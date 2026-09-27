@@ -69,6 +69,7 @@ var launcherCodes = map[string]CodeInfo{
 	"KB_PLUGIN_COMMAND_SHADOWED":             {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_PLUGIN_CRASHED":                      {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: true},
 	"KB_PLUGIN_INSTALL_FAILED":               {Area: ErrorArea("plugin"), Stage: ErrorStage("extend"), Retryable: true},
+	"KB_PLUGIN_INTEGRITY_MISMATCH":           {Area: ErrorArea("plugin"), Stage: ErrorStage("extend"), Retryable: false},
 	"KB_PLUGIN_LOAD_FAILED":                  {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_PLUGIN_NAMESPACE_RESERVED":           {Area: ErrorArea("plugin"), Stage: ErrorStage("extend"), Retryable: false},
 	"KB_PLUGIN_NAMESPACE_TAKEN":              {Area: ErrorArea("plugin"), Stage: ErrorStage("extend"), Retryable: false},
