@@ -26,7 +26,7 @@ Class `state` = runtime state, `declaration` = stays in `.kb/`.
 
 | Path (now under `<state dir>/`) | Writer | Reader | Class | Status |
 | --- | --- | --- | --- | --- |
-| `cache/cli-manifests.json` | `cli/commands` `discover.ts`, via `manifest-cache-path.ts` | `discover.ts`, `diag.ts`; `marketplace plugins refresh` deletes it | state | moved |
+| `cache/cli-manifests.json` | (removed in task 7.6: static `dist/manifest.json` is read directly, see 14-discovery-unification.md) | - | - | removed |
 | `cache/registry.json`, `registry.prev.json` | `core/registry` `snapshot-manager.ts` | same | state | moved |
 | `analytics/analytics.sqlite` | `adapters/analytics-sqlite` (default) | same; `plugins/agents` `quality-report` | state | moved |
 | `analytics/analytics.duckdb` | `adapters/analytics-duckdb` (default) | same | state | moved |
