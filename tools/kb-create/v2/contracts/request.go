@@ -4,6 +4,7 @@ package contracts
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 )
 
@@ -101,6 +102,20 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	}
 	if r.PlatformRoot == "" {
 		return InstallRequest{}, fmt.Errorf("platform root is required")
+	}
+	// Resolve user supplied paths at the request boundary so later execution
+	// never interprets a relative root against a changed working directory.
+	root, err := filepath.Abs(r.PlatformRoot)
+	if err != nil {
+		return InstallRequest{}, fmt.Errorf("resolve platform root: %w", err)
+	}
+	r.PlatformRoot = filepath.Clean(root)
+	if r.ProjectRoot != "" {
+		project, err := filepath.Abs(r.ProjectRoot)
+		if err != nil {
+			return InstallRequest{}, fmt.Errorf("resolve project root: %w", err)
+		}
+		r.ProjectRoot = filepath.Clean(project)
 	}
 	plugins, err := normalizeComponents("plugin", r.Plugins)
 	if err != nil {

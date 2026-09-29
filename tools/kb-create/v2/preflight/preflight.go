@@ -15,6 +15,22 @@ func Ensure(out io.Writer) error {
 	return EnsureWith(sharedtoolchain.Version, out)
 }
 
+// EnsureNode runs before interactive questions. The installer owns pnpm
+// selection, so the user's globally installed pnpm is never a prerequisite.
+func EnsureNode(out io.Writer) error {
+	node, err := sharedtoolchain.Version("node")
+	if err != nil {
+		return fmt.Errorf("Node.js preflight failed: %w", err)
+	}
+	if err := sharedtoolchain.ValidateNode(node); err != nil {
+		return err
+	}
+	if out != nil {
+		fmt.Fprintf(out, "Node.js preflight: %s\n", node)
+	}
+	return nil
+}
+
 // EnsureWith is the deterministic boundary used by tests and embedders that
 // already own process execution. The production launcher passes the shared
 // version reader above.

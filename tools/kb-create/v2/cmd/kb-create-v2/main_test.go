@@ -26,6 +26,42 @@ func testCompatibility(version string) *catalog.CompatibilityMatrix {
 	}
 }
 
+func TestParseProvidersSupportsCommaSeparatedPreferences(t *testing.T) {
+	got, err := parseProviders("storage=disk-io-storage, cache=state-broker")
+	if err != nil || got["storage"] != "disk-io-storage" || got["cache"] != "state-broker" {
+		t.Fatalf("providers/error = %#v / %v", got, err)
+	}
+	if _, err := parseProviders("storage=disk,storage=other"); err == nil {
+		t.Fatal("expected duplicate capability to fail")
+	}
+}
+
+func TestHelpListsCommandsAndOnlyRelevantProviderFlag(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "help.txt")
+	file, err := os.Create(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	printHelp(file)
+	printCommandHelp(file, "apply")
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{"install", "Install KB Labs interactively", "--provider CAPABILITY=ADAPTER", "Usage: kb-create apply"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("help is missing %q: %s", expected, text)
+		}
+	}
+	if strings.Contains(text, "wizard") || strings.Contains(text, "Usage:\n") {
+		t.Fatalf("help exposed a retired command or raw flag dump: %s", text)
+	}
+}
+
 func TestRunEmitsOnlyStructuredPlan(t *testing.T) {
 	dir := t.TempDir()
 	index := filepath.Join(dir, "index.json")

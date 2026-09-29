@@ -1,6 +1,21 @@
 package contracts
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
+
+func TestNormalizeMakesRelativeRootsAbsolute(t *testing.T) {
+	request, err := (InstallRequest{PlatformRoot: "./kb-platform", ProjectRoot: "./project"}).Normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{request.PlatformRoot, request.ProjectRoot} {
+		if !filepath.IsAbs(root) {
+			t.Fatalf("root is not absolute: %q", root)
+		}
+	}
+}
 
 func TestInstallRequestNormalizeDefaultsToSafeCIContract(t *testing.T) {
 	request, err := (InstallRequest{PlatformRoot: t.TempDir()}).Normalize()

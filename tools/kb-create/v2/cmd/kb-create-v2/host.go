@@ -18,6 +18,7 @@ import (
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/supervisor"
 )
 
@@ -87,6 +88,9 @@ func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state h
 		return c.fail(1, asLauncherError(err))
 	}
 	payload := map[string]any{"ok": true, "operation": "status", "host": status}
+	if c.Executable != "" {
+		payload["kbShimCorrect"] = shim.Correct(c.Executable, c.PlatformRoot)
+	}
 	if active, readErr := receipt.Read(c.PlatformRoot); readErr == nil {
 		payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion}
 	}
@@ -100,6 +104,13 @@ func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state h
 	}
 	if status.State == host.StateUnhealthy {
 		return c.failWith(1, contracts.NewLauncherError("KB_HOST_UNHEALTHY", "The host responds but is unhealthy.", "Run \"kb-create restart\" or \"kb-create doctor\".", nil), payload)
+	}
+	if !c.JSON {
+		next := "run `kb status` from a project"
+		if c.Executable != "" && !shim.Correct(c.Executable, c.PlatformRoot) {
+			next = "rerun `kb-create install` to repair the kb command shim"
+		}
+		return c.succeed(payload, fmt.Sprintf("Installed: yes\nRunning: %s\nReachable: %t\nNext: %s", status.State, status.Healthy, next))
 	}
 	return c.succeed(payload, fmt.Sprintf("host %s (pid %d)", status.State, status.PID))
 }

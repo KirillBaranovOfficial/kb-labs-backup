@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
@@ -17,6 +18,14 @@ func TestPlanUsesOnlyV2JSONRequestAndCatalog(t *testing.T) {
 func TestPlanReturnsStructuredFailureForBadRequest(t *testing.T) {
 	response := Plan([]byte(`not-json`), catalog.Catalog{})
 	if response.OK || response.Error == nil || response.Error.Stage != contracts.StageResolve {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestPlanAcceptsWizardRequestEnvelopeUnchanged(t *testing.T) {
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "sha", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
+	response := Plan([]byte(`{"ok":true,"request":{"schema":"kb.create/v2","platform":{"channel":"stable"},"platformRoot":"./kb-platform"}}`), source)
+	if !response.OK || response.Plan == nil || !filepath.IsAbs(response.Plan.Request.PlatformRoot) {
 		t.Fatalf("response = %#v", response)
 	}
 }

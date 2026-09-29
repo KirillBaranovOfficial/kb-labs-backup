@@ -15,7 +15,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/resolve"
 )
 
 const Schema = "kb.create.scenario/v2"
@@ -115,6 +117,38 @@ func IDs() ([]string, error) {
 	}
 	sort.Strings(result)
 	return result, nil
+}
+
+// ValidateCatalog resolves every built-in journey against the candidate
+// release index during sealing. This catches absent plugins/adapters and
+// ambiguous capability providers before an index is published.
+func ValidateCatalog(source catalog.Catalog) error {
+	ids, err := IDs()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		definition, err := Load(id)
+		if err != nil {
+			return err
+		}
+		state, err := New(definition)
+		if err != nil {
+			return fmt.Errorf("scenario %q: %w", id, err)
+		}
+		profile := "default"
+		if len(definition.Profiles) > 0 {
+			profile = definition.Profiles[0]
+		}
+		request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: "/tmp/kb-create-scenario-validation", Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceOffline})
+		if err != nil {
+			return fmt.Errorf("scenario %q: %w", id, err)
+		}
+		if _, err := resolve.Plan(request, source); err != nil {
+			return fmt.Errorf("scenario %q does not resolve against release index: %w", id, err)
+		}
+	}
+	return nil
 }
 func Decode(data []byte) (Scenario, error) {
 	var result Scenario

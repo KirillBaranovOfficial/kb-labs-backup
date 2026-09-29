@@ -310,3 +310,14 @@ func TestValidatorMessageReplacesTheGenericFailureText(t *testing.T) {
 		t.Fatalf("valid value rejected: %v", err)
 	}
 }
+
+func TestValidateCatalogChecksTheCurrentBuiltinScenarioSet(t *testing.T) {
+	source := source()
+	if err := ValidateCatalog(source); err != nil {
+		t.Fatalf("current built-in scenarios did not resolve: %v", err)
+	}
+	source.Plugins = source.Plugins[:len(source.Plugins)-1]
+	if err := ValidateCatalog(source); err == nil {
+		t.Fatal("a scenario referencing an absent plugin must fail validation")
+	}
+}

@@ -71,7 +71,7 @@ func (i installation) swapTo(t *testing.T, next contracts.InstallReceipt) (swap.
 
 func (i installation) hostState(t *testing.T) (state string, healthURL string) {
 	t.Helper()
-	status, _, raw := i.run("status")
+	status, _, raw := i.run("status", "--json")
 	hostStatus, _ := status["host"].(map[string]any)
 	if hostStatus == nil {
 		t.Fatalf("status: %s", raw)
@@ -109,7 +109,7 @@ func TestUpdateStopsSwapsAndRestartsTheHostWithoutManualSteps(t *testing.T) {
 		_ = conn.Close()
 		t.Fatal("the previous host must be gone")
 	}
-	status, _, _ := inst.run("status")
+	status, _, _ := inst.run("status", "--json")
 	if pid := status["host"].(map[string]any)["pid"].(float64); pid == before {
 		t.Fatal("the host process must have been replaced")
 	}
@@ -216,7 +216,7 @@ func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 
 func TestStatusReportsTheHostAndTheInstalledVersion(t *testing.T) {
 	inst := newInstallation(t)
-	payload, code, raw := invoke(t, invocation{Operation: "status", PlatformRoot: inst.root})
+	payload, code, raw := invoke(t, invocation{Operation: "status", PlatformRoot: inst.root, JSON: true})
 	if code != 0 || payload["host"].(map[string]any)["state"] != "stopped" {
 		t.Fatalf("status: %d %s", code, raw)
 	}

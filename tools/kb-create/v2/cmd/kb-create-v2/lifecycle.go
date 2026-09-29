@@ -16,6 +16,7 @@ import (
 	"github.com/kb-labs/create/v2/logs"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/swap"
 )
@@ -166,6 +167,12 @@ func (i invocation) runRecovery(output *os.File) int {
 	if err != nil {
 		writeLauncherFailure(output, root, correlationID, transcript.Path(), asLauncherError(err), nil)
 		return 1
+	}
+	if operation == "uninstall" && i.Executable != "" {
+		if err := shim.Remove(i.Executable, root); err != nil {
+			write(output, failure("KB_INSTALL_APPLY_FAILED", "installation was removed but the kb command shim could not be removed", "remove the stale kb link from the launcher directory after checking its target", err))
+			return 1
+		}
 	}
 	write(output, map[string]any{"ok": true, "operation": operation, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning && operation != "uninstall", "logPath": transcript.Path()})
 	return 0
