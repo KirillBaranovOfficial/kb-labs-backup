@@ -62,6 +62,7 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = ""):
     deadline = time.monotonic() + 900
     sent_choice = not choice
     last_prompt = ""
+    apply_started = None
     while proc.poll() is None and time.monotonic() < deadline:
         try:
             ready, _, _ = select.select([master], [], [], 0.2)
@@ -70,6 +71,8 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = ""):
             chunk = os.read(master, 8192)
             if chunk:
                 output.extend(chunk)
+                if apply_started is None and re.search(rb"Applying installation", chunk, re.I):
+                    apply_started = time.monotonic()
                 visible = output.decode(errors="replace")[-2000:]
                 prompts = re.findall(r"(?im)^.*(?:\?|\[.*(?:default|y/n|yes/no).*\]|default[^\n]*:|press enter[^\n]*|select[^\n]*:).*?$", visible)
                 prompt = prompts[-1] if prompts else ""
@@ -85,7 +88,8 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = ""):
         os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
     os.close(master)
-    return proc.returncode, output.decode(errors="replace"), time.monotonic() - started
+    finished = time.monotonic()
+    return proc.returncode, output.decode(errors="replace"), finished - started, apply_started - started if apply_started else None
 
 
 def human_text_is_clean(output: str):
@@ -217,8 +221,10 @@ def main():
         return 0 if passed else 1
     if FRONT == "human":
         choice = "commit" if VARIANT == "human-nondefault" else ""
-        code, output, duration = pty_install([launcher, "install"], env, choice)
-        TIMES["questions"] = duration
+        code, output, duration, apply_offset = pty_install([launcher, "install"], env, choice)
+        TIMES["questions"] = apply_offset if apply_offset is not None else duration
+        if apply_offset is not None:
+            TIMES["apply"] = duration - apply_offset
         human_text_is_clean(output)
         if code != 0:
             fail(f"kb-create install: exit {code}; {' '.join(output.split())[-700:]}")
@@ -229,7 +235,7 @@ def main():
     else:
         args = [launcher, "apply", "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                 "--request-platform-root", str(PLATFORM), "--scenario", SCENARIO,
-                "--registry", REGISTRY, "--yes"]
+                "--registry", REGISTRY]
         if VARIANT == "relative-path":
             args[args.index(str(PLATFORM))] = "./relative-kb-platform"
         result, elapsed = run(args, env=env, timeout=1200)
@@ -259,10 +265,10 @@ def main():
             else:
                 request_file = HOME / "launcher-request.json"
                 request_file.write_text(json.dumps(request) + "\n")
-                removed, _ = run([launcher, "uninstall", "--yes"], env=env, timeout=180)
+                removed, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM)], env=env, timeout=180)
                 if require(removed, step="remove direct-flags install before --input"):
                     args = [launcher, "apply", "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
-                            "--input", str(request_file), "--registry", REGISTRY, "--yes"]
+                            "--input", str(request_file), "--registry", REGISTRY]
                     result, elapsed = run(args, env=env, timeout=1200)
                     TIMES["apply"] += elapsed
                     if not require(result, step="kb-create apply --input launcher request"):
@@ -305,7 +311,7 @@ def main():
         if require(result, step=f"kb-create {command}") and not re.search(key, result.stdout, re.I):
             fail(f"kb-create {command}: expected human summary '{key}'")
 
-    result, _ = run([launcher, "uninstall", "--yes"], env=env, timeout=180)
+    result, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM)], env=env, timeout=180)
     if require(result, step="kb-create uninstall"):
         alive = [p for p in PROCESSES if p.poll() is None]
         listeners, _ = run(["ss", "-H", "-ltnp"], timeout=20)
