@@ -21,7 +21,7 @@ import type { PlatformContainer } from "@kb-labs/core-runtime";
 import { setJsonMode } from "@kb-labs/shared-cli-ui";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { createContextLogger } from "@kb-labs/core-platform";
+import { AdapterUnavailableError, createContextLogger } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
 import { createCLIUIFacade } from "./ui-facade";
@@ -151,10 +151,28 @@ export async function executePlugin(
       undefined,
       {
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       },
     );
+    if (renderUnavailableAdapterError(
+      error,
+      context.presenter as unknown as Parameters<typeof createCLIUIFacade>[0],
+    )) {
+      return 1;
+    }
     return undefined;
   }
+}
+
+export function renderUnavailableAdapterError(
+  error: unknown,
+  presenter?: Parameters<typeof createCLIUIFacade>[0],
+): boolean {
+  if (!(error instanceof AdapterUnavailableError) || error.reason !== "not-configured") {
+    return false;
+  }
+  createCLIUIFacade(presenter).error(error);
+  return true;
 }
 
 /**
