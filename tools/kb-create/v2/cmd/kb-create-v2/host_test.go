@@ -124,7 +124,7 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 		t.Fatalf("second start: %d %s", code, raw)
 	}
 
-	status, code, raw := inst.run("status")
+	status, code, raw := inst.run("status", "--json")
 	host := status["host"].(map[string]any)
 	if code != 0 || host["state"] != "running" || host["pid"].(float64) != pid || status["supervisor"] == nil {
 		t.Fatalf("status: %d %s", code, raw)
@@ -143,7 +143,7 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(inst.state, "control.json")); !os.IsNotExist(err) {
 		t.Fatal("control.json must be gone after stop")
 	}
-	status, code, _ = inst.run("status")
+	status, code, _ = inst.run("status", "--json")
 	if code != 0 || status["host"].(map[string]any)["state"] != "stopped" {
 		t.Fatalf("status after stop: %v", status)
 	}
@@ -197,7 +197,7 @@ func TestForegroundStartRunsTheHostDirectly(t *testing.T) {
 	go func() { waited <- command.Wait() }()
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		if status, _, _ := inst.run("status"); status["host"] != nil && status["host"].(map[string]any)["state"] == "running" {
+		if status, _, _ := inst.run("status", "--json"); status["host"] != nil && status["host"].(map[string]any)["state"] == "running" {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -216,7 +216,7 @@ func TestForegroundStartRunsTheHostDirectly(t *testing.T) {
 		_ = command.Process.Kill()
 		t.Fatal("launcher did not exit after SIGTERM")
 	}
-	if status, _, _ := inst.run("status"); status["host"].(map[string]any)["state"] != "stopped" {
+	if status, _, _ := inst.run("status", "--json"); status["host"].(map[string]any)["state"] != "stopped" {
 		t.Fatalf("host must stop with the foreground launcher: %v", status)
 	}
 }

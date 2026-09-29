@@ -190,8 +190,12 @@ const manifestFor = item => {
     const implementsValue = implementsSource?.startsWith('[')
       ? [...implementsSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
       : implementsSource?.slice(1, -1);
+    const defaultsSource = source.match(/\bdefaultFor:\s*(\[[^\]]*\])/)?.[1];
+    const defaultFor = defaultsSource
+      ? [...defaultsSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
+      : undefined;
     if (id && implementsValue) {
-      return { schema: 'kb.adapter/1', id, implements: implementsValue };
+      return { schema: 'kb.adapter/1', id, implements: implementsValue, ...(defaultFor ? { defaultFor } : {}) };
     }
   }
   return undefined;
@@ -324,7 +328,20 @@ for (const item of stage) {
     const capabilities = (Array.isArray(manifest.implements) ? manifest.implements : [manifest.implements])
       .filter(Boolean)
       .map(interfaceToCapability);
-    adapters.push({ ...component(item, manifest, manifest.id ?? idFor(item.name)), provides: capabilities });
+    if (manifest.defaultFor !== undefined && !Array.isArray(manifest.defaultFor)) {
+      throw new Error(`${item.name} defaultFor must be an array of provided capabilities`);
+    }
+    const defaults = manifest.defaultFor ?? [];
+    for (const capability of defaults) {
+      if (!capabilities.includes(capability)) {
+        throw new Error(`${item.name} declares defaultFor ${capability} but does not implement it`);
+      }
+    }
+    adapters.push({
+      ...component(item, manifest, manifest.id ?? idFor(item.name)),
+      provides: capabilities,
+      ...(defaults.length ? { defaultFor: defaults } : {}),
+    });
   }
 }
 

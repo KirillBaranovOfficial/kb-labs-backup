@@ -26,6 +26,12 @@ type Runner interface {
 type commandRunner struct{}
 
 func (commandRunner) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
+	if name == "pnpm" {
+		// Corepack downloads and caches this exact package-manager release; the
+		// user's globally installed pnpm never participates in an install.
+		args = append([]string{"pnpm@11.4.0"}, args...)
+		name = "corepack"
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout, cmd.Stderr = output, output
 	return cmd.Run()

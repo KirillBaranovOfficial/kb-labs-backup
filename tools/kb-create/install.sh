@@ -294,9 +294,4 @@ if [ -n "$INDEX_DEST" ]; then
 fi
 echo ""
 printf "%sGet started:%s\n" "$C_BOLD" "$C_RESET"
-if [ -n "$INDEX_DEST" ]; then
-  printf "  %skb-create wizard --index %s --request-platform-root ./kb-platform%s\n" "$C_DIM" "$INDEX_DEST" "$C_RESET"
-else
-  printf "  %skb-create wizard --index release-index.json --request-platform-root ./kb-platform%s\n" "$C_DIM" "$C_RESET"
-fi
-printf "  %skb-create status --platform-root ./kb-platform%s\n" "$C_DIM" "$C_RESET"
+printf "  %skb-create install%s\n" "$C_DIM" "$C_RESET"

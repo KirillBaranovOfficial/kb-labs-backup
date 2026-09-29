@@ -6,6 +6,7 @@ package transport
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -19,6 +20,14 @@ type PlanResponse struct {
 }
 
 func DecodeRequest(data []byte) (contracts.InstallRequest, error) {
+	// Accept the public JSON envelope emitted by older request frontends as
+	// well as the canonical request object. This preserves copy/paste input.
+	var envelope struct {
+		Request json.RawMessage `json:"request"`
+	}
+	if err := json.Unmarshal(data, &envelope); err == nil && len(envelope.Request) != 0 {
+		data = envelope.Request
+	}
 	var request contracts.InstallRequest
 	if err := json.Unmarshal(data, &request); err != nil {
 		return contracts.InstallRequest{}, fmt.Errorf("decode V2 request: %w", err)
@@ -34,7 +43,11 @@ func Plan(data []byte, source catalog.Catalog) PlanResponse {
 func PlanWith(data []byte, source catalog.Catalog, options resolve.Options) PlanResponse {
 	request, err := DecodeRequest(data)
 	if err != nil {
-		return failure(contracts.CodeIncompatibleComponents, contracts.StageResolve, err)
+		code := contracts.CodeIncompatibleComponents
+		if strings.Contains(err.Error(), "platform root is required") {
+			code = contracts.CodeInputRequired
+		}
+		return failure(code, contracts.StageResolve, err)
 	}
 	resolved, err := resolve.PlanWith(request, source, options)
 	if err != nil {
