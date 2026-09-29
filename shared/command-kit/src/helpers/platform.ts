@@ -29,11 +29,7 @@ export class ServiceNotConfiguredError extends Error {
     public readonly service: string,
     public readonly requiredAdapter: string
   ) {
-    super(
-      requiredAdapter
-        ? `Service '${service}' is not configured. Add "${requiredAdapter}" to kb.config.json adapters.`
-        : `Service '${service}' is not configured. Configure it in kb.config.json.`
-    );
+    super(`Service '${service}' is not configured. Add "${requiredAdapter}" to kb.config.json adapters.`);
     this.name = 'ServiceNotConfiguredError';
   }
 }
