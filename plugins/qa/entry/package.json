@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@kb-labs/plugin-contracts": "workspace:*",
-    "js-yaml": "^4.2.0",
+    "js-yaml": "^4.3.2",
     "@kb-labs/qa-contracts": "workspace:*",
     "@kb-labs/qa-core": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
@@ -58,7 +58,7 @@
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=24.0.0",

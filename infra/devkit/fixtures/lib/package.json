@@ -27,7 +27,7 @@
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4",
+    "vitest": "^4.1.11",
     "tsup": "^8.5.0",
     "eslint": "^9.35.0",
     "prettier": "^3.6.2",

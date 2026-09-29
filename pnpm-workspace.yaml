@@ -37,7 +37,8 @@ overrides:
   '@fastify/reply-from': '>=12.6.2'
   '@fastify/static': '>=10.1.1'
   follow-redirects: '>=1.16.0'
-  hono: '>=4.12.34'
+  # GHSA-gqvv-2mrq-wpjv, GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx (MCP SDK transitives).
+  hono: '>=4.13.5'
   '@hono/node-server': '>=2.0.5'
   koa: '>=2.16.4'
   webpack-dev-server: 5.2.6
@@ -52,15 +53,17 @@ overrides:
   react-router-dom: '>=7.18.1'
   postcss: '>=8.5.23'
   'nanoid@<3.3.18': '>=3.3.18'
-  ip-address: '>=10.3.1'
+  # GHSA-rpw4-54j3-4h4q and GHSA-2vr4-cq9g-pvrc (socks transitives).
+  ip-address: '>=10.5.1'
   uuid: '>=11.1.1'
   qs: '>=6.15.4'
-  sharp: '>=0.35.0'
+  # GHSA-rgj7-g3m4-5g8c (Next.js image processing).
+  sharp: '>=0.35.4'
   find-my-way: '>=9.7.0'
-  # gray-matter's yaml engine calls the safeLoad/safeDump aliases removed in js-yaml 4;
-  # keep it on the patched 3.x line and only force 4.x elsewhere (e.g. eslint).
-  'gray-matter>js-yaml': '>=3.15.1 <4'
-  js-yaml: '^4.3.1'
+  # GHSA-2883-xcg3-v3hh; gray-matter needs the 3.x API, so keep it on patched 3.x.
+  'gray-matter>js-yaml': '>=3.15.2 <4'
+  # GHSA-2883-xcg3-v3hh for the 4.x eslint and workspace dependency trees.
+  js-yaml: '^4.3.2'
   'brace-expansion@^5.0.5': '5.0.9'
   'brace-expansion@^2.0.2': '2.1.4'
   'brace-expansion@^1.1.7': '1.1.18'
@@ -72,14 +75,21 @@ overrides:
   'tar@<=7.5.18': '>=7.5.19'
   'axios@<1.18.0': '>=1.18.0'
   esbuild: ^0.28.1
-  'undici@^7.0.0': '7.29.0'
-  'undici@7.24.7': '7.29.0'
-  'undici@7.28.0': '7.29.0'
-  'undici@^6.23.0': '6.28.0'
-  'undici@<6.28.0': '6.28.0'
-  '@qdrant/js-client-rest>undici': '6.28.0'
-  'nodemailer@<=9.0.0': '>=9.0.1'
+  # GHSA-82fw-gwwq-j7x9; Vitest 4.1.11 still accepts the affected patch release.
+  '@vitest/mocker': '>=4.1.11'
+  # GHSA-3wwx-pv8p-q78v; keep each consumer on its existing major.
+  'undici@>=8.1.0 <8.10.2': '8.10.2'
+  'undici@^7.0.0': '7.29.1'
+  'undici@^6.23.0': '6.28.1'
+  'undici@<6.28.1': '6.28.1'
+  '@qdrant/js-client-rest>undici': '6.28.1'
+  # GHSA-8m3c-c648-2xjj, GHSA-wmmp-3585-3rmp, GHSA-2x7j-588g-ccc2,
+  # GHSA-cc9r-2j5m-2m83, and GHSA-6vj9-mwq6-2f5v (inbox/imapflow).
+  nodemailer: '>=10.0.2'
+  # GHSA-7w5x-hrqm-74c2 (knip transitive).
+  smol-toml: '>=1.7.1'
   launch-editor: '>=2.14.1'
   'http-proxy-middleware@>=0.16.0 <2.0.10': 2.0.10
   'form-data@>=4.0.0 <4.0.6': '>=4.0.6'
-  'adm-zip@<0.6.0': '>=0.6.0'
+  # GHSA-vwc7-r8mq-g2x9 and GHSA-7q85-xj36-vmfc (module federation dts plugin).
+  'adm-zip@<0.6.1': '>=0.6.1'
