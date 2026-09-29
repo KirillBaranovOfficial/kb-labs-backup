@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient, defaultWorkflowClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -18,7 +18,9 @@ beforeEach(() => {
 describe('workflow:runs cancel', () => {
   it('RCX-01: cancels a run and prints confirmation', async () => {
     const cancelRun = vi.fn().mockResolvedValue(undefined);
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, cancelRun }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, cancelRun });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -34,10 +36,12 @@ describe('workflow:runs cancel', () => {
   });
 
   it('RCX-02: --json outputs { ok: true, data: { runId, cancelled: true } }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      cancelRun: vi.fn().mockResolvedValue(undefined),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        cancelRun: vi.fn().mockResolvedValue(undefined),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -52,7 +56,9 @@ describe('workflow:runs cancel', () => {
 
   it('RCX-03: --run-id flag works as alias for positional argument', async () => {
     const cancelRun = vi.fn().mockResolvedValue(undefined);
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, cancelRun }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, cancelRun });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -66,7 +72,9 @@ describe('workflow:runs cancel', () => {
   });
 
   it('RCX-04: missing runId returns exitCode 1 and validation error', async () => {
-    MockedClient.mockImplementation(() => makeClient(defaultWorkflowClient));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient(defaultWorkflowClient);
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -80,10 +88,12 @@ describe('workflow:runs cancel', () => {
   });
 
   it('RCX-05: daemon unavailable returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      cancelRun: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        cancelRun: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -96,10 +106,12 @@ describe('workflow:runs cancel', () => {
   });
 
   it('RCX-06: daemon returns error (run not found / already finished) returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      cancelRun: vi.fn().mockRejectedValue(new Error('Failed to cancel run: Not Found')),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        cancelRun: vi.fn().mockRejectedValue(new Error('Failed to cancel run: Not Found')),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

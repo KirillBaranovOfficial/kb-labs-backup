@@ -14,8 +14,14 @@ const mockCredClear = vi.fn();
 const mockSessionLoad = vi.fn();
 const mockSessionClear = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: vi.fn().mockImplementation(() => ({ load: mockCredLoad, clear: mockCredClear })),
-  SessionManager: vi.fn().mockImplementation(() => ({ load: mockSessionLoad, clear: mockSessionClear })),
+  CredentialsManager: class {
+    load = mockCredLoad;
+    clear = mockCredClear;
+  },
+  SessionManager: class {
+    load = mockSessionLoad;
+    clear = mockSessionClear;
+  },
 }));
 
 import { authLogout } from '../commands/system/auth/auth-logout.js';

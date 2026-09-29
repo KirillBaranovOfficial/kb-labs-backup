@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient, defaultWorkflowClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -34,10 +34,12 @@ beforeEach(() => {
 
 describe('workflow:runs view', () => {
   it('RV-01: renders run tree without flags (exitCode 0 on success)', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -50,10 +52,12 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-02: --json=all outputs full run object (BUG-004 path)', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -67,10 +71,12 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-03: --json without value (boolean true) does not crash — treated as --json=all', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -86,10 +92,12 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-03b: --json before positional arg (--run-id explicit) does not crash', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -103,10 +111,12 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-04: --json=status,jobs outputs only selected fields', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -123,10 +133,12 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-04b: --run-id flag works as alias for positional arg', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -140,10 +152,12 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-05: no args and no runs → exitCode 0, info message', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      listRuns: async () => [],
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        listRuns: async () => [],
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -157,11 +171,13 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-05b: no args → auto-fetches latest run and shows it', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      listRuns: async () => [{ id: 'run-latest', name: 'deploy', status: 'success' as const, createdAt: new Date().toISOString() }],
-      getRun: async () => baseRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        listRuns: async () => [{ id: 'run-latest', name: 'deploy', status: 'success' as const, createdAt: new Date().toISOString() }],
+        getRun: async () => baseRun,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -175,10 +191,12 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-06: daemon error returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => { throw new Error('daemon unreachable'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => { throw new Error('daemon unreachable'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -192,10 +210,12 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-07: failed run returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => ({ ...baseRun, status: 'failed' as const }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => ({ ...baseRun, status: 'failed' as const }),
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -208,10 +228,12 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-08: formatDuration returns "0ms" for durationMs=0 (BUG-007)', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => ({ ...baseRun, durationMs: 0 }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => ({ ...baseRun, durationMs: 0 }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -244,10 +266,12 @@ describe('workflow:runs view', () => {
         }],
       }],
     };
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => runWithOutputs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => runWithOutputs,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -279,10 +303,12 @@ describe('workflow:runs view', () => {
         }],
       }],
     };
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => runWithLongOutput,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => runWithLongOutput,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -299,14 +325,16 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-11: --output flag shows per-step stdout inline', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-      getRunLogs: async () => [
-        { level: 'info', message: 'hello from step', timestamp: new Date().toISOString(), stepId: 'step-1', stream: 'stdout' },
-        { level: 'info', message: 'error line', timestamp: new Date().toISOString(), stepId: 'step-1', stream: 'stderr' },
-      ],
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+        getRunLogs: async () => [
+          { level: 'info', message: 'hello from step', timestamp: new Date().toISOString(), stepId: 'step-1', stream: 'stdout' },
+          { level: 'info', message: 'error line', timestamp: new Date().toISOString(), stepId: 'step-1', stream: 'stderr' },
+        ],
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -329,11 +357,13 @@ describe('workflow:runs view', () => {
       stepId: 'step-1',
       stream: 'stdout',
     }));
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-      getRunLogs: async () => manyLogs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+        getRunLogs: async () => manyLogs,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -348,14 +378,16 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-13: --output without matching stepId logs skips gracefully — tree still renders', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-      getRunLogs: async () => [
-        // no stepId — should be filtered out
-        { level: 'info', message: 'orphan log', timestamp: new Date().toISOString() },
-      ],
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+        getRunLogs: async () => [
+          // no stepId — should be filtered out
+          { level: 'info', message: 'orphan log', timestamp: new Date().toISOString() },
+        ],
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -375,11 +407,13 @@ describe('workflow:runs view', () => {
   });
 
   it('RV-14: --output failure (getRunLogs throws) renders degraded tree, not exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-      getRunLogs: async () => { throw new Error('logs endpoint not found'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+        getRunLogs: async () => { throw new Error('logs endpoint not found'); },
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -412,10 +446,12 @@ describe('workflow:runs view', () => {
         }],
       }],
     };
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => runWithCircular,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => runWithCircular,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -447,10 +483,12 @@ describe('workflow:runs view', () => {
         }],
       }],
     };
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => runWithFailedOutputs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => runWithFailedOutputs,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -473,10 +511,12 @@ describe('workflow:runs view', () => {
         outputs: { report: 'ok', count: 3 },
       },
     };
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => runWithResult,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => runWithResult,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -496,11 +536,13 @@ describe('workflow:runs view', () => {
     const getRunLogsSpy = vi.fn().mockResolvedValue([
       { level: 'info', message: 'step output line', timestamp: new Date().toISOString(), stepId: 'step-1', stream: 'stdout' },
     ]);
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-      getRunLogs: getRunLogsSpy,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+        getRunLogs: getRunLogsSpy,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -523,11 +565,13 @@ describe('workflow:runs view', () => {
       stepId: 'step-1',
       stream: 'stdout',
     }));
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getRun: async () => baseRun,
-      getRunLogs: async () => manyLogs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getRun: async () => baseRun,
+        getRunLogs: async () => manyLogs,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');

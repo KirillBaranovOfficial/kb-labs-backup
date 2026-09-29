@@ -4,7 +4,7 @@ import { makeClient } from '../helpers/defaults.js';
 
 // Mock WorkflowDaemonClient before importing the command
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -18,9 +18,11 @@ beforeEach(() => {
 
 describe('workflow:health', () => {
   it('CH-01: prints success message when daemon is healthy', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      health: async () => ({ ok: true, service: 'workflow' }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        health: async () => ({ ok: true, service: 'workflow' }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -32,9 +34,11 @@ describe('workflow:health', () => {
   });
 
   it('CH-02: --json returns { ok: true, data: { ok, service } }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      health: async () => ({ ok: true, service: 'workflow' }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        health: async () => ({ ok: true, service: 'workflow' }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -45,9 +49,11 @@ describe('workflow:health', () => {
   });
 
   it('CH-03: daemon unavailable — prints error, returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      health: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        health: async () => { throw new Error('ECONNREFUSED'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

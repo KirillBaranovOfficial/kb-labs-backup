@@ -22,7 +22,7 @@ func TestPackageJSONRuleReportsMissingFieldsAndVersionMismatch(t *testing.T) {
 		PackageJSON: config.PackageJSONRules{
 			RequiredFields:  []string{"name", "version", "type"},
 			RequiredScripts: []string{"build", "test"},
-			RequiredDevDeps: map[string]string{"typescript": "^5.0.0", "vitest": "^3.0.0"},
+		RequiredDevDeps: map[string]string{"typescript": "^5.0.0", "vitest": "^4.0.0"},
 			Type:            "module",
 			Engines:         map[string]string{"node": ">=20", "pnpm": ">=9"},
 		},

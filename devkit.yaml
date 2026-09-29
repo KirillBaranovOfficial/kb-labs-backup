@@ -146,7 +146,7 @@ presets:
       required_dev_deps:
         typescript: "^5"
         tsup: "^8"
-        vitest: "^3"
+        vitest: "^4"
         "@kb-labs/devkit": "*"
       required_fields:
         - name
@@ -189,7 +189,7 @@ presets:
       required_dev_deps:
         typescript: "^5"
         tsup: "^8"
-        vitest: "^3"
+        vitest: "^4"
         "@kb-labs/devkit": "*"
       required_fields:
         - name

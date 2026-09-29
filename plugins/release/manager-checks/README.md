@@ -90,7 +90,7 @@ All configuration via function parameters.
 - `@types/node` (`^24.7.0`): Node.js types
 - `tsup` (`^8`): TypeScript bundler
 - `typescript` (`^5`): TypeScript compiler
-- `vitest` (`^3`): Test runner
+- `vitest` (`^4.1.11`): Test runner
 
 ## 🧪 Testing
 

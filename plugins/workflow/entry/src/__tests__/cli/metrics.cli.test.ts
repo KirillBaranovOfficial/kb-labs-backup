@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -23,9 +23,11 @@ beforeEach(() => {
 
 describe('workflow:metrics', () => {
   it('CM-01: renders table with run and job counts', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getMetrics: async () => sampleMetrics,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getMetrics: async () => sampleMetrics,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -37,9 +39,11 @@ describe('workflow:metrics', () => {
   });
 
   it('CM-02: --json returns { ok: true, data: WorkflowMetricsData }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getMetrics: async () => sampleMetrics,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getMetrics: async () => sampleMetrics,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -53,9 +57,11 @@ describe('workflow:metrics', () => {
   });
 
   it('CM-03: daemon unavailable returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getMetrics: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getMetrics: async () => { throw new Error('ECONNREFUSED'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

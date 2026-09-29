@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -23,9 +23,11 @@ beforeEach(() => {
 
 describe('workflow:defs list', () => {
   it('DL-01: renders table when workflows exist', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      listWorkflows: async () => sampleWorkflows,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        listWorkflows: async () => sampleWorkflows,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -37,9 +39,11 @@ describe('workflow:defs list', () => {
   });
 
   it('DL-02: --json returns array of WorkflowInfo', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      listWorkflows: async () => sampleWorkflows,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        listWorkflows: async () => sampleWorkflows,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -53,12 +57,14 @@ describe('workflow:defs list', () => {
   });
 
   it('DL-03: --status active filters by status', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      listWorkflows: async (params: { source?: string; status?: string; tags?: string } = {}) => {
-        expect(params.status).toBe('active');
-        return [sampleWorkflows[0]!];
-      },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        listWorkflows: async (params: { source?: string; status?: string; tags?: string } = {}) => {
+          expect(params.status).toBe('active');
+          return [sampleWorkflows[0]!];
+        },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -68,12 +74,14 @@ describe('workflow:defs list', () => {
   });
 
   it('DL-04: --source passes source filter to client', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      listWorkflows: async (params: { source?: string; status?: string; tags?: string } = {}) => {
-        expect(params.source).toBe('manifest');
-        return [sampleWorkflows[0]!];
-      },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        listWorkflows: async (params: { source?: string; status?: string; tags?: string } = {}) => {
+          expect(params.source).toBe('manifest');
+          return [sampleWorkflows[0]!];
+        },
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -83,12 +91,14 @@ describe('workflow:defs list', () => {
   });
 
   it('DL-05: --tags passes tags filter to client', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      listWorkflows: async (params: { source?: string; status?: string; tags?: string } = {}) => {
-        expect(params.tags).toBe('release');
-        return [sampleWorkflows[0]!];
-      },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        listWorkflows: async (params: { source?: string; status?: string; tags?: string } = {}) => {
+          expect(params.tags).toBe('release');
+          return [sampleWorkflows[0]!];
+        },
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -96,9 +106,11 @@ describe('workflow:defs list', () => {
   });
 
   it('DL-06: empty list renders empty state, does not throw', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      listWorkflows: async () => [],
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        listWorkflows: async () => [],
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -109,9 +121,11 @@ describe('workflow:defs list', () => {
   });
 
   it('DL-07: daemon unavailable — error message, exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      listWorkflows: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        listWorkflows: async () => { throw new Error('ECONNREFUSED'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -122,9 +136,11 @@ describe('workflow:defs list', () => {
   });
 
   it('DL-08: renders Tags column joined by comma', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      listWorkflows: async () => [sampleWorkflows[0]!],
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        listWorkflows: async () => [sampleWorkflows[0]!],
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

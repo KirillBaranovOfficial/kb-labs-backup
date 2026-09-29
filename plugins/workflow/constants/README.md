@@ -107,7 +107,7 @@ None (pure constants package)
 - `@types/node` (`^24.3.3`): Node.js types
 - `tsup` (`^8.5.0`): TypeScript bundler
 - `typescript` (`^5.6.3`): TypeScript compiler
-- `vitest` (`^3.2.4`): Test runner
+- `vitest` (`^4.1.11`): Test runner
 
 ## 🧪 Testing
 

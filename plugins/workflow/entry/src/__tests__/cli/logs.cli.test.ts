@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -23,9 +23,11 @@ beforeEach(() => {
 
 describe('workflow:logs', () => {
   it('CLG-01: --run-id outputs log lines via ctx.ui.log', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async () => sampleLogs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async () => sampleLogs,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -37,9 +39,11 @@ describe('workflow:logs', () => {
   });
 
   it('CLG-02: --job-id outputs log lines via job endpoint', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getJobLogs: async () => sampleLogs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getJobLogs: async () => sampleLogs,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -50,9 +54,11 @@ describe('workflow:logs', () => {
   });
 
   it('CLG-03: --json returns { ok: true, data: { logs } }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async () => sampleLogs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async () => sampleLogs,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -75,9 +81,11 @@ describe('workflow:logs', () => {
   });
 
   it('CLG-05: empty logs renders empty state without throwing', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async () => [],
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async () => [],
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -89,9 +97,11 @@ describe('workflow:logs', () => {
   });
 
   it('CLG-06: daemon unavailable returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async () => { throw new Error('ECONNREFUSED'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -102,9 +112,11 @@ describe('workflow:logs', () => {
   });
 
   it('CLG-07: emits deprecation warning on every invocation', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async () => sampleLogs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async () => sampleLogs,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

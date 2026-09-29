@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 vi.mock('@kb-labs/sdk', async (importOriginal) => {
@@ -35,9 +35,11 @@ afterEach(() => {
 
 describe('workflow:job-run', () => {
   it('CJR-01: --handler submits job and prints jobId, exitCode 0', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      submitJob: async () => ({ id: 'job-abc', status: 'pending' }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        submitJob: async () => ({ id: 'job-abc', status: 'pending' }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -48,9 +50,11 @@ describe('workflow:job-run', () => {
   });
 
   it('CJR-02: --json returns { ok: true, data: { id, status } }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      submitJob: async () => ({ id: 'job-abc', status: 'pending' }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        submitJob: async () => ({ id: 'job-abc', status: 'pending' }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -64,12 +68,14 @@ describe('workflow:job-run', () => {
 
   it('CJR-03: --input passes parsed JSON to submitJob', async () => {
     let capturedPayload: unknown;
-    MockedClient.mockImplementation(() => makeClient({
-      submitJob: async (params) => {
-        capturedPayload = params.input;
-        return { id: 'job-xyz', status: 'pending' };
-      },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        submitJob: async (params) => {
+          capturedPayload = params.input;
+          return { id: 'job-xyz', status: 'pending' };
+        },
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -93,15 +99,17 @@ describe('workflow:job-run', () => {
   });
 
   it('CJR-05: --wait polls until completed, returns exitCode 0', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      submitJob: async () => ({ id: 'job-wait', status: 'pending' }),
-      getJobStatus: async () => ({
-        id: 'job-wait',
-        type: 'workflow',
-        status: 'completed',
-        createdAt: new Date().toISOString(),
-      }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        submitJob: async () => ({ id: 'job-wait', status: 'pending' }),
+        getJobStatus: async () => ({
+          id: 'job-wait',
+          type: 'workflow',
+          status: 'completed',
+          createdAt: new Date().toISOString(),
+        }),
+      });
+    });
 
     vi.useFakeTimers();
 
@@ -127,9 +135,11 @@ describe('workflow:job-run', () => {
   });
 
   it('CJR-07: daemon unavailable returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      submitJob: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        submitJob: async () => { throw new Error('ECONNREFUSED'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

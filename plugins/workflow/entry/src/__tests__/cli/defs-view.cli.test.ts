@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient, defaultWorkflowClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -33,7 +33,9 @@ beforeEach(() => {
 describe('workflow:defs view', () => {
   it('DV-01: renders sideBox with workflow details', async () => {
     const getWorkflow = vi.fn().mockResolvedValue(sampleWorkflow);
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, getWorkflow }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, getWorkflow });
+    });
 
     const { ui } = createCapturedUI();
     const sideBoxSpy = vi.spyOn(ui, 'sideBox');
@@ -57,10 +59,12 @@ describe('workflow:defs view', () => {
   });
 
   it('DV-02: --json outputs { ok: true, data: WorkflowInfo }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getWorkflow: vi.fn().mockResolvedValue(sampleWorkflow),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getWorkflow: vi.fn().mockResolvedValue(sampleWorkflow),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -75,7 +79,9 @@ describe('workflow:defs view', () => {
 
   it('DV-03: --id flag works as alias for positional argument', async () => {
     const getWorkflow = vi.fn().mockResolvedValue(sampleWorkflow);
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, getWorkflow }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, getWorkflow });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -89,7 +95,9 @@ describe('workflow:defs view', () => {
   });
 
   it('DV-04: missing id returns exitCode 1 and validation error', async () => {
-    MockedClient.mockImplementation(() => makeClient(defaultWorkflowClient));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient(defaultWorkflowClient);
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -100,10 +108,12 @@ describe('workflow:defs view', () => {
   });
 
   it('DV-05: workflow not found (404) returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getWorkflow: vi.fn().mockRejectedValue(new Error('Workflow missing-id not found')),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getWorkflow: vi.fn().mockRejectedValue(new Error('Workflow missing-id not found')),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -117,10 +127,12 @@ describe('workflow:defs view', () => {
   });
 
   it('DV-06: daemon unavailable returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      getWorkflow: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        getWorkflow: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });

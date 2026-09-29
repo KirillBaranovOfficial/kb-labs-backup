@@ -21,7 +21,9 @@ vi.mock('@kb-labs/studio-devtools', () => ({
     getChannel: () => null,
     registerChannel: vi.fn(),
   },
-  GenericChannel: vi.fn().mockImplementation(() => ({ push: vi.fn() })),
+  GenericChannel: class {
+    push = vi.fn();
+  },
 }));
 
 import {

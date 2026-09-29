@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient, defaultWorkflowClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -17,10 +17,12 @@ beforeEach(() => {
 
 describe('workflow:runs restart', () => {
   it('RST-01: restarts a run and prints new run ID', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      restartRun: async () => ({ runId: 'run-new-001', status: 'queued' }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        restartRun: async () => ({ runId: 'run-new-001', status: 'queued' }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -36,7 +38,9 @@ describe('workflow:runs restart', () => {
 
   it('RST-02: --from-step passes fromStepId to restartRun', async () => {
     const restartRun = vi.fn().mockResolvedValue({ runId: 'run-new-002', status: 'queued', fromStepId: 'checkout' });
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, restartRun }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, restartRun });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -51,7 +55,9 @@ describe('workflow:runs restart', () => {
 
   it('RST-03: without --from-step, restartRun is called with no fromStepId', async () => {
     const restartRun = vi.fn().mockResolvedValue({ runId: 'run-new-003', status: 'queued' });
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, restartRun }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, restartRun });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -65,10 +71,12 @@ describe('workflow:runs restart', () => {
   });
 
   it('RST-04: --json outputs { ok, data }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      restartRun: async () => ({ runId: 'run-new-004', status: 'queued' }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        restartRun: async () => ({ runId: 'run-new-004', status: 'queued' }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -94,10 +102,12 @@ describe('workflow:runs restart', () => {
   });
 
   it('RST-06: daemon error returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      restartRun: async () => { throw new Error('snapshot not available'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        restartRun: async () => { throw new Error('snapshot not available'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -112,7 +122,9 @@ describe('workflow:runs restart', () => {
 
   it('RST-07: --run-id flag works as alias for positional arg', async () => {
     const restartRun = vi.fn().mockResolvedValue({ runId: 'run-new-007', status: 'queued' });
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, restartRun }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, restartRun });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });

@@ -1,22 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mocked } from 'vitest';
 import { createSnapshotAPI, createNoopSnapshotAPI } from '../api/snapshot.js';
 
 describe('SnapshotAPI', () => {
-  let manager: {
-    captureSnapshot: ReturnType<typeof vi.fn>;
-    restoreSnapshot: ReturnType<typeof vi.fn>;
-    getSnapshotStatus: ReturnType<typeof vi.fn>;
-    deleteSnapshot: ReturnType<typeof vi.fn>;
-    garbageCollectSnapshots: ReturnType<typeof vi.fn>;
-  };
+  type Manager = Parameters<typeof createSnapshotAPI>[0]['manager'];
+  let manager: Mocked<Manager>;
 
   beforeEach(() => {
     manager = {
-      captureSnapshot: vi.fn(),
-      restoreSnapshot: vi.fn(),
-      getSnapshotStatus: vi.fn(),
-      deleteSnapshot: vi.fn(),
-      garbageCollectSnapshots: vi.fn(),
+      captureSnapshot: vi.fn<Manager['captureSnapshot']>(),
+      restoreSnapshot: vi.fn<Manager['restoreSnapshot']>(),
+      getSnapshotStatus: vi.fn<Manager['getSnapshotStatus']>(),
+      deleteSnapshot: vi.fn<Manager['deleteSnapshot']>(),
+      garbageCollectSnapshots: vi.fn<Manager['garbageCollectSnapshots']>(),
     };
   });
 

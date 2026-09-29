@@ -4,7 +4,7 @@ import { makeClient } from '../helpers/defaults.js';
 import type { WorkflowRunDetail } from '../../http-client.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -41,9 +41,11 @@ beforeEach(() => {
 
 describe('workflow:runs-status', () => {
   it('RST-01: positional runId renders status summary', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRun: async () => sampleRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRun: async () => sampleRun,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -54,9 +56,11 @@ describe('workflow:runs-status', () => {
   });
 
   it('RST-02: --run-id flag form renders status summary', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRun: async () => sampleRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRun: async () => sampleRun,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -67,9 +71,11 @@ describe('workflow:runs-status', () => {
   });
 
   it('RST-03: --json returns { ok: true, data: WorkflowRunDetail }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRun: async () => sampleRun,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRun: async () => sampleRun,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -92,9 +98,11 @@ describe('workflow:runs-status', () => {
   });
 
   it('RST-05: daemon unavailable returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRun: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRun: async () => { throw new Error('ECONNREFUSED'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

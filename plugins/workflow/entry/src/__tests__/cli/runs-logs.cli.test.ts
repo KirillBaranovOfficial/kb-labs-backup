@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -23,9 +23,11 @@ beforeEach(() => {
 
 describe('workflow:runs-logs', () => {
   it('RLG-01: positional runId renders log lines', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async () => sampleLogs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async () => sampleLogs,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -37,9 +39,11 @@ describe('workflow:runs-logs', () => {
   });
 
   it('RLG-02: --run-id flag form renders log lines', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async () => sampleLogs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async () => sampleLogs,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -50,9 +54,11 @@ describe('workflow:runs-logs', () => {
   });
 
   it('RLG-03: --json returns { ok: true, data: { logs } }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async () => sampleLogs,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async () => sampleLogs,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -76,12 +82,14 @@ describe('workflow:runs-logs', () => {
 
   it('RLG-07: --step passes stepId to getRunLogs', async () => {
     let capturedParams: { stepId?: string } = {};
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async (_runId: string, params: { stepId?: string }) => {
-        capturedParams = params;
-        return [];
-      },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async (_runId: string, params: { stepId?: string }) => {
+          capturedParams = params;
+          return [];
+        },
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -92,12 +100,14 @@ describe('workflow:runs-logs', () => {
 
   it('RLG-05: --log-failed passes failedOnly to getRunLogs', async () => {
     let capturedParams: { failedOnly?: boolean } = {};
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async (_runId: string, params: { failedOnly?: boolean }) => {
-        capturedParams = params;
-        return [];
-      },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async (_runId: string, params: { failedOnly?: boolean }) => {
+          capturedParams = params;
+          return [];
+        },
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -107,9 +117,11 @@ describe('workflow:runs-logs', () => {
   });
 
   it('RLG-06: daemon unavailable returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getRunLogs: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getRunLogs: async () => { throw new Error('ECONNREFUSED'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

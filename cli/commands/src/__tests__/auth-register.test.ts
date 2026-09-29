@@ -25,16 +25,16 @@ const mockSessionLoad = vi.fn();
 const mockSessionIsExpired = vi.fn();
 const mockSessionRefresh = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: vi.fn().mockImplementation(() => ({
-    load: mockCredLoad,
-    isExpired: mockCredIsExpired,
-    refresh: mockCredRefresh,
-  })),
-  SessionManager: vi.fn().mockImplementation(() => ({
-    load: mockSessionLoad,
-    isExpired: mockSessionIsExpired,
-    refresh: mockSessionRefresh,
-  })),
+  CredentialsManager: class {
+    load = mockCredLoad;
+    isExpired = mockCredIsExpired;
+    refresh = mockCredRefresh;
+  },
+  SessionManager: class {
+    load = mockSessionLoad;
+    isExpired = mockSessionIsExpired;
+    refresh = mockSessionRefresh;
+  },
 }));
 
 const mockFetch = vi.fn();

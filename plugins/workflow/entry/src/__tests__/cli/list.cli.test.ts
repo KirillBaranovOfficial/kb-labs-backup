@@ -4,7 +4,7 @@ import { makeClient } from '../helpers/defaults.js';
 import type { JobStatusInfo } from '@kb-labs/workflow-contracts';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -23,9 +23,11 @@ beforeEach(() => {
 
 describe('workflow:list', () => {
   it('CLI-01: renders table of active executions', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getExecutions: async () => sampleExecutions,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getExecutions: async () => sampleExecutions,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -37,9 +39,11 @@ describe('workflow:list', () => {
   });
 
   it('CLI-02: --json returns { ok: true, data: { executions } }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getExecutions: async () => sampleExecutions,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getExecutions: async () => sampleExecutions,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -52,9 +56,11 @@ describe('workflow:list', () => {
   });
 
   it('CLI-03: --status running filters executions client-side', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getExecutions: async () => sampleExecutions,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getExecutions: async () => sampleExecutions,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -66,13 +72,15 @@ describe('workflow:list', () => {
   });
 
   it('CLI-04: --type cron renders cron jobs table', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getCronJobs: async () => ({
-        crons: [
-          { id: 'cron-1', schedule: '*/5 * * * *', enabled: true, jobType: 'workflow', timezone: 'UTC' },
-        ],
-      }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getCronJobs: async () => ({
+          crons: [
+            { id: 'cron-1', schedule: '*/5 * * * *', enabled: true, jobType: 'workflow', timezone: 'UTC' },
+          ],
+        }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -84,9 +92,11 @@ describe('workflow:list', () => {
   });
 
   it('CLI-05: empty execution list renders empty state without throwing', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getExecutions: async () => [],
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getExecutions: async () => [],
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -98,9 +108,11 @@ describe('workflow:list', () => {
   });
 
   it('CLI-06: daemon unavailable returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getExecutions: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getExecutions: async () => { throw new Error('ECONNREFUSED'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -111,9 +123,11 @@ describe('workflow:list', () => {
   });
 
   it('CLI-07: emits deprecation warning when listing runs (not cron)', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getExecutions: async () => sampleExecutions,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getExecutions: async () => sampleExecutions,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -123,9 +137,11 @@ describe('workflow:list', () => {
   });
 
   it('CLI-08: does NOT emit deprecation warning when --type=cron', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getCronJobs: async () => ({ crons: [] }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getCronJobs: async () => ({ crons: [] }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

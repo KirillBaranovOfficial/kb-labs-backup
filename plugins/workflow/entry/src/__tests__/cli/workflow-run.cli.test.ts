@@ -1,25 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
-import { makeClient } from '../helpers/defaults.js';
+const mockRunWorkflow = vi.hoisted(() => vi.fn());
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: class WorkflowDaemonClientMock {
+    runWorkflow(...args: Parameters<typeof mockRunWorkflow>) { return mockRunWorkflow(...args); }
+  },
 }));
 
-import { WorkflowDaemonClient } from '../../http-client.js';
 import workflowRunCommand from '../../commands/workflow-run.js';
 
-const MockedClient = vi.mocked(WorkflowDaemonClient);
-
 beforeEach(() => {
-  MockedClient.mockReset();
+  mockRunWorkflow.mockReset();
 });
 
 describe('workflow:run', () => {
   it('CR-01: submits workflow and returns runId', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      runWorkflow: async () => ({ runId: 'r-123', status: 'queued' }),
-    }));
+    mockRunWorkflow.mockResolvedValue({ runId: 'r-123', status: 'queued' });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -33,9 +30,7 @@ describe('workflow:run', () => {
   });
 
   it('CR-02: --json returns { ok: true, data: { runId, status } }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      runWorkflow: async () => ({ runId: 'r-123', status: 'queued' }),
-    }));
+    mockRunWorkflow.mockResolvedValue({ runId: 'r-123', status: 'queued' });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -50,12 +45,10 @@ describe('workflow:run', () => {
 
   it('CR-03: --input passes JSON payload to runWorkflow', async () => {
     let capturedRequest: unknown;
-    MockedClient.mockImplementation(() => makeClient({
-      runWorkflow: async (_id: string, req: unknown) => {
-        capturedRequest = req;
-        return { runId: 'r-123', status: 'queued' };
-      },
-    }));
+    mockRunWorkflow.mockImplementation(async (_id: string, req: unknown) => {
+      capturedRequest = req;
+      return { runId: 'r-123', status: 'queued' };
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -69,12 +62,10 @@ describe('workflow:run', () => {
 
   it('CR-04: --input with nested JSON object passes full payload to runWorkflow', async () => {
     let capturedRequest: unknown;
-    MockedClient.mockImplementation(() => makeClient({
-      runWorkflow: async (_id: string, req: unknown) => {
-        capturedRequest = req;
-        return { runId: 'r-123', status: 'queued' };
-      },
-    }));
+    mockRunWorkflow.mockImplementation(async (_id: string, req: unknown) => {
+      capturedRequest = req;
+      return { runId: 'r-123', status: 'queued' };
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -96,12 +87,10 @@ describe('workflow:run', () => {
 
   it('CR-08: --inputs (deprecated alias) passes payload identically to --input', async () => {
     let capturedRequest: unknown;
-    MockedClient.mockImplementation(() => makeClient({
-      runWorkflow: async (_id: string, req: unknown) => {
-        capturedRequest = req;
-        return { runId: 'r-123', status: 'queued' };
-      },
-    }));
+    mockRunWorkflow.mockImplementation(async (_id: string, req: unknown) => {
+      capturedRequest = req;
+      return { runId: 'r-123', status: 'queued' };
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -115,9 +104,7 @@ describe('workflow:run', () => {
   });
 
   it('CR-05: missing --workflow-id returns exitCode 1 with error', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      runWorkflow: async () => ({ runId: 'r-x', status: 'queued' }),
-    }));
+    mockRunWorkflow.mockResolvedValue({ runId: 'r-x', status: 'queued' });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -131,9 +118,7 @@ describe('workflow:run', () => {
   });
 
   it('CR-06: daemon unavailable — readable error, exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      runWorkflow: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    mockRunWorkflow.mockRejectedValue(new Error('ECONNREFUSED'));
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -147,9 +132,7 @@ describe('workflow:run', () => {
   });
 
   it('CR-07: invalid --isolation value returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      runWorkflow: async () => ({ runId: 'r-x', status: 'queued' }),
-    }));
+    mockRunWorkflow.mockResolvedValue({ runId: 'r-x', status: 'queued' });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

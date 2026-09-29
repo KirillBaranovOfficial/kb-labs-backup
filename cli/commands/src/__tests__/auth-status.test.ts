@@ -14,8 +14,14 @@ const mockCredIsExpired = vi.fn();
 const mockSessionLoad = vi.fn();
 const mockSessionIsExpired = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: vi.fn().mockImplementation(() => ({ load: mockCredLoad, isExpired: mockCredIsExpired })),
-  SessionManager: vi.fn().mockImplementation(() => ({ load: mockSessionLoad, isExpired: mockSessionIsExpired })),
+  CredentialsManager: class {
+    load = mockCredLoad;
+    isExpired = mockCredIsExpired;
+  },
+  SessionManager: class {
+    load = mockSessionLoad;
+    isExpired = mockSessionIsExpired;
+  },
 }));
 
 import { authStatus } from '../commands/system/auth/auth-status.js';

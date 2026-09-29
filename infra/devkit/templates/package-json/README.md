@@ -64,7 +64,7 @@ Standard package.json templates for KB Labs monorepo packages.
   "rimraf": "^6.0.1",
   "tsup": "^8.5.0",
   "typescript": "^5.6.3",
-  "vitest": "^3.2.4"
+  "vitest": "^4.1.11"
 }
 ```
 
