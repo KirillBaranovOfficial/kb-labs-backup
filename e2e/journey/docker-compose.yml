@@ -1,4 +1,7 @@
 services:
+  publisher:
+    networks: [journey]
+
   origin:
     image: python:3.12-alpine
     command: ["python3", "-m", "http.server", "8080", "--directory", "/release"]
