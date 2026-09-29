@@ -38,7 +38,7 @@
     "@kb-labs/devkit": "workspace:*",
     "tsup": "^8.5.0",
     "typescript": "^5",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=24.0.0",

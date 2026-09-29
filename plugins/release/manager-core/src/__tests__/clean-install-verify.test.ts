@@ -9,7 +9,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // verifyCleanInstall() calls Arborist directly so the real Error surfaces.
 
 const mockReify = vi.fn();
-const mockArboristCtor = vi.fn(() => ({ reify: mockReify }));
+const mockArboristCtor = vi.fn(class MockArborist {
+  reify = mockReify;
+});
 
 vi.mock('@npmcli/arborist', () => ({
   Arborist: mockArboristCtor,

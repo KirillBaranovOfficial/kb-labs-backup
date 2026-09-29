@@ -60,6 +60,13 @@ describe('single platform release flow', () => {
     }
   });
 
+  it('keeps the checked-in SDK package versions aligned with the platform', () => {
+    const versions = ['core/runtime/package.json', 'sdk/sdk/package.json', 'sdk/platform-client/package.json']
+      .map(file => JSON.parse(readFileSync(join(repoRoot, file), 'utf8')).version);
+
+    expect(new Set(versions).size).toBe(1);
+  });
+
   it('still resolves platform-vX tags and no longer resolves sdk-vX tags', () => {
     expect(resolveFlowFromTag(config, 'platform-v2.121.0')).toEqual({ flowName: 'platform', channel: 'stable' });
     expect(resolveFlowFromTag(config, 'sdk-v2.121.0')).toBeNull();

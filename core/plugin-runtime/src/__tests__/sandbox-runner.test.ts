@@ -506,23 +506,23 @@ describe('Sandbox Runner', () => {
       }).not.toThrow();
     });
 
-    it('should execute handler in subprocess with IPC and metadata injection', async () => {
+    it.skip('should execute handler in subprocess with IPC and metadata injection', async () => {
       // This test requires a UnixSocket server to be running
       // For now, we skip it in unit tests and cover in integration tests
       // where the full CLI environment is available
 
       // TODO: Create a mock UnixSocket server for unit testing subprocess execution
       expect(true).toBe(true);
-    }, { skip: true });
+    });
 
-    it('should handle subprocess timeout', async () => {
+    it.skip('should handle subprocess timeout', async () => {
       // TODO: Create timeout test with mock UnixSocket server
       expect(true).toBe(true);
-    }, { skip: true });
+    });
 
-    it('should handle abort signal in subprocess', async () => {
+    it.skip('should handle abort signal in subprocess', async () => {
       // TODO: Create abort signal test with mock UnixSocket server
       expect(true).toBe(true);
-    }, { skip: true });
+    });
   });
 });
