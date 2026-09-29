@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -94,7 +95,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 	output, outputPath := installOutput(t)
 	var screen bytes.Buffer
-	code := (invocation{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}}}).run(output)
+	code := (invocation{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}}, NodePreflight: func() error { return nil }}).run(output)
 	if err := output.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 func TestInstallEarlyFailuresUseLauncherErrorRendering(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	output, path := installOutput(t)
-	code := (invocation{Operation: "install", Index: filepath.Join(t.TempDir(), "missing.json")}).run(output)
+	code := (invocation{Operation: "install", Index: filepath.Join(t.TempDir(), "missing.json"), NodePreflight: func() error { return nil }}).run(output)
 	if err := output.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -128,8 +129,23 @@ func TestInstallEarlyFailuresUseLauncherErrorRendering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != 2 || !strings.Contains(string(data), "Install failed [KB_INSTALL_INDEX_UNAVAILABLE]") || !strings.Contains(string(data), "Next:") {
+	if code != 2 || !strings.Contains(string(data), "Install failed [KB_INSTALL_RELEASE_INDEX_INVALID]") || !strings.Contains(string(data), "Next:") {
 		t.Fatalf("code/output = %d / %s", code, data)
+	}
+}
+
+func TestInstallChecksNodeBeforeQuestions(t *testing.T) {
+	output, path := installOutput(t)
+	var screen bytes.Buffer
+	code := (invocation{Operation: "install", InstallInput: strings.NewReader("\n"), InstallOutput: &screen, NodePreflight: func() error { return errors.New("node missing") }}).run(output)
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if code != 2 || !strings.Contains(screen.String(), "Install failed [KB_INSTALL_TOOLCHAIN_UNSUPPORTED]") || strings.Contains(screen.String(), "Platform channel") || !strings.Contains(screen.String(), "Next:") {
+		t.Fatalf("code/output = %d / %s", code, screen.String())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
 	}
 }
 

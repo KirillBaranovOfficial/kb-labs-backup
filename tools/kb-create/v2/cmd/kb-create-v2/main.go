@@ -188,10 +188,18 @@ type invocation struct {
 	InstallInput  io.Reader
 	InstallOutput io.Writer
 	RuntimeDeps   *runtime.Dependencies
+	NodePreflight func() error
 }
 
 func (i invocation) hostCommand(output *os.File) hostCommand {
 	return hostCommand{PlatformRoot: i.PlatformRoot, Executable: i.Executable, Version: buildVersion, JSON: i.JSON, Out: output, Err: os.Stderr}
+}
+
+func (i invocation) ensureNode() error {
+	if i.NodePreflight != nil {
+		return i.NodePreflight()
+	}
+	return preflight.EnsureNode(nil)
 }
 
 func (i invocation) run(output *os.File) int {
@@ -220,7 +228,7 @@ func (i invocation) run(output *os.File) int {
 		return i.runInstall(output)
 	}
 	if operation == "apply" || operation == "update" {
-		if err := preflight.EnsureNode(nil); err != nil {
+		if err := i.ensureNode(); err != nil {
 			write(output, failure("KB_INSTALL_TOOLCHAIN_UNSUPPORTED", "Node.js preflight failed", "install Node.js 24.x, then rerun kb-create install", err))
 			return 2
 		}
@@ -374,13 +382,13 @@ func (i invocation) runInstall(output *os.File) int {
 	if i.InstallOutput != nil {
 		humanOut = i.InstallOutput
 	}
-	if err := preflight.EnsureNode(nil); err != nil {
+	if err := i.ensureNode(); err != nil {
 		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TOOLCHAIN_UNSUPPORTED", "Node.js 24.x is required before installation.", "Install Node.js 24, then run `kb-create install`.", err))
 		return 2
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_HOME_UNAVAILABLE", "The home directory could not be determined.", "Set HOME to a writable directory, then rerun `kb-create install`.", err))
+		writeHumanFailure(humanOut, contracts.NewLauncherError(contracts.CodeInputRequired, "The home directory could not be determined.", "Set HOME to a writable directory, then rerun `kb-create install`.", err))
 		return 2
 	}
 	index := i.Index
@@ -402,7 +410,7 @@ func (i invocation) runInstall(output *os.File) int {
 	phaseStart := time.Now()
 	source, err := catalog.LoadFile(index)
 	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_INDEX_UNAVAILABLE", "The release index could not be loaded from "+index+".", "Reinstall the launcher with `curl -fsSL https://kblabs.ru/install.sh | sh`, then rerun `kb-create install`.", err))
+		writeHumanFailure(humanOut, contracts.NewLauncherError(contracts.CodeReleaseIndexInvalid, "The release index could not be loaded from "+index+".", "Reinstall the launcher with `curl -fsSL https://kblabs.ru/install.sh | sh`, then rerun `kb-create install`.", err))
 		return 2
 	}
 	fmt.Fprintln(humanOut, "Set up KB Labs. Local access is enabled by default; it only accepts connections from this computer.")
@@ -417,7 +425,7 @@ func (i invocation) runInstall(output *os.File) int {
 	}
 	encoded, err := json.Marshal(request)
 	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_REQUEST_INVALID", "The install request could not be encoded.", "Rerun `kb-create install`; if this repeats, report the launcher version.", err))
+		writeHumanFailure(humanOut, contracts.NewLauncherError(contracts.CodeInputRequired, "The install request could not be encoded.", "Rerun `kb-create install`; if this repeats, report the launcher version.", err))
 		return 2
 	}
 	planned := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion})
@@ -433,22 +441,22 @@ func (i invocation) runInstall(output *os.File) int {
 	fmt.Fprintln(humanOut, "\nApplying installation…")
 	requestFile, err := os.CreateTemp("", "kb-create-request-*.json")
 	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install request could not be staged.", "Free temporary disk space or check temporary-directory permissions, then rerun `kb-create install`.", err))
+		writeHumanFailure(humanOut, temporaryFileError(err))
 		return 2
 	}
 	defer os.Remove(requestFile.Name())
 	if _, err := requestFile.Write(encoded); err != nil {
 		requestFile.Close()
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install request could not be staged.", "Free temporary disk space or check temporary-directory permissions, then rerun `kb-create install`.", err))
+		writeHumanFailure(humanOut, temporaryFileError(err))
 		return 2
 	}
 	if err := requestFile.Close(); err != nil {
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install request could not be staged.", "Free temporary disk space or check temporary-directory permissions, then rerun `kb-create install`.", err))
+		writeHumanFailure(humanOut, temporaryFileError(err))
 		return 2
 	}
 	result, err := os.CreateTemp("", "kb-create-result-*.json")
 	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install output could not be staged.", "Free temporary disk space or check temporary-directory permissions, then rerun `kb-create install`.", err))
+		writeHumanFailure(humanOut, temporaryFileError(err))
 		return 2
 	}
 	defer os.Remove(result.Name())
@@ -458,14 +466,14 @@ func (i invocation) runInstall(output *os.File) int {
 		deps = &runtime.Dependencies{}
 	}
 	deps.Progress = progress
-	code := (invocation{Operation: "apply", Index: index, Input: requestFile.Name(), Registry: i.Registry, SecretEnv: i.SecretEnv, Executable: i.Executable, RuntimeDeps: deps}).run(result)
+	code := (invocation{Operation: "apply", Index: index, Input: requestFile.Name(), Registry: i.Registry, SecretEnv: i.SecretEnv, Executable: i.Executable, RuntimeDeps: deps, NodePreflight: func() error { return nil }}).run(result)
 	if err := result.Close(); err != nil {
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install result could not be read.", "Check temporary-directory permissions and free disk space, then rerun `kb-create install`.", err))
+		writeHumanFailure(humanOut, temporaryFileError(err))
 		return 2
 	}
 	data, err := os.ReadFile(result.Name())
 	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install result could not be read.", "Check temporary-directory permissions and free disk space, then rerun `kb-create install`.", err))
+		writeHumanFailure(humanOut, temporaryFileError(err))
 		return 2
 	}
 	var envelope struct {
@@ -489,6 +497,13 @@ type humanProgress struct {
 	started map[string]time.Time
 }
 
+func temporaryFileError(err error) *contracts.LauncherError {
+	if errors.Is(err, syscall.ENOSPC) {
+		return contracts.NewLauncherError("KB_INSTALL_NO_DISK_SPACE", "The launcher ran out of disk space while staging the install.", "Free disk space and rerun `kb-create install`.", err)
+	}
+	return contracts.NewLauncherError("KB_INSTALL_NO_WRITE_ACCESS", "The launcher could not create or write its temporary install files.", "Check temporary-directory permissions, then rerun `kb-create install`.", err)
+}
+
 func (p *humanProgress) Emit(event runtime.ProgressEvent) {
 	if event.Start {
 		p.started[event.Phase] = time.Now()
@@ -505,7 +520,7 @@ func (p *humanProgress) Emit(event runtime.ProgressEvent) {
 
 func writeHumanFailure(output io.Writer, failure *contracts.LauncherError) {
 	if failure == nil {
-		failure = contracts.NewLauncherError("KB_INSTALL_UNEXPECTED", "Installation failed unexpectedly.", "Run `kb-create doctor`, then rerun `kb-create install`.", nil)
+		failure = contracts.NewLauncherError(contracts.CodeApplyFailed, "Installation failed unexpectedly.", "Run `kb-create doctor`, then rerun `kb-create install`.", nil)
 	}
 	fmt.Fprintf(output, "Install failed [%s]: %s\nNext: %s\n", failure.Code, failure.Message, failure.Hint)
 }
