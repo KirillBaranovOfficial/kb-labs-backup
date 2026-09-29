@@ -90,6 +90,10 @@ func TestStartStatusStopGraceful(t *testing.T) {
 	if err != nil || status.State != StateRunning || !status.Healthy || status.PID != info.PID {
 		t.Fatalf("status: %+v %v", status, err)
 	}
+	owner := listenerOwner(fmt.Sprint(f.port))
+	if owner.PID != fmt.Sprint(info.PID) {
+		t.Fatalf("listener owner = %+v, launched pid = %d", owner, info.PID)
+	}
 	result, err := f.runner.Stop(ctx)
 	if err != nil || !result.WasRunning || !result.Graceful || result.Forced {
 		t.Fatalf("stop: %+v %v", result, err)
@@ -136,6 +140,15 @@ func TestPortInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer blocker.Close()
+	plan := contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", f.port)}}
+	if err := CheckPorts(plan); err == nil {
+		t.Fatal("expected early port conflict")
+	} else {
+		var typed *contracts.LauncherError
+		if !errors.As(err, &typed) || typed.Code != "KB_HOST_PORT_IN_USE" || typed.Details["port"] != fmt.Sprint(f.port) || typed.Details["pid"] == "" || typed.Details["command"] == "" {
+			t.Fatalf("port diagnostic lacks owner details: %#v", err)
+		}
+	}
 	_, err = f.runner.Start(context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_PORT_IN_USE" {
 		t.Fatalf("code %s", code)

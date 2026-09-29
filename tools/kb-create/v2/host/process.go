@@ -8,8 +8,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,7 +78,8 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	if conn, err := net.DialTimeout("tcp", address, 300*time.Millisecond); err == nil {
 		_ = conn.Close()
 		_, port, _ := net.SplitHostPort(address)
-		return Info{}, hostError("KB_HOST_PORT_IN_USE", "Port "+port+" is used by another application.", "Stop the application that uses the port, or change the host port in the installation config, then run \"kb-create start\" again.", nil, map[string]string{"port": port, "address": address})
+		owner := listenerOwner(port)
+		return Info{}, hostError("KB_HOST_PORT_IN_USE", "Port "+port+" is already in use.", "Stop the application using this port, then run `kb-create install` again.", nil, map[string]string{"port": port, "address": address, "pid": owner.PID, "command": owner.Command})
 	}
 	logFile, err := os.OpenFile(r.State.HostLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -173,6 +177,10 @@ func (r *ProcessRunner) waitReady(ctx context.Context, pid int, exited <-chan st
 	defer ticker.Stop()
 	for {
 		if r.healthy(ctx) {
+			if err := r.verifyListenerOwner(pid); err != nil {
+				r.kill(pid)
+				return err
+			}
 			return nil
 		}
 		select {
@@ -192,13 +200,86 @@ func (r *ProcessRunner) waitReady(ctx context.Context, pid int, exited <-chan st
 			// A host that became healthy just as the caller cancelled is up;
 			// the caller decides whether to stop it.
 			if r.healthy(context.Background()) {
+				if err := r.verifyListenerOwner(pid); err != nil {
+					r.kill(pid)
+					return err
+				}
 				return nil
 			}
 			r.kill(pid)
 			return r.startFailed(ctx.Err())
 		case <-ticker.C:
+			if r.healthy(ctx) {
+				if err := r.verifyListenerOwner(pid); err != nil {
+					r.kill(pid)
+					return err
+				}
+				return nil
+			}
 		}
 	}
+}
+
+type portOwner struct{ PID, Command string }
+
+func listenerOwner(port string) portOwner {
+	output, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-Fp", "-Fc").Output()
+	if err != nil {
+		return portOwner{}
+	}
+	var owner portOwner
+	for _, line := range strings.Split(string(output), "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		switch line[0] {
+		case 'p':
+			owner.PID = line[1:]
+		case 'c':
+			owner.Command = line[1:]
+		}
+	}
+	return owner
+}
+
+// CheckPorts reports conflicts in the resolved service graph before package
+// downloads or installation change the platform root.
+func CheckPorts(plan contracts.ResolvedInstallPlan) error {
+	ports := map[string]string{}
+	if plan.Host != nil {
+		if parsed, err := url.Parse(plan.Host.HealthURL); err == nil {
+			if _, port, err := net.SplitHostPort(parsed.Host); err == nil {
+				ports[port] = plan.Host.HealthURL
+			}
+		}
+	}
+	for _, service := range plan.ServiceGraph.Services {
+		if service.Port > 0 {
+			ports[strconv.Itoa(service.Port)] = service.ID
+		}
+	}
+	for port, purpose := range ports {
+		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))
+		if err == nil {
+			_ = listener.Close()
+			continue
+		}
+		owner := listenerOwner(port)
+		return hostError("KB_HOST_PORT_IN_USE", "Port "+port+" required by "+purpose+" is already in use.", "Stop the application using this port, then run `kb-create install` again.", err, map[string]string{"port": port, "pid": owner.PID, "command": owner.Command, "purpose": purpose})
+	}
+	return nil
+}
+
+func (r *ProcessRunner) verifyListenerOwner(pid int) error {
+	_, port, err := net.SplitHostPort(r.Spec.HealthAddress())
+	if err != nil {
+		return r.startFailed(err)
+	}
+	owner := listenerOwner(port)
+	if owner.PID != strconv.Itoa(pid) {
+		return hostError("KB_HOST_START_FAILED", "The health endpoint is responding from a process the launcher did not start.", "Stop the process using port "+port+" and run `kb-create install` again.", nil, map[string]string{"port": port, "expectedPid": strconv.Itoa(pid), "pid": owner.PID, "command": owner.Command})
+	}
+	return nil
 }
 
 // kill force-terminates a host that failed to become ready and clears its pid file.

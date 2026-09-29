@@ -15,6 +15,7 @@ import (
 	"github.com/kb-labs/create/v2/lifecycle"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/shim"
 	"github.com/kb-labs/create/v2/supervisor"
 	"github.com/kb-labs/create/v2/swap"
 )
@@ -58,6 +59,19 @@ func (i invocation) runDoctor(output *os.File) int {
 	if i.Recover.Enabled {
 		return i.runRecover(output)
 	}
+	if i.PlatformRoot == "" {
+		i.PlatformRoot = defaultPlatformRoot()
+	}
+	if i.DoctorInput == "" {
+		if _, err := receipt.Read(i.PlatformRoot); err != nil {
+			if i.JSON {
+				write(output, map[string]any{"ok": false, "operation": "doctor", "installed": false, "running": false, "reachable": false, "next": "kb-create install"})
+			} else {
+				fmt.Fprintln(output, "Installed: no\nRunning: no\nReachable: no\nNext: kb-create install")
+			}
+			return 1
+		}
+	}
 	var input doctor.Input
 	var err error
 	if i.DoctorInput != "" {
@@ -87,10 +101,29 @@ func (i invocation) runDoctor(output *os.File) int {
 			return 2
 		}
 		installation := doctor.InspectInstallation(i.PlatformRoot, state)
+		if i.Executable != "" && !shim.Correct(i.Executable, i.PlatformRoot) {
+			installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: "Run `kb-create install` to repair the command shim."})
+			installation.OK = false
+		}
 		platform := i.inspectPlatform(state)
 		response.Installation, response.Platform = &installation, &platform
 	}
 	response.OK = len(findings) == 0 && (response.Installation == nil || response.Installation.OK) && (response.Platform == nil || response.Platform.OK)
+	response.Installed = response.Installation != nil && response.Installation.OK
+	if response.Platform != nil {
+		for _, check := range response.Platform.Checks {
+			if check.ID == "host-process" && check.OK {
+				response.Running, response.Reachable = true, true
+			}
+		}
+	}
+	response.Next = "kb-create install"
+	if response.Installed {
+		response.Next = "kb-create start"
+		if response.Running {
+			response.Next = "cd ~/any-project && kb commit"
+		}
+	}
 	if i.DoctorFix {
 		if i.PlatformRoot == "" {
 			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--platform-root is required with --fix", "pass the V2 platform root that owns the active receipt", nil))
@@ -98,7 +131,22 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		return i.runDoctorFix(output, response)
 	}
-	write(output, response)
+	if i.JSON {
+		write(output, response)
+	} else {
+		installed, running, reachable := "no", "no", "no"
+		if response.Installed {
+			installed = "yes"
+		}
+		if response.Running {
+			running = "yes"
+		}
+		if response.Reachable {
+			reachable = "yes"
+		}
+		next := "run `" + response.Next + "`"
+		fmt.Fprintf(output, "Installed: %s\nRunning: %s\nReachable: %s\nNext: %s\n", installed, running, reachable, next)
+	}
 	if !response.OK {
 		return 1
 	}

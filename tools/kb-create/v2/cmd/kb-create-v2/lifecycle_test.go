@@ -71,7 +71,7 @@ func (i installation) swapTo(t *testing.T, next contracts.InstallReceipt) (swap.
 
 func (i installation) hostState(t *testing.T) (state string, healthURL string) {
 	t.Helper()
-	status, _, raw := i.run("status")
+	status, _, raw := i.run("status", "--json")
 	hostStatus, _ := status["host"].(map[string]any)
 	if hostStatus == nil {
 		t.Fatalf("status: %s", raw)
@@ -109,7 +109,7 @@ func TestUpdateStopsSwapsAndRestartsTheHostWithoutManualSteps(t *testing.T) {
 		_ = conn.Close()
 		t.Fatal("the previous host must be gone")
 	}
-	status, _, _ := inst.run("status")
+	status, _, _ := inst.run("status", "--json")
 	if pid := status["host"].(map[string]any)["pid"].(float64); pid == before {
 		t.Fatal("the host process must have been replaced")
 	}
@@ -216,7 +216,7 @@ func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 
 func TestStatusReportsTheHostAndTheInstalledVersion(t *testing.T) {
 	inst := newInstallation(t)
-	payload, code, raw := invoke(t, invocation{Operation: "status", PlatformRoot: inst.root})
+	payload, code, raw := invoke(t, invocation{Operation: "status", PlatformRoot: inst.root, JSON: true})
 	if code != 0 || payload["host"].(map[string]any)["state"] != "stopped" {
 		t.Fatalf("status: %d %s", code, raw)
 	}
@@ -232,7 +232,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	}
 
 	// Stopped host: the installation is fine, the platform is not running.
-	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root})
+	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	if code != 1 || payload["ok"] != false {
 		t.Fatalf("doctor: %d %s", code, raw)
 	}
@@ -244,7 +244,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	if _, exit, out := inst.run("start", "--json"); exit != 0 {
 		t.Fatalf("start: %s", out)
 	}
-	payload, code, raw = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root})
+	payload, code, raw = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	if code != 0 || payload["ok"] != true || payload["platform"].(map[string]any)["ok"] != true {
 		t.Fatalf("doctor on a healthy platform: %d %s", code, raw)
 	}
@@ -253,7 +253,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	if err := os.Remove(filepath.Join(inst.root, ".kb", "kb.config.jsonc")); err != nil {
 		t.Fatal(err)
 	}
-	payload, code, raw = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root})
+	payload, code, raw = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	if code != 1 || payload["installation"].(map[string]any)["ok"] != false || payload["platform"].(map[string]any)["ok"] != true {
 		t.Fatalf("doctor on a broken installation: %d %s", code, raw)
 	}

@@ -26,12 +26,12 @@ The V2 boundary is executable and covered by an offline journey test:
   exact artifact application, recovery, manifest-gap
   reporting and redacted dossiers for the public CLI.
 - the root `kb-create` binary provides `plan`, `apply`, `update`, `uninstall`,
-  explicit `rollback`, manifest-aware `doctor`, and `wizard`; all use V2
+  explicit `rollback`, manifest-aware `doctor`, and `install`; all use V2
   contracts and emit one JSON envelope.
 
 There is no legacy `install` path. `kb-create apply` is the only installation
 operation; it accepts the same request whether it came from CI, an agent,
-scenario, or the wizard.
+scenario, or the interactive install command.
 
 `apply` and `update` require an immutable release index and request. Recovery
 operations deliberately require only `--platform-root` (and a snapshot for
@@ -46,10 +46,12 @@ as `--request-platform-root`, `--platform-version`/`--platform-channel`,
 the same `InstallRequest` before resolution; flags never build a separate
 shell-level install sequence.
 
-For a human, `kb-create wizard --index release-index.json
---request-platform-root /path/to/platform` asks only for product axes and
-returns the same JSON request on stdout. It does not apply anything or own a
-second resolver; feed that request into `plan` or `apply` to continue.
+For a human, run `kb-create install`. It checks Node.js 24 before prompting,
+uses the release index saved by `install.sh` and defaults the platform root to
+`~/kb-platform`. It gathers scenario answers, resolves and displays the plan,
+then applies that plan through the same engine used by CI. Local access is the
+default; secured access remains available in the scenario. After installation,
+run `cd ~/any-project && kb commit`.
 
 ## Scenarios
 
@@ -270,7 +272,7 @@ adapter version, but it never silently changes an explicit pin:
 | Policy | Behaviour |
 |---|---|
 | `strict` (default for CI/agents) | Exact pins must be compatible or resolution fails. |
-| `compatible` (wizard default) | Resolver may choose only unpinned compatible versions and displays the resolved set before apply. |
+| `compatible` (interactive install default) | Resolver may choose only unpinned compatible versions and displays the resolved set before apply. |
 | `upgrade-safe` (explicit update only) | Resolver may advance unpinned artifacts within the defined compatibility policy; a snapshot is mandatory. |
 
 No intersecting range produces `KB_INSTALL_INCOMPATIBLE_COMPONENTS` before
@@ -289,8 +291,8 @@ default configuration.
 
 The technical source of truth for configuration variables and service metadata
 remains the manifests shipped by platform components, plugins and adapters.
-V2 does not turn the wizard into a universal manifest-variable form. The
-wizard chooses product-level axes and profiles; after verified artifacts are
+V2 does not turn interactive install into a universal manifest-variable form. The
+install chooses product-level axes and profiles; after verified artifacts are
 available, manifest-derived required input either receives a safe default or
 returns structured `KB_INSTALL_INPUT_REQUIRED` with a human hint and machine
 schema. CI/agents supply those values in `InstallRequest` and resume the same
@@ -389,7 +391,7 @@ organised by the mutable resources and contract they own.
 
 The launcher may be released only when all are true:
 
-1. Default fresh install, explicit CI request, scenario/wizard and agent use
+1. Default fresh install, explicit CI request, scenario/install and agent use
    the same resolved request/engine path.
 2. `create`, `update`, `uninstall`, manifest-aware `doctor --fix` and rollback
    operate on receipts/snapshots, not legacy per-command state.
@@ -407,7 +409,7 @@ The launcher may be released only when all are true:
    events; it owns execution semantics rather than adapting old state.
 3. Implement config/service graph renderer and verifier, then make offline
    config-contract tests authoritative.
-4. Implement V2 fresh/default and explicit CI path, followed by wizard and
+4. Implement V2 fresh/default and explicit CI path, followed by install and
    agent adapters.
 5. Add update/uninstall/doctor/rollback over snapshots and recovery plans.
 6. Add redacted dossiers and consent-gated telemetry.

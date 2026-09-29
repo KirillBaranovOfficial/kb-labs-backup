@@ -13,6 +13,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/release"
+	"github.com/kb-labs/create/v2/scenario"
 )
 
 func main() {
@@ -41,6 +42,9 @@ func run(input, output, manifestRoot string) error {
 	source, err = release.EnrichWithManifests(source, manifestRoot)
 	if err != nil {
 		return fmt.Errorf("export V2 package manifests: %w", err)
+	}
+	if err := scenario.ValidateCatalog(source); err != nil {
+		return fmt.Errorf("built-in scenario validation: %w", err)
 	}
 	// Exports intentionally omit release-controlled fields. Schema and digest
 	// are assigned here, after all manifest data has been collected.

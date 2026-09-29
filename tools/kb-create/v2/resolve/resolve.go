@@ -112,6 +112,11 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	}
 	requirements := append([]catalog.Requirement(nil), platform.Requires...)
 	for _, item := range request.Plugins {
+		if memberContains(platform.Members, item) {
+			// Official services shipped as platform members are already selected
+			// by the platform bundle and must not also resolve as plugins.
+			continue
+		}
 		component, found := selectComponent(source.Plugins, item)
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("plugin", item.ID, "requested version is not present in the release index")
@@ -169,6 +174,15 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, ProviderBindings: bindings, Host: &host, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
 	plan.PlanHash = hash(plan)
 	return plan, nil
+}
+
+func memberContains(members []catalog.Component, request contracts.ComponentRequest) bool {
+	for _, member := range members {
+		if member.ID == request.ID && (request.Version.Version == "" || request.Version.Version == member.Version) {
+			return true
+		}
+	}
+	return false
 }
 
 // cloneHost gives the plan its own copy: the plan is hashed and persisted, and
@@ -261,6 +275,18 @@ func selectAdapter(items []catalog.Adapter, requested []contracts.ComponentReque
 			}
 		}
 		return catalog.Adapter{}, false, false
+	}
+	defaults := make([]catalog.Adapter, 0, len(candidates))
+	for _, candidate := range candidates {
+		if contains(candidate.DefaultFor, capability) {
+			defaults = append(defaults, candidate)
+		}
+	}
+	if len(defaults) == 1 {
+		return defaults[0], true, false
+	}
+	if len(defaults) > 1 {
+		return catalog.Adapter{}, false, true
 	}
 	if len(candidates) == 1 {
 		return candidates[0], true, false

@@ -26,6 +26,42 @@ func testCompatibility(version string) *catalog.CompatibilityMatrix {
 	}
 }
 
+func TestParseProvidersSupportsCommaSeparatedPreferences(t *testing.T) {
+	got, err := parseProviders("storage=disk-io-storage, cache=state-broker")
+	if err != nil || got["storage"] != "disk-io-storage" || got["cache"] != "state-broker" {
+		t.Fatalf("providers/error = %#v / %v", got, err)
+	}
+	if _, err := parseProviders("storage=disk,storage=other"); err == nil {
+		t.Fatal("expected duplicate capability to fail")
+	}
+}
+
+func TestHelpListsCommandsAndOnlyRelevantProviderFlag(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "help.txt")
+	file, err := os.Create(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	printHelp(file)
+	printCommandHelp(file, "apply")
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{"install", "Install KB Labs interactively", "--provider CAPABILITY=ADAPTER", "Usage: kb-create apply"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("help is missing %q: %s", expected, text)
+		}
+	}
+	if strings.Contains(text, "wizard") || strings.Contains(text, "Usage:\n") {
+		t.Fatalf("help exposed a retired command or raw flag dump: %s", text)
+	}
+}
+
 func TestRunEmitsOnlyStructuredPlan(t *testing.T) {
 	dir := t.TempDir()
 	index := filepath.Join(dir, "index.json")
@@ -134,7 +170,7 @@ func TestDoctorReturnsStructuredManifestFindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code := (invocation{Operation: "doctor", DoctorInput: input}).run(file); code != 1 {
+	if code := (invocation{Operation: "doctor", DoctorInput: input, JSON: true}).run(file); code != 1 {
 		t.Fatalf("exit code = %d", code)
 	}
 	if err := file.Close(); err != nil {
@@ -147,6 +183,33 @@ func TestDoctorReturnsStructuredManifestFindings(t *testing.T) {
 	var response map[string]any
 	if err := json.Unmarshal(data, &response); err != nil || response["ok"] != false {
 		t.Fatalf("output/error = %s / %v", data, err)
+	}
+}
+
+func TestStatusAndDoctorSummarizeMissingInstallationForHumans(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, operation := range []string{"status", "doctor"} {
+		output := filepath.Join(t.TempDir(), "output")
+		file, err := os.Create(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := (invocation{Operation: operation}).run(file)
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if operation == "status" && code != 0 || operation == "doctor" && code != 1 {
+			t.Fatalf("%s exit code = %d, output: %s", operation, code, data)
+		}
+		for _, expected := range []string{"Installed: no", "Running: no", "Reachable: no", "Next: kb-create install"} {
+			if !strings.Contains(string(data), expected) {
+				t.Fatalf("%s summary is missing %q: %s", operation, expected, data)
+			}
+		}
 	}
 }
 

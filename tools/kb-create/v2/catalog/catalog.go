@@ -336,7 +336,8 @@ type Component struct {
 
 type Adapter struct {
 	Component
-	Provides []string `json:"provides"`
+	Provides   []string `json:"provides"`
+	DefaultFor []string `json:"defaultFor,omitempty"`
 }
 
 type Requirement struct {
