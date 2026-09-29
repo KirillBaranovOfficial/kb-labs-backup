@@ -18,6 +18,8 @@ fi
   cd "$ROOT/tools/kb-create"
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
     -o "$TARGET/kb-create-linux-amd64" .
+  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
+    -o "$TARGET/kb-create-linux-arm64" .
   # The installer artifact targets the Linux runner; the sealer runs on the
   # machine preparing the candidate (macOS locally, Linux in CI).
   CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
@@ -34,9 +36,9 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
 (
   cd "$TARGET"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum kb-create-linux-amd64 release-index.json > checksums.txt
+    sha256sum kb-create-linux-amd64 kb-create-linux-arm64 release-index.json > checksums.txt
   else
-    shasum -a 256 kb-create-linux-amd64 release-index.json > checksums.txt
+    shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 release-index.json > checksums.txt
   fi
 )
 echo "Prepared $TARGET"
