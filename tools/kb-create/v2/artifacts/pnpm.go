@@ -127,11 +127,14 @@ func (p Pnpm) run(command string, specs ...string) error {
 	if command == "remove" {
 		args = append(args, "--config.minimumReleaseAge=0")
 	}
+	// pnpm rejects --registry for remove, but pruning a dependency graph can
+	// still need package metadata from the registry that supplied the install.
+	// Keep that registry in config form so private release candidates can be
+	// uninstalled without falling back to the public npm registry.
+	if p.Registry != "" && command == "remove" {
+		args = append(args, "--config.registry="+p.Registry)
+	}
 	args = append(args, specs...)
-	// pnpm accepts --registry while resolving/installing packages, but rejects
-	// it for remove. Uninstall uses only installed manifest keys and performs
-	// no registry resolution, so forwarding the install option here turns a
-	// healthy cleanup into ERR_PNPM_UNKNOWN_OPTION.
 	if p.Registry != "" && command != "remove" {
 		args = append(args, "--registry", p.Registry)
 	}

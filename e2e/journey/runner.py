@@ -181,9 +181,9 @@ def main():
         # The prerequisite is evaluated by kb-create install; install.sh itself only downloads.
         (BIN / "kb-create").exists() and None
         launcher, _ = run([str(BIN / "kb-create"), "install"], env=env, timeout=90) if (BIN / "kb-create").exists() else (result, 0)
-        passed = "KB_INSTALL_NODE_VERSION" in launcher.stdout and "Node 24" in launcher.stdout
+        passed = "KB_INSTALL_TOOLCHAIN_UNSUPPORTED" in launcher.stdout and "Install Node.js 24" in launcher.stdout
         if not passed:
-            fail(f"wrong Node major: expected KB_INSTALL_NODE_VERSION and Node 24 hint; {launcher.stdout.strip()[:300]}")
+            fail(f"wrong Node major: expected KB_INSTALL_TOOLCHAIN_UNSUPPORTED and Node 24 hint; {launcher.stdout.strip()[:300]}")
         append_summary(passed)
         return 0 if passed else 1
 
@@ -214,14 +214,16 @@ def main():
                 "--request-platform-root", str(PLATFORM), "--scenario", "commit", "--registry", REGISTRY]
         result, elapsed = run(args, env=env, timeout=90)
         TIMES["apply"] = elapsed
-        passed = result.returncode != 0 and "KB_INSTALL_PORT_IN_USE" in result.stdout and "4000" in result.stdout
+        passed = result.returncode != 0 and "KB_HOST_PORT_IN_USE" in result.stdout and "4000" in result.stdout
         if not passed:
-            fail(f"port conflict: expected KB_INSTALL_PORT_IN_USE for port 4000; {' '.join(result.stdout.split())[-500:]}")
+            fail(f"port conflict: expected KB_HOST_PORT_IN_USE for port 4000; {' '.join(result.stdout.split())[-500:]}")
         append_summary(passed)
         return 0 if passed else 1
     if FRONT == "human":
         choice = "commit" if VARIANT == "human-nondefault" else ""
-        code, output, duration, apply_offset = pty_install([launcher, "install"], env, choice)
+        code, output, duration, apply_offset = pty_install(
+            [launcher, "install", "--registry", REGISTRY], env, choice
+        )
         TIMES["questions"] = apply_offset if apply_offset is not None else duration
         if apply_offset is not None:
             TIMES["apply"] = duration - apply_offset
@@ -237,14 +239,28 @@ def main():
                 "--request-platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", SCENARIO,
                 "--registry", REGISTRY]
         if VARIANT == "relative-path":
-            args[args.index(str(PLATFORM))] = "./relative-kb-platform"
+            args[args.index(str(PLATFORM))] = os.path.relpath(PLATFORM, Path.cwd())
         result, elapsed = run(args, env=env, timeout=1200)
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
-            passed = result.returncode != 0 and re.search(r"KB_INSTALL_[A-Z0-9_]+", result.stdout) is not None
-            passed = passed and re.search(r"(?i)(absolute|relative).*(path|platform root)|(--request-platform-root|kb-create apply)", result.stdout) is not None
+            try:
+                response = json.loads(result.stdout)
+                passed = (
+                    result.returncode == 0
+                    and response.get("ok") is True
+                    and response.get("receipt", {}).get("plan", {}).get("request", {}).get("platformRoot")
+                    == str(PLATFORM.resolve())
+                )
+            except json.JSONDecodeError:
+                passed = False
             if not passed:
-                fail(f"relative platform root: expected a precise KB_INSTALL_* error and path hint; {' '.join(result.stdout.split())[-500:]}")
+                fail(f"relative platform root: expected successful installation at the normalized root; {' '.join(result.stdout.split())[-500:]}")
+            else:
+                removed, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM), "--registry", REGISTRY], env=env, timeout=180)
+                if require(removed, step="uninstall relative-root installation"):
+                    passed = not PLATFORM.exists()
+                    if not passed:
+                        fail("relative platform root: uninstall left the normalized platform root")
             append_summary(passed)
             return 0 if passed else 1
         if not require(result, step="kb-create apply --json"):
@@ -265,7 +281,7 @@ def main():
             else:
                 request_file = HOME / "launcher-request.json"
                 request_file.write_text(json.dumps(request) + "\n")
-                removed, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM)], env=env, timeout=180)
+                removed, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM), "--registry", REGISTRY], env=env, timeout=180)
                 if require(removed, step="remove direct-flags install before --input"):
                     args = [launcher, "apply", "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                             "--input", str(request_file), "--registry", REGISTRY]
@@ -281,6 +297,11 @@ def main():
                         fail("kb-create apply --input: output was not one JSON document")
 
     if FIRST_FAILURE:
+        append_summary(False)
+        return 1
+
+    started, _ = run([launcher, "start", "--platform-root", str(PLATFORM)], env=env, timeout=120)
+    if not require(started, step="kb-create start"):
         append_summary(False)
         return 1
 
@@ -311,7 +332,7 @@ def main():
         if require(result, step=f"kb-create {command}") and not re.search(key, result.stdout, re.I):
             fail(f"kb-create {command}: expected human summary '{key}'")
 
-    result, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM)], env=env, timeout=180)
+    result, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM), "--registry", REGISTRY], env=env, timeout=180)
     if require(result, step="kb-create uninstall"):
         alive = [p for p in PROCESSES if p.poll() is None]
         listeners, _ = run(["ss", "-H", "-ltnp"], timeout=20)

@@ -137,14 +137,14 @@ func printHelp(output *os.File) {
 
 func printCommandHelp(output *os.File, command string) {
 	options := map[string][]string{
-		"install": {"--index PATH (defaults to ~/.local/share/kb-create/release-index.json)", "--platform-root PATH (defaults to ~/kb-platform)", "--request-platform-root PATH"},
+		"install": {"--index PATH (defaults to ~/.local/share/kb-create/release-index.json)", "--platform-root PATH (defaults to ~/kb-platform)", "--request-platform-root PATH", "--registry URL"},
 		"plan":    {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--project-root PATH", "--platform-version VERSION", "--platform-channel CHANNEL", "--sdk-version VERSION", "--service-profile PROFILE", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--policy POLICY", "--offline", "--scenario ID", "--scenario-answers JSON", "--scenario-resume", "--json"},
 		"apply":   {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--project-root PATH", "--platform-version VERSION", "--platform-channel CHANNEL", "--sdk-version VERSION", "--service-profile PROFILE", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--policy POLICY", "--offline", "--scenario ID", "--scenario-answers JSON", "--scenario-resume", "--registry URL", "--secret-env REQUIREMENT=ENV_VAR", "--json"},
 		"status":  {"--platform-root PATH", "--json"},
 		"doctor":  {"--platform-root PATH", "--doctor-input REQUEST.json", "--fix", "--recover", "--email EMAIL", "--tenant ID", "--password-stdin", "--generate", "--yes", "--json"},
 		"start":   {"--platform-root PATH", "--foreground", "--json"}, "stop": {"--platform-root PATH", "--json"}, "restart": {"--platform-root PATH", "--json"},
 		"update":    {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--project-root PATH", "--platform-version VERSION", "--platform-channel CHANNEL", "--sdk-version VERSION", "--service-profile PROFILE", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--policy POLICY", "--offline", "--json"},
-		"uninstall": {"--platform-root PATH", "--json"}, "rollback": {"--platform-root PATH", "--snapshot ID", "--json"},
+		"uninstall": {"--platform-root PATH", "--registry URL", "--json"}, "rollback": {"--platform-root PATH", "--snapshot ID", "--json"},
 	}
 	flags, ok := options[command]
 	if !ok {
