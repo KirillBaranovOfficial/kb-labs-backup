@@ -105,17 +105,17 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	}
 	// Resolve user supplied paths at the request boundary so later execution
 	// never interprets a relative root against a changed working directory.
-	root, err := filepath.Abs(r.PlatformRoot)
+	root, err := absolutePath(r.PlatformRoot)
 	if err != nil {
 		return InstallRequest{}, fmt.Errorf("resolve platform root: %w", err)
 	}
-	r.PlatformRoot = filepath.Clean(root)
+	r.PlatformRoot = root
 	if r.ProjectRoot != "" {
-		project, err := filepath.Abs(r.ProjectRoot)
+		project, err := absolutePath(r.ProjectRoot)
 		if err != nil {
 			return InstallRequest{}, fmt.Errorf("resolve project root: %w", err)
 		}
-		r.ProjectRoot = filepath.Clean(project)
+		r.ProjectRoot = project
 	}
 	plugins, err := normalizeComponents("plugin", r.Plugins)
 	if err != nil {
@@ -132,6 +132,17 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		delete(r.Values, key)
 	}
 	return r, nil
+}
+
+func absolutePath(value string) (string, error) {
+	if filepath.IsAbs(value) {
+		return filepath.Clean(value), nil
+	}
+	path, err := filepath.Abs(value)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(path), nil
 }
 
 func validateSelector(name string, selector VersionSelector) error {

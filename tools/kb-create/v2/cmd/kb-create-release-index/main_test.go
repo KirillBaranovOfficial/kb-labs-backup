@@ -17,6 +17,9 @@ func TestRunSealsNormalizedReleaseExport(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"channels":{"stable":"2.0.0"},"compatibility":{"schema":"kb.release-compatibility/2","labels":[{"id":"platform@2.0.0","kind":"platform","artifactId":"platform","version":"2.0.0","status":"prepared","validatedBy":["stage"]}]},"platforms":[{"id":"platform","version":"2.0.0","package":"@kb/platform","tarball":"https://example.test/platform.tgz","sha256":"artifact","host":{"command":"node_modules/.bin/kb-host","healthUrl":"http://127.0.0.1:4000/health"},"profiles":{"default":{}}}]}`), &source); err != nil {
 		t.Fatal(err)
 	}
+	source.SDKs = []catalog.Component{{ID: "sdk", Version: "2.0.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}}
+	source.Compatibility.Labels[0].Requires = []catalog.CompatibilityRelation{{Label: "sdk@2.0.0"}}
+	source.Compatibility.Labels = append(source.Compatibility.Labels, catalog.CompatibilityLabel{ID: "sdk@2.0.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"stage"}})
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}
 	for _, id := range []string{"marketplace", "review", "scaffold"} {
 		source.Platforms[0].Members = append(source.Platforms[0].Members, catalog.Component{ID: id, Version: "2.0.0", Package: "@kb/" + id, Tarball: "https://example.test/" + id + ".tgz", SHA256: id})
@@ -37,6 +40,7 @@ func TestRunSealsNormalizedReleaseExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	components := []catalog.Component{{ID: "platform", Version: "2.0.0", Package: "@kb/platform"}}
+	components = append(components, source.SDKs...)
 	components = append(components, source.Platforms[0].Members...)
 	components = append(components, source.Plugins...)
 	for _, adapter := range source.Adapters {

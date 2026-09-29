@@ -136,12 +136,13 @@ func printHelp(output *os.File) {
 
 func printCommandHelp(output *os.File, command string) {
 	options := map[string][]string{
-		"install": {"--index PATH (defaults to ~/.local/share/kb-create/release-index.json)", "--platform-root PATH (defaults to ~/kb-platform)"},
-		"plan":    {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--platform-channel CHANNEL", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--scenario ID", "--json"},
-		"apply":   {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--platform-channel CHANNEL", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--scenario ID", "--secret-env REQUIREMENT=ENV_VAR", "--json"},
-		"status":  {"--platform-root PATH", "--json"}, "doctor": {"--platform-root PATH", "--json"},
-		"start": {"--platform-root PATH", "--foreground", "--json"}, "stop": {"--platform-root PATH", "--json"}, "restart": {"--platform-root PATH", "--json"},
-		"update":    {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--json"},
+		"install": {"--index PATH (defaults to ~/.local/share/kb-create/release-index.json)", "--platform-root PATH (defaults to ~/kb-platform)", "--request-platform-root PATH"},
+		"plan":    {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--project-root PATH", "--platform-version VERSION", "--platform-channel CHANNEL", "--sdk-version VERSION", "--service-profile PROFILE", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--policy POLICY", "--offline", "--scenario ID", "--scenario-answers JSON", "--scenario-resume", "--json"},
+		"apply":   {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--project-root PATH", "--platform-version VERSION", "--platform-channel CHANNEL", "--sdk-version VERSION", "--service-profile PROFILE", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--policy POLICY", "--offline", "--scenario ID", "--scenario-answers JSON", "--scenario-resume", "--registry URL", "--secret-env REQUIREMENT=ENV_VAR", "--json"},
+		"status":  {"--platform-root PATH", "--json"},
+		"doctor":  {"--platform-root PATH", "--doctor-input REQUEST.json", "--fix", "--recover", "--email EMAIL", "--tenant ID", "--password-stdin", "--generate", "--yes", "--json"},
+		"start":   {"--platform-root PATH", "--foreground", "--json"}, "stop": {"--platform-root PATH", "--json"}, "restart": {"--platform-root PATH", "--json"},
+		"update":    {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--project-root PATH", "--platform-version VERSION", "--platform-channel CHANNEL", "--sdk-version VERSION", "--service-profile PROFILE", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--policy POLICY", "--offline", "--json"},
 		"uninstall": {"--platform-root PATH", "--json"}, "rollback": {"--platform-root PATH", "--snapshot ID", "--json"},
 	}
 	flags, ok := options[command]
@@ -191,6 +192,14 @@ func (i invocation) hostCommand(output *os.File) hostCommand {
 
 func (i invocation) run(output *os.File) int {
 	operation := i.Operation
+	if i.PlatformRoot != "" {
+		root, err := filepath.Abs(i.PlatformRoot)
+		if err != nil {
+			write(output, failure(contracts.CodeInputRequired, "platform root path is invalid", "pass a valid --platform-root path", err))
+			return 2
+		}
+		i.PlatformRoot = filepath.Clean(root)
+	}
 	switch operation {
 	case "install", "plan", "apply", "update", "uninstall", "rollback", "doctor", "status":
 	default:
@@ -252,6 +261,12 @@ func (i invocation) run(output *os.File) int {
 	if !response.OK {
 		write(output, response)
 		return 2
+	}
+	if operation == "apply" {
+		if err := host.CheckPorts(*response.Plan); err != nil {
+			write(output, map[string]any{"ok": false, "error": asLauncherError(err)})
+			return 2
+		}
 	}
 	started := time.Now()
 	outcome, errorCode := "failure", "KB_INSTALL_OPERATION_FAILED"
@@ -422,7 +437,7 @@ func (i invocation) runInstall(output *os.File) int {
 			return 1
 		}
 	}
-	fmt.Fprintf(output, "\nKB Labs is installed at %s.\nNext: add %s to PATH, then run `cd ~/any-project && kb commit`.\n", root, filepath.Join(root, "node_modules", ".bin"))
+	fmt.Fprintf(output, "\nKB Labs is installed at %s.\nNext: run `cd ~/any-project && kb commit`.\n", root)
 	return 0
 }
 

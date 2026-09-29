@@ -26,12 +26,12 @@ The V2 boundary is executable and covered by an offline journey test:
   exact artifact application, recovery, manifest-gap
   reporting and redacted dossiers for the public CLI.
 - the root `kb-create` binary provides `plan`, `apply`, `update`, `uninstall`,
-  explicit `rollback`, manifest-aware `doctor`, and `wizard`; all use V2
+  explicit `rollback`, manifest-aware `doctor`, and `install`; all use V2
   contracts and emit one JSON envelope.
 
 There is no legacy `install` path. `kb-create apply` is the only installation
 operation; it accepts the same request whether it came from CI, an agent,
-scenario, or the wizard.
+scenario, or the interactive install command.
 
 `apply` and `update` require an immutable release index and request. Recovery
 operations deliberately require only `--platform-root` (and a snapshot for
@@ -291,7 +291,7 @@ default configuration.
 
 The technical source of truth for configuration variables and service metadata
 remains the manifests shipped by platform components, plugins and adapters.
-V2 does not turn the wizard into a universal manifest-variable form. The
+V2 does not turn interactive install into a universal manifest-variable form. The
 install chooses product-level axes and profiles; after verified artifacts are
 available, manifest-derived required input either receives a safe default or
 returns structured `KB_INSTALL_INPUT_REQUIRED` with a human hint and machine

@@ -24,6 +24,7 @@ export const manifest: AdapterManifest = {
   // Multi-role driver: one package fills both the documentDatabase and the
   // kvStore platform slots on a shared better-sqlite3 connection.
   implements: ['IDocumentDatabase', 'IKVStore'],
+  defaultFor: ['documentDatabase', 'kvStore'],
   contexts: ['workspace'],
   capabilities: {
     transactions: true,

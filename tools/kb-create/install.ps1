@@ -164,10 +164,5 @@ if ($ResolvedVersion) { Write-Ok "Version: $ResolvedVersion" }
 if ($IndexDest) { Write-Ok "Release index verified and saved to $IndexDest" }
 Write-Host ""
 Write-Host "Get started:" -ForegroundColor White
-if ($IndexDest) {
-    Write-Host "  kb-create wizard --index `"$IndexDest`" --request-platform-root ./kb-platform" -ForegroundColor DarkGray
-} else {
-    Write-Host "  kb-create wizard --index release-index.json --request-platform-root ./kb-platform" -ForegroundColor DarkGray
-}
-Write-Host "  kb-create status" -ForegroundColor DarkGray
+Write-Host "  kb-create install" -ForegroundColor DarkGray
 Write-Host ""

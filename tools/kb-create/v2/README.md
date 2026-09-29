@@ -85,7 +85,7 @@ The host receives its secrets by environment variable name, so on every
 apply/update the launcher also stores each present secret under the environment variable its
 plan patch binds it to, next to the requirement ID (what the launcher verifies
 and doctor checks). This holds whatever supplied the value (`--secret-env` or the
-wizard). Two secrets bound to one variable must hold the same value or the run
+install flow). Two secrets bound to one variable must hold the same value or the run
 fails instead of letting the last write win.
 
 Scenario field rules that matter to authors:
@@ -111,7 +111,7 @@ takes a `kb-dev` path.
 ## Why V2
 
 The launcher owns one declarative action engine, catalog, journal, recovery
-primitives, wizard, agent protocol and direct CI flow. Installation state is
+primitives, interactive install, agent protocol and direct CI flow. Installation state is
 resolved from the sealed release index and request before any filesystem or
 package-manager mutation.
 
@@ -231,7 +231,7 @@ default configuration.
 
 The technical source of truth for configuration variables and service metadata
 remains the manifests shipped by platform components, plugins and adapters.
-V2 does not turn the wizard into a universal manifest-variable form. The
+V2 does not turn interactive install into a universal manifest-variable form. The
 install chooses product-level axes and profiles; after verified artifacts are
 available, manifest-derived required input either receives a safe default or
 returns structured `KB_INSTALL_INPUT_REQUIRED` with a human hint and machine

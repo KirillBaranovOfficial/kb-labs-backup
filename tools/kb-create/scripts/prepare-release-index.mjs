@@ -190,8 +190,12 @@ const manifestFor = item => {
     const implementsValue = implementsSource?.startsWith('[')
       ? [...implementsSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
       : implementsSource?.slice(1, -1);
+    const defaultsSource = source.match(/\bdefaultFor:\s*(\[[^\]]*\])/)?.[1];
+    const defaultFor = defaultsSource
+      ? [...defaultsSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
+      : undefined;
     if (id && implementsValue) {
-      return { schema: 'kb.adapter/1', id, implements: implementsValue };
+      return { schema: 'kb.adapter/1', id, implements: implementsValue, ...(defaultFor ? { defaultFor } : {}) };
     }
   }
   return undefined;

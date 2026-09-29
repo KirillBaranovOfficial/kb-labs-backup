@@ -170,7 +170,7 @@ func TestDoctorReturnsStructuredManifestFindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code := (invocation{Operation: "doctor", DoctorInput: input}).run(file); code != 1 {
+	if code := (invocation{Operation: "doctor", DoctorInput: input, JSON: true}).run(file); code != 1 {
 		t.Fatalf("exit code = %d", code)
 	}
 	if err := file.Close(); err != nil {
@@ -183,6 +183,33 @@ func TestDoctorReturnsStructuredManifestFindings(t *testing.T) {
 	var response map[string]any
 	if err := json.Unmarshal(data, &response); err != nil || response["ok"] != false {
 		t.Fatalf("output/error = %s / %v", data, err)
+	}
+}
+
+func TestStatusAndDoctorSummarizeMissingInstallationForHumans(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, operation := range []string{"status", "doctor"} {
+		output := filepath.Join(t.TempDir(), "output")
+		file, err := os.Create(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := (invocation{Operation: operation}).run(file)
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if operation == "status" && code != 0 || operation == "doctor" && code != 1 {
+			t.Fatalf("%s exit code = %d, output: %s", operation, code, data)
+		}
+		for _, expected := range []string{"Installed: no", "Running: no", "Reachable: no", "Next: kb-create install"} {
+			if !strings.Contains(string(data), expected) {
+				t.Fatalf("%s summary is missing %q: %s", operation, expected, data)
+			}
+		}
 	}
 }
 
