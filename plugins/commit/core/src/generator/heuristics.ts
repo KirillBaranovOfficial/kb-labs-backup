@@ -60,7 +60,9 @@ export function generateHeuristicPlan(summaries: FileSummary[]): CommitGroup[] {
   const categoryGroups = groupByCategory(unpairedFiles);
 
   for (const [category, files] of categoryGroups) {
-    const type = categoryToType(category);
+    const type = category.startsWith('src:')
+      ? inferTypeFromChanges(files[0])
+      : categoryToType(category);
     const scope = inferScope(files.map((f) => f.path));
 
     commits.push({
@@ -280,9 +282,12 @@ function categorizeFile(path: string): string {
   if (
     name.startsWith('.') ||
     name.includes('config') ||
-    ['package.json', 'tsconfig.json', 'eslint.config.js'].includes(name)
+    ['package.json', 'tsconfig.json', 'eslint.config.js'].includes(name) ||
+    ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock'].includes(name)
   ) {
-    return 'config';
+    return ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock'].includes(name)
+      ? 'lockfile'
+      : 'config';
   }
 
   // CI/CD
@@ -309,6 +314,7 @@ function categoryToType(category: string): ConventionalType {
   if (category === 'config') {return 'chore';}
   if (category === 'ci') {return 'ci';}
   if (category === 'build') {return 'build';}
+  if (category === 'lockfile') {return 'chore';}
   return 'chore'; // Default for src:* categories
 }
 
@@ -381,6 +387,9 @@ function generateMessage(type: ConventionalType, files: FileSummary[]): string {
 
   if (type === 'chore') {
     if (files.some((f) => f.path.includes('package.json'))) {
+      return `update dependencies`;
+    }
+    if (files.some((f) => ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock'].includes(basename(f.path)))) {
       return `update dependencies`;
     }
     return `update configuration`;

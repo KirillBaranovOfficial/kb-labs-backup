@@ -24,16 +24,31 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
         details: { slot: error.slot, reason: error.reason },
       });
     }
+    const command = getAdapterConfigurationCommand(error.slot);
     return createErrorEnvelope('KB_ADAPTER_NOT_CONFIGURED', {
       ...options,
       cause: error.message,
-      details: { service: error.slot, adapter: `adapters.${error.slot}` },
+      details: { service: error.slot, adapter: `platform.adapters.${error.slot}`, command },
+      actions: [{
+        id: 'configure-adapter',
+        label: `Configure ${error.slot}`,
+        command,
+      }],
     });
   }
   return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
     ...options,
     cause: error instanceof Error ? error.message : String(error),
   });
+}
+
+function getAdapterConfigurationCommand(slot: string): string {
+  const adapterPackage = slot === 'llm'
+    ? '@kb-labs/adapters-openai'
+    : slot === 'embeddings'
+      ? '@kb-labs/adapters-openai/embeddings'
+      : `@kb-labs/adapters-${slot}`;
+  return `kb config set platform.adapters.${slot} ${adapterPackage}`;
 }
 
 /** Statuses (HTTP-style) that a caller can reasonably retry. */

@@ -43,9 +43,11 @@ async function resolveContext(ctx: PluginContextV3, flags: CommitFlags) {
   const config = resolveCommitConfig(fileConfig ?? {}, env);
   const effectiveScope = flags.scope ?? config.scope?.default ?? 'root';
   const scopeCwd = resolveScopePath(cwd, effectiveScope, config.scope?.scopes);
+  const rawPlatformConfig = await ctx.platform.config.getRawConfig();
+  const llmConfigured = hasConfiguredLLM(rawPlatformConfig);
 
   const llmComplete =
-    llm && config.llm.enabled
+    llm && config.llm.enabled && llmConfigured
       ? async (prompt: string, options?: { systemPrompt?: string; temperature?: number; maxTokens?: number }) => {
           const result = await llm.complete(prompt, {
             ...options,
@@ -59,7 +61,29 @@ async function resolveContext(ctx: PluginContextV3, flags: CommitFlags) {
         }
       : undefined;
 
-  return { cwd, config, effectiveScope, scopeCwd, llmComplete };
+  return { cwd, config, effectiveScope, scopeCwd, llmComplete, llmConfigured };
+}
+
+function hasConfiguredLLM(config: unknown): boolean {
+  if (typeof config !== 'object' || config === null) {
+    return false;
+  }
+  const platform = (config as Record<string, unknown>).platform;
+  if (typeof platform !== 'object' || platform === null) {
+    return false;
+  }
+  const adapters = (platform as Record<string, unknown>).adapters;
+  if (typeof adapters !== 'object' || adapters === null) {
+    return false;
+  }
+  const llm = (adapters as Record<string, unknown>).llm;
+  return typeof llm === 'string' ? llm.trim().length > 0 : Array.isArray(llm) && llm.length > 0;
+}
+
+function reportMissingLLM(ctx: PluginContextV3, config: CommitPluginConfig, llmConfigured: boolean): void {
+  if (config.llm.enabled && !llmConfigured) {
+    ctx.ui.write('No LLM configured — using heuristics. To enable AI messages: kb config set platform.adapters.llm @kb-labs/adapters-openai');
+  }
 }
 
 export default defineCommand({
@@ -69,7 +93,7 @@ export default defineCommand({
   handler: {
     async intent(ctx: PluginContextV3, input: CLIInput<CommitFlags>) {
       const flags = input.flags;
-      const { effectiveScope, scopeCwd, llmComplete, config } = await resolveContext(ctx, flags);
+      const { effectiveScope, scopeCwd, llmComplete, config, llmConfigured } = await resolveContext(ctx, flags);
 
       const status = await getGitStatus(scopeCwd);
       if (!hasChanges(status)) {
@@ -78,6 +102,7 @@ export default defineCommand({
           operations: [],
         };
       }
+      reportMissingLLM(ctx, config, llmConfigured);
 
       const plan = await generateCommitPlan({
         cwd: scopeCwd,
@@ -103,7 +128,7 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<CommitFlags>): Promise<RunResult> {
       const startTime = Date.now();
       const flags = input.flags;
-      const { cwd, effectiveScope, scopeCwd, llmComplete, config } = await resolveContext(ctx, flags);
+      const { cwd, effectiveScope, scopeCwd, llmComplete, config, llmConfigured } = await resolveContext(ctx, flags);
       const withPush = flags['with-push'] ?? false;
       const outputJson = flags.json ?? false;
 
@@ -124,6 +149,7 @@ export default defineCommand({
         ctx.ui?.warn?.('No changes to commit');
         return { ok: false, error: 'Command failed' };
       }
+      reportMissingLLM(ctx, config, llmConfigured);
       statusLoader.succeed('Git status analyzed');
 
       // 2. Generate plan

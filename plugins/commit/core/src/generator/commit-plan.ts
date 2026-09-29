@@ -6,7 +6,7 @@
 
 import type { CommitPlan, GitStatus, FileSummary, CommitGroup } from '@kb-labs/commit-contracts';
 import type { GenerateOptions } from '../types';
-import { useLogger, useAnalytics, useLLM, type LLMMessage } from '@kb-labs/sdk';
+import { AdapterUnavailableError, useLogger, useAnalytics, useLLM, type LLMMessage } from '@kb-labs/sdk';
 import { COMMIT_PLAN_TOOL, COMMIT_PLAN_TOOL_PHASE3 } from './commit-tools';
 import { getGitStatus, getAllChangedFiles } from '../analyzer/git-status';
 import { getFileSummaries, getFileDiffs } from '../analyzer/file-summary';
@@ -419,14 +419,21 @@ export async function generateCommitPlan(options: GenerateOptions): Promise<Comm
       }
 
       // Fallback to heuristics ONLY for LLM errors (parse, timeout, etc.)
-      // stderr is inherited in worker-pool mode — this surfaces the error in CI logs even when logger is NOOP
       const errMsg = error instanceof Error ? error.message : String(error);
       const errStack = error instanceof Error && error.stack ? error.stack : '';
-      process.stderr.write(`[commit] LLM failed, falling back to heuristics: ${errMsg}\n${errStack}\n`);
-      await logger.warn('LLM generation failed after retries, falling back to heuristics', {
-        error: errMsg,
-      });
-      onProgress?.('LLM failed, using heuristics...');
+      if (error instanceof AdapterUnavailableError && error.reason === 'not-configured') {
+        await logger.debug('LLM is not configured; using heuristic commit messages', {
+          capability: error.slot,
+          stack: errStack,
+        });
+        onProgress?.('No LLM configured — using heuristics. To enable AI messages: kb config set platform.adapters.llm @kb-labs/adapters-openai');
+      } else {
+        await logger.warn(`LLM generation failed, falling back to heuristics: ${errMsg}`, {
+          error: errMsg,
+          stack: errStack,
+        });
+        onProgress?.(`LLM failed, using heuristics: ${errMsg}`);
+      }
       commits = generateHeuristicPlan(summaries);
     }
   } else {

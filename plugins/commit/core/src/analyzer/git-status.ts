@@ -33,12 +33,45 @@ const IGNORED_SEGMENTS = new Set([
   "coverage",
 ]);
 
+const IGNORED_KB_STATE_PATHS = new Set([
+  'agents/sessions',
+  'bundle',
+  'cache',
+  'commit',
+  'devkit',
+  'memory/sessions',
+  'mind',
+  'output',
+  'release',
+  'run-artifacts',
+  'tmp',
+  'verdaccio',
+]);
+
 /**
  * Check if file should be ignored (node_modules, dist, etc.)
  * Uses exact path segment matching to avoid false positives like "my-dist/file.ts".
  */
 function shouldIgnoreFile(file: string): boolean {
-  return file.split("/").some((segment) => IGNORED_SEGMENTS.has(segment));
+  const segments = file.split("/");
+  if (segments.some((segment) => IGNORED_SEGMENTS.has(segment))) {
+    return true;
+  }
+
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    if (segments[index] !== '.kb') {
+      continue;
+    }
+    const statePath = segments.slice(index + 1, index + 3).join('/');
+    if (IGNORED_KB_STATE_PATHS.has(statePath) || IGNORED_KB_STATE_PATHS.has(segments[index + 1] ?? '')) {
+      return true;
+    }
+    if (segments[index + 1] === 'logs' && segments[index + 2] === 'tmp') {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

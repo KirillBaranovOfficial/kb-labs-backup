@@ -93,3 +93,25 @@ describe('hasChanges', () => {
     expect(hasChanges({ staged: ['a.ts'], unstaged: [], untracked: [] })).toBe(true);
   });
 });
+
+describe('getGitStatus runtime state filtering', () => {
+  const repo = join(process.cwd(), '.test-commit-runtime-state');
+
+  beforeEach(async () => {
+    await mkdir(repo, { recursive: true });
+    await simpleGit(repo).init();
+  });
+
+  afterEach(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+
+  it('does not include stale commit plans under .kb/commit', async () => {
+    await mkdir(join(repo, '.kb/commit/plans/root/current'), { recursive: true });
+    await writeFile(join(repo, '.kb/commit/plans/root/current/plan.json'), '{}');
+    await writeFile(join(repo, 'README.md'), '# User file\n');
+
+    const status = await getGitStatus(repo);
+    expect(status.untracked).toEqual(['README.md']);
+  });
+});

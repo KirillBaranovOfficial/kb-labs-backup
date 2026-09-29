@@ -873,7 +873,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Service {service} is not configured.",
-      "hint": "Add {adapter} under adapters in kb.config.json."
+      "hint": "Run `{command}` to configure this adapter."
     },
     {
       "code": "KB_RUNTIME_INPUT_INVALID",
