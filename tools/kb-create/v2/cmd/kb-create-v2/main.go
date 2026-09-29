@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -182,8 +183,11 @@ type invocation struct {
 	ScenarioResume                                                                    bool
 	Direct                                                                            directRequest
 	// Executable is the launcher binary re-executed to supervise the host.
-	Executable string
-	JSON       bool
+	Executable    string
+	JSON          bool
+	InstallInput  io.Reader
+	InstallOutput io.Writer
+	RuntimeDeps   *runtime.Dependencies
 }
 
 func (i invocation) hostCommand(output *os.File) hostCommand {
@@ -314,14 +318,43 @@ func (i invocation) run(output *os.File) int {
 	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: root, Registry: i.Registry, Offline: offlineArtifacts, Log: transcript}, Binaries: artifacts.Binaries{Root: root, Offline: offlineArtifacts}}
 	prober := host.Prober{PlatformRoot: root, State: state}
 	deps := runtime.Dependencies{Artifacts: artifactExecutor, CorrelationID: correlationID, Secrets: &store}
+	if i.RuntimeDeps != nil {
+		if i.RuntimeDeps.Artifacts != nil {
+			deps.Artifacts = i.RuntimeDeps.Artifacts
+		}
+		if i.RuntimeDeps.Host != nil {
+			deps.Host = i.RuntimeDeps.Host
+		}
+		if i.RuntimeDeps.Clock != nil {
+			deps.Clock = i.RuntimeDeps.Clock
+		}
+		if i.RuntimeDeps.Secrets != nil {
+			deps.Secrets = i.RuntimeDeps.Secrets
+		}
+		deps.Progress = i.RuntimeDeps.Progress
+	}
 	if operation == "apply" {
-		deps.Host = prober
+		if i.Operation == "apply" && i.RuntimeDeps != nil && deps.Progress != nil {
+			// The shared apply engine owns artifact, render, host and verification events.
+		}
+		if deps.Host == nil {
+			deps.Host = prober
+		}
 		receipt, applyErr := runtime.Apply(ctx, *response.Plan, deps)
 		if applyErr == nil {
 			if i.Executable != "" {
+				if deps.Progress != nil {
+					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: true})
+				}
 				if shimErr := shim.Ensure(i.Executable, root); shimErr != nil {
+					if deps.Progress != nil {
+						deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
+					}
 					write(output, failure("KB_INSTALL_APPLY_FAILED", "installation completed but the kb command shim could not be created", "check the launcher directory and installed platform command, then rerun `kb-create install`", shimErr))
 					return 1
+				}
+				if deps.Progress != nil {
+					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
 				}
 			}
 			write(output, map[string]any{"ok": true, "operation": operation, "receipt": receipt, "logPath": transcript.Path()})
@@ -337,13 +370,17 @@ func (i invocation) run(output *os.File) int {
 // runInstall is the human frontend. It gathers answers, prints the shared
 // resolver's plan, then invokes the same apply engine used by JSON callers.
 func (i invocation) runInstall(output *os.File) int {
+	var humanOut io.Writer = output
+	if i.InstallOutput != nil {
+		humanOut = i.InstallOutput
+	}
 	if err := preflight.EnsureNode(nil); err != nil {
-		fmt.Fprintf(output, "Node.js 24.x is required before installation. Install Node.js 24, then run `kb-create install`. (%v)\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TOOLCHAIN_UNSUPPORTED", "Node.js 24.x is required before installation.", "Install Node.js 24, then run `kb-create install`.", err))
 		return 2
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Fprintf(output, "Cannot determine your home directory: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_HOME_UNAVAILABLE", "The home directory could not be determined.", "Set HOME to a writable directory, then rerun `kb-create install`.", err))
 		return 2
 	}
 	index := i.Index
@@ -359,64 +396,76 @@ func (i invocation) runInstall(output *os.File) int {
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
-		fmt.Fprintf(output, "Platform path is invalid: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `kb-create install --platform-root PATH`.", err))
 		return 2
 	}
+	phaseStart := time.Now()
 	source, err := catalog.LoadFile(index)
 	if err != nil {
-		fmt.Fprintf(output, "Release index could not be loaded from %s. Reinstall the launcher with `curl -fsSL https://kblabs.ru/install.sh | sh`.\n", index)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_INDEX_UNAVAILABLE", "The release index could not be loaded from "+index+".", "Reinstall the launcher with `curl -fsSL https://kblabs.ru/install.sh | sh`, then rerun `kb-create install`.", err))
 		return 2
 	}
-	fmt.Fprintln(output, "Set up KB Labs. Local access is enabled by default; it only accepts connections from this computer.")
-	request, err := wizard.RequestScenario(source, root, "explore", wizard.IO{In: os.Stdin, Out: output})
+	fmt.Fprintln(humanOut, "Set up KB Labs. Local access is enabled by default; it only accepts connections from this computer.")
+	input := i.InstallInput
+	if input == nil {
+		input = os.Stdin
+	}
+	request, err := wizard.RequestScenario(source, root, "explore", wizard.IO{In: input, Out: humanOut})
 	if err != nil {
-		fmt.Fprintf(output, "Install answers could not be compiled: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the answers and rerun `kb-create install`.", err))
 		return 2
 	}
 	encoded, err := json.Marshal(request)
 	if err != nil {
-		fmt.Fprintf(output, "Install request could not be encoded: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_REQUEST_INVALID", "The install request could not be encoded.", "Rerun `kb-create install`; if this repeats, report the launcher version.", err))
 		return 2
 	}
 	planned := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion})
 	if !planned.OK {
-		fmt.Fprintf(output, "The selected install cannot be resolved: %s\nNext: %s\n", planned.Error.Message, planned.Error.Hint)
+		writeHumanFailure(humanOut, planned.Error)
 		return 2
 	}
-	fmt.Fprintf(output, "\nPlan: platform %s, %d artifacts\n", planned.Plan.ServiceGraph.PlatformVersion, len(planned.Plan.Artifacts))
+	fmt.Fprintf(humanOut, "  ✓ Resolve (%s)\n", time.Since(phaseStart).Round(time.Millisecond))
+	fmt.Fprintf(humanOut, "\nPlan: platform %s, %d artifacts\n", planned.Plan.ServiceGraph.PlatformVersion, len(planned.Plan.Artifacts))
 	for _, artifact := range planned.Plan.Artifacts {
-		fmt.Fprintf(output, "  - %s %s (%s)\n", artifact.ID, artifact.Version, artifact.Kind)
+		fmt.Fprintf(humanOut, "  - %s %s (%s)\n", artifact.ID, artifact.Version, artifact.Kind)
 	}
-	fmt.Fprintln(output, "\nApplying installation…")
+	fmt.Fprintln(humanOut, "\nApplying installation…")
 	requestFile, err := os.CreateTemp("", "kb-create-request-*.json")
 	if err != nil {
-		fmt.Fprintf(output, "Could not stage the install request: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install request could not be staged.", "Free temporary disk space or check temporary-directory permissions, then rerun `kb-create install`.", err))
 		return 2
 	}
 	defer os.Remove(requestFile.Name())
 	if _, err := requestFile.Write(encoded); err != nil {
 		requestFile.Close()
-		fmt.Fprintf(output, "Could not stage the install request: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install request could not be staged.", "Free temporary disk space or check temporary-directory permissions, then rerun `kb-create install`.", err))
 		return 2
 	}
 	if err := requestFile.Close(); err != nil {
-		fmt.Fprintf(output, "Could not stage the install request: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install request could not be staged.", "Free temporary disk space or check temporary-directory permissions, then rerun `kb-create install`.", err))
 		return 2
 	}
 	result, err := os.CreateTemp("", "kb-create-result-*.json")
 	if err != nil {
-		fmt.Fprintf(output, "Could not stage install output: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install output could not be staged.", "Free temporary disk space or check temporary-directory permissions, then rerun `kb-create install`.", err))
 		return 2
 	}
 	defer os.Remove(result.Name())
-	code := (invocation{Operation: "apply", Index: index, Input: requestFile.Name(), Registry: i.Registry, SecretEnv: i.SecretEnv, Executable: i.Executable}).run(result)
+	progress := &humanProgress{out: humanOut, started: map[string]time.Time{}}
+	deps := i.RuntimeDeps
+	if deps == nil {
+		deps = &runtime.Dependencies{}
+	}
+	deps.Progress = progress
+	code := (invocation{Operation: "apply", Index: index, Input: requestFile.Name(), Registry: i.Registry, SecretEnv: i.SecretEnv, Executable: i.Executable, RuntimeDeps: deps}).run(result)
 	if err := result.Close(); err != nil {
-		fmt.Fprintf(output, "Could not read install result: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install result could not be read.", "Check temporary-directory permissions and free disk space, then rerun `kb-create install`.", err))
 		return 2
 	}
 	data, err := os.ReadFile(result.Name())
 	if err != nil {
-		fmt.Fprintf(output, "Could not read install result: %v\n", err)
+		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TEMP_FILE_FAILED", "The install result could not be read.", "Check temporary-directory permissions and free disk space, then rerun `kb-create install`.", err))
 		return 2
 	}
 	var envelope struct {
@@ -425,20 +474,40 @@ func (i invocation) runInstall(output *os.File) int {
 	}
 	if json.Unmarshal(data, &envelope) != nil || code != 0 || !envelope.OK {
 		if envelope.Error != nil {
-			fmt.Fprintf(output, "Install failed [%s]: %s\nNext: %s\n", envelope.Error.Code, envelope.Error.Message, envelope.Error.Hint)
+			writeHumanFailure(humanOut, envelope.Error)
 		} else {
-			fmt.Fprintln(output, "Install failed. Run `kb-create doctor` for diagnosis.")
+			writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_APPLY_FAILED", "Installation failed before a structured result was available.", "Run `kb-create doctor`, then rerun `kb-create install`.", nil))
 		}
 		return code
 	}
-	if i.Executable != "" {
-		if err := shim.Ensure(i.Executable, root); err != nil {
-			fmt.Fprintf(output, "KB Labs was installed, but the `kb` command shim could not be created: %v\nNext: check %s and rerun `kb-create install`.\n", err, filepath.Dir(i.Executable))
-			return 1
-		}
-	}
-	fmt.Fprintf(output, "\nKB Labs is installed at %s.\nNext: run `cd ~/any-project && kb commit`.\n", root)
+	fmt.Fprintf(humanOut, "\nKB Labs is installed at %s.\nNext: run `cd ~/any-project && kb commit`.\n", root)
 	return 0
+}
+
+type humanProgress struct {
+	out     io.Writer
+	started map[string]time.Time
+}
+
+func (p *humanProgress) Emit(event runtime.ProgressEvent) {
+	if event.Start {
+		p.started[event.Phase] = time.Now()
+		fmt.Fprintf(p.out, "  … %s\n", event.Phase)
+		return
+	}
+	started, ok := p.started[event.Phase]
+	if !ok {
+		return
+	}
+	fmt.Fprintf(p.out, "  ✓ %s (%s)\n", event.Phase, time.Since(started).Round(time.Millisecond))
+	delete(p.started, event.Phase)
+}
+
+func writeHumanFailure(output io.Writer, failure *contracts.LauncherError) {
+	if failure == nil {
+		failure = contracts.NewLauncherError("KB_INSTALL_UNEXPECTED", "Installation failed unexpectedly.", "Run `kb-create doctor`, then rerun `kb-create install`.", nil)
+	}
+	fmt.Fprintf(output, "Install failed [%s]: %s\nNext: %s\n", failure.Code, failure.Message, failure.Hint)
 }
 
 // runStatus reports the host of the receipt-owned installation without

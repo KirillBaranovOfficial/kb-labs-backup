@@ -1,16 +1,154 @@
 package v2cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
 )
+
+type installArtifacts struct{ root string }
+
+func (a installArtifacts) Install(items []contracts.Artifact) error {
+	return a.InstallWithProgress(items, nil)
+}
+func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progress func(string, bool)) error {
+	if progress != nil {
+		progress("Download and verify artifacts", true)
+		progress("Download and verify artifacts", false)
+		progress("Install packages", true)
+	}
+	bin := filepath.Join(a.root, "node_modules", ".bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		if progress != nil {
+			progress("Install packages", false)
+		}
+		return err
+	}
+	err := os.WriteFile(filepath.Join(bin, "kb"), []byte("fake kb"), 0o755)
+	if progress != nil {
+		progress("Install packages", false)
+	}
+	return err
+}
+func (installArtifacts) Restore() error { return nil }
+
+type installHost struct{}
+
+func (installHost) Probe(context.Context, contracts.HostSpec) error { return nil }
+
+func installOutput(t *testing.T) (*os.File, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "screen.txt")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return file, path
+}
+
+func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+	root := filepath.Join(home, "kb-platform")
+	index := filepath.Join(home, "release-index.json")
+	release, err := catalog.Seal(catalog.Catalog{
+		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: testCompatibility("2.0.0"),
+		Platforms:     []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)}, Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}}},
+		Plugins:       []catalog.Component{{ID: "commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(home, "bin", "kb-create")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("launcher"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	output, outputPath := installOutput(t)
+	var screen bytes.Buffer
+	code := (invocation{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}}}).run(output)
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 {
+		t.Fatalf("exit code %d, screen:\n%s", code, screen.String())
+	}
+	for _, expected := range []string{"Resolve (", "Download and verify artifacts (", "Install packages (", "Render config (", "Start host (", "Verify installation (", "Create kb shim (", "KB Labs is installed", "cd ~/any-project && kb commit"} {
+		if !strings.Contains(screen.String(), expected) {
+			t.Errorf("screen missing %q:\n%s", expected, screen.String())
+		}
+	}
+	if strings.Contains(screen.String(), `{"ok"`) || strings.Contains(screen.String(), "goroutine ") || strings.Contains(screen.String(), "panic:") {
+		t.Fatalf("human screen leaked JSON or stack trace:\n%s", screen.String())
+	}
+	if _, err := os.Stat(outputPath); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(filepath.Join(home, "bin", "kb")); err != nil || target != filepath.Join(root, "node_modules", ".bin", "kb") {
+		t.Fatalf("kb shim target/error = %q / %v", target, err)
+	}
+}
+
+func TestInstallEarlyFailuresUseLauncherErrorRendering(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	output, path := installOutput(t)
+	code := (invocation{Operation: "install", Index: filepath.Join(t.TempDir(), "missing.json")}).run(output)
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 2 || !strings.Contains(string(data), "Install failed [KB_INSTALL_INDEX_UNAVAILABLE]") || !strings.Contains(string(data), "Next:") {
+		t.Fatalf("code/output = %d / %s", code, data)
+	}
+}
+
+func TestHumanProgressUsesElapsedPhaseEvents(t *testing.T) {
+	output, path := installOutput(t)
+	p := &humanProgress{out: output, started: map[string]time.Time{}}
+	p.started["Install packages"] = time.Now().Add(-time.Millisecond)
+	p.Emit(runtime.ProgressEvent{Phase: "Install packages"})
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Install packages") || !strings.Contains(string(data), "ms)") {
+		t.Fatalf("progress output = %s", data)
+	}
+}
 
 func testHost() *contracts.HostSpec {
 	return &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}
