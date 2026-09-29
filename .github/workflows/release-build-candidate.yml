@@ -38,8 +38,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  journey-gate:
+    name: Clean installer journey gate
+    uses: ./.github/workflows/reusable-installer-journey.yml
+    with:
+      ref: ${{ inputs.commit_sha }}
+    permissions:
+      contents: read
+
   build:
     name: Build candidate ${{ inputs.candidate_id }}
+    needs: journey-gate
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:

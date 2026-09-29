@@ -68,6 +68,9 @@ for ((i = 0; i < n; i++)); do
     http*) url="${args[i]}" ;;
   esac
 done
+if [ -n "${FAKE_CURL_LOG:-}" ]; then
+  printf '%s\n' "$url" >> "$FAKE_CURL_LOG"
+fi
 case "$url" in
   *binaries-stable/channel.json*)
     out='{ "schema": 1, "channel": "stable", "tag": "'"${FAKE_STABLE_TAG:-v9.9.9-binaries}"'" }'
@@ -273,6 +276,34 @@ test_pinned_version() {
   pass "pinned version: --version v1.2.3 is used verbatim, no 'latest' resolution"
 }
 
+# ── Local candidate download base override ──────────────────────────────────
+
+test_download_base_override() {
+  FAKE_CHECKSUM_LINE="${FAKE_SHA256}  ${BINARY_FILE}"
+  RUN_HOME="$(mktemp -d)"
+  local fakebin log
+  fakebin="$(mktemp -d)"
+  log="$RUN_HOME/curl.log"
+  write_fake_curl "$fakebin"
+  curated_path "$fakebin"
+  RUN_OUT="$(HOME="$RUN_HOME" PATH="$fakebin" FAKE_CURL_LOG="$log" \
+    FAKE_CHECKSUM_LINE="$FAKE_CHECKSUM_LINE" FAKE_BIN_CONTENT="$FAKE_BIN_CONTENT" \
+    KB_CREATE_DOWNLOAD_BASE_URL="http://candidate.test/releases" \
+    "$SYS_BASH" "$INSTALL_SH" --version journey-candidate 2>&1)"
+  RUN_CODE=$?
+  if [ "$RUN_CODE" -ne 0 ]; then
+    fail "download base override" "expected exit 0, got $RUN_CODE. Output:\n$RUN_OUT"
+    return
+  fi
+  if ! grep -Fq "http://candidate.test/releases/journey-candidate/$BINARY_FILE" "$log" || \
+     ! grep -Fq "http://candidate.test/releases/journey-candidate/checksums.txt" "$log" || \
+     ! grep -Fq "http://candidate.test/releases/journey-candidate/release-index.json" "$log"; then
+    fail "download base override" "installer did not fetch candidate assets from the override. URLs:\n$(cat "$log" 2>/dev/null)"
+    return
+  fi
+  pass "download base override: pinned binary, checksums and release index use the local origin"
+}
+
 # ── 7. --channel defaults to stable ──────────────────────────────────────
 
 test_channel_defaults_to_stable() {
@@ -423,6 +454,7 @@ case "$(uname -s)" in
 esac
 
 test_success_path
+test_download_base_override
 test_checksum_mismatch
 test_missing_checksum_entry
 test_no_checksum_tool

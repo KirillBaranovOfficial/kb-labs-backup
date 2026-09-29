@@ -1,0 +1,43 @@
+services:
+  publisher:
+    networks: [journey]
+
+  origin:
+    image: python:3.12-alpine
+    command: ["python3", "-m", "http.server", "8080", "--directory", "/release"]
+    volumes:
+      - ../.journey/release:/release:ro
+    networks: [journey]
+
+  runner:
+    build:
+      context: ..
+      dockerfile: e2e/journey/Dockerfile.runner
+    image: kb-installer-journey:local
+    depends_on:
+      origin:
+        condition: service_started
+      verdaccio:
+        condition: service_healthy
+    environment:
+      KB_CREATE_DOWNLOAD_BASE_URL: http://origin:8080
+      KB_JOURNEY_REGISTRY: http://verdaccio:4873
+      KB_JOURNEY_SCENARIO: ${KB_JOURNEY_SCENARIO:-commit}
+      KB_JOURNEY_FRONT_DOOR: ${KB_JOURNEY_FRONT_DOOR:-agent}
+      KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}
+      GITHUB_STEP_SUMMARY: /tmp/journey-summary.md
+      KB_JOURNEY_SUMMARY: /summary/journey-summary.md
+    volumes:
+      - ../.journey/reports:/summary
+    networks: [journey]
+    init: true
+
+  verdaccio:
+    extends:
+      file: docker-compose.yml
+      service: verdaccio
+    networks: [journey]
+
+networks:
+  journey:
+    name: kb-installer-journey
