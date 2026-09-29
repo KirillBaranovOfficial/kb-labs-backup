@@ -52,6 +52,45 @@ catalog also covers:
 - adding, editing, running, inspecting, and removing workflows;
 - isolated platform/project directories and clean CI installation.
 
+## Clean installer release gate
+
+`e2e/journey/run.sh` builds a local candidate from the current tree, publishes
+its packed packages to the existing local Verdaccio registry, seals a release
+index, and serves the launcher binary, checksum file, and index from a local
+HTTP origin. The runner sets `KB_CREATE_DOWNLOAD_BASE_URL` to that origin; the
+installer uses the normal GitHub Releases URL whenever this variable is unset.
+
+Each journey is a new Node 24 Linux container with git and pnpm 12.8.1, while
+the platform pins pnpm 11.4.0. The container starts with an empty temporary
+HOME. The matrix covers direct agent apply for every built-in scenario, the
+human `install` path through a PTY (defaults and a non-default scenario), and
+the Node, port, and relative-path failures. A fresh git project then checks the
+installed `kb` command, first value, runtime isolation, status, doctor, and
+uninstall. Results include durations, platform-root size, and the first failed
+step; CI appends the same table to the job summary.
+
+Run the complete candidate journey locally from the repository root:
+
+```bash
+pnpm install --frozen-lockfile
+e2e/journey/run.sh
+```
+
+The script builds packages in dependency order, runs journeys one at a time to
+fit Docker Desktop's memory budget, and removes its Compose containers and
+volumes on exit. It works on macOS with Docker Desktop because install and
+runtime commands execute in isolated Linux containers; neither the host HOME
+nor host KB Labs state is used. To reuse a candidate already prepared by the
+build, run `e2e/journey/run.sh --no-build`. To prepare packages, the sealed
+index, and release-shaped binary files without starting containers, run
+`e2e/journey/run.sh --prepare-only`.
+
+CI builds the candidate once, then fans out fresh-container journeys. The
+reusable workflow is called on relevant pull requests and pushes to `master`,
+and is a required dependency of the release-candidate build job. The affected
+paths include the launcher, runtime, CLI, host services, adapters, plugins,
+release-index preparation, and candidate packaging.
+
 ## Test layers and responsibilities
 
 | Layer | Purpose | Example command |
