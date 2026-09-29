@@ -18,7 +18,9 @@ fi
   cd "$ROOT/tools/kb-create"
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
     -o "$TARGET/kb-create-linux-amd64" .
-  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
+  # The installer artifact targets the Linux runner; the sealer runs on the
+  # machine preparing the candidate (macOS locally, Linux in CI).
+  CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
     -o "$OUT/kb-create-release-index" ./v2/cmd/kb-create-release-index
 )
 
