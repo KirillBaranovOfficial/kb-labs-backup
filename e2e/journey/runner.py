@@ -234,7 +234,7 @@ def main():
             fail("kb-create install: terminal showed no success and next steps")
     else:
         args = [launcher, "apply", "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
-                "--request-platform-root", str(PLATFORM), "--scenario", SCENARIO,
+                "--request-platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", SCENARIO,
                 "--registry", REGISTRY]
         if VARIANT == "relative-path":
             args[args.index(str(PLATFORM))] = "./relative-kb-platform"
