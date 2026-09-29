@@ -72,13 +72,13 @@ step; CI appends the same table to the job summary.
 Run the complete candidate journey locally from the repository root:
 
 ```bash
-pnpm install --frozen-lockfile
 e2e/journey/run.sh
 ```
 
-The script builds packages in dependency order, runs journeys one at a time to
-fit Docker Desktop's memory budget, and removes its Compose containers and
-volumes on exit. It works on macOS with Docker Desktop because install and
+The script installs the frozen workspace dependencies and builds packages in
+dependency order, then runs journeys one at a time to fit Docker Desktop's
+memory budget. It removes its Compose containers and volumes on exit. It works
+on macOS with Docker Desktop because install and
 runtime commands execute in isolated Linux containers; neither the host HOME
 nor host KB Labs state is used. To reuse a candidate already prepared by the
 build, run `e2e/journey/run.sh --no-build`. To prepare packages, the sealed

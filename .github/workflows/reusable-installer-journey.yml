@@ -58,7 +58,7 @@ jobs:
           const journeys = fs.readdirSync(dir)
             .filter(name => name.endsWith('.json') && name !== 'custom.json')
             .map(name => `agent:${path.basename(name, '.json')}`);
-          journeys.push('human:default', 'human:nondefault', 'negative:wrong-node',
+          journeys.push('agent-input:commit', 'human:default', 'human:nondefault', 'negative:wrong-node',
             'negative:occupied-port', 'negative:relative-path');
           process.stdout.write(`journeys=${JSON.stringify(journeys)}\n`);
           NODE

@@ -53,6 +53,7 @@ status=0
 if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
   case "$KB_JOURNEY_ONLY" in
     agent:*) run_journey agent "${KB_JOURNEY_ONLY#agent:}" default ;;
+    agent-input:*) run_journey agent "${KB_JOURNEY_ONLY#agent-input:}" input ;;
     human:default) run_journey human explore human-default ;;
     human:nondefault) run_journey human commit human-nondefault ;;
     negative:*) run_journey agent commit "${KB_JOURNEY_ONLY#negative:}" ;;
@@ -64,6 +65,7 @@ else
     [[ "$scenario" == custom ]] && continue
     run_journey agent "$scenario" default
   done < <(find tools/kb-create/v2/scenario/scenarios -maxdepth 1 -name '*.json' -print | sort)
+  run_journey agent commit input
   run_journey human explore human-default
   run_journey human commit human-nondefault
   for variant in wrong-node occupied-port relative-path; do

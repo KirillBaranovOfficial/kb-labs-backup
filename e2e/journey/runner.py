@@ -6,6 +6,7 @@ import json
 import os
 import pty
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -60,16 +61,24 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = ""):
     output = bytearray()
     deadline = time.monotonic() + 900
     sent_choice = not choice
+    last_prompt = ""
     while proc.poll() is None and time.monotonic() < deadline:
         try:
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if not ready:
+                continue
             chunk = os.read(master, 8192)
             if chunk:
                 output.extend(chunk)
-                if choice and not sent_choice:
-                    os.write(master, (choice + "\n" + "\n" * 80).encode())
-                    sent_choice = True
-                else:
-                    os.write(master, b"\n" * 8)
+                visible = output.decode(errors="replace")[-2000:]
+                prompts = re.findall(r"(?im)^.*(?:\?|\[.*(?:default|y/n|yes/no).*\]|default[^\n]*:|press enter[^\n]*|select[^\n]*:).*?$", visible)
+                prompt = prompts[-1] if prompts else ""
+                if prompt and prompt != last_prompt:
+                    answer = choice if choice and not sent_choice and re.search(r"scenario|journey|setup", prompt, re.I) else ""
+                    if answer:
+                        sent_choice = True
+                    os.write(master, (answer + "\n").encode())
+                    last_prompt = prompt
         except OSError:
             break
     if proc.poll() is None:
@@ -103,6 +112,45 @@ def append_summary(passed: bool):
     with report.open("a") as stream:
         stream.write("\n".join(lines) + "\n")
     print("\n".join(lines))
+
+
+def extract_request(payload):
+    if isinstance(payload, dict):
+        if payload.get("schema") == "kb.create/v2" and "platformRoot" in payload:
+            return payload
+        for value in payload.values():
+            found = extract_request(value)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = extract_request(value)
+            if found is not None:
+                return found
+    return None
+
+
+def verify_listener_ownership():
+    result, _ = run(["ss", "-H", "-ltnp"], timeout=20)
+    if not require(result, step="list platform listeners"):
+        return
+    pids = set(re.findall(r"pid=(\d+)", result.stdout))
+    if not pids:
+        fail("platform is running but exposes no owned listening process")
+        return
+    for pid in pids:
+        cmdline = Path(f"/proc/{pid}/cmdline")
+        try:
+            command = cmdline.read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            fail(f"listener pid {pid} disappeared before ownership could be checked")
+            continue
+        try:
+            cwd = os.readlink(f"/proc/{pid}/cwd")
+        except OSError:
+            cwd = ""
+        if str(PLATFORM) not in command and not cwd.startswith(str(PLATFORM)):
+            fail(f"listener pid {pid} is not running from this platform root: {command[:240]}")
 
 
 def main():
@@ -186,6 +234,13 @@ def main():
             args[args.index(str(PLATFORM))] = "./relative-kb-platform"
         result, elapsed = run(args, env=env, timeout=1200)
         TIMES["apply"] = elapsed
+        if VARIANT == "relative-path":
+            passed = result.returncode != 0 and re.search(r"KB_INSTALL_[A-Z0-9_]+", result.stdout) is not None
+            passed = passed and re.search(r"(?i)(absolute|relative).*(path|platform root)|(--request-platform-root|kb-create apply)", result.stdout) is not None
+            if not passed:
+                fail(f"relative platform root: expected a precise KB_INSTALL_* error and path hint; {' '.join(result.stdout.split())[-500:]}")
+            append_summary(passed)
+            return 0 if passed else 1
         if not require(result, step="kb-create apply --json"):
             append_summary(False)
             return 1
@@ -197,26 +252,50 @@ def main():
             return 1
         if payload.get("ok") is not True:
             fail("kb-create apply --json: result did not report ok=true")
+        if VARIANT == "input":
+            request = extract_request(payload)
+            if request is None:
+                fail("kb-create apply --json: launcher output contained no kb.create/v2 request")
+            else:
+                request_file = HOME / "launcher-request.json"
+                request_file.write_text(json.dumps(request) + "\n")
+                removed, _ = run([launcher, "uninstall", "--yes"], env=env, timeout=180)
+                if require(removed, step="remove direct-flags install before --input"):
+                    args = [launcher, "apply", "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
+                            "--input", str(request_file), "--registry", REGISTRY, "--yes"]
+                    result, elapsed = run(args, env=env, timeout=1200)
+                    TIMES["apply"] += elapsed
+                    if not require(result, step="kb-create apply --input launcher request"):
+                        append_summary(False)
+                        return 1
+                    try:
+                        if json.loads(result.stdout).get("ok") is not True:
+                            fail("kb-create apply --input: result did not report ok=true")
+                    except json.JSONDecodeError:
+                        fail("kb-create apply --input: output was not one JSON document")
 
     if FIRST_FAILURE:
         append_summary(False)
         return 1
 
+    verify_listener_ownership()
+
     # New login shell and fresh project directory prove user-facing PATH and runtime isolation.
     PROJECT.mkdir(exist_ok=True)
-    (PROJECT / ".gitignore").write_text("\n")
     run(["git", "init", "-q"], env=env, cwd=PROJECT)
     (PROJECT / "note.txt").write_text("journey first value\n")
     run(["git", "add", "note.txt"], env=env, cwd=PROJECT)
     result, elapsed = run(["bash", "-lc", "kb --help && kb commit --help"], env=env, cwd=PROJECT, timeout=180)
     TIMES["first command"] = elapsed
     if require(result, step="new login shell kb --help"):
-        if FRONT == "agent":
+        if FRONT == "agent" and SCENARIO == "commit":
             result, elapsed = run(["bash", "-lc", "kb commit --dry-run --note 'Prepare the staged change'"],
                                   env=env, cwd=PROJECT, timeout=300)
             TIMES["first command"] += elapsed
             if not require(result, step="kb commit first value"):
                 pass
+            elif "Prepare the staged change" not in result.stdout:
+                fail("kb commit first value: output did not include the supplied human note")
         status, _ = run(["git", "status", "--porcelain"], env=env, cwd=PROJECT)
         if status.stdout.strip() != "?? note.txt" and status.stdout.strip() != "A  note.txt":
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
@@ -229,8 +308,20 @@ def main():
     result, _ = run([launcher, "uninstall", "--yes"], env=env, timeout=180)
     if require(result, step="kb-create uninstall"):
         alive = [p for p in PROCESSES if p.poll() is None]
-        if alive or PLATFORM.exists() or (BIN / "kb").exists():
-            fail("uninstall left a process, shim, or platform root")
+        listeners, _ = run(["ss", "-H", "-ltnp"], timeout=20)
+        if listeners.stdout.strip():
+            fail(f"uninstall left listening TCP ports: {' '.join(listeners.stdout.split())[:400]}")
+        platform_pids = set()
+        for pid in re.findall(r"pid=(\d+)", listeners.stdout):
+            try:
+                command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+                cwd = os.readlink(f"/proc/{pid}/cwd")
+                if str(PLATFORM) in command or cwd.startswith(str(PLATFORM)):
+                    platform_pids.add(pid)
+            except OSError:
+                continue
+        if alive or platform_pids or PLATFORM.exists() or (BIN / "kb" ).exists():
+            fail("uninstall left a platform process, listening port, shim, or platform root")
     passed = not FIRST_FAILURE
     append_summary(passed)
     return 0 if passed else 1

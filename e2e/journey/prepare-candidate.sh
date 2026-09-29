@@ -31,6 +31,10 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
 
 (
   cd "$TARGET"
-  sha256sum kb-create-linux-amd64 release-index.json > checksums.txt
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum kb-create-linux-amd64 release-index.json > checksums.txt
+  else
+    shasum -a 256 kb-create-linux-amd64 release-index.json > checksums.txt
+  fi
 )
 echo "Prepared $TARGET"
