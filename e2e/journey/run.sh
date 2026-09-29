@@ -60,11 +60,12 @@ if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
     *) echo "Unknown KB_JOURNEY_ONLY value: $KB_JOURNEY_ONLY" >&2; exit 2 ;;
   esac
 else
-  while IFS= read -r scenario_file; do
+  mapfile -t scenario_files < <(find tools/kb-create/v2/scenario/scenarios -maxdepth 1 -name '*.json' -print | sort)
+  for scenario_file in "${scenario_files[@]}"; do
     scenario=$(basename "$scenario_file" .json)
     [[ "$scenario" == custom ]] && continue
     run_journey agent "$scenario" default
-  done < <(find tools/kb-create/v2/scenario/scenarios -maxdepth 1 -name '*.json' -print | sort)
+  done
   run_journey agent commit input
   run_journey human explore human-default
   run_journey human commit human-nondefault
