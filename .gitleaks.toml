@@ -6,6 +6,28 @@ title = "KB Labs gitleaks config"
 [extend]
 useDefault = true
 
+# These unit tests deliberately use fixed fake bearer tokens to exercise their
+# request guards. Scope the exceptions to the exact files and the matching rule.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Fake bearer tokens in project runtime unit tests"
+  paths = [
+    '''^services/project-runtime/app/src/__tests__/args\.test\.ts$''',
+    '''^services/project-runtime/app/src/__tests__/guard\.test\.ts$''',
+    '''^services/project-runtime/app/src/__tests__/runtime\.test\.ts$''',
+  ]
+
+# This unit test uses an AWS-shaped sample to verify credential detection; it
+# does not contain a real AWS access key.
+[[rules]]
+id = "aws-access-token"
+
+  [[rules.allowlists]]
+  description = "AWS-shaped false positive in secret detection unit test"
+  paths = ['''^core/config/src/__tests__/write-user-config\.spec\.ts$''']
+
 # Allowlist of intentional test fixtures, e2e certificates, fake test secrets,
 # and committed build artifacts — NOT real credentials. Path-based so it stays
 # stable across squash-merges (commit-fingerprint allowlists break when SHAs
