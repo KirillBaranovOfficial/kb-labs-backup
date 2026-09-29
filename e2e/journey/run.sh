@@ -44,7 +44,7 @@ run_journey() {
   local front_door="$1" scenario="$2" variant="$3"
   echo "==> $front_door / $scenario / $variant"
   if ! KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
-    "${COMPOSE[@]}" run --rm -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT runner; then
+    "${COMPOSE[@]}" run --rm -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT runner < /dev/null; then
     status=1
   fi
 }
@@ -60,12 +60,11 @@ if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
     *) echo "Unknown KB_JOURNEY_ONLY value: $KB_JOURNEY_ONLY" >&2; exit 2 ;;
   esac
 else
-  mapfile -t scenario_files < <(find tools/kb-create/v2/scenario/scenarios -maxdepth 1 -name '*.json' -print | sort)
-  for scenario_file in "${scenario_files[@]}"; do
+  while IFS= read -r scenario_file; do
     scenario=$(basename "$scenario_file" .json)
     [[ "$scenario" == custom ]] && continue
     run_journey agent "$scenario" default
-  done
+  done < <(find tools/kb-create/v2/scenario/scenarios -maxdepth 1 -name '*.json' -print | sort)
   run_journey agent commit input
   run_journey human explore human-default
   run_journey human commit human-nondefault
