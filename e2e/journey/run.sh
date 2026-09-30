@@ -28,6 +28,10 @@ if [[ "${1:-}" == "--prepare-only" ]]; then
   exit
 fi
 
+if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
+  python3 e2e/journey/scenarios.py validate --level release
+fi
+
 if [[ "${1:-}" != "--no-build" ]]; then
   pnpm install --frozen-lockfile
   kb-devkit run build --affected
@@ -44,7 +48,8 @@ run_journey() {
   local front_door="$1" scenario="$2" variant="$3"
   echo "==> $front_door / $scenario / $variant"
   if ! KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
-    "${COMPOSE[@]}" run --rm -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT runner < /dev/null; then
+    "${COMPOSE[@]}" run --rm -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
+    -e KB_JOURNEY_SERVICE_PROFILE runner < /dev/null; then
     status=1
   fi
 }
@@ -66,20 +71,18 @@ if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
     *) echo "Unknown KB_JOURNEY_ONLY value: $KB_JOURNEY_ONLY" >&2; exit 2 ;;
   esac
 else
-  # Exercise repeat/install and PTY paths before the remaining scenarios use
-  # the 2 GiB VM's memory budget. Every runner still starts with a clean HOME.
-  run_journey agent commit default
-  run_journey agent commit input
-  run_journey human explore human-default
-  run_journey human commit human-nondefault
-  while IFS= read -r scenario_file; do
-    scenario=$(basename "$scenario_file" .json)
-    [[ "$scenario" == custom || "$scenario" == commit ]] && continue
-    run_journey agent "$scenario" default
-  done < <(find tools/kb-create/v2/scenario/scenarios -maxdepth 1 -name '*.json' -print | sort)
-  for variant in wrong-node occupied-port relative-path; do
-    run_journey agent commit "$variant"
-  done
+  while IFS= read -r selector; do
+    case "$selector" in
+      agent:*) run_journey agent "${selector#agent:}" default ;;
+      agent-input:*) run_journey agent commit input ;;
+      human:default) run_journey human explore human-default ;;
+      human:nondefault) run_journey human commit human-nondefault ;;
+      negative:*) run_journey agent commit "${selector#negative:}" ;;
+      service-local:*) KB_JOURNEY_SERVICE_PROFILE=nightly run_journey agent "${selector#service-local:}" default ;;
+      service-secured:*) KB_JOURNEY_SERVICE_PROFILE=nightly run_journey human "${selector#service-secured:}" secured ;;
+      *) echo "Unknown scenario manifest selector: $selector" >&2; status=1 ;;
+    esac
+  done < <(python3 -c 'import json,subprocess; print("\n".join(json.loads(subprocess.check_output(["python3","e2e/journey/scenarios.py","list","--level","release"],text=True))))')
 fi
 
 echo "Journey matrix complete (exit $status)"

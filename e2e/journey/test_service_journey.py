@@ -128,6 +128,9 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertTrue(wrapper_copied, "Dockerfile.runner must install entrypoint.py as kb-journey-runner")
         self.assertTrue(required_modules <= copied_into_package,
                         f"Dockerfile.runner misses journey modules: {sorted(required_modules - copied_into_package)}")
+        self.assertIn("COPY e2e/journey/steps /opt/kb-journey/steps",
+                      (journey_dir / "Dockerfile.runner").read_text(),
+                      "Dockerfile.runner must copy the auth step package imported by runner.py")
 
     def test_aggregate_compares_previous_status_and_uses_stable_fingerprint(self):
         bad = {"capability": "workflow", "mode": "local", "name": "run", "status": "FAIL",
@@ -203,8 +206,9 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertIn("status must be", failure["first_failure"]["message"])
 
     def test_declared_profile_capabilities_match_service_checks(self):
-        for mode in ("local", "secured"):
-            self.assertEqual(declared_capabilities(mode), {capability for _, capability, _ in checks(mode)})
+        for mode, auth_capability in (("local", "auth.local"), ("secured", "auth.invite-reset")):
+            self.assertEqual(declared_capabilities(mode),
+                             {capability for _, capability, _ in checks(mode)} | {auth_capability})
 
     def test_issue_sync_is_idempotent_updates_existing_and_closes_fixed(self):
         client = FakeGitHub()
@@ -235,8 +239,8 @@ class ServiceJourneyTests(unittest.TestCase):
     def test_required_mode_steps_and_workflow_fixture_are_explicit(self):
         local = {capability for _, capability, _ in checks("local")}
         secured = {capability for _, capability, _ in checks("secured")}
-        self.assertNotIn("auth.invites", local)
-        self.assertIn("auth.invites", secured)
+        self.assertNotIn("auth.invites", local | secured)
+        self.assertNotIn("scaffold", local | secured)
         with patch("service_runner.request", return_value=(200, {"data": {"workflows": []}}, {})):
             failure = discover_workflow("prj_fixture", "")
         self.assertIn("e2e-hello fixture", failure)

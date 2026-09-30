@@ -59,10 +59,7 @@ def expect(path: str, expected: set[int], capability: str, *, method="GET", payl
 
 def checks(mode: str):
     yield ("gateway readiness", "gateway", lambda: expect("/ready", {200}, "gateway readiness"))
-    if mode == "local":
-        yield ("local no-login identity", "auth.local", lambda: expect("/auth/me", {200}, "local no-login identity"))
-    else:
-        yield ("secured anonymous denial", "auth.secured", lambda: expect("/auth/me", {401, 403}, "secured anonymous denial"))
+    if mode == "secured":
         def admin_login():
             if not ADMIN_PASSWORD:
                 return "BLOCKED: secured profile needs KB_JOURNEY_ADMIN_PASSWORD; provide test credentials in the isolated journey container"
@@ -100,17 +97,11 @@ def checks(mode: str):
     yield ("Studio shell", "studio", lambda: expect("/", {200}, "Studio shell"))
     yield ("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
     yield ("marketplace registry", "marketplace", lambda: expect(f"/api/v1/projects/{pid}/rest/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
-    yield ("plugin author scaffold API", "scaffold", lambda: expect("/api/v1/scaffold/templates", {200}, "plugin scaffold templates", token=auth_token()))
-    if mode == "secured":
-        yield ("admin invite API", "auth.invites", lambda: expect("/auth/invites", {200}, "invite management API", token=auth_token()))
-        yield ("password reset completion API", "auth.password-reset", lambda: expect(
-            "/auth/password/reset", {400}, "password reset completion API",
-            method="POST", payload={"token": "journey-probe", "newPassword": "JourneyReplacement123!"}, token=auth_token()))
-
-
 def declared_capabilities(mode: str) -> set[str]:
     """Return every capability the selected service profile promises to check."""
-    return {capability for _, capability, _ in checks(mode)}
+    capabilities = {capability for _, capability, _ in checks(mode)}
+    capabilities.add("auth.local" if mode == "local" else "auth.invite-reset")
+    return capabilities
 
 
 def discover_workflow(project_id: str, token: str) -> str | None:

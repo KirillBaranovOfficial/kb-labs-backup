@@ -13,6 +13,11 @@ binary version skew unless `--allow-version-skew` is passed on purpose.
 
 ## Candidate gates
 
+`release-build-candidate.yml` first runs the installer and user-scenario
+journey contract. The candidate cannot build while any declared scenario is
+marked NOT COVERED or while a journey fails. The contract and current gaps are
+listed in the [release journey coverage page](/guides/release-journey-coverage).
+
 The workflow engine creates a release intent and dispatches the candidate
 builder. The candidate workflow creates the immutable bundle; the delivery
 workflow only verifies and publishes that bundle. For a platform candidate:
@@ -35,7 +40,10 @@ There is no independent binary release workflow or separate binary promotion
 path. The workflow engine invokes delivery for `canary` or `stable` only after
 the candidate identity and smoke evidence are valid.
 
-The candidate smoke is deliberately a bounded installer/package/config/workflow gate. Actual service startup remains covered by the sharded integration suites; a green smoke does not replace them.
+The delivery workflow's post-publish smoke remains a bounded
+installer/package/config/workflow check. Before candidate build, the release
+journey gate above exercises the declared user scenarios, including service
+startup; a green post-publish smoke does not replace that matrix.
 
 The compatibility matrix is conservative in the first release: it records the
 exact staged Platform/SDK pair (same version) and the SDK's declared runtime peer range. A

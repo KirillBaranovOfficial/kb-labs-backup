@@ -10,6 +10,7 @@ RUN npm install --prefix /opt/kb-studio-playwright @playwright/test@1.52.0 \
 ENV PATH="/root/.local/bin:/root/.local/share/pnpm:$PATH"
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
 COPY e2e/journey/*.py /opt/kb-journey/
+COPY e2e/journey/steps /opt/kb-journey/steps
 COPY e2e/journey/entrypoint.py /usr/local/bin/kb-journey-runner
 ENV PYTHONPATH="/opt/kb-journey"
 COPY e2e/journey/studio-playwright.config.mjs /opt/kb-studio-playwright/playwright.config.mjs

@@ -18,7 +18,8 @@ import urllib.request
 from pathlib import Path
 
 from studio_steps import create_studio_member, run_studio_browser_step
-from service_steps import record_runner_failure
+from service_steps import Journey, record_runner_failure
+from steps.auth import run_local_auth_steps, run_secured_auth_steps
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = os.getenv("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -327,6 +328,33 @@ def uninstall_removed_platform_root():
     return not PLATFORM.exists() and not receipt.exists() and not snapshots.exists()
 
 
+def restart_host(launcher: str, env: dict[str, str]) -> str:
+    result, _ = run([launcher, "restart", "--platform-root", str(PLATFORM)], env=env, timeout=180)
+    if not require(result, step="kb-create restart for auth persistence"):
+        raise RuntimeError("host restart failed during secured auth journey")
+    return "http://127.0.0.1:4000"
+
+
+def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
+    receipt = PLATFORM / ".kb" / "v2" / "receipt.json"
+    hidden_receipt = receipt.with_name("receipt.journey-hidden.json")
+    if not receipt.is_file() or hidden_receipt.exists():
+        fail("broken-install doctor fixture requires one active receipt")
+        return
+    os.replace(receipt, hidden_receipt)
+    try:
+        result, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
+        try:
+            diagnostic = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            diagnostic = {}
+        if (result.returncode != 1 or diagnostic.get("ok") is not False
+                or diagnostic.get("installed") is not False or diagnostic.get("next") != "kb-create install"):
+            fail(f"kb-create doctor did not diagnose missing installation receipt with the install next step: {' '.join(result.stdout.split())[-500:]}")
+    finally:
+        os.replace(hidden_receipt, receipt)
+
+
 def main():
     global FIRST_FAILURE
     env = BASE_ENV.copy()
@@ -551,6 +579,8 @@ def main():
                 stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: {command}-output ==\n{result.stdout[-5000:]}\n")
             fail(f"kb-create {command}: expected human summary '{key}'")
 
+    verify_broken_install_doctor(launcher, env)
+
     local_service_journey = FRONT == "agent" and SCENARIO == "explore" and VARIANT == "default"
     secured_service_journey = FRONT == "human" and VARIANT.endswith("secured")
     if BASE_ENV.get("KB_JOURNEY_SERVICE_PROFILE") == "nightly" and (local_service_journey or secured_service_journey):
@@ -584,7 +614,31 @@ def main():
         except json.JSONDecodeError:
             project_payload = {}
             project_id = ""
+        if not require(project_add, step="kb project add --init") or not project_id:
+            fail("project registration did not return a project ID")
         service_env["KB_JOURNEY_PROJECT_ID"] = project_id
+        auth_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-auth-{mode}.json")
+        auth_journey = Journey(mode, f"auth-{mode}")
+
+        def run_auth_flow():
+            if mode == "local":
+                run_local_auth_steps("http://127.0.0.1:4000")
+            else:
+                run_secured_auth_steps(
+                    "http://127.0.0.1:4000",
+                    service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                    "auth-reset-member@example.test",
+                    lambda: restart_host(launcher, env),
+                )
+            return None
+
+        auth_capability = "auth.local" if mode == "local" else "auth.invite-reset"
+        auth_journey.step("local identity" if mode == "local" else "admin invite, reset, and restart persistence",
+                          auth_capability, run_auth_flow)
+        auth_result = auth_journey.write_json(auth_report)
+        if auth_result.status != "PASS":
+            fail(f"{mode} auth journey: {auth_result.first_failure}")
         service_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-{mode}.json")
         result, elapsed = run(["python3", "/opt/kb-journey/service_runner.py", "--mode", mode, "--output", str(service_report)],
                              env=service_env, timeout=300)

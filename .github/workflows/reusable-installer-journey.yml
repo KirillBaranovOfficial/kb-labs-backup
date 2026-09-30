@@ -8,11 +8,11 @@ on:
         type: string
         required: false
         default: ''
-      service-profile:
-        description: Run post-install service steps in addition to installer assertions
+      scenario-level:
+        description: Scenario manifest level consumed by this gate
         type: string
         required: false
-        default: fast
+        default: release
 
 permissions:
   contents: read
@@ -29,6 +29,10 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
+      - name: Fail when a declared release journey is not covered
+        env:
+          SCENARIO_LEVEL: ${{ inputs.scenario-level }}
+        run: python3 e2e/journey/scenarios.py validate --level "$SCENARIO_LEVEL"
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with: { run_install: false }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -56,22 +60,10 @@ jobs:
           KB_JOURNEY_PACKAGES_READY: ${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}
         run: e2e/journey/prepare-candidate.sh
       - id: matrix
-        name: Derive journey matrix from built-in scenarios
+        name: Read journey matrix from the shared scenario manifest
         env:
-          SERVICE_PROFILE: ${{ inputs.service-profile }}
-        run: |
-          node - <<'NODE' >> "$GITHUB_OUTPUT"
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const dir = 'tools/kb-create/v2/scenario/scenarios';
-          const journeys = fs.readdirSync(dir)
-            .filter(name => name.endsWith('.json') && name !== 'custom.json')
-            .map(name => `agent:${path.basename(name, '.json')}`);
-          journeys.push('agent-input:commit', 'human:default', 'human:nondefault', 'negative:wrong-node',
-            'negative:occupied-port', 'negative:relative-path');
-          if (process.env.SERVICE_PROFILE === 'nightly') journeys.push('service-secured:explore');
-          process.stdout.write(`journeys=${JSON.stringify(journeys)}\n`);
-          NODE
+          SCENARIO_LEVEL: ${{ inputs.scenario-level }}
+        run: printf 'journeys=%s\n' "$(python3 e2e/journey/scenarios.py list --level "$SCENARIO_LEVEL")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: installer-journey-candidate
@@ -112,7 +104,7 @@ jobs:
       - name: Run journey in a fresh container
         env:
           KB_JOURNEY_CI: '1'
-          KB_JOURNEY_SERVICE_PROFILE: ${{ inputs.service-profile }}
+          KB_JOURNEY_SERVICE_PROFILE: ${{ startsWith(matrix.case, 'service-') && 'nightly' || '' }}
           KB_JOURNEY_ONLY: ${{ matrix.case }}
         run: e2e/journey/run.sh --no-build
       - name: Stop journey containers
