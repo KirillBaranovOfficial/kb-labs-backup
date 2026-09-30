@@ -1,208 +1,104 @@
 ---
 title: "Installation"
-description: "Install KB Labs via kb-create, pin versions, verify checksums, and upgrade."
-updatedAt: "2026-08-22"
+description: "Install KB Labs locally or apply a release index from CI."
+updatedAt: "2026-09-30"
 order: 2
 ---
 
-KB Labs is installed through `kb-create` — a Go binary that downloads the platform, runs the setup wizard, and manages your workspace. This page covers all installation paths, version pinning, and upgrading.
+The supported human installation uses the `kb-create` launcher. It installs
+the platform into `~/kb-platform`, starts it, verifies its health, and adds the
+`kb` command to your user environment.
 
 ## Prerequisites
 
-- **macOS** or **Linux** (Windows support coming)
-- **curl** (for the one-line install)
-- **Git**
-- **Node.js** 20+ and **pnpm** 9+ (installed automatically if missing, or you can pre-install)
+- macOS or Linux.
+- Node.js 24.x. Install it before continuing; pnpm is managed by the installer.
+- At least 1.20 GiB of available memory and 2 GiB of free disk space.
+- `curl` and a network connection to the KB Labs release index and package registry.
 
-## Quick install (recommended)
+## Install
 
 ```bash
 curl -fsSL https://kblabs.ru/install.sh | sh
+kb-create install
 ```
 
-The script:
+The shell script installs the launcher in `~/.local/bin`. Ensure that directory
+is on `PATH`, then run `kb-create install`. Follow the prompts to choose local
+or secured access. Local access is loopback-only and requires no sign-in.
+Secured access enables sign-in and lets you configure the first administrator
+during setup.
 
-1. Detects your OS and architecture
-2. Downloads the correct `kb-create` binary from GitHub releases
-3. Installs it to `~/.local/bin` (or `/usr/local/bin` if you have write access)
-4. Verifies the binary works
-
-After install, `kb-create` is available in your PATH.
-
-The public `https://kblabs.ru/install.sh` URL redirects to the maintained
-launcher script in the monorepo at
-[`tools/kb-create/install.sh`](https://github.com/kb-labs-team/kb-labs/blob/main/tools/kb-create/install.sh).
-
-## Pin a specific version
-
-For reproducible CI and controlled upgrades:
+To install the platform into another writable directory:
 
 ```bash
-curl -fsSL https://kblabs.ru/install.sh | sh -s -- --version v1.2.3
+kb-create install --platform-root /path/to/kb-platform
 ```
 
-## Verify checksum
+The install command downloads and verifies platform artifacts, installs
+packages, writes configuration, starts the host, verifies the installation,
+and configures the `kb` shim. Its success output gives the next command, for
+example `cd ~/any-project && kb commit`.
 
-```bash
-curl -fsSL https://github.com/kb-labs-team/kb-labs/releases/download/v1.2.3/checksums.txt \
-  | grep kb-create-linux-amd64
-```
-
-Compare the SHA256 against the downloaded binary:
-
-```bash
-sha256sum ~/.local/bin/kb-create
-```
-
-## Manual binary install
-
-For environments where `curl | sh` is restricted, download the binary directly from [GitHub releases](https://github.com/kb-labs-team/kb-labs/releases/latest):
-
-| Platform              | Binary                   |
-| --------------------- | ------------------------ |
-| macOS (Apple Silicon) | `kb-create-darwin-arm64` |
-| macOS (Intel)         | `kb-create-darwin-amd64` |
-| Linux (x86_64)        | `kb-create-linux-amd64`  |
-| Linux (ARM64)         | `kb-create-linux-arm64`  |
-
-After downloading:
-
-```bash
-chmod +x kb-create-darwin-arm64
-mv kb-create-darwin-arm64 /usr/local/bin/kb-create
-```
-
-## Bootstrap a workspace
-
-Once `kb-create` is installed, create your first workspace:
-
-```bash
-kb-create my-project
-```
-
-The interactive wizard:
-
-- Picks a package manager (pnpm recommended)
-- Sets up the platform directory (`~/.kb` by default or project-local)
-- Generates scoped `.kb/kb.config.jsonc` platform/project configuration
-- Runs `pnpm install`
-
-The wizard and the agent/CI JSON protocol compile into the same V2 request.
-For CI, use a sealed release index and the deterministic `apply` operation; it
-does not run interactive scenarios:
-
-```bash
-kb-create apply --index ./release-index.json \
-  --request-platform-root ./ci-platform --project-root "$GITHUB_WORKSPACE" \
-  --plugins=release
-```
-
-The release index is the authority for the release train. It contains the
-platform, SDK and published binary labels plus their explicit compatibility
-relations. The launcher verifies the index digest and refuses to plan or apply
-an index without that matrix. Package manifests remain the source of truth for
-artifact requirements and provider capabilities.
-
-When finished, the workspace is ready:
-
-```bash
-cd my-project
-kb-create status   # shows installed components and platform path
-```
-
-## Choose a release channel or version
-
-Declarative installs can select the SDK and Platform axes independently, although
-current releases publish the SDK, Platform and binaries at one shared version. The
-Platform axis always uses one release for its core packages, adapters,
-services, plugins, and service companion CLI packages.
-
-```bash
-# Install the platform's canary train.
-kb-create my-project --yes --platform-channel canary
-
-# Pin a reproducible Platform release while leaving the SDK at its default.
-kb-create my-project --yes --platform-version 2.118.1
-
-# Use the selected train with a CI request too.
-kb-create apply --index ./release-index.json \
-  --request-platform-root ./ci-platform --platform-channel canary
-```
-
-Channels are labels in the selected release index, not direct npm tag lookups.
-An exact `--sdk-version` or `--platform-version` cannot be combined with the
-channel flag for that same axis. `kb-create` resolves the selected label to a
-concrete version before installing and stores the result in the installation
-state. Use `kb-create status` to see the selected train and resolved versions.
-
-`kb-create` validates the complete selected platform/SDK/binary relation before
-installation. An incompatible or incomplete relation fails before packages are
-written; there is no production bypass flag.
-
-## Verify the installation
+## Check or diagnose an installation
 
 ```bash
 kb-create status
+kb-create doctor
 ```
 
-Expected output:
+Both commands accept `--platform-root PATH` when you installed outside the
+default `~/kb-platform` directory. Doctor reports health checks and, when it
+finds a repairable problem, gives a recovery command.
 
-```
-KB Labs Installation
+## Agent and CI installation
 
-  Launcher:  kb-create v1.2.3
-  Platform:  @kb-labs/cli v0.1.4
-  Node:      v22.1.0
-  pnpm:      9.4.0
-  Config:    ./my-project/.kb/kb.config.jsonc ✓
-```
-
-If any component is missing, `kb-create status` will suggest a fix command.
-
-## Configure LLM access
-
-AI-powered features (Mind RAG, commit generation, AI review) require an LLM adapter. Edit `.kb/kb.config.jsonc`:
-
-```json
-{
-  "platform": {
-    "adapters": {
-      "llm": "@kb-labs/adapters-openai"
-    },
-    "adapterOptions": {
-      "llm": {
-        "apiKey": "${OPENAI_API_KEY}"
-      }
-    }
-  }
-}
-```
-
-Set the key in your environment:
+Use `apply --json` with the sealed release index and an explicit platform
+root. This path is non-interactive and produces machine-readable output:
 
 ```bash
-export OPENAI_API_KEY=sk-...
+kb-create apply --json --index ./release-index.json \
+  --request-platform-root ./ci-platform --service-profile default \
+  --scenario commit
 ```
 
-See [Configuration → kb.config](/configuration/kb-config) for all adapter options.
+Use the release index for the release train being installed. The launcher
+validates its digest and compatibility relations before it writes packages.
+Do not use a hand-built index or copy version metadata from another release.
 
-## Upgrading
+## Uninstall
 
 ```bash
-# Upgrade kb-create to latest
-curl -fsSL https://kblabs.ru/install.sh | sh
-
-# Upgrade the platform packages inside a workspace using the next sealed index.
-cd my-project
-kb-create update --index ./release-index.json
+kb-create uninstall
 ```
 
-## Enterprise
+To remove an installation outside the default location, supply the same
+`--platform-root PATH` used for install.
 
-For private repos and self-hosted rollout automation, see [Enterprise deployment](/enterprise). The `curl | sh` flow is the recommended starting point; SSH provisioning and internal mirrors layer on top.
+## Installation errors
 
-## What's next
+These are the common errors reported by the installer, with recovery guidance
+from the error catalog:
 
-→ [Quick Start](/quick-start) — start services and run your first command  
-→ [Configuration → kb.config](/configuration/kb-config) — full config reference  
-→ [Adapters](/adapters) — configure LLM, database, storage, and more
+| Error code | Meaning | Recovery |
+| --- | --- | --- |
+| `KB_INSTALL_NODE_VERSION` | Node.js is not 24.x. | Install Node 24, then run `kb-create install`; with nvm: `nvm install 24 && nvm use 24`. |
+| `KB_INSTALL_MEMORY_INSUFFICIENT` | Available memory is below 1.20 GiB. | Close memory-heavy applications or increase machine memory, then run `kb-create install` again. |
+| `KB_INSTALL_NO_DISK_SPACE` | There is not enough free disk space. | Free disk space or choose another writable directory with `kb-create install --platform-root PATH`. The preflight minimum is 2 GiB. |
+| `KB_INSTALL_PACKAGE_MANAGER_KILLED` | The package manager was killed, likely because memory ran out. | Free memory, then rerun `kb-create install`. |
+| `KB_INSTALL_PORT_IN_USE` | A required port is occupied. | Stop the process using the port named in the error, then rerun `kb-create install`. |
+
+## Configure an LLM (optional)
+
+`kb commit` can run without an LLM by using its heuristic path. To enable
+OpenAI-backed generation, configure the adapter and keep the key in an
+environment variable:
+
+```bash
+kb config set platform.adapters.llm @kb-labs/adapters-openai
+kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'
+export OPENAI_API_KEY=your-openai-api-key
+```
+
+See [Configuration → kb.config](/configuration/kb-config) for configuration
+scopes and adapter options.
