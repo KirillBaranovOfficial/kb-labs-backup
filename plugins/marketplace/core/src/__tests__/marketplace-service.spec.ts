@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import type { PackageSource, InstalledPackage, ResolvedPackage } from '@kb-labs/marketplace-contracts';
+import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
 import { MarketplaceService, mergeScopedEntries } from '../marketplace-service.js';
 
@@ -111,6 +112,45 @@ describe('MarketplaceService', () => {
   // ── install ──────────────────────────────────────────────────────────
 
   describe('install', () => {
+    it('installs project pins into the shared store and changes only marketplace.lock', async () => {
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+      const { dir, integrity } = await createPluginDir(tmpDir, 'store-plugin', '@kb-labs/store-plugin');
+      const source = createMockSource(new Map([
+        ['@kb-labs/store-plugin', { dir, version: '1.0.0', integrity }],
+      ]));
+      const resolved = await source.resolve('@kb-labs/store-plugin');
+      const storeEntry = {
+        schema: 'kb.store-entry/1' as const,
+        name: resolved.id,
+        version: resolved.version,
+        kind: 'plugin' as const,
+        integrity,
+        installedAt: new Date().toISOString(),
+      };
+      const stored: ResolvedStoreEntry = { entry: storeEntry, packageRoot: dir, entryDir: tmpDir };
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        async resolve() { return stored; },
+        async listEntries() { return [storeEntry]; },
+      };
+      const sourceInstall = vi.spyOn(source, 'install');
+      const sourceRemove = vi.spyOn(source, 'remove');
+      const service = new MarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+
+      await service.install({ scope: 'project', projectRoot }, ['@kb-labs/store-plugin']);
+      await service.uninstall({ scope: 'project', projectRoot }, ['@kb-labs/store-plugin']);
+
+      expect(sourceInstall).not.toHaveBeenCalled();
+      expect(sourceRemove).not.toHaveBeenCalled();
+      expect(await fs.readdir(projectRoot)).toEqual(['.kb']);
+      expect(await fs.readdir(path.join(projectRoot, '.kb'))).toEqual(['kb.config.json', 'marketplace.lock']);
+    });
+
     it('installs a plugin and writes to marketplace.lock', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'test-plugin', '@kb-labs/test-plugin');
       const source = createMockSource(
