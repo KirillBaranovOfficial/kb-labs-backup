@@ -54,14 +54,16 @@ async function makePlugin(f: PluginFixture): Promise<string> {
 async function lockEntry(
   root: string,
   dir: string,
-  source: 'marketplace' | 'local',
+  source: 'platform' | 'marketplace' | 'local',
   enabled = true,
 ): Promise<ReturnType<typeof createMarketplaceEntry>> {
   const entry = createMarketplaceEntry({
     version: '1.0.0',
     integrity: await computePackageIntegrity(dir),
     resolvedPath: path.relative(root, dir) || '.',
-    source,
+    // These discovery fixtures test the location-based runtime path. v3
+    // project marketplace pins are exercised by the store integration test.
+    source: source === 'marketplace' ? 'platform' : source,
     primaryKind: 'plugin',
     provides: ['plugin'],
   });
@@ -74,7 +76,7 @@ async function writeLock(
   entries: Record<string, ReturnType<typeof createMarketplaceEntry>>,
 ): Promise<void> {
   const lock = createEmptyLock();
-  lock.installed = entries;
+  lock.plugins = entries;
   await writeMarketplaceLock(root, lock);
 }
 

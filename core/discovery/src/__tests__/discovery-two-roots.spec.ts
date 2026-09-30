@@ -70,11 +70,11 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     await makePlugin(pluginDir, '@kb-labs/commit');
 
     const platformLock = createEmptyLock();
-    platformLock.installed['@kb-labs/commit'] = createMarketplaceEntry({
+    platformLock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: await integrity(pluginDir),
       resolvedPath: './node_modules/@kb-labs/commit-entry',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -98,11 +98,11 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     const platformPluginDir = path.join(platformDir, 'node_modules', '@kb-labs', 'commit-entry');
     await makePlugin(platformPluginDir, '@kb-labs/commit');
     const platformLock = createEmptyLock();
-    platformLock.installed['@kb-labs/commit'] = createMarketplaceEntry({
+    platformLock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: await integrity(platformPluginDir),
       resolvedPath: './node_modules/@kb-labs/commit-entry',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -112,7 +112,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     const projectPluginDir = path.join(projectDir, 'plugins', 'mind', 'entry');
     await makePlugin(projectPluginDir, '@kb-labs/mind');
     const projectLock = createEmptyLock();
-    projectLock.installed['@kb-labs/mind'] = createMarketplaceEntry({
+    projectLock.plugins['@kb-labs/mind'] = createMarketplaceEntry({
       version: '2.0.0',
       integrity: await integrity(projectPluginDir),
       resolvedPath: './plugins/mind/entry',
@@ -137,11 +137,11 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     const platformCommitDir = path.join(platformDir, 'node_modules', '@kb-labs', 'commit-entry');
     await makePlugin(platformCommitDir, '@kb-labs/commit', '0.1.0');
     const platformLock = createEmptyLock();
-    platformLock.installed['@kb-labs/commit'] = createMarketplaceEntry({
+    platformLock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '0.1.0',
       integrity: await integrity(platformCommitDir),
       resolvedPath: './node_modules/@kb-labs/commit-entry',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -151,7 +151,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     const projectCommitDir = path.join(projectDir, 'plugins', 'commit', 'entry');
     await makePlugin(projectCommitDir, '@kb-labs/commit', '2.0.0');
     const projectLock = createEmptyLock();
-    projectLock.installed['@kb-labs/commit'] = createMarketplaceEntry({
+    projectLock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '2.0.0',
       integrity: await integrity(projectCommitDir),
       resolvedPath: './plugins/commit/entry',
@@ -181,11 +181,11 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     await makePlugin(platformPluginDir, '@kb-labs/workflow');
 
     const platformLock = createEmptyLock();
-    platformLock.installed['@kb-labs/workflow'] = createMarketplaceEntry({
+    platformLock.plugins['@kb-labs/workflow'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: await integrity(platformPluginDir),
       resolvedPath: './node_modules/@kb-labs/workflow-entry',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -212,7 +212,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     await makePlugin(projectPluginDir, '@kb-labs/review');
 
     const projectLock = createEmptyLock();
-    projectLock.installed['@kb-labs/review'] = createMarketplaceEntry({
+    projectLock.plugins['@kb-labs/review'] = createMarketplaceEntry({
       version: '3.0.0',
       integrity: await integrity(projectPluginDir),
       resolvedPath: './plugins/review/entry',
@@ -252,7 +252,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     await makePlugin(pluginDir, '@kb-labs/qa');
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/qa'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/qa'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: await integrity(pluginDir),
       resolvedPath: './plugins/qa/entry',

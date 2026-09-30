@@ -51,7 +51,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
     try {
       const roots = await resolveConfigRoots(getContextCwd(ctx));
       const lock = await readMarketplaceLock(roots.platformRoot, new DiagnosticCollector());
-      if (lock?.installed[packageId]?.primaryKind !== 'adapter') {
+      if (!lock?.adapters?.[packageId]) {
         return {
           ok: false,
           error: `Adapter package ${packageId} is not installed on this platform.`,

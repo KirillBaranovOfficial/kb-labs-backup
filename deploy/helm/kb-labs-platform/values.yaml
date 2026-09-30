@@ -102,7 +102,8 @@ config: {}
 # (the default) to run with each image's baked default composition — see the
 # note on `config` above and templates/configmap.yaml for why "empty" must
 # mean "mount nothing," not "mount an empty file," in this chart.
-# When set, must be a full lock: {schema: kb.marketplace/2, installed: {...}}
+# When set, must be a full schema v3 lock. Project pins must not include
+# machine-specific resolvedPath or installedAt fields.
 # (see core/discovery/src/marketplace-lock.ts).
 marketplaceLock: {}
 

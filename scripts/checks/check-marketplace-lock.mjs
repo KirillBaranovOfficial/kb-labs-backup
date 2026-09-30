@@ -8,10 +8,9 @@
  *   Input:  KB_DEVKIT_PACKAGE_NAME env or JSON on stdin
  *   Output: { issues: [{ check, severity, message, file }] }
  *
- * Rule: every `installed` entry's resolvedPath must exist on disk, and its
- * key must look like a real package id (`name` or `@scope/name`). Catches
- * drift (a package directory was deleted/moved but the lock entry wasn't)
- * and corruption (a malformed id/path written by a buggy install path)
+ * Rule: every schema v3 pin has an exact version, integrity, enabled state and
+ * source kind, and its key must look like a real package id. Project store
+ * paths are derived at runtime and must not be committed here.
  * before it rots silently for months — see the MKT-02 e2e diagnostics test,
  * which reads the same lock via `kb marketplace doctor`.
  *
@@ -28,7 +27,7 @@ const CHECK_NAME = 'check-marketplace-lock';
 const ANCHOR_PACKAGE = '@kb-labs/devkit';
 const DEVKIT_MODE = Boolean(process.env.KB_DEVKIT_MODE);
 
-const ROOT = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
+const ROOT = process.env.KB_MARKETPLACE_LOCK_ROOT ?? new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
 const LOCK_PATH = join(ROOT, '.kb', 'marketplace.lock');
 
 // @scope/name or bare name — no colons, no trailing slash, no path separators.
@@ -54,9 +53,27 @@ function validate() {
     return issues;
   }
 
-  const installed = lock.installed ?? {};
+  if (lock.schema !== 'kb.marketplace/3') {
+    const v2 = lock.schema === 'kb.marketplace/2';
+    issues.push({
+      check: CHECK_NAME,
+      severity: 'error',
+      message: v2
+        ? '.kb/marketplace.lock uses schema v2; run "kb marketplace sync" to regenerate it as v3.'
+        : '.kb/marketplace.lock must use schema kb.marketplace/3.',
+      file: '.kb/marketplace.lock',
+    });
+    return issues;
+  }
 
-  for (const [id, entry] of Object.entries(installed)) {
+  if ('adapters' in lock) {
+    issues.push({ check: CHECK_NAME, severity: 'error', message: '.kb/marketplace.lock is a project lock and must not contain a machine-level adapters map.', file: '.kb/marketplace.lock' });
+    return issues;
+  }
+
+  const plugins = lock.plugins ?? {};
+
+  for (const [id, entry] of Object.entries(plugins)) {
     if (!VALID_ID.test(id)) {
       issues.push({
         check: CHECK_NAME,
@@ -67,25 +84,41 @@ function validate() {
       continue;
     }
 
-    const resolvedPath = entry?.resolvedPath;
-    if (!resolvedPath || typeof resolvedPath !== 'string') {
+    if (entry?.source === 'marketplace' && (
+      typeof entry.version !== 'string' || typeof entry.integrity !== 'string' ||
+      typeof entry.enabled !== 'boolean' || 'resolvedPath' in entry || 'installedAt' in entry
+    )) {
       issues.push({
         check: CHECK_NAME,
         severity: 'error',
-        message: `.kb/marketplace.lock: "${id}" has no resolvedPath.`,
+        message: `.kb/marketplace.lock: "${id}" is not a machine-independent v3 pin (expected version, integrity, enabled, source; no resolvedPath or installedAt).`,
         file: '.kb/marketplace.lock',
       });
       continue;
     }
-
-    const full = join(ROOT, resolvedPath);
-    if (!existsSync(full)) {
+    if (entry?.source === 'local' && (typeof entry.link !== 'string' || entry.link.startsWith('/') || typeof entry.enabled !== 'boolean')) {
       issues.push({
         check: CHECK_NAME,
         severity: 'error',
-        message: `.kb/marketplace.lock: "${id}" points at "${resolvedPath}", which no longer exists. Remove this entry from .kb/marketplace.lock (no CLI command prunes stale entries yet — "marketplace sync" only adds, "rehash" only rebuilds discovery hashes).`,
+        message: `.kb/marketplace.lock: "${id}" has an invalid local link entry.`,
         file: '.kb/marketplace.lock',
       });
+      continue;
+    }
+    if (!['marketplace', 'local'].includes(entry?.source)) {
+      issues.push({
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `.kb/marketplace.lock: "${id}" has an unsupported project source kind.`,
+        file: '.kb/marketplace.lock',
+      });
+      continue;
+    }
+    const allowed = entry.source === 'marketplace'
+      ? ['version', 'integrity', 'enabled', 'source']
+      : ['link', 'enabled', 'source'];
+    if (Object.keys(entry ?? {}).some((key) => !allowed.includes(key))) {
+      issues.push({ check: CHECK_NAME, severity: 'error', message: `.kb/marketplace.lock: "${id}" contains fields outside the project v3 lock contract.`, file: '.kb/marketplace.lock' });
     }
   }
 
@@ -94,7 +127,7 @@ function validate() {
 
 function printHuman(issues) {
   if (issues.length === 0) {
-    process.stdout.write(`${CHECK_NAME}: OK — all marketplace.lock entries resolve\n`);
+    process.stdout.write(`${CHECK_NAME}: OK — marketplace.lock entries use schema v3\n`);
     return;
   }
   for (const i of issues) {

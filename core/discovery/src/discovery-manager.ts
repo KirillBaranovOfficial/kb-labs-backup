@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { type ManifestV3 } from '@kb-labs/plugin-contracts';
 import { createExtensionStore } from '@kb-labs/core-extension-store';
+import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import type {
   DiscoveryResult,
   DiscoveredPlugin,
@@ -49,6 +50,8 @@ export interface DiscoveryOptions {
    * A root without `pnpm-workspace.yaml` contributes only its own package.
    */
   workspace?: boolean;
+  /** Machine-local extension store used to resolve project version pins. */
+  extensionStore?: IExtensionStore;
 }
 
 /** Shadowing priority within one scope: workspace > linked > node_modules. */
@@ -118,6 +121,7 @@ export class DiscoveryManager {
   private readonly importTimeoutMs: number;
   private readonly verifyIntegrity: boolean;
   private readonly workspace: boolean;
+  private readonly extensionStore: IExtensionStore;
   /** plugins.allow/block/linked per scope root, read at the start of discover() */
   private policies = new Map<string, PluginPolicy>();
 
@@ -129,6 +133,7 @@ export class DiscoveryManager {
     this.importTimeoutMs = opts.importTimeoutMs ?? 5_000;
     this.verifyIntegrity = opts.verifyIntegrity ?? true;
     this.workspace = opts.workspace ?? true;
+    this.extensionStore = opts.extensionStore ?? createExtensionStore();
   }
 
   /**
@@ -176,12 +181,23 @@ export class DiscoveryManager {
     for (const { scope, root } of this.scopes) {
       const lock = await readMarketplaceLock(root, diag);
       if (!lock) {continue;}
-      for (const [id, entry] of Object.entries(lock.installed)) {
-        const storePin = entry.resolvedPath.startsWith('store:') ? entry.resolvedPath.slice('store:'.length) : undefined;
-        const storeName = storePin ? decodeURIComponent(storePin.slice(0, storePin.lastIndexOf('@'))) : undefined;
-        const packageRoot = storePin && storeName
-          ? (await createExtensionStore().lookup({ name: storeName, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot
-          : path.resolve(root, entry.resolvedPath);
+      for (const [id, entry] of Object.entries(lock.plugins)) {
+        let packageRoot: string | undefined;
+        if (entry.source === 'local' && entry.link) {
+          packageRoot = path.resolve(root, entry.link);
+        } else if (entry.resolvedPath) {
+          packageRoot = path.resolve(root, entry.resolvedPath);
+        } else if (scope === 'project' && entry.source === 'marketplace' && entry.version && entry.integrity) {
+          try {
+            packageRoot = (await this.extensionStore.lookup({ name: id, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
+          } catch (error) {
+            diag.error('INTEGRITY_MISMATCH', `Pinned package ${id}@${entry.version} does not match the shared store: ${error instanceof Error ? error.message : String(error)}`, {
+              pluginId: id,
+              remediation: `Run "kb marketplace install ${id}@${entry.version}" to restore the pinned version`,
+            });
+            continue;
+          }
+        }
         if (!packageRoot) {
           diag.error('PLUGIN_STORE_MISSING', `Pinned package ${id}@${entry.version} is missing from the shared store`, {
             remediation: 'Run "kb marketplace install ' + id + '" to restore the pinned version',
@@ -262,7 +278,7 @@ export class DiscoveryManager {
 
     // Verify integrity for non-local packages. Local packages change frequently
     // (rebuilds, version bumps) — integrity is updated at install/sync time, not here.
-    if (this.verifyIntegrity && entry?.integrity && entry.source !== 'local' && !entry.resolvedPath.startsWith('store:')) {
+    if (this.verifyIntegrity && entry?.integrity && entry.source !== 'local' && entry.resolvedPath) {
       const ok = await this.checkIntegrity(packageRoot, entry.integrity, id, diag);
       if (!ok) {
         return fail('integrity', `Integrity mismatch for "${id}"`);
@@ -314,7 +330,7 @@ export class DiscoveryManager {
       manifestPath: loaded.manifestPath,
       manifestKind: loaded.kind,
       source: entry
-        ? { kind: entry.source, path: entry.resolvedPath }
+        ? { kind: entry.source === 'platform' ? 'marketplace' : entry.source, path: entry.link ?? entry.resolvedPath ?? packageRoot }
         : { kind: 'local', path: relativeTo(candidate.root, packageRoot) },
       display: manifest.display
         ? { name: manifest.display.name, description: manifest.display.description }

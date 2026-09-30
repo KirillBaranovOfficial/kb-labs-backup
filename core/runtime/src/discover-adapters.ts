@@ -56,10 +56,10 @@ async function loadAdaptersFromLock(
   const lock = await readMarketplaceLock(root, diag);
   if (!lock) { return; }
 
-  for (const [pkgId, entry] of Object.entries(lock.installed)) {
-    if (entry.primaryKind !== 'adapter') { continue; }
+  for (const [pkgId, entry] of Object.entries(lock.adapters ?? {})) {
     if (entry.enabled === false) { continue; }
 
+    if (!entry.resolvedPath) continue;
     const pkgRoot = path.resolve(root, entry.resolvedPath);
 
     // Read main export path and npm package name from package.json.

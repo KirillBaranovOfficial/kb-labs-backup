@@ -84,11 +84,11 @@ describe('Discovery Integration: install → discover → available', () => {
     });
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/commit'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '1.5.0',
       integrity,
       resolvedPath: relPath,
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin', 'cli-command'],
     });
@@ -140,7 +140,7 @@ describe('Discovery Integration: install → discover → available', () => {
       { ...api, id: '@kb-labs/rest-api', version: '2.0.0', provides: ['plugin', 'rest-route'] },
       { ...workflow, id: '@kb-labs/deploy', version: '0.5.0', provides: ['plugin', 'workflow'] },
     ]) {
-      lock.installed[id] = createMarketplaceEntry({
+      lock.plugins[id] = createMarketplaceEntry({
         version, integrity, resolvedPath: relPath,
         source: 'local', primaryKind: 'plugin', provides,
       });
@@ -174,11 +174,11 @@ describe('Discovery Integration: install → discover → available', () => {
 
     // Install as disabled
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/toggle'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/toggle'] = createMarketplaceEntry({
       version: '1.0.0', integrity, resolvedPath: relPath,
       source: 'local', primaryKind: 'plugin', provides: ['plugin'],
     });
-    lock.installed['@kb-labs/toggle']!.enabled = false;
+    lock.plugins['@kb-labs/toggle']!.enabled = false;
     await writeMarketplaceLock(tmpDir, lock);
 
     // Discovery should skip
@@ -187,7 +187,7 @@ describe('Discovery Integration: install → discover → available', () => {
     expect(result.plugins).toHaveLength(0);
 
     // Enable
-    lock.installed['@kb-labs/toggle']!.enabled = true;
+    lock.plugins['@kb-labs/toggle']!.enabled = true;
     await writeMarketplaceLock(tmpDir, lock);
 
     // Discovery should find
@@ -205,11 +205,11 @@ describe('Discovery Integration: install → discover → available', () => {
 
     // Install with wrong integrity
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/tampered'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/tampered'] = createMarketplaceEntry({
       version: '1.0.0',
-      integrity: 'sha256-WRONG_HASH',
+      integrity: 'sha256-WRONGHASH',
       resolvedPath: relPath,
-      source: 'marketplace', // marketplace = strict integrity check
+      source: 'platform', // marketplace = strict integrity check
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -232,7 +232,7 @@ describe('Discovery Integration: install → discover → available', () => {
     });
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/vanished'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/vanished'] = createMarketplaceEntry({
       version: '1.0.0', integrity,
       resolvedPath: './plugins/vanished',
       source: 'local', primaryKind: 'plugin', provides: ['plugin'],

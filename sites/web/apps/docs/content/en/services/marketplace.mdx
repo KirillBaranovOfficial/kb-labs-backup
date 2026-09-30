@@ -5,7 +5,7 @@ updatedAt: "2026-09-30"
 order: 4
 ---
 
-The marketplace manages extension packages for the installed KB Labs platform. Plugin installs made from a project leave its package manifest, package-manager lockfile, and `node_modules` alone. The project records its selected plugin version and enabled state in `.kb/marketplace.lock`.
+The marketplace manages extension packages for the installed KB Labs platform. Plugin installs made from a project leave its package manifest, package-manager lockfile, and `node_modules` alone. The project records its selected plugin's exact version, tarball integrity, source kind, and enabled state in schema v3 of `.kb/marketplace.lock`. A project pin stores no absolute or machine-specific path and no installation timestamp; the runtime resolves the version through that machine's shared store.
 
 ## Install and manage a project plugin
 
@@ -19,7 +19,7 @@ kb marketplace plugins enable @kb-labs/commit-entry
 kb marketplace uninstall @kb-labs/commit-entry
 ```
 
-Replace the example package and version with the published plugin you need. Commit `.kb/marketplace.lock` to share the project pin. The package itself is kept in the machine's shared extension store. If a project pin points to a missing store entry, reinstall it with `kb marketplace install <package[@version]>`.
+Replace the example package and version with the published plugin you need. Commit `.kb/marketplace.lock` to share the project pin. The package itself is kept in the machine's shared extension store. If a project pin points to a missing store entry, reinstall it with `kb marketplace install <package[@version]>`. When an older v2 lock is rejected, regenerate it with `kb marketplace sync`.
 
 A local plugin can be linked explicitly after building it:
 

@@ -80,7 +80,7 @@ describe('EntityRegistry', () => {
     const integrity = await computeIntegrity(pluginDir);
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/test'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/test'] = createMarketplaceEntry({
       version: '1.0.0', integrity,
       resolvedPath: './plugins/test',
       source: 'local', primaryKind: 'plugin',
@@ -109,7 +109,7 @@ describe('EntityRegistry', () => {
     const integrity = await computeIntegrity(pluginDir);
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/multi'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/multi'] = createMarketplaceEntry({
       version: '1.0.0', integrity,
       resolvedPath: './plugins/multi',
       source: 'local', primaryKind: 'plugin',
@@ -133,7 +133,7 @@ describe('EntityRegistry', () => {
     const integrity = await computeIntegrity(pluginDir);
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/exact'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/exact'] = createMarketplaceEntry({
       version: '1.0.0', integrity,
       resolvedPath: './plugins/exact',
       source: 'local', primaryKind: 'plugin',
@@ -162,7 +162,7 @@ describe('EntityRegistry', () => {
     const integrity = await computeIntegrity(pluginDir);
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/snap'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/snap'] = createMarketplaceEntry({
       version: '1.0.0', integrity,
       resolvedPath: './plugins/snap',
       source: 'local', primaryKind: 'plugin',
@@ -190,7 +190,7 @@ describe('EntityRegistry', () => {
     const integrity = await computeIntegrity(pluginDir);
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/api'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/api'] = createMarketplaceEntry({
       version: '1.0.0', integrity,
       resolvedPath: './plugins/api',
       source: 'local', primaryKind: 'plugin',
@@ -218,7 +218,7 @@ describe('EntityRegistry', () => {
     const lock = createEmptyLock();
     for (const [id, dir] of [['@kb-labs/studio-a', dir1], ['@kb-labs/studio-b', dir2]] as const) {
       const integrity = await computeIntegrity(dir);
-      lock.installed[id] = createMarketplaceEntry({
+      lock.plugins[id] = createMarketplaceEntry({
         version: '1.0.0', integrity,
         resolvedPath: `./plugins/${id.replace('@kb-labs/', '')}`,
         source: 'local', primaryKind: 'plugin', provides: ['plugin'],
@@ -239,7 +239,7 @@ describe('EntityRegistry', () => {
   it('getDiagnostics returns structured report', async () => {
     // Create lock pointing to non-existent plugin
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/missing'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/missing'] = createMarketplaceEntry({
       version: '1.0.0', integrity: 'sha256-x',
       resolvedPath: './nonexistent',
       source: 'marketplace', primaryKind: 'plugin',
@@ -269,7 +269,7 @@ describe('EntityRegistry', () => {
     const pluginDir = await createPluginDir(tmpDir, '@kb-labs/new');
     const integrity = await computeIntegrity(pluginDir);
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/new'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/new'] = createMarketplaceEntry({
       version: '1.0.0', integrity,
       resolvedPath: './plugins/new',
       source: 'local', primaryKind: 'plugin',

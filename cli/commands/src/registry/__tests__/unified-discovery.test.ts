@@ -47,7 +47,7 @@ async function writeLock(
 ): Promise<void> {
   const lock = createEmptyLock();
   for (const { id, dir, source } of entries) {
-    lock.installed[id] = createMarketplaceEntry({
+    lock.plugins[id] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: await computePackageIntegrity(dir),
       resolvedPath: path.relative(root, dir),

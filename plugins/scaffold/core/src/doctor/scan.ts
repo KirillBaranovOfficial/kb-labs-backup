@@ -132,12 +132,12 @@ export interface ScanResult {
 }
 
 interface LockEntry {
-  resolvedPath?: string;
+  link?: string;
   enabled?: boolean;
 }
 
 interface MarketplaceLockShape {
-  installed?: Record<string, LockEntry>;
+  plugins?: Record<string, LockEntry>;
 }
 
 async function readLock(
@@ -270,7 +270,7 @@ async function checkLockSync(
     // not entry package names (e.g. @kb-labs/my-notifier-entry).
     const id = pkgName.replace(/-entry$/, '');
 
-    if (!lock || !lock.installed) {
+    if (!lock || !lock.plugins) {
       out.push({
         severity: 'warn',
         package: pkgName,
@@ -280,7 +280,7 @@ async function checkLockSync(
       return out;
     }
 
-    const lockEntry = lock.installed[id];
+    const lockEntry = lock.plugins[id];
     if (!lockEntry) {
       const hint = relative(workspaceRoot, entryPkgDir);
       out.push({
@@ -299,13 +299,13 @@ async function checkLockSync(
       });
     }
 
-    if (typeof lockEntry.resolvedPath === 'string') {
-      const lockAbs = resolvePath(workspaceRoot, lockEntry.resolvedPath);
+    if (typeof lockEntry.link === 'string') {
+      const lockAbs = resolvePath(workspaceRoot, lockEntry.link);
       if (lockAbs !== entryPkgDir) {
         out.push({
           severity: 'warn',
           package: pkgName,
-          message: `lock points at ${lockEntry.resolvedPath} but scaffolded package is at ${relative(workspaceRoot, entryPkgDir)}`,
+          message: `lock points at ${lockEntry.link} but scaffolded package is at ${relative(workspaceRoot, entryPkgDir)}`,
         });
       }
     }
