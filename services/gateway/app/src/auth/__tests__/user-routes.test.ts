@@ -37,6 +37,7 @@ import {
   CredentialsStore,
   MembershipsStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
   PasswordResetStore,
   AuthAuditStore,
@@ -83,6 +84,7 @@ interface TestCtx {
   credentials: CredentialsStore;
   memberships: MembershipsStore;
   sessions: SessionsStore;
+  apiTokens: ApiTokensStore;
   invites: InvitesStore;
 }
 
@@ -103,6 +105,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   const credentials = new CredentialsStore(docs);
   const memberships = new MembershipsStore(docs);
   const sessions = new SessionsStore(docs, SESSION_OPTS);
+  const apiTokens = new ApiTokensStore(docs);
   const invites = new InvitesStore(docs);
   const passwordResets = new PasswordResetStore(docs);
   const authAudit = new AuthAuditStore(docs);
@@ -147,6 +150,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
     userAuthService,
     users,
     sessions,
+    apiTokens,
     invites,
     authAudit,
     providers,
@@ -178,7 +182,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   await app.register(fastifyCookie);
 
   // User-auth middleware runs first (before machine Bearer check).
-  app.addHook('onRequest', createUserAuthMiddleware({ users, sessions, pdp, tenantResolver, jwtConfig: JWT }));
+  app.addHook('onRequest', createUserAuthMiddleware({ users, sessions, apiTokens, pdp, tenantResolver, jwtConfig: JWT }));
 
   // Machine auth middleware — skips if userAuthContext already set.
   app.addHook('onRequest', createAuthMiddleware(fakeCache, JWT, { authEnabled: !opts.authDisabled }));
@@ -190,7 +194,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   registerUserAuthRoutes(app, userRouteDeps);
 
   await app.ready();
-  return { app, users, credentials, memberships, sessions, invites };
+  return { app, users, credentials, memberships, sessions, apiTokens, invites };
 }
 
 // ── Seed helpers ──────────────────────────────────────────────────────────────
@@ -925,6 +929,48 @@ describe('GET /auth/sessions', () => {
     expect(Array.isArray(body.sessions)).toBe(true);
     expect(body.sessions.length).toBeGreaterThanOrEqual(1);
     expect(body.sessions.some((s) => s.isCurrent)).toBe(true);
+  });
+});
+
+describe('personal API tokens', () => {
+  let ctx: TestCtx;
+  beforeEach(async () => {
+    ctx = await buildApp();
+    await seedAdmin(ctx);
+  });
+
+  it('creates, lists, authenticates with, and owner-revokes an API token', async () => {
+    const { cookieHeader, csrfToken } = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const created = await ctx.app.inject({
+      method: 'POST', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+      payload: { name: 'build agent' },
+    });
+    expect(created.statusCode).toBe(201);
+    const body = created.json() as { token: string; tokenRecord: { tokenId: string; userId: string } };
+    expect(body.token).toMatch(/^kbl_pat_/);
+
+    const list = await ctx.app.inject({ method: 'GET', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader } });
+    expect(list.json()).toMatchObject({ tokens: [{ tokenId: body.tokenRecord.tokenId, userId: body.tokenRecord.userId, name: 'build agent' }] });
+    expect(JSON.stringify(list.json())).not.toContain(body.token);
+
+    expect((await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: { host: HOST, authorization: `Bearer ${body.token}` } })).statusCode).toBe(200);
+    const revoked = await ctx.app.inject({
+      method: 'POST', url: `/auth/tokens/${body.tokenRecord.tokenId}/revoke`,
+      headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect((await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: { host: HOST, authorization: `Bearer ${body.token}` } })).statusCode).toBe(401);
+  });
+
+  it('does not let an owner revoke another user API token', async () => {
+    const { cookieHeader, csrfToken } = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const other = await ctx.apiTokens.create({ userId: 'other-user', tenantId: TENANT_ID, name: 'other CI', ttlMs: HOUR });
+    const response = await ctx.app.inject({
+      method: 'POST', url: `/auth/tokens/${other.record.tokenId}/revoke`,
+      headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(await ctx.apiTokens.findActive(other.token)).not.toBeNull();
   });
 });
 

@@ -61,6 +61,13 @@ pnpm --filter kb-labs-studio-app test     # Run Vitest tests
 
 ## Integration Points
 
+### Accounts and API tokens
+
+In secured mode, Studio uses Gateway sessions for account and team access. The
+account pages include password changes, active sessions, and `/account/tokens`
+for creating, listing, and revoking personal agent/CI tokens. Admin-only user
+and invite pages create reset or activation links for out-of-band sharing.
+
 - **REST API**: uses `@kb-labs/data-client` with `VITE_API_BASE_URL` (usually `/api/v1`)
 - **Plugins**: consumes Studio manifests via `@kb-labs/plugin-adapter-studio` and registry loader
 - **Mind**: uses `@kb-labs/mind-cli` and Mind surfaces for advanced views
@@ -70,5 +77,4 @@ pnpm --filter kb-labs-studio-app test     # Run Vitest tests
 Key environment variables (via Vite):
 
 - `VITE_API_BASE_URL` — base URL of REST API (defaults to `/api/v1`)
-
 

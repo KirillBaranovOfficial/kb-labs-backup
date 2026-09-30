@@ -7076,6 +7076,9 @@ importers:
       '@kb-labs/core-contracts':
         specifier: workspace:*
         version: link:../../core/contracts
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../core/plugin-contracts
       '@kb-labs/qa-contracts':
         specifier: workspace:*
         version: link:../../plugins/qa/contracts

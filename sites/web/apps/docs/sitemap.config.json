@@ -202,7 +202,7 @@
       "stalenessRisk": "medium",
       "pages": [
         { "slug": "gateway/index",          "type": "manual", "owners": ["plugins/gateway/**"] },
-        { "slug": "gateway/authentication", "type": "hybrid", "owners": ["plugins/gateway/auth/**"] },
+        { "slug": "gateway/authentication", "type": "hybrid", "owners": ["services/gateway/app/src/auth/**", "services/gateway/auth/src/**", "cli/commands/src/commands/system/auth/**", "studio/app/src/pages/admin-users-page.tsx", "studio/app/src/pages/admin-invites-page.tsx", "studio/app/src/pages/api-tokens-page.tsx", "studio/app/src/pages/activate-page.tsx", "studio/app/src/pages/reset-password-page.tsx"] },
         { "slug": "gateway/routing",        "type": "hybrid", "owners": ["plugins/gateway/core/**"] },
         { "slug": "gateway/webhooks",       "type": "manual", "owners": ["plugins/gateway/**"], "status": "missing" },
         { "slug": "gateway/self-hosted",    "type": "manual", "owners": ["tools/kb-deploy/**"] },

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createInMemoryDocumentDatabase } from '@kb-labs/sdk/testing';
+import type { BaseDocument } from '@kb-labs/core-platform/adapters';
 import { AuthAuditStore, type AuthAuditEvent } from '../audit-store.js';
 
 describe('AuthAuditStore', () => {
@@ -12,7 +13,7 @@ describe('AuthAuditStore', () => {
       targetUserId: 'member-1',
       tenantId: 'tenant-1',
     });
-    const events = await docs.find<AuthAuditEvent>('auth_audit_events', {});
+    const events = await docs.find<BaseDocument & AuthAuditEvent>('auth_audit_events', {});
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       action: 'user.password_reset_link_created', actorUserId: 'admin-1',

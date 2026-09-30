@@ -1,0 +1,46 @@
+---
+title: Authentication and accounts
+description: Local and secured access, team invites, account recovery, and personal API tokens.
+lang: en
+slug: authentication
+---
+
+## Choose an access mode
+
+A local install accepts connections only from the same computer and signs requests in as `local-admin`; it does not ask you to log in. A secured install requires accounts for Studio and Gateway APIs. Use secured mode when teammates or remote agents need access.
+
+## Sign in and invite teammates
+
+Admins sign in with their install's Gateway URL, then invite a teammate from Studio's **Admin → Invites** page. Choose `member` for project use. Share the returned `/activate/<token>` link directly; the Gateway does not send email. Members can use projects, plugins, and workflows, but cannot manage users, invites, or platform settings.
+
+## Recover an account
+
+An admin can copy a one-time password reset link from **Admin → Users**, or create one from the CLI:
+
+```bash
+kb auth reset-link --user-id usr_123
+```
+
+The link expires after one hour, can be used once, and revokes that user's existing sessions. Share it out of band.
+
+If no admin can sign in, stop the host and reset the bootstrap admin as the local operator:
+
+```bash
+kb-create stop
+kb-create doctor --recover --email admin@example.com --tenant kb-cloud --password-stdin --yes
+kb-create start
+```
+
+Enter the new password on standard input. Replace the tenant with the configured bootstrap tenant. `--generate` asks the doctor to create a replacement password.
+
+## Give an agent API access
+
+Create a personal token for an agent or CI job:
+
+```bash
+kb auth tokens --name "nightly CI"
+kb auth tokens
+kb auth tokens --revoke tok_abc123
+```
+
+Tokens inherit the owner's role, expire after 90 days, and are only listed or revoked by their owner. The secret appears only when created. Store it in your CI secret manager and pass it as a Bearer token.

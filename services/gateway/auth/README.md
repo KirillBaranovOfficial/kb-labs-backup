@@ -248,6 +248,19 @@ sessions. Use `kb-create doctor --recover --email admin@example.com --tenant kb-
 to have it generate a password instead; keep the
 printed value private and sign in with it immediately.
 
+## Personal API tokens
+
+`ApiTokensStore` persists only SHA-256 hashes of user-issued personal tokens.
+The plaintext is returned once at creation. Tokens have a 90-day lifetime,
+inherit the owner's live role permissions, and can be listed or revoked only
+by that user. Studio exposes `/account/tokens`; the CLI supports:
+
+```bash
+kb auth tokens --name "nightly CI"
+kb auth tokens
+kb auth tokens --revoke tok_abc123
+```
+
 ## Security properties
 
 | Property | Implementation |

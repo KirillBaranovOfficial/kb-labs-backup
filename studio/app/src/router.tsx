@@ -13,6 +13,7 @@ import { LoginPage } from './pages/login-page';
 import { ActivatePage } from './pages/activate-page';
 import { SessionsPage } from './pages/sessions-page';
 import { ChangePasswordPage } from './pages/change-password-page';
+import { ApiTokensPage } from './pages/api-tokens-page';
 import { AdminUsersPage } from './pages/admin-users-page';
 import { AdminInvitesPage } from './pages/admin-invites-page';
 import { ResetPasswordPage } from './pages/reset-password-page';
@@ -280,6 +281,11 @@ export const router = createBrowserRouter([
       {
         path: '/account/password',
         element: <ChangePasswordPage />,
+        errorElement: <ErrorBoundary />,
+      },
+      {
+        path: '/account/tokens',
+        element: <ApiTokensPage />,
         errorElement: <ErrorBoundary />,
       },
       // Admin pages (permission checks are inside the components)

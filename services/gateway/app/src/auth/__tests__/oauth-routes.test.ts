@@ -31,6 +31,7 @@ import {
   CredentialsStore,
   MembershipsStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
   PasswordResetStore,
   AuthAuditStore,
@@ -114,6 +115,7 @@ async function buildApp(opts: BuildOpts = {}): Promise<TestCtx> {
   const credentials = new CredentialsStore(docs);
   const memberships = new MembershipsStore(docs);
   const sessions = new SessionsStore(docs, SESSION_OPTS);
+  const apiTokens = new ApiTokensStore(docs);
   const invites = new InvitesStore(docs);
   const passwordResets = new PasswordResetStore(docs);
   const authAudit = new AuthAuditStore(docs);
@@ -143,6 +145,7 @@ async function buildApp(opts: BuildOpts = {}): Promise<TestCtx> {
     userAuthService,
     users,
     sessions,
+    apiTokens,
     invites,
     authAudit,
     providers,

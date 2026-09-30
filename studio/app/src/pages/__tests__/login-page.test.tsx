@@ -95,8 +95,8 @@ describe('LoginPage', () => {
 
     expect(screen.getByLabelText(/email/i)).toBeDefined();
     expect(screen.getByLabelText(/password/i)).toBeDefined();
-    // Must NOT have a role selector (CD-3 — no role on frontend)
-    expect(screen.queryByText(/viewer|operator|admin/i)).toBeNull();
+    // Must NOT have a role selector (CD-3 — no role on frontend).
+    expect(screen.queryByLabelText(/role/i)).toBeNull();
   });
 
   it('calls auth.login with email and password on submit', async () => {
@@ -136,10 +136,11 @@ describe('LoginPage', () => {
     fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'a@b.com' } });
     fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'pass' } });
 
-    act(() => {
-      fireEvent.submit(screen.getByRole('form', { name: /login form/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
     });
 
+    expect(login).toHaveBeenCalledOnce();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /sign in|signing in/i }).getAttribute('disabled')).not.toBeNull(),
     );

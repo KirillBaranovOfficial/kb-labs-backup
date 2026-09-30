@@ -51,6 +51,8 @@ export type {
 } from './invites-store.js';
 export { PasswordResetStore } from './password-reset-store.js';
 export type { PasswordResetRecord } from './password-reset-store.js';
+export { ApiTokensStore } from './api-tokens-store.js';
+export type { ApiTokenRecord } from './api-tokens-store.js';
 export { AuthAuditStore } from './audit-store.js';
 export type { AuthAuditEvent } from './audit-store.js';
 export {

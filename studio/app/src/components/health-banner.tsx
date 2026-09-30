@@ -36,7 +36,9 @@ export function HealthBanner() {
     healthSnapshot?.status ?? ((healthRaw as { ok?: boolean } | undefined)?.ok ? 'healthy' : 'unknown');
   const healthStatus = sseHealth?.status ?? fallbackStatus;
   const readyStatus = sseHealth?.ready ?? ready?.ready ?? true;
-  const readyReason = !readyStatus ? sseHealth?.reason ?? ready?.reason : undefined;
+  const readyReason = !readyStatus
+    ? sseHealth?.reason ?? (ready && 'reason' in ready ? ready.reason : undefined)
+    : undefined;
 
   const impactedComponents = (healthSnapshot?.checks ?? [])
     .filter((check) => check.status !== 'ok')

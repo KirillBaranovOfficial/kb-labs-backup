@@ -124,7 +124,7 @@ export function createAuthMiddleware(
 
     // A user Bearer token has already been verified by user-auth middleware.
     // Machine token resolution deliberately does not accept that JWT type.
-    if (request.userAuthContext?.source === 'bearer') {return;}
+    if (request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') {return;}
 
     if (!token) {
       return reply.code(401).send({ error: 'Unauthorized', message: 'Missing Authorization header' });

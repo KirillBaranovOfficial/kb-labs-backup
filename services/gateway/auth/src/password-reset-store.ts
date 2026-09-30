@@ -46,7 +46,7 @@ export class PasswordResetStore {
     const expiresAt = createdAt + input.ttlMs;
     await this.docs.insertOne<PasswordResetDoc>(COLLECTION, {
       resetId, userId: input.userId, tenantId: input.tenantId, createdBy: input.createdBy,
-      createdAt, expiresAt, status: 'active', tokenHash: hashToken(token),
+      expiresAt, status: 'active', tokenHash: hashToken(token),
     });
     return { resetId, token, expiresAt };
   }

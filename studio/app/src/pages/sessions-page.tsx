@@ -10,6 +10,7 @@
  */
 
 import * as React from 'react';
+import { Link } from 'react-router-dom';
 import { authClient } from '../auth/shared-client.js';
 
 interface SessionFamily {
@@ -68,6 +69,7 @@ export function SessionsPage() {
       <p style={{ color: 'var(--text-secondary, #666)', marginBottom: '1.5rem' }}>
         Manage your active sessions across devices.
       </p>
+      <p><Link to="/account/tokens">Manage API tokens</Link></p>
 
       {loading && <p>Loading sessions…</p>}
       {error && <p role="alert" style={{ color: 'red' }}>{error}</p>}

@@ -43,6 +43,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type {
   UsersStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
   AuthAuditStore,
   ProviderRegistry,
@@ -105,6 +106,7 @@ export interface UserAuthRouteDeps {
   userAuthService: UserAuthServiceForRoutes;
   users: UsersStore;
   sessions: SessionsStore;
+  apiTokens: ApiTokensStore;
   invites: InvitesStore;
   authAudit: AuthAuditStore;
   providers: ProviderRegistry;
@@ -285,7 +287,7 @@ async function recordLoginFailure(
 // ── Route registrar ───────────────────────────────────────────────────────────
 
 export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRouteDeps): void {
-  const { userAuthService, users, sessions, invites, authAudit, providers, pdp, tenantResolver, bootstrapTenantId, cookieOpts, inviteTtlMs, rateLimiter, authRateLimit, oauthState, oauthCallbackPerIpPerMinute } = deps;
+  const { userAuthService, users, sessions, invites, apiTokens, authAudit, providers, pdp, tenantResolver, bootstrapTenantId, cookieOpts, inviteTtlMs, rateLimiter, authRateLimit, oauthState, oauthCallbackPerIpPerMinute } = deps;
   // Apply config defaults so the rest of the handler can use them without null-checks.
   const authRateLimitCfg = { loginPerIpPerMinute: 10, loginPerEmailPerMinute: 5, ...authRateLimit };
 
@@ -761,6 +763,34 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       }
       throw err;
     }
+  });
+
+  // Personal API tokens are long-lived credentials for agents and CI. They
+  // inherit the owner's current role and are only visible/revocable by owner.
+  app.get('/auth/tokens', async (request, reply) => {
+    const ctx = requireUser(request, reply);
+    if (!ctx) return;
+    const tokens = await apiTokens.listByUser(ctx.userId);
+    return reply.send({ tokens });
+  });
+
+  app.post<{ Body: { name?: string } }>('/auth/tokens', async (request, reply) => {
+    const ctx = requireUser(request, reply);
+    if (!ctx) return;
+    if (!checkCsrf(request, reply)) return;
+    const name = request.body?.name?.trim();
+    if (!name || name.length > 80) return reply.code(400).send({ error: 'Bad Request', message: 'name is required and must be at most 80 characters' });
+    const created = await apiTokens.create({ userId: ctx.userId, tenantId: ctx.tenantId, name, ttlMs: 90 * 24 * 60 * 60 * 1000 });
+    return reply.code(201).send({ token: created.token, tokenRecord: created.record });
+  });
+
+  app.post<{ Params: { id: string } }>('/auth/tokens/:id/revoke', async (request, reply) => {
+    const ctx = requireUser(request, reply);
+    if (!ctx) return;
+    if (!checkCsrf(request, reply)) return;
+    const revoked = await apiTokens.revokeByUser(request.params.id, ctx.userId);
+    if (!revoked) return reply.code(404).send({ error: 'Not found', message: 'API token not found' });
+    return reply.send({ ok: true });
   });
 
   // ── POST /auth/invites ──────────────────────────────────────────────────────

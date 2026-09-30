@@ -156,7 +156,7 @@ export function LoginPage() {
                   { type: 'email', message: 'Enter a valid email address' },
                 ]}
               >
-                <UIInput id="login-email" type="email" autoComplete="email" size="large" />
+                <UIInput id="email" type="email" autoComplete="email" size="large" />
               </UIFormItem>
             </div>
 
@@ -167,7 +167,7 @@ export function LoginPage() {
                 name="password"
                 rules={[{ required: true, message: 'Password is required' }]}
               >
-                <UIInputPassword id="login-password" autoComplete="current-password" size="large" />
+                <UIInputPassword id="password" autoComplete="current-password" size="large" />
               </UIFormItem>
             </div>
 
@@ -184,6 +184,7 @@ export function LoginPage() {
               variant="primary"
               size="large"
               loading={loading}
+              disabled={loading}
               className={styles.submit}
             >
               {loading ? 'Signing in…' : 'Sign in'}

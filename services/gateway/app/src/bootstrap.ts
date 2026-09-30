@@ -21,6 +21,7 @@ import {
   CredentialsStore,
   MembershipsStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
   PasswordResetStore,
   AuthAuditStore,
@@ -180,6 +181,7 @@ export async function startGateway(
       refreshTtlMs: refreshTtlSec * 1000,
       graceWindowMs,
     });
+    const apiTokens = new ApiTokensStore(docs);
     const invites = new InvitesStore(docs);
     const passwordResets = new PasswordResetStore(docs);
     const authAudit = new AuthAuditStore(docs);
@@ -310,6 +312,7 @@ export async function startGateway(
       userAuthService,
       users,
       sessions,
+      apiTokens,
       invites,
       authAudit,
       providers,
