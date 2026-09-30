@@ -6,54 +6,27 @@ area: studio
 priority: P0
 status: active
 release: true
-modes: [secured]
+modes: [local, secured]
 surfaces: [studio]
 ---
 
 ## Goal
-Developer opens Studio in browser, logs in, and sees the dashboard.
+
+Open Studio on a fresh host, reach the dashboard in local mode or after logging in on a secured host, and return to Studio with the session intact.
 
 ## Prerequisites
-- [ ] Platform installed, `kb-dev start` done
-- [ ] Studio running on port 3000 (or 3002 behind nginx)
-- [ ] Browser available
 
----
+- [ ] Platform installed and started with `kb-dev`.
+- [ ] Studio base URL recorded by the installation; secured mode has a valid user account.
+- [ ] A browser is available.
 
 ## Steps
 
-### Phase 1 — Load Studio
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-020.1 | Open the Studio base URL served by the installed host, using the host URL recorded by the V2 install | Studio loads, no blank page, no JS errors in console | | ⬜ |
-| S-020.2 | Login page appears | Has username + password fields | | ⬜ |
-| S-020.3 | Page loads in < 3s | No noticeable lag | | ⬜ |
-
-### Phase 2 — Login
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-020.4 | Enter valid credentials (admin@... / password) | Login succeeds, redirects to dashboard | | ⬜ |
-| S-020.5 | Dashboard shows platform status (services, plugins) | Data visible, not empty | | ⬜ |
-| S-020.6 | No JS errors in browser console after login | Console clean | | ⬜ |
-
-### Phase 3 — Wrong credentials
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-020.7 | Enter wrong password | "Invalid credentials" shown — not blank/crash | | ⬜ |
-| S-020.8 | After 5 wrong attempts | Rate limit message — not silent 429 | | ⬜ |
-
-### Phase 4 — Session
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-020.9 | Refresh page after login | Stays logged in | | ⬜ |
-| S-020.10 | Close tab, reopen Studio | Session persists (or re-login prompted cleanly) | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|--------|----------|
+| S-020.1 | Open the Studio base URL in local mode | Studio opens without a login form and displays the Dashboard page. |
+| S-020.2 | Open the Studio base URL in secured mode | Studio displays the login form with email and password fields. |
+| S-020.3 | In secured mode, submit the valid account credentials | The login form closes and the Dashboard page is displayed. |
+| S-020.4 | In secured mode, submit the same email with an incorrect password | The login page remains visible and displays `Invalid credentials`; Studio does not render a blank page. |
+| S-020.5 | Refresh Studio after entering the dashboard in secured mode | The authenticated dashboard remains visible while the session is valid. |
+| S-020.6 | Navigate from the dashboard using the Studio sidebar to Projects, Analytics, and Observability | Each selected page title is visible and the sidebar marks the selected section. |

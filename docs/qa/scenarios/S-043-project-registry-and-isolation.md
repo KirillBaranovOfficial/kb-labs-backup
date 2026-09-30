@@ -1,13 +1,13 @@
 ---
 id: S-043
-title: Projects — register and isolate project extensions
+title: Projects — Register projects and isolate CLI extensions
 persona: solo-developer
 area: config
 priority: P0
 status: active
 release: true
 modes: [local, secured]
-surfaces: [cli, studio]
+surfaces: [cli]
 ---
 
 ## Goal
@@ -22,8 +22,8 @@ Multiple registered projects retain distinct plugin, adapter, and runtime state.
 
 | # | Action | Expected |
 |---|---|---|
-| S-043.1 | Run `kb project add <project-a>` and `kb project add <project-b>` | Each reports a stable, distinct project ID. |
-| S-043.2 | Run `kb project list --json` | Both IDs and paths appear. |
-| S-043.3 | Install different plugins in the two project roots | Each project lock records only its own plugin. |
-| S-043.4 | Run `kb adapter bind storage <package-id>` from each project with distinct packages | Each project config records its own binding; the other config is unchanged. |
-| S-043.5 | Change the working directory between the two project roots, then select each project in Studio | CLI operations resolve the current project; Studio shows the selected project and its matching plugin/adapter set. |
+| S-043.1 | From each initialized project root run `kb project add <absolute-project-path> --json` | Each response contains `ok: true`, a stable project ID, canonical path, and name; the two IDs differ. |
+| S-043.2 | Run `kb project list --json` | The response contains both IDs, names, canonical paths, and statuses; `total` equals `2`. |
+| S-043.3 | From each project root install a different exact plugin version with `kb marketplace install <package-id>@<version>` | Each project's `.kb/marketplace.lock` contains its own installed package and does not contain the other project's package. |
+| S-043.4 | Run `kb adapter bind storage <package-id>` from each project root with distinct installed packages | Each project's `.kb/kb.config.json` records its own storage binding; the other project's binding is unchanged. |
+| S-043.5 | Run one project-scoped plugin command from each project root | The command resolves that project's plugin installation and does not resolve the other project's plugin. |
