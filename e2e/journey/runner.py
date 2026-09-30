@@ -59,6 +59,37 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
     return subprocess.CompletedProcess(args, proc.returncode, stdout=output), time.monotonic() - started
 
 
+def run_tty_confirmation(args: list[str], *, env=None, timeout=900):
+    started = time.monotonic()
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(args, env=env or BASE_ENV, stdin=slave, stdout=slave,
+                            stderr=slave, close_fds=True)
+    os.close(slave)
+    output = bytearray()
+    confirmed = False
+    deadline = started + timeout
+    while proc.poll() is None:
+        if time.monotonic() >= deadline:
+            proc.kill()
+            proc.wait()
+            os.close(master)
+            raise subprocess.TimeoutExpired(args, timeout)
+        readable, _, _ = select.select([master], [], [], 0.2)
+        if not readable:
+            continue
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:
+            break
+        output.extend(chunk)
+        if not confirmed and b"Continue? [y/N]" in output:
+            os.write(master, b"y\n")
+            confirmed = True
+    proc.wait()
+    os.close(master)
+    return subprocess.CompletedProcess(args, proc.returncode, stdout=output.decode(errors="replace")), time.monotonic() - started
+
+
 def sample_pnpm_rss(_root_pid: int) -> float:
     peak_kib = 0
     for proc_root in Path("/proc").iterdir():
@@ -691,7 +722,11 @@ def main():
     global PLATFORM_SIZE_MIB
     if PLATFORM.exists():
         PLATFORM_SIZE_MIB = sum(p.stat().st_size for p in PLATFORM.rglob("*") if p.is_file()) / (1024 * 1024)
-    result, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM), "--registry", REGISTRY], env=env, timeout=180)
+    uninstall_args = [launcher, "uninstall", "--platform-root", str(PLATFORM), "--registry", REGISTRY]
+    if FRONT_DOOR == "human":
+        result, _ = run_tty_confirmation(uninstall_args, env=env, timeout=180)
+    else:
+        result, _ = run([*uninstall_args, "--yes"], env=env, timeout=180)
     if require(result, step="kb-create uninstall"):
         alive = [p for p in PROCESSES if p.poll() is None]
         listeners, _ = run(["ss", "-H", "-ltnp"], timeout=20)

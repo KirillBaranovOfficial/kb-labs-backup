@@ -20,7 +20,7 @@ plan or manually editing generated configuration.
 | # | Action | Expected |
 |---|---|---|
 | S-024.1 | Apply a verified update and record its previous snapshot ID | Snapshot is immutable and associated with the platform root |
-| S-024.2 | `kb-create rollback --platform-root "$PLATFORM_ROOT" --snapshot SNAPSHOT_ID` | JSON result includes the restored snapshot and log path |
+| S-024.2 | `kb-create rollback --platform-root "$PLATFORM_ROOT" --snapshot SNAPSHOT_ID --yes` | JSON result includes the restored snapshot and log path |
 | S-024.3 | Inspect receipt, `kb.config.jsonc`, `devservices.yaml` and `kb-dev status --json` | All agree with the restored service graph |
 | S-024.4 | Request a missing/unknown snapshot | Non-zero structured recovery error with a hint; active install remains unchanged |
 | S-024.5 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT"` | Any remaining manifest requirement is reported explicitly |

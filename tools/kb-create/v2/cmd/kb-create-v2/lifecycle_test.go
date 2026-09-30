@@ -3,6 +3,7 @@
 package v2cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,50 @@ import (
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/swap"
 )
+
+func TestReadConfirmation(t *testing.T) {
+	for _, test := range []struct {
+		answer string
+		want   bool
+	}{{"y\n", true}, {"yes\n", true}, {"n\n", false}, {"\n", false}} {
+		got, err := readConfirmation(strings.NewReader(test.answer))
+		if err != nil || got != test.want {
+			t.Fatalf("answer %q: got %v, %v", test.answer, got, err)
+		}
+	}
+}
+
+func TestConfirmRecoveryTTYYesAndNo(t *testing.T) {
+	for _, test := range []struct {
+		answer string
+		want   bool
+	}{{"y\n", true}, {"n\n", false}} {
+		var output bytes.Buffer
+		got, err := confirmRecovery(invocation{}, "uninstall", "/platform", strings.NewReader(test.answer), &output, true)
+		if err != nil || got != test.want {
+			t.Fatalf("answer %q: got %v, %v", test.answer, got, err)
+		}
+		for _, expected := range []string{"/platform", "services", "receipt", "snapshots", "Project files are kept"} {
+			if !strings.Contains(output.String(), expected) {
+				t.Fatalf("prompt missing %q: %s", expected, output.String())
+			}
+		}
+	}
+}
+
+func TestRecoveryRequiresYesWithoutTTY(t *testing.T) {
+	payload, code, raw := invoke(t, invocation{Operation: "uninstall", PlatformRoot: t.TempDir(), JSON: true})
+	if code != 2 || errorCode(payload) != "KB_INSTALL_CONFIRMATION_REQUIRED" || !strings.Contains(raw, "kb-create uninstall --platform-root") || !strings.Contains(raw, "--yes") {
+		t.Fatalf("unexpected confirmation envelope: %d %s", code, raw)
+	}
+}
+
+func TestRecoveryWithYesPassesConfirmationGate(t *testing.T) {
+	payload, code, raw := invoke(t, invocation{Operation: "uninstall", PlatformRoot: t.TempDir(), Yes: true})
+	if code != 2 || errorCode(payload) != contracts.CodeReceiptUnavailable {
+		t.Fatalf("--yes did not proceed to receipt validation: %d %s", code, raw)
+	}
+}
 
 // These tests run the real launcher binary as the supervisor and a real child
 // process as the host; only the artifact swap (pnpm) is replaced by rewriting
@@ -194,7 +239,7 @@ func invoke(t *testing.T, command invocation) (map[string]any, int, string) {
 
 func TestRollbackWithoutASnapshotIsRefusedWithTheCatalogError(t *testing.T) {
 	inst := newInstallation(t)
-	payload, code, raw := invoke(t, invocation{Operation: "rollback", PlatformRoot: inst.root})
+	payload, code, raw := invoke(t, invocation{Operation: "rollback", PlatformRoot: inst.root, Yes: true})
 	if code != 1 || errorCode(payload) != contracts.CodeUpdateNoSnapshot {
 		t.Fatalf("rollback: %d %s", code, raw)
 	}
@@ -207,7 +252,7 @@ func TestRollbackWithoutASnapshotIsRefusedWithTheCatalogError(t *testing.T) {
 func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 	t.Setenv(host.KBHomeEnv, t.TempDir())
 	for _, operation := range []string{"rollback", "uninstall"} {
-		payload, code, raw := invoke(t, invocation{Operation: operation, PlatformRoot: t.TempDir()})
+		payload, code, raw := invoke(t, invocation{Operation: operation, PlatformRoot: t.TempDir(), Yes: true})
 		if code != 2 || errorCode(payload) != contracts.CodeReceiptUnavailable {
 			t.Fatalf("%s: %d %s", operation, code, raw)
 		}

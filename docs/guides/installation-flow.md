@@ -69,7 +69,7 @@ kb-create doctor --fix --platform-root /srv/kb-platform
 
 # Recover a named immutable snapshot, or remove launcher-owned state.
 kb-create rollback --platform-root /srv/kb-platform --snapshot SNAPSHOT_ID
-kb-create uninstall --platform-root /srv/kb-platform
+kb-create uninstall --platform-root /srv/kb-platform --yes
 ```
 
 `doctor --fix` never invents a secret or chooses between ambiguous providers. It records missing user input with the manifest owner and hint. Each mutating operation writes the private package-manager transcript to `.kb/logs/`; on failure it also writes a redacted dossier in `.kb/diagnostics/` and prints both paths. Opt-in telemetry carries only outcome metadata, never paths, secrets or logs.
