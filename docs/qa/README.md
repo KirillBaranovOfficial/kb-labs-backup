@@ -11,6 +11,8 @@
 
 A test claim records its kind (`journey`, `e2e`, or `unit`). A unit claim cannot satisfy a user-flow step in a release case. Release readiness applies to cases with `status: active` and `release: true` for each listed mode. `historical` cases are retained as design records and are not release-gated.
 
+The decisions that bound the catalog (release scope, roles, adapter defaults, scheduling) are logged in [`docs/product/decisions.md`](../product/decisions.md). The step-by-step procedure for agents is the `intent-flow` skill.
+
 ## Frontmatter
 
 Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `status` (`active`/`planned`/`historical`), `release` (`true`/`false`), `modes` (`local`/`secured`), and `surfaces` (`cli`/`studio`/`api`/`agent`). Do not add `automation` or `e2e` fields. Historical duplicate records may include `superseded_by: S-023` to point to the active case that now owns that capability. Keep the superseding case ID valid and stable; `superseded_by` does not change the historical status.
