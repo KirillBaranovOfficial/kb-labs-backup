@@ -1,63 +1,29 @@
 ---
 id: S-030
-title: Plugin command — Long-running, progress visible, cancellable
+title: Commit plugin — Long-running generation reports progress and can be cancelled
 persona: solo-developer
 area: plugins
 priority: P1
 status: active
-release: false
+release: true
 modes: [local, secured]
 surfaces: [cli]
 ---
 
 ## Goal
-Developer runs a command that takes time. Terminal shows progress, Ctrl+C cancels cleanly.
+
+A developer runs the commit plugin's potentially long LLM generation, sees progress while it runs, and can interrupt it from the terminal.
 
 ## Prerequisites
-- [ ] Services running, `ai-review` plugin installed
 
----
+- [ ] The `@kb-labs/commit` plugin is installed and enabled in the project.
+- [ ] A Git repository has enough staged changes to keep generation running during observation, and its LLM adapter is configured.
 
 ## Steps
 
-### Phase 1 — Progress visible
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-030.1 | `kb review run --scope=all` | Progress indicator from first second | Spinner visible immediately: `⠋ Running heuristic analysis...` | ✅ |
-| S-030.2 | Output streams incrementally | Something updates regularly | Spinner updates, result in ~3.5s | ✅ |
-| S-030.3 | User can tell working vs hung | Spinner/dots | Spinner present | ✅ |
-
-### Phase 2 — Ctrl+C
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-030.4 | Ctrl+C during review | Graceful exit with message | Process terminates (SIGINT sent) | ✅ |
-| S-030.5 | No orphaned processes | No zombie node processes | Service processes remain (expected), review process gone | ✅ |
-| S-030.6 | Terminal prompt restored | Not stuck | Prompt returns | ✅ |
-| S-030.7 | Worker EPIPE after Ctrl+C | Silent | `[Worker worker_xxx] Uncaught exception: Error: write EPIPE` printed to log | ⚠️ |
-
-### Phase 3 — Timeout and concurrent
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-030.8 | Command hangs beyond timeout | Times out with message | Not tested | ⬜ |
-| S-030.9 | Two parallel `kb review run` | Both complete | Not tested | ⬜ |
-
----
-
-## Result
-
-**PASS** — Progress visible, Ctrl+C works, no zombies. Minor: EPIPE error printed on cancel (noisy but not breaking).
-
-## Bugs
-
-| ID | Priority | Description |
+| # | Action | Expected |
 |---|---|---|
-| B-032 | P2 | Worker prints `write EPIPE` on Ctrl+C — noisy but harmless. Should be caught silently. |
-
-## Notes
-
-- `kb review run` without args requires staged changes. Use `--scope=all` for full review.
-- Review completes in ~3.5s on 47-file project (heuristic, no LLM).
-- Run date: 2026-06-05. Platform 2.94.0.
+| S-030.1 | Run `kb commit commit --dry-run` with the staged changes | The CLI displays an active progress indicator and a generation phase message before printing the plan. |
+| S-030.2 | Observe output while generation is still in progress | At least one subsequent phase update is visible before the final result. |
+| S-030.3 | Send Ctrl+C while the command is generating | The command exits in response to the interrupt, restores the terminal prompt, and does not print an uncaught worker `EPIPE` error. |
+| S-030.4 | Inspect Git history after cancellation | No commit was created by the interrupted `--dry-run` command. |

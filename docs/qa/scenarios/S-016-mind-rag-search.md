@@ -1,6 +1,6 @@
 ---
 id: S-016
-title: Mind — RAG search
+title: Mind — Index and search project content
 persona: solo-developer
 area: mind
 priority: P1
@@ -11,49 +11,23 @@ surfaces: [cli]
 ---
 
 ## Goal
-Developer uses Mind plugin to semantically search their codebase and get grounded answers.
+
+A developer uses the marketplace-installed Mind plugin to index a project and retrieve relevant source references.
 
 ## Prerequisites
-- [ ] `mind` plugin installed (`kb marketplace install mind`)
-- [ ] Codebase indexed (or indexing triggered)
-- [ ] Vector store configured (qdrant or in-memory)
 
----
+- [ ] The Mind plugin is available from the marketplace and installed in the project.
+- [ ] The project has a configured vector-store adapter.
 
 ## Steps
 
-### Phase 1 — Index
+| # | Action | Expected |
+|---|---|---|
+| S-016.1 | Run `kb mind index` | Indexing completes and reports the number of files indexed. |
+| S-016.2 | Run `kb mind status` | Output includes the indexed file count and last-index time. |
+| S-016.3 | Run `kb mind search --text "how does authentication work"` | Results include matching source excerpts with file paths and line references. |
+| S-016.4 | Run `kb mind search --text "how does authentication work" --json` | Standard output is valid JSON containing the same result references. |
+| S-016.5 | Run `kb mind ask --text "explain the plugin system" --agent` | Agent output is valid JSON with `answer` and `sources`; each source identifies a project file. |
+| S-016.6 | Unbind the LLM adapter and run the same `kb mind ask` command | The command returns a typed error naming the missing `llm` capability and includes a `kb adapter bind llm <installed-adapter-package>` hint. |
 
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-016.1 | `kb mind index` (or auto-index on install) | Files indexed, progress shown | | ⬜ |
-| S-016.2 | `kb mind status` | Shows indexed file count, last index time | | ⬜ |
-
-### Phase 2 — Search
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-016.3 | `kb mind search --text "how does authentication work"` | Returns relevant code snippets with file references | | ⬜ |
-| S-016.4 | Results include file path + line number | Navigable references | | ⬜ |
-| S-016.5 | `kb mind search --text "..." --json` | Valid JSON output | | ⬜ |
-
-### Phase 3 — Ask (grounded answer)
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-016.6 | `kb mind ask --text "explain the plugin system"` | Generates answer grounded in codebase | | ⬜ |
-| S-016.7 | Answer cites sources (file paths) | Not hallucinated | | ⬜ |
-| S-016.8 | `kb mind ask --agent` | Returns JSON with `answer` + `sources` | | ⬜ |
-
-### Phase 4 — Re-index
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-016.9 | Add a new file, `kb mind index` | New file appears in search results | | ⬜ |
-| S-016.10 | Delete a file, re-index | Deleted file no longer in results | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+Mind is an optional marketplace plugin outside the platform core release contour.

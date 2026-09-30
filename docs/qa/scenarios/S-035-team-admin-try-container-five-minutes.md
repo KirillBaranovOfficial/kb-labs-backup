@@ -1,9 +1,9 @@
 ---
 id: S-035
-title: Team Admin — Try KB Labs in a Container Without a Rebuild
+title: Team admin — Evaluate a published platform service image
 persona: team-admin
 area: platform-core
-priority: P0
+priority: P1
 status: planned
 release: false
 modes: [local, secured]
@@ -12,53 +12,20 @@ surfaces: [cli]
 
 ## Goal
 
-An admin with no access to the KB Labs monorepo pulls a published service
-image and runs it. It boots successfully with a working default composition
-— no config file to author, no adapters to wire up first. This is the "5
-minutes to evaluate" claim the whole cloud-delivery plan is built around.
-
----
+An administrator with Docker installed starts a published platform service image and verifies its baked default composition without building the monorepo.
 
 ## Prerequisites
 
-- [ ] Docker installed, daemon running
-- [ ] A published (or locally built) service image
-
----
+- [ ] Docker Engine is installed and running.
+- [ ] A published service image and its documented port and required secrets are available.
 
 ## Steps
 
-### Phase 1 — Boot with zero configuration
+| # | Action | Expected |
+|---|---|---|
+| S-035.1 | Run the image with its documented required environment and port mapping, without mounting a config file | The container remains running and does not enter a restart loop. |
+| S-035.2 | Inspect the service's effective runtime config through its documented diagnostic surface | The effective config contains resolved values and no literal unresolved `${VAR}` placeholders. |
+| S-035.3 | Request the documented health endpoint | It returns HTTP 200 with a healthy status within 30 seconds of container start. |
+| S-035.4 | Restart the same container without changing its inputs and repeat the health request | The service returns healthy again and the baked default config remains unchanged. |
 
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-035.1 | `docker run <image>` with no volumes, no env beyond secrets | Container starts, does not crash-loop | | ⬜ |
-| S-035.2 | Inspect the live config the process is using | Matches the image's baked default — never a raw `${VAR}` placeholder, never empty | | ⬜ |
-| S-035.3 | Hit the service's health endpoint | 200 / healthy | | ⬜ |
-
-### Phase 2 — Re-run doesn't corrupt state
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-035.4 | Stop and restart the same container (no volumes) | Boots identically — the baked default is applied fresh each time, not accumulated/mutated | | ⬜ |
-
----
-
-## Result
-
-<!-- PASS / FAIL / PARTIAL -->
-
-## Bugs
-
-## Notes
-
-- Automated via `e2e/deploy/config-override/test.sh`, run:
-  `sh e2e/deploy/config-override/test.sh` from repo root (requires Docker).
-- **What that e2e proves vs. what this scenario claims:** the e2e test
-  exercises the exact, real `docker-entrypoint.sh` shipped in
-  `services/gateway/app/` against a minimal fixture app — it proves the
-  *packaging mechanism* (baked default applies when nothing is mounted).
-  It does not boot a real gateway/rest-api/etc. process end-to-end, because
-  that needs `pnpm deploy --prod` artifacts only CI produces today. Full
-  real-image coverage is blocked on the same CI gap as
-  [S-034](S-034-platform-team-full-image-matrix-published.md).
+This container evaluation flow remains planned until the kb-deploy delivery phase defines supported images and health endpoints.

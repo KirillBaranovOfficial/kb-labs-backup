@@ -1,10 +1,10 @@
 ---
 id: S-004
-title: S-004 — Deploy a platform to a remote host
+title: Team Admin — Deploy a platform to a remote host
 persona: team-admin
 area: platform-core
 priority: P0
-status: active
+status: planned
 release: false
 modes: [local, secured]
 surfaces: [cli]
@@ -12,19 +12,20 @@ surfaces: [cli]
 
 ## Goal
 
-An operator deploys KB Labs to a remote host with the current `kb-deploy` interface and verifies the published services.
+An operator deploys a configured target to a remote host with the supported `kb-deploy` CLI and checks its deployment state.
 
 ## Prerequisites
 
-- [ ] `kb-deploy` and a valid deployment config with SSH access to a test host.
+- [ ] A deployment config with a test target, valid SSH access, Docker access, and registry credentials as required by that target.
+- [ ] The repository is at a commit whose changed files match the target's `watch` paths, or the operator intends to deploy all targets.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-004.1 | Run `kb-deploy status` | Configured targets and the last deployment state are listed. |
-| S-004.2 | Run `kb-deploy run --config deploy.yaml` | Deployment reports each completed stage and a final result. |
-| S-004.3 | Open the configured Studio URL and sign in | Studio loads and the admin can access the deployed platform. |
-| S-004.4 | Repeat `kb-deploy run --config deploy.yaml` with unchanged inputs | Deployment completes and all configured health checks pass. |
+| S-004.1 | Run `kb-deploy list` from the configured repository | The configured target name, image and host are listed. |
+| S-004.2 | Run `kb-deploy --config .kb/deploy.yaml run <target>` | The output reports build, push and deploy results for that target; a failure identifies the failed stage and target. |
+| S-004.3 | Run `kb-deploy --config .kb/deploy.yaml status` | The target's deployed short Git SHA and deployment timestamp are shown. |
+| S-004.4 | Make a change under the target's `watch` paths and run `kb-deploy --config .kb/deploy.yaml run` | The affected target is built, pushed and deployed; unchanged targets are skipped. |
 
-This covers remote deployment through `tools/kb-deploy/README.md`; container delivery targets remain separate planned cases.
+This remains planned until the kb-deploy delivery phase defines a supported customer deployment contour.
