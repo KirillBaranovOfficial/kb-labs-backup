@@ -58,7 +58,7 @@ export function SystemEventsPage() {
         {error && (
           <UIAlert
             message="Connection failed"
-            description={error.message + ' - Make sure REST API is running on localhost:5050'}
+            description={error.message + ' - Check that the selected project runtime is available.'}
             variant="error"
             showIcon
           />

@@ -78,6 +78,30 @@ afterEach(() => {
 });
 
 describe('AuthProvider initial load', () => {
+  it('opens a local machine session without prompting for login', async () => {
+    vi.stubGlobal('fetch', mockFetch({
+      '/api/auth/me': {
+        status: 200,
+        body: { userId: 'local-admin', email: 'local-admin', tenantId: 'local' },
+      },
+      '/api/auth/permissions': {
+        status: 200,
+        body: { permissions: ['platform-settings:read'] },
+      },
+    }));
+
+    render(
+      <AuthProvider>
+        <TestComponent />
+      </AuthProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('status').textContent).toBe('authenticated'),
+    );
+    expect(screen.getByTestId('email').textContent).toBe('local-admin');
+  });
+
   it('sets status=authenticated when /api/auth/me succeeds', async () => {
     vi.stubGlobal('fetch', mockFetch({
       '/api/auth/me': { status: 200, body: ME_RESPONSE },
