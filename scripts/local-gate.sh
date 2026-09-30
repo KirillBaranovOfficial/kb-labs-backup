@@ -150,10 +150,12 @@ stage() {
     ended="$(date +%s)"
     duration="$((ended - started))"
     STAGES+=("$name|PASS|$duration")
+    LAST_STAGE_EXIT=0
   else
     ended="$(date +%s)"
     duration="$((ended - started))"
     STAGES+=("$name|FAIL|$duration")
+    LAST_STAGE_EXIT=1
     FIRST_FAILURE="${FIRST_FAILURE:-$name}"
     STATUS=1
     return "$((1 - KEEP_GOING))"
@@ -181,7 +183,15 @@ for image in kb-installer-journey:local kb-e2e-ci-publisher:latest kb-e2e-ci-pla
   image_id="$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null || true)"
   [[ -z "$image_id" ]] || TASK_IMAGE_IDS_BEFORE+="$image_id "
 done
-stage 'local install and service journey' env KB_JOURNEY_ONLY=service-local:explore e2e/journey/run.sh --no-build || exit 1
-stage 'secured install and service journey' env KB_JOURNEY_ONLY=service-secured:explore e2e/journey/run.sh --no-build || exit 1
-stage 'nightly journey aggregation' python3 e2e/journey/nightly_report.py --results .journey/reports --json "$OUT/capabilities.json" --summary "$OUT/capabilities.md" || exit 1
+stage 'prepare service journey candidate' e2e/journey/prepare-candidate.sh || exit 1
+mkdir -p .journey/reports
+rm -f .journey/reports/service-local.json .journey/reports/service-secured.json
+stage 'local install and service journey' env KB_JOURNEY_ONLY=service-local:explore e2e/journey/run.sh --no-build || true
+LOCAL_JOURNEY_EXIT="$LAST_STAGE_EXIT"
+stage 'secured install and service journey' env KB_JOURNEY_ONLY=service-secured:explore e2e/journey/run.sh --no-build || true
+SECURED_JOURNEY_EXIT="$LAST_STAGE_EXIT"
+stage 'nightly journey aggregation' python3 e2e/journey/nightly_report.py --results .journey/reports --profile local --profile secured \
+  --journey-exit "local=$LOCAL_JOURNEY_EXIT" --journey-exit "secured=$SECURED_JOURNEY_EXIT" \
+  --json "$OUT/capabilities.json" --summary "$OUT/capabilities.md" || true
+[[ "$STATUS" == 0 ]] || exit 1
 exit 0

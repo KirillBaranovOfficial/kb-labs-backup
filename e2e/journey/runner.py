@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from studio_steps import create_studio_member, record_studio_browser_step
+from service_steps import record_runner_failure
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = os.getenv("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -239,6 +240,12 @@ def append_summary(passed: bool):
                           "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n")
     with report.open("a") as stream:
         stream.write("\n".join(lines) + "\n")
+    if (not passed and BASE_ENV.get("KB_JOURNEY_SERVICE_PROFILE") == "nightly"
+            and (VARIANT.endswith("secured") or SCENARIO == "explore")):
+        mode = "secured" if VARIANT.endswith("secured") else "local"
+        service_report = report.with_name(f"service-{mode}.json")
+        if not service_report.exists():
+            record_runner_failure(service_report, mode, FIRST_FAILURE)
     if not passed:
         diagnosis = report.with_name("journey-diagnostics.log")
         candidates = sorted((PLATFORM / ".kb" / "diagnostics").glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)

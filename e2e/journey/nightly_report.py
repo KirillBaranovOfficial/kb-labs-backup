@@ -18,10 +18,52 @@ def fingerprint(step: dict) -> str:
 
 
 def load_results(directory: str | Path) -> list[dict]:
-    return [json.loads(path.read_text()) for path in sorted(Path(directory).glob("*.json"))]
+    root = Path(directory)
+    if not root.is_dir():
+        return [{"steps": [{"capability": "journey.runner", "mode": "unknown",
+                            "name": "result directory", "status": "FAIL",
+                            "message": f"journey result directory is missing: {root}"}]}]
+    paths = sorted(root.glob("*.json"))
+    if not paths:
+        return [{"steps": [{"capability": "journey.runner", "mode": "unknown",
+                            "name": "result files", "status": "FAIL",
+                            "message": f"no journey result files found in {root}"}]}]
+    results = []
+    for path in paths:
+        try:
+            result = json.loads(path.read_text())
+            if (not isinstance(result, dict) or not isinstance(result.get("steps"), list)
+                    or any(not isinstance(step, dict) for step in result["steps"])):
+                raise ValueError("expected a JSON object with an array of step objects")
+            for step in result["steps"]:
+                if any(not isinstance(step.get(field), str) or not step[field]
+                       for field in ("capability", "mode", "name")):
+                    raise ValueError("each step needs non-empty capability, mode, and name fields")
+                if step.get("status") not in {"PASS", "FAIL", "BLOCKED"}:
+                    raise ValueError("each step status must be PASS, FAIL, or BLOCKED")
+                if not isinstance(step.get("message"), str):
+                    raise ValueError("each step needs a message string")
+                try:
+                    float(step.get("duration_seconds", 0))
+                except (TypeError, ValueError) as error:
+                    raise ValueError("each step duration_seconds must be numeric") from error
+            results.append(result)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+            mode = path.stem.removeprefix("service-")
+            results.append({"steps": [{"capability": "journey.runner", "mode": mode,
+                                       "name": "result file parse",
+                                       "status": "FAIL",
+                                       "message": f"could not parse {path.name}: {error}"}]})
+    return results
 
 
-def aggregate(results: list[dict], previous: list[dict] | None = None) -> dict:
+def aggregate(results: list[dict], previous: list[dict] | None = None,
+              profiles: dict[str, set[str]] | None = None,
+              journey_exits: dict[str, int] | None = None) -> dict:
+    if not results:
+        results = [{"steps": [{"capability": "journey.runner", "mode": "unknown",
+                               "name": "result files", "status": "FAIL",
+                               "message": "no journey results were provided to the aggregator"}]}]
     capabilities: dict[str, dict] = {}
     failures: dict[str, dict] = {}
     for result in results:
@@ -35,8 +77,45 @@ def aggregate(results: list[dict], previous: list[dict] | None = None) -> dict:
                 issue = dict(step)
                 issue["fingerprint"] = fingerprint(step)
                 failures[issue["fingerprint"]] = issue
-            elif step.get("status") == "BLOCKED" and item["status"] == "PASS":
-                item["status"] = "BLOCKED"
+            elif step.get("status") == "BLOCKED":
+                if item["status"] == "PASS":
+                    item["status"] = "BLOCKED"
+                item["first_failure"] = item["first_failure"] or step
+    if not capabilities:
+        step = {"capability": "journey.runner", "mode": "unknown", "name": "capability results",
+                "status": "FAIL", "duration_seconds": 0.0,
+                "message": "journey result files contained no capability steps"}
+        capabilities["journey.runner:unknown"] = {"capability": "journey.runner", "mode": "unknown",
+                                                   "status": "FAIL", "duration_seconds": 0.0,
+                                                   "first_failure": step}
+        issue = dict(step)
+        issue["fingerprint"] = fingerprint(step)
+        failures[issue["fingerprint"]] = issue
+    for mode, declared in (profiles or {}).items():
+        reported = {key.split(":", 1)[0] for key, item in capabilities.items()
+                    if item.get("mode") == mode}
+        for missing in sorted(declared - reported):
+            key = f"{missing}:{mode}"
+            detail = {"capability": missing, "mode": mode, "name": "required capability result",
+                      "status": "BLOCKED", "duration_seconds": 0.0,
+                      "message": f"profile {mode} declares {missing}, but the journey produced no result"}
+            capabilities[key] = {"capability": missing, "mode": mode, "status": "BLOCKED",
+                                 "duration_seconds": 0.0, "first_failure": detail}
+    for mode, exit_code in (journey_exits or {}).items():
+        if exit_code != 0:
+            key = f"journey.runner:{mode}"
+            detail = {"capability": "journey.runner", "mode": mode,
+                      "name": "journey process exit", "status": "FAIL",
+                      "duration_seconds": 0.0,
+                      "message": f"{mode} journey process exited with status {exit_code}"}
+            item = capabilities.setdefault(key, {"capability": "journey.runner", "mode": mode,
+                                                  "status": "FAIL", "duration_seconds": 0.0,
+                                                  "first_failure": detail})
+            item["status"] = "FAIL"
+            item["first_failure"] = item["first_failure"] or detail
+            issue = dict(detail)
+            issue["fingerprint"] = fingerprint(detail)
+            failures[issue["fingerprint"]] = issue
     prior_caps = {f"{step.get('capability')}:{step.get('mode')}": step
                   for result in (previous or []) for step in result.get("steps", [])}
     for result in (previous or []):
@@ -152,11 +231,25 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--results", required=True)
     parser.add_argument("--previous")
+    parser.add_argument("--profile", action="append", choices=["local", "secured"], default=[])
+    parser.add_argument("--journey-exit", action="append", default=[], metavar="MODE=CODE")
     parser.add_argument("--json", default="nightly-report.json")
     parser.add_argument("--summary", default="nightly-report.md")
     parser.add_argument("--sync-issues", action="store_true")
     args = parser.parse_args()
-    report = aggregate(load_results(args.results), load_results(args.previous) if args.previous else [])
+    from service_runner import declared_capabilities
+    exits = {}
+    for value in args.journey_exit:
+        mode, separator, code = value.partition("=")
+        if not separator or mode not in {"local", "secured"}:
+            parser.error(f"invalid --journey-exit {value!r}; expected local=CODE or secured=CODE")
+        try:
+            exits[mode] = int(code)
+        except ValueError:
+            parser.error(f"invalid --journey-exit code in {value!r}")
+    profiles = {mode: declared_capabilities(mode) for mode in args.profile}
+    report = aggregate(load_results(args.results), load_results(args.previous) if args.previous else [],
+                       profiles, exits)
     Path(args.json).parent.mkdir(parents=True, exist_ok=True)
     Path(args.summary).parent.mkdir(parents=True, exist_ok=True)
     Path(args.json).write_text(json.dumps(report, indent=2) + "\n")

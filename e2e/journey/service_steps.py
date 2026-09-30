@@ -80,3 +80,12 @@ def run_steps(journey: Journey, steps: Iterable[tuple[str, str, Callable[[], str
     for name, capability, check in steps:
         journey.step(name, capability, check)
     return journey.result()
+
+
+def record_runner_failure(path: str | Path, mode: str, failure: str) -> JourneyResult:
+    """Preserve a pre-service runner failure in the capability result file."""
+    name, separator, message = failure.partition(": ")
+    journey = Journey(mode, f"runner-{mode}")
+    journey.step(name if separator else "journey runner", "journey.install",
+                 lambda: message if separator else failure or "journey failed before capability checks")
+    return journey.write_json(path)

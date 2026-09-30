@@ -108,6 +108,11 @@ def checks(mode: str):
             method="POST", payload={"email": "journey-member@example.test"}, token=auth_token()))
 
 
+def declared_capabilities(mode: str) -> set[str]:
+    """Return every capability the selected service profile promises to check."""
+    return {capability for _, capability, _ in checks(mode)}
+
+
 def discover_workflow(project_id: str, token: str) -> str | None:
     path = f"/api/v1/projects/{project_id}/workflow/api/v1/workflows"
     status, body, _ = request(path, token=token)

@@ -26,9 +26,18 @@ fresh-host test is copied into that image at build time and targets the gateway
 at `http://127.0.0.1:4000` from within the same container. The image is built by
 `e2e/journey/run.sh`; no browser installation is needed on the host.
 
-The batch gate performs these local and secured journeys after its build and
-checks:
+The batch gate prepares a fresh `journey-candidate` release from the worktree,
+then runs these local and secured journeys after its build and checks. Preparing
+the candidate is required even though each journey runner uses `--no-build`:
+that flag skips the journey's own build and packaging, while the gate owns that
+one-time setup.
 
 ```bash
 scripts/local-gate.sh batch
 ```
+
+The gate clears the two service result files before running. Its nightly
+aggregator checks the local and secured profiles against every capability each
+profile declares, records a non-zero journey process exit, and reports missing
+or malformed result files as failures. A report is PASS only when all declared
+capabilities have passing results.
