@@ -45,7 +45,7 @@ export default function WorkflowsRuns() {
     { workflowId: string; input: Record<string, unknown> },
     { runId: string; status: string }
   >(
-    (p) => `/exec/api/v1/workflows/${encodeURIComponent(p.workflowId)}/runs`,
+    (p) => `/exec/api/v1/workflows/${encodeURIComponent(p.workflowId)}/run`,
     { mapBody: (p) => ({ inputs: p.input }) },
   );
 
