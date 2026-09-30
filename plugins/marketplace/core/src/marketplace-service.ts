@@ -162,7 +162,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       // lock entry (B-021).
       const primaryKind = await this.detectKind(result.packageRoot);
       if (primaryKind === null) {
-        await source.remove(result.id, scopeRoot).catch(() => undefined);
+        if (!this.extensionStore) {
+          await source.remove(result.id, scopeRoot).catch(() => undefined);
+        }
         throw new InvalidEntityError(
           `Package "${result.id}" (resolved from "${spec}") is not a valid KB Labs entity — ` +
           `no plugin/adapter/workflow manifest found. Nothing was installed. ` +
@@ -197,7 +199,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       await addToMarketplaceLock(scopeRoot, result.id, entry);
 
       // Cache manifest
-      await this.cacheManifest(scopeRoot, result.id, result.packageRoot, primaryKind, result.integrity);
+      if (!this.extensionStore) {
+        await this.cacheManifest(scopeRoot, result.id, result.packageRoot, primaryKind, result.integrity);
+      }
 
       // Run post-install hook
       if (strategy?.afterInstall) {
