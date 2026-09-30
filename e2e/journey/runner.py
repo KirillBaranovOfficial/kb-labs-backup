@@ -19,6 +19,7 @@ from pathlib import Path
 
 from studio_steps import create_studio_member, run_studio_browser_step
 from service_steps import Journey, record_runner_failure
+from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
 from steps.auth import run_local_auth_steps, run_secured_auth_steps
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
@@ -670,6 +671,7 @@ def main():
         auth_result = auth_journey.write_json(auth_report)
         if auth_result.status != "PASS":
             fail(f"{mode} auth journey: {auth_result.first_failure}")
+        prepare_workflow_fixtures(PROJECT)
         service_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-{mode}.json")
         result, elapsed = run(["python3", "/opt/kb-journey/service_runner.py", "--mode", mode, "--output", str(service_report)],
                              env=service_env, timeout=300)
@@ -682,6 +684,13 @@ def main():
             except (OSError, json.JSONDecodeError):
                 detail = "service journey result JSON could not be read"
             fail(f"{mode} service journey: {detail}")
+
+        workflow_journey = Journey(mode, f"workflow-{mode}")
+        run_workflow_journey(workflow_journey, env=service_env, project=PROJECT)
+        workflow_result = workflow_journey.result()
+        merge_workflow_result(service_report, workflow_result.__dict__)
+        if workflow_result.status != "PASS":
+            fail(f"{mode} workflow journey: {workflow_result.first_failure}")
 
         project = project_payload.get("project", project_payload) if isinstance(project_payload, dict) else {}
         project_name = str(project.get("name") or "") if isinstance(project, dict) else ""

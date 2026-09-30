@@ -348,7 +348,7 @@ export class WorkflowDaemonClient {
    * Get cron jobs
    */
   async getCronJobs(): Promise<CronListResponse> {
-    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/cron`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/crons`);
     if (!response.ok) {
       throw new Error(`Failed to get cron jobs: ${response.statusText}`);
     }

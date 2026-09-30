@@ -12,16 +12,18 @@ surfaces: [cli, studio, api]
 
 ## Goal
 
-A project user configures a cron-triggered workflow and verifies that the schedule is visible to the runtime.
+A project user enables a cron workflow, observes a scheduled run and its output, then disables the schedule and confirms later intervals do not start new runs.
 
 ## Prerequisites
 
-- [ ] Project workflow definition that supports a cron trigger.
+- [ ] Registered project with the workflow daemon available.
+- [ ] The project runtime remains available while an enabled schedule is registered.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-044.1 | Add a cron trigger to the project workflow definition and run `kb workflow lint` | Definition passes validation. |
-| S-044.2 | Run `kb workflow list --type=cron` | Workflow is listed with its schedule/trigger information. |
-| S-044.3 | Open the project’s Cron view in Studio or inspect the workflow schedule API | Configured expression and workflow are visible for the selected project. |
+| S-044.1 | Create `.kb/jobs/journey-cron.yml` with `schedule: '* * * * *'`, `autoStart: true`, and `enabled: true`, then run `kb workflow list --type=cron --json` | The runtime accepts and registers the enabled schedule for the selected project. |
+| S-044.2 | Run `kb workflow list --type=cron --json` | The enabled schedule and its one-minute expression are visible. |
+| S-044.3 | Inspect `kb workflow runs list --workflow=journey-cron --json` and `kb workflow runs logs <runId> --json` after the next interval | A scheduled run reaches success and its output contains the workflow's log line. |
+| S-044.4 | Set `enabled: false`, confirm the cron entry reports disabled, then inspect history after one full interval | No additional scheduled run starts after the schedule is disabled. |
