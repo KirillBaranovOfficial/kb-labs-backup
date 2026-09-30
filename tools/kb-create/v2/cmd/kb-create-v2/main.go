@@ -96,14 +96,14 @@ func Execute() int {
 	recoverTenant := flag.String("tenant", "", "doctor --recover: tenant ID")
 	recoverPasswordStdin := flag.Bool("password-stdin", false, "doctor --recover: read the new password from stdin")
 	recoverGenerate := flag.Bool("generate", false, "doctor --recover: generate a password and print it once")
-	recoverYes := flag.Bool("yes", false, "doctor --recover: apply the changes (without it the recovery is a dry run)")
+	recoverYes := flag.Bool("yes", false, "confirm doctor recovery, uninstall, or rollback")
 	operation := flag.String("operation", "plan", "V2 operation: plan, apply, update, uninstall, rollback, doctor, status, start, stop, restart")
 	platformRoot := flag.String("platform-root", "", "platform root for lifecycle operations")
 	snapshotID := flag.String("snapshot", "", "V2 snapshot ID for rollback (default: the snapshot taken by the last update)")
 	registry := flag.String("registry", "", "npm registry for exact artifact installation")
 	telemetryURL := flag.String("telemetry-endpoint", "", "opt-in anonymous telemetry endpoint")
 	foreground := flag.Bool("foreground", false, "start: run the host directly in this process, without the control channel")
-	jsonOutput := flag.Bool("json", false, "emit the JSON envelope instead of text (host commands, doctor --recover)")
+	jsonOutput := flag.Bool("json", false, "emit JSON output; destructive recovery also requires --yes")
 	telemetryAllowed := flag.Bool("telemetry-consent", false, "allow anonymous operational telemetry")
 	flag.Parse()
 	telemetryEndpoint, telemetryConsent = *telemetryURL, *telemetryAllowed
@@ -117,7 +117,7 @@ func Execute() int {
 		Registry: *registry, SecretEnv: *secretEnv, DoctorFix: *doctorFix,
 		Recover:    recoverRequest{Enabled: *doctorRecover, Email: *recoverEmail, Tenant: *recoverTenant, PasswordStdin: *recoverPasswordStdin, Generate: *recoverGenerate, Yes: *recoverYes, JSON: *jsonOutput},
 		ScenarioID: *scenarioID, ScenarioAnswers: *scenarioAnswers, ScenarioResume: *scenarioResume, Direct: direct, Executable: executable,
-		JSON: *jsonOutput,
+		JSON: *jsonOutput, Yes: *recoverYes,
 	}.run(os.Stdout)
 }
 
@@ -144,7 +144,7 @@ func printCommandHelp(output *os.File, command string) {
 		"doctor":  {"--platform-root PATH", "--doctor-input REQUEST.json", "--fix", "--recover", "--email EMAIL", "--tenant ID", "--password-stdin", "--generate", "--yes", "--json"},
 		"start":   {"--platform-root PATH", "--foreground", "--json"}, "stop": {"--platform-root PATH", "--json"}, "restart": {"--platform-root PATH", "--json"},
 		"update":    {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--project-root PATH", "--platform-version VERSION", "--platform-channel CHANNEL", "--sdk-version VERSION", "--service-profile PROFILE", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--policy POLICY", "--offline", "--json"},
-		"uninstall": {"--platform-root PATH", "--registry URL", "--json"}, "rollback": {"--platform-root PATH", "--snapshot ID", "--json"},
+		"uninstall": {"--platform-root PATH", "--registry URL", "--yes", "--json"}, "rollback": {"--platform-root PATH", "--snapshot ID", "--yes", "--json"},
 	}
 	flags, ok := options[command]
 	if !ok {
@@ -185,6 +185,7 @@ type invocation struct {
 	// Executable is the launcher binary re-executed to supervise the host.
 	Executable    string
 	JSON          bool
+	Yes           bool
 	InstallInput  io.Reader
 	InstallOutput io.Writer
 	RuntimeDeps   *runtime.Dependencies

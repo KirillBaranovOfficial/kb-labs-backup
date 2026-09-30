@@ -1,13 +1,18 @@
 package v2cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
@@ -97,6 +102,18 @@ func (i invocation) runRecovery(output *os.File) int {
 		write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil))
 		return 2
 	}
+	if operation == "uninstall" || operation == "rollback" {
+		confirmed, confirmErr := confirmRecovery(i, operation, root, os.Stdin, os.Stdout, term.IsTerminal(os.Stdin.Fd()))
+		if confirmErr != nil {
+			hint := recoveryConfirmationHint(i, operation, root)
+			write(output, failure("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.", hint, confirmErr))
+			return 2
+		}
+		if !confirmed {
+			write(output, failure("KB_INSTALL_OPERATION_CANCELLED", "The operation was cancelled.", "rerun the command and confirm when prompted", nil))
+			return 1
+		}
+	}
 	active, err := receipt.Read(root)
 	if err != nil {
 		write(output, failure(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", err))
@@ -176,6 +193,47 @@ func (i invocation) runRecovery(output *os.File) int {
 	}
 	write(output, map[string]any{"ok": true, "operation": operation, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning && operation != "uninstall", "logPath": transcript.Path()})
 	return 0
+}
+
+func recoveryConfirmationHint(i invocation, operation, root string) string {
+	command := fmt.Sprintf("kb-create %s --platform-root %s", operation, strconv.Quote(root))
+	if operation == "rollback" && i.Snapshot != "" {
+		command += " --snapshot " + strconv.Quote(i.Snapshot)
+	}
+	if operation == "uninstall" && i.Registry != "" {
+		command += " --registry " + strconv.Quote(i.Registry)
+	}
+	if i.JSON {
+		command += " --json"
+	}
+	return "rerun `" + command + " --yes`"
+}
+
+func confirmRecovery(i invocation, operation, root string, input io.Reader, output io.Writer, isTTY bool) (bool, error) {
+	if i.Yes {
+		return true, nil
+	}
+	if i.JSON || !isTTY {
+		return false, fmt.Errorf("confirmation unavailable without a terminal")
+	}
+	if operation == "uninstall" {
+		fmt.Fprintf(output, "This will remove platform root %s, its installed services, active receipt, and saved snapshots. Project files are kept. Continue? [y/N] ", root)
+	} else {
+		fmt.Fprintf(output, "This will replace platform root %s and its active receipt with a saved snapshot. Continue? [y/N] ", root)
+	}
+	return readConfirmation(input)
+}
+
+func readConfirmation(input io.Reader) (bool, error) {
+	line, err := bufio.NewReader(input).ReadString('\n')
+	if err != nil && len(line) == 0 {
+		return false, err
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if answer == "y" || answer == "yes" {
+		return true, nil
+	}
+	return false, nil
 }
 
 // writeLauncherFailure emits a typed failure with its diagnostic dossier.
