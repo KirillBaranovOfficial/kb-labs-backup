@@ -23,7 +23,8 @@ def load_results(directory: str | Path) -> list[dict]:
         return [{"steps": [{"capability": "journey.runner", "mode": "unknown",
                             "name": "result directory", "status": "FAIL",
                             "message": f"journey result directory is missing: {root}"}]}]
-    paths = sorted(root.glob("*.json"))
+    paths = sorted(path for path in root.glob("*.json")
+                   if path.name.startswith("service-") or path.name in {"workflow.json", "installer-job-result.json"})
     if not paths:
         return [{"steps": [{"capability": "journey.runner", "mode": "unknown",
                             "name": "result files", "status": "FAIL",
@@ -59,7 +60,8 @@ def load_results(directory: str | Path) -> list[dict]:
 
 def aggregate(results: list[dict], previous: list[dict] | None = None,
               profiles: dict[str, set[str]] | None = None,
-              journey_exits: dict[str, int] | None = None) -> dict:
+              journey_exits: dict[str, int] | None = None,
+              case_coverage: list[dict] | None = None) -> dict:
     if not results:
         results = [{"steps": [{"capability": "journey.runner", "mode": "unknown",
                                "name": "result files", "status": "FAIL",
@@ -128,10 +130,12 @@ def aggregate(results: list[dict], previous: list[dict] | None = None,
             delta["fixed"].append(key)
         elif capability["status"] == "FAIL":
             delta["persisting" if old == "FAIL" else "new"].append(key)
+    coverage_failed = any(item.get("releasePassed") is not True for item in (case_coverage or []))
     return {"schema": "kb.nightly-report/v1", "generated_at": datetime.now(timezone.utc).isoformat(),
-            "status": "FAIL" if failures else "BLOCKED" if any(x["status"] == "BLOCKED" for x in capabilities.values()) else "PASS",
+            "status": "FAIL" if failures or coverage_failed else "BLOCKED" if any(x["status"] == "BLOCKED" for x in capabilities.values()) else "PASS",
             "capabilities": sorted(capabilities.values(), key=lambda x: (x["capability"], x["mode"])),
             "failures": list(failures.values()), "delta": delta,
+            "case_coverage": case_coverage or [],
             "duration_seconds": round(sum(x["duration_seconds"] for x in capabilities.values()), 3)}
 
 
@@ -212,6 +216,11 @@ def render_summary(report: dict, run_url: str = "") -> str:
         failure = item.get("first_failure") or {}
         lines.append(f"| {item['capability']} | {item['mode']} | {item['status']} | {item['duration_seconds']:.1f}s | {failure.get('name', '')}: {failure.get('message', '')} |")
     lines.extend(["", f"Overall: **{report.get('status', 'UNKNOWN')}**; duration {report.get('duration_seconds', 0):.1f}s."])
+    for coverage in report.get("case_coverage", []):
+        cases = coverage.get("cases", [])
+        incomplete = sum(1 for item in cases if item.get("release") and item.get("status") == "active"
+                         and item.get("statusResult") not in {"PASS", "NOT REQUIRED"})
+        lines.append(f"Case coverage ({coverage.get('mode', 'unknown')}): **{'PASS' if coverage.get('releasePassed') else 'FAIL'}**; {incomplete} active release case(s) incomplete.")
     lines.append(f"Delta: {json.dumps(report.get('delta', {}), sort_keys=True)}")
     if run_url:
         lines.append(f"Run: {run_url}")
@@ -233,6 +242,7 @@ def main() -> int:
     parser.add_argument("--previous")
     parser.add_argument("--profile", action="append", choices=["local", "secured"], default=[])
     parser.add_argument("--journey-exit", action="append", default=[], metavar="MODE=CODE")
+    parser.add_argument("--case-coverage", action="append", default=[], metavar="FILE")
     parser.add_argument("--json", default="nightly-report.json")
     parser.add_argument("--summary", default="nightly-report.md")
     parser.add_argument("--sync-issues", action="store_true")
@@ -248,8 +258,16 @@ def main() -> int:
         except ValueError:
             parser.error(f"invalid --journey-exit code in {value!r}")
     profiles = {mode: declared_capabilities(mode) for mode in args.profile}
+    case_coverage = []
+    for path in args.case_coverage:
+        try:
+            case_coverage.append(json.loads(Path(path).read_text()))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            case_coverage.append({"schema": "kb.qa-case-coverage/v1", "mode": "unknown",
+                                  "releasePassed": False, "cases": [],
+                                  "diagnostics": [f"could not read case coverage {path}: {error}"]})
     report = aggregate(load_results(args.results), load_results(args.previous) if args.previous else [],
-                       profiles, exits)
+                       profiles, exits, case_coverage)
     Path(args.json).parent.mkdir(parents=True, exist_ok=True)
     Path(args.summary).parent.mkdir(parents=True, exist_ok=True)
     Path(args.json).write_text(json.dumps(report, indent=2) + "\n")
