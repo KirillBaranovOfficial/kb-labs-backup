@@ -27,6 +27,7 @@ import { formatCommandHelp } from '@kb-labs/shared-cli-ui';
 import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
 import { findProjectConfigRoot } from '@kb-labs/core-workspace';
 import type { GatewayCredentials, SessionCredentials } from '@kb-labs/cli-runtime/gateway';
+import { writeAndRegisterScaffold } from './scaffold-transaction.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_ROOT = resolve(here, '..', '..', 'templates');
@@ -262,14 +263,22 @@ async function runDefault(
     }
   }
 
-  await writeFiles({ outRoot, files: result.files, force: input.force });
-
   const entryPkgDir =
     entityArg === 'plugin'
       ? `${outRoot}/packages/${nameArg}-entry`
       : outRoot;
 
-  await linkWithMarketplace(entryPkgDir, ctx.cwd, result.manifest);
+  try {
+    await writeAndRegisterScaffold(
+      outRoot,
+      () => writeFiles({ outRoot, files: result.files, force: input.force }),
+      () => linkWithMarketplace(entryPkgDir, ctx.cwd, result.manifest),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    validationError(ctx, message, 'Check the platform with `kb-create status`, then start it with `kb-create start`.');
+    return { ok: false, error: message };
+  }
 
   const registrationNote = 'Registered in .kb/marketplace.lock';
 
@@ -369,8 +378,22 @@ async function linkWithMarketplace(entryPkgDir: string, cwd: string, manifest: R
       continue;
     }
     if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`Marketplace registration failed (${response.status}): ${detail}`);
+      let message = 'The marketplace rejected the registration.';
+      let hint: string | undefined;
+      try {
+        const payload: unknown = await response.json();
+        if (payload && typeof payload === 'object') {
+          const root = payload as Record<string, unknown>;
+          const error = root.error && typeof root.error === 'object'
+            ? root.error as Record<string, unknown>
+            : root;
+          if (typeof error.message === 'string') { message = error.message; }
+          if (typeof error.hint === 'string') { hint = error.hint; }
+        }
+      } catch {
+        // The status is actionable even when a proxy returned a non-JSON body.
+      }
+      throw new Error(`Marketplace registration failed (${response.status}): ${message}${hint ? ` ${hint}` : ''}`);
     }
     return;
   }
