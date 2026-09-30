@@ -210,7 +210,8 @@ class ServiceJourneyTests(unittest.TestCase):
     def test_declared_profile_capabilities_match_service_checks(self):
         for mode, auth_capability in (("local", "auth.local"), ("secured", "auth.invite-reset")):
             self.assertEqual(declared_capabilities(mode),
-                             {capability for _, capability, _ in checks(mode)} | {auth_capability})
+                             {capability for _, capability, _ in checks(mode)}
+                             | {auth_capability, "plugin-author"})
 
     def test_issue_sync_is_idempotent_updates_existing_and_closes_fixed(self):
         client = FakeGitHub()

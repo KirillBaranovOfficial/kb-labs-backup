@@ -617,6 +617,7 @@ def main():
     if BASE_ENV.get("KB_JOURNEY_SERVICE_PROFILE") == "nightly" and (local_service_journey or secured_service_journey):
         mode = "secured" if secured_service_journey else "local"
         service_env = env.copy()
+        service_env["KB_JOURNEY_PROJECT_ROOT"] = str(PROJECT)
         if mode == "secured":
             service_env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
             service_env["KB_JOURNEY_ADMIN_PASSWORD"] = "JourneyPassw0rd!"
