@@ -242,7 +242,7 @@ describe('EntityRegistry', () => {
     lock.plugins['@kb-labs/missing'] = createMarketplaceEntry({
       version: '1.0.0', integrity: 'sha256-x',
       resolvedPath: './nonexistent',
-      source: 'marketplace', primaryKind: 'plugin',
+      source: 'platform', primaryKind: 'plugin',
       provides: ['plugin'],
     });
     await writeMarketplaceLock(tmpDir, lock);

@@ -200,6 +200,7 @@ export class DiscoveryManager {
         }
         if (!packageRoot) {
           diag.error('PLUGIN_STORE_MISSING', `Pinned package ${id}@${entry.version} is missing from the shared store`, {
+            pluginId: id,
             remediation: 'Run "kb marketplace install ' + id + '" to restore the pinned version',
           });
           continue;

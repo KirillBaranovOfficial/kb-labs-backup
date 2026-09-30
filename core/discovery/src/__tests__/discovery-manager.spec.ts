@@ -58,6 +58,34 @@ describe('DiscoveryManager', () => {
     expect(pkgNotFound!.remediation).toContain('install');
   });
 
+  it('associates missing shared-store diagnostics with the pinned plugin', async () => {
+    const lock = createEmptyLock();
+    lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
+      version: '1.0.0',
+      integrity: 'sha256-abc',
+      source: 'marketplace',
+      primaryKind: 'plugin',
+      provides: ['plugin'],
+    });
+    await writeMarketplaceLock(tmpDir, lock);
+
+    const dm = new DiscoveryManager({
+      root: tmpDir,
+      extensionStore: {
+        root: tmpDir,
+        casDir: path.join(tmpDir, 'cas'),
+        entriesDir: path.join(tmpDir, 'entries'),
+        lookup: async () => undefined,
+        resolve: async () => { throw new Error('resolve must not be called during discovery'); },
+        listEntries: async () => [],
+      },
+    });
+    const result = await dm.discover();
+
+    const missing = result.diagnostics.find(d => d.code === 'PLUGIN_STORE_MISSING');
+    expect(missing?.context?.pluginId).toBe('@kb-labs/ghost');
+  });
+
   it('discovers plugin with kb.plugin.json', async () => {
     // Create a fake plugin directory with kb.plugin.json
     const pluginDir = path.join(tmpDir, 'plugins', 'test-plugin');

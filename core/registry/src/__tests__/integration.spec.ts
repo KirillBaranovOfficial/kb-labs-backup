@@ -244,7 +244,7 @@ describe('Registry Integration', () => {
       version: '1.0.0',
       integrity: 'sha256-fake',
       resolvedPath: './nonexistent',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
