@@ -15,13 +15,13 @@ func TestEnrichWithManifestsReplacesReleaseConfigProjection(t *testing.T) {
 	if err := os.MkdirAll(path, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	data := []byte(`{"schema":"kb.create.artifact-manifest/v2","id":"platform","package":"@kb/platform","version":"2.0.0","requirements":[{"id":"gateway.mode","path":"/gateway/mode","required":true,"default":"\"secure\""},{"id":"gateway.token","secret":true,"required":true,"env":"GATEWAY_TOKEN","services":["gateway"]}]}`)
+	data := []byte(`{"schema":"kb.create.artifact-manifest/v2","id":"platform","package":"@kb/platform","version":"2.0.0","requirements":[{"id":"gateway.mode","path":"/gateway/mode","required":true,"default":"\"secure\""},{"id":"gateway.token","secret":true,"generate":true,"required":true,"env":"GATEWAY_TOKEN","services":["gateway"]}]}`)
 	if err := os.WriteFile(filepath.Join(path, "kb-create.manifest.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	source := catalog.Catalog{Platforms: []catalog.PlatformBundle{{ID: "platform", Package: "@kb/platform", Version: "2.0.0", Config: []catalog.ConfigRequirement{{ID: "stale"}}}}}
 	got, err := EnrichWithManifests(source, root)
-	if err != nil || len(got.Platforms[0].Config) != 2 || got.Platforms[0].Config[0].ID != "gateway.mode" || got.Platforms[0].Config[1].Env != "GATEWAY_TOKEN" {
+	if err != nil || len(got.Platforms[0].Config) != 2 || got.Platforms[0].Config[0].ID != "gateway.mode" || got.Platforms[0].Config[1].Env != "GATEWAY_TOKEN" || !got.Platforms[0].Config[1].Generate {
 		t.Fatalf("catalog/error = %#v / %v", got, err)
 	}
 }

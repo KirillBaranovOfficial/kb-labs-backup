@@ -154,6 +154,10 @@ func healthChecks(ctx context.Context, client *http.Client, healthURL string) []
 		Adapters map[string]struct {
 			Available *bool `json:"available"`
 		} `json:"adapters"`
+		ProjectRuntimes *struct {
+			Active int `json:"active"`
+			Limit  int `json:"limit"`
+		} `json:"projectRuntimes"`
 	}
 	status, err := getJSON(ctx, client, healthURL, &document)
 	if errors.Is(err, errNotJSON) {
@@ -181,6 +185,12 @@ func healthChecks(ctx context.Context, client *http.Client, healthURL string) []
 		}
 		checks = append(checks, check)
 	}
+	if document.ProjectRuntimes != nil {
+		checks = append(checks, Check{
+			ID: "project-runtimes", OK: true,
+			Detail: fmt.Sprintf("Project runtimes start on demand; %d of %d active.", document.ProjectRuntimes.Active, document.ProjectRuntimes.Limit),
+		})
+	}
 	if len(checks) == 0 {
 		checks = append(checks, Check{ID: "health", OK: true})
 	}
@@ -196,7 +206,8 @@ func authChecks(ctx context.Context, client *http.Client, healthURL string) []Ch
 	}
 	parsed.Path = "/health/auth"
 	var readiness struct {
-		Issues []struct {
+		AuthEnabled *bool `json:"authEnabled"`
+		Issues      []struct {
 			Code     string `json:"code"`
 			Severity string `json:"severity"`
 			Message  string `json:"message"`
@@ -209,6 +220,9 @@ func authChecks(ctx context.Context, client *http.Client, healthURL string) []Ch
 	}
 	checks := make([]Check, 0, len(readiness.Issues)+1)
 	for _, issue := range readiness.Issues {
+		if issue.Code == "no_active_admin" && readiness.AuthEnabled != nil && !*readiness.AuthEnabled {
+			continue
+		}
 		checks = append(checks, Check{ID: "auth:" + issue.Code, OK: issue.Severity != "error", Detail: issue.Message, Hint: strings.TrimSpace(issue.Hint)})
 	}
 	if len(checks) == 0 {

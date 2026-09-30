@@ -4,7 +4,7 @@
     {
       "id": "gateway.access.mode",
       "path": "/gateway/access/mode",
-      "default": "secured",
+      "default": "local",
       "hint": "Studio access: \"secured\" requires login; \"local\" is a no-login install that binds loopback only"
     },
     {
@@ -29,6 +29,7 @@
     {
       "id": "gateway.jwtSecret",
       "secret": true,
+      "generate": true,
       "env": "GATEWAY_JWT_SECRET",
       "services": [
         "gateway"

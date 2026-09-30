@@ -3,6 +3,7 @@ package secrets
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -27,6 +28,39 @@ func TestStoreIsPrivateAndSupportsExistenceOnly(t *testing.T) {
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode/error = %v / %v", info.Mode(), err)
+	}
+}
+
+func TestEnsureGeneratedCreatesPrivateRandomSecretAndPreservesSuppliedValue(t *testing.T) {
+	root := t.TempDir()
+	store := Store{PlatformRoot: root}
+	plan := &contracts.ResolvedInstallPlan{
+		Request:   contracts.InstallRequest{SecretInputs: []string{"gateway.jwtSecret"}},
+		Artifacts: []contracts.Artifact{{Config: []contracts.ConfigRequirement{{ID: "gateway.jwtSecret", Secret: true, Generate: true}}}},
+	}
+	if err := EnsureGenerated(plan, store); err != nil {
+		t.Fatal(err)
+	}
+	first, present, err := store.Get("gateway.jwtSecret")
+	if err != nil || !present || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(first) {
+		t.Fatalf("generated secret = %q, present=%v, err=%v", first, present, err)
+	}
+	if err := EnsureGenerated(plan, store); err != nil {
+		t.Fatal(err)
+	}
+	second, _, _ := store.Get("gateway.jwtSecret")
+	if second != first {
+		t.Fatal("existing operator or generated secret was replaced")
+	}
+	if err := store.Put("gateway.jwtSecret", "operator-selected-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureGenerated(plan, store); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := store.Get("gateway.jwtSecret")
+	if got != "operator-selected-secret" {
+		t.Fatalf("operator secret = %q", got)
 	}
 }
 func TestStoreRejectsInjectionName(t *testing.T) {

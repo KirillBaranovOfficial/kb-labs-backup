@@ -126,18 +126,19 @@ describe('jwt secret', () => {
     expect(r.issues[0]).toMatchObject({ code: 'jwt_secret_default', severity: 'error' });
   });
 
-  it('default secret on loopback is only a warning (dev)', async () => {
+  it('default secret on loopback is an error because every install needs a private secret', async () => {
     await seedAdmin();
     const r = await evaluate({ jwtSecretIsDefault: true, loopbackOnly: true });
-    expect(r.ok).toBe(true);
-    expect(r.issues[0]).toMatchObject({ code: 'jwt_secret_default', severity: 'warning' });
+    expect(r.ok).toBe(false);
+    expect(r.issues[0]).toMatchObject({ code: 'jwt_secret_default', severity: 'error' });
   });
 });
 
 describe('auth disabled (solo/local)', () => {
-  it('never reports issues, even with no admin and a default secret', async () => {
+  it('does not require an admin but still rejects the shared default secret', async () => {
     const r = await evaluate({ authEnabled: false, jwtSecretIsDefault: true, bootstrap: { status: 'not-configured' } });
-    expect(r).toMatchObject({ ok: true, authEnabled: false, issues: [] });
+    expect(r).toMatchObject({ ok: false, authEnabled: false, activeAdmins: 0 });
+    expect(r.issues.map((issue) => issue.code)).toEqual(['jwt_secret_default']);
   });
 });
 

@@ -14,6 +14,7 @@ type ConfigRequirement struct {
 	Path     string   `json:"path,omitempty"`
 	Required bool     `json:"required,omitempty"`
 	Secret   bool     `json:"secret,omitempty"`
+	Generate bool     `json:"generate,omitempty"`
 	Default  string   `json:"default,omitempty"`
 	Env      string   `json:"env,omitempty"`
 	Services []string `json:"services,omitempty"`

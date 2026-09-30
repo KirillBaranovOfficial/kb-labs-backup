@@ -103,7 +103,7 @@ func (p Pnpm) materializeManifests(items []contracts.Artifact) error {
 		for _, requirement := range item.Config {
 			manifest.Requirements = append(manifest.Requirements, doctor.Requirement{
 				ID: requirement.ID, Path: requirement.Path, Required: requirement.Required,
-				Secret: requirement.Secret, Hint: requirement.Hint, Env: requirement.Env,
+				Secret: requirement.Secret, Generate: requirement.Generate, Hint: requirement.Hint, Env: requirement.Env,
 				Services: append([]string(nil), requirement.Services...), Default: []byte(requirement.Default),
 			})
 		}

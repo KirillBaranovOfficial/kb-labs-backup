@@ -89,7 +89,7 @@ func requirements(items []doctor.Requirement) ([]catalog.ConfigRequirement, erro
 			}
 			defaultValue = string(item.Default)
 		}
-		result = append(result, catalog.ConfigRequirement{ID: item.ID, Path: item.Path, Required: item.Required, Secret: item.Secret, Default: defaultValue, Env: item.Env, Services: append([]string(nil), item.Services...), Hint: item.Hint})
+		result = append(result, catalog.ConfigRequirement{ID: item.ID, Path: item.Path, Required: item.Required, Secret: item.Secret, Generate: item.Generate, Default: defaultValue, Env: item.Env, Services: append([]string(nil), item.Services...), Hint: item.Hint})
 	}
 	return result, nil
 }

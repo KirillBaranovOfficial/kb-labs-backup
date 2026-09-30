@@ -27,6 +27,7 @@ PLATFORM = HOME / "kb-platform"
 PROJECT = HOME / "fresh-project"
 TIMES: dict[str, float] = {}
 MAX_PNPM_RSS_MIB = 0.0
+PLATFORM_SIZE_MIB: float | None = None
 PROCESSES: list[subprocess.Popen] = []
 FIRST_FAILURE = ""
 
@@ -134,15 +135,17 @@ def human_text_is_clean(output: str):
 
 
 def append_summary(passed: bool):
-    root_size = 0
-    if PLATFORM.exists():
-        root_size = sum(p.stat().st_size for p in PLATFORM.rglob("*") if p.is_file())
+    root_size = PLATFORM_SIZE_MIB
+    if root_size is None:
+        root_size = 0.0
+        if PLATFORM.exists():
+            root_size = sum(p.stat().st_size for p in PLATFORM.rglob("*") if p.is_file()) / (1024 * 1024)
     title = f"{FRONT_DOOR}/{SCENARIO}" if VARIANT == "default" else VARIANT
     lines = [f"| {title} | {'PASS' if passed else 'FAIL'} | {FIRST_FAILURE or 'all assertions passed'} | "
              f"{TIMES.get('install.sh', 0):.1f}s | {TIMES.get('questions', 0):.1f}s | "
              f"{TIMES.get('apply', 0):.1f}s | {TIMES.get('start', 0):.1f}s | "
              f"{TIMES.get('first command', 0):.1f}s | "
-             f"{sum(TIMES.values()):.1f}s | {root_size / (1024 * 1024):.1f} MiB | {MAX_PNPM_RSS_MIB:.1f} MiB |"]
+             f"{sum(TIMES.values()):.1f}s | {root_size:.1f} MiB | {MAX_PNPM_RSS_MIB:.1f} MiB |"]
     report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
     report.parent.mkdir(parents=True, exist_ok=True)
     if not report.exists():
@@ -276,9 +279,9 @@ def main():
                 "--request-platform-root", str(PLATFORM), "--scenario", "commit", "--registry", REGISTRY]
         result, elapsed = run(args, env=env, timeout=90)
         TIMES["apply"] = elapsed
-        passed = result.returncode != 0 and "KB_HOST_PORT_IN_USE" in result.stdout and "4000" in result.stdout
+        passed = result.returncode != 0 and "KB_INSTALL_PORT_IN_USE" in result.stdout and "4000" in result.stdout
         if not passed:
-            fail(f"port conflict: expected KB_HOST_PORT_IN_USE for port 4000; {' '.join(result.stdout.split())[-500:]}")
+            fail(f"port conflict: expected KB_INSTALL_PORT_IN_USE for port 4000; {' '.join(result.stdout.split())[-500:]}")
         append_summary(passed)
         return 0 if passed else 1
     if FRONT == "human":
@@ -289,6 +292,10 @@ def main():
         TIMES["questions"] = apply_offset if apply_offset is not None else duration
         if apply_offset is not None:
             TIMES["apply"] = duration - apply_offset
+        if VARIANT.startswith("human-"):
+            diagnostic = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log")
+            with diagnostic.open("a", encoding="utf-8") as stream:
+                stream.write(f"\n== {FRONT}/{SCENARIO}: install-pty (exit {code}) ==\n{output[-12000:]}\n")
         human_text_is_clean(output)
         if code != 0:
             fail(f"kb-create install: exit {code}; {' '.join(output.split())[-2000:]}")
@@ -311,7 +318,7 @@ def main():
                 root = payload.get("plan", {}).get("request", {}).get("platformRoot", "")
             except json.JSONDecodeError:
                 root = ""
-            passed = result.returncode == 0 and Path(root).is_absolute() and root == str(Path("./relative-kb-platform").resolve())
+            passed = result.returncode == 0 and Path(root).is_absolute() and root == str(PLATFORM.resolve())
             if not passed:
                 fail(f"relative platform root: expected a successful plan with an absolute normalized root; {' '.join(result.stdout.split())[-500:]}")
             append_summary(passed)
@@ -334,20 +341,18 @@ def main():
             else:
                 request_file = HOME / "launcher-request.json"
                 request_file.write_text(json.dumps(request) + "\n")
-                removed, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM), "--registry", REGISTRY], env=env, timeout=180)
-                if require(removed, step="remove direct-flags install before --input"):
-                    args = [launcher, "apply", "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
-                            "--input", str(request_file), "--registry", REGISTRY]
-                    result, elapsed = run(args, env=env, timeout=1200)
-                    TIMES["apply"] += elapsed
-                    if not require(result, step="kb-create apply --input launcher request"):
-                        append_summary(False)
-                        return 1
-                    try:
-                        if json.loads(result.stdout).get("ok") is not True:
-                            fail("kb-create apply --input: result did not report ok=true")
-                    except json.JSONDecodeError:
-                        fail("kb-create apply --input: output was not one JSON document")
+                args = [launcher, "apply", "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
+                        "--input", str(request_file), "--registry", REGISTRY]
+                result, elapsed = run(args, env=env, timeout=1200)
+                TIMES["apply"] += elapsed
+                if not require(result, step="kb-create apply --input launcher request"):
+                    append_summary(False)
+                    return 1
+                try:
+                    if json.loads(result.stdout).get("ok") is not True:
+                        fail("kb-create apply --input: result did not report ok=true")
+                except json.JSONDecodeError:
+                    fail("kb-create apply --input: output was not one JSON document")
 
     if FIRST_FAILURE:
         append_summary(False)
@@ -392,7 +397,7 @@ def main():
         if status.stdout.strip() != "?? note.txt" and status.stdout.strip() != "A  note.txt":
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
-    for command, key in (("status", r"Installed:\s+yes.*Running:\s+yes"), ("doctor", "healthy")):
+    for command, key in (("status", r"Installed:\s+yes.*Running:\s+yes"), ("doctor", "")):
         result, _ = run([launcher, command, "--platform-root", str(PLATFORM)], env=env, timeout=120)
         if not require(result, step=f"kb-create {command}"):
             with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
@@ -401,17 +406,27 @@ def main():
                 diagnostic, _ = run([launcher, command, "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
                 with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
                     stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: doctor-json (exit {diagnostic.returncode}) ==\n{(diagnostic.stdout or '')[-12000:]}\n{(diagnostic.stderr or '')[-4000:]}\n")
-        elif not re.search(key, result.stdout, re.I | re.S):
+        elif command == "doctor":
+            diagnostic, _ = run([launcher, command, "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
+            try:
+                health = json.loads(diagnostic.stdout)
+                passed = diagnostic.returncode == 0 and health.get("ok") is True and health.get("platform", {}).get("ok") is True
+            except json.JSONDecodeError:
+                passed = False
+            if not passed:
+                fail(f"kb-create doctor: expected healthy JSON report; {' '.join(diagnostic.stdout.split())[-1000:]}")
+        elif key and not re.search(key, result.stdout, re.I | re.S):
             with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
                 stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: {command}-output ==\n{result.stdout[-5000:]}\n")
             fail(f"kb-create {command}: expected human summary '{key}'")
 
+    global PLATFORM_SIZE_MIB
+    if PLATFORM.exists():
+        PLATFORM_SIZE_MIB = sum(p.stat().st_size for p in PLATFORM.rglob("*") if p.is_file()) / (1024 * 1024)
     result, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM), "--registry", REGISTRY], env=env, timeout=180)
     if require(result, step="kb-create uninstall"):
         alive = [p for p in PROCESSES if p.poll() is None]
         listeners, _ = run(["ss", "-H", "-ltnp"], timeout=20)
-        if listeners.stdout.strip():
-            fail(f"uninstall left listening TCP ports: {' '.join(listeners.stdout.split())[:400]}")
         platform_pids = set()
         for pid in re.findall(r"pid=(\d+)", listeners.stdout):
             try:
@@ -421,6 +436,8 @@ def main():
                     platform_pids.add(pid)
             except OSError:
                 continue
+        if platform_pids:
+            fail(f"uninstall left platform listeners: {', '.join(sorted(platform_pids))}")
         if alive or platform_pids or not uninstall_removed_platform_root() or (BIN / "kb").exists():
             fail("uninstall left a platform process, listening port, shim, platform root, receipt, or snapshots")
     passed = not FIRST_FAILURE

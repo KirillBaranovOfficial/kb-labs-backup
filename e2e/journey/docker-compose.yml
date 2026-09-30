@@ -18,7 +18,7 @@ services:
     build:
       context: ..
       dockerfile: e2e/journey/Dockerfile.runner
-    image: kb-installer-journey:local
+    image: ${KB_JOURNEY_RUNNER_IMAGE:-kb-installer-journey:local}
     depends_on:
       origin:
         condition: service_healthy
@@ -45,4 +45,4 @@ services:
 
 networks:
   journey:
-    name: kb-installer-journey
+    name: ${KB_JOURNEY_NETWORK:-kb-installer-journey}

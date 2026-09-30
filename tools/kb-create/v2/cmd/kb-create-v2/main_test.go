@@ -19,6 +19,22 @@ import (
 	"github.com/kb-labs/create/v2/secrets"
 )
 
+func TestRequestWithGeneratedSecretsAddsOnlyDeclaredGeneratedSecretInputs(t *testing.T) {
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: t.TempDir()}
+	artifacts := []contracts.Artifact{{Config: []contracts.ConfigRequirement{
+		{ID: "gateway.jwtSecret", Secret: true, Generate: true},
+		{ID: "gateway.bootstrap.password", Secret: true},
+	}}}
+	got, changed, err := requestWithGeneratedSecrets(request, artifacts)
+	if err != nil || !changed || len(got.SecretInputs) != 1 || got.SecretInputs[0] != "gateway.jwtSecret" {
+		t.Fatalf("request/changed/error = %#v / %v / %v", got, changed, err)
+	}
+	got, changed, err = requestWithGeneratedSecrets(got, artifacts)
+	if err != nil || changed || len(got.SecretInputs) != 1 {
+		t.Fatalf("second request/changed/error = %#v / %v / %v", got, changed, err)
+	}
+}
+
 type installArtifacts struct{ root string }
 
 func (a installArtifacts) Install(items []contracts.Artifact) error {

@@ -274,6 +274,21 @@ func (i invocation) run(output *os.File) int {
 		write(output, response)
 		return 2
 	}
+	if operation == "apply" || operation == "update" {
+		request, changed, requestErr := requestWithGeneratedSecrets(response.Plan.Request, response.Plan.Artifacts)
+		if requestErr != nil {
+			write(output, failure(contracts.CodeInputRequired, "the install request could not include generated secrets.", "rerun `kb-create install` with the selected platform manifest", requestErr))
+			return 2
+		}
+		if changed {
+			data, _ := json.Marshal(request)
+			response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
+			if !response.OK {
+				write(output, response)
+				return 2
+			}
+		}
+	}
 	if operation == "apply" {
 		root := response.Plan.Request.PlatformRoot
 		if err := preflight.CheckInstallResources(root); err != nil {
@@ -311,6 +326,10 @@ func (i invocation) run(output *os.File) int {
 	store := secrets.Store{PlatformRoot: root}
 	if err := populateSecrets(store, i.SecretEnv); err != nil {
 		write(output, failure("KB_INSTALL_SECRET_INPUT_INVALID", "secret input could not be stored", "use --secret-env requirement=ENV_VAR and set the environment variable", err))
+		return 2
+	}
+	if err := secrets.EnsureGenerated(response.Plan, store); err != nil {
+		write(output, failure(contracts.CodeApplyFailed, "the session signing secret could not be generated or stored.", "check that the platform root is writable, then rerun `kb-create install`", err))
 		return 2
 	}
 	state, stateErr := host.StateHome()
@@ -567,6 +586,31 @@ func (i invocation) runStatus(output *os.File) int {
 		return command.fail(2, setupErr)
 	}
 	return command.hostStatus(context.Background(), runner, state)
+}
+
+func requestWithGeneratedSecrets(request contracts.InstallRequest, artifacts []contracts.Artifact) (contracts.InstallRequest, bool, error) {
+	known := make(map[string]bool, len(request.SecretInputs))
+	for _, id := range request.SecretInputs {
+		known[id] = true
+	}
+	changed := false
+	for _, artifact := range artifacts {
+		for _, requirement := range artifact.Config {
+			if requirement.Secret && requirement.Generate && !known[requirement.ID] {
+				request.SecretInputs = append(request.SecretInputs, requirement.ID)
+				known[requirement.ID] = true
+				changed = true
+			}
+		}
+	}
+	if changed {
+		var err error
+		request, err = request.Normalize()
+		if err != nil {
+			return contracts.InstallRequest{}, false, err
+		}
+	}
+	return request, changed, nil
 }
 
 func defaultPlatformRoot() string {

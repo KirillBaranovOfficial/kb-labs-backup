@@ -18,6 +18,7 @@ type Requirement struct {
 	ID       string   `json:"id,omitempty"`
 	Path     string   `json:"path"`
 	Secret   bool     `json:"secret"`
+	Generate bool     `json:"generate,omitempty"`
 	Required bool     `json:"required"`
 	Hint     string   `json:"hint"`
 	Env      string   `json:"env,omitempty"`

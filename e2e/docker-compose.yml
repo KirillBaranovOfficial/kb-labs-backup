@@ -39,7 +39,7 @@ services:
 
   # ── Publish monorepo tarballs to Verdaccio ────────────────────────────────
   publisher:
-    image: kb-e2e-ci-publisher:latest
+    image: ${KB_E2E_PUBLISHER_IMAGE:-kb-e2e-ci-publisher:latest}
     build:
       context: ./
       dockerfile: publisher/Dockerfile
