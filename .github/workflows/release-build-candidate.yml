@@ -43,6 +43,7 @@ jobs:
     uses: ./.github/workflows/reusable-installer-journey.yml
     with:
       ref: ${{ inputs.commit_sha }}
+      scenario-level: release
     permissions:
       contents: read
 

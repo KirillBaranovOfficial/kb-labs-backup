@@ -14,20 +14,14 @@ jobs:
     name: Fresh install journeys
     uses: ./.github/workflows/reusable-installer-journey.yml
     with:
-      service-profile: nightly
-    permissions:
-      contents: read
-
-  services:
-    name: Service and auth regression suites
-    uses: ./.github/workflows/e2e-platform.yml
+      scenario-level: nightly
     permissions:
       contents: read
 
   report:
     name: Nightly report and issue sync
     if: always()
-    needs: [installer, services]
+    needs: [installer]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -48,16 +42,14 @@ jobs:
       - name: Collect reusable workflow results
         env:
           INSTALLER_RESULT: ${{ needs.installer.result }}
-          SERVICES_RESULT: ${{ needs.services.result }}
         run: |
           mkdir -p .journey/nightly-results
-          python3 - <<'PY'
+          RESULT="$INSTALLER_RESULT" python3 - <<'PY'
           import json, os
           from pathlib import Path
-          for capability, variable in [('install-matrix', 'INSTALLER_RESULT'), ('service-regression', 'SERVICES_RESULT')]:
-              result = os.environ[variable]
-              status = 'PASS' if result == 'success' else 'FAIL' if result == 'failure' else 'BLOCKED'
-              Path(f'.journey/nightly-results/{capability}.json').write_text(json.dumps({'schema':'kb.service-journey/v1', 'steps':[{'name': capability, 'capability': capability, 'mode':'matrix', 'status':status, 'duration_seconds':0.0, 'message': 'passed' if status == 'PASS' else f'GitHub job result: {result}'}]}) + '\n')
+          result = os.environ['RESULT']
+          status = 'PASS' if result == 'success' else 'FAIL' if result == 'failure' else 'BLOCKED'
+          Path('.journey/nightly-results/scenario-manifest.json').write_text(json.dumps({'schema':'kb.service-journey/v1', 'steps':[{'name': 'scenario manifest and full journey matrix', 'capability':'scenario-manifest', 'mode':'nightly', 'status':status, 'duration_seconds':0.0, 'message':'passed' if status == 'PASS' else f'GitHub job result: {result}'}]}) + '\n')
           PY
       - name: Download previous nightly JSON artifact
         continue-on-error: true

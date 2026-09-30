@@ -7,17 +7,23 @@ MODE="${1:-}"
 shift || true
 DRY_RUN=0
 KEEP_GOING=0
+FULL=0
 PACKAGES=""
 while (($#)); do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --keep-going) KEEP_GOING=1 ;;
+    --full) FULL=1 ;;
     --packages) (($# >= 2)) || { echo "local-gate: --packages needs a comma-separated value" >&2; exit 2; }; PACKAGES="$2"; shift ;;
     *) echo "local-gate: unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
-[[ "$MODE" == quick || "$MODE" == batch ]] || { echo "Usage: scripts/local-gate.sh quick [--packages a,b] [--dry-run] | batch [--dry-run] [--keep-going]" >&2; exit 2; }
+[[ "$MODE" == quick || "$MODE" == batch ]] || { echo "Usage: scripts/local-gate.sh quick [--packages a,b] [--dry-run] | batch [--full] [--dry-run] [--keep-going]" >&2; exit 2; }
+if [[ "$MODE" == quick && "$FULL" == 1 ]]; then echo "local-gate: --full is only available with batch" >&2; exit 2; fi
+if [[ "$MODE" == batch && "$FULL" == 1 && "$DRY_RUN" == 0 ]]; then
+  python3 e2e/journey/scenarios.py validate --level full || exit 1
+fi
 
 if [[ "$MODE" == quick ]]; then
   if [[ -z "$PACKAGES" ]]; then
@@ -105,11 +111,16 @@ PY
 STAGE_NAMES=()
 STAGE_NAMES+=( 'frozen install' 'affected build' 'affected lint type-check tests' )
 while IFS= read -r package; do STAGE_NAMES+=("kb-create Go tests $package"); done <<< "$go_packages"
-STAGE_NAMES+=( 'dependency audit' 'secret scan' 'prepare service journey candidate' 'Colima start' 'local install and service journey' 'secured install and service journey' 'nightly journey aggregation' )
+STAGE_NAMES+=( 'dependency audit' 'secret scan' 'prepare service journey candidate' 'Colima start' )
+if ((FULL)); then STAGE_NAMES+=( 'full scenario manifest journey matrix' ); else STAGE_NAMES+=( 'local install and service journey' 'secured install and service journey' ); fi
+STAGE_NAMES+=( 'nightly journey aggregation' )
 GO_STAGE_START=3
 AUDIT_STAGE=$((GO_STAGE_START + $(wc -l <<< "$go_packages" | tr -d ' ')))
 SECRET_STAGE=$((AUDIT_STAGE + 1)); CANDIDATE_STAGE=$((AUDIT_STAGE + 2)); COLIMA_STAGE=$((AUDIT_STAGE + 3))
-LOCAL_JOURNEY_STAGE=$((AUDIT_STAGE + 4)); SECURED_JOURNEY_STAGE=$((AUDIT_STAGE + 5)); AGGREGATION_STAGE=$((AUDIT_STAGE + 6))
+JOURNEY_STAGE=$((AUDIT_STAGE + 4))
+if ((FULL)); then AGGREGATION_STAGE=$((AUDIT_STAGE + 5)); else
+  LOCAL_JOURNEY_STAGE=$JOURNEY_STAGE; SECURED_JOURNEY_STAGE=$((JOURNEY_STAGE + 1)); AGGREGATION_STAGE=$((AUDIT_STAGE + 6))
+fi
 if ((DRY_RUN)); then
   for i in "${!STAGE_NAMES[@]}"; do printf '%d. %s\n' "$((i + 1))" "${STAGE_NAMES[$i]}"; done
   if ((KEEP_GOING)); then echo 'keep-going: continue after failed stages; final status remains non-zero'; fi
@@ -181,8 +192,8 @@ if [[ "${INSTALL_FAILED:-0}" == 1 ]]; then
   for ((go_index=0; go_index < AUDIT_STAGE-GO_STAGE_START; go_index++)); do block_stage "${STAGE_NAMES[$((GO_STAGE_START + go_index))]}" 'blocked because frozen install failed'; done
   block_stage "${STAGE_NAMES[$CANDIDATE_STAGE]}" 'blocked because frozen install failed'
   block_stage "${STAGE_NAMES[$COLIMA_STAGE]}" 'blocked because frozen install failed'
-  block_stage "${STAGE_NAMES[$LOCAL_JOURNEY_STAGE]}" 'blocked because frozen install failed'
-  block_stage "${STAGE_NAMES[$SECURED_JOURNEY_STAGE]}" 'blocked because frozen install failed'
+  block_stage "${STAGE_NAMES[$JOURNEY_STAGE]}" 'blocked because frozen install failed'
+  if ((!FULL)); then block_stage "${STAGE_NAMES[$((JOURNEY_STAGE + 1))]}" 'blocked because frozen install failed'; fi
   block_stage "${STAGE_NAMES[$AGGREGATION_STAGE]}" 'blocked because frozen install failed'
 else
 stage "${STAGE_NAMES[1]}" env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run build --affected || exit 1
@@ -211,8 +222,15 @@ else
   else block_stage "${STAGE_NAMES[$COLIMA_STAGE]}" 'blocked because candidate preparation failed'; fi
 fi
 mkdir -p .journey/reports
-rm -f .journey/reports/service-local.json .journey/reports/service-secured.json
+rm -f .journey/reports/service-local.json .journey/reports/service-secured.json .journey/reports/service-auth-local.json .journey/reports/service-auth-secured.json
 if ((JOURNEY_CANDIDATE_READY)); then
+if ((FULL)); then
+stage "${STAGE_NAMES[$JOURNEY_STAGE]}" e2e/journey/run.sh --no-build || true
+FULL_JOURNEY_EXIT="$LAST_STAGE_EXIT"
+stage "${STAGE_NAMES[$AGGREGATION_STAGE]}" python3 e2e/journey/nightly_report.py --results .journey/reports --profile local --profile secured \
+  --journey-exit "local=$FULL_JOURNEY_EXIT" --journey-exit "secured=$FULL_JOURNEY_EXIT" \
+  --json "$OUT/capabilities.json" --summary "$OUT/capabilities.md" || true
+else
 stage "${STAGE_NAMES[$LOCAL_JOURNEY_STAGE]}" env KB_JOURNEY_ONLY=service-local:explore e2e/journey/run.sh --no-build || true
 LOCAL_JOURNEY_EXIT="$LAST_STAGE_EXIT"
 stage "${STAGE_NAMES[$SECURED_JOURNEY_STAGE]}" env KB_JOURNEY_ONLY=service-secured:explore e2e/journey/run.sh --no-build || true
@@ -220,10 +238,11 @@ SECURED_JOURNEY_EXIT="$LAST_STAGE_EXIT"
 stage "${STAGE_NAMES[$AGGREGATION_STAGE]}" python3 e2e/journey/nightly_report.py --results .journey/reports --profile local --profile secured \
   --journey-exit "local=$LOCAL_JOURNEY_EXIT" --journey-exit "secured=$SECURED_JOURNEY_EXIT" \
   --json "$OUT/capabilities.json" --summary "$OUT/capabilities.md" || true
+fi
 else
   if [[ "${INSTALL_FAILED:-0}" != 1 ]]; then
-    block_stage "${STAGE_NAMES[$LOCAL_JOURNEY_STAGE]}" 'blocked because candidate preparation failed'
-    block_stage "${STAGE_NAMES[$SECURED_JOURNEY_STAGE]}" 'blocked because candidate preparation failed'
+    block_stage "${STAGE_NAMES[$JOURNEY_STAGE]}" 'blocked because candidate preparation failed'
+    if ((!FULL)); then block_stage "${STAGE_NAMES[$((JOURNEY_STAGE + 1))]}" 'blocked because candidate preparation failed'; fi
     block_stage "${STAGE_NAMES[$AGGREGATION_STAGE]}" 'blocked because candidate preparation failed'
   fi
 fi
