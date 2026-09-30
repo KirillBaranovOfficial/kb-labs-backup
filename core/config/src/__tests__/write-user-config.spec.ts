@@ -6,12 +6,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { withFileLock, FileLockTimeoutError } from '../user-config/file-lock.js';
+import { parseJsonc } from '../user-config/jsonc-edit.js';
 import { editDistance, resolveKeyPath, suggestKey } from '../user-config/schema-keys.js';
 import { findPlainSecrets, isSecretKeyPath, looksLikeSecretValue } from '../user-config/secrets.js';
 import {
   ConfigWriteError,
   revisionOf,
   setUserConfigValue,
+  unsetUserConfigValue,
   type ConfigWriteErrorCode,
 } from '../user-config/write-user-config.js';
 
@@ -306,6 +308,66 @@ describe('setUserConfigValue: schema validation', () => {
       'KB_CONFIG_INVALID',
     );
     expect(error.details.path).toBe('platform');
+  });
+});
+
+describe('unsetUserConfigValue', () => {
+  it('removes the user binding while preserving adapter options and unrelated config', async () => {
+    const input = `{
+  // project user config
+  "platform": {
+    "adapters": { "storage": "@kb-labs/adapters-fs", "cache": "@kb-labs/adapters-cache" },
+    "adapterOptions": { "storage": { "baseDir": ".kb/data" } }
+  }
+}
+`;
+    await fsp.writeFile(file, input);
+
+    const result = await unsetUserConfigValue({
+      filePath: file,
+      path: ['platform', 'adapters', 'storage'],
+      schema: TEST_SCHEMA,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.previousValue).toBe('@kb-labs/adapters-fs');
+    expect(parseJsonc(result.text)).toEqual({
+      platform: {
+        adapters: { cache: '@kb-labs/adapters-cache' },
+        adapterOptions: { storage: { baseDir: '.kb/data' } },
+      },
+    });
+    expect(result.text).toContain('// project user config');
+    expect(await fsp.readFile(file, 'utf8')).toBe(result.text);
+  });
+
+  it('dry-runs without writing and is idempotent when the key is already absent', async () => {
+    await fsp.writeFile(file, JSON.stringify({
+      platform: { adapters: { storage: '@kb-labs/adapters-fs' }, adapterOptions: { storage: { baseDir: '.kb/data' } } },
+    }));
+    const original = await fsp.readFile(file, 'utf8');
+    const dryRun = await unsetUserConfigValue({
+      filePath: file,
+      path: ['platform', 'adapters', 'storage'],
+      schema: TEST_SCHEMA,
+      dryRun: true,
+    });
+    expect(dryRun.changed).toBe(true);
+    expect(await fsp.readFile(file, 'utf8')).toBe(original);
+
+    const removed = await unsetUserConfigValue({
+      filePath: file,
+      path: ['platform', 'adapters', 'storage'],
+      schema: TEST_SCHEMA,
+    });
+    const unchanged = await unsetUserConfigValue({
+      filePath: file,
+      path: ['platform', 'adapters', 'storage'],
+      schema: TEST_SCHEMA,
+    });
+    expect(removed.changed).toBe(true);
+    expect(unchanged.changed).toBe(false);
+    expect(unchanged.previousValue).toBeUndefined();
   });
 });
 

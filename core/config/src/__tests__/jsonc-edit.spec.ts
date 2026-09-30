@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   JsoncPathError,
   JsoncSyntaxError,
+  deleteJsoncValue,
   getJsoncValue,
   parseJsonc,
   setJsoncValue,
@@ -131,6 +132,38 @@ describe('setJsoncValue', () => {
   it('is idempotent when the same value is set again', () => {
     const once = setJsoncValue(DOC, ['platform', 'adapters', 'llm'], '@kb-labs/adapters-openai');
     expect(once).toBe(DOC);
+  });
+});
+
+describe('deleteJsoncValue', () => {
+  it('removes a nested binding and its trailing comment while preserving sibling config and comments', () => {
+    const input = `{
+  // project options
+  "platform": {
+    "adapters": {
+      "storage": "@kb-labs/adapters-fs", // project-only binding
+      "cache": "@kb-labs/adapters-cache"
+    },
+    "adapterOptions": { "storage": { "baseDir": ".kb/data" } }
+  }
+}
+`;
+    const next = deleteJsoncValue(input, ['platform', 'adapters', 'storage']);
+    expect(parseJsonc(next)).toEqual({
+      platform: {
+        adapters: { cache: '@kb-labs/adapters-cache' },
+        adapterOptions: { storage: { baseDir: '.kb/data' } },
+      },
+    });
+    expect(next).toContain('// project options');
+    expect(next).not.toContain('project-only binding');
+  });
+
+  it('removes a last property without leaving a dangling comma and leaves missing keys unchanged', () => {
+    const input = '{\n  "platform": { "adapters": { "storage": "@kb-labs/adapters-fs" } }\n}\n';
+    const next = deleteJsoncValue(input, ['platform', 'adapters', 'storage']);
+    expect(parseJsonc(next)).toEqual({ platform: { adapters: {} } });
+    expect(deleteJsoncValue(next, ['platform', 'adapters', 'storage'])).toBe(next);
   });
 });
 

@@ -12,6 +12,7 @@ import uuid
 from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import Journey
+from marketplace_steps import run_marketplace_steps
 
 
 BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -151,6 +152,12 @@ def main() -> int:
             journey.blocked(name, capability, output.removeprefix("BLOCKED: "))
         else:
             journey.step(name, capability, lambda value=output: value)
+    project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT", "")
+    if project_root:
+        run_marketplace_steps(journey, project_root, os.getenv("KB_JOURNEY_REGISTRY", ""), os.environ.copy())
+    else:
+        journey.step("marketplace and adapter user flows", "marketplace",
+                     lambda: "KB_JOURNEY_PROJECT_ROOT is required for marketplace and adapter journeys")
     result = journey.write_json(args.output)
     print(json.dumps(result.__dict__, indent=2))
     return 0 if result.status == "PASS" else 1
