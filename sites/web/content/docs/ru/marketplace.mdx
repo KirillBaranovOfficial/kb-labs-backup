@@ -15,6 +15,22 @@ kb marketplace install @kb-labs/commit-entry@1.2.3
 
 Проект хранит версию и состояние плагина в `.kb/marketplace.lock`. Сам пакет устанавливается в общее хранилище машины. Команда не меняет `package.json`, lock-файл пакетного менеджера или `node_modules`. Добавьте marketplace lock в git вместе с проектом.
 
+## Разработка локального плагина
+
+Создайте плагин в проекте, соберите его и привяжите entry-пакет относительным путём:
+
+```bash
+kb scaffold run plugin my-plugin
+cd .kb/plugins/my-plugin
+pnpm install
+pnpm -w build
+cd ../../..
+kb marketplace link --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb my-plugin hello
+```
+
+Команда link записывает локальный пакет в `.kb/marketplace.lock`. Scaffold только создаёт файлы и не регистрирует пакет автоматически.
+
 Команды `kb marketplace plugins disable <package>` и `kb marketplace plugins enable <package>` выключают и включают плагин для проекта. `kb marketplace uninstall <package>` удаляет его pin.
 
 ## Установка и привязка адаптера

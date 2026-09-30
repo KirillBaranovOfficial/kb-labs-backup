@@ -58,6 +58,12 @@ kb scaffold run plugin my-plugin --out ./custom/path   # override output dir
 kb scaffold run plugin my-plugin --force               # overwrite existing
 ```
 
+Scaffolding writes files only. Build the generated workspace, then link the
+plugin entry from the project root with `kb marketplace link --link
+.kb/plugins/my-plugin/packages/my-plugin-entry`. For adapters, run the scaffold
+from the platform root, build the package, link it with `--scope platform`, and
+bind it to a project slot with `kb adapter bind <slot> <package-id>`.
+
 ### Doctor
 
 ```bash

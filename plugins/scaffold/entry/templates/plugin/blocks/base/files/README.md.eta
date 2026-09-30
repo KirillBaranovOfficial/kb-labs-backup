@@ -148,11 +148,11 @@ pnpm kb <%= it.name %> hello
 - CLI commands: `packages/<%= it.name %>-entry/src/manifest.ts`
 - Shared types: `packages/<%= it.name %>-contracts/src/index.ts`
 
-**Link into a workspace**
+**Link into the project**
 
 ```bash
-pnpm kb marketplace plugins link .
-pnpm kb plugins clear-cache
+cd ../../..
+kb marketplace link --link .kb/plugins/<%= it.name %>/packages/<%= it.name %>-entry
 ```
 
 **Health check**

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeAndRegisterScaffold } from '../../commands/scaffold-transaction.js';
+import { writeScaffoldTransaction } from '../../commands/scaffold-transaction.js';
 
 const roots: string[] = [];
 
@@ -16,31 +16,29 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe('writeAndRegisterScaffold', () => {
-  it('removes newly generated files when marketplace registration fails', async () => {
+describe('writeScaffoldTransaction', () => {
+  it('removes partially generated files when writing fails', async () => {
     const parent = await makeRoot();
     const outRoot = join(parent, 'plugin');
 
-    await expect(writeAndRegisterScaffold(
+    await expect(writeScaffoldTransaction(
       outRoot,
-      async () => { await mkdir(outRoot); await writeFile(join(outRoot, 'package.json'), '{}'); },
-      async () => { throw new Error('registration rejected'); },
-    )).rejects.toThrow('registration rejected');
+      async () => { await mkdir(outRoot); await writeFile(join(outRoot, 'package.json'), '{}'); throw new Error('disk full'); },
+    )).rejects.toThrow('disk full');
 
     await expect(readFile(outRoot)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('restores previous output when forced replacement cannot be registered', async () => {
+  it('restores previous output when forced replacement fails to write', async () => {
     const parent = await makeRoot();
     const outRoot = join(parent, 'plugin');
     await mkdir(outRoot);
     await writeFile(join(outRoot, 'previous.txt'), 'keep');
 
-    await expect(writeAndRegisterScaffold(
+    await expect(writeScaffoldTransaction(
       outRoot,
-      async () => { await mkdir(outRoot); await writeFile(join(outRoot, 'new.txt'), 'new'); },
-      async () => { throw new Error('registration rejected'); },
-    )).rejects.toThrow('registration rejected');
+      async () => { await mkdir(outRoot); await writeFile(join(outRoot, 'new.txt'), 'new'); throw new Error('disk full'); },
+    )).rejects.toThrow('disk full');
 
     expect(await readFile(join(outRoot, 'previous.txt'), 'utf8')).toBe('keep');
   });

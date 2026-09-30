@@ -15,6 +15,22 @@ kb marketplace install @kb-labs/commit-entry@1.2.3
 
 The project records its version and enabled state in `.kb/marketplace.lock`. The package lives in the machine's shared extension store; the install does not change your `package.json`, package-manager lockfile, or `node_modules`. Commit the marketplace lock with your project.
 
+## Develop a local plugin
+
+From a KB Labs project, scaffold and build a plugin, then link its entry package with a project-relative path:
+
+```bash
+kb scaffold run plugin my-plugin
+cd .kb/plugins/my-plugin
+pnpm install
+pnpm -w build
+cd ../../..
+kb marketplace link --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb my-plugin hello
+```
+
+The link command records the local package in `.kb/marketplace.lock`; generated files are not registered automatically.
+
 Use `kb marketplace plugins disable <package>` and `kb marketplace plugins enable <package>` to change the project pin's enabled state. `kb marketplace uninstall <package>` removes the pin.
 
 ## Install and bind an adapter

@@ -92,27 +92,27 @@ describe('marketplace:plugins:disable', () => {
   });
 });
 
-describe('marketplace:plugins:link', () => {
-  it('PL-01: links local plugin successfully', async () => {
+describe('marketplace:link', () => {
+  it('links a project-relative local plugin successfully', async () => {
     mockedPost.mockResolvedValue({ id: 'my-plugin', scope: 'project' });
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await linkCommand.execute(ctx, mockCLIInput({ argv: ['/path/to/plugin'], flags: {} }));
+    const result = await linkCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '.kb/plugins/my-plugin/packages/my-plugin-entry' } }));
 
     expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
-  it('PL-02: --dry-run shows intent, HTTP post is NOT called', async () => {
+  it('rejects absolute paths before calling the marketplace', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    const result = await linkCommand.execute(ctx, mockCLIInput({ argv: ['/path/to/plugin'], flags: { 'dry-run': true } }));
+    const result = await linkCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '/path/to/plugin' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(mockedPost).not.toHaveBeenCalled();
-    expect(captured.infos[0]?.message).toContain('Dry-run');
+    expect(captured.errors[0]).toContain('relative');
   });
 });
 
