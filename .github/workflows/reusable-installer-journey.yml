@@ -8,6 +8,11 @@ on:
         type: string
         required: false
         default: ''
+      service-profile:
+        description: Run post-install service steps in addition to installer assertions
+        type: string
+        required: false
+        default: fast
 
 permissions:
   contents: read
@@ -52,6 +57,8 @@ jobs:
         run: e2e/journey/prepare-candidate.sh
       - id: matrix
         name: Derive journey matrix from built-in scenarios
+        env:
+          SERVICE_PROFILE: ${{ inputs.service-profile }}
         run: |
           node - <<'NODE' >> "$GITHUB_OUTPUT"
           const fs = require('node:fs');
@@ -62,6 +69,7 @@ jobs:
             .map(name => `agent:${path.basename(name, '.json')}`);
           journeys.push('agent-input:commit', 'human:default', 'human:nondefault', 'negative:wrong-node',
             'negative:occupied-port', 'negative:relative-path');
+          if (process.env.SERVICE_PROFILE === 'nightly') journeys.push('service-secured:explore');
           process.stdout.write(`journeys=${JSON.stringify(journeys)}\n`);
           NODE
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -104,6 +112,7 @@ jobs:
       - name: Run journey in a fresh container
         env:
           KB_JOURNEY_CI: '1'
+          KB_JOURNEY_SERVICE_PROFILE: ${{ inputs.service-profile }}
           KB_JOURNEY_ONLY: ${{ matrix.case }}
         run: e2e/journey/run.sh --no-build
       - name: Stop journey containers
@@ -112,3 +121,10 @@ jobs:
       - name: Add journey report to job summary
         if: always()
         run: if [ -f .journey/reports/journey-summary.md ]; then cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: service-journey-results-${{ matrix.case }}
+          path: .journey/reports/service-*.json
+          if-no-files-found: ignore
+          retention-days: 90

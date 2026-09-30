@@ -43,7 +43,7 @@ async function pollRunStatus(
 
 test('W-01: create workflow run returns run ID', async ({ request }) => {
   const wf = await findWorkflow(request, 'e2e-hello')
-  test.skip(!wf, 'e2e-hello workflow not found — check .kb/workflows in platform setup')
+  expect(wf, 'required e2e-hello workflow is missing from the nightly fixture').toBeTruthy()
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
 
@@ -55,7 +55,7 @@ test('W-01: create workflow run returns run ID', async ({ request }) => {
 
 test('W-02: GET /runs/:id returns a valid initial status', async ({ request }) => {
   const wf = await findWorkflow(request, 'e2e-hello')
-  test.skip(!wf, 'e2e-hello workflow not found — check .kb/workflows in platform setup')
+  expect(wf, 'required e2e-hello workflow is missing from the nightly fixture').toBeTruthy()
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
   const status = await pollRunStatus(request, runId)
@@ -64,7 +64,7 @@ test('W-02: GET /runs/:id returns a valid initial status', async ({ request }) =
 
 test('W-03: e2e-hello workflow reaches completed within 30s', async ({ request }) => {
   const wf = await findWorkflow(request, 'e2e-hello')
-  test.skip(!wf, 'e2e-hello workflow not found — check .kb/workflows in platform setup')
+  expect(wf, 'required e2e-hello workflow is missing from the nightly fixture').toBeTruthy()
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
 
@@ -76,7 +76,7 @@ test('W-03: e2e-hello workflow reaches completed within 30s', async ({ request }
 
 test('W-04: e2e-fail workflow reaches failed status within 30s', async ({ request }) => {
   const wf = await findWorkflow(request, 'e2e-fail')
-  test.skip(!wf, 'e2e-fail workflow not found — check .kb/workflows in platform setup')
+  expect(wf, 'required e2e-fail workflow is missing from the nightly fixture').toBeTruthy()
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
 

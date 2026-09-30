@@ -66,7 +66,7 @@ test('WR-02: GET /runs?status=success — returns only success runs', async ({ r
 
 test('WR-03: POST /workflows/:id/runs — returns a valid runId', async ({ request }) => {
   const wf = await getFirstWorkflow(request)
-  test.skip(!wf, 'no workflows registered in catalog — nothing to run')
+  expect(!wf, 'no workflows registered in catalog — nothing to run').toBe(false)
 
   const id = wf!.id ?? wf!.name!
   const runId = await startRun(request, id)
@@ -78,10 +78,10 @@ test('WR-03: POST /workflows/:id/runs — returns a valid runId', async ({ reque
 
 test('WR-04: GET /runs/:runId — returns run detail', async ({ request }) => {
   const wf = await getFirstWorkflow(request)
-  test.skip(!wf, 'no workflows in catalog')
+  expect(!wf, 'no workflows in catalog').toBe(false)
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
-  test.skip(!runId, 'could not start run')
+  expect(runId, 'workflow run creation is required for detail lookup').toBeTruthy()
 
   const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)
   expect(res.status()).toBe(200)
@@ -95,10 +95,10 @@ test('WR-04: GET /runs/:runId — returns run detail', async ({ request }) => {
 
 test('WR-05: run reaches terminal state within 30s', async ({ request }) => {
   const wf = await getFirstWorkflow(request)
-  test.skip(!wf, 'no workflows in catalog')
+  expect(!wf, 'no workflows in catalog').toBe(false)
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
-  test.skip(!runId, 'could not start run')
+  expect(runId, 'workflow run creation is required for terminal-state polling').toBeTruthy()
 
   await expect.poll(
     async () => {
@@ -114,10 +114,10 @@ test('WR-05: run reaches terminal state within 30s', async ({ request }) => {
 
 test('WR-06: POST cancel — accepted for a running or pending run', async ({ request }) => {
   const wf = await getFirstWorkflow(request)
-  test.skip(!wf, 'no workflows in catalog')
+  expect(!wf, 'no workflows in catalog').toBe(false)
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
-  test.skip(!runId, 'could not start run')
+  expect(runId, 'workflow run creation is required for cancellation').toBeTruthy()
 
   // Cancel immediately while run may still be pending/running.
   // Route is POST /api/v1/runs/:runId/cancel (no /workflows prefix despite the contracts constant).
@@ -147,7 +147,7 @@ test('WR-07: GET /jobs — returns a jobs array', async ({ request }) => {
 test('WR-08: REST proxy GET /plugins/workflow/runs responds 200', async ({ request }) => {
   const res = await request.get(`${REST}/plugins/workflow/runs`)
   // 404 = plugin not mounted in REST API (minimal install without workflow plugin)
-  test.skip(res.status() === 404, 'workflow plugin not mounted in REST API')
+  expect(res.status() === 404, 'workflow plugin not mounted in REST API').toBe(false)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const runs: unknown[] = body.data?.runs ?? body.data ?? body.runs ?? (Array.isArray(body) ? body : [])
@@ -158,11 +158,11 @@ test('WR-08: REST proxy GET /plugins/workflow/runs responds 200', async ({ reque
 
 test('WR-09: REST proxy — POST /plugins/workflow/workflows/:id/run returns runId', async ({ request }) => {
   const wf = await getFirstWorkflow(request)
-  test.skip(!wf, 'no workflows in catalog')
+  expect(!wf, 'no workflows in catalog').toBe(false)
 
   const id = wf!.id ?? wf!.name!
   const res = await request.post(`${REST}/plugins/workflow/workflows/${id}/run`)
-  test.skip(res.status() === 404, 'workflow REST proxy not mounted')
+  expect(res.status() === 404, 'workflow REST proxy not mounted').toBe(false)
   expect([200, 201]).toContain(res.status())
   const body = await res.json()
   const data = body.data ?? body
@@ -186,10 +186,10 @@ test('WR-10: GET /runs?limit=1 — returns at most one run', async ({ request })
 
 test('WR-11: GET /runs?limit=1 — returns latest run after a new one is started', async ({ request }) => {
   const wf = await getFirstWorkflow(request)
-  test.skip(!wf, 'no workflows in catalog')
+  expect(!wf, 'no workflows in catalog').toBe(false)
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
-  test.skip(!runId, 'could not start run')
+  expect(runId, 'workflow run creation is required for latest-run lookup').toBeTruthy()
 
   const res = await request.get(`${WORKFLOW}/api/v1/runs?limit=1`)
   expect(res.status()).toBe(200)

@@ -31,7 +31,7 @@ test('CM-02: commit plugin manifest has commit command', async ({ request }) => 
       m.manifest?.id?.includes('commit') ||
       m.manifest?.name?.toLowerCase().includes('commit'),
   )
-  test.skip(!commitPlugin, 'commit plugin not found in registry')
+  expect(!commitPlugin, 'commit plugin not found in registry').toBe(false)
 
   // Manifest must carry at least an identifier
   expect(

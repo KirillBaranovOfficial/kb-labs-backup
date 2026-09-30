@@ -7,6 +7,7 @@ RUN apt-get update -qq && apt-get install -y -qq ca-certificates curl git jq pyt
 ENV PATH="/root/.local/bin:/root/.local/share/pnpm:$PATH"
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
 COPY e2e/journey/runner.py /usr/local/bin/kb-journey-runner
+COPY e2e/journey/service_steps.py e2e/journey/service_runner.py /usr/local/share/kb-create/
 RUN chmod +x /usr/local/share/kb-create/install.sh /usr/local/bin/kb-journey-runner
 
 ENTRYPOINT ["python3", "/usr/local/bin/kb-journey-runner"]

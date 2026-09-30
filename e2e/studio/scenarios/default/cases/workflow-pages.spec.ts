@@ -9,7 +9,7 @@ import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
  * 2. The Studio SPA shell loads for all workflow routes (no hard 404)
  * 3. The workflow daemon API endpoints consumed by Studio pages respond correctly
  *
- * Tests skip gracefully when Studio or the workflow daemon is not running.
+ * Missing Studio or workflow routes fail because both are required services.
  */
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ async function workflowIsUp(
 
 test('SW-01: MF manifest contains a workflow plugin entry', async ({ request }) => {
   const manifestRes = await request.get(`${GATEWAY}/mf-manifest.json`);
-  test.skip(manifestRes.status() === 404, 'Studio MF manifest not available');
+  expect(manifestRes.status() === 404, 'Studio MF manifest not available').toBe(false);
   expect(manifestRes.status()).toBe(200);
 
   const manifest = await manifestRes.json();
@@ -53,13 +53,13 @@ test('SW-01: MF manifest contains a workflow plugin entry', async ({ request }) 
 
   // Not every installation will have the workflow plugin loaded in the manifest,
   // but if manifest has entries, workflow should be among them.
-  test.skip(keys.length === 0, 'Manifest has no remote entries — single-bundle mode');
+  expect(keys.length === 0, 'Manifest has no remote entries — single-bundle mode').toBe(false);
   expect(hasWorkflow).toBe(true);
 });
 
 test('SW-02: Studio SPA shell responds for /workflows route', async ({ request }) => {
   const up = await studioIsUp(request);
-  test.skip(!up, 'Studio not available — run kb-dev start');
+  expect(!up, 'Studio not available — run kb-dev start').toBe(false);
 
   // In a SPA all routes serve the same index.html — 404 would mean the route
   // is not caught by the gateway proxy/static fallback.
@@ -73,7 +73,7 @@ test('SW-02: Studio SPA shell responds for /workflows route', async ({ request }
 
 test('SW-03: Studio SPA shell responds for /workflows/runs route', async ({ request }) => {
   const up = await studioIsUp(request);
-  test.skip(!up, 'Studio not available — run kb-dev start');
+  expect(!up, 'Studio not available — run kb-dev start').toBe(false);
 
   const res = await request.get(`${GATEWAY}/workflows/runs`);
   expect([200, 301, 302]).toContain(res.status());
@@ -81,7 +81,7 @@ test('SW-03: Studio SPA shell responds for /workflows/runs route', async ({ requ
 
 test('SW-04: Workflow daemon API — /api/v1/runs used by runs list page', async ({ request }) => {
   const up = await workflowIsUp(request);
-  test.skip(!up, 'Workflow daemon not running');
+  expect(up, 'Workflow daemon is required by this journey').toBe(true);
 
   const res = await request.get(`${WORKFLOW}/api/v1/runs`);
   expect(res.status()).toBe(200);
@@ -92,7 +92,7 @@ test('SW-04: Workflow daemon API — /api/v1/runs used by runs list page', async
 
 test('SW-05: Workflow daemon API — /api/v1/workflows used by definitions page', async ({ request }) => {
   const up = await workflowIsUp(request);
-  test.skip(!up, 'Workflow daemon not running');
+  expect(up, 'Workflow daemon is required by this journey').toBe(true);
 
   const res = await request.get(`${WORKFLOW}/api/v1/workflows`);
   expect(res.status()).toBe(200);
@@ -103,7 +103,7 @@ test('SW-05: Workflow daemon API — /api/v1/workflows used by definitions page'
 
 test('SW-06: Workflow daemon API — /api/v1/cron used by cron jobs page', async ({ request }) => {
   const up = await workflowIsUp(request);
-  test.skip(!up, 'Workflow daemon not running');
+  expect(up, 'Workflow daemon is required by this journey').toBe(true);
 
   const res = await request.get(`${WORKFLOW}/api/v1/crons`);
   expect(res.status()).toBe(200);

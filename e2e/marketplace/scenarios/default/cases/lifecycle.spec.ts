@@ -30,9 +30,7 @@ const findExact = (packages: PkgEntry[]) =>
 
 // Shared skip guards for install errors
 function skipOnInstallError(status: number) {
-  test.skip(status === 404, 'package not found in registry — check Verdaccio publish step')
-  test.skip(status === 422, 'marketplace install failed (pnpm workspace-root check — needs --ignore-workspace-root-check in marketplace npm-source)')
-  test.skip(status === 500, 'npm registry unreachable from this environment')
+  expect(status, 'required marketplace fixture package was not installed; check the Verdaccio publish step and installer output').toBeLessThan(400)
 }
 
 // ML-01: install package → appears in listing
@@ -63,7 +61,7 @@ test('ML-02: disable package → disabled flag set in listing', async ({ request
   const disable = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/disable`, {
     data: { packageId: TEST_SPEC },
   })
-  test.skip(disable.status() === 404, 'disable endpoint not available in this build')
+  expect(disable.status(), 'marketplace disable capability is missing').not.toBe(404)
   expect(disable.status()).toBe(200)
   const disableData = (await disable.json()).data ?? (await disable.json())
   expect(disableData.enabled).toBe(false)
@@ -94,7 +92,7 @@ test('ML-03: enable package → enabled flag restored in listing', async ({ requ
   const enable = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/enable`, {
     data: { packageId: TEST_SPEC },
   })
-  test.skip(enable.status() === 404, 'enable endpoint not available in this build')
+  expect(enable.status(), 'marketplace enable capability is missing').not.toBe(404)
   expect(enable.status()).toBe(200)
   const enableData = (await enable.json()).data ?? (await enable.json())
   expect(enableData.enabled).toBe(true)
@@ -112,7 +110,7 @@ test('ML-04: POST /packages/update — responds without error', async ({ request
   const update = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/update`, {
     data: { packageIds: [TEST_SPEC] },
   })
-  test.skip(update.status() === 404, 'update endpoint not available in this build')
+  expect(update.status(), 'marketplace update capability is missing').not.toBe(404)
   // 200 = updated, 204 = already at latest, both are valid
   expect([200, 204]).toContain(update.status())
 })
@@ -129,7 +127,7 @@ test('ML-05: uninstall package → gone from GET /packages', async ({ request })
   const uninstall = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/uninstall`, {
     data: { packageIds: [TEST_SPEC] },
   })
-  test.skip(uninstall.status() === 404, 'uninstall endpoint not available in this build')
+  expect(uninstall.status(), 'marketplace uninstall capability is missing').not.toBe(404)
   expect([200, 204]).toContain(uninstall.status())
 
   // Give it a moment, then verify the exact package is gone

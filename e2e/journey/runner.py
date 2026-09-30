@@ -85,7 +85,7 @@ def require(result, expected=0, step="command"):
     return True
 
 
-def pty_install(command: list[str], env: dict[str, str], choice: str = ""):
+def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
     global MAX_PNPM_RSS_MIB
     master, slave = pty.openpty()
     started = time.monotonic()
@@ -95,6 +95,7 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = ""):
     output = bytearray()
     deadline = time.monotonic() + 900
     sent_choice = not choice
+    sent_access_mode = False
     last_prompt = ""
     apply_started = None
     while proc.poll() is None and time.monotonic() < deadline:
@@ -109,10 +110,27 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = ""):
                 if apply_started is None and re.search(rb"Applying installation", chunk, re.I):
                     apply_started = time.monotonic()
                 visible = output.decode(errors="replace")[-2000:]
-                prompts = re.findall(r"(?im)^.*(?:\?|\[.*(?:default|y/n|yes/no).*\]|default[^\n]*:|press enter[^\n]*|select[^\n]*:).*?$", visible)
+                if access_mode == "secured" and not sent_access_mode and "Studio access" in visible:
+                    os.write(master, b"secured\n")
+                    sent_access_mode = True
+                    last_prompt = "Studio access (secured)"
+                    continue
+                prompts = re.findall(r"(?im)^.*(?:\?|\[.*(?:default|y/n|yes/no).*\]|default[^\n]*:|press enter[^\n]*|select[^\n]*:|admin email[^\n]*:|admin tenant[^\n]*:|admin password[^\n]*:|confirm admin password[^\n]*:|session signing secret[^\n]*:).*?$", visible)
                 prompt = prompts[-1] if prompts else ""
                 if prompt and prompt != last_prompt:
-                    answer = choice if choice and not sent_choice and re.search(r"scenario|journey|setup", prompt, re.I) else ""
+                    answer = ""
+                    if access_mode == "secured" and re.search(r"Studio access", prompt, re.I):
+                        answer = "secured"
+                    elif access_mode == "secured" and re.search(r"Admin email", prompt, re.I):
+                        answer = "journey-admin@example.test"
+                    elif access_mode == "secured" and re.search(r"Admin tenant", prompt, re.I):
+                        answer = "journey"
+                    elif access_mode == "secured" and re.search(r"Admin password", prompt, re.I) and not re.search(r"Confirm", prompt, re.I):
+                        answer = "JourneyPassw0rd!"
+                    elif access_mode == "secured" and re.search(r"Confirm admin password", prompt, re.I):
+                        answer = "JourneyPassw0rd!"
+                    elif choice and not sent_choice and re.search(r"scenario|journey|setup", prompt, re.I):
+                        answer = choice
                     if answer:
                         sent_choice = True
                     os.write(master, (answer + "\n").encode())
@@ -187,6 +205,24 @@ def extract_request(payload):
     return None
 
 
+def find_project_id(payload):
+    if isinstance(payload, dict):
+        for key in ("projectId", "project_id", "id"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.startswith("prj_"):
+                return value
+        for value in payload.values():
+            found = find_project_id(value)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = find_project_id(value)
+            if found:
+                return found
+    return ""
+
+
 def verify_listener_ownership():
     result, _ = run(["ss", "-H", "-ltnp"], timeout=20)
     if not require(result, step="list platform listeners"):
@@ -225,6 +261,8 @@ def main():
     (HOME / ".bash_profile").write_text("if [ -f ~/.profile ]; then . ~/.profile; fi\n")
     (HOME / ".npmrc").write_text(f"registry={REGISTRY}\n")
     env["KB_CREATE_DOWNLOAD_BASE_URL"] = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"]
+    if VARIANT.endswith("secured"):
+        env["KB_JOURNEY_ADMIN_PASSWORD"] = "JourneyPassw0rd!"
     # Agent flows pass --registry explicitly. Human `install` uses the package
     # manager's normal registry setting, so point that setting at the isolated
     # journey registry as well.
@@ -284,10 +322,11 @@ def main():
             fail(f"port conflict: expected KB_INSTALL_PORT_IN_USE for port 4000; {' '.join(result.stdout.split())[-500:]}")
         append_summary(passed)
         return 0 if passed else 1
-    if FRONT == "human":
+    if FRONT == "human" and not VARIANT.endswith("secured"):
         choice = "commit" if VARIANT == "human-nondefault" else ""
+        access_mode = "secured" if VARIANT.endswith("secured") else "local"
         code, output, duration, apply_offset = pty_install(
-            [launcher, "install", "--registry", REGISTRY], env, choice
+            [launcher, "install", "--registry", REGISTRY], env, choice, access_mode
         )
         TIMES["questions"] = apply_offset if apply_offset is not None else duration
         if apply_offset is not None:
@@ -295,7 +334,7 @@ def main():
         if VARIANT.startswith("human-"):
             diagnostic = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log")
             with diagnostic.open("a", encoding="utf-8") as stream:
-                stream.write(f"\n== {FRONT}/{SCENARIO}: install-pty (exit {code}) ==\n{output[-12000:]}\n")
+                stream.write(f"\n== {FRONT}/{SCENARIO}: install-pty (access={access_mode}, exit {code}) ==\n{output[-12000:]}\n")
         human_text_is_clean(output)
         if code != 0:
             fail(f"kb-create install: exit {code}; {' '.join(output.split())[-2000:]}")
@@ -305,9 +344,21 @@ def main():
             fail("kb-create install: terminal showed no success and next steps")
     else:
         operation = "plan" if VARIANT in {"input", "relative-path"} else "apply"
+        install_scenario = "custom" if VARIANT.endswith("secured") else SCENARIO
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
-                "--request-platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", SCENARIO,
+                "--request-platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
                 "--registry", REGISTRY]
+        if VARIANT.endswith("secured"):
+            answers = json.dumps({
+                "access.mode": "secured",
+                "admin.email": "journey-admin@example.test",
+                "admin.tenant": "journey",
+                # Declares the secret input in the plan; the real value comes
+                # from the isolated runner environment via --secret-env.
+                "admin.password": "journey-secret-placeholder",
+            })
+            args.extend(["--scenario-answers", answers,
+                         "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
         if VARIANT == "relative-path":
             args[args.index(str(PLATFORM))] = os.path.relpath(PLATFORM, Path.cwd())
         result, elapsed = run(args, env=env, timeout=1200)
@@ -334,6 +385,8 @@ def main():
             return 1
         if payload.get("ok") is not True:
             fail("kb-create apply --json: result did not report ok=true")
+        if VARIANT.endswith("secured"):
+            env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
         if VARIANT == "input":
             request = extract_request(payload)
             if request is None:
@@ -419,6 +472,52 @@ def main():
             with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
                 stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: {command}-output ==\n{result.stdout[-5000:]}\n")
             fail(f"kb-create {command}: expected human summary '{key}'")
+
+    local_service_journey = FRONT == "agent" and SCENARIO == "commit" and VARIANT == "default"
+    secured_service_journey = FRONT == "human" and VARIANT.endswith("secured")
+    if BASE_ENV.get("KB_JOURNEY_SERVICE_PROFILE") == "nightly" and (local_service_journey or secured_service_journey):
+        mode = "secured" if secured_service_journey else "local"
+        service_env = env.copy()
+        if mode == "secured":
+            service_env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
+            service_env["KB_JOURNEY_ADMIN_PASSWORD"] = "JourneyPassw0rd!"
+            login, _ = run(["bash", "-c", '. "$HOME/.profile"; kb auth login --gateway-url http://127.0.0.1:4000 --email "$1" --password "$2"',
+                            "journey", service_env["KB_JOURNEY_ADMIN_EMAIL"], service_env["KB_JOURNEY_ADMIN_PASSWORD"]],
+                           env=service_env, cwd=PROJECT, timeout=90)
+            if login.returncode != 0:
+                fail(f"secured service journey admin CLI login: `kb auth login` exited {login.returncode}; {' '.join(login.stdout.split())[-400:]}")
+        workflow_dir = PROJECT / ".kb" / "workflows"
+        workflow_dir.mkdir(parents=True, exist_ok=True)
+        (workflow_dir / "e2e-hello.yml").write_text(
+            "name: e2e-hello\nversion: 1.0.0\ndescription: Installed service journey smoke workflow\n"
+            "on:\n  manual: true\njobs:\n  smoke:\n    runsOn: local\n    steps:\n"
+            "      - name: Say hello\n        id: hello\n        uses: builtin:shell\n"
+            "        with:\n          command: echo hello-workflow\n",
+            encoding="utf-8",
+        )
+        lint, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow lint --json'], env=env, cwd=PROJECT, timeout=120)
+        if lint.returncode != 0:
+            fail(f"workflow fixture lint: `kb workflow lint --json` exited {lint.returncode}; {' '.join(lint.stdout.split())[-500:]}")
+        project_add, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add "$1" --init --json', "journey", str(PROJECT)],
+                             env=env, cwd=PROJECT, timeout=90)
+        try:
+            project_payload = json.loads(project_add.stdout)
+            project_id = find_project_id(project_payload)
+        except json.JSONDecodeError:
+            project_id = ""
+        service_env["KB_JOURNEY_PROJECT_ID"] = project_id
+        service_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-{mode}.json")
+        result, elapsed = run(["python3", "/usr/local/share/kb-create/service_runner.py", "--mode", mode, "--output", str(service_report)],
+                             env=service_env, timeout=300)
+        TIMES[f"{mode} service journeys"] = elapsed
+        if result.returncode != 0:
+            try:
+                service_result = json.loads(service_report.read_text())
+                first = service_result.get("first_failure") or {}
+                detail = f"{first.get('name', 'journey step')}: {first.get('message', '')}"
+            except (OSError, json.JSONDecodeError):
+                detail = "service journey result JSON could not be read"
+            fail(f"{mode} service journey: {detail}")
 
     global PLATFORM_SIZE_MIB
     if PLATFORM.exists():

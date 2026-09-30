@@ -4,7 +4,7 @@ import { REST } from '@kb-labs/e2e-shared/urls.js'
 // SC-01: scaffold lists available templates
 test('SC-01: scaffold lists available templates', async ({ request }) => {
   const res = await request.get(`${REST}/api/v1/scaffold/templates`)
-  test.skip(res.status() === 404 || res.status() === 501, 'scaffold/templates endpoint not yet exposed by REST API')
+  expect(res.status(), 'scaffold templates endpoint is missing from the required profile').toBe(200)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const templates: { id?: string; name?: string }[] =
@@ -21,7 +21,7 @@ test('SC-01: scaffold lists available templates', async ({ request }) => {
 // SC-02: scaffold plugin template has required fields
 test('SC-02: scaffold plugin template has required structure', async ({ request }) => {
   const res = await request.get(`${REST}/api/v1/scaffold/templates`)
-  test.skip(res.status() === 404 || res.status() === 501, 'scaffold/templates endpoint not yet exposed by REST API')
+  expect(res.status(), 'scaffold templates endpoint is missing from the required profile').toBe(200)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const templates: { id?: string; name?: string; description?: string; type?: string }[] =
@@ -30,7 +30,7 @@ test('SC-02: scaffold plugin template has required structure', async ({ request 
   const pluginTemplate = templates.find(
     t => t.id?.includes('plugin') || t.name?.includes('plugin'),
   )
-  test.skip(!pluginTemplate, 'no plugin template found in scaffold templates list')
+  expect(pluginTemplate, 'plugin template is missing from the required scaffold catalog').toBeTruthy()
 
   // Template must have at least an identifier and a description or type
   expect(pluginTemplate!.id ?? pluginTemplate!.name).toBeTruthy()
@@ -47,11 +47,8 @@ test('SC-03: scaffold run creates plugin structure', async ({ request }) => {
     },
   })
 
-  // Skip if the endpoint is not exposed yet
-  test.skip(
-    res.status() === 404 || res.status() === 501,
-    'scaffold/run endpoint not exposed by REST API',
-  )
+  expect(res.status(), 'scaffold run endpoint is missing from the required profile').not.toBe(404)
+  expect(res.status(), 'scaffold run endpoint is missing from the required profile').not.toBe(501)
 
   expect([200, 201]).toContain(res.status())
   const body = await res.json()

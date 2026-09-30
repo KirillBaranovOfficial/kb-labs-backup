@@ -41,7 +41,7 @@ test('RV-03: review-entry plugin manifest loads correctly', async ({ request }) 
       m.manifest?.id?.includes('review') ||
       m.manifest?.name?.toLowerCase().includes('review'),
   )
-  test.skip(!reviewPlugin, 'review plugin not found in registry')
+  expect(!reviewPlugin, 'review plugin not found in registry').toBe(false)
 
   // Manifest must have an id or name — the minimal contract for a registered plugin
   expect(reviewPlugin!.pluginId ?? reviewPlugin!.manifest?.id ?? reviewPlugin!.manifest?.name).toBeTruthy()
