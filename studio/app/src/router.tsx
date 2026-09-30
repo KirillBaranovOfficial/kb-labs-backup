@@ -13,8 +13,10 @@ import { LoginPage } from './pages/login-page';
 import { ActivatePage } from './pages/activate-page';
 import { SessionsPage } from './pages/sessions-page';
 import { ChangePasswordPage } from './pages/change-password-page';
+import { ApiTokensPage } from './pages/api-tokens-page';
 import { AdminUsersPage } from './pages/admin-users-page';
 import { AdminInvitesPage } from './pages/admin-invites-page';
+import { ResetPasswordPage } from './pages/reset-password-page';
 import { PluginPageV2 } from './routes/plugin-page-v2';
 import { PageTransition } from './components/page-transition';
 import { createStudioLogger } from './utils/logger';
@@ -143,11 +145,11 @@ function LayoutContent() {
       }
     }
 
-    // Settings always at the bottom
-    items.push(settingsNavigation);
+    // Platform settings are administrator-only.
+    if (auth.permissions.has('platform-settings:read')) items.push(settingsNavigation);
 
     return items;
-  }, [pluginNavModel]);
+  }, [pluginNavModel, auth.permissions]);
 
   // Available items for NavigationSettings UI (top-level items except settings)
   const availableNavItems = React.useMemo(
@@ -252,6 +254,11 @@ export const router = createBrowserRouter([
     element: <ActivatePage />,
     errorElement: <ErrorBoundary />,
   },
+  {
+    path: '/reset-password/:token',
+    element: <ResetPasswordPage />,
+    errorElement: <ErrorBoundary />,
+  },
   // Protected routes (RequireAuth gate before Layout renders)
   {
     element: <RequireAuth><Layout /></RequireAuth>,
@@ -274,6 +281,11 @@ export const router = createBrowserRouter([
       {
         path: '/account/password',
         element: <ChangePasswordPage />,
+        errorElement: <ErrorBoundary />,
+      },
+      {
+        path: '/account/tokens',
+        element: <ApiTokensPage />,
         errorElement: <ErrorBoundary />,
       },
       // Admin pages (permission checks are inside the components)

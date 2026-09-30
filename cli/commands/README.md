@@ -75,6 +75,14 @@ const registry = await registerCommands(manifests);
 
 ## ✨ Features
 
+### Gateway authentication
+
+The built-in `kb auth` commands manage human Gateway sessions, one-time admin
+password-reset links, and personal API tokens for agents and CI. Run
+`kb auth tokens --name "nightly CI"` to create a token, `kb auth tokens` to list
+your own tokens, or `kb auth tokens --revoke tok_abc123` to revoke one.
+Token secrets are shown once and inherit the owner's current role.
+
 ```
 kb-labs-cli/packages/commands/src/
 ├── registry/           # Plugin discovery and registration

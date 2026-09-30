@@ -17,14 +17,20 @@ import { authClient } from '../auth/shared-client.js';
 interface InviteRecord {
   inviteId: string;
   email: string;
-  status: 'pending' | 'consumed' | 'revoked';
-  expiresAt: string;
+  groupId: 'tenant-admin' | 'tenant-member';
+  status: 'active' | 'used' | 'revoked';
+  expiresAt: number;
+}
+
+interface InvitesResponse {
+  invites: InviteRecord[];
 }
 
 function InvitesList() {
   const [invites, setInvites] = React.useState<InviteRecord[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [email, setEmail] = React.useState('');
+  const [role, setRole] = React.useState<'member' | 'admin'>('member');
   const [creating, setCreating] = React.useState(false);
   const [copyMessage, setCopyMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -33,8 +39,8 @@ function InvitesList() {
     setLoading(true);
     setError(null);
     try {
-      const data = await authClient.fetch<InviteRecord[]>('/auth/invites');
-      setInvites(data);
+      const data = await authClient.fetch<InvitesResponse>('/auth/invites');
+      setInvites(data.invites);
     } catch {
       setError('Failed to load invites');
     } finally {
@@ -52,7 +58,7 @@ function InvitesList() {
     try {
       const data = await authClient.fetch<{ activationUrl: string }>('/auth/invites', {
         method: 'POST',
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, role }),
       });
       await navigator.clipboard.writeText(data.activationUrl);
       setCopyMessage('Activation URL copied to clipboard!');
@@ -105,6 +111,19 @@ function InvitesList() {
             fontSize: '0.9rem',
           }}
         />
+        <label htmlFor="invite-role" style={{ position: 'absolute', clip: 'rect(0 0 0 0)' }}>
+          Invite role
+        </label>
+        <select
+          id="invite-role"
+          aria-label="Invite role"
+          value={role}
+          onChange={(e) => setRole(e.target.value as 'member' | 'admin')}
+          style={{ padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px solid var(--border-primary, #d9d9d9)' }}
+        >
+          <option value="member">Member</option>
+          <option value="admin">Admin</option>
+        </select>
         <button
           type="submit"
           disabled={creating}
@@ -145,10 +164,10 @@ function InvitesList() {
             {invites.map((invite) => (
               <tr key={invite.inviteId}>
                 <td style={tdStyle}>{invite.email}</td>
-                <td style={tdStyle}>{invite.status}</td>
+                <td style={tdStyle}>{invite.groupId === 'tenant-admin' ? 'Admin' : 'Member'} · {invite.status}</td>
                 <td style={tdStyle}>{new Date(invite.expiresAt).toLocaleDateString()}</td>
                 <td style={tdStyle}>
-                  {invite.status === 'pending' && (
+                  {invite.status === 'active' && (
                     <button
                       onClick={() => void handleRevoke(invite.inviteId)}
                       style={dangerButtonStyle}

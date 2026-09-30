@@ -21,6 +21,7 @@ import {
   UsersStore,
   MembershipsStore,
   SessionsStore,
+  createStubPDP,
   createTenantResolver,
   signUserAccessToken,
   signAccessToken,
@@ -47,12 +48,16 @@ beforeEach(async () => {
   await app.register(fastifyCookie);
   app.addHook('onRequest', createUserAuthMiddleware({
     users,
+    sessions,
+    pdp: createStubPDP({ memberships }),
     tenantResolver: createTenantResolver({ pattern: '{tenant}.kblabs.ru' }),
     jwtConfig,
   }));
 
   app.get('/echo', async (req) => ({
     auth: req.userAuthContext ?? null,
+    namespaceId: req.authContext?.namespaceId,
+    permissions: req.authContext?.permissions,
   }));
 
   await app.ready();
@@ -69,6 +74,7 @@ const seedUserAndToken = async (
     email: 'a@x.com',
     status: opts.status,
   });
+  await memberships.addMembership({ userId: opts.userId, tenantId: opts.tenantId, groupId: 'tenant-member' });
   const sess = await sessions.createSession({
     userId: opts.userId,
     tenantId: opts.tenantId,
@@ -106,10 +112,26 @@ describe('happy path', () => {
     expect(r.statusCode).toBe(200);
     expect(r.json().auth).toMatchObject({
       type: 'user',
+      source: 'cookie',
       userId: 'u1',
       tenantId: 'kblabs-cloud',
       familyId,
     });
+    expect(r.json().namespaceId).toBe('kblabs-cloud');
+    expect(r.json().permissions).toContain('projects:read');
+  });
+});
+
+describe('revoked session families', () => {
+  it('rejects an access token immediately after its family is revoked', async () => {
+    const { token, familyId } = await seedUserAndToken();
+    await sessions.revokeFamily(familyId);
+    const response = await app.inject({
+      method: 'GET', url: '/echo',
+      headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${token}` },
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json().message).toBe('Session revoked');
   });
 });
 

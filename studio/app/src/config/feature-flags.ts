@@ -93,22 +93,21 @@ export function getFeaturesByGroup(): Record<FeatureGroup, FeatureFlag[]> {
 /** Check if a feature is enabled based on user preferences */
 export function isFeatureEnabled(
   featureId: FeatureId,
-  userPreferences?: Record<FeatureId, boolean>
+  userPreferences?: Partial<Record<FeatureId, boolean>>
 ): boolean {
   const flag = FEATURE_FLAGS[featureId];
   if (!flag) {return false;}
 
   // If user has explicit preference, use that
-  if (userPreferences && featureId in userPreferences) {
-    return userPreferences[featureId];
-  }
+  const preference = userPreferences?.[featureId];
+  if (preference !== undefined) return preference;
 
   // Otherwise use default
   return flag.defaultEnabled;
 }
 
 /** Get all enabled features */
-export function getEnabledFeatures(userPreferences?: Record<FeatureId, boolean>): FeatureId[] {
+export function getEnabledFeatures(userPreferences?: Partial<Record<FeatureId, boolean>>): FeatureId[] {
   return Object.keys(FEATURE_FLAGS).filter((id) =>
     isFeatureEnabled(id as FeatureId, userPreferences)
   ) as FeatureId[];
@@ -117,7 +116,7 @@ export function getEnabledFeatures(userPreferences?: Record<FeatureId, boolean>)
 /** Check if feature has dependencies and all are enabled */
 export function areDependenciesMet(
   featureId: FeatureId,
-  userPreferences?: Record<FeatureId, boolean>
+  userPreferences?: Partial<Record<FeatureId, boolean>>
 ): boolean {
   const flag = FEATURE_FLAGS[featureId];
   if (!flag.dependencies || flag.dependencies.length === 0) {return true;}

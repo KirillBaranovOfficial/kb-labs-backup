@@ -21,7 +21,9 @@ import {
   type JwtConfig,
   type UsersStore,
   type SessionsStore,
+  type ApiTokensStore,
   type InvitesStore,
+  type AuthAuditStore,
   type ProviderRegistry,
   type IPolicyDecisionPoint,
   type TenantResolver,
@@ -81,7 +83,9 @@ export interface UserAuthServerDeps {
   userAuthService: UserAuthServiceForRoutes;
   users: UsersStore;
   sessions: SessionsStore;
+  apiTokens: ApiTokensStore;
   invites: InvitesStore;
+  authAudit: AuthAuditStore;
   providers: ProviderRegistry;
   pdp: IPolicyDecisionPoint;
   tenantResolver: TenantResolver;
@@ -255,6 +259,9 @@ export async function createServer(
       "onRequest",
       createUserAuthMiddleware({
         users: userAuth.users,
+        sessions: userAuth.sessions,
+        apiTokens: userAuth.apiTokens,
+        pdp: userAuth.pdp,
         tenantResolver: userAuth.tenantResolver,
         jwtConfig,
       }),
@@ -373,6 +380,7 @@ export async function createServer(
             userAuthService: userAuth.userAuthService,
             cookieOpts: { cookieSecure: userAuth.cookieSecure },
           }),
+          userLogoutFn: (refreshToken) => userAuth.userAuthService.logout(refreshToken),
           pdp: userAuth.pdp,
         }
       : undefined;
@@ -390,7 +398,9 @@ export async function createServer(
           userAuthService: userAuth.userAuthService,
           users: userAuth.users,
           sessions: userAuth.sessions,
+          apiTokens: userAuth.apiTokens,
           invites: userAuth.invites,
+          authAudit: userAuth.authAudit,
           providers: userAuth.providers,
           pdp: userAuth.pdp,
           tenantResolver: userAuth.tenantResolver,

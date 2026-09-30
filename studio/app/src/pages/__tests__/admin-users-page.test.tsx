@@ -11,13 +11,17 @@
  *   - Enable button calls POST /api/auth/users/:id/enable
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { AuthContext } from '../../auth/guards.js';
 import type { AuthState } from '../../auth/auth-provider.js';
 import { AdminUsersPage } from '../admin-users-page.js';
+import { _setAuthClientForTesting } from '../../auth/shared-client.js';
+import type { AuthHttpClient } from '../../auth/http-client.js';
+
+afterEach(() => _setAuthClientForTesting(null));
 
 const USERS = [
   { userId: 'u1', email: 'alice@test.com', tenantId: 'kb-cloud', status: 'active' },
@@ -60,7 +64,7 @@ describe('AdminUsersPage', () => {
   });
 
   it('renders user list with email and status', async () => {
-    vi.stubGlobal('fetch', mockFetch({ '/api/auth/users': { status: 200, body: USERS } }));
+    vi.stubGlobal('fetch', mockFetch({ '/api/auth/users': { status: 200, body: { users: USERS } } }));
     renderPage();
 
     await waitFor(() => expect(screen.getByText(/alice@test\.com/i)).toBeDefined());
@@ -70,7 +74,7 @@ describe('AdminUsersPage', () => {
 
   it('calls POST /api/auth/users/:id/disable for active user', async () => {
     const mockF = mockFetch({
-      '/api/auth/users': { status: 200, body: USERS },
+      '/api/auth/users': { status: 200, body: { users: USERS } },
       '/api/auth/users/u1/disable': { status: 200, body: { ok: true } },
     });
     vi.stubGlobal('fetch', mockF);
@@ -89,7 +93,7 @@ describe('AdminUsersPage', () => {
 
   it('calls POST /api/auth/users/:id/enable for disabled user', async () => {
     const mockF = mockFetch({
-      '/api/auth/users': { status: 200, body: USERS },
+      '/api/auth/users': { status: 200, body: { users: USERS } },
       '/api/auth/users/u2/enable': { status: 200, body: { ok: true } },
     });
     vi.stubGlobal('fetch', mockF);
@@ -104,5 +108,18 @@ describe('AdminUsersPage', () => {
       String(u).includes('/enable'),
     );
     expect(enableCalls).toHaveLength(1);
+  });
+
+  it('copies an admin-generated reset link', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ users: USERS })
+      .mockResolvedValueOnce({ resetUrl: 'https://gateway.test/reset-password/secret' });
+    _setAuthClientForTesting({ fetch } as unknown as AuthHttpClient);
+    renderPage();
+    await waitFor(() => expect(screen.getByText(/alice@test\.com/i)).toBeDefined());
+    await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: /copy reset link/i })[0]!); });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://gateway.test/reset-password/secret'));
   });
 });

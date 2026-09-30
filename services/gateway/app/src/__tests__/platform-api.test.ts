@@ -127,6 +127,21 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('denies members direct access to machine storage adapters', async () => {
+    const memberApp = Fastify({ logger: false });
+    await memberApp.register(async (scope) => {
+      scope.addHook('onRequest', async (request) => {
+        request.authContext = { type: 'user', userId: 'member-1', namespaceId: 'tenant-1', tier: 'free', permissions: ['projects:read'] };
+      });
+      registerPlatformRoutes(scope, noopLogger);
+    });
+    await memberApp.ready();
+    const response = await memberApp.inject({ method: 'POST', url: '/platform/v1/documentDatabase/find', payload: { args: ['users', {}] } });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.code).toBe('PERMISSION_DENIED');
+    await memberApp.close();
+  });
+
   // ── Validation ────────────────────────────────────────────────────────
 
   it('returns 404 for unknown adapter', async () => {

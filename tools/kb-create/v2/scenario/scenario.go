@@ -490,6 +490,7 @@ func Compile(value Scenario, state State, base contracts.InstallRequest) (contra
 		}
 		if field.ProviderFor != "" {
 			base.ProviderPreferences[field.ProviderFor] = text
+			base.Adapters = append(base.Adapters, contracts.ComponentRequest{ID: text})
 		} else {
 			base.Values[field.Requirement] = string(raw)
 		}

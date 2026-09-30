@@ -46,7 +46,9 @@ const PUBLIC_ROUTES = new Set([
   // return tokens in the body instead of cookies, see user-routes.ts.
   '/auth/login/cli',
   '/auth/refresh/cli',
+  '/auth/logout/cli',
   '/auth/activate',
+  '/auth/password/reset',
   '/auth/providers',
   '/internal/dispatch', // has its own x-internal-secret auth
   '/internal/resolve-host', // has its own x-internal-secret auth
@@ -119,6 +121,10 @@ export function createAuthMiddleware(
     // honour the Bearer token so that machine-auth context (namespaceId, etc.)
     // is populated — critical for per-tenant rate limiting and route permissions.
     if (!token && request.userAuthContext) {return;}
+
+    // A user Bearer token has already been verified by user-auth middleware.
+    // Machine token resolution deliberately does not accept that JWT type.
+    if (request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') {return;}
 
     if (!token) {
       return reply.code(401).send({ error: 'Unauthorized', message: 'Missing Authorization header' });

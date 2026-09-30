@@ -48,7 +48,7 @@ export function DashboardGrid({
     >
       {childrenArray.map((child, index) => {
         // Extract layoutHint from child props if available
-        const layoutHint = (child as React.ReactElement)?.props?.layoutHint || { w: 4, h: 4 };
+        const layoutHint = (child as React.ReactElement<{ layoutHint?: { w: number; h: number; minW?: number; minH?: number; height?: string | number } }>)?.props?.layoutHint || { w: 4, h: 4 };
         const { w, h, minW, minH, height } = layoutHint;
 
         // Calculate height based on layoutHint.height
@@ -118,5 +118,4 @@ export function DashboardGrid({
     </div>
   );
 }
-
 

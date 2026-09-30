@@ -37,7 +37,10 @@ import {
   CredentialsStore,
   MembershipsStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
+  PasswordResetStore,
+  AuthAuditStore,
   ProviderRegistry,
   type SessionsStoreOptions,
   createTenantResolver,
@@ -81,6 +84,7 @@ interface TestCtx {
   credentials: CredentialsStore;
   memberships: MembershipsStore;
   sessions: SessionsStore;
+  apiTokens: ApiTokensStore;
   invites: InvitesStore;
 }
 
@@ -101,7 +105,10 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   const credentials = new CredentialsStore(docs);
   const memberships = new MembershipsStore(docs);
   const sessions = new SessionsStore(docs, SESSION_OPTS);
+  const apiTokens = new ApiTokensStore(docs);
   const invites = new InvitesStore(docs);
+  const passwordResets = new PasswordResetStore(docs);
+  const authAudit = new AuthAuditStore(docs);
   const providers = new ProviderRegistry();
 
   const emailPwd = createEmailPasswordProvider({
@@ -126,6 +133,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
     memberships,
     sessions,
     invites,
+    passwordResets,
     providers,
     passwordPolicy,
     jwtConfig: JWT,
@@ -142,7 +150,9 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
     userAuthService,
     users,
     sessions,
+    apiTokens,
     invites,
+    authAudit,
     providers,
     pdp,
     tenantResolver,
@@ -164,6 +174,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
       userAuthService,
       cookieOpts: { cookieSecure: false },
     }),
+    userLogoutFn: (refreshToken) => userAuthService.logout(refreshToken),
     pdp,
   };
 
@@ -171,7 +182,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   await app.register(fastifyCookie);
 
   // User-auth middleware runs first (before machine Bearer check).
-  app.addHook('onRequest', createUserAuthMiddleware({ users, tenantResolver, jwtConfig: JWT }));
+  app.addHook('onRequest', createUserAuthMiddleware({ users, sessions, apiTokens, pdp, tenantResolver, jwtConfig: JWT }));
 
   // Machine auth middleware — skips if userAuthContext already set.
   app.addHook('onRequest', createAuthMiddleware(fakeCache, JWT, { authEnabled: !opts.authDisabled }));
@@ -183,7 +194,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   registerUserAuthRoutes(app, userRouteDeps);
 
   await app.ready();
-  return { app, users, credentials, memberships, sessions, invites };
+  return { app, users, credentials, memberships, sessions, apiTokens, invites };
 }
 
 // ── Seed helpers ──────────────────────────────────────────────────────────────
@@ -921,6 +932,48 @@ describe('GET /auth/sessions', () => {
   });
 });
 
+describe('personal API tokens', () => {
+  let ctx: TestCtx;
+  beforeEach(async () => {
+    ctx = await buildApp();
+    await seedAdmin(ctx);
+  });
+
+  it('creates, lists, authenticates with, and owner-revokes an API token', async () => {
+    const { cookieHeader, csrfToken } = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const created = await ctx.app.inject({
+      method: 'POST', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+      payload: { name: 'build agent' },
+    });
+    expect(created.statusCode).toBe(201);
+    const body = created.json() as { token: string; tokenRecord: { tokenId: string; userId: string } };
+    expect(body.token).toMatch(/^kbl_pat_/);
+
+    const list = await ctx.app.inject({ method: 'GET', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader } });
+    expect(list.json()).toMatchObject({ tokens: [{ tokenId: body.tokenRecord.tokenId, userId: body.tokenRecord.userId, name: 'build agent' }] });
+    expect(JSON.stringify(list.json())).not.toContain(body.token);
+
+    expect((await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: { host: HOST, authorization: `Bearer ${body.token}` } })).statusCode).toBe(200);
+    const revoked = await ctx.app.inject({
+      method: 'POST', url: `/auth/tokens/${body.tokenRecord.tokenId}/revoke`,
+      headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect((await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: { host: HOST, authorization: `Bearer ${body.token}` } })).statusCode).toBe(401);
+  });
+
+  it('does not let an owner revoke another user API token', async () => {
+    const { cookieHeader, csrfToken } = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const other = await ctx.apiTokens.create({ userId: 'other-user', tenantId: TENANT_ID, name: 'other CI', ttlMs: HOUR });
+    const response = await ctx.app.inject({
+      method: 'POST', url: `/auth/tokens/${other.record.tokenId}/revoke`,
+      headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+    });
+    expect(response.statusCode).toBe(404);
+    expect(await ctx.apiTokens.findActive(other.token)).not.toBeNull();
+  });
+});
+
 describe('POST /auth/sessions/:fam/revoke', () => {
   let ctx: TestCtx;
 
@@ -1013,12 +1066,12 @@ describe('POST /auth/invites (admin only)', () => {
       method: 'POST',
       url: '/auth/invites',
       headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
-      payload: { email: 'newguy@test.com', groupId: 'tenant-member' },
+      payload: { email: 'newguy@test.com', role: 'member' },
     });
 
     expect(r.statusCode).toBe(201);
     const body = r.json() as { activationUrl: string; inviteId: string };
-    expect(body.activationUrl).toContain('/activate?token=');
+    expect(body.activationUrl).toContain('/activate/');
     expect(body.inviteId).toBeTruthy();
   });
 
@@ -1053,7 +1106,7 @@ describe('POST /auth/invites (admin only)', () => {
       method: 'POST',
       url: '/auth/invites',
       headers: { host: HOST, cookie: memberCookies, 'x-csrf-token': memberCsrf },
-      payload: { email: 'another@test.com', groupId: 'tenant-member' },
+      payload: { email: 'another@test.com', role: 'member' },
     });
 
     expect(r.statusCode).toBe(403);
@@ -1385,5 +1438,45 @@ describe('POST /auth/login — rate limiting', () => {
       payload: { email: 'admin@test.com', password: 'Password123!' },
     });
     expect(ok.statusCode).toBe(200);
+  });
+});
+
+describe('admin password reset links', () => {
+  it('creates a one-time tenant-scoped reset link and accepts it once', async () => {
+    const ctx = await buildApp();
+    await seedAdmin(ctx);
+    await ctx.users.create({ userId: 'member-reset', tenantId: TENANT_ID, email: 'member-reset@test.com', status: 'active' });
+    await ctx.credentials.setCredential({ userId: 'member-reset', providerId: 'email-password', hash: await bcryptjs.hash('OldPassword123!', 4) });
+    const admin = await ctx.app.inject({ method: 'POST', url: '/auth/login/cli', headers: { host: HOST }, payload: { email: 'admin@test.com', password: 'Password123!' } });
+    const adminToken = (admin.json() as { accessToken: string }).accessToken;
+    const issued = await ctx.app.inject({
+      method: 'POST', url: '/auth/users/member-reset/password-reset-link',
+      headers: { host: HOST, authorization: `Bearer ${adminToken}` },
+    });
+    expect(issued.statusCode).toBe(201);
+    const resetUrl = (issued.json() as { resetUrl: string }).resetUrl;
+    const token = new URL(resetUrl).pathname.split('/').at(-1);
+    expect(token).toBeTruthy();
+
+    const applied = await ctx.app.inject({ method: 'POST', url: '/auth/password/reset', headers: { host: HOST }, payload: { token, newPassword: 'NewPassword123!' } });
+    expect(applied.statusCode).toBe(200);
+    const reused = await ctx.app.inject({ method: 'POST', url: '/auth/password/reset', headers: { host: HOST }, payload: { token, newPassword: 'OtherPassword123!' } });
+    expect(reused.statusCode).toBe(400);
+    const login = await ctx.app.inject({ method: 'POST', url: '/auth/login', headers: { host: HOST }, payload: { email: 'member-reset@test.com', password: 'NewPassword123!' } });
+    expect(login.statusCode).toBe(200);
+    await ctx.app.close();
+  });
+});
+
+describe('POST /auth/logout/cli', () => {
+  it('revokes the refresh family before the CLI removes its local session', async () => {
+    const ctx = await buildApp();
+    await seedAdmin(ctx);
+    const login = await ctx.app.inject({ method: 'POST', url: '/auth/login/cli', headers: { host: HOST }, payload: { email: 'admin@test.com', password: 'Password123!' } });
+    const refreshToken = (login.json() as { refreshToken: string }).refreshToken;
+    expect((await ctx.app.inject({ method: 'POST', url: '/auth/logout/cli', headers: { host: HOST }, payload: { refreshToken } })).statusCode).toBe(200);
+    const refresh = await ctx.app.inject({ method: 'POST', url: '/auth/refresh/cli', headers: { host: HOST }, payload: { refreshToken } });
+    expect(refresh.statusCode).toBe(401);
+    await ctx.app.close();
   });
 });

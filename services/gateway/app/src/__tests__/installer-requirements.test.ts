@@ -73,7 +73,7 @@ describe('kb-create.requirements.json', () => {
 
   it('every non-secret requirement is a JSON Pointer', () => {
     for (const r of file.requirements.filter((x) => !x.secret)) {
-      expect(r.path, r.id).toMatch(/^\/gateway(\/[A-Za-z]+)+$/);
+      expect(r.path, r.id).toMatch(/^\/(?:gateway|platform)(\/[A-Za-z]+)+$/);
     }
   });
 });

@@ -43,7 +43,9 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type {
   UsersStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
+  AuthAuditStore,
   ProviderRegistry,
   IPolicyDecisionPoint,
   JwtConfig,
@@ -59,6 +61,7 @@ import type { UserAuthContext } from './user-auth-middleware.js';
 import {
   setSessionCookies,
   clearSessionCookies,
+  COOKIE_ACCESS,
   COOKIE_REFRESH,
   COOKIE_CSRF,
   type CookieOptions,
@@ -95,13 +98,17 @@ export interface UserAuthServiceForRoutes {
     password: string;
     deviceCtx: { ip?: string; userAgent?: string };
   }): Promise<SessionResult>;
+  issuePasswordReset(input: { userId: string; tenantId: string; createdBy: string; ttlMs: number }): Promise<{ resetId: string; token: string; expiresAt: number }>;
+  completePasswordReset(input: { token: string; newPassword: string }): Promise<void>;
 }
 
 export interface UserAuthRouteDeps {
   userAuthService: UserAuthServiceForRoutes;
   users: UsersStore;
   sessions: SessionsStore;
+  apiTokens: ApiTokensStore;
   invites: InvitesStore;
+  authAudit: AuthAuditStore;
   providers: ProviderRegistry;
   pdp: IPolicyDecisionPoint;
   /** Resolves the tenant from the Host header — used to prevent tenantId bypass via body. */
@@ -153,6 +160,9 @@ function requireUser(request: FastifyRequest, reply: FastifyReply): UserAuthCont
  * Returns true if valid; sends 403 and returns false otherwise.
  */
 function checkCsrf(request: FastifyRequest, reply: FastifyReply): boolean {
+  // Bearer-authenticated CLI/API clients cannot be targeted by browser CSRF.
+  // Cookie-authenticated browser mutations still require the double-submit token.
+  if (!getCookies(request)[COOKIE_ACCESS]) return true;
   const cookieVal = getCookies(request)[COOKIE_CSRF];
   const headerVal = request.headers['x-csrf-token'];
   const headerStr = typeof headerVal === 'string' ? headerVal : undefined;
@@ -277,7 +287,7 @@ async function recordLoginFailure(
 // ── Route registrar ───────────────────────────────────────────────────────────
 
 export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRouteDeps): void {
-  const { userAuthService, users, sessions, invites, providers, pdp, tenantResolver, bootstrapTenantId, cookieOpts, inviteTtlMs, rateLimiter, authRateLimit, oauthState, oauthCallbackPerIpPerMinute } = deps;
+  const { userAuthService, users, sessions, invites, apiTokens, authAudit, providers, pdp, tenantResolver, bootstrapTenantId, cookieOpts, inviteTtlMs, rateLimiter, authRateLimit, oauthState, oauthCallbackPerIpPerMinute } = deps;
   // Apply config defaults so the rest of the handler can use them without null-checks.
   const authRateLimitCfg = { loginPerIpPerMinute: 10, loginPerEmailPerMinute: 5, ...authRateLimit };
 
@@ -712,17 +722,96 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     return true;
   }
 
+  app.post<{ Params: { id: string } }>('/auth/users/:id/password-reset-link', {
+    schema: { tags: ['Auth'], summary: 'Create a one-time password reset link for a tenant user (admin only)' },
+  }, async (request, reply) => {
+    if (!(await requirePermission(request, reply, PERMISSIONS.USERS_WRITE))) return;
+    if (!checkCsrf(request, reply)) return;
+    const ctx = request.userAuthContext!;
+    const target = await users.getById(request.params.id);
+    if (!target || target.tenantId !== ctx.tenantId) {
+      return reply.code(404).send({ error: 'Not found', message: 'User not found' });
+    }
+    const reset = await userAuthService.issuePasswordReset({
+      userId: target.userId, tenantId: target.tenantId, createdBy: ctx.userId, ttlMs: 60 * 60 * 1000,
+    });
+    await authAudit.record({
+      action: 'user.password_reset_link_created', actorUserId: ctx.userId,
+      targetUserId: target.userId, tenantId: ctx.tenantId,
+    });
+    const host = typeof request.headers.host === 'string' ? request.headers.host : 'localhost';
+    const protocol = cookieOpts.cookieSecure ? 'https' : 'http';
+    return reply.code(201).send({ resetUrl: `${protocol}://${host}/reset-password/${encodeURIComponent(reset.token)}`, expiresAt: reset.expiresAt });
+  });
+
+  app.post<{ Body: { token?: string; newPassword?: string } }>('/auth/password/reset', {
+    schema: { tags: ['Auth'], summary: 'Set a new password using an admin reset link' },
+  }, async (request, reply) => {
+    const { token, newPassword } = request.body ?? {};
+    if (typeof token !== 'string' || !token || typeof newPassword !== 'string' || !newPassword) {
+      return reply.code(400).send({ error: 'Bad Request', message: 'token and newPassword are required' });
+    }
+    try {
+      await userAuthService.completePasswordReset({ token, newPassword });
+      return reply.send({ ok: true });
+    } catch (err) {
+      if (err instanceof AuthError && err.code === 'invalid_password_reset') {
+        return reply.code(400).send({ error: 'invalid_password_reset', message: 'This reset link is invalid, expired, or already used' });
+      }
+      if (err instanceof AuthError && err.code === 'weak_password') {
+        return reply.code(400).send({ error: 'weak_password', message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  // Personal API tokens are long-lived credentials for agents and CI. They
+  // inherit the owner's current role and are only visible/revocable by owner.
+  app.get('/auth/tokens', async (request, reply) => {
+    const ctx = requireUser(request, reply);
+    if (!ctx) return;
+    const tokens = await apiTokens.listByUser(ctx.userId);
+    return reply.send({ tokens });
+  });
+
+  app.post<{ Body: { name?: string } }>('/auth/tokens', async (request, reply) => {
+    const ctx = requireUser(request, reply);
+    if (!ctx) return;
+    if (!checkCsrf(request, reply)) return;
+    const name = request.body?.name?.trim();
+    if (!name || name.length > 80) return reply.code(400).send({ error: 'Bad Request', message: 'name is required and must be at most 80 characters' });
+    const created = await apiTokens.create({ userId: ctx.userId, tenantId: ctx.tenantId, name, ttlMs: 90 * 24 * 60 * 60 * 1000 });
+    return reply.code(201).send({ token: created.token, tokenRecord: created.record });
+  });
+
+  app.post<{ Params: { id: string } }>('/auth/tokens/:id/revoke', async (request, reply) => {
+    const ctx = requireUser(request, reply);
+    if (!ctx) return;
+    if (!checkCsrf(request, reply)) return;
+    const revoked = await apiTokens.revokeByUser(request.params.id, ctx.userId);
+    if (!revoked) return reply.code(404).send({ error: 'Not found', message: 'API token not found' });
+    return reply.send({ ok: true });
+  });
+
   // ── POST /auth/invites ──────────────────────────────────────────────────────
-  app.post<{ Body: { email?: string; groupId?: string; ttlMs?: number } }>('/auth/invites', {
+  app.post<{ Body: { email?: string; role?: string; ttlMs?: number } }>('/auth/invites', {
     schema: { tags: ['Auth'], summary: 'Create an invite for a new user (admin only)' },
   }, async (request, reply) => {
     if (!(await requirePermission(request, reply, PERMISSIONS.INVITES_WRITE))) {return;}
     if (!checkCsrf(request, reply)) {return;}
 
     const ctx = request.userAuthContext!;
-    const { email, groupId, ttlMs: bodyTtlMs } = request.body ?? {};
-    if (!email || !groupId) {
-      return reply.code(400).send({ error: 'Bad Request', message: 'email and groupId are required' });
+    const { email, role, ttlMs: bodyTtlMs } = request.body ?? {};
+    if (typeof email !== 'string' || !email || (role !== 'admin' && role !== 'member')) {
+      return reply.code(400).send({ error: 'Bad Request', message: 'email and role (admin or member) are required' });
+    }
+
+    const targetRole = role === 'admin' ? 'tenant-admin' : 'tenant-member';
+    if (targetRole === 'tenant-admin' && !(await pdp.check(
+      { userId: ctx.userId, tenantId: ctx.tenantId, type: 'user' },
+      PERMISSIONS.USERS_WRITE,
+    )).allow) {
+      return reply.code(403).send({ error: 'Forbidden', message: 'Only admins may invite another admin' });
     }
 
     // Allow callers to specify a custom TTL (e.g., short-lived invites for testing
@@ -733,14 +822,14 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     const result = await invites.createInvite({
       email,
       tenantId: ctx.tenantId,
-      groupId: groupId as 'tenant-admin' | 'tenant-member',
+      groupId: targetRole,
       createdBy: ctx.userId,
       ttlMs: effectiveTtlMs,
     });
 
     const host = typeof request.headers.host === 'string' ? request.headers.host : 'localhost';
     const protocol = cookieOpts.cookieSecure ? 'https' : 'http';
-    const activationUrl = `${protocol}://${host}/activate?token=${result.activationToken}`;
+    const activationUrl = `${protocol}://${host}/activate/${encodeURIComponent(result.activationToken)}`;
 
     return reply.code(201).send({ inviteId: result.inviteId, activationUrl });
   });

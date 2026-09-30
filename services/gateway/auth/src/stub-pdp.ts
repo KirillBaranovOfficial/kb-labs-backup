@@ -1,20 +1,12 @@
 /**
  * @module @kb-labs/gateway-auth/stub-pdp
  *
- * Stub `IPolicyDecisionPoint` (ADR-0020, Phase 1.12). Mock RBAC over
- * the memberships store: tenant-admin gets every canonical permission,
- * tenant-member gets none. Machine identities are temporarily allowed
- * everything (matches the existing machine-token behaviour pre-RBAC).
- *
- * This module exists so the real handlers can call `policy.check(...)`
- * and `enumeratePermissions(...)` from day one. The real RBAC + ReBAC
- * engine (ClickUp 869def338) replaces this implementation; callers do
- * not change.
+ * Role policy over the memberships store. Administrators receive the
+ * canonical platform permissions; members receive project use, plugin,
+ * workflow, and own-account permissions only.
  *
  * Closed-world: actions outside the canonical PERMISSIONS enum return
- * `allow: false` even for tenant-admin. This is deliberate — until we
- * have per-plugin permission registration, the central enum is the
- * full universe of known actions.
+ * `allow: false` for every identity.
  */
 
 import type {
@@ -29,10 +21,20 @@ import type { MembershipsStore, GroupId } from './memberships-store.js';
 
 const ALL_PERMISSIONS: ReadonlyArray<string> = Object.freeze(Object.values(PERMISSIONS));
 const MACHINE_PERMISSIONS: ReadonlyArray<string> = Object.freeze([PERMISSIONS.MACHINE_REGISTER]);
+const MEMBER_PERMISSIONS: ReadonlyArray<string> = Object.freeze([
+  PERMISSIONS.PROJECTS_READ,
+  PERMISSIONS.PROJECTS_WRITE,
+  PERMISSIONS.PLUGINS_READ,
+  PERMISSIONS.PLUGINS_WRITE,
+  PERMISSIONS.WORKFLOWS_READ,
+  PERMISSIONS.WORKFLOWS_WRITE,
+  PERMISSIONS.ACCOUNT_READ,
+  PERMISSIONS.ACCOUNT_WRITE,
+]);
 
 const GROUP_PERMISSIONS: Readonly<Record<GroupId, ReadonlyArray<string>>> = Object.freeze({
   'tenant-admin': ALL_PERMISSIONS,
-  'tenant-member': Object.freeze([]),
+  'tenant-member': MEMBER_PERMISSIONS,
 });
 
 export interface StubPDPOptions {
@@ -55,13 +57,9 @@ export const createStubPDP = (opts: StubPDPOptions): IPolicyDecisionPoint => {
       _ctx?: PolicyContext,
     ): Promise<PolicyDecision> {
       if (identity.type === 'machine') {
-        // Machine identities currently retain their pre-PDP permissions.
-        // Will tighten when the real PDP lands.
-        if ((MACHINE_PERMISSIONS as string[]).includes(action)) {
-          return { allow: true };
-        }
-        // Machines still allowed for now — keeps gateway proxy flows intact.
-        return { allow: true };
+        return MACHINE_PERMISSIONS.includes(action)
+          ? { allow: true }
+          : { allow: false, reason: 'permission_denied' };
       }
 
       const perms = await permissionsForUser(identity);

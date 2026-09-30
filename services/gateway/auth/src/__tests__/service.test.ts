@@ -164,4 +164,12 @@ describe('AuthService', () => {
       expect(result).toBeNull();
     });
   });
+
+  it('revokes a machine refresh token during CLI logout', async () => {
+    const { clientId, clientSecret } = await service.register({ name: 'laptop', capabilities: [] });
+    const tokens = await service.issueTokens(clientId, clientSecret);
+    expect(tokens).not.toBeNull();
+    expect(await service.revokeRefreshToken(tokens!.refreshToken)).toBe(true);
+    expect(await service.refreshTokens(tokens!.refreshToken)).toBeNull();
+  });
 });

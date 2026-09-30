@@ -216,7 +216,52 @@ Refresh Token (30 days)
 
 ---
 
-## Security Properties
+## User roles and password recovery
+
+Secured gateways use two tenant roles. `admin` can manage users, invites, and
+platform settings. `member` can use projects, plugins, workflows, and their own
+account. An administrator can create a one-time password reset link from the
+Studio Users page or from the CLI after signing in as an admin:
+
+```bash
+kb auth login --gateway-url https://gateway.example.com --email admin@example.com --password '<admin-password>'
+kb auth reset-link --user-id <user-id>
+```
+
+Replace `<user-id>` with the ID shown by the gateway's user administration.
+Share the returned link with that user out of band. It expires after one hour,
+works once, and revokes all of the user's existing sessions when redeemed. No
+email is sent by the gateway.
+
+If no administrator can log in, use the installed operator recovery tool with
+the host stopped. Supply the new password on standard input; `--tenant` is the
+tenant ID configured for the bootstrap administrator:
+
+```bash
+kb-create stop
+kb-create doctor --recover --email admin@example.com --tenant kb-cloud --password-stdin --yes
+kb-create start
+```
+
+The recovery tool resets or recreates the administrator and revokes existing
+sessions. Use `kb-create doctor --recover --email admin@example.com --tenant kb-cloud --generate --yes`
+to have it generate a password instead; keep the
+printed value private and sign in with it immediately.
+
+## Personal API tokens
+
+`ApiTokensStore` persists only SHA-256 hashes of user-issued personal tokens.
+The plaintext is returned once at creation. Tokens have a 90-day lifetime,
+inherit the owner's live role permissions, and can be listed or revoked only
+by that user. Studio exposes `/account/tokens`; the CLI supports:
+
+```bash
+kb auth tokens --name "nightly CI"
+kb auth tokens
+kb auth tokens --revoke tok_abc123
+```
+
+## Security properties
 
 | Property | Implementation |
 |----------|---------------|

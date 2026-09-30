@@ -26,6 +26,7 @@ export interface MachineAuthRoutesUserExt {
    *  Must write the reply and return true; return false to fall through to
    *  the machine body-refresh path. */
   userRefreshFn: (request: FastifyRequest, reply: FastifyReply) => Promise<boolean>;
+  userLogoutFn: (refreshToken: string) => Promise<void>;
   /** PDP for checking MACHINE_REGISTER permission on cookie-authenticated admin users. */
   pdp: IPolicyDecisionPoint;
 }
@@ -122,5 +123,15 @@ export function registerAuthRoutes(
     }
 
     return reply.send(tokens);
+  });
+
+  app.post<{ Body: { refreshToken?: string } }>('/auth/logout/cli', { schema: { tags: ['Auth'], summary: 'Revoke a CLI session or machine refresh token' } }, async (request, reply) => {
+    const refreshToken = request.body?.refreshToken;
+    if (typeof refreshToken !== 'string' || !refreshToken) {
+      return reply.code(400).send({ error: 'Bad Request', message: 'refreshToken is required' });
+    }
+    await authService.revokeRefreshToken(refreshToken);
+    await userExt?.userLogoutFn(refreshToken);
+    return reply.send({ ok: true });
   });
 }

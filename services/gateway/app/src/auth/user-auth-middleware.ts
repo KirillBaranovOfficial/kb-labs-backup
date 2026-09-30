@@ -40,13 +40,15 @@
  */
 
 import type { FastifyRequest, FastifyReply, FastifyError } from 'fastify';
-import type { UsersStore, JwtConfig, TenantResolver } from '@kb-labs/gateway-auth';
+import type { UsersStore, SessionsStore, ApiTokensStore, JwtConfig, TenantResolver, IPolicyDecisionPoint } from '@kb-labs/gateway-auth';
+import type { AuthContext } from '@kb-labs/gateway-contracts';
 import { verifyUserAccessToken } from '@kb-labs/gateway-auth';
 import { COOKIE_ACCESS } from './user-cookies.js';
 import { extractBearerToken } from './tokens.js';
 
 export interface UserAuthContext {
   type: 'user';
+  source: 'cookie' | 'bearer' | 'api-token';
   userId: string;
   tenantId: string;
   familyId: string;
@@ -60,6 +62,9 @@ declare module 'fastify' {
 
 export interface UserAuthMiddlewareDeps {
   users: UsersStore;
+  sessions: SessionsStore;
+  apiTokens?: ApiTokensStore;
+  pdp: IPolicyDecisionPoint;
   tenantResolver: TenantResolver;
   jwtConfig: JwtConfig;
 }
@@ -78,6 +83,18 @@ export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
     const token = cookieToken ?? bearerToken;
     if (!token) {
       // No user cookie, no Bearer token — let machine middleware handle it.
+      return;
+    }
+
+    const apiToken = deps.apiTokens && !cookieToken ? await deps.apiTokens.findActive(token) : null;
+    if (apiToken) {
+      const user = await deps.users.getById(apiToken.userId);
+      if (!user || user.status !== 'active') return sendUnauthorized(reply, 'Token owner is inactive');
+      const resolvedTenant = deps.tenantResolver.resolve(typeof request.headers.host === 'string' ? request.headers.host : undefined);
+      if (resolvedTenant !== null && resolvedTenant !== apiToken.tenantId) return sendUnauthorized(reply, 'Tenant mismatch');
+      request.userAuthContext = { type: 'user', source: 'api-token', userId: apiToken.userId, tenantId: apiToken.tenantId, familyId: apiToken.tokenId };
+      const permissions = await deps.pdp.enumeratePermissions({ userId: apiToken.userId, tenantId: apiToken.tenantId, type: 'user' });
+      request.authContext = { type: 'user', userId: apiToken.userId, namespaceId: apiToken.tenantId, tier: 'free', permissions };
       return;
     }
 
@@ -117,12 +134,25 @@ export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
     if (!user || user.status !== 'active') {
       return sendUnauthorized(reply, 'Session no longer valid');
     }
+    if (!(await deps.sessions.hasActiveFamily(payload.familyId, payload.userId))) {
+      return sendUnauthorized(reply, 'Session revoked');
+    }
 
     request.userAuthContext = {
       type: 'user',
+      source: cookieToken ? 'cookie' : 'bearer',
       userId: payload.userId,
       tenantId: payload.tenantId,
       familyId: payload.familyId,
     };
+    const permissions = await deps.pdp.enumeratePermissions({ userId: payload.userId, tenantId: payload.tenantId, type: 'user' });
+    const authContext: AuthContext = {
+      type: 'user',
+      userId: payload.userId,
+      namespaceId: payload.tenantId,
+      tier: 'free',
+      permissions,
+    };
+    request.authContext = authContext;
   };
 };

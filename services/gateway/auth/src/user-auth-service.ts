@@ -25,6 +25,7 @@ import { canonicalizeEmail } from './users-store.js';
 import type { CredentialsStore } from './credentials-store.js';
 import type { MembershipsStore } from './memberships-store.js';
 import type { InvitesStore } from './invites-store.js';
+import type { PasswordResetStore } from './password-reset-store.js';
 import type {
   SessionsStore} from './sessions-store.js';
 import {
@@ -51,7 +52,8 @@ export type AuthErrorCode =
   | 'invalid_current_password'
   | 'weak_password'
   | 'invalid_invite'
-  | 'unknown_invite';
+  | 'unknown_invite'
+  | 'invalid_password_reset';
 
 export class AuthError extends Error {
   public override readonly name = 'AuthError';
@@ -65,6 +67,7 @@ export interface UserAuthServiceOptions {
   credentials: CredentialsStore;
   memberships: MembershipsStore;
   invites: InvitesStore;
+  passwordResets: PasswordResetStore;
   sessions: SessionsStore;
   providers: ProviderRegistry;
   passwordPolicy: PasswordPolicy;
@@ -117,6 +120,8 @@ export interface ActivateInput {
   password: string;
   deviceCtx: DeviceCtx;
 }
+
+export interface CompletePasswordResetInput { token: string; newPassword: string; }
 
 const toPublicUser = (u: User): PublicUser => ({
   userId: u.userId,
@@ -326,7 +331,21 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
     };
   };
 
+  const issuePasswordReset = async (input: { userId: string; tenantId: string; createdBy: string; ttlMs: number }) =>
+    opts.passwordResets.create(input);
+
+  const completePasswordReset = async (input: CompletePasswordResetInput): Promise<void> => {
+    const policyResult = await opts.passwordPolicy.validate(input.newPassword);
+    const polErr = mapPolicyResultToError(policyResult);
+    if (polErr) throw polErr;
+    const reset = await opts.passwordResets.consume(input.token);
+    if (!reset) throw new AuthError('invalid_password_reset');
+    const hash = await bcrypt.hash(input.newPassword, opts.bcryptCost);
+    await opts.credentials.setCredential({ userId: reset.userId, providerId: 'email-password', hash });
+    await opts.sessions.revokeAllUserSessions(reset.userId);
+  };
+
   void now; // Reserved for future audit-event timestamps; currently unused.
 
-  return { login, refresh, logout, changePassword, activate };
+  return { login, refresh, logout, changePassword, activate, issuePasswordReset, completePasswordReset };
 };

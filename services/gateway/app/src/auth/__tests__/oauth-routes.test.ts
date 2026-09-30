@@ -31,7 +31,10 @@ import {
   CredentialsStore,
   MembershipsStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
+  PasswordResetStore,
+  AuthAuditStore,
   ProviderRegistry,
   OAuthStateStore,
   type SessionsStoreOptions,
@@ -112,7 +115,10 @@ async function buildApp(opts: BuildOpts = {}): Promise<TestCtx> {
   const credentials = new CredentialsStore(docs);
   const memberships = new MembershipsStore(docs);
   const sessions = new SessionsStore(docs, SESSION_OPTS);
+  const apiTokens = new ApiTokensStore(docs);
   const invites = new InvitesStore(docs);
+  const passwordResets = new PasswordResetStore(docs);
+  const authAudit = new AuthAuditStore(docs);
 
   const providers = new ProviderRegistry();
   providers.register(createEmailPasswordProvider({ users, credentials, tenantId: TENANT_ID, bcryptCost: 4 }));
@@ -122,7 +128,7 @@ async function buildApp(opts: BuildOpts = {}): Promise<TestCtx> {
   const pdp = createStubPDP({ memberships });
   const passwordPolicy = createPasswordPolicy({ minLength: 8, maxLength: 256, hibpEnabled: false });
   const userAuthService = createUserAuthService({
-    users, credentials, memberships, sessions, invites, providers, passwordPolicy,
+    users, credentials, memberships, sessions, invites, passwordResets, providers, passwordPolicy,
     jwtConfig: JWT, accessTtlSec: 900, refreshTtlSec: HOUR / 1000, bcryptCost: 4,
   });
   const tenantResolver = createTenantResolver({ pattern: '{tenant}.kblabs.ru' });
@@ -133,13 +139,15 @@ async function buildApp(opts: BuildOpts = {}): Promise<TestCtx> {
 
   const app = Fastify({ logger: false, trustProxy: true });
   await app.register(fastifyCookie);
-  app.addHook('onRequest', createUserAuthMiddleware({ users, tenantResolver, jwtConfig: JWT }));
+  app.addHook('onRequest', createUserAuthMiddleware({ users, sessions, pdp, tenantResolver, jwtConfig: JWT }));
 
   registerUserAuthRoutes(app, {
     userAuthService,
     users,
     sessions,
+    apiTokens,
     invites,
+    authAudit,
     providers,
     pdp,
     tenantResolver,

@@ -1,9 +1,7 @@
 /**
  * kb auth logout — Remove stored Gateway credentials.
  *
- * Clears both identity stores — ~/.kb/credentials.json (machine) and
- * ~/.kb/session.json (human) — "log out" is one verb regardless of which
- * one(s) are actually present.
+ * Revokes Gateway refresh tokens, then clears both local identity stores.
  */
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
@@ -16,7 +14,7 @@ type LogoutFlags = {
 export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
   name: 'logout',
   description: 'Remove stored Gateway credentials',
-  longDescription: 'Deletes ~/.kb/credentials.json and ~/.kb/session.json. CLI will no longer be able to reach Gateway until re-login.',
+  longDescription: 'Revokes saved Gateway refresh tokens, then deletes ~/.kb/credentials.json and ~/.kb/session.json.',
   category: 'auth',
   examples: [
     'kb auth logout',
@@ -32,6 +30,31 @@ export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
       credentialsManager.load(),
       sessionManager.load(),
     ]);
+
+    const savedTokens: Array<{ gatewayUrl: string; refreshToken: string }> = [];
+    if (existingSession) savedTokens.push(existingSession);
+    if (existingCredentials) savedTokens.push(existingCredentials);
+    for (const identity of savedTokens) {
+      let response: Response;
+      try {
+        response = await fetch(`${identity.gatewayUrl}/auth/logout/cli`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken: identity.refreshToken }),
+        });
+      } catch {
+        const error = 'Could not reach a Gateway to revoke saved credentials. Check the Gateway and run `kb auth logout` again.';
+        if (flags.json) ctx.ui?.json({ ok: false, error });
+        else ctx.ui?.error?.(error);
+        return { ok: false, error };
+      }
+      if (!response.ok) {
+        const error = `Gateway rejected token revocation (HTTP ${response.status}). Run 'kb auth status', then 'kb auth logout' again.`;
+        if (flags.json) ctx.ui?.json({ ok: false, error });
+        else ctx.ui?.error?.(error);
+        return { ok: false, error };
+      }
+    }
 
     if (!existingCredentials && !existingSession) {
       if (flags.json) {

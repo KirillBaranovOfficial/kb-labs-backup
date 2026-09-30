@@ -21,7 +21,10 @@ import {
   CredentialsStore,
   MembershipsStore,
   SessionsStore,
+  ApiTokensStore,
   InvitesStore,
+  PasswordResetStore,
+  AuthAuditStore,
   loadIdentityProviders,
   createPasswordPolicy,
   createUserAuthService,
@@ -178,7 +181,10 @@ export async function startGateway(
       refreshTtlMs: refreshTtlSec * 1000,
       graceWindowMs,
     });
+    const apiTokens = new ApiTokensStore(docs);
     const invites = new InvitesStore(docs);
+    const passwordResets = new PasswordResetStore(docs);
+    const authAudit = new AuthAuditStore(docs);
 
     // Identity providers are loaded from config (ADR-0020, DD-3). An
     // empty/absent `auth.providers` registers the built-in email-password
@@ -208,6 +214,7 @@ export async function startGateway(
       memberships,
       sessions,
       invites,
+      passwordResets,
       providers,
       passwordPolicy,
       jwtConfig: {
@@ -305,7 +312,9 @@ export async function startGateway(
       userAuthService,
       users,
       sessions,
+      apiTokens,
       invites,
+      authAudit,
       providers,
       pdp,
       tenantResolver,
