@@ -1,90 +1,79 @@
 ---
 title: "Quick Start"
 description: "Install KB Labs and run your first command in under 5 minutes."
-updatedAt: "2026-07-25"
+updatedAt: "2026-09-30"
 order: 1
 ---
 
-Install `kb-create`, bootstrap a workspace, and run your first command.
+Install KB Labs, then run your first command in any Git project.
 
-## 1. Install the launcher
+## Prerequisites
+
+- macOS or Linux (Windows installation is not yet supported by this journey).
+- Node.js 24.x.
+- At least 1.20 GiB available memory and 2 GiB free disk space.
+- `curl` to run the installer.
+
+The installer manages its pnpm runtime; you do not need to install pnpm first.
+
+## Install KB Labs
 
 ```bash
 curl -fsSL https://kblabs.ru/install.sh | sh
+kb-create install
 ```
 
-Downloads the correct binary for your platform and installs it to `~/.local/bin`. On macOS and Linux. Windows support is coming.
+The first command installs the `kb-create` launcher. The second installs and
+starts the platform, checks the setup, and configures the `kb` command. Local
+access is the default and accepts connections only from this computer. Choose
+secured access during setup if other computers or users need to sign in.
 
-## 2. Bootstrap your project
-
-```bash
-kb-create my-project
-```
-
-Runs the interactive wizard: picks a package manager, configures the platform directory, and sets up `.kb/kb.config.jsonc` with sane defaults. When it finishes you have a ready workspace.
-
-To use the declarative scenario engine during the migration cutover:
-
-```bash
-kb-create my-project --engine
-```
-
-The Human terminal flow and Agent JSON flow share the same scenario state,
-validation, compatibility resolution, and installation plan. CI should use
-the deterministic direct path instead of a scenario:
-
-```bash
-kb-create install --plugins=release --platform ./ci-platform
-```
-
-## 3. Start services
-
-```bash
-cd my-project
-kb-dev start
-```
-
-Starts the core services: REST API, Workflow Daemon, Gateway. Check that everything is alive:
+Check the installation and host:
 
 ```bash
 kb-create status
+kb-create doctor
 ```
 
-## 4. Run your first command
+## Run your first command
+
+Use any existing Git project (or create one), then run:
 
 ```bash
-# See all available commands
-kb --help
-
-# Generate a commit plan from staged changes (works without LLM — falls back to heuristics)
-kb commit commit --dry-run
-
-# List installed plugins
-kb marketplace plugins list
+cd ~/any-project
+kb commit
 ```
 
-## What's next
+The commit command works without an LLM; it can use its heuristic path. To
+enable AI-backed generation with OpenAI, set the adapter and provide the key
+through an environment variable:
 
-| Goal                                  | Start here                                                    |
-| ------------------------------------- | ------------------------------------------------------------- |
-| Build a plugin                        | [Guides → First Plugin](/guides/first-plugin)                 |
-| Set up a workflow                     | [Guides → First Workflow](/guides/first-workflow)             |
-| Configure adapters (LLM, DB, storage) | [Adapters → Overview](/adapters)                              |
-| Understand the architecture           | [Concepts → Overview](/concepts/overview)                     |
-| Run in production                     | [Guides → Production Readiness](/guides/production-readiness) |
+```bash
+kb config set platform.adapters.llm @kb-labs/adapters-openai
+kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'
+export OPENAI_API_KEY=your-openai-api-key
+```
+
+## Agent and CI installation
+
+For non-interactive installs, provide a release index and use the JSON apply
+operation. Replace the index path with the sealed index for the release you
+intend to install:
+
+```bash
+kb-create apply --json --index ./release-index.json \
+  --request-platform-root ./ci-platform --service-profile default \
+  --scenario commit
+```
 
 ## Troubleshooting
 
-**Services won't start:**
-
-```bash
-kb-dev doctor          # environment diagnostics
-kb-dev start --force   # kill port conflicts and retry
-```
-
-**"Command not found" after building a plugin:**
-
-```bash
-```
+| Error code | What happened | Fix |
+| --- | --- | --- |
+| `KB_INSTALL_NODE_VERSION` | Node.js is not 24.x. | Install Node 24, then rerun `kb-create install`; with nvm: `nvm install 24 && nvm use 24`. |
+| `KB_INSTALL_MEMORY_INSUFFICIENT` | Less than 1.20 GiB memory is available. | Close memory-heavy applications or increase machine memory, then rerun `kb-create install`. |
+| `KB_INSTALL_NO_DISK_SPACE` | Less than 2 GiB is free for installation. | Free disk space or choose a writable platform directory with `kb-create install --platform-root PATH`. |
+| `KB_INSTALL_PACKAGE_MANAGER_KILLED` | The package manager was killed, likely because memory ran out. | Free memory, then rerun `kb-create install`. |
+| `KB_INSTALL_PORT_IN_USE` | A port needed by the platform is occupied. | Stop the process using the reported port, then rerun `kb-create install`. |
 
 More help: [Guides → Troubleshooting](/guides/troubleshooting)

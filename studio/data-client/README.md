@@ -106,7 +106,7 @@ All configuration via HTTP client factory.
 - `react` (`^18.3.1`): React
 - `tsup` (`^8`): TypeScript bundler
 - `typescript` (`^5`): TypeScript compiler
-- `vitest` (`^3.2.4`): Test runner
+- `vitest` (`^4.1.11`): Test runner
 
 ## 🧪 Testing
 
@@ -207,4 +207,3 @@ See [CONTRIBUTING.md](../../CONTRIBUTING.md) for development guidelines.
 ## 📄 License
 
 MIT © KB Labs
-

@@ -23,7 +23,7 @@
       "stalenessRisk": "low",
       "pages": [
         { "slug": "index",       "type": "manual", "static": true },
-        { "slug": "quick-start", "type": "hybrid", "owners": ["cli/**", "plugins/marketplace/**"] },
+        { "slug": "quick-start", "type": "hybrid", "owners": ["tools/kb-create/**", "cli/**", "plugins/marketplace/**"] },
         { "slug": "installation","type": "hybrid", "owners": ["tools/kb-create/**", "cli/**"] },
         { "slug": "privacy",     "type": "manual", "static": true }
       ]
@@ -101,8 +101,8 @@
         { "slug": "guides/first-adapter",        "type": "manual", "owners": ["sdk/**", "adapters/**"] },
         { "slug": "guides/first-workflow",       "type": "manual", "owners": ["plugins/workflow/entry/src/manifest.ts", "plugins/workflow/engine/**", "plugins/workflow/contracts/**", "plugins/workflow/builtins/**", "plugins/workflow/daemon/src/api/workflows-api.ts", "tools/kb-dev/**", "studio/**"] },
         { "slug": "guides/add-studio-page",      "type": "manual", "owners": ["studio/**", "sdk/**"] },
-        { "slug": "guides/llm-setup",            "type": "manual", "owners": ["adapters/openai/**", "adapters/kblabs-gateway/**"] },
-        { "slug": "guides/testing",              "type": "manual", "owners": ["shared/testing/**", "shared/testing-e2e/**"] },
+        { "slug": "guides/llm-setup",            "type": "manual", "owners": ["tools/kb-create/**", "cli/commands/src/commands/system/config/**", "adapters/openai/**"] },
+        { "slug": "guides/testing",              "type": "manual", "owners": ["shared/testing/**", "shared/testing-e2e/**", "infra/devkit/vitest/**", "infra/devkit/vitest.config.ts", "infra/devkit/fixtures/web/tests/**", "infra/devkit/templates/package-json/**", "devkit.yaml"] },
         { "slug": "guides/production-readiness", "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "guides/troubleshooting",      "type": "manual", "owners": ["tools/kb-dev/**", "tools/kb-devkit/**"] },
         { "slug": "guides/ci-install",            "type": "manual", "owners": ["tools/kb-create/**", ".github/actions/kb-create-install/**"] }

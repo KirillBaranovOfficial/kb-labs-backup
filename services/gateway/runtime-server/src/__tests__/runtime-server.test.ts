@@ -9,16 +9,23 @@ import type { CapabilityCall } from '@kb-labs/host-agent-contracts';
 
 // --- Mocks ---
 
+const gatewayClientState = vi.hoisted(() => ({
+  onConnected: vi.fn<(hostId: string, sessionId: string) => void>(),
+}));
 const mockRegisterHandler = vi.fn();
 const mockConnect = vi.fn().mockResolvedValue(undefined);
 const mockStop = vi.fn();
 
 vi.mock('@kb-labs/host-agent-core', () => ({
-  GatewayClient: vi.fn().mockImplementation(() => ({
-    registerHandler: mockRegisterHandler,
-    connect: mockConnect,
-    stop: mockStop,
-  })),
+  GatewayClient: class {
+    constructor(options: { onConnected?: (hostId: string, sessionId: string) => void }) {
+      gatewayClientState.onConnected.mockImplementation(options.onConnected ?? (() => {}));
+    }
+
+    registerHandler = mockRegisterHandler;
+    connect = mockConnect;
+    stop = mockStop;
+  },
 }));
 
 const mockRunInProcess = vi.fn();
@@ -154,14 +161,7 @@ describe('RuntimeServer', () => {
     });
 
     it('returns hostId after onConnected callback', async () => {
-      const { GatewayClient } = await import('@kb-labs/host-agent-core');
       const { RuntimeServer } = await import('../runtime-server.js');
-
-      let capturedOnConnected: ((hostId: string, sessionId: string) => void) | undefined;
-      vi.mocked(GatewayClient).mockImplementationOnce((opts) => {
-        capturedOnConnected = opts.onConnected;
-        return { registerHandler: vi.fn(), connect: vi.fn(), stop: vi.fn() } as unknown as InstanceType<typeof GatewayClient>;
-      });
 
       const server = new RuntimeServer({
         gatewayUrl: 'http://localhost:4000',
@@ -169,7 +169,7 @@ describe('RuntimeServer', () => {
       });
 
       expect(server.getHostId()).toBeNull();
-      capturedOnConnected?.('host_runtime_xyz', 'sess-1');
+      gatewayClientState.onConnected('host_runtime_xyz', 'sess-1');
       expect(server.getHostId()).toBe('host_runtime_xyz');
     });
   });

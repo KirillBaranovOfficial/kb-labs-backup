@@ -27,13 +27,9 @@ import type {
 export class ServiceNotConfiguredError extends Error {
   constructor(
     public readonly service: string,
-    public readonly requiredAdapter?: string
+    public readonly requiredAdapter: string
   ) {
-    super(
-      requiredAdapter
-        ? `Service '${service}' is not configured. Add "${requiredAdapter}" to kb.config.json adapters.`
-        : `Service '${service}' is not configured. Configure it in kb.config.json.`
-    );
+    super(`Service '${service}' is not configured. Add "${requiredAdapter}" to kb.config.json adapters.`);
     this.name = 'ServiceNotConfiguredError';
   }
 }
@@ -58,7 +54,7 @@ export class ServiceNotConfiguredError extends Error {
  */
 export function useLLM(ctx: PluginContext): ILLM {
   if (!ctx.platform.llm) {
-    throw new ServiceNotConfiguredError('llm', '@kb-labs/shared-openai');
+    throw new ServiceNotConfiguredError('llm', '@kb-labs/adapters-openai');
   }
   return ctx.platform.llm;
 }
@@ -79,7 +75,7 @@ export function useLLM(ctx: PluginContext): ILLM {
  */
 export function useEmbeddings(ctx: PluginContext): IEmbeddings {
   if (!ctx.platform.embeddings) {
-    throw new ServiceNotConfiguredError('embeddings', '@kb-labs/shared-openai');
+    throw new ServiceNotConfiguredError('embeddings', '@kb-labs/adapters-openai/embeddings');
   }
   return ctx.platform.embeddings;
 }
@@ -100,7 +96,7 @@ export function useEmbeddings(ctx: PluginContext): IEmbeddings {
  */
 export function useVectorStore(ctx: PluginContext): IVectorStore {
   if (!ctx.platform.vectorStore) {
-    throw new ServiceNotConfiguredError('vectorStore', '@kb-labs/mind-qdrant');
+    throw new ServiceNotConfiguredError('vectorStore', '@kb-labs/adapters-qdrant');
   }
   return ctx.platform.vectorStore;
 }

@@ -505,7 +505,7 @@ describe('UI Adapter', () => {
   });
 
   describe('Error Handling', () => {
-    const createErrorUIFacade = (errorFn: ReturnType<typeof vi.fn>) => ({
+    const createErrorUIFacade = (errorFn: (error: unknown) => void) => ({
       colors: {} as any,
       write: (text: string) => process.stdout.write(text),
       info: vi.fn(),
@@ -525,7 +525,7 @@ describe('UI Adapter', () => {
     });
 
     it('should handle Error object in error()', () => {
-      const mockError = vi.fn();
+      const mockError = vi.fn<(error: unknown) => void>();
       const ui = createErrorUIFacade(mockError);
 
       const error = new Error('Test error');
@@ -535,7 +535,7 @@ describe('UI Adapter', () => {
     });
 
     it('should handle string in error()', () => {
-      const mockError = vi.fn();
+      const mockError = vi.fn<(error: unknown) => void>();
       const ui = createErrorUIFacade(mockError);
 
       ui.error('Test error string');

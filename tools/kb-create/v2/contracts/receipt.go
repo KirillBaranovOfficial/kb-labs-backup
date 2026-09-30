@@ -9,14 +9,15 @@ const (
 )
 
 type Artifact struct {
-	ID      string `json:"id"`
-	Kind    string `json:"kind"`
-	Package string `json:"package"`
-	Version string `json:"version"`
-	SHA256  string `json:"sha256"`
-	URL     string `json:"url,omitempty"`
-	Tarball string `json:"tarball,omitempty"`
-	Target  string `json:"target,omitempty"`
+	ID      string              `json:"id"`
+	Kind    string              `json:"kind"`
+	Package string              `json:"package"`
+	Version string              `json:"version"`
+	SHA256  string              `json:"sha256"`
+	URL     string              `json:"url,omitempty"`
+	Tarball string              `json:"tarball,omitempty"`
+	Target  string              `json:"target,omitempty"`
+	Config  []ConfigRequirement `json:"config,omitempty"`
 	// Registry names the discovery kind ("plugin" or "adapter") of an artifact
 	// that is installed under another Kind, e.g. a platform member that is also
 	// a catalog plugin/adapter. Empty for artifacts that are not registry entities.

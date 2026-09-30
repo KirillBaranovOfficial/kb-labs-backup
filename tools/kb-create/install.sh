@@ -3,6 +3,9 @@ set -eu
 
 REPO="kb-labs-team/kb-labs"
 BINARY="kb-create"
+# Override only the release download origin (for local candidate testing).
+# Unset, public installs continue to download from GitHub Releases.
+DOWNLOAD_BASE_URL="${KB_CREATE_DOWNLOAD_BASE_URL:-https://github.com/${REPO}/releases/download}"
 DEST="${HOME}/.local/bin/${BINARY}"
 INDEX_DEST="${HOME}/.local/share/${BINARY}/release-index.json"
 VERSION="latest"
@@ -136,10 +139,10 @@ if [ "$VERSION" = "latest" ]; then
     err "No binary release was found for ${REPO}."
     exit 1
   fi
-  BASE_URL="https://github.com/${REPO}/releases/download/${RESOLVED_VERSION}"
+  BASE_URL="${DOWNLOAD_BASE_URL}/${RESOLVED_VERSION}"
 else
   RESOLVED_VERSION="$VERSION"
-  BASE_URL="https://github.com/${REPO}/releases/download/${RESOLVED_VERSION}"
+  BASE_URL="${DOWNLOAD_BASE_URL}/${RESOLVED_VERSION}"
 fi
 
 BINARY_FILE="${BINARY}-${OS}-${ARCH}"
@@ -294,9 +297,4 @@ if [ -n "$INDEX_DEST" ]; then
 fi
 echo ""
 printf "%sGet started:%s\n" "$C_BOLD" "$C_RESET"
-if [ -n "$INDEX_DEST" ]; then
-  printf "  %skb-create wizard --index %s --request-platform-root ./kb-platform%s\n" "$C_DIM" "$INDEX_DEST" "$C_RESET"
-else
-  printf "  %skb-create wizard --index release-index.json --request-platform-root ./kb-platform%s\n" "$C_DIM" "$C_RESET"
-fi
-printf "  %skb-create status --platform-root ./kb-platform%s\n" "$C_DIM" "$C_RESET"
+printf "  %skb-create install%s\n" "$C_DIM" "$C_RESET"

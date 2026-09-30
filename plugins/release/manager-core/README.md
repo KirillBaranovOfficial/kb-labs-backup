@@ -105,7 +105,7 @@ All configuration via function parameters and kb-labs.config.json.
 - `@types/semver` (`^7.5.0`): SemVer types
 - `tsup` (`^8`): TypeScript bundler
 - `typescript` (`^5`): TypeScript compiler
-- `vitest` (`^3`): Test runner
+- `vitest` (`^4.1.11`): Test runner
 
 ## 🧪 Testing
 

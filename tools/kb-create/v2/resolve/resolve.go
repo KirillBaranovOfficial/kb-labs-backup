@@ -79,7 +79,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 	}
 	graph.PlatformVersion, graph.Profile = platform.Version, profileName(request.ServiceProfile)
-	artifacts := []contracts.Artifact{{ID: platform.ID, Kind: "platform", Package: platform.Package, Version: platform.Version, SHA256: platform.SHA256, Tarball: platform.Tarball}}
+	artifacts := []contracts.Artifact{{ID: platform.ID, Kind: "platform", Package: platform.Package, Version: platform.Version, SHA256: platform.SHA256, Tarball: platform.Tarball, Config: platform.Config}}
 	for _, member := range platform.Members {
 		item := artifact(member, "platform-member")
 		item.Registry = registryKind(source, member.Package)
@@ -112,6 +112,11 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	}
 	requirements := append([]catalog.Requirement(nil), platform.Requires...)
 	for _, item := range request.Plugins {
+		if memberContains(platform.Members, item) {
+			// Official services shipped as platform members are already selected
+			// by the platform bundle and must not also resolve as plugins.
+			continue
+		}
 		component, found := selectComponent(source.Plugins, item)
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("plugin", item.ID, "requested version is not present in the release index")
@@ -171,6 +176,15 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	return plan, nil
 }
 
+func memberContains(members []catalog.Component, request contracts.ComponentRequest) bool {
+	for _, member := range members {
+		if member.ID == request.ID && (request.Version.Version == "" || request.Version.Version == member.Version) {
+			return true
+		}
+	}
+	return false
+}
+
 // cloneHost gives the plan its own copy: the plan is hashed and persisted, and
 // must not change if the release index value it came from is reused.
 func cloneHost(host contracts.HostSpec) contracts.HostSpec {
@@ -209,7 +223,7 @@ func registryKind(source catalog.Catalog, pkg string) string {
 }
 
 func artifact(c catalog.Component, kind string) contracts.Artifact {
-	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, Tarball: c.Tarball}
+	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, Tarball: c.Tarball, Config: c.Config}
 }
 func findPlatform(items []catalog.PlatformBundle, version string) (catalog.PlatformBundle, bool) {
 	for _, v := range items {
@@ -261,6 +275,18 @@ func selectAdapter(items []catalog.Adapter, requested []contracts.ComponentReque
 			}
 		}
 		return catalog.Adapter{}, false, false
+	}
+	defaults := make([]catalog.Adapter, 0, len(candidates))
+	for _, candidate := range candidates {
+		if contains(candidate.DefaultFor, capability) {
+			defaults = append(defaults, candidate)
+		}
+	}
+	if len(defaults) == 1 {
+		return defaults[0], true, false
+	}
+	if len(defaults) > 1 {
+		return catalog.Adapter{}, false, true
 	}
 	if len(candidates) == 1 {
 		return candidates[0], true, false

@@ -115,9 +115,16 @@ describe('toErrorEnvelope (platform errors)', () => {
     const envelope = toErrorEnvelope(new AdapterUnavailableError('llm'), { correlationId: 'c1' });
     expect(validateErrorEnvelope(envelope)).toEqual([]);
     expect(envelope.code).toBe('KB_ADAPTER_NOT_CONFIGURED');
-    expect(envelope.details).toEqual({ service: 'llm', adapter: 'adapters.llm' });
+    expect(envelope.details).toEqual({
+      service: 'llm',
+      adapter: 'platform.adapters.llm',
+      command: 'kb config set platform.adapters.llm @kb-labs/adapters-openai',
+    });
     expect(envelope.correlationId).toBe('c1');
-    expect(envelope.hint).toContain('adapters.llm');
+    expect(envelope.hint).toContain('kb config set platform.adapters.llm');
+    expect(envelope.actions?.[0]?.command).toBe(
+      'kb config set platform.adapters.llm @kb-labs/adapters-openai',
+    );
   });
 
   it('maps a load-failed adapter to KB_HOST_ADAPTER_UNAVAILABLE', () => {

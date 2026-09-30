@@ -1,20 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mocked } from 'vitest';
 import { createEnvironmentAPI, createNoopEnvironmentAPI } from '../api/environment.js';
 
 describe('EnvironmentAPI', () => {
-  let manager: {
-    createEnvironment: ReturnType<typeof vi.fn>;
-    getEnvironmentStatus: ReturnType<typeof vi.fn>;
-    destroyEnvironment: ReturnType<typeof vi.fn>;
-    renewEnvironmentLease: ReturnType<typeof vi.fn>;
-  };
+  type Manager = Parameters<typeof createEnvironmentAPI>[0]['manager'];
+  let manager: Mocked<Manager>;
 
   beforeEach(() => {
     manager = {
-      createEnvironment: vi.fn(),
-      getEnvironmentStatus: vi.fn(),
-      destroyEnvironment: vi.fn(),
-      renewEnvironmentLease: vi.fn(),
+      createEnvironment: vi.fn<Manager['createEnvironment']>(),
+      getEnvironmentStatus: vi.fn<Manager['getEnvironmentStatus']>(),
+      destroyEnvironment: vi.fn<Manager['destroyEnvironment']>(),
+      renewEnvironmentLease: vi.fn<Manager['renewEnvironmentLease']>(),
     };
   });
 

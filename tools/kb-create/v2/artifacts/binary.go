@@ -93,17 +93,39 @@ type Composite struct {
 }
 
 func (c Composite) Install(items []contracts.Artifact) error {
+	return c.InstallWithProgress(items, nil)
+}
+
+// InstallWithProgress exposes the real download/verification and package
+// installation boundaries to the shared apply engine's frontends.
+func (c Composite) InstallWithProgress(items []contracts.Artifact, progress func(string, bool)) error {
+	if progress != nil {
+		progress("Download and verify artifacts", true)
+	}
 	// A binary is small and independently hash-verifiable, so install it first.
 	// If pnpm then fails, remove V2-owned binaries immediately; a later update
 	// additionally restores the pre-mutation snapshot and package lock state.
 	if err := c.Binaries.Install(items); err != nil {
+		if progress != nil {
+			progress("Download and verify artifacts", false)
+		}
 		return err
 	}
+	if progress != nil {
+		progress("Download and verify artifacts", false)
+		progress("Install packages", true)
+	}
 	if err := c.Packages.Install(items); err != nil {
+		if progress != nil {
+			progress("Install packages", false)
+		}
 		if removeErr := c.Binaries.Remove(items); removeErr != nil {
 			return fmt.Errorf("install packages: %w; remove staged binaries: %v", err, removeErr)
 		}
 		return err
+	}
+	if progress != nil {
+		progress("Install packages", false)
 	}
 	return nil
 }

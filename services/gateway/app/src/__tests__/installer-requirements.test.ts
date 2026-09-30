@@ -101,18 +101,18 @@ describe('the gateway really reads what it declares', () => {
     }
     const parsed = GatewayConfigSchema.parse((config as { gateway: unknown }).gateway);
 
-    expect(parsed.access).toEqual({ mode: 'secured' });
+    expect(parsed.access).toEqual({ mode: 'local' });
     expect(parsed.auth?.bootstrap?.adminEmail).toBe('admin@example.com');
     expect(parsed.auth?.bootstrap?.tenantId).toBe('acme');
   });
 
-  it('the default install (defaults only, no answers) keeps login required', () => {
+  it('the default install (defaults only, no answers) uses local access without login', () => {
     const config: Record<string, unknown> = {};
     for (const r of file.requirements.filter((x) => !x.secret && x.default !== undefined)) {
       setPointer(config, r.path!, r.default);
     }
     const parsed = GatewayConfigSchema.parse((config as { gateway: unknown }).gateway);
-    expect(resolveAccess(parsed).authEnabled).toBe(true);
+    expect(resolveAccess(parsed)).toEqual({ authEnabled: false, bindHost: '127.0.0.1' });
   });
 
   // Regression found by the docker auth e2e: a default here was written into

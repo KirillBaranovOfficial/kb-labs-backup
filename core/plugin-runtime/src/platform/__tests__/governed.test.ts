@@ -8,6 +8,8 @@ import { createGovernedPlatformServices } from '../governed';
 import type { PlatformServices, PermissionSpec } from '@kb-labs/plugin-contracts';
 import { PermissionError } from '@kb-labs/plugin-contracts';
 
+type NotifierSubscribe = NonNullable<PlatformServices['notifier']>['subscribe'];
+
 // Mock platform services
 function createMockPlatformServices(): PlatformServices {
   return {
@@ -532,10 +534,10 @@ describe('createGovernedPlatformServices', () => {
   // ── Notifier governance ───────────────────────────────────────────────────
 
   describe('notifier', () => {
-    function mockNotifier() {
+    function mockNotifier(): NonNullable<PlatformServices['notifier']> {
       return {
         notify: vi.fn(async () => {}),
-        subscribe: vi.fn((_filter: unknown, _handler: (...args: unknown[]) => unknown) => {
+        subscribe: vi.fn<NotifierSubscribe>(() => {
           return () => {};
         }),
       };
@@ -595,8 +597,8 @@ describe('createGovernedPlatformServices', () => {
 
     it('subscribe wildcard sources: ["*"] receives from any source', async () => {
       const notifier = mockNotifier();
-      let capturedHandler: ((e: unknown) => Promise<void>) | undefined;
-      notifier.subscribe = vi.fn((_f: unknown, h: (e: unknown) => Promise<void>) => {
+      let capturedHandler: Parameters<NotifierSubscribe>[1] | undefined;
+      notifier.subscribe = vi.fn<NotifierSubscribe>((_f, h) => {
         capturedHandler = h;
         return () => {};
       });
@@ -615,8 +617,8 @@ describe('createGovernedPlatformServices', () => {
 
     it('subscribe enforces declared sources as hard ceiling', async () => {
       const notifier = mockNotifier();
-      let capturedHandler: ((e: unknown) => Promise<void>) | undefined;
-      notifier.subscribe = vi.fn((_f: unknown, h: (e: unknown) => Promise<void>) => {
+      let capturedHandler: Parameters<NotifierSubscribe>[1] | undefined;
+      notifier.subscribe = vi.fn<NotifierSubscribe>((_f, h) => {
         capturedHandler = h;
         return () => {};
       });
@@ -638,8 +640,8 @@ describe('createGovernedPlatformServices', () => {
 
     it('subscribe enforces declared severity ceiling', async () => {
       const notifier = mockNotifier();
-      let capturedHandler: ((e: unknown) => Promise<void>) | undefined;
-      notifier.subscribe = vi.fn((_f: unknown, h: (e: unknown) => Promise<void>) => {
+      let capturedHandler: Parameters<NotifierSubscribe>[1] | undefined;
+      notifier.subscribe = vi.fn<NotifierSubscribe>((_f, h) => {
         capturedHandler = h;
         return () => {};
       });

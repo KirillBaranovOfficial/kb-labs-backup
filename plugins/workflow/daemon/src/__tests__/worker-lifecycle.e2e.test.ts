@@ -6,9 +6,9 @@ import { mockLogger } from '@kb-labs/shared-testing';
 const mockRunnerExecute = vi.fn();
 
 vi.mock('@kb-labs/workflow-runtime', () => ({
-  SandboxRunner: vi.fn().mockImplementation(() => ({
-    execute: mockRunnerExecute,
-  })),
+  SandboxRunner: class {
+    execute = mockRunnerExecute;
+  },
 }));
 
 import { createWorkflowWorker } from '../worker.js';

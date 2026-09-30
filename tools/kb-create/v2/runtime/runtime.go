@@ -24,6 +24,9 @@ type ArtifactInstaller interface {
 	Install([]contracts.Artifact) error
 	Restore() error
 }
+type ProgressArtifactInstaller interface {
+	InstallWithProgress([]contracts.Artifact, func(string, bool)) error
+}
 type ArtifactUninstaller interface {
 	Uninstall([]contracts.Artifact) error
 }
@@ -38,6 +41,15 @@ type HostProbe interface {
 
 type Clock interface{ Now() time.Time }
 
+// Progress events describe work performed by the shared apply engine. Frontends
+// may render them for people or ignore them for machine calls.
+type ProgressEvent struct {
+	Phase string
+	Start bool
+}
+
+type ProgressSink interface{ Emit(ProgressEvent) }
+
 type systemClock struct{}
 
 func (systemClock) Now() time.Time { return time.Now().UTC() }
@@ -50,11 +62,17 @@ type Dependencies struct {
 	// receipt and must be safe to disclose in a diagnostic bundle.
 	CorrelationID string
 	Secrets       *secrets.Store
+	Progress      ProgressSink
 }
 
 // Apply is the one V2 fresh-install operation. It deliberately has no
 // dependency on legacy manifests, state or package scanning.
 func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.InstallReceipt, error) {
+	emit := func(phase string, start bool) {
+		if deps.Progress != nil {
+			deps.Progress.Emit(ProgressEvent{Phase: phase, Start: start})
+		}
+	}
 	if plan.Schema != contracts.ResolvedPlanSchema {
 		return contracts.InstallReceipt{}, fmt.Errorf("apply resolved plan: unsupported schema %q", plan.Schema)
 	}
@@ -69,8 +87,16 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 			return contracts.InstallReceipt{}, fmt.Errorf("bind secrets to service environment: %w", err)
 		}
 	}
-	if err := deps.Artifacts.Install(plan.Artifacts); err != nil {
-		return contracts.InstallReceipt{}, fmt.Errorf("apply exact artifacts: %w", err)
+	var artifactErr error
+	if phased, ok := deps.Artifacts.(ProgressArtifactInstaller); ok {
+		artifactErr = phased.InstallWithProgress(plan.Artifacts, emit)
+	} else {
+		emit("Download and verify artifacts / install packages", true)
+		artifactErr = deps.Artifacts.Install(plan.Artifacts)
+		emit("Download and verify artifacts / install packages", false)
+	}
+	if artifactErr != nil {
+		return contracts.InstallReceipt{}, fmt.Errorf("apply exact artifacts: %w", artifactErr)
 	}
 	// core-discovery's plugin registry reads .kb/marketplace.lock, not the
 	// resolved plan — without this, every installed plugin/adapter is on
@@ -79,23 +105,32 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		_ = removeProjections(plan.Request.PlatformRoot)
 		return contracts.InstallReceipt{}, fmt.Errorf("write marketplace lock: %w", err)
 	}
+	emit("Render config", true)
 	if _, err := render.Write(plan); err != nil {
+		emit("Render config", false)
 		return contracts.InstallReceipt{}, fmt.Errorf("render resolved projections: %w", err)
 	}
+	emit("Render config", false)
 	now := now(deps.Clock)
+	if deps.Host != nil {
+		emit("Start host", true)
+		if err := deps.Host.Probe(ctx, *plan.Host); err != nil {
+			emit("Start host", false)
+			_ = removeProjections(plan.Request.PlatformRoot)
+			return contracts.InstallReceipt{}, fmt.Errorf("start the resolved host: %w", err)
+		}
+		emit("Start host", false)
+	}
+	emit("Verify installation", true)
 	check, err := verify.Run(plan, now)
 	if err != nil {
+		emit("Verify installation", false)
 		// A fresh run has no prior receipt to restore. Remove only V2-owned
 		// projections so an incomplete installation cannot masquerade as installed.
 		_ = removeProjections(plan.Request.PlatformRoot)
 		return contracts.InstallReceipt{}, fmt.Errorf("verify installation: %w", err)
 	}
-	if deps.Host != nil {
-		if err := deps.Host.Probe(ctx, *plan.Host); err != nil {
-			_ = removeProjections(plan.Request.PlatformRoot)
-			return contracts.InstallReceipt{}, fmt.Errorf("start the resolved host: %w", err)
-		}
-	}
+	emit("Verify installation", false)
 	result := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: receiptID(plan.PlanHash, now), CreatedAt: now, CorrelationID: deps.CorrelationID, Plan: plan, Verification: check}
 	if err := receipt.Write(plan.Request.PlatformRoot, result); err != nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("commit verified receipt: %w", err)
@@ -145,12 +180,10 @@ func Update(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depend
 	return result, snapshot, nil
 }
 
-// Uninstall is intentionally narrow: it removes exactly the artifacts in the
-// verified receipt. The host must already be stopped (the caller halts it): the
-// installed host binary is one of the artifacts being removed. The snapshot
-// remains in .kb/v2/snapshots so a failed operation can recover; a successful
-// deletion leaves explicit recovery data rather than claiming user-authored
-// project files are disposable.
+// Uninstall removes the artifacts in the verified receipt and, after teardown
+// succeeds, the entire platform root. The host must already be stopped (the
+// caller halts it): the installed host binary is one of the artifacts being
+// removed. The recovery snapshot is retained only until teardown succeeds.
 func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, error) {
 	if deps.Artifacts == nil {
 		return contracts.Snapshot{}, fmt.Errorf("uninstall: artifact installer is required")
@@ -163,7 +196,7 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 	if err != nil {
 		return contracts.Snapshot{}, fmt.Errorf("uninstall: read active receipt: %w", err)
 	}
-	return lifecycle.Mutate(platformRoot, now(deps.Clock), func() error {
+	snapshot, err := lifecycle.Mutate(platformRoot, now(deps.Clock), func() error {
 		if err := uninstaller.Uninstall(active.Plan.Artifacts); err != nil {
 			return err
 		}
@@ -174,6 +207,13 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 		}
 		return receipt.Delete(platformRoot)
 	}, nil, deps.Artifacts.Restore)
+	if err != nil {
+		return snapshot, err
+	}
+	if err := os.RemoveAll(platformRoot); err != nil {
+		return snapshot, fmt.Errorf("uninstall: remove platform root: %w", err)
+	}
+	return snapshot, nil
 }
 
 // Rollback restores an explicit V2 snapshot and reinstalls its exact lock

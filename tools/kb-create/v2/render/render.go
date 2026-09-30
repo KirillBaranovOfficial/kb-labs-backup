@@ -21,58 +21,9 @@ type Output struct {
 	Config []byte
 }
 
-// gatewayUpstreamRoute is a single entry of the gateway's proxy routing
-// table (services/gateway/contracts/src/config.ts's UpstreamConfigSchema:
-// serviceId, prefix, optional rewritePrefix/websocket/description). This is
-// a distinct concept from platform.adapterOptions.serviceTransport.services:
-// serviceTransport supplies the URL a given service ID resolves to for RPC
-// calls, while gatewayUpstreamRoute maps an inbound HTTP path prefix to
-// which service ID handles it. V2 renders only the serviceTransport adapter
-// *selection* (platform.adapters.serviceTransport, a manifest default); it
-// never renders adapterOptions.serviceTransport.services itself — the host
-// and project runtime build that map in-process from the loopback ports they
-// actually bind and inject it during platform assembly (ADR-0043 B8,
-// services/host/app/src/transport.ts, services/project-runtime/app/src/
-// transport.ts), so no service address is ever written to kb.config.jsonc
-// (ADR-0047, docs/architecture/target/07-migration.md stage 5.4). Nothing in
-// the V2 plan/manifest pipeline carries per-service routing metadata today (a
-// kb.service/1 manifest has no equivalent of a plugin's declared `requires`/
-// `config`), so this mirrors .kb/kb.config.json's hand-authored `gateway.
-// upstreams` table verbatim rather than deriving it. Without it, the
-// generated config's `gateway.upstreams` defaults to `{}` (the schema's zod
-// default), so the gateway boots with zero configured upstreams and /ready
-// never turns healthy — it has nothing to consider "up".
-type gatewayUpstreamRoute struct {
-	ServiceID     string `json:"serviceId"`
-	Prefix        string `json:"prefix"`
-	RewritePrefix string `json:"rewritePrefix,omitempty"`
-	Websocket     bool   `json:"websocket,omitempty"`
-	Description   string `json:"description,omitempty"`
-}
-
-var conventionalGatewayUpstreams = map[string]gatewayUpstreamRoute{
-	"rest":                 {ServiceID: "rest", Prefix: "/api/v1", Websocket: true, Description: "REST API — main platform BFF"},
-	"workflow":             {ServiceID: "workflow", Prefix: "/api/exec", RewritePrefix: "", Description: "Workflow Daemon — direct access"},
-	"marketplace":          {ServiceID: "marketplace", Prefix: "/api/v1/marketplace", Description: "Marketplace Service — unified entity management"},
-	"widgets":              {ServiceID: "rest", Prefix: "/plugins", Description: "Plugin widget bundles — served by REST API"},
-	"marketplace-registry": {ServiceID: "marketplace-registry", Prefix: "/api/v1/registry", RewritePrefix: "/api/v1", Description: "Marketplace Registry — publish, share, install kb:handle/name packages"},
-	"mcp":                  {ServiceID: "mcp-daemon", Prefix: "/api/v1/mcp", Description: "MCP Daemon — plugin commands as tools for external agents"},
-}
-
-// gatewayUpstreams returns the conventional routes whose target service ID
-// is actually present in this install's resolved service graph — a route
-// pointing at a service this particular profile never installed would be
-// silently dead weight at best.
-func gatewayUpstreams(services map[string]struct{}) map[string]gatewayUpstreamRoute {
-	result := map[string]gatewayUpstreamRoute{}
-	for name, route := range conventionalGatewayUpstreams {
-		if _, ok := services[route.ServiceID]; ok {
-			result[name] = route
-		}
-	}
-	return result
-}
-
+// Gateway proxy routes come from the host topology at runtime. The host adds
+// routes for its internal modules and project routing starts REST/workflow
+// lazily; package presence in the install graph does not imply a live service.
 func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	if plan.Schema != contracts.ResolvedPlanSchema {
 		return Output{}, fmt.Errorf("unsupported resolved plan schema %q", plan.Schema)
@@ -115,9 +66,6 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	// wholesale replacement and every resolved binding (cache, storage, ...)
 	// was dropped whenever a manifest declared a /platform/adapters default.
 	config := map[string]any{"platform": map[string]any{"version": plan.ServiceGraph.PlatformVersion, "adapters": stringMapAsAny(adapters)}, "plugins": stringMapAsAny(plugins)}
-	if upstreams := gatewayUpstreams(services); len(upstreams) > 0 {
-		config["gateway"] = map[string]any{"upstreams": upstreams}
-	}
 	merge(config, extra)
 	applyHostSection(config)
 	// A manifest default is only a baseline; a binding the resolver actually

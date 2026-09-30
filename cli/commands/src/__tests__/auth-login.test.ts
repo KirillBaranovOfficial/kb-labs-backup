@@ -13,8 +13,12 @@ import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 const mockSave = vi.fn();
 const mockSessionSave = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: vi.fn().mockImplementation(() => ({ save: mockSave })),
-  SessionManager: vi.fn().mockImplementation(() => ({ save: mockSessionSave })),
+  CredentialsManager: class {
+    save = mockSave;
+  },
+  SessionManager: class {
+    save = mockSessionSave;
+  },
 }));
 
 // Mock fetch globally

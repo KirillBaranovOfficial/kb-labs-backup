@@ -22,12 +22,12 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     // ID must come from the manifest's own id, not a package-name heuristic.
     packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })),
     packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-daemon', '2.0.0', 'var manifest = { schema: "kb.service/1", id: "workflow", runtime: { port: 7778, healthCheck: "/health" } }; export { manifest };', { bin: { 'kb-workflow': './dist/index.js' } }),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', 'const manifest={id:"pino-logger",implements:["ILogger"]}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', 'const manifest={id:"pino-logger",implements:["ILogger"],defaultFor:["logger"]}; export {manifest};'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-service-transport-http', '2.0.0', 'const manifest={id:"service-transport-http",implements:["IServiceTransport"]}; export {manifest};'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', 'const manifest={id:"sqlite",implements:["IKVStore"]}; export {manifest};'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-openai', '2.0.0', 'const manifest={id:"openai",implements:["ILLM"]}; export {manifest};'),
   ];
-  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
@@ -71,6 +71,8 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   // time with a misleading "does not match resolved artifact" error.
   assert.equal(index.platforms[0].members.find(m => m.package === '@kb-labs/release-manager-cli')?.id, 'release');
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.provides, ['logger']);
+  assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.defaultFor, ['logger']);
+  assert.deepEqual(index.adapters.find(adapter => adapter.id === 'state-broker')?.defaultFor, ['cache']);
   // Regression coverage for the capability-derivation bug: lowercasing every
   // capital letter in the interface name (instead of just the leading run)
   // turned "IServiceTransport" into "servicetransport" and "IKVStore" into
@@ -91,7 +93,7 @@ test('fails closed when a configured platform adapter is not staged', () => {
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
   ];
-  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--platform-adapter-config', '{"cache":"@kb-labs/adapters-redis"}', '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
@@ -109,7 +111,7 @@ test('fails closed when the SDK rejects the staged platform even in the same maj
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.155.2', '', { peerDependencies: { '@kb-labs/core-runtime': '<2.150.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.155.2', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
   ];
-  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
@@ -128,7 +130,7 @@ test('fails closed when a required platform member was not staged', () => {
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
   ];
-  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--platform-member-packages', '@kb-labs/cli-bin', '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
@@ -150,7 +152,7 @@ test('reads a minified scientific-notation port literal from a compiled service 
     // must still recover the real port instead of the truncated leading digit.
     packageArtifact(root, packageRoot, stage, '@kb-labs/gateway-app', '2.0.0', 'var manifest = { schema: "kb.service/1", id: "gateway", runtime: { port: 4e3 } }; export { manifest };', { bin: { 'gateway-app': './dist/index.js' } }),
   ];
-  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
@@ -160,6 +162,25 @@ test('reads a minified scientific-notation port literal from a compiled service 
   assert.equal(index.platforms[0].profiles.default.services[0].port, 4000);
 });
 
+
+function writeStageManifest(root, packageRoot, stage, artifacts) {
+  const staged = [...artifacts];
+  const packages = new Set(staged.map(item => item.name));
+  if (!packages.has('@kb-labs/commit-entry')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/commit-entry', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/commit', version: '2.0.0', platform: { requires: ['cache'] } })));
+  }
+  if (!packages.has('@kb-labs/release-manager-cli')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/release-manager-cli', '2.0.0', JSON.stringify({ schema: 'kb.plugin/3', id: '@kb-labs/release', version: '2.0.0' })));
+  }
+  if (!packages.has('@kb-labs/adapters-state-broker')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', 'const manifest={id:"state-broker",implements:"ICache",defaultFor:["cache"]}; export {manifest};'));
+  }
+  if (!packages.has('@kb-labs/workflow-daemon') && !packages.has('@kb-labs/gateway-app')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/gateway-app', '2.0.0', 'var manifest={schema:"kb.service/1",id:"gateway",runtime:{port:4000,healthCheck:"/health"}}; export {manifest};', { bin: { 'gateway-app': './dist/index.js' } }));
+  }
+  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(staged));
+}
+
 function packageArtifact(root, packageRoot, stage, name, version, manifest, extra = {}, files = {}) {
   const packageDir = join(packageRoot, 'package');
   rmSync(packageDir, { recursive: true, force: true });
@@ -167,6 +188,12 @@ function packageArtifact(root, packageRoot, stage, name, version, manifest, extr
   writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name, version, ...extra }));
   if (manifest) {
     writeFileSync(join(packageDir, /^(?:const|var) /.test(manifest) ? 'dist/manifest.js' : 'dist/manifest.json'), manifest);
+  }
+  if (name === '@kb-labs/workflow-daemon' || name === '@kb-labs/gateway-app') {
+    files = {
+      'kb-create.requirements.json': JSON.stringify({ schema: 'kb.create.requirements/v1', requirements: [{ id: 'gateway.access.mode', path: '/gateway/access/mode', default: 'local' }] }),
+      ...files,
+    };
   }
   for (const [relative, content] of Object.entries(files)) {
     mkdirSync(join(packageDir, relative, '..'), { recursive: true });
@@ -198,7 +225,7 @@ test('the default platform.adapters baseline keeps the credential-free logger an
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-service-transport-http', '2.0.0', 'const manifest={id:"service-transport-http",implements:["IServiceTransport"]}; export {manifest};'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-openai', '2.0.0', 'const manifest={id:"openai",implements:["ILLM"]}; export {manifest};'),
   ];
-  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
@@ -231,7 +258,7 @@ function prepareWithGateway(files) {
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/gateway-app', '2.0.0', GATEWAY_MANIFEST, { bin: { 'gateway-app': './dist/index.js' } }, files),
   ];
-  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
@@ -276,11 +303,11 @@ test('the requirements file is also honoured when shipped under dist/', () => {
   assert.deepEqual(member.config.map(item => item.id), ['gateway.access.mode']);
 });
 
-test('a package without a requirements file still gets an empty config (unchanged behaviour)', () => {
+test('the candidate release declares the config required by the built-in install scenario', () => {
   const { result, output } = prepareWithGateway({});
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   const member = JSON.parse(readFileSync(output, 'utf8')).platforms[0].members.find(item => item.package === '@kb-labs/gateway-app');
-  assert.equal((member.config ?? []).length, 0);
+  assert.deepEqual(member.config.map(item => item.id), ['gateway.access.mode']);
 });
 
 test('fails closed on a malformed requirements file rather than shipping the package without them', () => {
@@ -308,11 +335,11 @@ function skewFixture(prefix, sdkVersion) {
   const stage = join(root, 'stage');
   const packageRoot = join(root, 'packages');
   mkdirSync(stage, { recursive: true });
-  writeFileSync(join(stage, 'manifest.json'), JSON.stringify([
+  writeStageManifest(root, packageRoot, stage, [
     packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', sdkVersion, '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
-  ]));
+  ]);
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
@@ -379,7 +406,7 @@ function hostFixture(hostExtra) {
     packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
     ...(hostExtra ? [packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', hostExtra)] : []),
   ];
-  writeFileSync(join(stage, 'manifest.json'), JSON.stringify(artifacts));
+  writeStageManifest(root, packageRoot, stage, artifacts);
   writeFileSync(join(root, 'binary-manifest.json'), JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   return { root, stage };
 }

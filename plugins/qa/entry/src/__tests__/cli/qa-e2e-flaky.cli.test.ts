@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +7,15 @@ vi.mock('@kb-labs/qa-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kb-labs/qa-core')>();
   return {
     ...actual,
-    SnapshotStore: vi.fn(),
+    SnapshotStore: class SnapshotStoreMock {
+      loadE2eFlakyHistory() {
+        return mockLoadHistory();
+      }
+
+      saveE2eFlaky(...args: Parameters<InstanceType<typeof actual.SnapshotStore>['saveE2eFlaky']>) {
+        return mockSaveE2eFlaky(...args);
+      }
+    },
     captureGit: vi.fn().mockResolvedValue({ commit: 'abc123', branch: 'main', message: 'test' }),
   };
 });
@@ -20,7 +28,6 @@ vi.mock('@kb-labs/sdk', async (importOriginal) => {
   };
 });
 
-import { SnapshotStore } from '@kb-labs/qa-core';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import e2eFlakyCommand from '../../cli/commands/qa-e2e-flaky.js';
 import type { QaE2eFlakyFlags } from '../../cli/commands/flags.js';
@@ -47,13 +54,6 @@ const HISTORY: E2eFlakySnapshot[] = [
 
 let mockLoadHistory = vi.fn(() => HISTORY);
 let mockSaveE2eFlaky = vi.fn();
-
-beforeEach(() => {
-  vi.mocked(SnapshotStore).mockImplementation(() => ({
-    loadE2eFlakyHistory: mockLoadHistory,
-    saveE2eFlaky: mockSaveE2eFlaky,
-  }) as never);
-});
 
 afterEach(() => {
   vi.resetAllMocks();

@@ -72,45 +72,42 @@ const countActiveAdmins = async (
 
 export const evaluateAuthReadiness = async (input: AuthReadinessInput): Promise<AuthReadiness> => {
   const { authEnabled, tenantId, bootstrap } = input;
-
-  if (!authEnabled) {
-    // Solo/local mode: every request already runs as the local admin.
-    return { ok: true, authEnabled, tenantId, activeAdmins: 0, bootstrap: bootstrap.status, issues: [] };
-  }
-
-  const activeAdmins = await countActiveAdmins(input.users, input.memberships, tenantId);
   const issues: AuthIssue[] = [];
   const emailArg = bootstrap.email ?? '<admin-email>';
+  let activeAdmins = 0;
 
-  if (activeAdmins === 0) {
-    issues.push({
-      code: 'no_active_admin',
-      severity: 'error',
-      message: `Authentication is enabled but tenant "${tenantId}" has no active admin — nobody can log in.`,
-      hint: `Stop the host (kb-create stop), then run: kb-create doctor --recover --email ${emailArg} --tenant ${tenantId} --generate --yes`,
-    });
-  }
+  if (authEnabled) {
+    activeAdmins = await countActiveAdmins(input.users, input.memberships, tenantId);
+    if (activeAdmins === 0) {
+      issues.push({
+        code: 'no_active_admin',
+        severity: 'error',
+        message: `Authentication is enabled but tenant "${tenantId}" has no active admin — nobody can log in.`,
+        hint: `Stop the host (kb-create stop), then run: kb-create doctor --recover --email ${emailArg} --tenant ${tenantId} --generate --yes`,
+      });
+    }
 
-  if (bootstrap.status === 'failed') {
-    issues.push({
-      code: 'bootstrap_failed',
-      severity: 'error',
-      message: 'Seeding the bootstrap admin failed at startup.',
-      hint: 'Check the gateway startup logs for "Bootstrap admin seed failed", fix the cause, or run: kb-create doctor --recover',
-    });
-  } else if (bootstrap.status === 'exists-non-active') {
-    issues.push({
-      code: 'bootstrap_user_inactive',
-      severity: 'warning',
-      message: 'The bootstrap admin exists but is not active; bootstrap never re-activates existing users.',
-      hint: `Reactivate it with: kb-create doctor --recover --email ${emailArg} --tenant ${tenantId} --generate --yes`,
-    });
+    if (bootstrap.status === 'failed') {
+      issues.push({
+        code: 'bootstrap_failed',
+        severity: 'error',
+        message: 'Seeding the bootstrap admin failed at startup.',
+        hint: 'Check the gateway startup logs for "Bootstrap admin seed failed", fix the cause, or run: kb-create doctor --recover',
+      });
+    } else if (bootstrap.status === 'exists-non-active') {
+      issues.push({
+        code: 'bootstrap_user_inactive',
+        severity: 'warning',
+        message: 'The bootstrap admin exists but is not active; bootstrap never re-activates existing users.',
+        hint: `Reactivate it with: kb-create doctor --recover --email ${emailArg} --tenant ${tenantId} --generate --yes`,
+      });
+    }
   }
 
   if (input.jwtSecretIsDefault) {
     issues.push({
       code: 'jwt_secret_default',
-      severity: input.loopbackOnly ? 'warning' : 'error',
+      severity: 'error',
       message: 'GATEWAY_JWT_SECRET is not set: tokens are signed with a public development secret and can be forged.',
       hint: 'Set GATEWAY_JWT_SECRET (e.g. `openssl rand -hex 64`) and restart the gateway; existing sessions are invalidated.',
     });

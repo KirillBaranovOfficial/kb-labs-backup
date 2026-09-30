@@ -1,26 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
+const clientMocks = vi.hoisted(() => ({
+  connect: vi.fn<() => Promise<void>>(),
+  status: vi.fn<() => Promise<{ connected: boolean; hostId: string; gatewayUrl: string }>>(),
+  close: vi.fn(),
+}));
 
-// Mock transport and client before importing the command
 vi.mock('@kb-labs/host-agent-transport', () => ({
   createTransport: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock('@kb-labs/host-agent-client', () => ({
-  HostAgentClient: vi.fn(),
+  HostAgentClient: class HostAgentClientMock {
+    connect() { return clientMocks.connect(); }
+    status() { return clientMocks.status(); }
+    close() { clientMocks.close(); }
+  },
 }));
 
-import { HostAgentClient } from '@kb-labs/host-agent-client';
 import statusCommand from '../../commands/status.js';
-
-const MockedClient = vi.mocked(HostAgentClient);
-
-type HostAgentClientInstance = InstanceType<typeof HostAgentClient>;
-
-/** Returns a partial stub cast to the full HostAgentClient type. */
-function makeHostAgentClient(overrides: Partial<HostAgentClientInstance>): HostAgentClientInstance {
-  return overrides as unknown as HostAgentClientInstance;
-}
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -34,11 +32,8 @@ afterEach(() => {
 describe('workspace:status', () => {
   it('CS-01: daemon not running — exitCode 0, running: false', async () => {
     // Simulate IPC unreachable: connect throws
-    MockedClient.mockImplementation(() => makeHostAgentClient({
-      connect: async () => { throw new Error('ENOENT'); },
-      status: async () => { throw new Error('not connected'); },
-      close: vi.fn(),
-    }));
+    clientMocks.connect.mockRejectedValue(new Error('ENOENT'));
+    clientMocks.status.mockRejectedValue(new Error('not connected'));
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -50,11 +45,8 @@ describe('workspace:status', () => {
   });
 
   it('CS-02: daemon running and connected — exitCode 0, running: true, connected: true', async () => {
-    MockedClient.mockImplementation(() => makeHostAgentClient({
-      connect: async () => undefined,
-      status: async () => ({ connected: true, hostId: 'host-123', gatewayUrl: 'http://localhost:4000' }),
-      close: vi.fn(),
-    }));
+    clientMocks.connect.mockResolvedValue(undefined);
+    clientMocks.status.mockResolvedValue({ connected: true, hostId: 'host-123', gatewayUrl: 'http://localhost:4000' });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -68,11 +60,8 @@ describe('workspace:status', () => {
   });
 
   it('CS-03: daemon running but disconnected — exitCode 0, running: true, connected: false', async () => {
-    MockedClient.mockImplementation(() => makeHostAgentClient({
-      connect: async () => undefined,
-      status: async () => ({ connected: false, hostId: 'host-456', gatewayUrl: 'http://localhost:4000' }),
-      close: vi.fn(),
-    }));
+    clientMocks.connect.mockResolvedValue(undefined);
+    clientMocks.status.mockResolvedValue({ connected: false, hostId: 'host-456', gatewayUrl: 'http://localhost:4000' });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -85,11 +74,8 @@ describe('workspace:status', () => {
   });
 
   it('CS-04: --json flag with daemon not running outputs { running: false }', async () => {
-    MockedClient.mockImplementation(() => makeHostAgentClient({
-      connect: async () => { throw new Error('ENOENT'); },
-      status: async () => { throw new Error('not connected'); },
-      close: vi.fn(),
-    }));
+    clientMocks.connect.mockRejectedValue(new Error('ENOENT'));
+    clientMocks.status.mockRejectedValue(new Error('not connected'));
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -101,11 +87,8 @@ describe('workspace:status', () => {
   });
 
   it('CS-05: --json flag with connected daemon outputs full status JSON', async () => {
-    MockedClient.mockImplementation(() => makeHostAgentClient({
-      connect: async () => undefined,
-      status: async () => ({ connected: true, hostId: 'host-789', gatewayUrl: 'http://gw:4000' }),
-      close: vi.fn(),
-    }));
+    clientMocks.connect.mockResolvedValue(undefined);
+    clientMocks.status.mockResolvedValue({ connected: true, hostId: 'host-789', gatewayUrl: 'http://gw:4000' });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

@@ -7,6 +7,7 @@
 
 import { sideBorderBox, sideBorderChain, safeColors, safeSymbols, formatTable, logLine, confirm as promptConfirm, text as promptText, select as promptSelect, multiSelect as promptMultiSelect } from '@kb-labs/shared-cli-ui';
 import type { UIFacade, UILogEntry, MessageOptions, Spinner, SelectChoice, MultiSelectChoice, TableColumn, ChainItem } from '@kb-labs/plugin-contracts';
+import { AdapterUnavailableError, toErrorEnvelope } from '@kb-labs/core-platform';
 
 // Workspace root — used to shorten absolute paths in stack traces
 const WORKSPACE_ROOT = process.cwd();
@@ -89,6 +90,19 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
     },
 
     error: (err: Error | string, options?: MessageOptions) => {
+      if (err instanceof AdapterUnavailableError && err.reason === 'not-configured') {
+        const envelope = toErrorEnvelope(err);
+        const command = envelope.actions?.[0]?.command;
+        if (process.env.KB_OUTPUT_MODE === 'json') {
+          console.log(JSON.stringify({ ok: false, error: envelope }));
+        } else {
+          console.error(command
+            ? `${envelope.message} Configure it with: ${command}`
+            : `${envelope.message} ${envelope.hint}`);
+        }
+        return;
+      }
+
       const message = err instanceof Error ? err.message : err;
       const sections: Array<{ header?: string; items: Array<string | { text: string; dim?: boolean }> }> = [
         { items: [message] },

@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import type { Mock } from 'vitest';
 import { hello } from '../commands/system/hello.js';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
@@ -34,7 +35,7 @@ function makeMockPlatform() {
 }
 
 /** Build a PluginContextV3 with a spy on ui.write */
-function makeContext(writeSpy: ReturnType<typeof vi.fn>): PluginContextV3 {
+function makeContext(writeSpy: Mock<typeof noopUI.write>): PluginContextV3 {
   return {
     host: 'cli',
     requestId: 'test-request-id',
@@ -61,7 +62,7 @@ describe('hello command', () => {
   });
 
   it('prints "Hello World" to stdout', async () => {
-    const writeSpy = vi.fn();
+    const writeSpy = vi.fn<typeof noopUI.write>();
     const ctx = makeContext(writeSpy);
 
     const exitCode = await hello.run(ctx, [], { json: false });
@@ -73,7 +74,7 @@ describe('hello command', () => {
 
   it('outputs JSON when --json flag is set', async () => {
     const jsonSpy = vi.fn();
-    const writeSpy = vi.fn();
+    const writeSpy = vi.fn<typeof noopUI.write>();
     const ctx = { ...makeContext(writeSpy), ui: { ...noopUI, write: writeSpy, json: jsonSpy } };
 
     const exitCode = await hello.run(ctx, [], { json: true });

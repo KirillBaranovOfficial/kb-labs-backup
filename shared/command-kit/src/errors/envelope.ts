@@ -46,12 +46,15 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
     return pluginErrorToEnvelope(error, options);
   }
   if (error instanceof ServiceNotConfiguredError) {
+    const adapter = error.requiredAdapter;
+    const command = `kb config set platform.adapters.${error.service} ${adapter}`;
     return createErrorEnvelope('KB_ADAPTER_NOT_CONFIGURED', {
       ...options,
       cause: error.message,
       details: {
         service: error.service,
-        adapter: error.requiredAdapter ?? `adapters.${error.service}`,
+        adapter,
+        command,
       },
     });
   }

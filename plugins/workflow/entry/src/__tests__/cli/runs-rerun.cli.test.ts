@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient, defaultWorkflowClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -17,10 +17,12 @@ beforeEach(() => {
 
 describe('workflow:runs rerun', () => {
   it('RRR-01: reruns a workflow and prints new run ID', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      rerunWorkflow: async () => ({ runId: 'run-new-001', status: 'queued' }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        rerunWorkflow: async () => ({ runId: 'run-new-001', status: 'queued' }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -35,10 +37,12 @@ describe('workflow:runs rerun', () => {
   });
 
   it('RRR-02: --json outputs { ok, data }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      rerunWorkflow: async () => ({ runId: 'run-new-002', status: 'queued' }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        rerunWorkflow: async () => ({ runId: 'run-new-002', status: 'queued' }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -52,10 +56,12 @@ describe('workflow:runs rerun', () => {
   });
 
   it('RRR-02b: --run-id flag works as alias for positional arg', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      rerunWorkflow: async () => ({ runId: 'run-new-alias', status: 'queued' }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        rerunWorkflow: async () => ({ runId: 'run-new-alias', status: 'queued' }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -81,10 +87,12 @@ describe('workflow:runs rerun', () => {
   });
 
   it('RRR-04: daemon error returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      rerunWorkflow: async () => { throw new Error('daemon unavailable'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        rerunWorkflow: async () => { throw new Error('daemon unavailable'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -99,7 +107,9 @@ describe('workflow:runs rerun', () => {
 
   it('RRR-05: --dry-run shows intent, daemon is NOT called', async () => {
     const rerunWorkflow = vi.fn();
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, rerunWorkflow }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, rerunWorkflow });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -128,7 +138,9 @@ describe('workflow:runs rerun', () => {
 
   it('RRR-07: --failed-only passes failedOnly: true to rerunWorkflow', async () => {
     const rerunWorkflow = vi.fn().mockResolvedValue({ runId: 'run-new-007', status: 'queued' });
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, rerunWorkflow }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, rerunWorkflow });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -143,7 +155,9 @@ describe('workflow:runs rerun', () => {
 
   it('RRR-08: without --failed-only, rerunWorkflow is called with failedOnly: false', async () => {
     const rerunWorkflow = vi.fn().mockResolvedValue({ runId: 'run-new-008', status: 'queued' });
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, rerunWorkflow }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, rerunWorkflow });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });

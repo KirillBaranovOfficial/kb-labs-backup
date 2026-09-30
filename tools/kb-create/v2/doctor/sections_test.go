@@ -139,9 +139,25 @@ func TestPlatformSectionReadsUpstreamsAdaptersAndSignInReadiness(t *testing.T) {
 }
 
 func TestPlatformSectionIsHealthyWhenEverythingReportsUp(t *testing.T) {
-	status := gatewayDouble(t, `{"upstreams":{"state":{"status":"up"}}}`, `{"ok":true,"issues":[]}`)
+	status := gatewayDouble(t, `{"upstreams":{"state":{"status":"up"}},"projectRuntimes":{"active":0,"limit":4}}`, `{"ok":true,"issues":[]}`)
 	if section := InspectPlatform(context.Background(), status, nil); !section.OK {
 		t.Fatalf("section = %+v", section)
+	} else if check(t, section, "project-runtimes").Detail != "Project runtimes start on demand; 0 of 4 active." {
+		t.Fatalf("project runtime status = %+v", check(t, section, "project-runtimes"))
+	}
+}
+
+func TestPlatformSectionDoesNotRequireAdminWhenAuthIsDisabled(t *testing.T) {
+	status := gatewayDouble(t, `{"upstreams":{"marketplace":{"status":"up"}}}`,
+		`{"ok":true,"authEnabled":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in"},{"code":"jwt_secret_default","severity":"error","message":"shared secret"}]}`)
+	section := InspectPlatform(context.Background(), status, nil)
+	for _, item := range section.Checks {
+		if item.ID == "auth:no_active_admin" {
+			t.Fatalf("local mode must not report missing admin: %+v", item)
+		}
+	}
+	if got := check(t, section, "auth:jwt_secret_default"); got.OK {
+		t.Fatalf("local mode must still report the shared default secret: %+v", got)
 	}
 }
 

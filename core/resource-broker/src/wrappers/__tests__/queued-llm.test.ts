@@ -8,30 +8,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { QueuedLLM } from '../queued-llm.js';
 import type { ILLM, LLMResponse } from '@kb-labs/core-platform';
-import type { ResourceResponse } from '../../types.js';
+import type { IResourceBroker, ResourceRequest, ResourceResponse } from '../../types.js';
 
-/** Captured enqueue request for assertions */
-interface CapturedRequest {
-  resource: string;
-  operation: string;
-  args: unknown[];
-  priority: string;
-  estimatedTokens?: number;
-}
+type EnqueueRequest = Omit<ResourceRequest, 'id' | 'createdAt'>;
 
 describe('QueuedLLM', () => {
-  let mockBroker: {
-    enqueue: ReturnType<typeof vi.fn>;
-    register: ReturnType<typeof vi.fn>;
-    registerLimit: ReturnType<typeof vi.fn>;
-    tryAcquire: ReturnType<typeof vi.fn>;
-    getStats: ReturnType<typeof vi.fn>;
-    shutdown: ReturnType<typeof vi.fn>;
-    isShuttingDown: ReturnType<typeof vi.fn>;
-  };
+  let mockBroker: IResourceBroker;
   let mockLLM: ILLM;
   let queuedLLM: QueuedLLM;
-  let enqueueCall: CapturedRequest | null;
+  let enqueueCall: EnqueueRequest | null;
+  let enqueueCalled: boolean;
 
   const mockResponse: LLMResponse = {
     content: 'Mock response',
@@ -41,10 +27,12 @@ describe('QueuedLLM', () => {
 
   beforeEach(() => {
     enqueueCall = null;
+    enqueueCalled = false;
 
     // Mock broker that captures enqueue calls
     mockBroker = {
-      enqueue: vi.fn(async <T>(request: CapturedRequest): Promise<ResourceResponse<T>> => {
+      enqueue: async <T>(request: EnqueueRequest): Promise<ResourceResponse<T>> => {
+        enqueueCalled = true;
         enqueueCall = request;
         return {
           success: true,
@@ -54,23 +42,23 @@ describe('QueuedLLM', () => {
           processingTime: 10,
           totalTime: 10,
         };
-      }),
-      register: vi.fn(),
-      registerLimit: vi.fn(),
-      tryAcquire: vi.fn(async () => ({
+      },
+      register: () => {},
+      registerLimit: () => {},
+      tryAcquire: async () => ({
         allowed: false,
         release: async () => {},
-      })),
-      getStats: vi.fn(() => ({
+      }),
+      getStats: () => ({
         resources: {},
         totalRequests: 0,
         totalSuccess: 0,
         totalErrors: 0,
         queueSize: 0,
         uptime: 0,
-      })),
-      shutdown: vi.fn(async () => {}),
-      isShuttingDown: vi.fn(() => false),
+      }),
+      shutdown: async () => {},
+      isShuttingDown: () => false,
     };
 
     // Mock LLM (used for stream passthrough)
@@ -196,26 +184,26 @@ describe('QueuedLLM', () => {
 
   describe('error handling', () => {
     it('should throw when broker returns failure', async () => {
-      mockBroker.enqueue = vi.fn(async (): Promise<ResourceResponse> => ({
+      mockBroker.enqueue = async <T>(): Promise<ResourceResponse<T>> => ({
         success: false,
         error: new Error('Rate limit exceeded'),
         retries: 0,
         waitTime: 0,
         processingTime: 0,
         totalTime: 0,
-      }));
+      });
 
       await expect(queuedLLM.complete('Hello')).rejects.toThrow('Rate limit exceeded');
     });
 
     it('should throw generic error when broker fails without error object', async () => {
-      mockBroker.enqueue = vi.fn(async (): Promise<ResourceResponse> => ({
+      mockBroker.enqueue = async <T>(): Promise<ResourceResponse<T>> => ({
         success: false,
         retries: 0,
         waitTime: 0,
         processingTime: 0,
         totalTime: 0,
-      }));
+      });
 
       await expect(queuedLLM.complete('Hello')).rejects.toThrow('LLM request failed');
     });
@@ -230,7 +218,7 @@ describe('QueuedLLM', () => {
 
       expect(chunks).toEqual(['chunk1', 'chunk2']);
       // Stream should NOT go through broker
-      expect(mockBroker.enqueue).not.toHaveBeenCalled();
+      expect(enqueueCalled).toBe(false);
       // Stream should go directly to realLLM
       expect(mockLLM.stream).toHaveBeenCalledWith('Hello', undefined);
     });

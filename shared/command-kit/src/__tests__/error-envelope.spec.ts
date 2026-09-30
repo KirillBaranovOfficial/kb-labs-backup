@@ -44,13 +44,17 @@ describe('toErrorEnvelope (command-kit adapter)', () => {
   });
 
   it('maps ServiceNotConfiguredError to KB_ADAPTER_NOT_CONFIGURED', () => {
-    const envelope = toErrorEnvelope(new ServiceNotConfiguredError('llm', '@kb-labs/shared-openai'));
+    const envelope = toErrorEnvelope(new ServiceNotConfiguredError('llm', '@kb-labs/adapters-openai'));
     expect(validateErrorEnvelope(envelope)).toEqual([]);
     expect(envelope.code).toBe('KB_ADAPTER_NOT_CONFIGURED');
-    expect(envelope.hint).toContain('@kb-labs/shared-openai');
+    expect(envelope.hint).toBe(
+      'Run `kb config set platform.adapters.llm @kb-labs/adapters-openai` to configure this adapter.',
+    );
 
-    const noAdapter = toErrorEnvelope(new ServiceNotConfiguredError('cache'));
-    expect(noAdapter.hint).toContain('adapters.cache');
+    const cacheAdapter = toErrorEnvelope(new ServiceNotConfiguredError('cache', '@kb-labs/adapters-redis'));
+    expect(cacheAdapter.hint).toBe(
+      'Run `kb config set platform.adapters.cache @kb-labs/adapters-redis` to configure this adapter.',
+    );
   });
 
   it('maps ValidationError issues into details', () => {

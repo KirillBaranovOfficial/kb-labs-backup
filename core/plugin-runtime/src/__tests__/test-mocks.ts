@@ -6,13 +6,14 @@
  */
 
 import { vi } from 'vitest';
+import type { Mocked } from 'vitest';
 import type { PlatformServices, UIFacade } from '@kb-labs/plugin-contracts';
 import { createDefaultProcessExecutor } from '../process/index.js';
 
 /**
  * Create a typed mock ILogger
  */
-export function createMockLogger() {
+export function createMockLogger(): Mocked<PlatformServices['logger']> {
   const logger = {
     trace: vi.fn(),
     debug: vi.fn(),

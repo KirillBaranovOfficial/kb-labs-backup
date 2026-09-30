@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient, defaultWorkflowClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -26,7 +26,9 @@ describe('workflow:runs approve', () => {
   it('RAP-01: approves the single pending step and prints confirmation', async () => {
     const listPendingApprovals = vi.fn().mockResolvedValue({ runId: 'run-abc', pending: [PENDING_STEP] });
     const resolveApproval = vi.fn().mockResolvedValue({ runId: 'run-abc', jobId: 'job-001', stepId: 'step-review', action: 'approve', resolved: true });
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, listPendingApprovals, resolveApproval }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, listPendingApprovals, resolveApproval });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -45,7 +47,9 @@ describe('workflow:runs approve', () => {
   it('RAP-02: rejects step when --action=reject is passed', async () => {
     const listPendingApprovals = vi.fn().mockResolvedValue({ runId: 'run-abc', pending: [PENDING_STEP] });
     const resolveApproval = vi.fn().mockResolvedValue({ runId: 'run-abc', jobId: 'job-001', stepId: 'step-review', action: 'reject', resolved: true });
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, listPendingApprovals, resolveApproval }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, listPendingApprovals, resolveApproval });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -61,11 +65,13 @@ describe('workflow:runs approve', () => {
 
   it('RAP-03: --json outputs { ok: true, data: { ... } }', async () => {
     const resolvedPayload = { runId: 'run-abc', jobId: 'job-001', stepId: 'step-review', action: 'approve', resolved: true };
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      listPendingApprovals: vi.fn().mockResolvedValue({ runId: 'run-abc', pending: [PENDING_STEP] }),
-      resolveApproval: vi.fn().mockResolvedValue(resolvedPayload),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        listPendingApprovals: vi.fn().mockResolvedValue({ runId: 'run-abc', pending: [PENDING_STEP] }),
+        resolveApproval: vi.fn().mockResolvedValue(resolvedPayload),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -81,7 +87,9 @@ describe('workflow:runs approve', () => {
   it('RAP-04: explicit --job-id + --step-id bypasses list call', async () => {
     const listPendingApprovals = vi.fn();
     const resolveApproval = vi.fn().mockResolvedValue({ runId: 'run-abc', jobId: 'job-001', stepId: 'step-x', action: 'approve', resolved: true });
-    MockedClient.mockImplementation(() => makeClient({ ...defaultWorkflowClient, listPendingApprovals, resolveApproval }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({ ...defaultWorkflowClient, listPendingApprovals, resolveApproval });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -96,10 +104,12 @@ describe('workflow:runs approve', () => {
   });
 
   it('RAP-05: no pending approvals returns exitCode 1 with clear message', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      listPendingApprovals: vi.fn().mockResolvedValue({ runId: 'run-abc', pending: [] }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        listPendingApprovals: vi.fn().mockResolvedValue({ runId: 'run-abc', pending: [] }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -113,16 +123,18 @@ describe('workflow:runs approve', () => {
   });
 
   it('RAP-06: multiple pending approvals returns exitCode 1 with list', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      listPendingApprovals: vi.fn().mockResolvedValue({
-        runId: 'run-abc',
-        pending: [
-          { jobId: 'job-001', stepId: 'step-a', stepName: 'Review A', context: {} },
-          { jobId: 'job-002', stepId: 'step-b', stepName: 'Review B', context: {} },
-        ],
-      }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        listPendingApprovals: vi.fn().mockResolvedValue({
+          runId: 'run-abc',
+          pending: [
+            { jobId: 'job-001', stepId: 'step-a', stepName: 'Review A', context: {} },
+            { jobId: 'job-002', stepId: 'step-b', stepName: 'Review B', context: {} },
+          ],
+        }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -136,7 +148,9 @@ describe('workflow:runs approve', () => {
   });
 
   it('RAP-07: missing runId returns exitCode 1 with validation error', async () => {
-    MockedClient.mockImplementation(() => makeClient(defaultWorkflowClient));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient(defaultWorkflowClient);
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -150,7 +164,9 @@ describe('workflow:runs approve', () => {
   });
 
   it('RAP-08: invalid action value returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient(defaultWorkflowClient));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient(defaultWorkflowClient);
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -164,11 +180,13 @@ describe('workflow:runs approve', () => {
   });
 
   it('RAP-09: daemon error on resolve returns exitCode 1', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      listPendingApprovals: vi.fn().mockResolvedValue({ runId: 'run-abc', pending: [PENDING_STEP] }),
-      resolveApproval: vi.fn().mockRejectedValue(new Error('Step is not waiting for approval')),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        listPendingApprovals: vi.fn().mockResolvedValue({ runId: 'run-abc', pending: [PENDING_STEP] }),
+        resolveApproval: vi.fn().mockRejectedValue(new Error('Step is not waiting for approval')),
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -182,11 +200,13 @@ describe('workflow:runs approve', () => {
 
   it('RAP-10: --run-id flag works as alias for positional argument', async () => {
     const resolveApproval = vi.fn().mockResolvedValue({ runId: 'run-flag-001', jobId: 'job-001', stepId: 'step-review', action: 'approve', resolved: true });
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      listPendingApprovals: vi.fn().mockResolvedValue({ runId: 'run-flag-001', pending: [PENDING_STEP] }),
-      resolveApproval,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        listPendingApprovals: vi.fn().mockResolvedValue({ runId: 'run-flag-001', pending: [PENDING_STEP] }),
+        resolveApproval,
+      });
+    });
 
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });

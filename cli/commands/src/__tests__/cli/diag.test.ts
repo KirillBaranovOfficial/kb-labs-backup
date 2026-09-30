@@ -54,7 +54,11 @@ const mockCollectorInstance = {
 
 vi.mock('@kb-labs/core-discovery', () => ({
   readMarketplaceLock: vi.fn(async () => null),
-  DiagnosticCollector: vi.fn(() => mockCollectorInstance),
+  DiagnosticCollector: class {
+    constructor() {
+      return mockCollectorInstance;
+    }
+  },
   computeManifestIntegrity: vi.fn(),
 }));
 

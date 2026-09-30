@@ -178,9 +178,9 @@ func TestRestartStopsThenStarts(t *testing.T) {
 
 func TestRestartFailureUsesTheEnvelope(t *testing.T) {
 	server, runner, _ := startServer(t)
-	runner.startEr = contracts.NewLauncherError("KB_HOST_PORT_IN_USE", "Port 1 is used by another application.", "Free the port.", nil)
+	runner.startEr = contracts.NewLauncherError("KB_INSTALL_PORT_IN_USE", "Port 1 is used by another application.", "Free the port.", nil)
 	status, body, _ := call(t, server, http.MethodPost, "/v1/host/restart", server.Token(), nil, nil)
-	if status != http.StatusInternalServerError || !strings.Contains(string(body), "KB_HOST_PORT_IN_USE") {
+	if status != http.StatusInternalServerError || !strings.Contains(string(body), "KB_INSTALL_PORT_IN_USE") {
 		t.Fatalf("status %d body %s", status, body)
 	}
 }

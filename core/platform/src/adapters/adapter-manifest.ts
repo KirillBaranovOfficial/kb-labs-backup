@@ -217,6 +217,9 @@ export interface AdapterManifest {
    */
   implements: string | string[];
 
+  /** Capabilities this adapter is the platform's default provider for. */
+  defaultFor?: string[];
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Dependencies
   // ═══════════════════════════════════════════════════════════════════════════

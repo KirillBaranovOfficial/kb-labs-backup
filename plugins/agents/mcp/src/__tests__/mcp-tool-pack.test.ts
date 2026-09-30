@@ -34,11 +34,11 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
 });
 
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: vi.fn().mockImplementation(() => ({})),
+  StdioClientTransport: class {},
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
-  SSEClientTransport: vi.fn().mockImplementation(() => ({})),
+  SSEClientTransport: class {},
 }));
 
 // ── Tests ──────────────────────────────────────────────────────────────

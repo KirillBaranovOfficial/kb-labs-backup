@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(class WorkflowDaemonClientMock {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -37,9 +37,11 @@ beforeEach(() => {
 
 describe('workflow:status', () => {
   it('CS-01: --job-id renders status with jobs and steps', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getJobStatus: async () => runningJob,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getJobStatus: async () => runningJob,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -50,9 +52,11 @@ describe('workflow:status', () => {
   });
 
   it('CS-02: --json returns { ok: true, data: JobStatusDetail }', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getJobStatus: async () => runningJob,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getJobStatus: async () => runningJob,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -75,9 +79,11 @@ describe('workflow:status', () => {
   });
 
   it('CS-04: daemon unavailable returns exitCode 1 with readable message', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getJobStatus: async () => { throw new Error('ECONNREFUSED'); },
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getJobStatus: async () => { throw new Error('ECONNREFUSED'); },
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -88,14 +94,16 @@ describe('workflow:status', () => {
   });
 
   it('CS-05: job in running state renders status without throwing', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getJobStatus: async () => ({
-        id: 'job-xyz',
-        type: 'workflow',
-        status: 'running',
-        createdAt: new Date().toISOString(),
-      }),
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getJobStatus: async () => ({
+          id: 'job-xyz',
+          type: 'workflow',
+          status: 'running',
+          createdAt: new Date().toISOString(),
+        }),
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -106,9 +114,11 @@ describe('workflow:status', () => {
   });
 
   it('CS-06: emits deprecation warning on every invocation', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      getJobStatus: async () => runningJob,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        getJobStatus: async () => runningJob,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

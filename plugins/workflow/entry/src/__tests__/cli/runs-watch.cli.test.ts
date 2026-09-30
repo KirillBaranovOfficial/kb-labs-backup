@@ -3,7 +3,7 @@ import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shar
 import { makeClient, defaultWorkflowClient } from '../helpers/defaults.js';
 
 vi.mock('../../http-client.js', () => ({
-  WorkflowDaemonClient: vi.fn(),
+  WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}),
 }));
 
 import { WorkflowDaemonClient } from '../../http-client.js';
@@ -42,10 +42,12 @@ function mockFetchWithSse(events: Array<{ type: string; stepId?: string; payload
 
 beforeEach(() => {
   MockedClient.mockReset();
-  MockedClient.mockImplementation(() => makeClient({
-    ...defaultWorkflowClient,
-    getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
-  }));
+  MockedClient.mockImplementation(function MockedClientImplementation() {
+    return makeClient({
+      ...defaultWorkflowClient,
+      getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+    });
+  });
 });
 
 afterEach(() => {
@@ -54,11 +56,13 @@ afterEach(() => {
 
 describe('workflow:runs watch', () => {
   it('CW-01: no runId and no runs → exitCode 0, info message', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      listRuns: async () => [],
-      getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        listRuns: async () => [],
+        getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+      });
+    });
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -69,11 +73,13 @@ describe('workflow:runs watch', () => {
   });
 
   it('CW-01b: no runId → auto-fetches latest and watches it', async () => {
-    MockedClient.mockImplementation(() => makeClient({
-      ...defaultWorkflowClient,
-      listRuns: async () => [{ id: 'run-latest', name: 'deploy', status: 'running' as const, createdAt: new Date().toISOString() }],
-      getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
-    }));
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        ...defaultWorkflowClient,
+        listRuns: async () => [{ id: 'run-latest', name: 'deploy', status: 'running' as const, createdAt: new Date().toISOString() }],
+        getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+      });
+    });
     mockFetchWithSse([
       { type: 'run.finished', payload: { status: 'success' } },
     ]);

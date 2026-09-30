@@ -4,6 +4,8 @@
 package secrets
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +14,38 @@ import (
 
 	"github.com/kb-labs/create/v2/contracts"
 )
+
+// EnsureGenerated fills generated secret requirements with a fresh per-install
+// value unless an operator already supplied one. Secret values stay in the
+// private store and are never added to the plan or receipt.
+func EnsureGenerated(plan *contracts.ResolvedInstallPlan, store Store) error {
+	inputs := make(map[string]bool, len(plan.Request.SecretInputs))
+	for _, id := range plan.Request.SecretInputs {
+		inputs[id] = true
+	}
+	for _, artifact := range plan.Artifacts {
+		for _, requirement := range artifact.Config {
+			if !requirement.Secret || !requirement.Generate || !inputs[requirement.ID] {
+				continue
+			}
+			exists, err := store.Exists(requirement.ID)
+			if err != nil {
+				return fmt.Errorf("check generated secret %s: %w", requirement.ID, err)
+			}
+			if exists {
+				continue
+			}
+			random := make([]byte, 32)
+			if _, err := rand.Read(random); err != nil {
+				return fmt.Errorf("generate secret %s: %w", requirement.ID, err)
+			}
+			if err := store.Put(requirement.ID, hex.EncodeToString(random)); err != nil {
+				return fmt.Errorf("store generated secret %s: %w", requirement.ID, err)
+			}
+		}
+	}
+	return nil
+}
 
 type Store struct{ PlatformRoot string }
 

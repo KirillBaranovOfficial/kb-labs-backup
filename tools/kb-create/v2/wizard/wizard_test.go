@@ -40,14 +40,18 @@ func TestRequestScenarioCompilesSameDeclarativeAnswersAsMachineRequest(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	// scenario commit asks for channel, profile, then its cache provider.
+	// Provider metadata supplies the scenario default, so only channel/profile
+	// are prompted and this journey works with a finite non-terminal reader.
 	var output bytes.Buffer
-	request, err := RequestScenario(source, "/platform", "commit", IO{In: bytes.NewBufferString("\n\nstate-broker\n"), Out: &output})
+	request, err := RequestScenario(source, "/platform", "commit", IO{In: bytes.NewBufferString("\n\n"), Out: &output})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if request.ScenarioID != "commit" || request.Platform.Channel != contracts.ChannelStable || request.ProviderPreferences["cache"] != "state-broker" {
 		t.Fatalf("request = %#v", request)
+	}
+	if bytes.Contains(output.Bytes(), []byte("Cache provider")) {
+		t.Fatalf("infrastructure provider should use its declared default: %s", output.String())
 	}
 	machine := request
 	machine.ScenarioID = "commit"

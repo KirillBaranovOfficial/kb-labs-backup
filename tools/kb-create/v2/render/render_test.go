@@ -66,17 +66,11 @@ func TestBuildDerivesHostAuthFromTheAccessMode(t *testing.T) {
 	}
 }
 
-// Regression coverage: gateway.upstreams (services/gateway/contracts/src/config.ts's
-// UpstreamConfigSchema) defaults to {} when absent from rendered config —
-// distinct from platform.adapterOptions.serviceTransport.services, which V2
-// never renders at all (the host/project runtime generate it in-process from
-// their actual bound ports, ADR-0043 B8) and which only supplies per-service
-// RPC URLs, not HTTP proxy routing. Without any gateway.upstreams entries, /ready's single
-// required check (the "rest" upstream) can never turn "up", so the gateway
-// never becomes ready. Only routes whose target service is actually part of
-// this install's resolved service graph should render — a route pointing at
-// an uninstalled service is not just unnecessary but silently wrong.
-func TestBuildRendersGatewayUpstreamsForInstalledServicesOnly(t *testing.T) {
+// Static gateway routes belong to the host, which creates routes only for its
+// internal modules. REST and workflow are project-runtime services; the host
+// starts them lazily behind project routing. Other legacy service packages
+// are not started by the host. Package presence cannot create direct routes.
+func TestBuildDoesNotRenderLegacyServiceGraphAsGatewayUpstreams(t *testing.T) {
 	plan := testPlan(t.TempDir())
 	plan.ServiceGraph.Services = append(plan.ServiceGraph.Services,
 		contracts.Service{ID: "rest", Command: "serve", Port: 5050},
@@ -86,26 +80,12 @@ func TestBuildRendersGatewayUpstreamsForInstalledServicesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var config struct {
-		Gateway struct {
-			Upstreams map[string]struct {
-				ServiceID string `json:"serviceId"`
-				Prefix    string `json:"prefix"`
-			} `json:"upstreams"`
-		} `json:"gateway"`
-	}
+	var config map[string]json.RawMessage
 	if err := json.Unmarshal(output.Config, &config); err != nil {
 		t.Fatal(err)
 	}
-	rest, ok := config.Gateway.Upstreams["rest"]
-	if !ok || rest.ServiceID != "rest" || rest.Prefix != "/api/v1" {
-		t.Fatalf("rest upstream = %+v, ok=%v", rest, ok)
-	}
-	if _, ok := config.Gateway.Upstreams["workflow"]; !ok {
-		t.Fatal("expected workflow upstream to render (workflow service is installed)")
-	}
-	if _, ok := config.Gateway.Upstreams["marketplace"]; ok {
-		t.Fatal("marketplace upstream should not render — marketplace service is not part of this plan")
+	if _, ok := config["gateway"]; ok {
+		t.Fatalf("renderer emitted static gateway config for host-managed services: %s", output.Config)
 	}
 }
 

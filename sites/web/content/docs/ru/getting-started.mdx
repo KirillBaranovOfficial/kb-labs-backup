@@ -5,8 +5,29 @@ lang: ru
 slug: getting-started
 ---
 
-## Быстрый старт
+## Установка и первая команда
 
-1. Создайте workspace.
-2. Выпустите API-ключи.
-3. Запустите первый automation flow.
+Требования: Node.js 24.x, не менее 1,20 ГиБ доступной памяти и 2 ГиБ
+свободного места на диске. Установщик сам управляет pnpm.
+
+```bash
+curl -fsSL https://kblabs.ru/install.sh | sh
+kb-create install
+```
+
+Выберите локальный доступ для работы только с этого компьютера или защищённый
+доступ, если пользователям нужно входить в систему. Проверьте установку
+командами `kb-create status` и `kb-create doctor`.
+
+Затем выполните команду в любом Git-проекте:
+
+```bash
+cd ~/any-project
+kb commit
+```
+
+`kb commit` работает и без LLM, используя эвристики. Чтобы включить генерацию
+через OpenAI, задайте адаптер командами `kb config set platform.adapters.llm
+@kb-labs/adapters-openai` и
+`kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'`, затем
+экспортируйте `OPENAI_API_KEY` в оболочке.

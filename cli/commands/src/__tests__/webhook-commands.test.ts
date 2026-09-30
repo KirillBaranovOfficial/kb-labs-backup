@@ -20,7 +20,9 @@ const CREDS = {
 
 const mockLoad = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: vi.fn().mockImplementation(() => ({ load: mockLoad })),
+  CredentialsManager: class {
+    load = mockLoad;
+  },
 }));
 
 const mockFetch = vi.fn();

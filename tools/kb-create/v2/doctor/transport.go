@@ -18,6 +18,10 @@ type Input struct {
 // Findings and Repair are the manifest-requirement gaps of the installation.
 type Response struct {
 	OK           bool       `json:"ok"`
+	Installed    bool       `json:"installed"`
+	Running      bool       `json:"running"`
+	Reachable    bool       `json:"reachable"`
+	Next         string     `json:"next"`
 	Installation *Section   `json:"installation,omitempty"`
 	Platform     *Section   `json:"platform,omitempty"`
 	Findings     []Finding  `json:"findings"`

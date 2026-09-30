@@ -7,18 +7,19 @@ import type { AgentServerCallbacks, AgentSession } from '../server/mcp-agent-ser
 const mockHandlers = new Map<string, (req: unknown) => Promise<unknown>>();
 
 vi.mock('@modelcontextprotocol/sdk/server/index.js', () => {
-  const Server = vi.fn().mockImplementation(() => ({
-    setRequestHandler: vi.fn((schema: { method: string }, handler: (req: unknown) => Promise<unknown>) => {
+  class Server {
+    setRequestHandler(schema: { method: string }, handler: (req: unknown) => Promise<unknown>) {
       mockHandlers.set(schema.method ?? JSON.stringify(schema), handler);
-    }),
-    connect: vi.fn().mockResolvedValue(undefined),
-    close: vi.fn().mockResolvedValue(undefined),
-  }));
+    }
+
+    connect = vi.fn().mockResolvedValue(undefined);
+    close = vi.fn().mockResolvedValue(undefined);
+  }
   return { Server };
 });
 
 vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
-  StdioServerTransport: vi.fn().mockImplementation(() => ({})),
+  StdioServerTransport: class {},
 }));
 
 vi.mock('@modelcontextprotocol/sdk/types.js', () => ({

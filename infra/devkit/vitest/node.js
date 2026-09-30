@@ -12,9 +12,8 @@ export default defineConfig({
     globals: false,
     reporters: ['default'],
     pool: 'forks',
-    poolOptions: {
-      forks: { maxForks, minForks: 1 },
-    },
+    maxWorkers: maxForks,
+    minWorkers: 1,
     include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)'],
     exclude: [
       '**/node_modules/**',

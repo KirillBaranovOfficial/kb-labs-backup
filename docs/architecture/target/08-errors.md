@@ -19,16 +19,16 @@
 
 ```jsonc
 {
-  "code": "KB_HOST_PORT_IN_USE",       // стабильный, никогда не переиспользуется
-  "area": "host",                       // install | host | auth | project | config | plugin | update | runtime | product
-  "stage": "start",                     // момент пути пользователя (см. §3)
+  "code": "KB_INSTALL_PORT_IN_USE",       // стабильный, никогда не переиспользуется
+  "area": "install",                    // install | host | auth | project | config | plugin | update | runtime | product
+  "stage": "preflight",                 // момент пути пользователя (см. §3)
   "severity": "error",                  // error | warning
   "retryable": false,
   "message": "Порт 4000 занят другим приложением.",     // что случилось, человеческим языком
   "cause": "Процесс node (pid 4321) слушает 127.0.0.1:4000.", // почему (без секретов)
   "hint": "Остановите приложение, занявшее порт, или измените порт хоста в конфигурации установки, затем снова: kb-create start",   // что делать сейчас
   "actions": [{ "id": "retry-start", "label": "Запустить снова", "command": "kb-create start" }],
-  "docs": "https://…/errors/KB_HOST_PORT_IN_USE",       // опционально
+  "docs": "https://…/errors/KB_INSTALL_PORT_IN_USE",       // опционально
   "correlationId": "01J…",              // по нему находится запись в логах
   "details": { "port": "4000" }         // структурировано, без секретов
 }
@@ -87,6 +87,9 @@
 | `KB_INSTALL_NETWORK_UNREACHABLE` | нет доступа к релиз-индексу/реестру | проверить сеть/прокси, `retry` | L |
 | `KB_INSTALL_RELEASE_INDEX_INVALID` | индекс повреждён/подпись не сходится | повторить; сообщить (виновник — мы) | L |
 | `KB_INSTALL_NODE_MISSING` | нет нужной версии Node/менеджера пакетов | ссылка на установку или установить встроенный | L |
+| `KB_INSTALL_NODE_VERSION` | Node.js не 24.x | установить Node.js 24; для nvm: `nvm install 24 && nvm use 24` | L |
+| `KB_INSTALL_MEMORY_INSUFFICIENT` | доступной памяти меньше 1.20 GiB | освободить память или увеличить её объём, затем `kb-create install` | L |
+| `KB_INSTALL_PORT_IN_USE` | порт, требуемый установкой, занят | остановить процесс с портом и снова `kb-create install` | L |
 | `KB_INSTALL_INCOMPATIBLE_COMPONENTS` | (есть) компоненты несовместимы | какие и с какими версиями | L |
 | `KB_INSTALL_PROVIDER_UNRESOLVED` / `_AMBIGUOUS` | (есть) не найден/неоднозначен провайдер возможности | выбрать провайдера | L |
 | `KB_INSTALL_INPUT_REQUIRED` / `KB_INSTALL_CONFIG_REQUIRED` | (есть) не хватает ввода/конфига | какое поле | L |
@@ -110,7 +113,6 @@
 |---|---|---|---|
 | `KB_HOST_UNREACHABLE` | CLI/Studio не достучались до хоста | `kb-create start` / `doctor` | K, S |
 | `KB_HOST_ALREADY_RUNNING` | повторный старт | `status`, `restart` | L |
-| `KB_HOST_PORT_IN_USE` | порт занят | освободить или другой порт | L |
 | `KB_HOST_START_FAILED` | процесс упал при старте | причина из лога, `correlationId` | L |
 | `KB_HOST_UNHEALTHY` | хост отвечает, модуль/сервис нет | какой модуль, `restart`/`doctor` | K, S |
 | `KB_HOST_EXPOSURE_REFUSED` | режим без авторизации + не loopback bind | включить авторизацию или вернуть loopback | L |

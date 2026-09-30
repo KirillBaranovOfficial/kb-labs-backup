@@ -16,7 +16,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { acquireHandle } from '../shared-handle.js';
 
 describe('acquireHandle — directory creation', () => {
-  const handles: Array<{ release: () => void }> = [];
+  const handles: Array<ReturnType<typeof acquireHandle>> = [];
 
   afterEach(() => {
     for (const h of handles) { try { h.release(); } catch { /* already closed */ } }
@@ -35,8 +35,8 @@ describe('acquireHandle — directory creation', () => {
       }).not.toThrow();
 
       // DB must be usable after opening
-      const h = handles[0];
-      expect(h.handle.open).toBe(true);
+      const h = handles.at(0);
+      expect(h?.handle.open).toBe(true);
     } finally {
       await rm(base, { recursive: true, force: true });
     }

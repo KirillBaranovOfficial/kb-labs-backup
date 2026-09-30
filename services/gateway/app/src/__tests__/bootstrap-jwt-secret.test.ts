@@ -101,9 +101,9 @@ vi.mock("../server.js", () => ({
 }));
 
 vi.mock("../hosts/registry.js", () => ({
-  HostRegistry: vi.fn().mockImplementation(() => ({
-    restore: vi.fn().mockResolvedValue(0),
-  })),
+  HostRegistry: class {
+    restore = vi.fn().mockResolvedValue(0);
+  },
 }));
 
 vi.mock("@kb-labs/gateway-core", () => ({

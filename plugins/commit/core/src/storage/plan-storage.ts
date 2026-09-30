@@ -1,5 +1,5 @@
 /**
- * Commit plan storage in .kb/commit/
+ * Commit plan runtime storage in the project's KB state directory.
  */
 
 /* eslint-disable no-await-in-loop -- Sequential file operations required for plan cleanup and history management */
@@ -8,9 +8,10 @@ import { readFile, writeFile, mkdir, rm, readdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import type { CommitPlan, ApplyResult, GitStatusSnapshot } from '@kb-labs/commit-contracts';
 import { CommitPlanSchema, GitStatusSnapshotSchema } from '@kb-labs/commit-contracts';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { getFileSummaries } from '../analyzer/file-summary';
 
-const COMMIT_DIR = '.kb/commit';
+const COMMIT_STATE_SEGMENTS = ['commit'] as const;
 const PLANS_DIR = 'plans';
 const CURRENT_DIR = 'current';
 const HISTORY_DIR = 'history';
@@ -36,7 +37,7 @@ function normalizeScopeForPath(scope: string): string {
  * Get path to commit storage directory
  */
 export function getCommitStoragePath(cwd: string): string {
-  return join(cwd, COMMIT_DIR);
+  return resolveRuntimeStatePath(cwd, COMMIT_STATE_SEGMENTS);
 }
 
 /**
@@ -44,7 +45,7 @@ export function getCommitStoragePath(cwd: string): string {
  */
 export function getScopePlanDir(cwd: string, scope: string = 'root'): string {
   const scopeDir = normalizeScopeForPath(scope);
-  return join(cwd, COMMIT_DIR, PLANS_DIR, scopeDir);
+  return join(getCommitStoragePath(cwd), PLANS_DIR, scopeDir);
 }
 
 /**
@@ -253,7 +254,7 @@ export async function initStorage(cwd: string, scope: string = 'root'): Promise<
  * List all scopes with plans
  */
 export async function listScopes(cwd: string): Promise<string[]> {
-  const plansDir = join(cwd, COMMIT_DIR, PLANS_DIR);
+  const plansDir = join(getCommitStoragePath(cwd), PLANS_DIR);
 
   try {
     const entries = await readdir(plansDir, { withFileTypes: true });

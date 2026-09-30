@@ -155,6 +155,15 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 				}
 				continue
 			}
+			if field.ProviderFor != "" {
+				if len(field.Default) == 0 {
+					return contracts.InstallRequest{}, fmt.Errorf("scenario provider %q has no declared default", field.ProviderFor)
+				}
+				if err := session.Apply(field.ID, field.Default, flow.SourceDefault); err != nil {
+					return contracts.InstallRequest{}, err
+				}
+				continue
+			}
 			var raw string
 			if len(field.Options) > 0 {
 				options := make([]string, 0, len(field.Options))

@@ -3,13 +3,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
 import { createJobsAPI, createNoopJobsAPI } from '../api/jobs.js';
 import type { IJobScheduler, JobHandle } from '@kb-labs/core-platform';
 
 describe('JobsAPI', () => {
   describe.skip('createJobsAPI', () => {
     let mockScheduler: IJobScheduler;
-    let mockFetch: ReturnType<typeof vi.fn>;
+    let mockFetch: Mock<typeof fetch>;
 
     beforeEach(() => {
       mockScheduler = {
@@ -21,7 +22,7 @@ describe('JobsAPI', () => {
       };
 
       // Mock global fetch
-      mockFetch = vi.fn();
+      mockFetch = vi.fn<typeof fetch>();
       global.fetch = mockFetch;
     });
 

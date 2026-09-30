@@ -1,20 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mocked } from 'vitest';
 import { createWorkspaceAPI, createNoopWorkspaceAPI } from '../api/workspace.js';
 
 describe('WorkspaceAPI', () => {
-  let manager: {
-    materializeWorkspace: ReturnType<typeof vi.fn>;
-    attachWorkspace: ReturnType<typeof vi.fn>;
-    releaseWorkspace: ReturnType<typeof vi.fn>;
-    getWorkspaceStatus: ReturnType<typeof vi.fn>;
-  };
+  type Manager = Parameters<typeof createWorkspaceAPI>[0]['manager'];
+  let manager: Mocked<Manager>;
 
   beforeEach(() => {
     manager = {
-      materializeWorkspace: vi.fn(),
-      attachWorkspace: vi.fn(),
-      releaseWorkspace: vi.fn(),
-      getWorkspaceStatus: vi.fn(),
+      materializeWorkspace: vi.fn<Manager['materializeWorkspace']>(),
+      attachWorkspace: vi.fn<Manager['attachWorkspace']>(),
+      releaseWorkspace: vi.fn<Manager['releaseWorkspace']>(),
+      getWorkspaceStatus: vi.fn<Manager['getWorkspaceStatus']>(),
     };
   });
 

@@ -15,7 +15,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/resolve"
 )
 
 const Schema = "kb.create.scenario/v2"
@@ -116,6 +118,78 @@ func IDs() ([]string, error) {
 	sort.Strings(result)
 	return result, nil
 }
+
+// ValidateCatalog resolves every built-in journey against the candidate
+// release index during sealing. This catches absent plugins/adapters and
+// ambiguous capability providers before an index is published.
+func ValidateCatalog(source catalog.Catalog) error {
+	ids, err := IDs()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		definition, err := Load(id)
+		if err != nil {
+			return err
+		}
+		state, err := New(definition)
+		if err != nil {
+			return fmt.Errorf("scenario %q: %w", id, err)
+		}
+		profile := "default"
+		if len(definition.Profiles) > 0 {
+			profile = definition.Profiles[0]
+		}
+		channel := contracts.ChannelStable
+		platformVersion := source.Channels[channel]
+		if platformVersion == "" {
+			channels := make([]string, 0, len(source.Channels))
+			for candidate := range source.Channels {
+				channels = append(channels, string(candidate))
+			}
+			sort.Strings(channels)
+			if len(channels) == 0 {
+				return fmt.Errorf("scenario %q cannot be checked because the release index has no channels", id)
+			}
+			channel = contracts.Channel(channels[0])
+			platformVersion = source.Channels[channel]
+		}
+		request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: "/tmp/kb-create-scenario-validation", Platform: contracts.VersionSelector{Version: platformVersion}, SDK: contracts.VersionSelector{Version: sdkVersionFor(source, platformVersion)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceOffline})
+		if err != nil {
+			return fmt.Errorf("scenario %q: %w", id, err)
+		}
+		options := resolve.Options{}
+		for _, platform := range source.Platforms {
+			if platform.Version != platformVersion || len(platform.Binaries) == 0 {
+				continue
+			}
+			options.OS, options.Arch = platform.Binaries[0].OS, platform.Binaries[0].Arch
+			break
+		}
+		if _, err := resolve.PlanWith(request, source, options); err != nil {
+			return fmt.Errorf("scenario %q does not resolve against release index: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func sdkVersionFor(source catalog.Catalog, platformVersion string) string {
+	if source.Compatibility != nil {
+		platformLabel := "platform@" + platformVersion
+		for _, label := range source.Compatibility.Labels {
+			if label.ID != platformLabel {
+				continue
+			}
+			for _, relation := range label.Requires {
+				if strings.HasPrefix(relation.Label, "sdk@") {
+					return strings.TrimPrefix(relation.Label, "sdk@")
+				}
+			}
+		}
+	}
+	return platformVersion
+}
+
 func Decode(data []byte) (Scenario, error) {
 	var result Scenario
 	if err := json.Unmarshal(data, &result); err != nil {

@@ -128,7 +128,7 @@ func TestUpdateSnapshotsPreviousVerifiedReceipt(t *testing.T) {
 	}
 }
 
-func TestUninstallUsesReceiptArtifacts(t *testing.T) {
+func TestUninstallRemovesPlatformRootAfterRemovingReceiptArtifacts(t *testing.T) {
 	root := t.TempDir()
 	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", Plan: contracts.ResolvedInstallPlan{PlanHash: "old", Artifacts: []contracts.Artifact{{ID: "plugin", Package: "@kb/plugin"}}}}); err != nil {
 		t.Fatal(err)
@@ -149,14 +149,8 @@ func TestUninstallUsesReceiptArtifacts(t *testing.T) {
 	if len(installer.removed) != 1 || installer.removed[0].ID != "plugin" {
 		t.Fatalf("removed = %#v", installer.removed)
 	}
-	if _, err := receipt.Read(root); !os.IsNotExist(err) {
-		t.Fatalf("receipt must be removed, err = %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
-		t.Fatalf("managed config must be removed, err = %v", err)
-	}
-	if data, _ := os.ReadFile(filepath.Join(root, "user.txt")); string(data) != "user" {
-		t.Fatalf("user file = %q", data)
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("successful uninstall must remove the platform root and its snapshots, err = %v", err)
 	}
 }
 
