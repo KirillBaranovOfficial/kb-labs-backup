@@ -21,7 +21,7 @@ export class HttpAdaptersSource implements AdaptersDataSource {
   constructor(private readonly client: HttpClient, private readonly projectId?: string) {}
 
   private path(path: string): string {
-    if (!this.projectId) throw new Error('Select a project to view project adapter usage.');
+    if (!this.projectId) {throw new Error('Select a project to view project adapter usage.');}
     return `/projects/${encodeURIComponent(this.projectId)}${path}`;
   }
 

@@ -56,10 +56,10 @@ export class ApiTokensStore {
   }
 
   async findActive(token: string): Promise<ApiTokenRecord | null> {
-    if (!token.startsWith(TOKEN_PREFIX)) return null;
+    if (!token.startsWith(TOKEN_PREFIX)) {return null;}
     await this.ensureSchema();
     const [record] = await this.docs.find<ApiTokenDoc>(COLLECTION, { tokenHash: { $eq: hash(token) } }, { limit: 1 });
-    if (!record || record.revokedAt !== undefined || record.expiresAt <= this.now()) return null;
+    if (!record || record.revokedAt !== undefined || record.expiresAt <= this.now()) {return null;}
     const { tokenHash: _hash, ...publicRecord } = record;
     return publicRecord;
   }

@@ -80,13 +80,14 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
     const client = argv[0];
     if (client !== "claude" && client !== "codex" && client !== "cursor") {
       const message = "Choose a client: claude, codex, or cursor.";
-      if (json)
+      if (json) {
         ctx.ui?.json({
           ok: false,
           error: { message, next: "kb mcp config <claude|codex|cursor>" },
         });
-      else
+      } else {
         ctx.ui?.error(`${message} Next: kb mcp config <claude|codex|cursor>`);
+      }
       return { ok: false, error: message };
     }
     try {
@@ -118,13 +119,15 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
         auth: local ? "none" : "Bearer ${KB_MCP_TOKEN}",
         config: renderMcpClientConfig(client, url, !local),
       };
-      if (json) ctx.ui?.json(body);
-      else {
+      if (json) {
+        ctx.ui?.json(body);
+      } else {
         ctx.ui?.write(`${renderMcpClientConfig(client, url, !local)}\n`);
-        if (!local)
+        if (!local) {
           ctx.ui?.write(
             "\nSet KB_MCP_TOKEN to a gateway-issued user or API token before starting the client.\n",
           );
+        }
       }
       return body;
     } catch (error) {

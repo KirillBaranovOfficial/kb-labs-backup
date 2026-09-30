@@ -89,9 +89,9 @@ export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
     const apiToken = deps.apiTokens && !cookieToken ? await deps.apiTokens.findActive(token) : null;
     if (apiToken) {
       const user = await deps.users.getById(apiToken.userId);
-      if (!user || user.status !== 'active') return sendUnauthorized(reply, 'Token owner is inactive');
+      if (!user || user.status !== 'active') {return sendUnauthorized(reply, 'Token owner is inactive');}
       const resolvedTenant = deps.tenantResolver.resolve(typeof request.headers.host === 'string' ? request.headers.host : undefined);
-      if (resolvedTenant !== null && resolvedTenant !== apiToken.tenantId) return sendUnauthorized(reply, 'Tenant mismatch');
+      if (resolvedTenant !== null && resolvedTenant !== apiToken.tenantId) {return sendUnauthorized(reply, 'Tenant mismatch');}
       request.userAuthContext = { type: 'user', source: 'api-token', userId: apiToken.userId, tenantId: apiToken.tenantId, familyId: apiToken.tokenId };
       const permissions = await deps.pdp.enumeratePermissions({ userId: apiToken.userId, tenantId: apiToken.tenantId, type: 'user' });
       request.authContext = { type: 'user', userId: apiToken.userId, namespaceId: apiToken.tenantId, tier: 'free', permissions };

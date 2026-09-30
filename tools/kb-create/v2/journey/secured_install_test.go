@@ -70,6 +70,15 @@ func sealedGatewayCatalog(t *testing.T) catalog.Catalog {
 	if err := os.WriteFile(filepath.Join(platformDir, "kb-create.manifest.json"), platformManifest, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	sqlitePackage := "@kb-labs/adapters-sqlite"
+	sqliteDir := filepath.Join(stage, "node_modules", filepath.FromSlash(sqlitePackage))
+	if err := os.MkdirAll(sqliteDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	sqliteManifest, _ := json.Marshal(map[string]any{"schema": "kb.create.artifact-manifest/v2", "id": "sqlite-stores", "package": sqlitePackage, "version": "2.0.0"})
+	if err := os.WriteFile(filepath.Join(sqliteDir, "kb-create.manifest.json"), sqliteManifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	source := catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
@@ -78,6 +87,7 @@ func sealedGatewayCatalog(t *testing.T) catalog.Catalog {
 			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "gateway-app", Port: 4000, Required: true}}}},
 			Members:  []catalog.Component{{ID: "gateway", Version: "2.0.0", Package: "@kb-labs/gateway-app", Tarball: "https://example.test/gateway.tgz", SHA256: "gateway"}},
 		}},
+		Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "2.0.0", Package: sqlitePackage, Tarball: "https://example.test/adapters-sqlite.tgz", SHA256: "sqlite"}, Provides: []string{"documentDatabase", "kvStore"}}},
 	}
 	enriched, err := release.EnrichWithManifests(source, stage)
 	if err != nil {

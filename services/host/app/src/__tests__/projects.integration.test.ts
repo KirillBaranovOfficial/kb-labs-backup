@@ -328,7 +328,9 @@ describe("kb-host project routing", () => {
       keptRunningSchedules: 2,
     });
     const pid = (await reply(subject, a.id, "/rest/whoami")).pid;
-    await new Promise<void>((resolve) => setTimeout(resolve, 120));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 120);
+    });
     expect(isAlive(pid)).toBe(true);
   });
 

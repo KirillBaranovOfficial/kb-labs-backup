@@ -151,7 +151,7 @@ export async function removeFromMarketplaceLock(
     return false;
   }
   delete existing.plugins[packageId];
-  if (existing.adapters) delete existing.adapters[packageId];
+  if (existing.adapters) {delete existing.adapters[packageId];}
   await writeMarketplaceLock(root, existing);
   return true;
 }
@@ -211,7 +211,7 @@ async function setPluginEnabled(
     return false;
   }
   const entry = existing.plugins[packageId] ?? existing.adapters?.[packageId];
-  if (entry) entry.enabled = enabled;
+  if (entry) {entry.enabled = enabled;}
   await writeMarketplaceLock(root, existing);
   return true;
 }
@@ -247,19 +247,19 @@ function isValidLock(value: unknown): value is MarketplaceLock {
     !Array.isArray(obj.plugins) &&
     (obj.adapters === undefined || (typeof obj.adapters === 'object' && obj.adapters !== null && !Array.isArray(obj.adapters))) &&
     Object.entries(obj.plugins).every(([id, raw]) => {
-      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id) || typeof raw !== 'object' || raw === null) return false;
+      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id) || typeof raw !== 'object' || raw === null) {return false;}
       const entry = raw as Record<string, unknown>;
-      if (typeof entry.enabled !== 'boolean' || !['marketplace', 'local', 'platform'].includes(String(entry.source))) return false;
+      if (typeof entry.enabled !== 'boolean' || !['marketplace', 'local', 'platform'].includes(String(entry.source))) {return false;}
       const allowed = entry.source === 'marketplace' ? ['version', 'integrity', 'enabled', 'source']
         : entry.source === 'local' ? ['link', 'enabled', 'source']
           : ['version', 'integrity', 'resolvedPath', 'enabled', 'source'];
-      if (Object.keys(entry).some((key) => !allowed.includes(key))) return false;
-      if (entry.source === 'marketplace') return typeof entry.version === 'string' && validIntegrity(entry.integrity);
-      if (entry.source === 'local') return typeof entry.link === 'string' && !path.isAbsolute(entry.link);
+      if (Object.keys(entry).some((key) => !allowed.includes(key))) {return false;}
+      if (entry.source === 'marketplace') {return typeof entry.version === 'string' && validIntegrity(entry.integrity);}
+      if (entry.source === 'local') {return typeof entry.link === 'string' && !path.isAbsolute(entry.link);}
       return typeof entry.resolvedPath === 'string' && typeof entry.version === 'string' && validIntegrity(entry.integrity);
     }) &&
     Object.entries((obj.adapters ?? {}) as Record<string, unknown>).every(([id, raw]) => {
-      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id) || typeof raw !== 'object' || raw === null) return false;
+      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id) || typeof raw !== 'object' || raw === null) {return false;}
       const entry = raw as Record<string, unknown>;
       return Object.keys(entry).every((key) => ['version', 'integrity', 'resolvedPath', 'enabled', 'source'].includes(key)) &&
         entry.source === 'platform' && typeof entry.version === 'string' && validIntegrity(entry.integrity) &&

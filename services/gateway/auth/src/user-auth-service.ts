@@ -337,9 +337,9 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
   const completePasswordReset = async (input: CompletePasswordResetInput): Promise<void> => {
     const policyResult = await opts.passwordPolicy.validate(input.newPassword);
     const polErr = mapPolicyResultToError(policyResult);
-    if (polErr) throw polErr;
+    if (polErr) {throw polErr;}
     const reset = await opts.passwordResets.consume(input.token);
-    if (!reset) throw new AuthError('invalid_password_reset');
+    if (!reset) {throw new AuthError('invalid_password_reset');}
     const hash = await bcrypt.hash(input.newPassword, opts.bcryptCost);
     await opts.credentials.setCredential({ userId: reset.userId, providerId: 'email-password', hash });
     await opts.sessions.revokeAllUserSessions(reset.userId);

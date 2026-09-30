@@ -36,7 +36,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
   constructor(private client: HttpClient, private readonly projectId?: string) {}
 
   private path(path: string): string {
-    if (!this.projectId) throw new Error('Select a project to view project observability.');
+    if (!this.projectId) {throw new Error('Select a project to view project observability.');}
     return `/projects/${encodeURIComponent(this.projectId)}${path}`;
   }
 
