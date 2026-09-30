@@ -260,7 +260,14 @@ func selectComponentAdapter(items []catalog.Adapter, request contracts.Component
 func selectAdapter(items []catalog.Adapter, requested []contracts.ComponentRequest, preferred, capability string) (catalog.Adapter, bool, bool) {
 	allowed := map[string]bool{}
 	for _, v := range requested {
-		allowed[v.ID] = true
+		// An explicitly selected adapter constrains only the capability it
+		// provides. For example, choosing a cache adapter in a scenario must
+		// not prevent the platform from selecting its service transport.
+		for _, candidate := range items {
+			if candidate.ID == v.ID && provides(candidate, capability) {
+				allowed[v.ID] = true
+			}
+		}
 	}
 	candidates := make([]catalog.Adapter, 0)
 	for _, v := range items {

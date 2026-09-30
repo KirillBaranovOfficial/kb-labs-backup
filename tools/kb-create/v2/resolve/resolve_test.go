@@ -27,6 +27,33 @@ func TestDeclaredProviderDefaultWinsWithoutOrderDependence(t *testing.T) {
 	}
 }
 
+func TestExplicitAdapterSelectionDoesNotConstrainOtherCapabilities(t *testing.T) {
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+			Requires: []catalog.Requirement{{Capability: "serviceTransport"}},
+		}},
+		Adapters: []catalog.Adapter{
+			{Component: catalog.Component{ID: "state-broker", Version: "1", Package: "@kb/state", SHA256: "state"}, Provides: []string{"cache"}},
+			{Component: catalog.Component{ID: "service-transport-http", Version: "1", Package: "@kb/transport", SHA256: "transport"}, Provides: []string{"serviceTransport"}},
+		},
+	}
+	plan, err := Plan(contracts.InstallRequest{
+		PlatformRoot:        "/tmp/x",
+		Adapters:            []contracts.ComponentRequest{{ID: "state-broker"}},
+		ProviderPreferences: map[string]string{"cache": "state-broker"},
+	}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ProviderBindings) != 1 || plan.ProviderBindings[0].Capability != "serviceTransport" || plan.ProviderBindings[0].AdapterID != "service-transport-http" {
+		t.Fatalf("provider bindings = %#v", plan.ProviderBindings)
+	}
+}
+
 func TestPlanProjectsSecretOnlyAsEnvironmentReference(t *testing.T) {
 	source := catalog.Catalog{Digest: "release-digest", Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve"}}}}, Config: []catalog.ConfigRequirement{{ID: "openai.apiKey", Secret: true, Required: true, Env: "OPENAI_API_KEY", Services: []string{"gateway"}}}}}}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", SecretInputs: []string{"openai.apiKey"}}, source)
