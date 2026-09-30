@@ -180,12 +180,10 @@ func Update(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depend
 	return result, snapshot, nil
 }
 
-// Uninstall is intentionally narrow: it removes exactly the artifacts in the
-// verified receipt. The host must already be stopped (the caller halts it): the
-// installed host binary is one of the artifacts being removed. The snapshot
-// remains in .kb/v2/snapshots so a failed operation can recover; a successful
-// deletion leaves explicit recovery data rather than claiming user-authored
-// project files are disposable.
+// Uninstall removes the artifacts in the verified receipt and, after teardown
+// succeeds, the entire platform root. The host must already be stopped (the
+// caller halts it): the installed host binary is one of the artifacts being
+// removed. The recovery snapshot is retained only until teardown succeeds.
 func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, error) {
 	if deps.Artifacts == nil {
 		return contracts.Snapshot{}, fmt.Errorf("uninstall: artifact installer is required")
@@ -198,7 +196,7 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 	if err != nil {
 		return contracts.Snapshot{}, fmt.Errorf("uninstall: read active receipt: %w", err)
 	}
-	return lifecycle.Mutate(platformRoot, now(deps.Clock), func() error {
+	snapshot, err := lifecycle.Mutate(platformRoot, now(deps.Clock), func() error {
 		if err := uninstaller.Uninstall(active.Plan.Artifacts); err != nil {
 			return err
 		}
@@ -209,6 +207,13 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 		}
 		return receipt.Delete(platformRoot)
 	}, nil, deps.Artifacts.Restore)
+	if err != nil {
+		return snapshot, err
+	}
+	if err := os.RemoveAll(platformRoot); err != nil {
+		return snapshot, fmt.Errorf("uninstall: remove platform root: %w", err)
+	}
+	return snapshot, nil
 }
 
 // Rollback restores an explicit V2 snapshot and reinstalls its exact lock

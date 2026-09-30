@@ -157,11 +157,17 @@ def verify_listener_ownership():
             fail(f"listener pid {pid} is not running from this platform root: {command[:240]}")
 
 
+def uninstall_removed_platform_root():
+    receipt = PLATFORM / ".kb" / "v2" / "receipt.json"
+    snapshots = PLATFORM / ".kb" / "v2" / "snapshots"
+    return not PLATFORM.exists() and not receipt.exists() and not snapshots.exists()
+
+
 def main():
     global FIRST_FAILURE
     env = BASE_ENV.copy()
     env["HOME"] = str(HOME)
-    env["PATH"] = f"{BIN}:/usr/local/bin:/usr/bin:/bin"
+    env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
     (HOME / ".profile").write_text("if [ -f ~/.bashrc ]; then . ~/.bashrc; fi\n")
     env["KB_CREATE_DOWNLOAD_BASE_URL"] = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"]
     env.pop("KB_PLATFORM_ROOT", None)
@@ -258,9 +264,9 @@ def main():
             else:
                 removed, _ = run([launcher, "uninstall", "--platform-root", str(PLATFORM), "--registry", REGISTRY], env=env, timeout=180)
                 if require(removed, step="uninstall relative-root installation"):
-                    passed = not PLATFORM.exists()
+                    passed = uninstall_removed_platform_root() and not (BIN / "kb").exists()
                     if not passed:
-                        fail("relative platform root: uninstall left the normalized platform root")
+                        fail("relative platform root: uninstall left the platform root, receipt, snapshots, or kb shim")
             append_summary(passed)
             return 0 if passed else 1
         if not require(result, step="kb-create apply --json"):
@@ -347,8 +353,8 @@ def main():
                     platform_pids.add(pid)
             except OSError:
                 continue
-        if alive or platform_pids or PLATFORM.exists() or (BIN / "kb" ).exists():
-            fail("uninstall left a platform process, listening port, shim, or platform root")
+        if alive or platform_pids or not uninstall_removed_platform_root() or (BIN / "kb").exists():
+            fail("uninstall left a platform process, listening port, shim, platform root, receipt, or snapshots")
     passed = not FIRST_FAILURE
     append_summary(passed)
     return 0 if passed else 1
