@@ -54,6 +54,23 @@ func availableMemory() (uint64, error) {
 }
 
 func darwinAvailableMemory(output string) (uint64, error) {
+	for _, line := range strings.Split(output, "\n") {
+		if pageSizeIndex := strings.Index(line, "page size of "); pageSizeIndex >= 0 {
+			pageSizeFields := strings.Fields(line[pageSizeIndex+len("page size of "):])
+			if len(pageSizeFields) == 0 {
+				return 0, fmt.Errorf("vm_stat did not report a valid page size")
+			}
+			pageSize, err := strconv.ParseUint(pageSizeFields[0], 10, 64)
+			if err != nil || pageSize == 0 {
+				return 0, fmt.Errorf("vm_stat reported an invalid page size %q", pageSizeFields[0])
+			}
+			return darwinAvailableMemoryWithPageSize(output, pageSize)
+		}
+	}
+	return 0, fmt.Errorf("vm_stat did not report a page size")
+}
+
+func darwinAvailableMemoryWithPageSize(output string, pageSize uint64) (uint64, error) {
 	var pages uint64
 	for _, line := range strings.Split(output, "\n") {
 		fields := strings.SplitN(line, ":", 2)
@@ -75,7 +92,7 @@ func darwinAvailableMemory(output string) (uint64, error) {
 	if pages == 0 {
 		return 0, fmt.Errorf("vm_stat did not report available pages")
 	}
-	return pages * uint64(unix.Getpagesize()), nil
+	return pages * pageSize, nil
 }
 
 func linuxCgroupAvailable(hostAvailable uint64) (uint64, error) {
