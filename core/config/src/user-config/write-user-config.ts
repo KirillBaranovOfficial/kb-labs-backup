@@ -1,14 +1,14 @@
 /**
  * @module @kb-labs/core-config/user-config/write-user-config
  *
- * The single writer of the user config file (ADR-0047: one writer per file).
- * `setUserConfigValue` is an atomic, locked read-modify-write:
+ * The only writers of user config files (ADR-0047: one writer per file).
+ * `setUserConfigValue` and `unsetUserConfigValue` are atomic, locked writes:
  *
  *   1. take the file lock;
  *   2. read the file and check the caller's expected revision;
  *   3. reject unknown keys (with a suggestion), raw secrets and references to
- *      unset secret variables;
- *   4. splice the value into the JSONC text (comments and formatting kept);
+ *      unset secret variables on set;
+ *   4. splice or remove the requested JSONC property (comments and formatting kept);
  *   5. validate the resulting document (a write is refused only when it
  *      introduces a NEW schema issue, so a file that is already imperfect
  *      elsewhere can still be edited);
@@ -28,6 +28,7 @@ import { withFileLock, FileLockTimeoutError, type FileLockOptions } from './file
 import {
   JsoncPathError,
   JsoncSyntaxError,
+  deleteJsoncValue,
   parseJsonc,
   setJsoncValue,
 } from './jsonc-edit.js';
@@ -87,6 +88,9 @@ export interface SetUserConfigOptions {
   expectedRevision?: string;
   lock?: FileLockOptions;
 }
+
+export type UnsetUserConfigOptions = Pick<SetUserConfigOptions,
+  'filePath' | 'path' | 'schema' | 'validate' | 'dryRun' | 'expectedRevision' | 'lock'>;
 
 export interface SetUserConfigResult {
   filePath: string;
@@ -268,6 +272,43 @@ async function computeEdit(options: SetUserConfigOptions, text: string, filePath
   return nextText;
 }
 
+async function computeUnset(options: UnsetUserConfigOptions, text: string, filePath: string): Promise<string> {
+  const { path: keyPath, schema } = options;
+  const keyName = dotted(keyPath);
+  if (keyPath.length === 0 || keyPath.some((segment) => segment === '')) {
+    throw new ConfigWriteError('KB_CONFIG_INVALID', 'The key path is empty or has an empty segment', { path: keyName });
+  }
+  if (schema) {
+    const resolution = resolveKeyPath(schema, keyPath);
+    if (resolution.status === 'unknown') {
+      throw new ConfigWriteError('KB_CONFIG_UNKNOWN_KEY', `Unknown configuration key ${keyName}`, {
+        path: keyName,
+        key: resolution.key,
+        parent: resolution.parentPath,
+        suggestion: resolution.suggestion ?? '',
+        knownKeys: resolution.knownKeys.join(','),
+      });
+    }
+  }
+
+  const before = parseDocument(text, filePath);
+  const nextText = deleteJsoncValue(text, keyPath);
+  const after = parseDocument(nextText, filePath);
+  const knownBefore = new Set(
+    [...schemaIssues(schema, before), ...((await options.validate?.(before)) ?? [])].map(issueKey),
+  );
+  const introduced = [...schemaIssues(schema, after), ...((await options.validate?.(after)) ?? [])].filter(
+    (issue) => !knownBefore.has(issueKey(issue)),
+  );
+  const first = introduced[0];
+  if (first) {
+    throw new ConfigWriteError('KB_CONFIG_INVALID', `${first.path || keyName}: ${first.message}`, {
+      path: first.path || keyName,
+    });
+  }
+  return nextText;
+}
+
 /**
  * Set one key in the user config file. See the module docs for the guarantees.
  * Throws `ConfigWriteError`.
@@ -331,6 +372,66 @@ export async function setUserConfigValue(options: SetUserConfigOptions): Promise
   if (options.dryRun) {
     return run();
   }
+  try {
+    return await withFileLock(filePath, run, options.lock);
+  } catch (error) {
+    if (error instanceof FileLockTimeoutError) {
+      throw new ConfigWriteError('KB_CONFIG_CONFLICT', `${filePath} is locked by another writer`, { path: filePath });
+    }
+    throw error;
+  }
+}
+
+/** Remove one key from a user config file with the same locking and atomic-write guarantees as set. */
+export async function unsetUserConfigValue(options: UnsetUserConfigOptions): Promise<SetUserConfigResult> {
+  let filePath = path.resolve(options.filePath);
+  try {
+    filePath = await fsp.realpath(filePath);
+  } catch {
+    // Missing file: retain the resolved path and report an unchanged dry operation.
+  }
+
+  const run = async (): Promise<SetUserConfigResult> => {
+    const existing = await readIfExists(filePath);
+    const text = existing ?? '';
+    const revisionBefore = revisionOf(text);
+    if (options.expectedRevision !== undefined && options.expectedRevision !== revisionBefore) {
+      throw new ConfigWriteError('KB_CONFIG_CONFLICT', `${filePath} changed since it was read`, { path: filePath });
+    }
+
+    const previousDoc = parseDocument(text, filePath);
+    let previousValue: unknown = previousDoc;
+    for (const segment of options.path) {
+      previousValue = previousValue !== null && typeof previousValue === 'object'
+        && Object.prototype.hasOwnProperty.call(previousValue, segment)
+        ? (previousValue as Record<string, unknown>)[segment]
+        : undefined;
+    }
+    const editedText = await computeUnset(options, text, filePath);
+    const nextText = previousValue === undefined ? text : editedText;
+    const changed = nextText !== text;
+    const base: Omit<SetUserConfigResult, 'revisionAfter'> = {
+      filePath,
+      created: false,
+      changed,
+      dryRun: Boolean(options.dryRun),
+      previousValue,
+      revisionBefore,
+      text: nextText,
+    };
+    if (!changed || options.dryRun) {
+      return { ...base, revisionAfter: changed ? revisionOf(nextText) : revisionBefore };
+    }
+
+    const current = (await readIfExists(filePath)) ?? '';
+    if (revisionOf(current) !== revisionBefore) {
+      throw new ConfigWriteError('KB_CONFIG_CONFLICT', `${filePath} changed while the edit was prepared`, { path: filePath });
+    }
+    await writeAtomicKeepingMode(filePath, nextText);
+    return { ...base, revisionAfter: revisionOf(nextText) };
+  };
+
+  if (options.dryRun) return run();
   try {
     return await withFileLock(filePath, run, options.lock);
   } catch (error) {

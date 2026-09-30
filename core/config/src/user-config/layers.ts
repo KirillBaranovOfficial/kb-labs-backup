@@ -14,8 +14,8 @@
  *                   (project wins over platform, ADR-0012)
  *   4. `overlay`    `<projectRoot>/.kb/overlays/*.jsonc` scenario overlays
  *
- * The user config files are written ONLY by `setUserConfigValue`
- * (`kb config set`). One writer per file.
+ * The user config files are written ONLY by `setUserConfigValue` and
+ * `unsetUserConfigValue`. One writer per file.
  */
 
 import { promises as fsp } from 'node:fs';

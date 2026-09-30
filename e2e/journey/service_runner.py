@@ -14,6 +14,7 @@ from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import Journey
 from plugin_author_steps import run_plugin_author_flow
+from marketplace_steps import run_marketplace_steps
 
 
 BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -163,19 +164,14 @@ def main() -> int:
         else:
             journey.step(name, capability, lambda value=output: value)
     project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")
+    registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
     if project_root:
-        run_plugin_author_flow(
-            journey,
-            Path(project_root),
-            Path.home() / ".local/bin/kb",
-            os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873"),
-        )
+        run_marketplace_steps(journey, project_root, registry, os.environ.copy())
+        run_plugin_author_flow(journey, Path(project_root), Path.home() / ".local/bin/kb", registry)
     else:
-        journey.blocked(
-            "plugin author flow",
-            "plugin-author",
-            "journey runner did not receive KB_JOURNEY_PROJECT_ROOT from the installed project setup",
-        )
+        reason = "journey runner did not receive KB_JOURNEY_PROJECT_ROOT from the installed project setup"
+        journey.blocked("marketplace and adapter user flows", "marketplace", reason)
+        journey.blocked("plugin author flow", "plugin-author", reason)
     result = journey.write_json(args.output)
     print(json.dumps(result.__dict__, indent=2))
     return 0 if result.status == "PASS" else 1

@@ -6,6 +6,7 @@ import { noopTraceContext, noopUI } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { writeMarketplaceLock } from '@kb-labs/core-discovery';
 import { adapterBind } from '../../commands/system/adapter/bind.js';
+import { adapterUnbind } from '../../commands/system/adapter/unbind.js';
 
 let sandbox: string;
 let platformRoot: string;
@@ -101,5 +102,39 @@ describe('kb adapter bind', () => {
     expect(code).toBe(0);
     expect(outputs[0]).toMatchObject({ ok: true, dryRun: true, changed: true });
     expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({});
+  });
+});
+
+describe('kb adapter unbind', () => {
+  it('clears only the project binding and preserves adapter options and platform config', async () => {
+    await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapters: { storage: '@kb-labs/adapters-fs' } } }));
+    await writeFile(join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({
+      platform: { adapters: { storage: '@kb-labs/adapters-fs' }, adapterOptions: { storage: { baseDir: '.kb/data' } } },
+    }));
+    const { ctx, outputs } = context();
+
+    const code = await adapterUnbind.run(ctx, ['storage'], { json: true });
+
+    expect(code).toBe(0);
+    expect(outputs[0]).toMatchObject({ ok: true, slot: 'storage', changed: true, dryRun: false });
+    expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toMatchObject({
+      platform: { adapters: {}, adapterOptions: { storage: { baseDir: '.kb/data' } } },
+    });
+    expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({
+      platform: { adapters: { storage: '@kb-labs/adapters-fs' } },
+    });
+  });
+
+  it('validates an unbind without writing in dry-run mode', async () => {
+    await writeFile(join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapters: { storage: '@kb-labs/adapters-fs' } } }));
+    const { ctx, outputs } = context();
+
+    const code = await adapterUnbind.run(ctx, ['storage'], { json: true, 'dry-run': true });
+
+    expect(code).toBe(0);
+    expect(outputs[0]).toMatchObject({ ok: true, dryRun: true, changed: true });
+    expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({
+      platform: { adapters: { storage: '@kb-labs/adapters-fs' } },
+    });
   });
 });
