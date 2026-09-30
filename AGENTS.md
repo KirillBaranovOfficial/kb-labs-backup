@@ -2,6 +2,7 @@
 
 ## Non-negotiable rules
 
+- Product cases in `docs/qa/scenarios/` are the product truth (ADR-0050). Work is case-first TDD: first write or edit the case (user expectation, exact steps, observable outcomes), then tests top-down (e2e claiming `S-###.n`, then integration, then unit), and only then code. Never change user-visible behavior without a case change; when code or docs disagree with a case, the case wins.
 - Keep dependency direction: `core` → `sdk`/`shared`/`core/plugin-*` → `cli`/`adapters` → `plugins` → `studio`.
 - Internal dependencies use `workspace:*` only; never use `link:` or pinned internal versions.
 - Treat every directory in `plugins/` as a plugin. Plugin pages use only `@kb-labs/sdk` and contracts, not Studio internals.
