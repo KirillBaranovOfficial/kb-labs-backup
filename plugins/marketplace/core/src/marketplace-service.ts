@@ -152,7 +152,10 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
 
       const resolved = await source.resolve(spec);
-      const result = this.extensionStore
+      // ADR-0048 keeps the shared version store for project plugin pins. A
+      // platform install (including every adapter) belongs in the platform
+      // package graph so adapters can be resolved by the platform runtime.
+      const result = this.extensionStore && ctx.scope === 'project'
         ? await this.installInStore(resolved)
         : await source.install(resolved, scopeRoot, opts);
 
