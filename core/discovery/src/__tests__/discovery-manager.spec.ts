@@ -38,11 +38,11 @@ describe('DiscoveryManager', () => {
 
   it('reports PACKAGE_NOT_FOUND when resolvedPath does not exist', async () => {
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/ghost'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-abc',
       resolvedPath: './nonexistent',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -81,7 +81,7 @@ describe('DiscoveryManager', () => {
 
     // Write lock
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/test-plugin'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/test-plugin'] = createMarketplaceEntry({
       version: '1.2.3',
       integrity,
       resolvedPath: './plugins/test-plugin',
@@ -116,11 +116,11 @@ describe('DiscoveryManager', () => {
     }), 'utf-8');
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/bad-hash'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/bad-hash'] = createMarketplaceEntry({
       version: '1.0.0',
-      integrity: 'sha256-WRONG_HASH',
+      integrity: 'sha256-WRONGHASH',
       resolvedPath: './plugins/bad-hash',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -146,11 +146,11 @@ describe('DiscoveryManager', () => {
     }), 'utf-8');
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/no-verify'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/no-verify'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-WRONG',
       resolvedPath: './plugins/no-verify',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -176,11 +176,11 @@ describe('DiscoveryManager', () => {
     const integrity = `sha256-${crypto.createHash('sha256').update(pkgContent).digest('base64')}`;
 
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/unsigned'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/unsigned'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity,
       resolvedPath: './plugins/unsigned',
-      source: 'marketplace',
+      source: 'platform',
       primaryKind: 'plugin',
       provides: ['plugin'],
     });
@@ -214,7 +214,7 @@ describe('DiscoveryManager', () => {
     for (const [name, dir] of [['dup1', dir1], ['dup2', dir2]] as const) {
       const pkgContent = await fs.readFile(path.join(dir, 'package.json'));
       const integrity = `sha256-${crypto.createHash('sha256').update(pkgContent).digest('base64')}`;
-      lock.installed[name] = createMarketplaceEntry({
+      lock.plugins[name] = createMarketplaceEntry({
         version: '1.0.0', integrity,
         resolvedPath: `./plugins/${name}`, source: 'local', primaryKind: 'plugin', provides: ['plugin'],
       });

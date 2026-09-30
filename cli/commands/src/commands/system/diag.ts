@@ -392,7 +392,7 @@ async function runLockStage(
   }
 
   const [topSegment] = ctx.segments;
-  const entry = findLockEntry(lock.installed, topSegment ?? '');
+  const entry = findLockEntry(lock.plugins, topSegment ?? '');
 
   if (!entry) {
     // Command already confirmed available from registry — not being in the lock is fine
@@ -618,7 +618,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
       }
 
       if (lock) {
-        const entries = Object.entries(lock.installed);
+        const entries = Object.entries(lock.plugins);
         const enabledCount = entries.filter(([, e]) => e.enabled !== false).length;
         const disabledCount = entries.length - enabledCount;
         diagnostics.push({

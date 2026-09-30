@@ -191,7 +191,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         resolvedPath: this.extensionStore
           ? `store:${encodeURIComponent(result.id)}@${encodeURIComponent(result.version)}`
           : relativeToRoot(scopeRoot, result.packageRoot),
-        source: resolved.source,
+        source: ctx.scope === 'platform' && resolved.source === 'marketplace' ? 'platform' : resolved.source,
         primaryKind,
         provides,
         trust,
@@ -250,7 +250,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
 
       // Run pre-uninstall hook
-      const strategy = this.strategies.get(entry.primaryKind);
+      const packageRoot = await this.resolveEntryPath(scopeRoot, id, entry);
+      const kind = packageRoot ? await this.detectKind(packageRoot) : null;
+      const strategy = kind ? this.strategies.get(kind) : undefined;
       if (strategy?.beforeUninstall) {
         await strategy.beforeUninstall(id, this, ctx);
       }
@@ -357,8 +359,8 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       return { installed: [], warnings: ['No marketplace.lock found'], scope: ctx.scope };
     }
 
-    const ids = packageIds ?? Object.keys(lock.installed);
-    const specs = ids.filter(id => id in lock.installed);
+    const ids = packageIds ?? Object.keys(lock.plugins);
+    const specs = ids.filter(id => id in lock.plugins);
 
     return this.install(ctx, specs);
   }
@@ -446,21 +448,25 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         perScope.push({ scope, entries: [] });
         continue;
       }
-      const entries = Object.entries(lock.installed).map(([id, entry]) => ({ ...entry, id }));
+      const entries = [...Object.entries(lock.plugins), ...Object.entries(lock.adapters ?? {})].map(([id, entry]) => ({ ...entry, id }));
       perScope.push({ scope, entries });
     }
 
     const merged = mergeScopedEntries(perScope);
-    return filter?.kind
-      ? merged.entries.filter(e => e.primaryKind === filter.kind)
-      : merged.entries;
+    if (!filter?.kind) return merged.entries;
+    const matching: ScopedMarketplaceEntry[] = [];
+    for (const entry of merged.entries) {
+      const packageRoot = await this.resolveEntryPath(resolveScopeRoot(this.roots, { scope: entry.scope, projectRoot: ctx.projectRoot }), entry.id, entry);
+      if (packageRoot && await this.detectKind(packageRoot) === filter.kind) matching.push(entry);
+    }
+    return matching;
   }
 
   async getEntry(ctx: ScopeContext, packageId: string): Promise<MarketplaceEntry | null> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     const diag = new DiagnosticCollector();
     const lock = await readMarketplaceLock(scopeRoot, diag);
-    return lock?.installed[packageId] ?? null;
+    return lock?.plugins[packageId] ?? lock?.adapters?.[packageId] ?? null;
   }
 
   // -------------------------------------------------------------------------
@@ -500,7 +506,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const autoEnable = opts.autoEnable ?? false;
     const diag = new DiagnosticCollector();
     const lock = await readMarketplaceLock(scopeRoot, diag) ?? createEmptyLock();
-    const existingIds = new Set(Object.keys(lock.installed));
+    const existingIds = new Set(Object.keys(lock.plugins));
 
     const added: SyncResult['added'] = [];
     const skipped: SyncResult['skipped'] = [];
@@ -521,7 +527,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
     await writeMarketplaceLock(scopeRoot, lock);
 
-    return { added, skipped, total: Object.keys(lock.installed).length };
+    return { added, skipped, total: Object.keys(lock.plugins).length };
   }
 
   private async _syncPackage(
@@ -587,7 +593,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
     if (!autoEnable) { entry.enabled = false; }
 
-    lock.installed[resolvedId] = entry;
+    lock.plugins[resolvedId] = entry;
     added.push({ id: resolvedId, primaryKind, version: pkgVersion });
   }
 
@@ -605,22 +611,16 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       return { ok: true, total: 0, issues: [{ severity: 'info', packageId: '', message: 'No marketplace.lock found' }] };
     }
 
-    const entries = Object.entries(lock.installed);
+    const entries = [...Object.entries(lock.plugins), ...Object.entries(lock.adapters ?? {})];
 
     for (const [id, entry] of entries) {
-      const pkgRoot = entry.resolvedPath.startsWith('store:') && this.extensionStore
-        ? (await this.extensionStore.lookup({
-            name: decodeURIComponent(entry.resolvedPath.slice('store:'.length).split('@').slice(0, -1).join('@')),
-            version: entry.version,
-            expectedIntegrity: entry.integrity,
-          }))?.packageRoot
-        : path.resolve(scopeRoot, entry.resolvedPath);
+      const pkgRoot = await this.resolveEntryPath(scopeRoot, id, entry);
 
       if (!pkgRoot) {
         issues.push({
           severity: 'error',
           packageId: id,
-          message: `Pinned package ${id}@${entry.version} is missing from the shared extension store`,
+          message: `Pinned package ${id}@${entry.version ?? 'unknown version'} is missing from its configured location`,
           remediation: `Run "kb marketplace install ${id}" to restore`,
         });
         continue;
@@ -665,6 +665,15 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       total: entries.length,
       issues,
     };
+  }
+
+  private async resolveEntryPath(scopeRoot: string, id: string, entry: MarketplaceEntry): Promise<string | undefined> {
+    if (entry.source === 'marketplace' && this.extensionStore && entry.version) {
+      return (await this.extensionStore.lookup({ name: id, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
+    }
+    if (entry.link) return path.resolve(scopeRoot, entry.link);
+    if (entry.resolvedPath) return path.resolve(scopeRoot, entry.resolvedPath);
+    return undefined;
   }
 
   // -------------------------------------------------------------------------

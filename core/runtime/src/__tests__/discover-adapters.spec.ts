@@ -26,10 +26,7 @@ describe('discoverAdapters (lock-based)', () => {
         version: '1.0.0',
         integrity: 'sha256-abc',
         resolvedPath: './packages/plugin',
-        installedAt: new Date().toISOString(),
-        source: 'local',
-        primaryKind: 'plugin',
-        provides: ['plugin'],
+        source: 'platform',
       },
     });
 
@@ -43,10 +40,7 @@ describe('discoverAdapters (lock-based)', () => {
         version: '1.0.0',
         integrity: 'sha256-abc',
         resolvedPath: './packages/adapter',
-        installedAt: new Date().toISOString(),
-        source: 'local',
-        primaryKind: 'adapter',
-        provides: ['adapter'],
+        source: 'platform',
         enabled: false,
       },
     });
@@ -61,10 +55,7 @@ describe('discoverAdapters (lock-based)', () => {
         version: '1.0.0',
         integrity: 'sha256-abc',
         resolvedPath: './packages/adapter',
-        installedAt: new Date().toISOString(),
-        source: 'local',
-        primaryKind: 'adapter',
-        provides: ['adapter'],
+        source: 'platform',
       },
     });
 
@@ -97,10 +88,8 @@ describe('discoverAdapters (lock-based)', () => {
         version: '1.0.0',
         integrity: 'sha256-abc',
         resolvedPath: './packages/my-adapter',
-        installedAt: new Date().toISOString(),
-        source: 'local',
+        source: 'platform',
         primaryKind: 'adapter',
-        provides: ['adapter'],
       },
     });
 
@@ -200,9 +189,16 @@ describe('discoverAdapters — project wins over platform', () => {
 async function writeLock(root: string, installed: Record<string, unknown>): Promise<void> {
   const lockDir = path.join(root, '.kb');
   await fs.mkdir(lockDir, { recursive: true });
+  const plugins: Record<string, unknown> = {};
+  const adapters: Record<string, unknown> = {};
+  for (const [id, raw] of Object.entries(installed)) {
+    const entry = raw as { primaryKind?: string; version: string; integrity: string; resolvedPath: string; enabled?: boolean };
+    const serialized = { version: entry.version, integrity: entry.integrity, resolvedPath: entry.resolvedPath, enabled: entry.enabled ?? true, source: 'platform' };
+    (entry.primaryKind === 'adapter' ? adapters : plugins)[id] = serialized;
+  }
   await fs.writeFile(
     path.join(lockDir, 'marketplace.lock'),
-    JSON.stringify({ schema: 'kb.marketplace/2', installed }, null, 2),
+    JSON.stringify({ schema: 'kb.marketplace/3', plugins, ...(Object.keys(adapters).length ? { adapters } : {}) }, null, 2),
   );
 }
 
@@ -235,8 +231,7 @@ async function buildAdapter(
       version: '1.0.0',
       integrity: 'sha256-test',
       resolvedPath: `./packages/${pkgSlug}`,
-      installedAt: new Date().toISOString(),
-      source: 'local',
+      source: 'platform',
       primaryKind: 'adapter',
       provides: ['adapter'],
     },

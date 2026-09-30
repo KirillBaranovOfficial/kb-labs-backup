@@ -4,7 +4,7 @@ Marketplace manages plugin and adapter packages for an installed KB Labs platfor
 
 ## Project plugins
 
-Run from the project root. Project plugin versions and enabled state are recorded in `.kb/marketplace.lock`; package files stay in the machine's shared extension store. Install does not update project `package.json`, the package-manager lockfile, or `node_modules`.
+Run from the project root. Schema v3 of `.kb/marketplace.lock` records each plugin's exact version, tarball integrity, source kind, and enabled state. It contains no machine-specific path or install timestamp; runtime resolution uses the machine's shared extension store. Install does not update project `package.json`, the package-manager lockfile, or `node_modules`. Run `kb marketplace sync` to regenerate a v2 lock.
 
 ```bash
 kb marketplace install @kb-labs/commit-entry@1.2.3

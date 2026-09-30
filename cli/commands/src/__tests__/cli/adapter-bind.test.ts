@@ -49,11 +49,12 @@ afterEach(async () => {
 describe('kb adapter bind', () => {
   it('binds an installed machine adapter in the current project config', async () => {
     await writeMarketplaceLock(platformRoot, {
-      schema: 'kb.marketplace/2',
-      installed: {
+      schema: 'kb.marketplace/3',
+      plugins: {},
+      adapters: {
         '@kb-labs/adapters-memory-cache': {
           version: '1.2.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-memory-cache',
-          installedAt: new Date().toISOString(), source: 'marketplace', primaryKind: 'adapter', provides: ['adapter'],
+          enabled: true, source: 'platform',
         },
       },
     });
@@ -84,11 +85,12 @@ describe('kb adapter bind', () => {
 
   it('validates a binding without writing in dry-run mode', async () => {
     await writeMarketplaceLock(platformRoot, {
-      schema: 'kb.marketplace/2',
-      installed: {
+      schema: 'kb.marketplace/3',
+      plugins: {},
+      adapters: {
         '@kb-labs/adapters-memory-cache': {
           version: '1.2.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-memory-cache',
-          installedAt: new Date().toISOString(), source: 'marketplace', primaryKind: 'adapter', provides: ['adapter'],
+          enabled: true, source: 'platform',
         },
       },
     });

@@ -192,8 +192,8 @@ export function createAdaptersRoutes(options: AdaptersRoutesOptions): HostRoutes
       try {
         const project = await showProject(registry, projectId);
         const lock = await readMarketplaceLock(platformRoot, new DiagnosticCollector());
-        const installed = lock?.installed[packageId];
-        if (!installed || installed.primaryKind !== "adapter") {
+        const installed = lock?.adapters?.[packageId];
+        if (!installed) {
           return sendEnvelope(reply, createErrorEnvelope("KB_ADAPTER_NOT_CONFIGURED", {
             cause: `Adapter package ${packageId} is not installed on this platform.`,
             details: { packageId },

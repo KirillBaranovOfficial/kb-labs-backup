@@ -171,9 +171,9 @@ describe('MarketplaceService', () => {
       // Verify lock file
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
       expect(lock).not.toBeNull();
-      expect(lock!.installed['@kb-labs/test-plugin']).toBeDefined();
-      expect(lock!.installed['@kb-labs/test-plugin']!.version).toBe('1.0.0');
-      expect(lock!.installed['@kb-labs/test-plugin']!.source).toBe('marketplace');
+      expect(lock!.plugins['@kb-labs/test-plugin']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/test-plugin']!.version).toBe('1.0.0');
+      expect(lock!.plugins['@kb-labs/test-plugin']!.source).toBe('platform');
     });
 
     it('keeps platform-scope packages in the platform graph when a shared store is configured', async () => {
@@ -217,7 +217,7 @@ describe('MarketplaceService', () => {
       expect(result.installed.map(e => e.id).sort()).toEqual(['@kb-labs/a', '@kb-labs/b']);
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(Object.keys(lock!.installed)).toHaveLength(2);
+      expect(Object.keys(lock!.plugins)).toHaveLength(2);
     });
 
     it('serializes concurrent mutations for the same marketplace scope', async () => {
@@ -252,7 +252,7 @@ describe('MarketplaceService', () => {
 
       expect(maxActive).toBe(1);
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(Object.keys(lock!.installed).sort()).toEqual(['@kb-labs/serial-a', '@kb-labs/serial-b']);
+      expect(Object.keys(lock!.plugins).sort()).toEqual(['@kb-labs/serial-a', '@kb-labs/serial-b']);
     });
 
     it('catches afterInstall hook errors as warnings', async () => {
@@ -296,7 +296,7 @@ describe('MarketplaceService', () => {
 
       // Lock must NOT contain the bogus entry.
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock?.installed['mind']).toBeUndefined();
+      expect(lock?.plugins['mind']).toBeUndefined();
     });
   });
 
@@ -316,13 +316,13 @@ describe('MarketplaceService', () => {
 
       // Verify installed
       let lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/to-remove']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/to-remove']).toBeDefined();
 
       // Uninstall
       await service.uninstall({ scope: "platform" }, ['@kb-labs/to-remove']);
 
       lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/to-remove']).toBeUndefined();
+      expect(lock!.plugins['@kb-labs/to-remove']).toBeUndefined();
       expect(removeSpy).toHaveBeenCalledWith('@kb-labs/to-remove', tmpDir);
     });
 
@@ -339,7 +339,7 @@ describe('MarketplaceService', () => {
       await service.uninstall({ scope: "platform" }, ['@kb-labs/x', '@kb-labs/y']);
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(Object.keys(lock!.installed)).toHaveLength(0);
+      expect(Object.keys(lock!.plugins)).toHaveLength(0);
     });
   });
 
@@ -359,8 +359,8 @@ describe('MarketplaceService', () => {
       expect(result.provides).toContain('cli-command');
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/local-plugin']).toBeDefined();
-      expect(lock!.installed['@kb-labs/local-plugin']!.source).toBe('local');
+      expect(lock!.plugins['@kb-labs/local-plugin']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/local-plugin']!.source).toBe('local');
     });
 
     it('links an unbuilt scaffold package from its validated source manifest', async () => {
@@ -393,8 +393,8 @@ describe('MarketplaceService', () => {
       expect(result.id).toBe('@kb-labs/local-plugin');
       expect(result.primaryKind).toBe('plugin');
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/local-plugin']).toBeDefined();
-      expect(lock!.installed['@kb-labs/local-plugin-entry']).toBeUndefined();
+      expect(lock!.plugins['@kb-labs/local-plugin']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/local-plugin-entry']).toBeUndefined();
     });
 
     it('rejects path outside workspace root (path traversal)', async () => {
@@ -415,7 +415,7 @@ describe('MarketplaceService', () => {
       await service.unlink({ scope: "platform" }, '@kb-labs/to-unlink');
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/to-unlink']).toBeUndefined();
+      expect(lock!.plugins['@kb-labs/to-unlink']).toBeUndefined();
     });
   });
 
@@ -433,11 +433,11 @@ describe('MarketplaceService', () => {
 
       await service.disable({ scope: "platform" }, '@kb-labs/toggle');
       let lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/toggle']!.enabled).toBe(false);
+      expect(lock!.plugins['@kb-labs/toggle']!.enabled).toBe(false);
 
       await service.enable({ scope: "platform" }, '@kb-labs/toggle');
       lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/toggle']!.enabled).toBe(true);
+      expect(lock!.plugins['@kb-labs/toggle']!.enabled).toBe(true);
     });
 
     it('throws when enabling a non-existent package', async () => {
@@ -614,7 +614,7 @@ describe('MarketplaceService', () => {
 
       // Verify lock file updated
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/found-plugin']).toBeDefined();
+      expect(lock!.plugins['@kb-labs/found-plugin']).toBeDefined();
     });
 
     it('skips packages already in lock', async () => {
@@ -640,7 +640,7 @@ describe('MarketplaceService', () => {
       await service.sync({ scope: "platform" }, { include: ['packages/*'], autoEnable: false });
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/auto-disabled']!.enabled).toBe(false);
+      expect(lock!.plugins['@kb-labs/auto-disabled']!.enabled).toBe(false);
     });
 
     it('auto-enables entries when autoEnable is true', async () => {
@@ -651,7 +651,7 @@ describe('MarketplaceService', () => {
       await service.sync({ scope: "platform" }, { include: ['packages/*'], autoEnable: true });
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
-      expect(lock!.installed['@kb-labs/auto-enabled']!.enabled).toBe(true);
+      expect(lock!.plugins['@kb-labs/auto-enabled']!.enabled).toBe(true);
     });
   });
 });

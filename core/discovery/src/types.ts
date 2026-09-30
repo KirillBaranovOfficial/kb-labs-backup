@@ -48,21 +48,23 @@ export type EntityKind =
 // ---------------------------------------------------------------------------
 
 export interface MarketplaceLock {
-  schema: 'kb.marketplace/2';
-  installed: Record<string, MarketplaceEntry>;
+  schema: 'kb.marketplace/3';
+  plugins: Record<string, MarketplaceEntry>;
+  /** Machine-only entries; adapters are never project scoped. */
+  adapters?: Record<string, MarketplaceEntry>;
 }
 
 export interface MarketplaceEntry {
+  /** Source kind for this pin. */
+  source: 'marketplace' | 'local' | 'platform';
   /** Installed version (semver) */
-  version: string;
+  version?: string;
   /** SRI integrity hash (sha256-...) */
-  integrity: string;
-  /** Resolved path to the package root (e.g., ./node_modules/@scope/pkg) */
-  resolvedPath: string;
-  /** ISO timestamp of installation */
-  installedAt: string;
-  /** How this package was installed */
-  source: 'marketplace' | 'local';
+  integrity?: string;
+  /** Runtime-only location for platform lock entries. Never written to project pins. */
+  resolvedPath?: string;
+  /** Project-relative link for explicitly linked local packages. */
+  link?: string;
   /**
    * Trust level: 'trusted' = signed by KB Labs Registry (sealed, no self-upgrade).
    * 'untrusted' = installed from npm/local/workspace. Default: 'untrusted'.
@@ -71,9 +73,9 @@ export interface MarketplaceEntry {
   /** Platform-issued signature (optional, for verified packages) */
   signature?: EntitySignature;
   /** Primary entity kind — discriminator for filtering (e.g., 'plugin', 'adapter') */
-  primaryKind: EntityKind;
+  primaryKind?: EntityKind;
   /** All entity kinds this package provides (extracted from manifest) */
-  provides: EntityKind[];
+  provides?: EntityKind[];
   /** Whether the entity is active (default: true) */
   enabled?: boolean;
   /**

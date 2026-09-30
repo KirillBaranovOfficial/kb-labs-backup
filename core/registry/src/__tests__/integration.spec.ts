@@ -240,7 +240,7 @@ describe('Registry Integration', () => {
 
     // Bad plugin: directory doesn't exist
     const lock = createEmptyLock();
-    lock.installed['@kb-labs/ghost'] = createMarketplaceEntry({
+    lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-fake',
       resolvedPath: './nonexistent',
@@ -252,7 +252,7 @@ describe('Registry Integration', () => {
     const existingLock = JSON.parse(
       await fs.readFile(path.join(root, '.kb', 'marketplace.lock'), 'utf-8'),
     );
-    existingLock.installed['@kb-labs/ghost'] = lock.installed['@kb-labs/ghost'];
+    existingLock.plugins['@kb-labs/ghost'] = lock.plugins['@kb-labs/ghost'];
     await writeMarketplaceLock(root, existingLock);
 
     const registry = await createRegistry({ root });

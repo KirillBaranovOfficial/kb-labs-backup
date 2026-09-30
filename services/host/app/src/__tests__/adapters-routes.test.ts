@@ -119,16 +119,14 @@ describe("createAdaptersRoutes", () => {
 
   it("POST bind writes an installed platform adapter into the project's adapter slot", async () => {
     await writeMarketplaceLock(platformRoot, {
-      schema: "kb.marketplace/2",
-      installed: {
+      schema: "kb.marketplace/3",
+      plugins: {},
+      adapters: {
         "@kb-labs/adapters-memory-cache": {
           version: "1.2.0",
           integrity: "sha256-fixture",
           resolvedPath: "node_modules/@kb-labs/adapters-memory-cache",
-          installedAt: new Date().toISOString(),
-          source: "marketplace",
-          primaryKind: "adapter",
-          provides: ["adapter"],
+          source: "platform",
         },
       },
     });

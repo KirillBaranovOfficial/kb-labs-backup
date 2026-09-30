@@ -12,6 +12,8 @@
 package marketplace
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -23,22 +25,21 @@ import (
 // Schema must match core-discovery's MarketplaceLock schema
 // (core/discovery/src/marketplace-lock.ts) — the TS reader rejects any
 // other value outright.
-const Schema = "kb.marketplace/2"
+const Schema = "kb.marketplace/3"
 
 type Lock struct {
-	Schema    string          `json:"schema"`
-	Installed map[string]Item `json:"installed"`
+	Schema   string          `json:"schema"`
+	Plugins  map[string]Item `json:"plugins"`
+	Adapters map[string]Item `json:"adapters,omitempty"`
 }
 
 type Item struct {
-	Version      string   `json:"version"`
-	Integrity    string   `json:"integrity"`
-	ResolvedPath string   `json:"resolvedPath"`
-	InstalledAt  string   `json:"installedAt"`
-	Source       string   `json:"source"`
-	PrimaryKind  string   `json:"primaryKind"`
-	Provides     []string `json:"provides"`
-	Enabled      bool     `json:"enabled"`
+	Version      string `json:"version"`
+	Integrity    string `json:"integrity"`
+	ResolvedPath string `json:"resolvedPath"`
+	// Source identifies machine-installed platform artifacts.
+	Source  string `json:"source"`
+	Enabled bool   `json:"enabled"`
 }
 
 // WriteLock regenerates .kb/marketplace.lock at platformRoot from the exact
@@ -46,22 +47,13 @@ type Item struct {
 // discoverable registry entities; "platform" and "binary" artifacts are
 // skipped, matching what the pre-cutover scanner reported.
 //
-// Entries carry no integrity hash. core-discovery only verifies it when
-// non-empty (core/discovery/src/discovery-manager.ts), and every V2 artifact
-// is already integrity-checked at resolve time against the sealed release
-// index's SHA256 — re-asserting a second, differently-shaped hash here would
-// just duplicate a check already done upstream.
-//
-// `provides` is set to the artifact's own kind. core-discovery does not
-// actually read this field for routing: it re-derives the real entity kinds
-// (cli-command, rest-route, ws-channel, ...) by loading each plugin's own
-// manifest at scan time (extractEntityKinds in discovery-manager.ts). The
-// lock only needs to name which packages exist and where.
+// The platform lock is machine-local: it records its platform-relative path.
+// SHA256 is converted to standard SRI encoding for the shared TypeScript reader.
 func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Time) error {
 	existing, _ := readLock(platformRoot) // best-effort: preserve `enabled` across re-applies
 
-	lock := Lock{Schema: Schema, Installed: make(map[string]Item)}
-	installedAt := now.UTC().Format(time.RFC3339)
+	lock := Lock{Schema: Schema, Plugins: make(map[string]Item), Adapters: make(map[string]Item)}
+	_ = now // retained for call-site compatibility; lock declarations have no timestamp.
 	for _, a := range artifacts {
 		kind := a.Kind
 		if a.Registry != "" {
@@ -72,23 +64,33 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 		}
 		enabled := true
 		if existing != nil {
-			if prior, ok := existing.Installed[a.ID]; ok {
+			prior, ok := existing.Plugins[a.ID]
+			if kind == "adapter" {
+				prior, ok = existing.Adapters[a.ID]
+			}
+			if ok {
 				enabled = prior.Enabled
 			}
 		}
-		lock.Installed[a.ID] = Item{
+		item := Item{
 			Version:      a.Version,
+			Integrity:    integrityFor(a.SHA256),
 			ResolvedPath: "node_modules/" + a.Package,
-			InstalledAt:  installedAt,
-			Source:       "marketplace",
-			PrimaryKind:  kind,
-			Provides:     []string{kind},
+			Source:       "platform",
 			Enabled:      enabled,
+		}
+		if kind == "adapter" {
+			lock.Adapters[a.ID] = item
+		} else {
+			lock.Plugins[a.ID] = item
 		}
 	}
 
-	if len(lock.Installed) == 0 {
+	if len(lock.Plugins) == 0 && len(lock.Adapters) == 0 {
 		return nil
+	}
+	if len(lock.Adapters) == 0 {
+		lock.Adapters = nil
 	}
 
 	kbDir := filepath.Join(platformRoot, ".kb")
@@ -106,6 +108,17 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 		return err
 	}
 	return os.Rename(tmp, target)
+}
+
+func integrityFor(sha256 string) string {
+	if sha256 == "" {
+		return ""
+	}
+	digest, err := hex.DecodeString(sha256)
+	if err != nil {
+		return ""
+	}
+	return "sha256-" + base64.StdEncoding.EncodeToString(digest)
 }
 
 func readLock(platformRoot string) (*Lock, error) {

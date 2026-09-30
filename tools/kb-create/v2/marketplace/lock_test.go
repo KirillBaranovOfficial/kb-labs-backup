@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	artifacts := []contracts.Artifact{
 		{ID: "@kb-labs/platform-core", Kind: "platform", Package: "@kb-labs/platform-core", Version: "1.0.0"},
 		{ID: "@kb-labs/binary-kbdev", Kind: "binary", Version: "1.0.0"},
-		{ID: "@kb-labs/plugin-commit", Kind: "plugin", Package: "@kb-labs/plugin-commit", Version: "1.2.3"},
+		{ID: "@kb-labs/plugin-commit", Kind: "plugin", Package: "@kb-labs/plugin-commit", Version: "1.2.3", SHA256: strings.Repeat("a", 64)},
 		{ID: "@kb-labs/adapters-sqlite", Kind: "adapter", Package: "@kb-labs/adapters-sqlite", Version: "4.5.6"},
 	}
 
@@ -27,10 +28,10 @@ func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	if lock.Schema != Schema {
 		t.Fatalf("schema = %q, want %q", lock.Schema, Schema)
 	}
-	if len(lock.Installed) != 2 {
-		t.Fatalf("installed = %d entries, want 2 (platform/binary kinds must be excluded): %+v", len(lock.Installed), lock.Installed)
+	if len(lock.Plugins) != 1 || len(lock.Adapters) != 1 {
+		t.Fatalf("plugins/adapters = %d/%d, want 1/1 (non-discoverable kinds must be excluded): %+v", len(lock.Plugins), len(lock.Adapters), lock)
 	}
-	plugin, ok := lock.Installed["@kb-labs/plugin-commit"]
+	plugin, ok := lock.Plugins["@kb-labs/plugin-commit"]
 	if !ok {
 		t.Fatal("plugin entry missing")
 	}
@@ -40,8 +41,11 @@ func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	if !plugin.Enabled {
 		t.Error("fresh entry should default to enabled")
 	}
-	if plugin.Integrity != "" {
-		t.Errorf("integrity should be empty (skips core-discovery's check), got %q", plugin.Integrity)
+	if plugin.Integrity == "" {
+		t.Error("integrity should be carried from the artifact digest")
+	}
+	if adapter, ok := lock.Adapters["@kb-labs/adapters-sqlite"]; !ok || adapter.Source != "platform" {
+		t.Errorf("adapter missing from machine adapters map: %+v", lock.Adapters)
 	}
 }
 
@@ -58,9 +62,9 @@ func TestWriteLock_PreservesDisabledAcrossReapply(t *testing.T) {
 	// Simulate a user disabling the plugin out of band (as `kb marketplace
 	// disable` would).
 	lock := readBack(t, root)
-	entry := lock.Installed["@kb-labs/plugin-commit"]
+	entry := lock.Plugins["@kb-labs/plugin-commit"]
 	entry.Enabled = false
-	lock.Installed["@kb-labs/plugin-commit"] = entry
+	lock.Plugins["@kb-labs/plugin-commit"] = entry
 	writeRaw(t, root, lock)
 
 	// A re-apply with the same artifact must not silently re-enable it.
@@ -68,7 +72,7 @@ func TestWriteLock_PreservesDisabledAcrossReapply(t *testing.T) {
 		t.Fatalf("second WriteLock: %v", err)
 	}
 	after := readBack(t, root)
-	if after.Installed["@kb-labs/plugin-commit"].Enabled {
+	if after.Plugins["@kb-labs/plugin-commit"].Enabled {
 		t.Error("re-apply must preserve a previously disabled entry")
 	}
 }
@@ -120,7 +124,7 @@ func TestWriteLockRegistersPlatformMembersThatArePlugins(t *testing.T) {
 		t.Fatal(err)
 	}
 	lock, err := readLock(root)
-	if err != nil || len(lock.Installed) != 1 || lock.Installed["workflow"].PrimaryKind != "plugin" {
+	if err != nil || len(lock.Plugins) != 1 || lock.Plugins["workflow"].Source != "platform" {
 		t.Fatalf("lock = %+v / %v", lock, err)
 	}
 }

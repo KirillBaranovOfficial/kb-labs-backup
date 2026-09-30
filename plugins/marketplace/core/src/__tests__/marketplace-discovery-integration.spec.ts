@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { DiscoveryManager } from '@kb-labs/core-discovery';
+import { createExtensionStore } from '@kb-labs/core-extension-store';
 import type { PackageSource, InstalledPackage, ResolvedPackage } from '@kb-labs/marketplace-contracts';
 import { MarketplaceService } from '../marketplace-service.js';
 
@@ -88,6 +89,51 @@ describe('Marketplace → Discovery Integration', () => {
     expect(manifest!.cli?.commands).toHaveLength(1);
     expect(manifest!.cli?.commands?.[0]?.path).toBe('review run');
   });
+
+  it('writes a portable v3 pin and resolves it from two independent machine stores', async () => {
+    const projectRoot = path.join(tmpDir, 'project');
+    const storeOneRoot = path.join(tmpDir, 'machine-one');
+    const storeTwoRoot = path.join(tmpDir, 'machine-two');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+    const { dir } = await createPluginOnDisk('portable', '@kb-labs/portable', '1.0.0');
+    const integrity = 'sha512-cG9ydGFibGU=';
+    const installer = {
+      async install(options: { name: string; version: string; projectDir: string }): Promise<{ packageRoot: string; integrity: string }> {
+        const packageRoot = path.join(options.projectDir, 'node_modules', ...options.name.split('/'));
+        await fs.mkdir(path.dirname(packageRoot), { recursive: true });
+        await fs.cp(dir, packageRoot, { recursive: true });
+        return { packageRoot, integrity };
+      },
+    };
+    const source: PackageSource = {
+      async resolve(spec: string): Promise<ResolvedPackage> {
+        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', downloadUrl: `file:${dir}` };
+      },
+      async install(): Promise<InstalledPackage> { throw new Error('store install should be used'); },
+      async remove() {},
+    };
+    const storeOne = createExtensionStore({ root: storeOneRoot, installer });
+    const marketplace = new MarketplaceService({ platformRoot: tmpDir, projectRoot, source, extensionStore: storeOne });
+    await marketplace.install({ scope: 'project' }, ['@kb-labs/portable']);
+
+    const lockFile = path.join(projectRoot, '.kb', 'marketplace.lock');
+    const lockText = await fs.readFile(lockFile, 'utf8');
+    const lock = JSON.parse(lockText);
+    expect(lock.schema).toBe('kb.marketplace/3');
+    expect(lock.plugins['@kb-labs/portable']).toMatchObject({ source: 'marketplace', version: '1.0.0', enabled: true });
+    expect(lock.plugins['@kb-labs/portable'].integrity).toMatch(/^sha(256|512)-/);
+    expect(lockText).not.toMatch(/resolvedPath|installedAt|machine-one|\/Users\/|[A-Z]:\\/);
+
+    const pin = lock.plugins['@kb-labs/portable'];
+    const storeTwo = createExtensionStore({ root: storeTwoRoot, installer });
+    await storeTwo.resolve({ name: '@kb-labs/portable', version: pin.version, kind: 'plugin', spec: `file:${dir}`, expectedIntegrity: pin.integrity });
+    const first = await new DiscoveryManager({ root: projectRoot, platformRoot: tmpDir, extensionStore: storeOne, workspace: false }).discover();
+    const second = await new DiscoveryManager({ root: projectRoot, platformRoot: tmpDir, extensionStore: storeTwo, workspace: false }).discover();
+    expect(first.plugins.map((plugin) => plugin.id)).toEqual(['@kb-labs/portable']);
+    expect(second.plugins.map((plugin) => plugin.id)).toEqual(['@kb-labs/portable']);
+    expect(first.plugins[0]?.packageRoot).not.toBe(second.plugins[0]?.packageRoot);
+  }, 60_000);
 
   it('install → uninstall → discover: plugin is gone after uninstall', async () => {
     const { dir, integrity } = await createPluginOnDisk('temp', '@kb-labs/temp', '1.0.0');
