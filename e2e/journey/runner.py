@@ -152,7 +152,6 @@ def verify_project_mcp(env: dict[str, str], local: bool):
 
 
 def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
-def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
     global MAX_PNPM_RSS_MIB
     master, slave = pty.openpty()
     started = time.monotonic()

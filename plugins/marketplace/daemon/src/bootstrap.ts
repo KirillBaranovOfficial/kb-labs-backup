@@ -9,6 +9,7 @@ import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import { readKbConfig } from "@kb-labs/core-config";
 import { createServer } from "@kb-labs/marketplace-api";
 import { MarketplaceService } from "@kb-labs/marketplace-core";
+import { createExtensionStore } from "@kb-labs/core-extension-store";
 import {
   NpmPackageSource,
   RegistryPackageSource,
@@ -45,6 +46,7 @@ export async function setup({
 
   const service = new MarketplaceService({
     platformRoot,
+    extensionStore: createExtensionStore(),
     source: new NpmPackageSource(),
     registrySource,
   });

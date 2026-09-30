@@ -11,6 +11,7 @@ import {
   configGroup,
   projectGroup,
   mcpGroup,
+  adapterGroup,
 } from "../commands/system/groups";
 import { createCompletionCommand, autoUpdateCompletion } from "../commands/system/completion";
 import { diag } from "../commands/system/diag";
@@ -66,6 +67,7 @@ export async function registerBuiltinCommands(
   registry.registerGroup(configGroup);
   registry.registerGroup(projectGroup);
   registry.registerGroup(mcpGroup);
+  registry.registerGroup(adapterGroup);
 
   // Standalone system commands
   registry.register(createCompletionCommand(registry));

@@ -35,6 +35,8 @@ export interface ConfigureAdapterResult {
   options: Record<string, unknown>;
 }
 
+export interface InstallAdapterResult { id: string; version: string }
+
 export interface ProjectAdaptersDataSource {
   listAdapters(projectId: string): Promise<ProjectAdapterEntry[]>;
   configureAdapter(
@@ -42,4 +44,6 @@ export interface ProjectAdaptersDataSource {
     name: string,
     options: Record<string, unknown>,
   ): Promise<ConfigureAdapterResult>;
+  installAdapter(spec: string): Promise<InstallAdapterResult>;
+  bindAdapter(projectId: string, slot: string, packageId: string): Promise<{ slot: string; packageId: string; file: string; changed: boolean }>;
 }

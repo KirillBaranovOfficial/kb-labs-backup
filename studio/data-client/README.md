@@ -52,6 +52,14 @@ Data Client
 - **Error Handling**: Unified error handling
 - **Envelope Interceptor**: Response envelope interceptor
 
+### Project marketplace actions
+
+`ProjectPluginsDataSource` lists project pins and supports plugin install,
+enable/disable, and uninstall through host `/api/v1/plugins` routes.
+`ProjectAdaptersDataSource` installs adapters at platform scope, binds them
+through `/api/v1/adapters/bind`, and configures project-scoped options. The
+TanStack Query hooks invalidate the selected project's list after mutations.
+
 ## 📦 API Reference
 
 ### Main Exports

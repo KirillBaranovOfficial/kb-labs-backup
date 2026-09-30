@@ -1,15 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mockCLIInput, createCapturedUI, createMockContext } from '@kb-labs/shared-testing-e2e/cli';
 
-const marketplaceAuth = vi.hoisted(() => ({
-  session: null as Record<string, unknown> | null,
-  sessionExpired: false,
-  sessionRefresh: vi.fn(),
-  credentials: null as Record<string, unknown> | null,
-  credentialsExpired: false,
-  credentialsRefresh: vi.fn(),
-}));
-
 // Mock scaffold-core before importing the command
 vi.mock('@kb-labs/scaffold-core', () => ({
   build: vi.fn(),
@@ -25,19 +16,6 @@ vi.mock('@kb-labs/scaffold-core', () => ({
 // Mock shared-cli-ui to prevent ESM issues with formatCommandHelp
 vi.mock('@kb-labs/shared-cli-ui', () => ({
   formatCommandHelp: vi.fn(() => 'scaffold help text'),
-}));
-
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  SessionManager: class {
-    load = async () => marketplaceAuth.session;
-    isExpired = () => marketplaceAuth.sessionExpired;
-    refresh = marketplaceAuth.sessionRefresh;
-  },
-  CredentialsManager: class {
-    load = async () => marketplaceAuth.credentials;
-    isExpired = () => marketplaceAuth.credentialsExpired;
-    refresh = marketplaceAuth.credentialsRefresh;
-  },
 }));
 
 import {
@@ -85,12 +63,6 @@ const MOCK_BUILD_RESULT = {
 beforeEach(() => {
   vi.resetAllMocks();
 
-  marketplaceAuth.session = null;
-  marketplaceAuth.sessionExpired = false;
-  marketplaceAuth.sessionRefresh.mockReset();
-  marketplaceAuth.credentials = null;
-  marketplaceAuth.credentialsExpired = false;
-  marketplaceAuth.credentialsRefresh.mockReset();
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
     ok: true,
     status: 200,
@@ -168,13 +140,8 @@ describe('scaffold:run', () => {
     expect(mockedWriteFiles).toHaveBeenCalled();
   });
 
-  it('SS-06: stale optional session does not prevent local marketplace registration', async () => {
-    marketplaceAuth.session = {
-      accessToken: 'expired', refreshToken: 'expired', gatewayUrl: 'http://127.0.0.1:4000', expiresAt: 0,
-    };
-    marketplaceAuth.sessionExpired = true;
-    marketplaceAuth.sessionRefresh.mockRejectedValue(new Error('session expired'));
-    const { ui } = createCapturedUI();
+  it('prints an explicit marketplace link step after generating files', async () => {
+    const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
     const result = await scaffoldCommand.execute(
@@ -183,9 +150,8 @@ describe('scaffold:run', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(fetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      headers: expect.not.objectContaining({ Authorization: expect.anything() }),
-    }));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(JSON.stringify(captured.success)).toContain('kb marketplace link --link');
   });
 
   it('SS-05: --dry-run with --json — captured.json contains result', async () => {

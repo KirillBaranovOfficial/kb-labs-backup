@@ -34,6 +34,18 @@ export interface SetEnabledParams {
   projectRoot?: string;
 }
 
+export interface InstallPackagesParams {
+  specs: string[];
+  scope: "platform" | "project";
+  projectRoot?: string;
+}
+
+export interface UninstallPackagesParams {
+  packageIds: string[];
+  scope: "platform" | "project";
+  projectRoot?: string;
+}
+
 /** Thrown when the marketplace responds with a non-2xx status. */
 export class MarketplaceClientError extends Error {
   constructor(
@@ -75,6 +87,24 @@ export class MarketplaceClient {
         scope: params.scope,
         ...(params.projectRoot ? { projectRoot: params.projectRoot } : {}),
       }),
+    });
+  }
+
+  async installPackages(params: InstallPackagesParams): Promise<unknown> {
+    const url = new URL("/packages/install", this.baseUrl);
+    return this.request<unknown>(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+  }
+
+  async uninstallPackages(params: UninstallPackagesParams): Promise<void> {
+    const url = new URL("/packages/uninstall", this.baseUrl);
+    await this.request<unknown>(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
     });
   }
 

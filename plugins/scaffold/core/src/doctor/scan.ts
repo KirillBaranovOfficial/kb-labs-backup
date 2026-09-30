@@ -178,7 +178,7 @@ export interface ScanOptions {
    * Workspace root containing `.kb/marketplace.lock`. When provided, each
    * scaffolded plugin found is cross-checked against the lock — missing
    * entries surface as warnings so the user knows to `kb marketplace
-   * plugins link` or rerun `kb scaffold`.
+   * link --link` or rerun `kb scaffold`.
    */
   workspaceRoot?: string;
 }
@@ -244,7 +244,7 @@ export async function scanRoot(
  * plugin's entry package is registered in `.kb/marketplace.lock`.
  *
  * Produces:
- *  - warn  "plugin not registered in marketplace.lock (run `kb marketplace plugins link ...`)"
+ *  - warn  "plugin not registered in marketplace.lock (run `kb marketplace link --link ...`)"
  *  - warn  "lock entry points elsewhere"
  *  - info  "plugin disabled in lock"
  */
@@ -286,7 +286,7 @@ async function checkLockSync(
       out.push({
         severity: 'warn',
         package: pkgName,
-        message: `not registered in marketplace.lock — run: kb marketplace plugins link ${hint}`,
+        message: `not registered in marketplace.lock — run: kb marketplace link --link ${hint}`,
       });
       continue;
     }

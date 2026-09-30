@@ -13,6 +13,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import { glob } from 'glob';
 import type { EntityKind, MarketplaceEntry, MarketplaceLock } from '@kb-labs/core-discovery';
 import {
@@ -41,6 +42,7 @@ import type {
   MarketplaceDiagnostic,
   InstallResult,
   InstallResultEntry,
+  InstalledPackage,
   SyncResult,
   DoctorReport,
   DoctorIssue,
@@ -67,6 +69,8 @@ export interface MarketplaceServiceOptions {
   source: PackageSource;
   /** KB Registry package source — used for specs starting with 'kb:' */
   registrySource?: PackageSource;
+  /** Shared machine store. When set, packages never enter project node_modules. */
+  extensionStore?: IExtensionStore;
   /** Additional strategies beyond built-in plugin/adapter */
   strategies?: EntityKindStrategy[];
 }
@@ -79,6 +83,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   private readonly roots: ServiceRoots;
   private readonly source: PackageSource;
   private readonly registrySource?: PackageSource;
+  private readonly extensionStore?: IExtensionStore;
   private readonly strategies = new Map<EntityKind, EntityKindStrategy>();
   /**
    * Package-manager and marketplace-lock mutations share a scope root. They
@@ -93,6 +98,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     this.roots = { platformRoot: opts.platformRoot, projectRoot: opts.projectRoot };
     this.source = opts.source;
     this.registrySource = opts.registrySource;
+    this.extensionStore = opts.extensionStore;
 
     // Built-in strategies
     this.registerStrategy(new PluginStrategy());
@@ -146,7 +152,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
 
       const resolved = await source.resolve(spec);
-      const result = await source.install(resolved, scopeRoot, opts);
+      // ADR-0048 keeps the shared version store for project plugin pins. A
+      // platform install (including every adapter) belongs in the platform
+      // package graph so adapters can be resolved by the platform runtime.
+      const result = this.extensionStore && ctx.scope === 'project'
+        ? await this.installInStore(resolved)
+        : await source.install(resolved, scopeRoot, opts);
 
       // Detect primary kind via strategies. A null result means the installed
       // package is not a KB Labs entity (no plugin/adapter/... manifest) —
@@ -154,7 +165,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       // lock entry (B-021).
       const primaryKind = await this.detectKind(result.packageRoot);
       if (primaryKind === null) {
-        await source.remove(result.id, scopeRoot).catch(() => undefined);
+        if (!this.extensionStore) {
+          await source.remove(result.id, scopeRoot).catch(() => undefined);
+        }
         throw new InvalidEntityError(
           `Package "${result.id}" (resolved from "${spec}") is not a valid KB Labs entity — ` +
           `no plugin/adapter/workflow manifest found. Nothing was installed. ` +
@@ -175,7 +188,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       const entry = createMarketplaceEntry({
         version: result.version,
         integrity: result.integrity,
-        resolvedPath: relativeToRoot(scopeRoot, result.packageRoot),
+        resolvedPath: this.extensionStore
+          ? `store:${encodeURIComponent(result.id)}@${encodeURIComponent(result.version)}`
+          : relativeToRoot(scopeRoot, result.packageRoot),
         source: resolved.source,
         primaryKind,
         provides,
@@ -187,7 +202,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       await addToMarketplaceLock(scopeRoot, result.id, entry);
 
       // Cache manifest
-      await this.cacheManifest(scopeRoot, result.id, result.packageRoot, primaryKind, result.integrity);
+      if (!this.extensionStore) {
+        await this.cacheManifest(scopeRoot, result.id, result.packageRoot, primaryKind, result.integrity);
+      }
 
       // Run post-install hook
       if (strategy?.afterInstall) {
@@ -240,7 +257,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
       await removeFromMarketplaceLock(scopeRoot, id);
       await removeCacheEntry(scopeRoot, id);
-      await this.source.remove(id, scopeRoot);
+      if (!this.extensionStore) {
+        await this.source.remove(id, scopeRoot);
+      }
     }
   }
 
@@ -384,6 +403,28 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         this.mutationTails.delete(scopeRoot);
       }
     }
+  }
+
+  private async installInStore(
+    resolved: Awaited<ReturnType<PackageSource['resolve']>>,
+  ): Promise<InstalledPackage> {
+    const store = this.extensionStore;
+    if (!store) {
+      throw new Error('Extension store is not configured. Restart the platform with `kb-create start`.');
+    }
+    const entry = await store.resolve({
+      name: resolved.id,
+      version: resolved.version,
+      kind: 'plugin',
+      ...(resolved.downloadUrl ? { spec: resolved.downloadUrl } : {}),
+      ...(resolved.integrity ? { expectedIntegrity: resolved.integrity } : {}),
+    });
+    return {
+      id: entry.entry.name,
+      version: entry.entry.version,
+      packageRoot: entry.packageRoot,
+      integrity: entry.entry.integrity,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -567,7 +608,23 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const entries = Object.entries(lock.installed);
 
     for (const [id, entry] of entries) {
-      const pkgRoot = path.resolve(scopeRoot, entry.resolvedPath);
+      const pkgRoot = entry.resolvedPath.startsWith('store:') && this.extensionStore
+        ? (await this.extensionStore.lookup({
+            name: decodeURIComponent(entry.resolvedPath.slice('store:'.length).split('@').slice(0, -1).join('@')),
+            version: entry.version,
+            expectedIntegrity: entry.integrity,
+          }))?.packageRoot
+        : path.resolve(scopeRoot, entry.resolvedPath);
+
+      if (!pkgRoot) {
+        issues.push({
+          severity: 'error',
+          packageId: id,
+          message: `Pinned package ${id}@${entry.version} is missing from the shared extension store`,
+          remediation: `Run "kb marketplace install ${id}" to restore`,
+        });
+        continue;
+      }
 
       try {
         await fs.access(pkgRoot);

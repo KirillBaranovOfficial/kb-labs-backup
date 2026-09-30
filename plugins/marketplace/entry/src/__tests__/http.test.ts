@@ -12,16 +12,16 @@ vi.mock('@kb-labs/sdk', () => ({
 }));
 
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  SessionManager: vi.fn().mockImplementation(() => ({
-    load: sessionLoad,
-    refresh: sessionRefresh,
-    isExpired: sessionIsExpired,
-  })),
-  CredentialsManager: vi.fn().mockImplementation(() => ({
-    load: credentialsLoad,
-    refresh: credentialsRefresh,
-    isExpired: credentialsIsExpired,
-  })),
+  SessionManager: class {
+    load = sessionLoad;
+    refresh = sessionRefresh;
+    isExpired = sessionIsExpired;
+  },
+  CredentialsManager: class {
+    load = credentialsLoad;
+    refresh = credentialsRefresh;
+    isExpired = credentialsIsExpired;
+  },
 }));
 
 import { get } from '../http.js';
@@ -88,5 +88,29 @@ describe('marketplace HTTP authentication', () => {
     );
     expect(sessionRefresh).not.toHaveBeenCalled();
     expect(credentialsRefresh).not.toHaveBeenCalled();
+  });
+
+  it('renders marketplace error envelopes without leaking raw response JSON', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: false,
+      error: { code: 'KB_PLUGIN_NOT_FOUND', message: 'Plugin was not found', hint: 'Install it with kb marketplace install <package>.' },
+      internal: 'secret detail',
+    }), { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(get('/packages')).rejects.toThrow(
+      'Marketplace request failed (404): Plugin was not found. Next: Install it with kb marketplace install <package>.',
+    );
+    await expect(get('/packages')).rejects.not.toThrow('secret detail');
+  });
+
+  it('points timeout recovery at the installed platform commands', async () => {
+    const abort = new Error('aborted');
+    abort.name = 'AbortError';
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abort));
+
+    await expect(get('/packages')).rejects.toThrow(
+      'Marketplace /packages timed out. Check the installed platform with `kb-create status`; start it with `kb-create start` if it is stopped.',
+    );
   });
 });

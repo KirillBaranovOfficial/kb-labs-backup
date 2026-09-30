@@ -7,6 +7,7 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { type ManifestV3 } from '@kb-labs/plugin-contracts';
+import { createExtensionStore } from '@kb-labs/core-extension-store';
 import type {
   DiscoveryResult,
   DiscoveredPlugin,
@@ -176,11 +177,22 @@ export class DiscoveryManager {
       const lock = await readMarketplaceLock(root, diag);
       if (!lock) {continue;}
       for (const [id, entry] of Object.entries(lock.installed)) {
+        const storePin = entry.resolvedPath.startsWith('store:') ? entry.resolvedPath.slice('store:'.length) : undefined;
+        const storeName = storePin ? decodeURIComponent(storePin.slice(0, storePin.lastIndexOf('@'))) : undefined;
+        const packageRoot = storePin && storeName
+          ? (await createExtensionStore().lookup({ name: storeName, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot
+          : path.resolve(root, entry.resolvedPath);
+        if (!packageRoot) {
+          diag.error('PLUGIN_STORE_MISSING', `Pinned package ${id}@${entry.version} is missing from the shared store`, {
+            remediation: 'Run "kb marketplace install ' + id + '" to restore the pinned version',
+          });
+          continue;
+        }
         locked.set(id, {
           id,
           scope,
           origin: entry.source === 'local' ? 'linked' : 'node_modules',
-          packageRoot: path.resolve(root, entry.resolvedPath),
+          packageRoot,
           root,
           entry,
         });
@@ -250,7 +262,7 @@ export class DiscoveryManager {
 
     // Verify integrity for non-local packages. Local packages change frequently
     // (rebuilds, version bumps) — integrity is updated at install/sync time, not here.
-    if (this.verifyIntegrity && entry?.integrity && entry.source !== 'local') {
+    if (this.verifyIntegrity && entry?.integrity && entry.source !== 'local' && !entry.resolvedPath.startsWith('store:')) {
       const ok = await this.checkIntegrity(packageRoot, entry.integrity, id, diag);
       if (!ok) {
         return fail('integrity', `Integrity mismatch for "${id}"`);

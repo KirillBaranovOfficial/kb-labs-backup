@@ -256,32 +256,33 @@ Edit your workspace's `.kb/kb.config.json` and swap the `cache` entry:
 }
 ```
 
-The adapter package name in `platform.adapters.cache` must match your published package name. For local development, link the package into your workspace:
+The adapter package name in `platform.adapters.cache` must match your published package name. Install it at machine scope and bind it from the project root:
 
 ```bash
-pnpm link /absolute/path/to/packages/memcache-adapter
+kb marketplace install @example/adapters-memcache@0.1.0 --scope platform
+kb adapter bind cache @example/adapters-memcache
 ```
 
-Or, if you're using pnpm workspaces, add the package to the workspace and reference it via `workspace:*`.
+The install command adds the adapter to the platform package graph. The bind command records the slot in the project config after checking the platform marketplace lock.
 
 ## Step 6 — Restart services
 
 Adapters load at service startup:
 
 ```bash
-kb-dev restart
+kb-create restart
 ```
 
-Check the REST API logs for adapter init:
+Check platform health after the restart:
 
 ```bash
-kb-dev logs rest | grep -i cache
+kb health
 ```
 
 You should see something like:
 
 ```
-[rest] Loaded adapter: cache (memcache, v0.1.0)
+Adapter initialization errors are reported in the health diagnostics.
 ```
 
 ## Step 7 — Test it from a plugin

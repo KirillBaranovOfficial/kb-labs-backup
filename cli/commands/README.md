@@ -230,11 +230,25 @@ pnpm build
 ```
 
 ### Adding New Commands
-
 1. Run `kb plugins scaffold my-plugin` to generate a manifest v2 skeleton.
 2. Implement your command handler in `src/commands/<name>.ts`.
 3. Update manifest permissions and metadata as needed.
 4. Build your package and test with `kb marketplace plugins list`.
+
+### Binding an installed adapter
+
+`kb adapter bind <slot> <package-id>` writes the adapter package into the
+current project's `platform.adapters.<slot>` config. The command reads the
+platform `.kb/marketplace.lock` first and refuses packages that are missing or
+not recorded as adapters. Install the package at machine scope before binding:
+
+```bash
+kb marketplace install @kb-labs/adapters-fs@1.2.3 --scope platform
+kb adapter bind storage @kb-labs/adapters-fs
+```
+
+`--dry-run` validates the binding without writing project config; `--json`
+returns the same operation result as a machine-readable object.
 
 ## Migration from Legacy Commands
 

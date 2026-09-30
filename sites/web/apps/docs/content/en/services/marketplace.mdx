@@ -1,220 +1,65 @@
 ---
 title: "Marketplace"
-description: "Install, manage, and discover entities (plugins, adapters, workflows) via npm."
-updatedAt: "2026-04-07"
+description: "Install plugins into the shared machine store and manage project pins and adapters."
+updatedAt: "2026-09-30"
 order: 4
 ---
 
-The marketplace service is how plugins, adapters, and other entities get installed into a KB Labs workspace. It wraps npm (today — a native registry is on the roadmap) behind a unified HTTP API and writes the resolved installations into `.kb/marketplace.lock`, which is then read by the discovery layer at CLI and service startup.
+The marketplace manages extension packages for the installed KB Labs platform. Plugin installs made from a project leave its package manifest, package-manager lockfile, and `node_modules` alone. The project records its selected plugin version and enabled state in `.kb/marketplace.lock`.
 
-It's a small Fastify service. Source: [plugins/marketplace/daemon/](plugins/marketplace/daemon/).
+## Install and manage a project plugin
 
-## Service manifest
+Run these commands from the project root:
 
-```ts
-{
-  schema: 'kb.service/1',
-  id: 'marketplace',
-  name: 'Marketplace',
-  version: '1.0.0',
-  description: 'Unified entity marketplace — install, manage, discover',
-  runtime: {
-    entry: 'dist/index.js',
-    port: 5070,
-    healthCheck: '/health',
-  },
-  env: {
-    PORT: { description: 'HTTP port', default: '5070' },
-    NODE_ENV: { description: 'Environment mode', default: 'development' },
-  },
-}
+```bash
+kb marketplace install @kb-labs/commit-entry@1.2.3
+kb marketplace plugins list
+kb marketplace plugins disable @kb-labs/commit-entry
+kb marketplace plugins enable @kb-labs/commit-entry
+kb marketplace uninstall @kb-labs/commit-entry
 ```
 
-Source: [plugins/marketplace/daemon/src/manifest.ts](plugins/marketplace/daemon/src/manifest.ts).
+Replace the example package and version with the published plugin you need. Commit `.kb/marketplace.lock` to share the project pin. The package itself is kept in the machine's shared extension store. If a project pin points to a missing store entry, reinstall it with `kb marketplace install <package[@version]>`.
 
-## Why a service?
+A local plugin can be linked explicitly after building it:
 
-Install, uninstall, and upgrade operations all have to:
-
-- Resolve the package from a registry.
-- Verify integrity and (eventually) signatures.
-- Update `.kb/marketplace.lock`.
-- Surface progress events so Studio can show a spinner.
-- Trigger a registry refresh in any running services (CLI, REST API, workflow daemon).
-
-Doing all that from inside every consumer (CLI, REST, Studio) would mean duplicating the install logic and coordinating concurrent writes to the lock file. Centralizing it in a single service solves both problems — everyone else becomes a client of the marketplace HTTP API.
-
-## Architecture
-
-```
-    CLI / Studio / REST
-         │
-         ▼
-    Marketplace HTTP :5070
-         │
-    ┌────┴─────┐
-    ▼          ▼
- Fastify    MarketplaceService
-                 │
-                 ▼
-           NpmPackageSource
-                 │
-                 ▼
-              pnpm / npm
-                 │
-                 ▼
-          .kb/marketplace.lock
+```bash
+pnpm build
+kb marketplace link --link .kb/plugins/my-plugin/packages/my-plugin-entry
 ```
 
-From [`bootstrap.ts`](plugins/marketplace/daemon/src/bootstrap.ts):
+Build the generated workspace before linking its entry package. The path is relative to the project root, and the link is recorded in `.kb/marketplace.lock`.
 
-1. Call `runService()` with the marketplace app ID, assembly hook, and service setup.
-2. `runService()` resolves roots, loads layered `.env`, and initializes the platform singleton.
-3. Construct `MarketplaceService` with an `NpmPackageSource`.
-4. Create a Fastify server via `@kb-labs/marketplace-api`.
-5. Listen on `port` (default 5070).
-6. Return teardown from setup; `runService()` owns graceful shutdown.
+To create that workspace from an existing project, run `kb scaffold run plugin my-plugin`, then follow its printed build and link steps. The first command is available after the link succeeds.
 
-The service is deliberately thin. `MarketplaceService` holds the business logic; the Fastify layer is pure HTTP wrapping.
+## Install and bind an adapter
 
-## Packages
+Adapters are installed at machine scope, while a project chooses the installed package for a slot in its own config:
 
-The marketplace is a small monorepo in itself — the daemon lives alongside the libraries it consumes:
-
-| Package | Purpose |
-|---|---|
-| `@kb-labs/marketplace-core` | The `MarketplaceService` class and `PackageSource` interface |
-| `@kb-labs/marketplace-npm` | `NpmPackageSource` — `pnpm` wrapper that installs, resolves, and introspects packages |
-| `@kb-labs/marketplace-api` | Fastify routes (`createServer()`) |
-| `@kb-labs/marketplace-app` | The daemon binary that wires everything together |
-
-Only `marketplace-npm` depends on `execa` / `pnpm` — everything else is vendor-agnostic, so a future `RegistryPackageSource` can be dropped in without touching the core or API.
-
-## `PackageSource` interface
-
-`NpmPackageSource` is the current implementation; the interface exists so that other sources (internal registry, OCI registry, local link) can be added without changing core behavior. The contract is in `@kb-labs/marketplace-contracts`.
-
-The source is responsible for:
-
-- **Resolving** — turning a package spec (name, version) into a concrete downloadable artifact.
-- **Installing** — fetching the artifact into `node_modules`.
-- **Inspecting** — reading the installed package's `package.json` + manifest.
-- **Uninstalling** — removing the artifact from `node_modules`.
-
-## Entity kinds
-
-The marketplace is **unified** — it handles more than just plugins. The entity kinds come from `@kb-labs/core-discovery`:
-
-```ts
-type EntityKind =
-  | 'plugin'
-  | 'adapter'
-  | 'cli-command'
-  | 'rest-route'
-  | 'ws-channel'
-  | 'workflow'
-  | 'webhook'
-  | 'job'
-  | 'cron'
-  | 'studio-widget'
-  | 'studio-menu'
-  | 'studio-layout'
-  | 'skill'
-  | 'hook'
-  | (string & {});
+```bash
+kb marketplace install @kb-labs/adapters-fs@1.2.3 --scope platform
+kb adapter bind storage @kb-labs/adapters-fs
 ```
 
-When a package is installed, the marketplace inspects its manifest and records `primaryKind` (the discriminator) plus `provides` (all kinds it contributes) in the lock file. This lets clients filter — "list all installed plugins" or "list everything that provides a workflow".
+`kb adapter bind` writes `platform.adapters.storage` in the current project's `.kb/kb.config.json[c]`. It refuses packages that are absent from the platform lock or are not adapters. Use `kb config set platform.adapterOptions.storage '{"baseDir":".kb/storage"}'` to configure adapter options in the project.
 
-## Lock file format
+Studio's project Plugins page accepts a package spec and installs or uninstalls through host routes; its enable switch updates the project lock. The Adapters page installs a package at machine scope, binds it to the selected project's slot, and configures its options. The bind API is:
 
-Every install writes to `.kb/marketplace.lock`:
+```http
+POST /api/v1/adapters/bind
+Content-Type: application/json
 
-```ts
-interface MarketplaceLock {
-  schema: 'kb.marketplace/2';
-  installed: Record<string, MarketplaceEntry>;
-}
-
-interface MarketplaceEntry {
-  version: string;
-  integrity: string;               // SRI hash of package.json (sha256-...)
-  resolvedPath: string;            // relative to repo root
-  installedAt: string;             // ISO 8601
-  source: 'marketplace' | 'local';
-  signature?: EntitySignature;
-  primaryKind: EntityKind;
-  provides: EntityKind[];
-  enabled?: boolean;               // default true
-}
+{"projectId":"prj_example","slot":"cache","packageId":"@kb-labs/adapters-fs"}
 ```
 
-The lock file is **the single source of truth** for the discovery layer. Every CLI startup and every service bootstrap reads this file via `DiscoveryManager.discover()` ([core-discovery](core/discovery/src/discovery-manager.ts)) and loads the manifests it points at.
+The response is an `{ "ok": true, "data": ... }` envelope. The gateway's configured local or secured access policy applies to these routes.
 
-- `source: 'marketplace'` — installed via `kb marketplace install`. Integrity mismatches are fatal.
-- `source: 'local'` — linked via `kb marketplace link`. Integrity mismatches are silently refreshed, because local packages change on every build.
+## Lock ownership
 
-See [Plugins → Overview → Discovery](/plugins#discovery) for the full discovery flow.
+`.kb/marketplace.lock` is read by shared discovery. Project plugin installs and enable/disable actions update the project lock; uninstall removes the project pin. Platform adapter installs update the platform lock and platform package graph. Binding an adapter changes only the project's config. Installing a project plugin does not modify `package.json`, the package-manager lockfile, or `node_modules`.
 
 ## HTTP API
 
-The API is mounted by `createServer()` in `@kb-labs/marketplace-api`. The surface covers:
+The marketplace module exposes package management below `/api/v1/marketplace` on the host gateway. Package actions use request bodies, for example `POST /api/v1/marketplace/packages/install` with `{"specs":["@kb-labs/example@1.2.3"],"scope":"project"}`. Adapter project APIs are host-owned at `/api/v1/adapters`; they require a registered `projectId`.
 
-- **Install** — `POST /install` with a package spec; returns the resolved entry.
-- **Uninstall** — `DELETE /packages/<name>`.
-- **Update** — `POST /packages/<name>/update`.
-- **Link** — `POST /link` with a local path for dev mode.
-- **Unlink** — `DELETE /packages/<name>/link`.
-- **List** — `GET /packages` with optional `kind` filter.
-- **Inspect** — `GET /packages/<name>` returns the entry plus the parsed manifest.
-- **Enable/Disable** — `PATCH /packages/<name>` with `{ enabled: boolean }`.
-- **Health / Readiness / OpenAPI** — standard `@kb-labs/shared-http` endpoints at `/health`, `/ready`, `/openapi.json`, `/docs`.
-
-The CLI commands (`kb marketplace install`, `kb marketplace list`, etc.) are thin HTTP clients that call this API.
-
-## Port 5070
-
-The service binds to port 5070 by default. Override via `KB_MARKETPLACE_PORT` or `PORT` in env. The bind host is `0.0.0.0` by default; override via `KB_MARKETPLACE_HOST`.
-
-`kb-dev` launches it on the default port and `kb-dev status` will show it under the `backend` group.
-
-## Starting the service
-
-```bash
-kb-dev start marketplace
-```
-
-Or directly:
-
-```bash
-cd plugins/marketplace/daemon
-node ./dist/index.js
-```
-
-The service reads `kb.config.json` from the repo root for platform configuration (logger, cache). There's no marketplace-specific config file.
-
-## CLI and lock cache
-
-After an install, running services (CLI, REST API, workflow daemon) each have their own registry cache in memory. Freshly installed entities don't appear until those caches are refreshed:
-
-```bash
-```
-
-This is the #1 source of "my plugin built but doesn't show up" confusion. The rule is: after any marketplace install, link, or rebuild of a linked plugin, clear the cache.
-
-## Graceful shutdown
-
-On `SIGTERM` / `SIGINT`:
-
-1. Log receipt of the signal.
-2. Close the Fastify server.
-3. Exit with code 0.
-
-No in-flight operation draining — installs are typically fast, and the npm subprocess (if one is running) is left to finish or fail on its own. If an install gets interrupted in the middle of writing the lock file, the lock is left in whatever state it was in and you may need to recover manually.
-
-## What to read next
-
-- [Plugins → Publishing](/plugins/publishing) — how plugin authors get their packages into the marketplace.
-- [Plugins → Overview → Discovery](/plugins#discovery) — how installed packages turn into live plugins.
-- [Concepts → Plugin System](/concepts/plugin-system#discovery-is-marketplace-driven) — the conceptual picture.
-- [Services → REST API](/services/rest-api) — sibling service with similar bootstrap patterns.
+Local platforms bind the gateway to loopback and do not require login. Secured platforms require an authenticated session. In secured mode, sign in with `kb auth login` before running a marketplace mutation.

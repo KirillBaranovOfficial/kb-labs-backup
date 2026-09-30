@@ -102,3 +102,7 @@ launcher's process contract, not to this package):
 
 Exit code 1 with a JSON error envelope on stderr means startup was refused;
 exit code 0 follows a clean signal shutdown.
+
+## Adapter project API
+
+The host exposes project adapter configuration at `/api/v1/adapters`. `GET /api/v1/adapters?projectId=<id>` lists the selected project's slots and options; `POST /api/v1/adapters/:name/configure` writes project-scoped options. `POST /api/v1/adapters/bind` accepts `{ "projectId": "prj_…", "slot": "cache", "packageId": "@kb-labs/adapters-fs-cache" }`. The bind route verifies that the platform `.kb/marketplace.lock` contains that package as an adapter, then writes `platform.adapters.<slot>` to the project's user config. Gateway local/secured auth policy covers these routes.

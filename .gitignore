@@ -174,3 +174,6 @@ tools/kb-env/kb-env
 # Tarballs `release stage plan` publishes to the staging registry; the pack-static /
 # pack-install checks verify these instead of re-packing.
 .kb/release/staging/
+
+# Local gate run reports
+.kb/local-gate/

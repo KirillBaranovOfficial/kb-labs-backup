@@ -58,4 +58,17 @@ export class MockProjectAdaptersSource implements ProjectAdaptersDataSource {
       options: found.options,
     };
   }
+
+  async installAdapter(spec: string): Promise<{ id: string; version: string }> {
+    const split = spec.lastIndexOf('@');
+    return { id: split > 0 ? spec.slice(0, split) : spec, version: split > 0 ? spec.slice(split + 1) : '1.0.0' };
+  }
+
+  async bindAdapter(projectId: string, slot: string, packageId: string) {
+    const entries = this.entriesFor(projectId);
+    const existing = entries.find((entry) => entry.name === slot);
+    if (existing) { existing.spec = packageId; }
+    else { entries.push({ name: slot, spec: packageId, options: {} }); }
+    return { slot, packageId, file: `/workspace/${projectId}/.kb/kb.config.jsonc`, changed: true };
+  }
 }

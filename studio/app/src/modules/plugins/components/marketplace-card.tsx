@@ -60,7 +60,7 @@ export function MarketplaceCard({ plugin, onClick }: MarketplaceCardProps) {
   const extra = hasError ? (
     <UITag variant="error">Invalid</UITag>
   ) : (
-    <UITag variant="success">Installed</UITag>
+    <UITag variant="neutral">Catalog entry</UITag>
   );
 
   return (

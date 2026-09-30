@@ -1,0 +1,47 @@
+---
+title: Plugin and adapter marketplace
+description: Install project plugins and machine-level adapters.
+lang: en
+slug: marketplace
+---
+
+## Install a plugin in a project
+
+From a KB Labs project, install a plugin at an exact version:
+
+```bash
+kb marketplace install @kb-labs/commit-entry@1.2.3
+```
+
+The project records its version and enabled state in `.kb/marketplace.lock`. The package lives in the machine's shared extension store; the install does not change your `package.json`, package-manager lockfile, or `node_modules`. Commit the marketplace lock with your project.
+
+## Develop a local plugin
+
+From a KB Labs project, scaffold and build a plugin, then link its entry package with a project-relative path:
+
+```bash
+kb scaffold run plugin my-plugin
+cd .kb/plugins/my-plugin
+pnpm install
+pnpm -w build
+cd ../../..
+kb marketplace link --link .kb/plugins/my-plugin/packages/my-plugin-entry
+kb my-plugin hello
+```
+
+The link command records the local package in `.kb/marketplace.lock`; generated files are not registered automatically.
+
+Use `kb marketplace plugins disable <package>` and `kb marketplace plugins enable <package>` to change the project pin's enabled state. `kb marketplace uninstall <package>` removes the pin.
+
+## Install and bind an adapter
+
+Install the adapter in the platform package graph, then bind it to a slot for this project:
+
+```bash
+kb marketplace install @kb-labs/adapters-fs@1.2.3 --scope platform
+kb adapter bind storage @kb-labs/adapters-fs
+```
+
+The bind command writes `platform.adapters.storage` to the current project's `.kb/kb.config.json[c]`. Adapter options remain per-project and can be set with `kb config set platform.adapterOptions.storage '{"baseDir":".kb/storage"}'`. In Studio, use the selected project's **Plugins** page to install, enable, disable, or uninstall plugins. Use **Adapters** to install a machine adapter, bind it to a project slot, and configure its options.
+
+The bind fails if the package is not listed as an adapter in the platform marketplace lock. Install it first with the exact `kb marketplace install … --scope platform` command shown above.

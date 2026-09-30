@@ -1,9 +1,9 @@
 import { defineCommand, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
-import * as path from 'node:path';
 import { post } from '../../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../../scope.js';
 
 interface LinkFlags {
+  link?: string;
   scope?: string;
   json?: boolean;
   'dry-run'?: boolean;
@@ -24,12 +24,13 @@ interface LinkResponse {
 }
 
 export default defineCommand<unknown, LinkInput, { id: string; scope: string }>({
-  id: 'marketplace:plugins:link',
+  id: 'marketplace:link',
   description: 'Link a local plugin for development',
 
   handler: {
     async intent(_ctx: PluginContextV3, input: LinkInput) {
-      const pluginPath = input.argv?.[0] ?? '(unknown)';
+      const flags = (input.flags ?? input) as LinkFlags;
+      const pluginPath = flags.link ?? input.argv?.[0] ?? '(unknown)';
       return {
         summary: `Link local plugin at "${pluginPath}"`,
         operations: [{ type: 'create' as const, resource: 'plugin-link', details: { path: pluginPath } }],
@@ -37,11 +38,11 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
     },
 
     async execute(ctx: PluginContextV3, input: LinkInput): Promise<CommandResult<{ id: string; scope: string }>> {
-      const pluginPath = input.argv?.[0];
       const flags = (input.flags ?? input) as LinkFlags;
+      const pluginPath = flags.link ?? input.argv?.[0];
 
       if (!pluginPath) {
-        validationError(ctx, 'Specify a plugin path to link', 'Usage: kb marketplace plugins link <path>', flags.json);
+        validationError(ctx, 'Specify a project-relative package path to link', 'Usage: kb marketplace link --link <relative-path>', flags.json);
         return { ok: false, error: 'A plugin path is required', result: { id: '', scope: '' } };
       }
 
@@ -58,10 +59,12 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
       }
 
       try {
-        // Resolve path against cwd so the daemon always receives an absolute
-        // location. Keeps the server side from inheriting any ambient cwd.
-        const absPath = path.resolve(ctx.cwd, pluginPath);
-        const result = await post<LinkResponse>(`/packages/link`, { path: absPath, ...scopeBody(scopeCtx) });
+        // The path is relative to the resolved marketplace scope root. This
+        // keeps platform adapter links usable without exposing machine paths.
+        if (pluginPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(pluginPath)) {
+          throw new Error('The --link path must be relative to the selected scope directory.');
+        }
+        const result = await post<LinkResponse>(`/packages/link`, { path: pluginPath, ...scopeBody(scopeCtx) });
 
         if (flags.json) {
           ctx.ui?.json?.({ ok: true, id: result.id, scope: result.scope });
