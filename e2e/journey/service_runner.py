@@ -60,8 +60,19 @@ def expect(path: str, expected: set[int], capability: str, *, method="GET", payl
     return None
 
 
+def expect_json(path: str, capability: str, *, token="") -> str | None:
+    status, body, _ = request(path, token=token)
+    if status != 200:
+        detail = body.get("message", body.get("error", "")) if isinstance(body, dict) else ""
+        suffix = f" ({detail})" if detail else ""
+        return f"{capability} unavailable: GET {path} returned HTTP {status}{suffix}"
+    if not isinstance(body, dict):
+        return f"{capability} returned HTTP 200 without a JSON object"
+    return None
+
+
 def checks(mode: str):
-    yield ("gateway readiness", "gateway", lambda: expect("/ready", {200}, "gateway readiness"))
+    yield ("gateway readiness", "gateway", lambda: expect_json("/ready", "gateway readiness"))
     if mode == "secured":
         def admin_login():
             if not ADMIN_PASSWORD:
@@ -90,13 +101,15 @@ def checks(mode: str):
     yield ("project registration", "projects", project)
     pid = PROJECT_ID or "{projectId}"
     auth_token = lambda: os.getenv("KB_JOURNEY_SERVICE_TOKEN", token)
-    yield ("workflow health", "workflow", lambda: expect(
-        f"/api/v1/projects/{pid}/workflow/health", {200}, "project-aware workflow health", token=auth_token()))
+    yield ("workflow health", "workflow", lambda: expect_json(
+        f"/api/v1/projects/{pid}/workflow/health", "project-aware workflow health", token=auth_token()))
     yield ("workflow discovery", "workflow", lambda: discover_workflow(pid, auth_token()))
     yield ("workflow execution endpoint", "workflow", lambda: expect(
         f"/api/v1/projects/{pid}/workflow/api/v1/workflows/e2e-hello/runs", {200, 201, 202},
         "project-aware workflow run endpoint", method="POST", payload={"trigger": {"type": "manual"}}, token=auth_token()))
+    yield ("project-scoped MCP initialize", "mcp", lambda: mcp_initialize(pid, auth_token()))
     yield ("project-scoped MCP tools/list", "mcp", lambda: mcp_probe(pid, auth_token()))
+    yield ("project-scoped MCP diagnostics", "mcp", lambda: mcp_diagnostics(pid, auth_token()))
     yield ("Studio shell", "studio", lambda: expect("/", {200}, "Studio shell"))
     yield ("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
     yield ("marketplace registry", "marketplace", lambda: expect(f"/api/v1/projects/{pid}/rest/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
@@ -123,28 +136,71 @@ def discover_workflow(project_id: str, token: str) -> str | None:
     return None
 
 
-def mcp_probe(project_id: str, token: str) -> str | None:
-    if project_id == "{projectId}":
-        return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
+def _mcp_response(project_id: str, token: str, payload: dict) -> tuple[int, object]:
     status, body, _ = request(f"/api/v1/projects/{project_id}/mcp", method="POST", token=token,
-                              accept="application/json, text/event-stream",
-                              payload={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
-    if status != 200:
-        return f"project-scoped MCP tools/list unavailable: POST /api/v1/projects/{project_id}/mcp returned HTTP {status}; enable the project MCP runtime and rerun the service journey"
+                              accept="application/json, text/event-stream", payload=payload)
     if isinstance(body, str) and any(line.startswith("data:") for line in body.splitlines()):
         data = "\n".join(line[5:].strip() for line in body.splitlines() if line.startswith("data:"))
         try:
             body = json.loads(data)
         except json.JSONDecodeError:
-            return "project-scoped MCP tools/list returned an invalid SSE JSON-RPC event"
+            return status, None
+    return status, body
+
+
+def mcp_initialize(project_id: str, token: str) -> str | None:
+    if project_id == "{projectId}":
+        return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
+    status, body = _mcp_response(project_id, token, {
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2025-03-26", "capabilities": {},
+                   "clientInfo": {"name": "kb-labs-journey", "version": "1.0.0"}},
+    })
+    if status != 200:
+        return f"project-scoped MCP initialize unavailable: POST /api/v1/projects/{project_id}/mcp returned HTTP {status}; enable the project MCP runtime and rerun the service journey"
+    result = body.get("result") if isinstance(body, dict) else None
+    if not isinstance(result, dict) or result.get("protocolVersion") != "2025-03-26":
+        return "project-scoped MCP initialize returned no result for protocol version 2025-03-26"
+    return None
+
+
+def mcp_probe(project_id: str, token: str) -> str | None:
+    if project_id == "{projectId}":
+        return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
+    status, body = _mcp_response(project_id, token, {
+        "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {},
+    })
+    if status != 200:
+        return f"project-scoped MCP tools/list unavailable: POST /api/v1/projects/{project_id}/mcp returned HTTP {status}; enable the project MCP runtime and rerun the service journey"
     if not isinstance(body, dict) or not isinstance(body.get("result"), dict):
         return "project-scoped MCP tools/list returned no JSON-RPC result"
     tools = body["result"].get("tools")
     if not isinstance(tools, list) or not tools:
         return "project-scoped MCP tools/list returned no project tools"
+    names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
+    expected = {"commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics"}
+    if not expected <= names:
+        return f"project-scoped MCP tools/list omitted expected tools: {sorted(expected - names)}"
     if any(not isinstance(tool, dict) or not isinstance(tool.get("name"), str)
            or not isinstance(tool.get("inputSchema"), dict) for tool in tools):
         return "project-scoped MCP tools/list returned a tool without its name or input schema"
+    return None
+
+
+def mcp_diagnostics(project_id: str, token: str) -> str | None:
+    if project_id == "{projectId}":
+        return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
+    status, body = _mcp_response(project_id, token, {
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "kb-labs__mcp_diagnostics", "arguments": {}},
+    })
+    if status != 200:
+        return f"project-scoped MCP diagnostics unavailable: HTTP {status}"
+    result = body.get("result") if isinstance(body, dict) else None
+    content = result.get("content", []) if isinstance(result, dict) else []
+    text = "\n".join(item.get("text", "") for item in content if isinstance(item, dict))
+    if not isinstance(result, dict) or result.get("isError") or "loaded cleanly" not in text:
+        return "project-scoped MCP diagnostics did not report that the project loaded cleanly"
     return None
 
 
@@ -159,8 +215,14 @@ def main() -> int:
         output = check()
         if output and output.startswith("BLOCKED:"):
             journey.blocked(name, capability, output.removeprefix("BLOCKED: "))
+        elif name in {"gateway readiness", "workflow health"}:
+            journey.step(name, capability, lambda value=output: value, cases=["PC-002.3"])
+        elif name == "project-scoped MCP initialize":
+            journey.step(name, capability, lambda value=output: value, cases=["S-045.1"])
         elif name == "project-scoped MCP tools/list":
-            journey.step(name, capability, lambda value=output: value, cases=["S-045.1", "S-045.2"])
+            journey.step(name, capability, lambda value=output: value, cases=["S-045.2"])
+        elif name == "project-scoped MCP diagnostics":
+            journey.step(name, capability, lambda value=output: value, cases=["S-045.3"])
         else:
             journey.step(name, capability, lambda value=output: value)
     project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")

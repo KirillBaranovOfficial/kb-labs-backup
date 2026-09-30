@@ -87,8 +87,10 @@ def run_secured_auth_steps(base_url: str, admin_email: str, admin_password: str,
     _login(base_url, member_email, "JourneyReplacement123!")
 
     restarted_url = restart_host()
-    _request(restarted_url, "/auth/login/cli", method="POST",
-             body={"email": admin_email, "password": admin_password})
+    restarted_admin_access, _ = _login(restarted_url, admin_email, admin_password)
+    restarted_admin = _request(restarted_url, "/auth/me", token=restarted_admin_access)
+    if restarted_admin.get("email") != admin_email:
+        raise AssertionError(f"fresh admin login after restart returned the wrong identity: {restarted_admin!r}")
     _request(restarted_url, "/auth/login/cli", method="POST",
              body={"email": member_email, "password": "JourneyReplacement123!"})
     _request(restarted_url, "/auth/me", token=admin_access, expected=401)
