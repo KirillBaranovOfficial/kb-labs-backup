@@ -202,6 +202,11 @@ export const qaRegressionsFlags = defineFlags({
 export type QaRegressionsFlags = typeof qaRegressionsFlags.infer;
 
 export const baselineUpdateFlags = defineFlags({
+  'dry-run': {
+    type: 'boolean',
+    description: 'Show the baseline update intent without running checks or writing files',
+    default: false,
+  },
   json: {
     type: 'boolean',
     description: 'Output JSON',

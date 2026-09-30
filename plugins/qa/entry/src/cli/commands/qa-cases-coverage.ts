@@ -20,7 +20,8 @@ function parseRunResult(value: unknown, knownSteps: Set<string>, declaredClaims:
     if (!['journey', 'e2e', 'unit'].includes(String(claim.kind))) throw new Error(`claims[${index}].kind must be journey, e2e, or unit`);
     if (!declaredClaims.has(`${claim.claimId}:${String(claim.kind)}`)) throw new Error(`claims[${index}] has no matching ${String(claim.kind)} test claim in source`);
     if (claim.status !== 'PASS' && claim.status !== 'FAIL') throw new Error(`claims[${index}].status must be PASS or FAIL`);
-    return { claimId: claim.claimId, kind: claim.kind as QACaseClaimKind, status: claim.status };
+    const status: QACaseRunResult['claims'][number]['status'] = claim.status;
+    return { claimId: claim.claimId, kind: claim.kind as QACaseClaimKind, status };
   });
   return { schema: 'kb.qa-case-run/v1', runId: record.runId, mode: record.mode, claims };
 }
@@ -34,8 +35,8 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
     const catalog = parseQACatalog(resolveCatalogPath(cwd, config?.casesPath));
     const scanned = scanQACaseClaims(cwd, catalog.cases);
     const diagnostics = [...catalog.diagnostics, ...scanned.diagnostics];
-    const mode = input.flags.mode;
-    const level = input.flags.level;
+    const mode = input.flags.mode ?? 'local';
+    const level = input.flags.level ?? 'all';
     if (mode !== 'local' && mode !== 'secured') diagnostics.push({ file: '<arguments>', line: 1, message: '--mode must be local or secured' });
     if (level !== 'all' && level !== 'release') diagnostics.push({ file: '<arguments>', line: 1, message: '--level must be all or release' });
     let runs: QACaseRunResult[] = [];
@@ -67,6 +68,6 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
         hint: 'Attach completed journey results with `--run <results.json>`, then rerun `kb qa cases coverage --level release`.',
       });
     }
-    return ok ? { ok: true, result: coverage } : { ok: false, error: `Release cases are not passing for ${mode}; rerun with completed results using `kb qa cases coverage --level release --mode ${mode} --run <results.json>``, result: coverage };
+    return ok ? { ok: true, result: coverage } : { ok: false, error: `Release cases are not passing for ${mode}; rerun with completed results using \`kb qa cases coverage --level release --mode ${mode} --run <results.json>\``, result: coverage };
   } },
 });

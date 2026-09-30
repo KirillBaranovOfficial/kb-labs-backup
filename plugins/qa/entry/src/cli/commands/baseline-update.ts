@@ -31,6 +31,12 @@ export default defineCommand<unknown, CLIInput<BaselineUpdateFlags>, unknown>({
 
     async execute(ctx: PluginContextV3, input: CLIInput<BaselineUpdateFlags>): Promise<CommandResult> {
       const { flags } = input;
+      if (flags['dry-run']) {
+        const result = { dryRun: true, operations: [{ type: 'create', resource: 'file', path: '.kb/qa/baseline.json' }] };
+        if (flags.json) ctx.ui?.json?.(result);
+        else ctx.ui?.info?.('Dry-run: would run QA check and stats, then save .kb/qa/baseline.json.');
+        return { ok: true, result };
+      }
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
 
