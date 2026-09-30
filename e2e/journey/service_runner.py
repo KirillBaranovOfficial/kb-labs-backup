@@ -6,12 +6,14 @@ import argparse
 import http.cookiejar
 import json
 import os
+from pathlib import Path
 import urllib.error
 import urllib.request
 import uuid
 from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import Journey
+from plugin_author_steps import run_plugin_author_flow
 
 
 BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -101,6 +103,7 @@ def declared_capabilities(mode: str) -> set[str]:
     """Return every capability the selected service profile promises to check."""
     capabilities = {capability for _, capability, _ in checks(mode)}
     capabilities.add("auth.local" if mode == "local" else "auth.invite-reset")
+    capabilities.add("plugin-author")
     return capabilities
 
 
@@ -159,6 +162,20 @@ def main() -> int:
             journey.step(name, capability, lambda value=output: value, cases=["S-045.1", "S-045.2"])
         else:
             journey.step(name, capability, lambda value=output: value)
+    project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")
+    if project_root:
+        run_plugin_author_flow(
+            journey,
+            Path(project_root),
+            Path.home() / ".local/bin/kb",
+            os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873"),
+        )
+    else:
+        journey.blocked(
+            "plugin author flow",
+            "plugin-author",
+            "journey runner did not receive KB_JOURNEY_PROJECT_ROOT from the installed project setup",
+        )
     result = journey.write_json(args.output)
     print(json.dumps(result.__dict__, indent=2))
     return 0 if result.status == "PASS" else 1
