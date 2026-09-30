@@ -36,14 +36,11 @@ the shard that owns its mutable resource, not by increasing a global timeout.
 
 ## Manual scenarios
 
-`docs/qa/scenarios/` records user-facing acceptance cases. A scenario marked
-`e2e-done` names the automated evidence; it is still valuable for exploratory
-release checks, but must not claim an old command/path the current launcher
-does not implement. Record a manual run in `docs/qa/runs/YYYY-MM-DD.md` with:
+`docs/qa/scenarios/` is the source of truth for user-facing cases and stable step IDs. Tests claim the steps they verify next to the test; a claim is evidence only when the corresponding test ran and its result is retained. Unit claims cannot satisfy user-flow steps in release cases. Use `kb qa cases` to compare case steps, claims, and run results. Record manual observations in `docs/qa/runs/YYYY-MM-DD.md` with:
 
 - release tag and immutable release-index digest;
-- platform root and selected profile (never secrets);
-- commands/results, `logPath`, and diagnostic dossier path on failure;
+- case and step IDs, mode, commands/results, and `logPath`;
+- diagnostic dossier path on failure;
 - a linked issue and the owning regression test/shard for every defect.
 
 ## Local commands
