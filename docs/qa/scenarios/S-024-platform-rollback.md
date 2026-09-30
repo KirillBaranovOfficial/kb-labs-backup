@@ -19,11 +19,11 @@ plan or manually editing generated configuration.
 
 | # | Action | Expected |
 |---|---|---|
-| S-024.1 | Apply a verified update and record its previous snapshot ID | Snapshot is immutable and associated with the platform root |
-| S-024.2 | `kb-create rollback --platform-root "$PLATFORM_ROOT" --snapshot SNAPSHOT_ID --yes` | JSON result includes the restored snapshot and log path |
-| S-024.3 | Inspect receipt, `kb.config.jsonc`, `devservices.yaml` and `kb-dev status --json` | All agree with the restored service graph |
-| S-024.4 | Request a missing/unknown snapshot | Non-zero structured recovery error with a hint; active install remains unchanged |
-| S-024.5 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT"` | Any remaining manifest requirement is reported explicitly |
+| S-024.1 | Update the running host to N+1 and record the snapshot ID returned by the update | The immutable recovery snapshot captures version N before the update |
+| S-024.2 | `kb-create rollback --platform-root "$PLATFORM_ROOT" --snapshot SNAPSHOT_ID --yes --json` | JSON result includes the restored snapshot and log path, and the host restarts |
+| S-024.3 | Inspect the receipt, generated config and `kb-create status --json`; run the existing project command and log in again in secured mode | The host and receipt return to N, config and project survive, and the existing admin account still authenticates |
+| S-024.4 | Request a missing/unknown snapshot with `--yes --json` | Non-zero structured recovery error includes a hint; active install remains unchanged |
+| S-024.5 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | The restored platform is reported healthy |
 
 ## Pass criteria
 

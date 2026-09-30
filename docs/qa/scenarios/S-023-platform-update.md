@@ -19,15 +19,16 @@ ambient state or losing a recoverable snapshot.
 
 | # | Action | Expected |
 |---|---|---|
-| S-023.1 | Save the active receipt, generated-config hashes and `kb-dev status --json` | Establishes the known-good snapshot/graph |
-| S-023.2 | Build a request using the newer sealed index and run `kb-create plan` | Shows exact changed artifacts and resulting graph before mutation |
-| S-023.3 | Run `kb-create update --index release-index.json --input request.json` | Snapshot is created, update is verified, output includes receipt, snapshot and log path |
-| S-023.4 | Inspect config/devservices and `kb-dev status --json` | All three agree with the new receipt |
-| S-023.5 | Simulate a failed verification in a controlled fixture | Runtime restores the preceding snapshot rather than leaving a partial install |
-| S-023.6 | Run the same update again | Deterministic no-drift result; no unannounced version change |
+| S-023.1 | Save the active V2 receipt, generated-config hashes and `kb-create status --json` | Establishes the installed version and known-good host/config state |
+| S-023.2 | Build a request for the newer sealed index and run `kb-create plan --index INDEX --input REQUEST --json` | The plan resolves the requested N+1 platform version before mutation |
+| S-023.3 | Run `kb-create update --index INDEX --input REQUEST --json` against the running host | The host restarts on N+1; output includes the new receipt, recovery snapshot and operation log |
+| S-023.4 | Inspect the active receipt, generated config and `kb-create status --json`; in secured mode, log in again as the existing admin | Receipt and healthy host report N+1, generated config survives, and the existing account still authenticates |
+| S-023.5 | Run `kb commit --dry-run --scope root` from the existing project | The project command succeeds after the host restart |
+| S-023.6 | Run the same update request again | The verified receipt remains on N+1 with the same resolved plan hash |
 
 ## Pass criteria
 
 Update uses the resolved V2 plan and receipt/snapshot recovery model. It does
 not rewrite user-provided secrets, infer a plugin version, or call a legacy
-marketplace lock scan.
+marketplace lock scan. The secured mode also proves that the pre-existing
+administrator account remains usable after the host restart.

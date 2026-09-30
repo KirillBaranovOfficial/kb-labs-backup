@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -105,6 +106,34 @@ const result = spawnSync(process.execPath, [
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (result.status !== 0) process.exit(result.status ?? 1);
+
+// The update journey needs a second sealed release. Give core-runtime and the
+// SDK a journey-only patch package version while retaining their code, so the
+// stable channel and package verification resolve one coherent N+1 release.
+const baseVersion = JSON.parse(readFileSync(output, 'utf8')).profiles?.default?.platformVersion;
+const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(baseVersion ?? '');
+if (!match) throw new Error(`platform release version is not a stable semantic version: ${baseVersion}`);
+const updateVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
+const updateOutput = join(resolve(output, '..'), 'release-index-update.json');
+const updatePackagesDir = join(resolve(output, '..'), 'update-packages');
+prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion);
+const update = spawnSync(process.execPath, [
+  prepareScript,
+  '--flow', 'platform',
+  '--channel', 'stable',
+  '--artifacts-dir', updatePackagesDir,
+  '--binary-manifest', binaryManifest,
+  '--platform-version', updateVersion,
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer',
+  '--platform-adapter-config', adapterConfig,
+  '--platform-adapter-options', adapterOptions,
+  '--platform-member-packages', platformMembers,
+  '--adapter-overrides', adapterOverrides,
+  '--registry', 'http://verdaccio:4873',
+  '--output', updateOutput,
+  '--sealer-bin', sealer,
+], { stdio: 'inherit' });
+if (update.status !== 0) process.exit(update.status ?? 1);
 
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
