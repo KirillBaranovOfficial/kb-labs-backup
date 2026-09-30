@@ -133,8 +133,14 @@ def mcp_probe(project_id: str, token: str) -> str | None:
             body = json.loads(data)
         except json.JSONDecodeError:
             return "project-scoped MCP tools/list returned an invalid SSE JSON-RPC event"
-    if not isinstance(body, dict) or "result" not in body:
+    if not isinstance(body, dict) or not isinstance(body.get("result"), dict):
         return "project-scoped MCP tools/list returned no JSON-RPC result"
+    tools = body["result"].get("tools")
+    if not isinstance(tools, list) or not tools:
+        return "project-scoped MCP tools/list returned no project tools"
+    if any(not isinstance(tool, dict) or not isinstance(tool.get("name"), str)
+           or not isinstance(tool.get("inputSchema"), dict) for tool in tools):
+        return "project-scoped MCP tools/list returned a tool without its name or input schema"
     return None
 
 
@@ -149,6 +155,8 @@ def main() -> int:
         output = check()
         if output and output.startswith("BLOCKED:"):
             journey.blocked(name, capability, output.removeprefix("BLOCKED: "))
+        elif name == "project-scoped MCP tools/list":
+            journey.step(name, capability, lambda value=output: value, cases=["S-045.1", "S-045.2"])
         else:
             journey.step(name, capability, lambda value=output: value)
     result = journey.write_json(args.output)

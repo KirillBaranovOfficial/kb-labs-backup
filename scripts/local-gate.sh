@@ -21,9 +21,6 @@ while (($#)); do
 done
 [[ "$MODE" == quick || "$MODE" == batch ]] || { echo "Usage: scripts/local-gate.sh quick [--packages a,b] [--dry-run] | batch [--full] [--dry-run] [--keep-going]" >&2; exit 2; }
 if [[ "$MODE" == quick && "$FULL" == 1 ]]; then echo "local-gate: --full is only available with batch" >&2; exit 2; fi
-if [[ "$MODE" == batch && "$FULL" == 1 && "$DRY_RUN" == 0 ]]; then
-  python3 e2e/journey/scenarios.py validate --level full || exit 1
-fi
 
 if [[ "$MODE" == quick ]]; then
   if [[ -z "$PACKAGES" ]]; then
@@ -109,18 +106,19 @@ PY
 )"
 [[ -n "$go_packages" ]] || go_packages="./v2"
 STAGE_NAMES=()
-STAGE_NAMES+=( 'frozen install' 'affected build' 'affected lint type-check tests' )
+STAGE_NAMES+=( 'frozen install' 'affected build' 'QA case catalog validation' 'affected lint type-check tests' )
 while IFS= read -r package; do STAGE_NAMES+=("kb-create Go tests $package"); done <<< "$go_packages"
 STAGE_NAMES+=( 'dependency audit' 'secret scan' 'prepare service journey candidate' 'Colima start' )
-if ((FULL)); then STAGE_NAMES+=( 'full scenario manifest journey matrix' ); else STAGE_NAMES+=( 'local install and service journey' 'secured install and service journey' ); fi
+if ((FULL)); then STAGE_NAMES+=( 'full release case journey matrix' ); else STAGE_NAMES+=( 'local install and service journey' 'secured install and service journey' ); fi
 STAGE_NAMES+=( 'nightly journey aggregation' )
-GO_STAGE_START=3
+GO_STAGE_START=4
 AUDIT_STAGE=$((GO_STAGE_START + $(wc -l <<< "$go_packages" | tr -d ' ')))
 SECRET_STAGE=$((AUDIT_STAGE + 1)); CANDIDATE_STAGE=$((AUDIT_STAGE + 2)); COLIMA_STAGE=$((AUDIT_STAGE + 3))
 JOURNEY_STAGE=$((AUDIT_STAGE + 4))
 if ((FULL)); then AGGREGATION_STAGE=$((AUDIT_STAGE + 5)); else
   LOCAL_JOURNEY_STAGE=$JOURNEY_STAGE; SECURED_JOURNEY_STAGE=$((JOURNEY_STAGE + 1)); AGGREGATION_STAGE=$((AUDIT_STAGE + 6))
 fi
+STAGE_NAMES+=( 'local release-case coverage' 'secured release-case coverage' )
 if ((DRY_RUN)); then
   for i in "${!STAGE_NAMES[@]}"; do printf '%d. %s\n' "$((i + 1))" "${STAGE_NAMES[$i]}"; done
   if ((KEEP_GOING)); then echo 'keep-going: continue after failed stages; final status remains non-zero'; fi
@@ -189,6 +187,7 @@ stage "${STAGE_NAMES[0]}" env CI=true pnpm install --frozen-lockfile || exit 1
 if [[ "${INSTALL_FAILED:-0}" == 1 ]]; then
   block_stage "${STAGE_NAMES[1]}" 'blocked because frozen install failed'
   block_stage "${STAGE_NAMES[2]}" 'blocked because frozen install failed'
+  block_stage "${STAGE_NAMES[3]}" 'blocked because frozen install failed'
   for ((go_index=0; go_index < AUDIT_STAGE-GO_STAGE_START; go_index++)); do block_stage "${STAGE_NAMES[$((GO_STAGE_START + go_index))]}" 'blocked because frozen install failed'; done
   block_stage "${STAGE_NAMES[$CANDIDATE_STAGE]}" 'blocked because frozen install failed'
   block_stage "${STAGE_NAMES[$COLIMA_STAGE]}" 'blocked because frozen install failed'
@@ -197,7 +196,8 @@ if [[ "${INSTALL_FAILED:-0}" == 1 ]]; then
   block_stage "${STAGE_NAMES[$AGGREGATION_STAGE]}" 'blocked because frozen install failed'
 else
 stage "${STAGE_NAMES[1]}" env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run build --affected || exit 1
-stage "${STAGE_NAMES[2]}" env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run lint type-check test --affected || exit 1
+stage "${STAGE_NAMES[2]}" pnpm kb qa cases validate || exit 1
+stage "${STAGE_NAMES[3]}" env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run lint type-check test --affected || exit 1
 TEMP_HOME="$(mktemp -d)"
 go_index=0
 while IFS= read -r package; do stage "${STAGE_NAMES[$((GO_STAGE_START + go_index))]}" bash -c 'cd tools/kb-create && env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET HOME="$1" go test "$2"' _ "$TEMP_HOME" "$package" || exit 1; go_index=$((go_index + 1)); done <<< "$go_packages"
@@ -245,6 +245,12 @@ else
     if ((!FULL)); then block_stage "${STAGE_NAMES[$((JOURNEY_STAGE + 1))]}" 'blocked because candidate preparation failed'; fi
     block_stage "${STAGE_NAMES[$AGGREGATION_STAGE]}" 'blocked because candidate preparation failed'
   fi
+  block_stage "${STAGE_NAMES[$((AGGREGATION_STAGE + 1))]}" 'blocked because journey candidate is unavailable'
+  block_stage "${STAGE_NAMES[$((AGGREGATION_STAGE + 2))]}" 'blocked because journey candidate is unavailable'
+fi
+if ((JOURNEY_CANDIDATE_READY)); then
+  stage 'local release-case coverage' pnpm kb qa cases coverage --level release --mode local --run .journey/reports/service-local.json || exit 1
+  stage 'secured release-case coverage' pnpm kb qa cases coverage --level release --mode secured --run .journey/reports/service-secured.json || exit 1
 fi
 [[ "$STATUS" == 0 ]] || exit 1
 exit 0
