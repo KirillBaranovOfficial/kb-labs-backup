@@ -1,6 +1,6 @@
 ---
 id: S-021
-title: S-021 — View workflow runs in Studio
+title: Studio — Inspect workflow runs for the selected project
 persona: solo-developer
 area: studio
 priority: P1
@@ -12,16 +12,20 @@ surfaces: [studio]
 
 ## Goal
 
-A Studio user selects a project and inspects workflow run history and one run’s details.
+A Studio user selects a project and inspects its workflow run history, run details, and step logs.
 
 ## Prerequisites
 
-- [ ] Studio host and registered project with completed workflow runs.
+- [ ] Host running with Studio available and a registered project selected.
+- [ ] The project has one successful and one failed workflow run with step output.
+- [ ] In secured mode, the user is logged in and authorized to view the project.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-021.1 | Open the project’s workflow Runs view in Studio | Runs belonging to the selected project are listed. |
-| S-021.2 | Select a completed and a failed run | Each detail view displays the correct terminal status. |
-| S-021.3 | Open run logs | Step-level output and failure details are visible. |
+| S-021.1 | Open **Workflows → Runs** for the selected project | The runs table shows only runs belonging to the selected project and includes each run ID, workflow ID, status, and start time. |
+| S-021.2 | Open the successful run, then the failed run | Each detail page shows the selected run ID, its exact terminal status (`success` or `failed`), and its workflow ID. |
+| S-021.3 | Open the successful run's step logs | The completed step's captured output is visible. |
+| S-021.4 | Open the failed run's step logs | The failed step is identified and its error message is visible. |
+| S-021.5 | Select a different project with no runs | The Runs view shows an empty state for that project and does not show either run from the first project. |

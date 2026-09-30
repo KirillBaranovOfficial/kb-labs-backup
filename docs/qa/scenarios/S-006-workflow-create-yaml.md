@@ -1,6 +1,6 @@
 ---
 id: S-006
-title: S-006 — Define a workflow from YAML
+title: Workflow — Create and validate the starter YAML definition
 persona: solo-developer
 area: workflow
 priority: P0
@@ -12,17 +12,19 @@ surfaces: [cli]
 
 ## Goal
 
-A developer authors a project workflow in YAML and verifies that the workflow service accepts and lists the definition.
+A developer creates the supported local workflow example, validates its YAML definition, and discovers it in the selected project's workflow catalog.
 
 ## Prerequisites
 
-- [ ] Project runtime and workflow plugin available.
+- [ ] Run commands from a registered project directory with the host running.
+- [ ] In secured mode, an authenticated gateway session is available.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-006.1 | Create `.kb/workflows/hello.yml` with a valid workflow ID, name, trigger, and job | File follows the workflow schema. |
-| S-006.2 | Run `kb workflow lint` | Definition passes validation with no reported errors. |
-| S-006.3 | Run `kb workflow defs list` | `hello` appears among project workflow definitions. |
-| S-006.4 | Introduce a missing required field and run lint again | Lint identifies the invalid definition and field. |
+| S-006.1 | Run `kb workflow init` | CLI creates `.kb/workflows/hello.yml` with `name: hello`, `version: 1.0.0`, `on.manual: true`, and a `hello` job using `builtin:shell` with `with.command: echo hello-workflow`. |
+| S-006.2 | Run `kb workflow lint` | The starter definition is reported valid; command exits 0. |
+| S-006.3 | Run `kb workflow defs list --json` | JSON includes the definition whose ID is `hello`. |
+| S-006.4 | Run `kb workflow init` again without changing the existing file | CLI reports `Workflow file already exists: .kb/workflows/hello.yml` and advises choosing another project or renaming the file; the existing file contents remain unchanged. |
+| S-006.5 | Change the `hello` step's `with.command` field to an invalid value by removing it, then run `kb workflow lint` | Lint exits non-zero and identifies `.kb/workflows/hello.yml` and the missing `command` field. |
