@@ -16,13 +16,13 @@ Local projects work without login; secured gateways require a valid session.
 
 ## Prerequisites
 
-- [ ] Local and secured hosts; test member account on secured host.
+- [ ] Local host with no saved human session, secured host, and test member account on secured host.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-041.1 | In local mode, run `kb auth status` | Identifies local access without requiring a saved session. |
-| S-041.2 | Call a protected project operation locally | Operation succeeds without a saved login. |
-| S-041.3 | Call a secured project route before login | Returns an authentication error and non-success status. |
-| S-041.4 | Run `kb auth login --gateway-url <url> --email <member> --password <password>` then `kb auth status` | Signed-in account is shown and authorized project operation succeeds. |
+| S-041.1 | In local mode, run `kb auth status --json` | JSON reports `ok: true` and `session.authenticated: false`; local access does not require a human session. |
+| S-041.2 | In local mode, send `GET <gateway-url>/auth/me` through the local gateway | HTTP 200 JSON contains the local machine identity's `userId` and `tenantId`. |
+| S-041.3 | In secured mode, send `GET <gateway-url>/auth/me` without a session or bearer token | HTTP 401 JSON is `{"error":"Unauthorized","message":"Not authenticated"}`. |
+| S-041.4 | Run `kb auth login --gateway-url <url> --email <member> --password <password>`, then `kb auth status --json` and `kb auth tokens --json` | Status reports `session.authenticated: true` and the member email; token listing returns JSON with `ok: true`. |

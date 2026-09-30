@@ -67,7 +67,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-039](S-039-agent-apply-json.md) | Agent — apply a V2 request as JSON | solo-developer | P0 | active | true | [local, secured] | [agent, cli] | — |
 | [S-040](S-040-human-install-wizard.md) | Human — complete the V2 install wizard | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
 | [S-041](S-041-local-and-secured-auth.md) | Authentication — local access and secured login | team-member | P0 | active | true | [local, secured] | [cli, studio, api] | — |
-| [S-042](S-042-admin-invite-reset-link.md) | Team Admin — invite a member and issue a reset link | team-admin | P1 | active | true | [secured] | [studio, cli, api] | — |
+| [S-042](S-042-admin-invite-reset-link.md) | Team Admin — invite a member and issue a reset link | team-admin | P1 | active | true | [secured] | [cli, api] | — |
 | [S-043](S-043-project-registry-and-isolation.md) | Projects — register and isolate project extensions | solo-developer | P0 | active | true | [local, secured] | [cli, studio] | — |
 | [S-044](S-044-workflow-run-history-logs-cron.md) | S-044 — Configure and inspect a workflow cron schedule | solo-developer | P1 | active | true | [local, secured] | [cli, studio, api] | — |
 | [S-045](S-045-project-mcp-tools.md) | MCP — call project-scoped tools | solo-developer | P1 | active | true | [local, secured] | [agent, api] | — |
@@ -77,6 +77,16 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-049](S-049-plugin-author-scaffold-link-loop.md) | S-049 — Plugin author loop superseded by S-003 | plugin-author | P1 | historical | false | [local] | [cli] | S-003 |
 | [S-050](S-050-platform-uninstall.md) | Platform — uninstall a V2 installation safely | solo-developer | P1 | active | true | [local, secured] | [cli, agent] | — |
 | [S-051](S-051-unified-error-envelope.md) | Errors — show the unified actionable error envelope | solo-developer | P1 | active | true | [local, secured] | [cli, api, agent] | — |
+| [S-100](scenarios/S-100-first-admin-bootstrap-and-recovery.md) | Secured install — bootstrap and recover the first administrator | team-admin | P0 | active | true | [secured] | [cli] | — |
+| [S-101](scenarios/S-101-change-own-password.md) | Account — change your own password | team-member | P1 | active | true | [secured] | [studio, api] | — |
+| [S-102](scenarios/S-102-manage-sessions-and-logout.md) | Account — inspect and revoke sessions, then log out | team-member | P1 | active | true | [secured] | [cli, studio, api] | — |
+| [S-103](scenarios/S-103-api-tokens-for-agents-and-ci.md) | Authentication — create, use, and revoke a personal API token | team-member | P1 | active | true | [secured] | [cli, studio, api, agent] | — |
+| [S-104](scenarios/S-104-roles-and-admin-authorization.md) | Security — admins manage tenant access and members cannot manage users | team-admin | P0 | active | true | [secured] | [api, cli] | — |
+| [S-105](scenarios/S-105-revoke-or-expire-an-invite.md) | Team Admin — revoke or allow an invite to expire | team-admin | P1 | active | true | [secured] | [api] | — |
+| [S-106](scenarios/S-106-studio-user-administration.md) | Studio — administer users and invites | team-admin | P0 | planned | true | [secured] | [studio] | — |
+| [S-107](scenarios/S-107-studio-invite-acceptance.md) | Studio — accept an invitation and activate an account | team-member | P1 | planned | true | [secured] | [studio] | — |
+| [S-108](scenarios/S-108-members-cannot-open-user-administration.md) | Studio — members cannot open user administration | team-member | P1 | planned | true | [secured] | [studio] | — |
+| [S-109](scenarios/S-109-configured-oauth-login.md) | Authentication — sign in through a configured identity provider | team-member | P2 | active | false | [secured] | [studio, api] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.
