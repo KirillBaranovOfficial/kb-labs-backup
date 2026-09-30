@@ -427,7 +427,7 @@ func TestDirectRequestUsesSamePlanTransport(t *testing.T) {
 func TestScenarioAnswersCompileThroughManifestBoundPlan(t *testing.T) {
 	dir := t.TempDir()
 	index := filepath.Join(dir, "index.json")
-	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`}}}}})
+	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`}, {ID: "gateway.authStorage.filename", Path: "/platform/adapterOptions/documentDatabase/filename", Default: `".kb/database/kb.sqlite"`}}}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "1.0.0", Package: "@kb/sqlite-stores", Tarball: "https://example.test/sqlite-stores.tgz", SHA256: "sqlite-stores"}, Provides: []string{"documentDatabase"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,11 @@ func TestScenarioAnswersCompileThroughManifestBoundPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	if code != 0 {
-		t.Fatalf("exit code = %d", code)
+		result, readErr := os.ReadFile(filepath.Join(dir, "output.json"))
+		if readErr != nil {
+			t.Fatalf("exit code = %d; read output: %v", code, readErr)
+		}
+		t.Fatalf("exit code = %d; output = %s", code, result)
 	}
 	result, err := os.ReadFile(filepath.Join(dir, "output.json"))
 	if err != nil {
