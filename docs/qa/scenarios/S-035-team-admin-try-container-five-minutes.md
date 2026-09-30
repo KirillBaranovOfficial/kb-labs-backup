@@ -2,9 +2,12 @@
 id: S-035
 title: Team Admin — Try KB Labs in a Container Without a Rebuild
 persona: team-admin
+area: platform-core
 priority: P0
-automation: e2e-done
-e2e: e2e/deploy/config-override/test.sh
+status: planned
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
@@ -29,15 +32,15 @@ minutes to evaluate" claim the whole cloud-delivery plan is built around.
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 1 | `docker run <image>` with no volumes, no env beyond secrets | Container starts, does not crash-loop | | ⬜ |
-| 2 | Inspect the live config the process is using | Matches the image's baked default — never a raw `${VAR}` placeholder, never empty | | ⬜ |
-| 3 | Hit the service's health endpoint | 200 / healthy | | ⬜ |
+| S-035.1 | `docker run <image>` with no volumes, no env beyond secrets | Container starts, does not crash-loop | | ⬜ |
+| S-035.2 | Inspect the live config the process is using | Matches the image's baked default — never a raw `${VAR}` placeholder, never empty | | ⬜ |
+| S-035.3 | Hit the service's health endpoint | 200 / healthy | | ⬜ |
 
 ### Phase 2 — Re-run doesn't corrupt state
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 4 | Stop and restart the same container (no volumes) | Boots identically — the baked default is applied fresh each time, not accumulated/mutated | | ⬜ |
+| S-035.4 | Stop and restart the same container (no volumes) | Boots identically — the baked default is applied fresh each time, not accumulated/mutated | | ⬜ |
 
 ---
 

@@ -2,9 +2,12 @@
 id: S-038
 title: Team Admin — Missing Secret Fails Fast Instead of Booting Broken
 persona: team-admin
+area: platform-core
 priority: P0
-automation: e2e-todo
-e2e: core/runtime/src/__tests__/config-loader.test.ts
+status: planned
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
@@ -31,14 +34,14 @@ real request instead.
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 1 | Start the service with the referenced env var unset, `NODE_ENV=production` | Process exits non-zero at boot, error names the missing variable | | ⬜ |
-| 2 | Set the variable, restart | Boots normally | | ⬜ |
+| S-038.1 | Start the service with the referenced env var unset, `NODE_ENV=production` | Process exits non-zero at boot, error names the missing variable | | ⬜ |
+| S-038.2 | Set the variable, restart | Boots normally | | ⬜ |
 
 ### Phase 2 — Same scenario outside production (dev ergonomics preserved)
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 3 | Same missing variable, `NODE_ENV` unset/`development` | Boots anyway, with a logged warning and the literal `${VAR}` left in place (fails lazily at first use, not at boot) | | ⬜ |
+| S-038.3 | Same missing variable, `NODE_ENV` unset/`development` | Boots anyway, with a logged warning and the literal `${VAR}` left in place (fails lazily at first use, not at boot) | | ⬜ |
 
 ---
 

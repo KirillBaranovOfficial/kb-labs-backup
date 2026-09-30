@@ -2,9 +2,12 @@
 id: S-031
 title: Session expired — clear prompt to re-login
 persona: solo-developer
+area: security
 priority: P1
-automation: manual
-e2e: —
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
@@ -21,29 +24,29 @@ Session expires while working. KB Labs tells the user clearly and continues grac
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 1 | `kb auth status` with expired token | Shows expiry state clearly | `Token: expired (will auto-refresh on next request)` | ✅ |
-| 2 | Run any command with expired token | Clear prompt to re-login | `[commit] LLM failed, falling back to heuristics: 401 "Unauthorized"` — falls back silently, no re-login prompt | ⚠️ |
-| 3 | Error distinct from "not configured" | Different message | Same `401 "Unauthorized"` for both cases — not distinct | ❌ |
+| S-031.1 | `kb auth status` with expired token | Shows expiry state clearly | `Token: expired (will auto-refresh on next request)` | ✅ |
+| S-031.2 | Run any command with expired token | Clear prompt to re-login | `[commit] LLM failed, falling back to heuristics: 401 "Unauthorized"` — falls back silently, no re-login prompt | ⚠️ |
+| S-031.3 | Error distinct from "not configured" | Different message | Same `401 "Unauthorized"` for both cases — not distinct | ❌ |
 
 ### Phase 2 — Auto-refresh
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 4 | Token near expiry — silently refreshed | User never sees it | Auth status says "will auto-refresh" — mechanism exists | ✅ |
-| 5 | Refresh succeeds | Command works | Not tested (need valid gateway creds) | ⬜ |
-| 6 | Both tokens fully expired | Explicit re-login prompt | Falls back to heuristics silently — no prompt | ❌ |
+| S-031.4 | Token near expiry — silently refreshed | User never sees it | Auth status says "will auto-refresh" — mechanism exists | ✅ |
+| S-031.5 | Refresh succeeds | Command works | Not tested (need valid gateway creds) | ⬜ |
+| S-031.6 | Both tokens fully expired | Explicit re-login prompt | Falls back to heuristics silently — no prompt | ❌ |
 
 ### Phase 3 — Studio session
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 7 | Studio session expires | Redirect to login with message | Not tested — no Studio login (B-023) | ⬜ |
+| S-031.7 | Studio session expires | Redirect to login with message | Not tested — no Studio login (B-023) | ⬜ |
 
 ### Phase 4 — Server restart
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 9 | `kb-dev restart` invalidates tokens | Re-login prompted | Not tested | ⬜ |
+| S-031.8 | `kb-dev restart` invalidates tokens | Re-login prompted | Not tested | ⬜ |
 
 ---
 

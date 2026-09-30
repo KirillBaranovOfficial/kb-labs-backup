@@ -2,9 +2,12 @@
 id: S-016
 title: Mind — RAG search
 persona: solo-developer
+area: mind
 priority: P1
-automation: manual
-e2e: —
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
@@ -23,31 +26,31 @@ Developer uses Mind plugin to semantically search their codebase and get grounde
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 1 | `kb mind index` (or auto-index on install) | Files indexed, progress shown | | ⬜ |
-| 2 | `kb mind status` | Shows indexed file count, last index time | | ⬜ |
+| S-016.1 | `kb mind index` (or auto-index on install) | Files indexed, progress shown | | ⬜ |
+| S-016.2 | `kb mind status` | Shows indexed file count, last index time | | ⬜ |
 
 ### Phase 2 — Search
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 3 | `kb mind search --text "how does authentication work"` | Returns relevant code snippets with file references | | ⬜ |
-| 4 | Results include file path + line number | Navigable references | | ⬜ |
-| 5 | `kb mind search --text "..." --json` | Valid JSON output | | ⬜ |
+| S-016.3 | `kb mind search --text "how does authentication work"` | Returns relevant code snippets with file references | | ⬜ |
+| S-016.4 | Results include file path + line number | Navigable references | | ⬜ |
+| S-016.5 | `kb mind search --text "..." --json` | Valid JSON output | | ⬜ |
 
 ### Phase 3 — Ask (grounded answer)
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 6 | `kb mind ask --text "explain the plugin system"` | Generates answer grounded in codebase | | ⬜ |
-| 7 | Answer cites sources (file paths) | Not hallucinated | | ⬜ |
-| 8 | `kb mind ask --agent` | Returns JSON with `answer` + `sources` | | ⬜ |
+| S-016.6 | `kb mind ask --text "explain the plugin system"` | Generates answer grounded in codebase | | ⬜ |
+| S-016.7 | Answer cites sources (file paths) | Not hallucinated | | ⬜ |
+| S-016.8 | `kb mind ask --agent` | Returns JSON with `answer` + `sources` | | ⬜ |
 
 ### Phase 4 — Re-index
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 9 | Add a new file, `kb mind index` | New file appears in search results | | ⬜ |
-| 10 | Delete a file, re-index | Deleted file no longer in results | | ⬜ |
+| S-016.9 | Add a new file, `kb mind index` | New file appears in search results | | ⬜ |
+| S-016.10 | Delete a file, re-index | Deleted file no longer in results | | ⬜ |
 
 ---
 

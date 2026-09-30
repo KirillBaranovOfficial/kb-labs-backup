@@ -1,67 +1,29 @@
 ---
 id: S-005
-title: Team Member — Connect to Cloud
+title: S-005 — Team member connects to a secured platform
 persona: team-member
+area: security
 priority: P1
-automation: manual
-e2e: —
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
 
-A team member gets CLI access to a cloud-deployed KB Labs platform.
-They should be able to run AI commands (commit, review) through the team's shared gateway
-without managing their own LLM credentials.
+A team member installs the client, signs into a secured gateway, and runs an authorized project operation using the team platform.
 
 ## Prerequisites
 
-- [ ] Platform is deployed and healthy (S-004 passed)
-- [ ] Admin has created an account for the member
-- [ ] Member has: Node 24+, internet access, no prior KB Labs install
-
----
+- [ ] Secured host, registered project, member account, and assigned project access.
 
 ## Steps
 
-### Phase 1 — Install & connect
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | `curl -fsSL https://kblabs.ru/install.sh \| sh` | `kb-create` installed | | ⬜ |
-| 2 | `kb-create apply --index <release-index> --request-platform-root <platform> --project-root <project>` | Project pointer generated and selected platform applied from the sealed index | | ⬜ |
-| 3 | `.env` or config contains team platform URL, no personal LLM key | Member is not using their own key | | ⬜ |
-
-### Phase 2 — Authentication
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 4 | `kb auth login` (or equivalent) | Prompts for credentials, authenticates against team platform | | ⬜ |
-| 5 | `kb auth status` | Shows logged-in user and connected platform URL | | ⬜ |
-
-### Phase 3 — Run commands through team gateway
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 6 | Make a change, `git add .`, `kb commit commit --dry-run` | Runs via team gateway, `LLM: Phase` in output | | ⬜ |
-| 7 | `kb review run` | Code review runs via team gateway | | ⬜ |
-| 8 | `kb workflow list` | Lists workflows available on team platform | | ⬜ |
-
-### Phase 4 — Isolation check
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 9 | Member cannot see other members' run history | Runs list shows only own runs | | ⬜ |
-| 10 | Member cannot access admin panel in Studio | 403 or no admin menu shown | | ⬜ |
-
----
-
-## Result
-
-<!-- PASS / FAIL / PARTIAL -->
-
-## Bugs
-
-## Notes
-
-- Identity (TD-4) and permissions (TD-8) are not yet fully implemented — steps 4,9,10 may be partially manual
-- Fleet distribution (TD-6/7) open — plugin availability on client may differ from server
+| # | Action | Expected |
+|---|---|---|
+| S-005.1 | Install or apply the V2 client with `kb-create apply --json` using the provided sealed index and request | JSON reports success and the selected platform/project roots. |
+| S-005.2 | Run `kb auth login --gateway-url <url> --email <member> --password <password>` | Login succeeds and stores a session for the secured gateway. |
+| S-005.3 | Run `kb auth status` | Shows the signed-in member and gateway. |
+| S-005.4 | Run an authorized operation against the registered project | Operation succeeds under the member’s account. |
+| S-005.5 | Attempt the same operation without a session or with insufficient access | Gateway returns an actionable authentication or authorization response. |

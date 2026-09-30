@@ -1,47 +1,27 @@
 ---
 id: S-008
-title: Workflow — Cancel running workflow
+title: S-008 — Cancel a running workflow
 persona: solo-developer
+area: workflow
 priority: P1
-automation: e2e-todo
-e2e: e2e/workflows/scenarios/default/cases/cancellation.spec.ts
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer cancels a workflow that is actively running. Run stops cleanly, no zombie processes.
+
+A user cancels an active workflow run and confirms the run reaches cancelled state.
 
 ## Prerequisites
-- [ ] Platform installed, services running
-- [ ] A long-running workflow exists (e.g. with a `sleep` step)
 
----
+- [ ] A workflow with a controllably long running step and an active run ID.
 
 ## Steps
 
-### Phase 1 — Start and cancel
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Start long-running workflow: `kb workflow run <name>` | Run starts, status `running` | | ⬜ |
-| 2 | `kb workflow cancel <runId>` | Accepted, status transitions to `cancelled` | | ⬜ |
-| 3 | `kb workflow status <runId>` | Status is `cancelled`, not `running` or `failed` | | ⬜ |
-
-### Phase 2 — Cancel via HTTP
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 4 | `POST /api/v1/runs/:runId/cancel` | HTTP 200, run cancelled | | ⬜ |
-| 5 | `GET /api/v1/runs/:runId` after cancel | `status: "cancelled"` | | ⬜ |
-
-### Phase 3 — Edge cases
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 6 | Cancel already-completed run | 400 or no-op with message — not crash | | ⬜ |
-| 7 | Cancel non-existent runId | 404 with clear message | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-008.1 | Start the workflow with `kb workflow run --workflow-id=<project>/long-task` | CLI returns a run ID for the active run. |
+| S-008.2 | Run `kb workflow runs cancel <runId>` | Cancellation request succeeds. |
+| S-008.3 | Run `kb workflow runs view <runId>` | Run state is `cancelled`; it is not still running. |
