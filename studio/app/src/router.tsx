@@ -25,6 +25,7 @@ import { useSettings } from './providers/settings-provider';
 import type { StudioRegistryV2 } from '@kb-labs/studio-federation';
 import { NavigationItemsProvider } from './providers/navigation-items-provider';
 import { applyNavigationCategories } from './utils/apply-navigation-categories';
+import { ProjectContextSelector } from './components/project-context-selector';
 import { AVAILABLE_ICONS, KBPageLayout, KBStatusBar, type NavigationItem, StatusBarItem, StatusBarPresets } from '@/components/ui';
 
 // Module routes
@@ -223,6 +224,9 @@ function LayoutContent() {
           />
         }
       >
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 0' }}>
+          <ProjectContextSelector />
+        </div>
         <HealthBanner />
         <PageTransition>
           <div style={{ paddingBottom: '20px' }}>

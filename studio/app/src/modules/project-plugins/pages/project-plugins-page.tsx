@@ -23,10 +23,10 @@ import {
 import { useDataSources } from '@/providers/data-sources-provider';
 import { useProjectPlugins, useSetProjectPluginEnabled, useInstallProjectPlugin, useUninstallProjectPlugin } from '@kb-labs/studio-data-client';
 import type { ProjectPluginEntry } from '@kb-labs/studio-data-client';
-import { ProjectPicker } from '@/components/project-picker';
+import { useProjectContext } from '@/providers/project-context-provider';
 
 export function ProjectPluginsPage() {
-  const [projectId, setProjectId] = React.useState<string | null>(null);
+  const { projectId } = useProjectContext();
   const [spec, setSpec] = React.useState('');
   const { projectPlugins: source } = useDataSources();
   const { data: plugins, isLoading } = useProjectPlugins(source, projectId);
@@ -121,12 +121,11 @@ export function ProjectPluginsPage() {
         description="Enable or disable plugins for the selected project."
         actions={(
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ProjectPicker value={projectId} onChange={setProjectId} />
             <UIInput
               aria-label="Plugin package and version"
               placeholder="@scope/plugin@1.2.3"
               value={spec}
-              onChange={(event) => setSpec(event.target.value)}
+              onChange={setSpec}
               style={{ width: 240 }}
             />
             <UIButton variant="primary" disabled={!projectId || !spec.trim()} loading={installPlugin.isPending} onClick={handleInstall}>

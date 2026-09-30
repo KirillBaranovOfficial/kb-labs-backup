@@ -1,89 +1,47 @@
-# kb-labs-studio-app
+# KB Labs Studio App
 
-KB Labs Studio application — web UI for interacting with KB Labs plugins and products.
+`@kb-labs/studio-app` is the KB Labs web UI. The machine gateway serves its
+static bundle and owns browser access to host APIs and project runtimes.
 
-## Vision & Purpose
+## What it does
 
-**kb-labs-studio-app** is the main Studio frontend.  
-It renders dashboards, plugin widgets, workflow runs, analytics views, and release/audit results powered by the KB Labs REST API and Mind.
-
-### Core Goals
-
-- Provide a unified web UI for all KB Labs products (Audit, Release, Mind, DevLink, AI tools)
-- Render plugin-provided Studio widgets (via `@kb-labs/plugin-adapter-studio`)
-- Offer dashboards, gallery, and per-product pages on top of `@kb-labs/data-client`
-
-## Package Status
-
-- **Version**: 0.1.0  
-- **Stage**: Stable (internal)  
-- **Status**: Production Ready for internal use ✅
-
-## Architecture
-
-### Stack
-
-- **Framework**: React 18 + React Router
-- **UI**: `@kb-labs/ui-core`, `@kb-labs/ui-react`, Ant Design, Lucide
-- **Data**: `@tanstack/react-query` with `@kb-labs/data-client`
-
-### Structure
-
-```
-apps/studio/
-├── src/
-│   ├── App.tsx              # Root React tree and providers
-│   ├── router.tsx           # Route definitions
-│   ├── modules/             # Feature modules (analytics, dashboard, mind, workflows, settings)
-│   ├── components/          # Shared layout and widget host components
-│   ├── layouts/             # Layouts (TwoPane, DashboardGrid, etc.)
-│   ├── providers/           # Auth, data sources, registry providers
-│   ├── registry/            # Studio registry loader and types
-│   ├── plugins/             # Plugin discovery and registry integration
-│   ├── hooks/               # Custom hooks (polling, widget data)
-│   └── styles/              # Theme and CSS variables
-└── vite.config.ts           # Vite configuration
-```
-
-The app uses a plugin registry to dynamically render Studio widgets exposed by plugins.
+- Lists registered projects and manages each project's plugins and adapters.
+- Shows gateway health and project-scoped runtime logs and events.
+- Loads enabled plugin pages through the Studio federation layer.
+- Uses gateway sessions in secured mode and no login in loopback-only local mode.
 
 ## Project marketplace
 
-The project Plugins page installs and uninstalls plugin package specs through
-the host API and manages each project's enabled state. The Adapters page
-installs adapter packages at machine scope, binds an installed package to a
-slot in the selected project, and edits project-scoped adapter options. Both
-pages use the host's `/api/v1/plugins` and `/api/v1/adapters` routes; they do
-not edit marketplace locks or config files directly.
+Select a project from the shared project context, then use the Plugins page to
+install or uninstall plugin package specs and enable or disable project pins.
+The Adapters page installs adapters at machine scope, binds them to slots for
+the selected project, and edits project-scoped adapter options. These actions
+go through host APIs; Studio does not edit marketplace locks or config files.
 
-## Scripts
+## Development
 
-From `kb-labs-studio` repo root:
+Run from the monorepo root:
 
 ```bash
-pnpm install
-pnpm --filter kb-labs-studio-app dev      # Start Vite dev server
-pnpm --filter kb-labs-studio-app build    # Build for production
-pnpm --filter kb-labs-studio-app preview  # Preview built bundle
-pnpm --filter kb-labs-studio-app test     # Run Vitest tests
+pnpm --filter @kb-labs/studio-app dev
+pnpm --filter @kb-labs/studio-app build
+pnpm --filter @kb-labs/studio-app test
 ```
 
-## Integration Points
+The rspack dev server supports frontend work. API requests require a reachable
+gateway. Installed platforms serve the built bundle from the gateway.
 
-### Accounts and API tokens
+## Access and API routes
 
-In secured mode, Studio uses Gateway sessions for account and team access. The
-account pages include password changes, active sessions, and `/account/tokens`
-for creating, listing, and revoking personal agent/CI tokens. Admin-only user
-and invite pages create reset or activation links for out-of-band sharing.
+Local installs bind the gateway to loopback and open Studio without a login.
+Secured installs require a gateway session. Members can use projects and their
+own account; administrators can manage users and invites.
 
-- **REST API**: uses `@kb-labs/data-client` with `VITE_API_BASE_URL` (usually `/api/v1`)
-- **Plugins**: consumes Studio manifests via `@kb-labs/plugin-adapter-studio` and registry loader
-- **Mind**: uses `@kb-labs/mind-cli` and Mind surfaces for advanced views
+Browser requests use the gateway origin. Machine health uses `/api/health`,
+`/api/ready`, and `/api/observability/health`; host project registration uses
+`/api/v1/projects`. Project runtime calls include the active project id, such as
+`/api/v1/projects/{projectId}/logs`.
 
-## Environment
-
-Key environment variables (via Vite):
-
-- `VITE_API_BASE_URL` — base URL of REST API (defaults to `/api/v1`)
-
+Plugin pages must use `@kb-labs/sdk` and public contracts. They must not import
+Studio implementation packages such as `@kb-labs/studio-data-client` or
+`@kb-labs/studio-federation`.

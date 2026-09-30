@@ -38,6 +38,8 @@ export interface DataSourcesConfig {
   baseUrl?: string;
   /** Bearer token forwarded to Gateway on every request */
   token?: string;
+  /** Active project for APIs hosted by a project's runtime. */
+  projectId?: string;
 }
 
 export interface DataSources {
@@ -78,9 +80,9 @@ export function createDataSources(config: DataSourcesConfig): DataSources {
     system: new HttpSystemSource(client),
     workflow: new HttpWorkflowSource(client),
     cache: new HttpCacheSource(client),
-    observability: new HttpObservabilitySource(client),
-    analytics: new HttpAnalyticsSource(client),
-    adapters: new HttpAdaptersSource(client),
+    observability: new HttpObservabilitySource(client, config.projectId),
+    analytics: new HttpAnalyticsSource(client, config.projectId),
+    adapters: new HttpAdaptersSource(client, config.projectId),
     platform: new HttpPlatformSource(client),
     plugins: new HttpPluginsSource(client),
     projects: new HttpProjectsSource(client),

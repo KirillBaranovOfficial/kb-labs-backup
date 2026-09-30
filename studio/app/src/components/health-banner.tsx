@@ -3,13 +3,11 @@ import { useHealthStatus, useReadyStatus } from '@kb-labs/studio-data-client';
 import { studioConfig } from '@/config/studio.config';
 import { RefreshCw, AlertCircle, AlertTriangle, Info } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRegistryV2 } from '../providers/registry-v2-provider';
 import type { HealthStatus } from '@kb-labs/studio-data-client';
 import styles from './health-banner.module.css';
 
 export function HealthBanner() {
   const sources = useDataSources();
-  const _registry = useRegistryV2();
   const sseHealth = null as { status: string; ts?: string; ready: boolean; reason?: string } | null;
   const { data: healthRaw, error, refetch } = useHealthStatus(sources.system);
   const { data: ready } = useReadyStatus(sources.system);
@@ -80,13 +78,13 @@ export function HealthBanner() {
   const iconSize = 14;
 
   const message = isDown
-    ? 'REST API unavailable'
+    ? 'Gateway unavailable'
     : isDegraded
-    ? 'REST API degraded'
+    ? 'Gateway degraded'
     : 'Mock mode';
 
   const description = isDown
-    ? `Not ready at ${studioConfig.apiBaseUrl}${readyReason ? ` — ${readyReason}` : ''}`
+    ? `Not ready at /api/ready${readyReason ? ` — ${readyReason}` : ''}`
     : isDegraded
     ? `Some services may be unavailable${pluginMetrics?.failed ? ` · ${pluginMetrics.failed} plugin mount(s) failed` : ''}`
     : 'Using mock data for development';

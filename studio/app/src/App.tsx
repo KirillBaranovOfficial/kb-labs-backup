@@ -13,6 +13,7 @@ import { router } from './router';
 import { studioConfig } from './config/studio.config';
 import { DevToolsProvider } from './providers/devtools-provider';
 import { DevToolsPanel } from './components/devtools/devtools-panel';
+import { ProjectContextProvider } from './providers/project-context-provider';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -29,17 +30,19 @@ export function App() {
       <SettingsProvider>
         <AuthProvider>
           <QueryClientProvider client={queryClient}>
-            <DataSourcesProvider>
-              <DevToolsProvider>
-                <RegistryV2Provider apiBaseUrl={studioConfig.apiBaseUrl}>
-                  <EventBusProvider>
-                    <RouterProvider router={router} />
-                    <ReactQueryDevtools initialIsOpen={false} />
-                  </EventBusProvider>
-                </RegistryV2Provider>
-                <DevToolsPanel />
-              </DevToolsProvider>
-            </DataSourcesProvider>
+            <ProjectContextProvider>
+              <DataSourcesProvider>
+                <DevToolsProvider>
+                  <RegistryV2Provider apiBaseUrl={studioConfig.apiBaseUrl}>
+                    <EventBusProvider>
+                      <RouterProvider router={router} />
+                      <ReactQueryDevtools initialIsOpen={false} />
+                    </EventBusProvider>
+                  </RegistryV2Provider>
+                  <DevToolsPanel />
+                </DevToolsProvider>
+              </DataSourcesProvider>
+            </ProjectContextProvider>
           </QueryClientProvider>
         </AuthProvider>
       </SettingsProvider>
