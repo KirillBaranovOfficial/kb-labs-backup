@@ -2,9 +2,12 @@
 id: S-010
 title: Marketplace — Install plugin
 persona: solo-developer
+area: marketplace
 priority: P0
-automation: manual
-e2e: —
+status: active
+release: true
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
@@ -18,36 +21,10 @@ Developer discovers a plugin in the marketplace and installs it. Plugin commands
 
 ## Steps
 
-### Phase 1 — Discover
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | `kb marketplace plugins list` | Shows available plugins with name/description/version | | ⬜ |
-| 2 | `kb marketplace plugins list --json` | Valid JSON, machine-readable | | ⬜ |
-| 3 | `kb marketplace search <query>` (if exists) | Returns relevant plugins | | ⬜ |
-
-### Phase 2 — Install
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 4 | `kb marketplace install <plugin-name>` | Downloads, installs, shows success | | ⬜ |
-| 5 | `kb --help` after install | New plugin commands visible | | ⬜ |
-| 6 | `cat .kb/marketplace.lock` | Plugin entry added with version + integrity | | ⬜ |
-
-### Phase 3 — Use installed plugin
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 7 | Run a command from the installed plugin | Command executes successfully | | ⬜ |
-
-### Phase 4 — Install same plugin again (idempotency)
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 8 | `kb marketplace install <same-plugin>` | "Already installed" or no-op — not duplicate entry in lock | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-010.1 | From the project root, run `kb marketplace install @kb-labs/commit-entry@<version>` | Selected exact version is installed into the project extension store. |
+| S-010.2 | Run `kb marketplace plugins list` | Installed plugin, version, and enabled state are listed. |
+| S-010.3 | Inspect `.kb/marketplace.lock` | Schema v3 entry has exact version, integrity, source kind, and enabled state. |
+| S-010.4 | Run a documented command from the installed plugin | Command is discoverable and returns its documented result. |
+| S-010.5 | Run `kb marketplace install @kb-labs/commit-entry@<version>` again | Installation remains pinned to the requested exact version without a duplicate lock entry. |

@@ -1,9 +1,13 @@
 ---
 id: PC-001
-area: platform-core
 title: Clean V2 install from released artifacts
+persona: solo-developer
+area: platform-core
 priority: P0
-env: clean machine or isolated platform root
+status: active
+release: true
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
@@ -24,14 +28,14 @@ test.
 
 | # | Action | Expected |
 |---|---|---|
-| 1 | `kb-create --version` | Prints launcher version without a stack trace |
-| 2 | `kb-create wizard --index release-index.json --request-platform-root "$PLATFORM_ROOT" > request.json` | Wizard offers only compatible selections and emits one V2 request |
-| 3 | `kb-create plan --index release-index.json --input request.json` | JSON response has `ok: true`, exact artifacts and a service graph; nothing is written under the root |
-| 4 | `kb-create apply --index release-index.json --input request.json` | One verified application; output includes `receipt` and `logPath` |
-| 5 | Inspect `$PLATFORM_ROOT/.kb/kb.config.jsonc` and `$PLATFORM_ROOT/.kb/devservices.yaml` | Both exist, parse, and match the selected profile and service graph |
-| 6 | `kb-create doctor --platform-root "$PLATFORM_ROOT"` | JSON response is `ok: true`, or names each missing manifest requirement and its hint |
-| 7 | `kb-dev status --json` | The services equal the receipt/devservices graph |
-| 8 | Repeat `plan` with the same input | Identical plan hash/artifacts; no package or config mutation |
+| PC-001.1 | `kb-create --version` | Prints launcher version without a stack trace |
+| PC-001.2 | `kb-create wizard --index release-index.json --request-platform-root "$PLATFORM_ROOT" > request.json` | Wizard offers only compatible selections and emits one V2 request |
+| PC-001.3 | `kb-create plan --index release-index.json --input request.json` | JSON response has `ok: true`, exact artifacts and a service graph; nothing is written under the root |
+| PC-001.4 | `kb-create apply --index release-index.json --input request.json` | One verified application; output includes `receipt` and `logPath` |
+| PC-001.5 | Inspect `$PLATFORM_ROOT/.kb/kb.config.jsonc` and `$PLATFORM_ROOT/.kb/devservices.yaml` | Both exist, parse, and match the selected profile and service graph |
+| PC-001.6 | `kb-create doctor --platform-root "$PLATFORM_ROOT"` | JSON response is `ok: true`, or names each missing manifest requirement and its hint |
+| PC-001.7 | `kb-dev status --json` | The services equal the receipt/devservices graph |
+| PC-001.8 | Repeat `plan` with the same input | Identical plan hash/artifacts; no package or config mutation |
 
 ## Pass criteria
 

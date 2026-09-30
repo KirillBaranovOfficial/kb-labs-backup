@@ -1,70 +1,28 @@
 ---
 id: PC-002
+title: PC-002 — Start the V2 host and confirm services
+persona: solo-developer
 area: platform-core
-title: First start — all services up
 priority: P0
-env: kb-env (fresh, after PC-001)
-requires: PC-001
+status: active
+release: true
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
 
-Developer starts all KB Labs services for the first time and confirms every service
-is healthy and reachable.
+A developer starts the V2 host runtime and confirms its managed services become healthy.
 
-## Environment
+## Prerequisites
 
-- [ ] PC-001 completed — project exists, `kb` in PATH
-- [ ] Ports 4000, 5050, 5070, 7777, 7778 are free
-
----
+- [ ] V2 installation with a configured platform root and `kb-dev` runtime configuration.
 
 ## Steps
 
-### Phase 1 — Start services
-
 | # | Action | Expected |
-|---|--------|----------|
-| 1 | `kb-dev start` (inside project dir) | All services start, no immediate crash |
-| 2 | Wait ~10 seconds | — |
-| 3 | `kb-dev status` | All services show `running` (green), no `failed` |
-| 4 | Output lists: gateway, rest-api, workflow, marketplace, state | All 5 present |
-
-### Phase 2 — Verify each service responds
-
-| # | Action | Expected |
-|---|--------|----------|
-| 5 | `curl -s http://localhost:4000/health` | `{"status":"healthy",...}`, HTTP 200 |
-| 6 | `curl -s http://localhost:5050/health` | `{"status":"healthy",...}`, HTTP 200 |
-| 7 | `curl -s http://localhost:5070/health` | `{"status":"healthy",...}`, HTTP 200 |
-| 8 | `curl -s http://localhost:7777/health` | `{"status":"healthy",...}`, HTTP 200 |
-| 9 | `curl -s http://localhost:7778/health` | `{"status":"healthy",...}`, HTTP 200 |
-
-### Phase 3 — Gateway routes correctly
-
-| # | Action | Expected |
-|---|--------|----------|
-| 10 | `curl -s http://localhost:4000/api/v1/runs?limit=1` | JSON response (200 or 401), not connection refused |
-| 11 | `curl -s http://localhost:4000/auth/me` | JSON with userId, not 500 or ECONNREFUSED |
-| 12 | `curl -s http://localhost:4000/api/v1/studio/registry` | JSON with plugin registry |
-
-### Phase 4 — Stop gracefully
-
-| # | Action | Expected |
-|---|--------|----------|
-| 13 | `kb-dev stop` | All services stop, no orphan processes |
-| 14 | `kb-dev status` | All services show `stopped` |
-| 15 | `curl -s http://localhost:4000/health` | Connection refused (services are down) |
-| 16 | `kb-dev start` again | Services restart cleanly |
-
----
-
-## Pass criteria
-
-All services reach `running` within 30 seconds of `kb-dev start`.
-All health endpoints return 200. Stop is clean (no zombie processes).
-
-## Notes
-
-- If a service shows `failed`: `kb-dev logs <service>` for details
-- Socket mode (KB_SOCKET_HASH) is injected automatically by `kb-dev` — do not set manually
+|---|---|---|
+| PC-002.1 | Run `kb-create start --platform-root "$PLATFORM_ROOT" --json` | Host services start under the configured network offset. |
+| PC-002.2 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` | JSON lists each configured host service and its current state. |
+| PC-002.3 | Check the configured gateway and workflow health endpoints | Each endpoint returns a successful health response. |
+| PC-002.4 | Run `kb-create stop --platform-root "$PLATFORM_ROOT" --json` | Managed services stop cleanly. |
