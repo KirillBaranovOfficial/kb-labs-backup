@@ -750,6 +750,15 @@
       "hint": "Check the network and registry, then retry."
     },
     {
+      "code": "KB_PLUGIN_INTEGRITY_MISMATCH",
+      "area": "plugin",
+      "stage": "extend",
+      "severity": "error",
+      "retryable": false,
+      "message": "Store entry for plugin {plugin} has integrity {actual}, expected {expected}.",
+      "hint": "Remove the store entry and reinstall the pinned version."
+    },
+    {
       "code": "KB_PLUGIN_LOAD_FAILED",
       "area": "plugin",
       "stage": "run",
