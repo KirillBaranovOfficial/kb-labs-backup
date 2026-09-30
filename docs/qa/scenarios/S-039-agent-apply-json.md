@@ -22,6 +22,6 @@ An automation agent installs the exact platform and project selection from a req
 
 | # | Action | Expected |
 |---|---|---|
-| S-039.1 | Run `kb-create apply --index release-index.json --input request.json --json` | JSON has `ok: true`, receipt, and log path. |
-| S-039.2 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` | Installed components match the receipt. |
-| S-039.3 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | Returns `ok: true` or manifest findings with owner, code, and hint. |
+| S-039.1 | Run `kb-create apply --json --index release-index.json --request-platform-root "$PLATFORM_ROOT" --service-profile default --scenario commit` | Exits 0; JSON has `ok: true`, `operation: "apply"`, a `receipt` whose `plan.request.platformRoot` is the isolated root, and non-empty `logPath`. |
+| S-039.2 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok: true`, `installed: true`, `host.state: "running"`, and `installation.receiptId` equal to the receipt ID in `$PLATFORM_ROOT/.kb/v2/receipt.json`. |
+| S-039.3 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | A healthy install exits 0 with `ok: true`; if an installed manifest requirement is missing, it exits 1 and the corresponding finding includes its `owner`, `path`, and `hint`. |

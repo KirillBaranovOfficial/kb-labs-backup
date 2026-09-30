@@ -22,7 +22,7 @@ Common project, marketplace, and configuration failures expose stable error data
 
 | # | Action | Expected |
 |---|---|---|
-| S-051.1 | Run a project command from an unregistered directory | Human message identifies the issue and gives `kb project add` as the next command. |
-| S-051.2 | Run `kb marketplace install <unknown-package>` | Actionable error names the unavailable package. |
-| S-051.3 | Run `kb adapter bind storage <uninstalled-package>` | Error names the missing package and platform-scope install command. |
-| S-051.4 | Repeat with `--json` | Stable error fields are present; human output contains no raw stack trace or JSON blob. |
+| S-051.1 | From an initialized but unregistered project directory, run `kb project show` | Exits non-zero; output is `The project {path} is not in the registry (the folder may have moved). [KB_PROJECT_UNKNOWN]` followed by `Hint: Register it with "kb project add {path}".`; `{path}` is the current path, redacted to `~` under the home directory; no stack trace or JSON object is printed. |
+| S-051.2 | Run `kb marketplace install @kb-labs/not-published` | Exits non-zero; human output names `@kb-labs/not-published` and includes an actionable hint. **Product question:** confirm the stable error `code` and exact next command for an unavailable registry package. |
+| S-051.3 | Run `kb adapter bind storage @kb-labs/not-installed` | Exits non-zero; output is `Adapter package @kb-labs/not-installed is not installed on this platform.` followed by `Run: kb marketplace install @kb-labs/not-installed --scope platform`; no raw stack trace or JSON object is printed. **Product question:** this path currently exposes no error code. |
+| S-051.4 | Repeat each failing command with `--json` | Project show returns `{ok:false,error:{code,message,hint}}`; adapter bind returns `{ok:false,error:<message>,hint:<command>}`. **Product question:** specify the stable JSON shape for unavailable marketplace packages and whether adapter bind must adopt the shared error envelope. Human output omits stack traces and raw JSON. |

@@ -22,6 +22,6 @@ A developer restarts V2 host services and verifies the configured runtime return
 
 | # | Action | Expected |
 |---|---|---|
-| PC-004.1 | Run `kb-create restart --platform-root "$PLATFORM_ROOT" --json` | Managed host services restart under that config. |
-| PC-004.2 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` | Services report their new runtime state and health information. |
-| PC-004.3 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | Install checks pass and no recovery finding remains. |
+| PC-004.1 | Run `kb-create restart --platform-root "$PLATFORM_ROOT" --json` while the host is running | Exits 0; JSON has `ok: true`, `operation: "restart"`, and `host.pid` greater than 0 for the restarted host. |
+| PC-004.2 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `host.state: "running"`, `running: true`, and `reachable: true`. |
+| PC-004.3 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok`, `installed`, `running`, and `reachable` set to `true`; installation and platform checks pass. |

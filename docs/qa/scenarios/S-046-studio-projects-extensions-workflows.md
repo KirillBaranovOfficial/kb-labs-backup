@@ -22,6 +22,6 @@ A Studio user selects among registered projects and verifies that each shows its
 
 | # | Action | Expected |
 |---|---|---|
-| S-046.1 | Open Studio and select project A | Project A is named as the active project. |
-| S-046.2 | Open Plugins and Adapters | Only the extensions bound/installed for project A are shown. |
-| S-046.3 | Select project B and open the same views | Project B is active and its distinct plugin and adapter set is shown. |
+| S-046.1 | Open Studio and select the project named `project-a` in the project selector | The active project selector displays `project-a`. |
+| S-046.2 | Open `/plugins` and `/adapters` with project A selected | The Plugins view lists only `@kb-labs/workflow`; the Adapters view lists only project A's bound storage adapter. |
+| S-046.3 | Select the project named `project-b`, then reopen `/plugins` and `/adapters` | The selector displays `project-b`; Plugins lists only `@kb-labs/commit` and Adapters lists only project B's bound storage adapter. |

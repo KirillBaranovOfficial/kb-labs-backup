@@ -24,11 +24,11 @@ A user removes a V2 installation only after a human confirms its scope on a term
 |---|---|---|
 | S-050.1 | Inspect the target root and project paths before invoking uninstall | The selected platform root is the intended V2 installation and project files are outside that root. |
 | S-050.2 | In a terminal, run `kb-create uninstall --platform-root "$PLATFORM_ROOT"` | Prompt names the platform root, installed services, active receipt and saved snapshots to remove, and says project files are kept. |
-| S-050.3 | Answer `n` | Exits with `KB_INSTALL_OPERATION_CANCELLED`; the installation is untouched. |
-| S-050.4 | Run `kb-create uninstall --platform-root "$PLATFORM_ROOT" --json` without a TTY | Exit 2 with `KB_INSTALL_CONFIRMATION_REQUIRED`; the hint is the exact rerun command with `--yes`; nothing is removed. |
-| S-050.5 | Human path: rerun in a terminal and answer `y`. Agent path: rerun with `--yes --json` | Returns `ok: true`, operation `uninstall`, snapshot metadata and log path; installed platform artifacts are removed. |
-| S-050.6 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` | No installed platform receipt is reported. |
-| S-050.7 | Inspect separate project directory | Workflows, config, source files and plugin source remain. |
+| S-050.3 | Answer `n` | Exits 1; stdout JSON has `error.code: "KB_INSTALL_OPERATION_CANCELLED"`; the active receipt remains. |
+| S-050.4 | Run `kb-create uninstall --platform-root "$PLATFORM_ROOT" --registry "$REGISTRY" --json` without a TTY | Exits 2; JSON `error.code` is `KB_INSTALL_CONFIRMATION_REQUIRED`, and `error.hint` is exactly ``rerun `kb-create uninstall --platform-root "$PLATFORM_ROOT" --registry $REGISTRY --json --yes````, including the command's surrounding backticks; the active receipt remains. |
+| S-050.5 | In a terminal, rerun `kb-create uninstall --platform-root "$PLATFORM_ROOT"` and answer `y` | Exits 0; stdout is JSON with `ok: true`, `operation: "uninstall"`, snapshot metadata, and `logPath`; the platform root, receipt, and snapshots are removed. |
+| S-050.6 | In an agent invocation, run `kb-create uninstall --platform-root "$PLATFORM_ROOT" --yes --json` | Exits 0; JSON has `ok: true`, `operation: "uninstall"`, snapshot metadata, and `logPath`; platform artifacts are removed. |
+| S-050.7 | Inspect the separate project directory after either successful path | The project root still exists and `$PROJECT_ROOT/note.txt` still contains `journey first value`. |
 
 ## Pass criteria
 

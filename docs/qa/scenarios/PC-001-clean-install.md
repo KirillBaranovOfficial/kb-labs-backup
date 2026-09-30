@@ -28,14 +28,14 @@ test.
 
 | # | Action | Expected |
 |---|---|---|
-| PC-001.1 | `kb-create --version` | Prints launcher version without a stack trace |
-| PC-001.2 | `kb-create wizard --index release-index.json --request-platform-root "$PLATFORM_ROOT" > request.json` | Wizard offers only compatible selections and emits one V2 request |
-| PC-001.3 | `kb-create plan --index release-index.json --input request.json` | JSON response has `ok: true`, exact artifacts and a service graph; nothing is written under the root |
-| PC-001.4 | `kb-create apply --index release-index.json --input request.json` | One verified application; output includes `receipt` and `logPath` |
-| PC-001.5 | Inspect `$PLATFORM_ROOT/.kb/kb.config.jsonc` and `$PLATFORM_ROOT/.kb/devservices.yaml` | Both exist, parse, and match the selected profile and service graph |
-| PC-001.6 | `kb-create doctor --platform-root "$PLATFORM_ROOT"` | JSON response is `ok: true`, or names each missing manifest requirement and its hint |
-| PC-001.7 | `kb-dev status --json` | The services equal the receipt/devservices graph |
-| PC-001.8 | Repeat `plan` with the same input | Identical plan hash/artifacts; no package or config mutation |
+| PC-001.1 | Run `kb-create --version` | Prints `kb-create <version>` and exits 0. |
+| PC-001.2 | Run `kb-create install --index release-index.json --platform-root "$PLATFORM_ROOT"` in a terminal and complete the displayed prompts | The terminal prints `Set up KB Labs`, a `Plan: platform <version>, <count> artifacts` summary, `Applying installation…`, then a success/next-step message. The operation applies the selected plan; it does not write a request file. |
+| PC-001.3 | Run `kb-create plan --index release-index.json --request-platform-root "$PLATFORM_ROOT" --service-profile default --scenario commit --json` | Exits 0; JSON has `ok: true`, `plan.request.platformRoot` equal to the isolated root, and the resolved `plan.artifacts` and `plan.serviceGraph`; no package, generated runtime config, or receipt is written. |
+| PC-001.4 | Run `kb-create apply --index release-index.json --request-platform-root "$PLATFORM_ROOT" --service-profile default --scenario commit --json` | Exits 0; JSON has `ok: true`, `operation: "apply"`, and non-empty `receipt` and `logPath`. |
+| PC-001.5 | Inspect `$PLATFORM_ROOT/.kb/kb.config.jsonc` and `$PLATFORM_ROOT/.kb/devservices.yaml` | Both files exist; the runtime config is valid JSONC and its service declarations match the selected service profile in the request. |
+| PC-001.6 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` after host start | Exits 0; JSON has `ok: true`, `installed: true`, `running: true`, `reachable: true`, and `platform.ok: true`. |
+| PC-001.7 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok: true`, `installed: true`, `running: true`, `reachable: true`, `host.state: "running"`, and `installation.receiptId` equal to the ID in `.kb/v2/receipt.json`. |
+| PC-001.8 | Repeat `kb-create plan --index release-index.json --request-platform-root "$PLATFORM_ROOT" --service-profile default --scenario commit --json` | The returned plan has the same `planHash`, `artifacts`, and `serviceGraph` as the first plan; planning does not write package or runtime config files under the root. |
 
 ## Pass criteria
 
