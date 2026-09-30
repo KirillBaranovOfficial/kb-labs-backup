@@ -65,7 +65,7 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
       return;
     }
     if (!result.ok) {
-      ctx.ui?.error(result.error ?? 'Adapter unbind failed');
+      ctx.ui?.error(`${result.error ?? 'Adapter unbind failed'}`);
       return;
     }
     ctx.ui?.success(result.dryRun ? 'Adapter unbind validated; no config written' : 'Adapter unbound from project', {
