@@ -352,7 +352,10 @@ export async function createHostConfig(
         createChildProcessLauncher({
           entry: overrides.entry ?? defaultRuntimeEntry(),
           // One platform per machine: every project runtime runs on the host's.
-          env: { KB_PLATFORM_ROOT: ctx.platformRoot },
+          env: {
+            KB_PLATFORM_ROOT: ctx.platformRoot,
+            KB_MCP_AUTH_MODE: settings.auth === "off" ? "local" : "secured",
+          },
           ...(overrides.stopTimeoutMs !== undefined
             ? { stopTimeoutMs: overrides.stopTimeoutMs }
             : {}),

@@ -18,6 +18,7 @@ import { platformSyncCommand } from './platform/sync';
 import { webhookProvision, webhookList, webhookRevoke } from './webhook';
 import { configShow, configGet, configSet } from './config';
 import { projectAdd, projectList, projectShow, projectRemove } from './project';
+import { mcpConfig } from './mcp';
 
 /**
  * Info Commands Group
@@ -114,4 +115,8 @@ export const projectGroup = defineSystemCommandGroup('project', 'Project registr
   projectList,
   projectShow,
   projectRemove,
+]);
+
+export const mcpGroup = defineSystemCommandGroup('mcp', 'Model Context Protocol commands', [
+  mcpConfig,
 ]);

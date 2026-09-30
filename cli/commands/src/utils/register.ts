@@ -10,6 +10,7 @@ import {
   webhookGroup,
   configGroup,
   projectGroup,
+  mcpGroup,
 } from "../commands/system/groups";
 import { createCompletionCommand, autoUpdateCompletion } from "../commands/system/completion";
 import { diag } from "../commands/system/diag";
@@ -64,6 +65,7 @@ export async function registerBuiltinCommands(
   registry.registerGroup(webhookGroup);
   registry.registerGroup(configGroup);
   registry.registerGroup(projectGroup);
+  registry.registerGroup(mcpGroup);
 
   // Standalone system commands
   registry.register(createCompletionCommand(registry));

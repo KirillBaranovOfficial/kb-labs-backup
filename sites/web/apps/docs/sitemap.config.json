@@ -36,7 +36,7 @@
       "stalenessRisk": "medium",
       "note": "Changes with ADRs. Each page should reference the relevant ADR.",
       "pages": [
-        { "slug": "concepts/overview",        "type": "manual", "owners": ["core/**"] },
+        { "slug": "concepts/overview",        "type": "manual", "owners": ["core/**", "services/host/app/**", "services/project-runtime/app/**", "services/mcp/app/**"] },
         { "slug": "concepts/plugin-system",   "type": "manual", "owners": ["core/plugin-runtime/**", "core/plugin-contracts/**"] },
         { "slug": "concepts/adapter-system",  "type": "manual", "owners": ["core/platform/**", "adapters/**"] },
         { "slug": "concepts/execution-model", "type": "manual", "owners": ["core/plugin-execution/**", "core/sandbox/**"] },
@@ -217,7 +217,8 @@
       "stalenessRisk": "medium",
       "note": "Platform tools and daemons. Not individual plugins.",
       "pages": [
-        { "slug": "services/index",           "type": "manual", "owners": ["tools/**"] },
+        { "slug": "services/index",           "type": "manual", "owners": ["tools/**", "services/host/app/**", "services/project-runtime/app/**", "services/mcp/app/**"] },
+        { "slug": "services/mcp",             "type": "manual", "owners": ["services/mcp/app/**", "services/project-runtime/app/**", "cli/commands/src/commands/system/mcp/**"] },
         { "slug": "services/cli",             "type": "hybrid", "owners": ["cli/**"] },
         { "slug": "services/kb-dev",          "type": "manual", "owners": ["tools/kb-dev/**"] },
         { "slug": "services/kb-devkit",       "type": "manual", "owners": ["infra/devkit/**", "tools/kb-devkit/**"] },

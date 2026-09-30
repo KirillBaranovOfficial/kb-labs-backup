@@ -13,6 +13,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
@@ -83,6 +85,70 @@ def require(result, expected=0, step="command"):
         fail(f"{step}: exit {result.returncode}; {excerpt or 'no output'}")
         return False
     return True
+
+
+def mcp_rpc(url: str, method: str, request_id: int, params=None, token=None):
+    payload = {"jsonrpc": "2.0", "id": request_id, "method": method}
+    if params is not None:
+        payload["params"] = params
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+                 **({"Authorization": f"Bearer {token}"} if token else {})},
+        method="POST",
+    )
+    try:
+        response = urllib.request.urlopen(request, timeout=30)
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f"MCP {method} returned HTTP {error.code}") from error
+    body = response.read().decode()
+    if body.lstrip().startswith("data:"):
+        body = "\n".join(line[5:].strip() for line in body.splitlines() if line.startswith("data:"))
+    return json.loads(body)
+
+
+def verify_project_mcp(env: dict[str, str], local: bool):
+    registered, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add --init --json'],
+                        env=env, cwd=PROJECT, timeout=180)
+    if not require(registered, step="register project for MCP"):
+        return
+    try:
+        project = json.loads(registered.stdout)["project"]
+        project_id = project["id"]
+        url = f"http://127.0.0.1:4000/api/v1/projects/{project_id}/mcp"
+        token = None
+        if not local:
+            try:
+                mcp_rpc(url, "tools/list", 0)
+            except RuntimeError as error:
+                if "HTTP 401" not in str(error):
+                    raise
+            else:
+                raise RuntimeError("secured MCP accepted a request without a token")
+            token = env.get("KB_MCP_TOKEN")
+            if not token:
+                raise RuntimeError("secured MCP journey needs KB_MCP_TOKEN from gateway login")
+        initialized = mcp_rpc(url, "initialize", 1, {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "kb-labs-journey", "version": "1.0.0"},
+        }, token)
+        if "result" not in initialized:
+            raise RuntimeError("initialize returned no result")
+        listed = mcp_rpc(url, "tools/list", 2, token=token)
+        tools = listed.get("result", {}).get("tools", [])
+        names = {tool.get("name") for tool in tools}
+        expected = {"commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics"}
+        if not expected.issubset(names):
+            raise RuntimeError(f"tools/list missing expected tools: {sorted(expected - names)}")
+        called = mcp_rpc(url, "tools/call", 3, {"name": "kb-labs__mcp_diagnostics", "arguments": {}}, token)
+        content = called.get("result", {}).get("content", [])
+        text = "\n".join(item.get("text", "") for item in content)
+        if called.get("result", {}).get("isError") or "loaded cleanly" not in text:
+            raise RuntimeError(f"diagnostics call had unexpected result: {text}")
+    except (KeyError, ValueError, RuntimeError, urllib.error.URLError) as error:
+        fail(f"project MCP journey: {error}")
 
 
 def pty_install(command: list[str], env: dict[str, str], choice: str = ""):
@@ -396,6 +462,9 @@ def main():
         status, _ = run(["git", "status", "--porcelain"], env=env, cwd=PROJECT)
         if status.stdout.strip() != "?? note.txt" and status.stdout.strip() != "A  note.txt":
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
+
+    if FRONT == "agent" and SCENARIO == "commit":
+        verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local")
 
     for command, key in (("status", r"Installed:\s+yes.*Running:\s+yes"), ("doctor", "")):
         result, _ = run([launcher, command, "--platform-root", str(PLATFORM)], env=env, timeout=120)

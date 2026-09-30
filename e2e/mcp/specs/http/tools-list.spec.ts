@@ -1,14 +1,13 @@
 import { test, expect } from '@playwright/test'
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js'
-import { listTools } from './_helpers.js'
+import { listTools, postMcp } from './_helpers.js'
 
-// MCP tools/list — anonymous callers see nothing; authenticated callers see the
+// MCP tools/list — secured mode rejects anonymous callers; authenticated callers see the
 // plugin-command tool catalog derived live from manifests.
 
-test('M-01: anonymous tools/list returns an empty catalog', async ({ request }) => {
-  const tools = await listTools(request)
-  expect(Array.isArray(tools)).toBe(true)
-  expect(tools).toHaveLength(0)
+test('M-01: anonymous tools/list returns 401', async ({ request }) => {
+  const response = await postMcp(request, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+  expect(response.status).toBe(401)
 })
 
 test('M-02: authenticated tools/list returns a non-empty catalog', async ({ request }) => {

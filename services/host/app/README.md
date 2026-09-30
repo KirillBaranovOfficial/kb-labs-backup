@@ -61,8 +61,9 @@ Top-level `host` section of the KB config (all optional):
 ## Project runtimes (model B)
 
 `GET|POST|... /api/v1/projects/{projectId}/<module>/<path>` is answered by the
-runtime of that project (`<module>` is `rest` or `workflow`; the rest of the
-path reaches the module unchanged). The gateway authenticates first, then asks
+runtime of that project (`<module>` is `rest`, `workflow`, or `mcp`; the rest of the
+path reaches the module unchanged). MCP Streamable HTTP is available at
+`/api/v1/projects/{projectId}/mcp`. The gateway authenticates first, then asks
 the host's `ProjectRuntimeManager`, which:
 
 - checks the id against the project registry (exact `prj_...` id only; unknown
