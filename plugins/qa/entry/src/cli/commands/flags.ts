@@ -227,3 +227,21 @@ export const baselineDiffFlags = defineFlags({
   },
 });
 export type BaselineDiffFlags = typeof baselineDiffFlags.infer;
+
+export const qaCasesListFlags = defineFlags({
+  json: { type: 'boolean', description: 'Output JSON', default: false },
+});
+export type QaCasesListFlags = typeof qaCasesListFlags.infer;
+
+export const qaCasesValidateFlags = defineFlags({
+  json: { type: 'boolean', description: 'Output JSON', default: false },
+});
+export type QaCasesValidateFlags = typeof qaCasesValidateFlags.infer;
+
+export const qaCasesCoverageFlags = defineFlags({
+  run: { type: 'string', description: 'Comma-separated run result JSON files' },
+  level: { type: 'string', description: 'Coverage level: all or release', default: 'all' },
+  mode: { type: 'string', description: 'Install mode: local or secured', default: 'local' },
+  json: { type: 'boolean', description: 'Output JSON', default: false },
+});
+export type QaCasesCoverageFlags = typeof qaCasesCoverageFlags.infer;

@@ -29,10 +29,6 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
-      - name: Fail when a declared release journey is not covered
-        env:
-          SCENARIO_LEVEL: ${{ inputs.scenario-level }}
-        run: python3 e2e/journey/scenarios.py validate --level "$SCENARIO_LEVEL"
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with: { run_install: false }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -49,6 +45,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build affected workspace packages
         run: ./tools/kb-devkit/kb-devkit run build --affected
+      - name: Validate QA cases and test claims
+        run: pnpm kb qa cases validate
       - name: Restore packed package cache
         id: tgz-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9

@@ -39,12 +39,14 @@ class FakeGitHub:
 class ServiceJourneyTests(unittest.TestCase):
     def test_first_failure_and_json_result(self):
         journey = Journey("local", "fixture")
-        journey.step("health", "gateway", lambda: None)
+        journey.step("health", "gateway", lambda: None, cases=["S-010.1"])
         journey.step("workflow", "workflow", lambda: "workflow route returned 404")
         result = journey.result()
         self.assertEqual(result.status, "FAIL")
         self.assertEqual(result.first_failure["name"], "workflow")
         self.assertEqual(len(result.steps), 2)
+        self.assertEqual(result.steps[0]["cases"], ["S-010.1"])
+        self.assertEqual(result.case_run["claims"], [{"claimId": "S-010.1", "kind": "journey", "status": "PASS"}])
         with tempfile.TemporaryDirectory() as directory:
             saved = journey.write_json(Path(directory) / "journey.json")
             self.assertEqual(saved.schema, "kb.service-journey/v1")

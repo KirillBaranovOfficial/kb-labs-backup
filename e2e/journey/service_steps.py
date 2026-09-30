@@ -18,6 +18,7 @@ class StepResult:
     status: str
     duration_seconds: float
     message: str
+    cases: list[str]
 
 
 @dataclass
@@ -29,6 +30,7 @@ class JourneyResult:
     status: str
     first_failure: dict | None
     steps: list[dict]
+    case_run: dict
 
 
 class Journey:
@@ -41,7 +43,7 @@ class Journey:
         self.started = time.monotonic()
         self.steps: list[StepResult] = []
 
-    def step(self, name: str, capability: str, check: Callable[[], str | None]) -> StepResult:
+    def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = ()) -> StepResult:
         started = time.monotonic()
         try:
             message = check()
@@ -50,12 +52,12 @@ class Journey:
             status = "FAIL"
             message = str(error) or error.__class__.__name__
         result = StepResult(name, capability, self.mode, status,
-                            round(time.monotonic() - started, 3), message or "passed")
+                            round(time.monotonic() - started, 3), message or "passed", list(cases))
         self.steps.append(result)
         return result
 
-    def blocked(self, name: str, capability: str, reason: str) -> StepResult:
-        result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, reason)
+    def blocked(self, name: str, capability: str, reason: str, cases: Iterable[str] = ()) -> StepResult:
+        result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, reason, list(cases))
         self.steps.append(result)
         return result
 
@@ -64,9 +66,23 @@ class Journey:
         failed = any(step.status == "FAIL" for step in self.steps)
         blocked = any(step.status == "BLOCKED" for step in self.steps)
         status = "FAIL" if failed else "BLOCKED" if blocked else "PASS"
+        claims = {}
+        for step in self.steps:
+            if step.status == "BLOCKED":
+                continue
+            for case_id in step.cases:
+                previous = claims.get(case_id)
+                if step.status == "FAIL" or previous != "FAIL":
+                    claims[case_id] = step.status
+        case_run = {
+            "schema": "kb.qa-case-run/v1",
+            "runId": self.run_id,
+            "mode": self.mode,
+            "claims": [{"claimId": case_id, "kind": "journey", "status": result} for case_id, result in sorted(claims.items())],
+        }
         return JourneyResult("kb.service-journey/v1", self.run_id, self.started_at,
                              round(time.monotonic() - self.started, 3), status, first,
-                             [asdict(step) for step in self.steps])
+                             [asdict(step) for step in self.steps], case_run)
 
     def write_json(self, path: str | Path) -> JourneyResult:
         result = self.result()
