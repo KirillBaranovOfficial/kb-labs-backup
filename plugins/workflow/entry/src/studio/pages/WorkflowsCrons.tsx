@@ -13,11 +13,14 @@ import {
   UIIcon,
 } from '@kb-labs/sdk/studio';
 import { useData } from '@kb-labs/sdk/studio';
+import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes';
 import { UICard } from '@kb-labs/sdk/studio';
 import { UIPage, UIPageHeader } from '@kb-labs/sdk/studio';
+import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker';
 
 export default function WorkflowsCrons() {
-  const { data: cronsData, isLoading } = useData<{ crons: Array<Record<string, unknown>> }>('/exec/api/v1/crons');
+  const { projectId, picker, hasProjects } = useWorkflowProject();
+  const { data: cronsData, isLoading } = useData<{ crons: Array<Record<string, unknown>> }>(projectWorkflowEndpoint(projectId, 'api/v1/crons'), { enabled: hasProjects });
 
   const formatDate = (date?: Date | string) => {
     if (!date) {return '-';}
@@ -118,6 +121,7 @@ export default function WorkflowsCrons() {
       <UIPageHeader
         title="Cron Jobs"
         description="Scheduled recurring tasks"
+        actions={picker}
         breadcrumbs={[
           { title: 'Home', href: '/' },
           { title: 'Workflows', href: '/workflows' },

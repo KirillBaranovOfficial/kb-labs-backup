@@ -4,7 +4,7 @@
  * Provides CLI commands for interacting with Workflow Daemon via HTTP API.
  */
 
-import { defineCommandFlags, combinePermissions } from '@kb-labs/sdk';
+import { defineCommandFlags, combinePermissions, kbPlatformPreset } from '@kb-labs/sdk';
 import {
   healthFlags,
   metricsFlags,
@@ -37,7 +37,9 @@ import {
  * No file system or git access needed
  */
 const pluginPermissions = combinePermissions()
-  .withEnv(['WORKFLOW_DAEMON_URL'])
+  .with(kbPlatformPreset)
+  .withFs({ mode: 'readWrite', allow: ['.kb/workflows/**'] })
+  .withEnv(['KB_PROJECT_ID', 'KB_GATEWAY_URL', 'HOME', 'KB_HOME'])
   .withNetwork({
     fetch: ['http://localhost:*', 'http://127.0.0.1:*'],
   })
@@ -72,6 +74,15 @@ export const manifest = {
       { path: 'workflow defs', describe: 'Workflow definition discovery (list, view)' },
     ],
     commands: [
+      {
+        path: 'workflow init',
+        category: 'Workflows',
+        operationType: 'mutate' as const,
+        describe: 'Create a runnable local workflow example.',
+        handler: './commands/init.js#default',
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow init'],
+      },
       {
         path: 'workflow health',
         category: 'Daemon',
@@ -534,29 +545,6 @@ export const manifest = {
         path: WORKFLOW_ROUTES.RESOLVE_APPROVAL,
         handler: './rest/resolve-approval-handler.js#default',
         describe: 'Approve or reject a pending approval step',
-      },
-    ],
-  },
-
-  // WebSocket channels for real-time updates
-  ws: {
-    basePath: '/v1/ws/plugins/workflow',
-    defaults: {
-      timeoutMs: 600000, // 10 minutes
-      maxMessageSize: 1048576, // 1MB
-      auth: 'none',
-      idleTimeoutMs: 300000, // 5 minutes
-    },
-    channels: [
-      {
-        path: '/logs/:runId',
-        handler: './ws/logs-channel.js#default',
-        description: 'Real-time job logs streaming',
-      },
-      {
-        path: '/progress/:jobId',
-        handler: './ws/progress-channel.js#default',
-        description: 'Real-time job progress updates',
       },
     ],
   },

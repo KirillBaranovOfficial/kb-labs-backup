@@ -66,7 +66,7 @@ test('an explicit generated source reference takes precedence over broad owner z
 
   assert.deepEqual(affected.map((page) => page.slug), ['guides/first-workflow']);
   assert.equal(affected[0].matchKind, 'exact');
-  assert.deepEqual(affected[0].sourceReferences, ['workflow run', 'workflow runs status']);
+  assert.deepEqual(affected[0].sourceReferences, ['workflow runs list', 'workflow runs logs']);
 });
 
 test('workflow engine ownership zones point at real, relevant source areas', () => {

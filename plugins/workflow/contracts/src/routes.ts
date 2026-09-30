@@ -8,6 +8,17 @@
  */
 export const WORKFLOW_BASE_PATH = '/plugins/workflow'
 
+/** Path to a workflow API route scoped to one registered project. */
+export function projectWorkflowRoute(projectId: string, path = ''): string {
+  const suffix = path.replace(/^\/+/, '');
+  return `/api/v1/projects/${encodeURIComponent(projectId)}/workflow${suffix ? `/${suffix}` : ''}`;
+}
+
+/** Project route path for Studio SDK hooks, which prepend `/api` themselves. */
+export function projectWorkflowEndpoint(projectId: string, path = ''): string {
+  return projectWorkflowRoute(projectId, path).slice('/api'.length);
+}
+
 /**
  * Workflow REST API routes
  */

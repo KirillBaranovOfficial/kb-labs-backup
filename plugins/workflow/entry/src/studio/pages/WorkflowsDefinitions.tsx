@@ -16,24 +16,28 @@ import {
 } from '@kb-labs/sdk/studio';
 import { useData, useMutateData } from '@kb-labs/sdk/studio';
 import type { WorkflowInfo } from '@kb-labs/workflow-contracts';
+import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes';
 import { UICard } from '@kb-labs/sdk/studio';
 import { RunWorkflowModal } from '../components/RunWorkflowModal';
 import { UIPage, UIPageHeader } from '@kb-labs/sdk/studio';
+import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker';
 
 export default function WorkflowsDefinitions() {
   const navigate = useNavigate();
   const [messageApi, contextHolder] = useUIMessage();
   const [runModalWorkflow, setRunModalWorkflow] = React.useState<WorkflowInfo | null>(null);
+  const { projectId, picker, hasProjects } = useWorkflowProject();
 
-  const { data: workflowsData, isLoading } = useData<{ workflows: WorkflowInfo[] }>('/exec/api/v1/workflows', {
+  const { data: workflowsData, isLoading } = useData<{ workflows: WorkflowInfo[] }>(projectWorkflowEndpoint(projectId, 'api/v1/workflows'), {
     params: { limit: 100 },
+    enabled: hasProjects,
   });
 
   const runWorkflowMutation = useMutateData<
     { workflowId: string; input: Record<string, unknown> },
     { runId: string; status: string }
   >(
-    (p) => `/exec/api/v1/workflows/${encodeURIComponent(p.workflowId)}/runs`,
+    (p) => projectWorkflowEndpoint(projectId, `api/v1/workflows/${encodeURIComponent(p.workflowId)}/runs`),
     { mapBody: (p) => ({ inputs: p.input }) },
   );
 
@@ -167,6 +171,7 @@ export default function WorkflowsDefinitions() {
           { title: 'Workflows', href: '/workflows' },
           { title: 'Definitions' },
         ]}
+        actions={picker}
       />
 
       <UICard>

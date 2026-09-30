@@ -36,7 +36,16 @@ const RUNTIME_TAG: Record<ProjectRuntimeState, { label: string; variant: 'succes
 
 function RuntimeStatus({ project }: { project: ProjectEntry }) {
   const tag = RUNTIME_TAG[project.runtime.state];
-  return <UITag variant={tag.variant}>{tag.label}</UITag>;
+  return (
+    <div>
+      <UITag variant={tag.variant}>{tag.label}</UITag>
+      {project.runtime.keptRunningSchedules > 0 && (
+        <div style={{ opacity: 0.7, fontSize: 12 }}>
+          kept running: {project.runtime.keptRunningSchedules} schedules
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ProjectsPage() {

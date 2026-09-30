@@ -26,7 +26,7 @@ function makeEntry(overrides: Partial<ProjectEntry>): ProjectEntry {
     lastUsedAt: null,
     path: '/workspace/demo',
     stateDir: '/home/user/.kb/state/prj_1',
-    runtime: { state: 'stopped', restarts: 0 },
+    runtime: { state: 'stopped', restarts: 0, keptRunningSchedules: 0 },
     ...overrides,
   };
 }
@@ -61,12 +61,21 @@ describe('ProjectsPage', () => {
 
   it('lists registered projects with their runtime status', async () => {
     const listProjects = vi.fn().mockResolvedValue([
-      makeEntry({ name: 'kb-labs-workspace', runtime: { state: 'ready', restarts: 0 } }),
+      makeEntry({ name: 'kb-labs-workspace', runtime: { state: 'ready', restarts: 0, keptRunningSchedules: 0 } }),
     ]);
     renderPage({ projects: { listProjects } as never });
 
     await waitFor(() => expect(screen.getByText('kb-labs-workspace')).toBeDefined());
     expect(screen.getByText('Running')).toBeDefined();
+  });
+
+  it('shows the schedule lease keeping a project runtime warm', async () => {
+    const listProjects = vi.fn().mockResolvedValue([
+      makeEntry({ runtime: { state: 'ready', restarts: 0, keptRunningSchedules: 2 } }),
+    ]);
+    renderPage({ projects: { listProjects } as never });
+
+    await waitFor(() => expect(screen.getByText('kept running: 2 schedules')).toBeDefined());
   });
 
   it('removes a project via the popconfirm action', async () => {

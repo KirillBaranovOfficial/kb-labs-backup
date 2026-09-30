@@ -13,12 +13,14 @@ import {
 } from '@kb-labs/sdk/studio';
 import { useData, useMutateData } from '@kb-labs/sdk/studio';
 import type { WorkflowRun, WorkflowInfo } from '@kb-labs/workflow-contracts';
+import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes';
 import { UIPage, UIPageHeader, UICard } from '@kb-labs/sdk/studio';
 import { ViewModeSelector } from '../components/shared/ViewModeSelector';
 import { TriageView } from '../components/triage/TriageView';
 import { BoardView } from '../components/board/BoardView';
 import { TableView } from '../components/table/TableView';
 import { RunWorkflowModal } from '../components/RunWorkflowModal';
+import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker';
 
 type ViewMode = 'triage' | 'board' | 'table';
 
@@ -34,18 +36,20 @@ export default function WorkflowsRuns() {
   const [viewMode, setViewMode] = useState<ViewMode>('triage');
   const [filters, setFilters] = useState<{ limit: number; status?: string }>({ limit: 50 });
   const [runModalOpen, setRunModalOpen] = useState(false);
+  const { projectId, picker, hasProjects } = useWorkflowProject();
 
-  const { data, isLoading, refetch } = useData<{ runs: WorkflowRun[]; total: number }>('/exec/api/v1/runs', {
+  const { data, isLoading, refetch } = useData<{ runs: WorkflowRun[]; total: number }>(projectWorkflowEndpoint(projectId, 'api/v1/runs'), {
     params: { limit: filters.limit, ...(filters.status ? { status: filters.status } : {}) },
+    enabled: hasProjects,
     pollingMs: viewMode !== 'table' ? 5000 : undefined,
   });
-  const { data: workflowsData } = useData<{ workflows: WorkflowInfo[] }>('/exec/api/v1/workflows', { params: { limit: 100 } });
+  const { data: workflowsData } = useData<{ workflows: WorkflowInfo[] }>(projectWorkflowEndpoint(projectId, 'api/v1/workflows'), { params: { limit: 100 }, enabled: hasProjects });
 
   const runWorkflowMutation = useMutateData<
     { workflowId: string; input: Record<string, unknown> },
     { runId: string; status: string }
   >(
-    (p) => `/exec/api/v1/workflows/${encodeURIComponent(p.workflowId)}/runs`,
+    (p) => projectWorkflowEndpoint(projectId, `api/v1/workflows/${encodeURIComponent(p.workflowId)}/runs`),
     { mapBody: (p) => ({ inputs: p.input }) },
   );
 
@@ -56,7 +60,7 @@ export default function WorkflowsRuns() {
       {contextHolder}
       <UIPageHeader
         title="Workflow Runs"
-        description="All workflow executions"
+        description={hasProjects ? 'Workflow executions for the selected project' : 'Register a project to view workflow executions'}
         breadcrumbs={[
           { title: 'Home', href: '/' },
           { title: 'Workflows', href: '/workflows' },
@@ -65,6 +69,7 @@ export default function WorkflowsRuns() {
         actions={
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <ViewModeSelector views={VIEWS} current={viewMode} onChange={setViewMode} />
+            {picker}
             <UIButton
               icon={<UIIcon name="ReloadOutlined" spin={isLoading} />}
               onClick={() => refetch()}

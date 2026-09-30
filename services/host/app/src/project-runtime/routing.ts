@@ -105,6 +105,7 @@ export function createProjectRouting(
           lastUsedAt: runtime.lastUsedAt,
           inflight: runtime.inflight,
           restarts: runtime.restarts,
+          keptRunningSchedules: runtime.keptRunningSchedules,
         })),
       };
     },

@@ -1,10 +1,10 @@
 /**
  * REST handler: GET /workflows/cron
- * Proxies to workflow daemon GET /api/v1/cron
+ * Proxies to the project workflow API GET /api/v1/crons
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
 
 interface CronInfo {
   id: string;
@@ -33,12 +33,12 @@ export default defineHandler({
     _input: RestInput
   ): Promise<CronListResponse> {
     const daemonUrl = getWorkflowDaemonUrl();
-    const url = `${daemonUrl}/api/v1/cron`;
+    const url = `${daemonUrl}/api/v1/crons`;
 
     ctx.platform.logger.info(`[cron-list-handler] Fetching cron jobs from ${url}`);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWorkflowApi(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

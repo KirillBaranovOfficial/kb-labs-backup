@@ -48,6 +48,7 @@ import {
   type RuntimeLauncher,
 } from "./project-runtime/manager.js";
 import { createProjectRouting } from "./project-runtime/routing.js";
+import { findScheduledProjects } from "./project-runtime/workflow-schedules.js";
 import { createProjectsRoutes } from "./projects-routes.js";
 import { createPluginsRoutes } from "./plugins-routes.js";
 import {
@@ -355,6 +356,9 @@ export async function createHostConfig(
           env: {
             KB_PLATFORM_ROOT: ctx.platformRoot,
             KB_MCP_AUTH_MODE: settings.auth === "off" ? "local" : "secured",
+            ...(internalBaseUrl(ctx, "gateway")
+              ? { KB_GATEWAY_URL: internalBaseUrl(ctx, "gateway") }
+              : {}),
           },
           ...(overrides.stopTimeoutMs !== undefined
             ? { stopTimeoutMs: overrides.stopTimeoutMs }
@@ -390,6 +394,19 @@ export async function createHostConfig(
           });
         },
       });
+      const refreshScheduledProjects = async (): Promise<void> => {
+        const scheduled = await findScheduledProjects(registry);
+        await manager.syncScheduledProjects(scheduled);
+      };
+      await refreshScheduledProjects();
+      const scheduleRefreshTimer = setInterval(() => {
+        void refreshScheduledProjects().catch((error: unknown) => {
+          logger.warn("Could not refresh scheduled workflow runtime leases", {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }, 30_000);
+      scheduleRefreshTimer.unref();
 
       // The marketplace module (if selected) already started listening above
       // (internal modules run before "gateway" in `modules`); reach it on its
@@ -421,6 +438,7 @@ export async function createHostConfig(
         },
       );
       return async () => {
+        clearInterval(scheduleRefreshTimer);
         // Stop taking requests first, then stop the runtimes they were for.
         try {
           await stopGateway();

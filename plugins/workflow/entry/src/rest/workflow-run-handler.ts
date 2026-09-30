@@ -5,7 +5,7 @@
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import type { WorkflowRunRequest } from '@kb-labs/workflow-contracts';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
 
 interface WorkflowRunParams {
   id: string;
@@ -30,11 +30,11 @@ export default defineHandler({
 
     const body: WorkflowRunRequest = input.body || {};
 
-    const url = `${daemonUrl}/api/v1/workflows/${encodeURIComponent(id)}/run`;
+    const url = `${daemonUrl}/api/v1/workflows/${encodeURIComponent(id)}/runs`;
     ctx.platform.logger.info(`[workflow-run-handler] Running workflow ${id} via ${url}`);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWorkflowApi(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

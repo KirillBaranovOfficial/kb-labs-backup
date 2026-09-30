@@ -13,8 +13,10 @@ import {
 } from '@kb-labs/sdk/studio';
 import { useData } from '@kb-labs/sdk/studio';
 import type { JobStatusInfo, JobListFilter } from '@kb-labs/workflow-contracts';
+import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes';
 import { UICard } from '@kb-labs/sdk/studio';
 import { UIPage, UIPageHeader } from '@kb-labs/sdk/studio';
+import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker';
 
 const STATUS_COLORS: Record<string, string> = {
   pending: 'default',
@@ -26,9 +28,11 @@ const STATUS_COLORS: Record<string, string> = {
 
 export default function WorkflowsJobs() {
   const [filters, setFilters] = React.useState<JobListFilter>({ limit: 50 });
+  const { projectId, picker, hasProjects } = useWorkflowProject();
 
-  const { data: jobsData, isLoading } = useData<{ jobs: JobStatusInfo[] }>('/exec/api/v1/jobs', {
+  const { data: jobsData, isLoading } = useData<{ jobs: JobStatusInfo[] }>(projectWorkflowEndpoint(projectId, 'api/v1/jobs'), {
     params: filters as Record<string, string | number | boolean>,
+    enabled: hasProjects,
   });
 
   const formatDate = (date?: Date | string) => {
@@ -137,6 +141,7 @@ export default function WorkflowsJobs() {
       <UIPageHeader
         title="Background Jobs"
         description="Monitor background job execution and status"
+        actions={picker}
         breadcrumbs={[
           { title: 'Home', href: '/' },
           { title: 'Workflows', href: '/workflows' },

@@ -49,12 +49,10 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
           ctx.ui?.info?.(`Watching latest run: ${runId}`);
         }
 
-        const eventsUrl = client.getRunEventsUrl(runId);
-
         ctx.ui?.info?.(`Watching run ${runId} (Ctrl+C to stop)...`);
 
         // Use fetch with streaming to consume SSE
-        const response = await fetch(eventsUrl, {
+        const response = await client.fetchRunEvents(runId, {
           headers: { Accept: 'text/event-stream' },
         });
 

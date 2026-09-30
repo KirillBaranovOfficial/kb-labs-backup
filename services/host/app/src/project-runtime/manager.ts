@@ -27,6 +27,8 @@ export interface RuntimeProject {
   id: string;
   /** Canonical absolute project root. */
   root: string;
+  /** Enabled workflow cron triggers that require this runtime to stay warm. */
+  keptRunningSchedules?: number;
 }
 
 export interface RuntimeAddress {
@@ -86,6 +88,7 @@ export interface RuntimeSnapshot {
   lastUsedAt: string;
   inflight: number;
   restarts: number;
+  keptRunningSchedules: number;
   pid?: number;
   address?: RuntimeAddress;
   /** Cause of the last failure, for logs and diagnostics (may contain paths). */
@@ -254,6 +257,23 @@ export class ProjectRuntimeManager {
     }
   }
 
+  /** Start scheduled projects and refresh the warm-lease count for every runtime. */
+  async syncScheduledProjects(projects: RuntimeProject[]): Promise<void> {
+    const schedules = new Map(projects.map((project) => [project.id, project]));
+    for (const entry of this.entries.values()) {
+      entry.project.keptRunningSchedules = schedules.get(entry.project.id)?.keptRunningSchedules ?? 0;
+    }
+    for (const project of projects) {
+      const existing = this.entries.get(project.id);
+      if (existing) {
+        existing.project.keptRunningSchedules = project.keptRunningSchedules ?? 0;
+        continue;
+      }
+      const lease = await this.acquire(project);
+      lease.release();
+    }
+  }
+
   status(): ManagerSnapshot {
     const runtimes: RuntimeSnapshot[] = [];
     for (const entry of this.entries.values()) {
@@ -263,6 +283,7 @@ export class ProjectRuntimeManager {
         lastUsedAt: new Date(entry.lastUsed).toISOString(),
         inflight: entry.inflight,
         restarts: entry.restarts,
+        keptRunningSchedules: entry.project.keptRunningSchedules ?? 0,
         ...(entry.process?.pid !== undefined ? { pid: entry.process.pid } : {}),
         ...(entry.process ? { address: entry.process.address } : {}),
         ...(entry.lastError ? { lastError: entry.lastError } : {}),
@@ -276,6 +297,7 @@ export class ProjectRuntimeManager {
           lastUsedAt: new Date(failure.at).toISOString(),
           inflight: 0,
           restarts: failure.restarts,
+          keptRunningSchedules: 0,
           lastError: failure.error,
         });
       }
@@ -330,7 +352,7 @@ export class ProjectRuntimeManager {
     if (this.closed || this.entries.has(project.id)) {
       return undefined;
     }
-    while (this.entries.size >= this.options.maxActiveProjects) {
+    while (this.entries.size >= this.options.maxActiveProjects && (project.keptRunningSchedules ?? 0) === 0) {
       const victim = this.leastRecentlyUsedIdle();
       if (!victim) {
         throw runtimeLimitReached(this.options.maxActiveProjects);
@@ -361,7 +383,7 @@ export class ProjectRuntimeManager {
   private leastRecentlyUsedIdle(): Entry | undefined {
     let victim: Entry | undefined;
     for (const entry of this.entries.values()) {
-      if (!this.isState(entry, "ready") || entry.inflight > 0) {
+      if (!this.isState(entry, "ready") || entry.inflight > 0 || (entry.project.keptRunningSchedules ?? 0) > 0) {
         continue;
       }
       if (!victim || entry.lastUsed < victim.lastUsed) {
@@ -644,7 +666,7 @@ export class ProjectRuntimeManager {
   private sweepIdle(): void {
     const cutoff = this.now() - this.options.idleTimeoutMs;
     for (const entry of [...this.entries.values()]) {
-      if (this.isState(entry, "ready") && entry.inflight === 0 && entry.lastUsed <= cutoff) {
+      if (this.isState(entry, "ready") && entry.inflight === 0 && (entry.project.keptRunningSchedules ?? 0) === 0 && entry.lastUsed <= cutoff) {
         void this.stopEntry(entry, "idle");
       }
     }

@@ -33,7 +33,7 @@ export async function bootstrap(_cwd: string = process.cwd()): Promise<void> {
     serviceId: "workflow",
     defaultPort: 7778,
     portEnvVar: "WORKFLOW_PORT",
-    defaultHost: "0.0.0.0",
+    defaultHost: "127.0.0.1",
     hostEnvVar: "WORKFLOW_HOST",
     platform: {
       assemblyHook: makeAssemblyHook(),

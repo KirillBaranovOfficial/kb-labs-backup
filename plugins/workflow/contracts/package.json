@@ -15,6 +15,11 @@
       "types": "./dist/rest-api.d.ts",
       "import": "./dist/rest-api.js",
       "require": "./dist/rest-api.js"
+    },
+    "./routes": {
+      "types": "./dist/routes.d.ts",
+      "import": "./dist/routes.js",
+      "require": "./dist/routes.js"
     }
   },
   "files": [
