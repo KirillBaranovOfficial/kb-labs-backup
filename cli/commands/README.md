@@ -12,6 +12,10 @@
 
 ## 🏗️ Architecture
 
+The built-in `kb mcp config <claude|codex|cursor>` command prints a client
+configuration for the current registered project. Secured installations use
+`KB_MCP_TOKEN` for the gateway-issued Bearer token.
+
 ### Core Components
 
 #### Command Registry

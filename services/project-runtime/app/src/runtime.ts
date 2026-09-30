@@ -27,6 +27,7 @@ import {
   type ServiceContext,
 } from "@kb-labs/shared-daemon";
 import { setup as setupWorkflow } from "@kb-labs/workflow-daemon";
+import { setupProjectMcp } from "@kb-labs/mcp-app/project-module";
 import type { RuntimeArgs } from "./args.js";
 import { createRuntimeGuard } from "./guard.js";
 import { RuntimeServiceTransport } from "./transport.js";
@@ -47,10 +48,11 @@ export interface ProjectRuntimeModule {
   setup: (ctx: ServiceContext) => Promise<Teardown>;
 }
 
-/** The project-scoped services that exist today. MCP is not composable yet. */
+/** The project-scoped services composed into every project runtime. */
 export const DEFAULT_PROJECT_MODULES: readonly ProjectRuntimeModule[] = [
   { id: "rest", serviceId: "rest", setup: setupRest },
   { id: "workflow", serviceId: "workflow", setup: setupWorkflow },
+  { id: "mcp", serviceId: "mcp", setup: setupProjectMcp },
 ];
 
 export interface ProjectRuntimeOptions

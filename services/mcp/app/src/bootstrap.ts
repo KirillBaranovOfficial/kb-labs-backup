@@ -6,6 +6,31 @@ import { loadJwtConfig } from "./mcp/auth.js";
 import { callOutput } from "./mcp/output-capture.js";
 import { createBufferedUI } from "./mcp/ui.js";
 import { McpDaemonServer } from "./server.js";
+import type { ServiceContext } from "@kb-labs/shared-daemon";
+
+/** Project-runtime module setup. The runtime supplies the project root and port,
+ * so the MCP process scope follows the project URL selected by the host. */
+export async function setupProjectMcp(ctx: ServiceContext): Promise<() => Promise<void>> {
+  const logger = ctx.logger.forComponent("mcp");
+  const { policy } = await resolvePolicy({});
+  const authMode = process.env.KB_MCP_AUTH_MODE === "local" ? "local" : "secured";
+  const server = new McpDaemonServer({
+    port: ctx.port,
+    host: ctx.host,
+    logger,
+    cache: ctx.platform.cache,
+    platform: ctx.platform,
+    resolvePlatform: () => ctx.platform,
+    projectRoot: ctx.projectRoot,
+    platformRoot: ctx.platformRoot,
+    jwtConfig: loadJwtConfig(),
+    policy,
+    endpointPath: "/",
+    authMode,
+  });
+  await server.start();
+  return async () => server.stop();
+}
 
 export async function bootstrap(): Promise<void> {
   await runService({

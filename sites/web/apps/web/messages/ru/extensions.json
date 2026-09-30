@@ -20,8 +20,8 @@
       {
         "title": "MCP",
         "description": "Откройте инструменты KB Labs для совместимого с MCP coding-агента, запущенного на вашей машине.",
-        "command": "MCP server  →  localhost:7779",
-        "note": "Опционально. Добавляйте, только когда агенту нужна эта интеграция."
+        "command": "kb mcp config claude",
+        "note": "Выведите конфигурацию MCP для Claude Code, Codex или Cursor в текущем проекте."
       },
       {
         "title": "Workflows",

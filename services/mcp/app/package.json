@@ -3,6 +3,12 @@
   "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",
+  "exports": {
+    "./project-module": {
+      "types": "./dist/project-module.d.ts",
+      "import": "./dist/project-module.js"
+    }
+  },
   "bin": {
     "mcp-app": "./dist/index.js"
   },

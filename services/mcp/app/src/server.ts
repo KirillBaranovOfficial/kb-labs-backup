@@ -43,6 +43,7 @@ import { type PlatformResolver } from './mcp/tool-router.js';
 import { resolveVisibleTools, executeToolCall } from './mcp/request-handler.js';
 import { McpObservabilityCollector } from './observability/collector.js';
 import type { ToolBuildDiagnostic } from './mcp/tool-builder.js';
+import { rejectsUnauthenticatedRequest, type McpAuthMode } from './mcp/auth-mode.js';
 
 /** Built-in diagnostic tool: always visible to authenticated callers, never
  * derived from a plugin manifest — reports which plugin commands failed to
@@ -77,6 +78,10 @@ export interface McpDaemonServerOptions {
   jwtConfig: JwtConfig;
   /** Authorization policy. Permit-all default until the platform supplies a real one. */
   policy: Policy;
+  /** Project runtime exposes MCP at its project-scoped root path. */
+  endpointPath?: string;
+  /** Local gateway mode has no login; secured mode requires a valid gateway token. */
+  authMode?: McpAuthMode;
 }
 
 export class McpDaemonServer {
@@ -173,7 +178,7 @@ export class McpDaemonServer {
     // CORS headers for all MCP responses (including preflight OPTIONS).
     // fastify.all() covers every method including OPTIONS, so no separate
     // fastify.options() is needed — that would cause a duplicate-route error.
-    server.all('/api/v1/mcp', async (request, reply) => {
+    server.all(this.opts.endpointPath ?? '/api/v1/mcp', async (request, reply) => {
       reply
         .header('Access-Control-Allow-Origin', '*')
         .header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
@@ -186,16 +191,25 @@ export class McpDaemonServer {
 
       const reqLogger = request.kbLogger ?? logger;
 
-      // 1. Authenticate. Invalid/absent token → anonymous (no throw, no 401).
+      // 1. Verify the gateway token. Local mode permits tokenless requests;
+      // secured mode rejects absent or invalid tokens with HTTP 401.
       const authHeader = request.headers.authorization;
       const authCtx = await resolveAuthContext(authHeader, cache, jwtConfig).catch(
         () => null,
       );
+      if (rejectsUnauthenticatedRequest(this.opts.authMode ?? 'secured', Boolean(authCtx))) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
       const tenantId = authCtx?.namespaceId ?? 'anonymous';
 
       // Bind the authorization predicate to the identity once per request.
-      // Anonymous callers get no predicate → they can neither list nor call tools.
-      const permits = authCtx ? this.permitsFor(toIdentity(authCtx)) : null;
+      // Local mode uses the local operator identity; secured requests use the
+      // identity from the gateway token.
+      const permits = authCtx
+        ? this.permitsFor(toIdentity(authCtx))
+        : this.opts.authMode === 'local'
+          ? () => true
+          : null;
 
       // 2. Resolve the visible tool list (cached per identity). The cache is a
       //    listing optimization ONLY — executeToolCall re-checks the live policy.

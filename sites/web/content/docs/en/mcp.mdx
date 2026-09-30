@@ -1,0 +1,23 @@
+---
+title: Project MCP server
+description: Connect an MCP client to a project's KB Labs tools through the host.
+lang: en
+slug: mcp
+---
+
+Each registered project has a Streamable HTTP endpoint in its project runtime:
+
+```text
+http://127.0.0.1:4000/api/v1/projects/<project-id>/mcp
+```
+
+Run `kb project show --json` from the project directory to find its id. If the
+folder has not been initialized and registered yet, run `kb project add --init`.
+Print a client configuration with `kb mcp config claude`, `kb mcp config codex`,
+or `kb mcp config cursor`.
+
+Local mode accepts requests without a token and binds the host to loopback.
+Secured mode requires a Bearer token issued by the gateway. The host chooses the
+project runtime from the project id in the URL, so each endpoint exposes tools
+from that project. Clients use standard MCP Streamable HTTP requests for
+`initialize`, `tools/list`, and `tools/call`.
