@@ -15,6 +15,7 @@ import { SessionsPage } from './pages/sessions-page';
 import { ChangePasswordPage } from './pages/change-password-page';
 import { AdminUsersPage } from './pages/admin-users-page';
 import { AdminInvitesPage } from './pages/admin-invites-page';
+import { ResetPasswordPage } from './pages/reset-password-page';
 import { PluginPageV2 } from './routes/plugin-page-v2';
 import { PageTransition } from './components/page-transition';
 import { createStudioLogger } from './utils/logger';
@@ -143,11 +144,11 @@ function LayoutContent() {
       }
     }
 
-    // Settings always at the bottom
-    items.push(settingsNavigation);
+    // Platform settings are administrator-only.
+    if (auth.permissions.has('platform-settings:read')) items.push(settingsNavigation);
 
     return items;
-  }, [pluginNavModel]);
+  }, [pluginNavModel, auth.permissions]);
 
   // Available items for NavigationSettings UI (top-level items except settings)
   const availableNavItems = React.useMemo(
@@ -250,6 +251,11 @@ export const router = createBrowserRouter([
   {
     path: '/activate/:token',
     element: <ActivatePage />,
+    errorElement: <ErrorBoundary />,
+  },
+  {
+    path: '/reset-password/:token',
+    element: <ResetPasswordPage />,
     errorElement: <ErrorBoundary />,
   },
   // Protected routes (RequireAuth gate before Layout renders)
