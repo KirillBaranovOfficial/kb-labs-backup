@@ -52,7 +52,7 @@ def expect(path: str, expected: set[int], capability: str, *, method="GET", payl
         reason = f"{capability} unavailable: {method} {path} returned HTTP {status}"
         if detail:
             reason += f" ({detail})"
-        reason += "; build and start the capability, then rerun `e2e/journey/service_runner.py`"
+        reason += "; build and start the capability, then rerun `python3 /opt/kb-journey/service_runner.py`"
         return reason
     return None
 

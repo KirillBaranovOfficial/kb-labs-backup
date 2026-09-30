@@ -1,12 +1,17 @@
+import ast
+import io
+import shlex
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from nightly_report import aggregate, fingerprint, load_results, sync_issues
+from entrypoint import run_runner
 from service_runner import checks, declared_capabilities, discover_workflow
 from service_steps import Journey, record_runner_failure
 
@@ -52,6 +57,58 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(result.steps[0]["capability"], "journey.install")
         self.assertEqual(result.steps[0]["name"], "install.sh")
         self.assertEqual(result.steps[0]["message"], "download returned HTTP 404")
+
+    def test_runner_startup_exception_writes_failure_result_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            broken_runner = root / "broken_runner.py"
+            broken_runner.write_text('raise RuntimeError("simulated import failure")\n')
+            summary = root / "journey-summary.md"
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                status = run_runner(broken_runner, summary, "local")
+            result = load_results(root)[0]
+        self.assertEqual(status, 1)
+        self.assertEqual(result["steps"][0]["capability"], "journey.runner")
+        self.assertEqual(result["steps"][0]["status"], "FAIL")
+        self.assertEqual(result["steps"][0]["name"], "runner startup")
+        self.assertIn("simulated import failure", result["steps"][0]["message"])
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_dockerfile_copies_modules_imported_by_journey_scripts_together(self):
+        root = Path(__file__).resolve().parents[2]
+        journey_dir = Path(__file__).resolve().parent
+        copied_into_package = set()
+        wrapper_copied = False
+        for line in (journey_dir / "Dockerfile.runner").read_text().splitlines():
+            if not line.lstrip().startswith("COPY "):
+                continue
+            tokens = shlex.split(line)
+            destination = tokens[-1]
+            for source in tokens[1:-1]:
+                for path in root.glob(source):
+                    target = Path(destination)
+                    if destination.endswith("/"):
+                        target /= path.name
+                    if str(target) == "/usr/local/bin/kb-journey-runner" and path.name == "entrypoint.py":
+                        wrapper_copied = True
+                    if str(target.parent) == "/opt/kb-journey":
+                        copied_into_package.add(path.name)
+
+        local_modules = {path.stem for path in journey_dir.glob("*.py")}
+        imported_modules = set()
+        for filename in ("runner.py", "service_runner.py", "studio_steps.py"):
+            tree = ast.parse((journey_dir / filename).read_text(), filename=filename)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imported_modules.update(alias.name.split(".", 1)[0] for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    imported_modules.add(node.module.split(".", 1)[0])
+        required_modules = {f"{name}.py" for name in imported_modules & local_modules}
+        required_modules.update({"runner.py", "service_runner.py", "studio_steps.py"})
+        self.assertTrue(wrapper_copied, "Dockerfile.runner must install entrypoint.py as kb-journey-runner")
+        self.assertTrue(required_modules <= copied_into_package,
+                        f"Dockerfile.runner misses journey modules: {sorted(required_modules - copied_into_package)}")
 
     def test_aggregate_compares_previous_status_and_uses_stable_fingerprint(self):
         bad = {"capability": "workflow", "mode": "local", "name": "run", "status": "FAIL",

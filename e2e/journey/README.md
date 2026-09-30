@@ -26,6 +26,12 @@ fresh-host test is copied into that image at build time and targets the gateway
 at `http://127.0.0.1:4000` from within the same container. The image is built by
 `e2e/journey/run.sh`; no browser installation is needed on the host.
 
+The runner image keeps `runner.py`, `service_runner.py`, `service_steps.py`,
+`studio_steps.py`, and the other journey Python modules together in
+`/opt/kb-journey`. The `kb-journey-runner` executable is a small bootstrap that
+starts `runner.py` and records a `journey.runner` failure result if Python
+cannot load or start it.
+
 The batch gate prepares a fresh `journey-candidate` release from the worktree,
 then runs these local and secured journeys after its build and checks. Preparing
 the candidate is required even though each journey runner uses `--no-build`:

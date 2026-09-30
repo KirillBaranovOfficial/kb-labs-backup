@@ -9,9 +9,9 @@ RUN npm install --prefix /opt/kb-studio-playwright @playwright/test@1.52.0 \
 
 ENV PATH="/root/.local/bin:/root/.local/share/pnpm:$PATH"
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
-COPY e2e/journey/runner.py /usr/local/bin/kb-journey-runner
-COPY e2e/journey/service_steps.py e2e/journey/service_runner.py /usr/local/share/kb-create/
-COPY e2e/journey/studio_steps.py /usr/local/bin/
+COPY e2e/journey/*.py /opt/kb-journey/
+COPY e2e/journey/entrypoint.py /usr/local/bin/kb-journey-runner
+ENV PYTHONPATH="/opt/kb-journey"
 COPY e2e/journey/studio-playwright.config.mjs /opt/kb-studio-playwright/playwright.config.mjs
 COPY e2e/studio/scenarios/default/cases/fresh-host.spec.ts /opt/kb-studio-playwright/fresh-host.spec.ts
 RUN chmod +x /usr/local/share/kb-create/install.sh /usr/local/bin/kb-journey-runner

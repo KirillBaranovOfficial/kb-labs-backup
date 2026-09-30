@@ -586,7 +586,7 @@ def main():
             project_id = ""
         service_env["KB_JOURNEY_PROJECT_ID"] = project_id
         service_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-{mode}.json")
-        result, elapsed = run(["python3", "/usr/local/share/kb-create/service_runner.py", "--mode", mode, "--output", str(service_report)],
+        result, elapsed = run(["python3", "/opt/kb-journey/service_runner.py", "--mode", mode, "--output", str(service_report)],
                              env=service_env, timeout=300)
         TIMES[f"{mode} service journeys"] = elapsed
         if result.returncode != 0:
