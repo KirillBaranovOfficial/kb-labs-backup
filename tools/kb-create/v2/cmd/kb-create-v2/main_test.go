@@ -30,14 +30,14 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 		progress("Download and verify artifacts", false)
 		progress("Install packages", true)
 	}
-	bin := filepath.Join(a.root, "node_modules", ".bin")
+	bin := filepath.Join(a.root, "node_modules", "@kb-labs", "cli-bin", "dist")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		if progress != nil {
 			progress("Install packages", false)
 		}
 		return err
 	}
-	err := os.WriteFile(filepath.Join(bin, "kb"), []byte("fake kb"), 0o755)
+	err := os.WriteFile(filepath.Join(bin, "bin.js"), []byte("export {};\n"), 0o644)
 	if progress != nil {
 		progress("Install packages", false)
 	}
@@ -113,7 +113,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	if _, err := os.Stat(outputPath); err != nil {
 		t.Fatal(err)
 	}
-	if target, err := os.Readlink(filepath.Join(home, "bin", "kb")); err != nil || target != filepath.Join(root, "node_modules", ".bin", "kb") {
+	if target, err := os.Readlink(filepath.Join(home, "bin", "kb")); err != nil || target != filepath.Join(root, ".kb", "v2", "bin", "kb") {
 		t.Fatalf("kb shim target/error = %q / %v", target, err)
 	}
 }
@@ -141,11 +141,26 @@ func TestInstallChecksNodeBeforeQuestions(t *testing.T) {
 	if err := output.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if code != 2 || !strings.Contains(screen.String(), "Install failed [KB_INSTALL_TOOLCHAIN_UNSUPPORTED]") || strings.Contains(screen.String(), "Platform channel") || !strings.Contains(screen.String(), "Next:") {
+	if code != 2 || !strings.Contains(screen.String(), "Install failed [KB_INSTALL_NODE_VERSION]") || strings.Contains(screen.String(), "Platform channel") || !strings.Contains(screen.String(), "Next:") {
 		t.Fatalf("code/output = %d / %s", code, screen.String())
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestApplyReportsNodeVersionCodeBeforeResolution(t *testing.T) {
+	output, path := installOutput(t)
+	code := (invocation{Operation: "apply", NodePreflight: func() error { return errors.New("Node.js v22.11.0 is unsupported") }}).run(output)
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 2 || !strings.Contains(string(data), "KB_INSTALL_NODE_VERSION") || !strings.Contains(string(data), "Install Node.js 24") || strings.Contains(string(data), "KB_INSTALL_INPUT_REQUIRED") {
+		t.Fatalf("code/output = %d / %s", code, data)
 	}
 }
 

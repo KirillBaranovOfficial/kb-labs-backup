@@ -10,12 +10,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/installed"
 )
 
 type call struct {
@@ -39,6 +42,38 @@ func TestPnpmUsesVerifiedTarballInsteadOfRegistrySpec(t *testing.T) {
 	}
 }
 
+func TestPnpmReportsExpectedAndReceivedTarballChecksums(t *testing.T) {
+	payload := []byte("unexpected-package-bytes")
+	sum := fmt.Sprintf("%x", sha256.Sum256([]byte("expected-package-bytes")))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
+	defer server.Close()
+	runner := &fakeRunner{}
+	err := (Pnpm{Root: t.TempDir(), Runner: runner}).Install([]contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "2", SHA256: sum, Tarball: server.URL}})
+	if err == nil || !strings.Contains(err.Error(), "expected "+sum) || !strings.Contains(err.Error(), fmt.Sprintf("got %x", sha256.Sum256(payload))) || len(runner.calls) != 0 {
+		t.Fatalf("error/calls = %v / %#v", err, runner.calls)
+	}
+}
+
+func TestPnpmReportsSignalTerminationAsLikelyMemoryFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("signal termination is only available on Unix")
+	}
+	runner := runnerFunc(func(context.Context, io.Writer, string, ...string) error {
+		return exec.Command("sh", "-c", "kill -9 $$").Run()
+	})
+	err := (Pnpm{Root: t.TempDir(), Runner: runner}).Install([]contracts.Artifact{{ID: "a", Package: "@kb/a", Version: "1.0.0"}})
+	failure, ok := err.(*contracts.LauncherError)
+	if !ok || failure.Code != contracts.CodePackageManagerKilled || !strings.Contains(failure.Message, "likely out of memory") || !strings.Contains(failure.Message, "992.3 MiB RSS") || failure.Details["requiredAvailableMemory"] != "1.20 GiB" || failure.Details["tunedPeakMemory"] != "992.3 MiB" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
+type runnerFunc func(context.Context, io.Writer, string, ...string) error
+
+func (run runnerFunc) Run(ctx context.Context, output io.Writer, name string, args ...string) error {
+	return run(ctx, output, name, args...)
+}
+
 // Regression coverage for the mechanism, not just its absence from the pnpm
 // invocation: pnpm 11.4.0 mis-parses a comma-joined --allow-build value as a
 // single "name@version-union" spec (ERR_PNPM_INVALID_VERSION_UNION) the
@@ -57,11 +92,72 @@ func TestPnpmWritesWorkspaceAllowBuildsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(data)
+	for _, setting := range []string{"autoInstallPeers: false", "childConcurrency: 1", "networkConcurrency: 4", "sideEffectsCache: false"} {
+		if !strings.Contains(got, setting) {
+			t.Fatalf("pnpm-workspace.yaml = %q, missing %q", got, setting)
+		}
+	}
 	for _, name := range approvedNativeBuilds {
 		want := fmt.Sprintf("%q: true", name)
 		if !strings.Contains(got, want) {
 			t.Fatalf("pnpm-workspace.yaml = %q, missing %q", got, want)
 		}
+	}
+}
+
+func TestPnpmMaterializesSignedArtifactManifestForDoctor(t *testing.T) {
+	root := t.TempDir()
+	item := contracts.Artifact{
+		ID: "disk-io-storage", Kind: "adapter", Package: "@kb/data-store", Version: "2.0.0",
+		Config: []contracts.ConfigRequirement{{ID: "store.path", Path: "/storage/path", Required: true, Default: `".kb/data"`, Hint: "set a storage path"}},
+	}
+	if err := (Pnpm{Root: root, Runner: &fakeRunner{}}).Install([]contracts.Artifact{item}); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := installed.Load(root, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Requirements) != 1 {
+		requirements := manifest.Requirements
+		t.Fatalf("requirements = %#v", requirements)
+	}
+	requirement := manifest.Requirements[0]
+	if requirement.ID != "store.path" || requirement.Path != "/storage/path" || requirement.Hint != "set a storage path" || string(requirement.Default) != `".kb/data"` {
+		t.Fatalf("requirement = %#v", requirement)
+	}
+}
+
+func TestPnpmPersistsExplicitRegistryForLifecycleOperations(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	if err := (Pnpm{Root: root, Registry: "https://registry.test", Runner: runner}).Install([]contracts.Artifact{{ID: "a", Package: "@kb/a", Version: "1.0.0"}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".npmrc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "registry=https://registry.test\n"; got != want {
+		t.Fatalf(".npmrc = %q, want %q", got, want)
+	}
+}
+
+func TestPnpmPreservesExistingNpmrc(t *testing.T) {
+	root := t.TempDir()
+	want := "registry=https://existing.test\n"
+	if err := os.WriteFile(filepath.Join(root, ".npmrc"), []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Pnpm{Root: root, Registry: "https://registry.test", Runner: &fakeRunner{}}).Install([]contracts.Artifact{{ID: "a", Package: "@kb/a", Version: "1.0.0"}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".npmrc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("existing .npmrc changed: got %q, want %q", data, want)
 	}
 }
 

@@ -1,0 +1,16 @@
+{
+  "code": "KB_INSTALL_PORT_IN_USE",
+  "area": "install",
+  "stage": "preflight",
+  "severity": "error",
+  "retryable": false,
+  "message": "Port 4000 is used by another application.",
+  "cause": "Process node (pid 4321) listens on 127.0.0.1:4000.",
+  "hint": "Stop the application using the port, then run `kb-create install` again.",
+  "actions": [
+    { "id": "retry-install", "label": "Retry install", "command": "kb-create install" }
+  ],
+  "docs": "https://kblabs.ru/errors/KB_INSTALL_PORT_IN_USE",
+  "correlationId": "01J8Z3X9Q2M4N5P6R7S8T9V0WX",
+  "details": { "port": "4000" }
+}

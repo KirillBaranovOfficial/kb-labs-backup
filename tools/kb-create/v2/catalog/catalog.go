@@ -340,19 +340,8 @@ type Adapter struct {
 	DefaultFor []string `json:"defaultFor,omitempty"`
 }
 
-type Requirement struct {
-	Capability string `json:"capability"`
-	RequiredBy string `json:"requiredBy,omitempty"`
-}
+type Requirement = contracts.Requirement
 
 // ConfigRequirement is exported from a selected artifact manifest. It is the
 // only authority allowed to map a scenario/CI answer into generated config.
-type ConfigRequirement struct {
-	ID       string   `json:"id"`
-	Path     string   `json:"path,omitempty"`
-	Required bool     `json:"required,omitempty"`
-	Secret   bool     `json:"secret,omitempty"`
-	Default  string   `json:"default,omitempty"` // JSON literal, never a secret
-	Env      string   `json:"env,omitempty"`
-	Services []string `json:"services,omitempty"`
-}
+type ConfigRequirement = contracts.ConfigRequirement

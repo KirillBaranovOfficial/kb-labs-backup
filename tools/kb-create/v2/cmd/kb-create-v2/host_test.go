@@ -161,7 +161,7 @@ func TestStartReportsPortInUse(t *testing.T) {
 	}
 	defer blocker.Close()
 	payload, code, raw := inst.run("start", "--json")
-	if code != 1 || errorCode(payload) != "KB_HOST_PORT_IN_USE" {
+	if code != 1 || errorCode(payload) != "KB_INSTALL_PORT_IN_USE" {
 		t.Fatalf("start: %d %s", code, raw)
 	}
 }

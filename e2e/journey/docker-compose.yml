@@ -7,6 +7,11 @@ services:
     command: ["python3", "-m", "http.server", "8080", "--directory", "/release"]
     volumes:
       - ../.journey/release:/release:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080', timeout=2)"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
     networks: [journey]
 
   runner:
@@ -16,7 +21,7 @@ services:
     image: kb-installer-journey:local
     depends_on:
       origin:
-        condition: service_started
+        condition: service_healthy
       verdaccio:
         condition: service_healthy
     environment:
