@@ -1,6 +1,6 @@
 /**
  * REST handler: POST /runs/:runId/approve
- * Proxies to workflow daemon POST /api/v1/runs/:runId/approve
+ * Proxies to the project workflow API POST /api/v1/runs/:runId/approvals/resolve
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
@@ -41,7 +41,7 @@ export default defineHandler({
       throw new Error('Missing required fields: jobId, stepId, action');
     }
 
-    const url = `${daemonUrl}/api/v1/runs/${encodeURIComponent(runId)}/approve`;
+    const url = `${daemonUrl}/api/v1/runs/${encodeURIComponent(runId)}/approvals/resolve`;
 
     ctx.platform.logger.info(`[resolve-approval-handler] Resolving approval for run ${runId}, step ${body.stepId}: ${body.action}`);
 

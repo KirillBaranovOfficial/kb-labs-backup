@@ -1,6 +1,6 @@
 /**
  * REST handler: GET /runs/:runId/pending-approvals
- * Proxies to workflow daemon GET /api/v1/runs/:runId/pending-approvals
+ * Proxies to the project workflow API GET /api/v1/runs/:runId/approvals
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
@@ -28,7 +28,7 @@ export default defineHandler({
       throw new Error('Missing runId parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/runs/${encodeURIComponent(runId)}/pending-approvals`;
+    const url = `${daemonUrl}/api/v1/runs/${encodeURIComponent(runId)}/approvals`;
 
     ctx.platform.logger.info(`[pending-approvals-handler] Fetching pending approvals for run ${runId}`);
 
