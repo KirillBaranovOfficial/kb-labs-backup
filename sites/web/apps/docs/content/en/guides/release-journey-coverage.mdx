@@ -1,0 +1,38 @@
+---
+title: "Release Journey Coverage"
+description: "User flows required by local, nightly, and release-candidate gates."
+updatedAt: "2026-10-01"
+order: 9
+---
+
+The installer and service journeys run from the shared contract in
+`e2e/journey/scenarios.json`. A scenario marked **NOT COVERED** has no user-flow
+step and fails the full local gate, nightly gate, and release-candidate gate.
+HTTP route probes remain diagnostic checks and do not satisfy a scenario.
+
+| User scenario | Journey step | Local gate | Release candidate | Nightly | Coverage |
+| --- | --- | --- | --- | --- | --- |
+| Agent `apply --json` install | `runner.py`: apply, start, first command | `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Agent apply from JSON input | `runner.py`: apply then `--input` | `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Human wizard default and nondefault choices | `runner.py`: PTY wizard | `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Every built-in install scenario | `runner.py`: each scenario JSON in the catalog | `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Negative installs: wrong Node, occupied port, relative root | `runner.py`: error and normalization assertions | `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Local no-login and secured authentication | `steps/auth.py`: local identity; secured login and access rules | `batch`; `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Admin invite and password-reset link | `steps/auth.py`: invite, activate, role denial, reset, revoked sessions, host restart | `batch`; `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Project registration | `runner.py`: `kb project add --init`, then project-scoped calls | `batch`; `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Workflow run, history/logs, and cron firing | No completed run, history/log inspection, or schedule assertion | — | NOT COVERED fails gate | NOT COVERED fails gate | NOT COVERED (M, 1–2 days) |
+| Project MCP tools | `runner.py`: initialize, list tools, call diagnostics | `batch --full` | reusable journey matrix | reusable journey matrix | Covered (local access) |
+| Studio shell and browser use | `studio_steps.py`: Playwright fresh-host journey | `batch`; `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Marketplace plugin install, project pin, invocation, uninstall | No store mutation flow | — | NOT COVERED fails gate | NOT COVERED fails gate | NOT COVERED (L, 3–5 days) |
+| Marketplace adapter bind and capability use | No adapter binding flow | — | NOT COVERED fails gate | NOT COVERED fails gate | NOT COVERED (M, 1–2 days) |
+| Author's own plugin `--link` | No linked plugin invocation flow | — | NOT COVERED fails gate | NOT COVERED fails gate | NOT COVERED (M, 1–2 days) |
+| Scaffold, build, link, invoke, and pin plugin | No generated plugin author loop | — | NOT COVERED fails gate | NOT COVERED fails gate | NOT COVERED (L, 3–5 days) |
+| Platform update | No second sealed version in the install journey | — | NOT COVERED fails gate | NOT COVERED fails gate | NOT COVERED (M, 1–2 days) |
+| Platform rollback | No update snapshot and rollback flow | — | NOT COVERED fails gate | NOT COVERED fails gate | NOT COVERED (M, 1–2 days) |
+| Platform uninstall | `runner.py`: uninstall and process/root/receipt checks | `batch`; `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+| Doctor on a broken install | `runner.py`: temporarily hide the receipt, check the diagnosis and install next step, then restore it | `batch`; `batch --full` | reusable journey matrix | reusable journey matrix | Covered |
+
+`scripts/local-gate.sh batch` keeps the two service journeys for quick iteration.
+Use `scripts/local-gate.sh batch --full` for the contract matrix. Release and
+nightly both call `reusable-installer-journey.yml`, which builds its matrix from
+the same manifest and refuses to start when any declared scenario is uncovered.
