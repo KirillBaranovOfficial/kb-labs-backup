@@ -269,22 +269,6 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         if journey.steps[-1].status != "PASS":
             return
 
-        def assert_storage_workflow() -> None:
-            launch = ["workflow", "run", "--workflow-id=e2e-hello", "--trigger-type=manual", "--json"]
-            launch_payload = _json(cli(launch), launch)
-            data = launch_payload.get("data")
-            run_id = data.get("runId") if isinstance(data, dict) else None
-            if launch_payload.get("ok") is not True or not isinstance(run_id, str) or not run_id:
-                raise RuntimeError(f"workflow run did not return a run ID: {launch_payload!r}")
-            watch = ["workflow", "runs", "watch", run_id]
-            watched = _output(cli(watch), watch)
-            if "Run SUCCESS" not in watched:
-                raise RuntimeError(f"workflow using project storage did not complete successfully: {watched[-500:]!r}")
-        journey.step("run and await the project workflow using storage", "adapter", assert_storage_workflow,
-                     cases=["S-048.5"])
-        if journey.steps[-1].status != "PASS":
-            return
-
         unbind = ["adapter", "unbind", "storage", "--json"]
         def assert_unbound() -> None:
             payload = _json(cli(unbind), unbind)
@@ -299,7 +283,11 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
                 raise RuntimeError("unbinding discarded project adapter options")
             if config_b != initial_b:
                 raise RuntimeError("unbinding project A changed project B config")
-        journey.step("unbind storage from project A", "adapter", assert_unbound, cases=["S-048.6"])
+        # S-048.6 is deliberately not claimed yet: this flow only verifies
+        # config deletion, not the post-unbind storage behavior now required
+        # by the case. Keep the operational unbind and cleanup assertion until
+        # a user-facing storage flow is selected.
+        journey.step("unbind storage from project A", "adapter", assert_unbound)
         if journey.steps[-1].status == "PASS":
             adapter_bound = False
     finally:

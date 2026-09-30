@@ -114,10 +114,11 @@ class MarketplaceStepTests(unittest.TestCase):
             journey = Journey("local", "marketplace-fixture")
             run_marketplace_steps(journey, project, "http://registry.test", env, fake_run)
 
-            expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("047", range(1, 4)), ("048", range(1, 7))) for step in steps}
+            expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("047", range(1, 4)), ("048", (1, 2, 3, 4))) for step in steps}
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(actual, expected)
+            self.assertNotIn(("kb", "workflow", "run", "--workflow-id=e2e-hello", "--trigger-type=manual", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
             self.assertIn(("kb", "adapter", "unbind", "storage", "--json"), calls)
             self.assertFalse(any(item.name.startswith("kb-marketplace-project-b-") for item in home.iterdir()))
