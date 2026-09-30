@@ -7,7 +7,7 @@ priority: P0
 status: active
 release: true
 modes: [secured]
-surfaces: [api, cli]
+surfaces: [api, cli, studio]
 ---
 
 ## Goal
@@ -27,3 +27,4 @@ Tenant admins can grant member or admin access, while a member can use projects 
 | S-104.3 | As member request `GET <gateway-url>/auth/permissions` | HTTP 200 JSON `permissions` contains `projects:read`, `projects:write`, `plugins:read`, `plugins:write`, `workflows:read`, and `workflows:write`; it excludes `users:read`, `users:write`, `invites:read`, and `invites:write`. |
 | S-104.4 | As member request `GET <gateway-url>/auth/users` | HTTP 403 JSON contains `error: "Forbidden"` and `message: "Permission denied: users:read"`. |
 | S-104.5 | As member send `POST <gateway-url>/auth/invites` with valid email and role JSON | HTTP 403 JSON contains `error: "Forbidden"` and `message: "Permission denied: invites:write"`. |
+| S-104.6 | Open Studio `/login`, then attempt `POST <gateway-url>/auth/register` without a cookie or Authorization header using a human signup body `{"name":"new-member","email":"new-member@example.test","password":"HumanPass123!"}` | The login form has no Sign up, Create account, or Register action. The request is refused with HTTP 401 JSON `{ "error": "Unauthorized", "message": "Missing Authorization header" }`; `/auth/register` is machine registration gated by `machine:register`, and no public human signup endpoint is exposed. |

@@ -4,7 +4,7 @@ title: Studio — members cannot open user administration
 persona: team-member
 area: studio
 priority: P1
-status: planned
+status: active
 release: true
 modes: [secured]
 surfaces: [studio]
@@ -23,7 +23,5 @@ Members can use project, plugin, and workflow pages but do not see or open tenan
 | # | Action | Expected |
 |---|---|---|
 | S-108.1 | Inspect the Studio navigation while signed in as a member | No Users or Invites navigation entry is shown. |
-| S-108.2 | Open `/admin/users` directly | Studio displays the permission-denied page and does not request or render tenant user records. |
+| S-108.2 | Open `/admin/users` and `/admin/invites` directly | Each route displays `403 — Forbidden` and `You do not have permission to view this page.`; neither route requests or renders tenant user or invite records. |
 | S-108.3 | Open a project, plugin, or workflow page available to the member | The page remains available under the member's project-use permissions. |
-
-Recommendation: hide the Users and Invites navigation entries for members and deny direct `/admin/users` and `/admin/invites` routes; do not expose read-only tenant user data to members.
