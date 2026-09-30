@@ -12,6 +12,7 @@
 import type { FastifyInstance } from 'fastify';
 import { platform } from '@kb-labs/core-runtime';
 import type { ILogger } from '@kb-labs/core-platform';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
 import {
   PlatformCallRequestSchema,
   type PlatformCallResponse,
@@ -49,6 +50,8 @@ const ALLOWED_METHODS: Record<string, Set<string>> = {
     'ping',
   ]),
 };
+
+const ADMIN_ONLY_ADAPTERS = new Set(['cache', 'storage', 'eventBus', 'documentDatabase', 'kvStore']);
 
 // ── Adapter resolution ────────────────────────────────────────────────────
 
@@ -94,6 +97,14 @@ export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): v
       }
 
       const { adapter: adapterName, method: methodName } = request.params;
+
+      if (auth.type === 'user' && ADMIN_ONLY_ADAPTERS.has(adapterName) && !auth.permissions.includes(PERMISSIONS.PLATFORM_SETTINGS_READ)) {
+        return reply.code(403).send({
+          ok: false,
+          error: { message: 'Permission denied: platform settings are administrator-only', code: 'PERMISSION_DENIED' },
+          durationMs: 0,
+        } satisfies PlatformCallResponse);
+      }
 
       // 1. Check adapter is in allowlist
       const allowedMethods = ALLOWED_METHODS[adapterName];

@@ -20,7 +20,7 @@ import type { AuthState } from '../../auth/auth-provider.js';
 import { AdminInvitesPage } from '../admin-invites-page.js';
 
 const INVITES = [
-  { inviteId: 'inv-1', email: 'newuser@test.com', status: 'pending', expiresAt: new Date(Date.now() + 86400000).toISOString() },
+  { inviteId: 'inv-1', email: 'newuser@test.com', groupId: 'tenant-member', status: 'active', expiresAt: Date.now() + 86400000 },
 ];
 
 function makeAuth(permissions: string[] = ['invites:read', 'invites:write']): AuthState {
@@ -59,7 +59,7 @@ describe('AdminInvitesPage', () => {
   });
 
   it('renders invite list', async () => {
-    vi.stubGlobal('fetch', mockFetch({ '/api/auth/invites': { status: 200, body: INVITES } }));
+    vi.stubGlobal('fetch', mockFetch({ '/api/auth/invites': { status: 200, body: { invites: INVITES } } }));
     renderPage();
 
     await waitFor(() => expect(screen.getByText(/newuser@test\.com/i)).toBeDefined());
@@ -70,7 +70,7 @@ describe('AdminInvitesPage', () => {
     Object.assign(navigator, { clipboard: { writeText } });
 
     const mockF = mockFetch({
-      '/api/auth/invites': { status: 200, body: INVITES },
+      '/api/auth/invites': { status: 200, body: { invites: INVITES } },
       // POST to /api/auth/invites returns activation URL
     });
     // Override to handle POST separately
@@ -100,6 +100,8 @@ describe('AdminInvitesPage', () => {
 
     await waitFor(() => expect(writeText).toHaveBeenCalled());
     expect(writeText.mock.calls[0]?.[0]).toContain('activate/tok-xyz');
+    const postCall = realMockF.mock.calls.find(([url, init]) => String(url).includes('/api/auth/invites') && (init as RequestInit | undefined)?.method === 'POST');
+    expect(JSON.parse((postCall?.[1] as RequestInit).body as string)).toEqual({ email: 'newbie@test.com', role: 'member' });
 
     // Toast / success message
     await waitFor(() => expect(screen.getByText(/copied/i)).toBeDefined());
@@ -107,7 +109,7 @@ describe('AdminInvitesPage', () => {
 
   it('calls POST /api/auth/invites/:id/revoke on revoke click', async () => {
     const mockF = mockFetch({
-      '/api/auth/invites': { status: 200, body: INVITES },
+      '/api/auth/invites': { status: 200, body: { invites: INVITES } },
       '/api/auth/invites/inv-1/revoke': { status: 200, body: { ok: true } },
     });
     vi.stubGlobal('fetch', mockF);

@@ -128,6 +128,11 @@ export class AuthService {
     return { accessToken, refreshToken: newRefreshToken, expiresIn, tokenType: 'Bearer' };
   }
 
+  async revokeRefreshToken(refreshToken: string): Promise<boolean> {
+    if (!(await verifyRefreshToken(refreshToken, this.jwtConfig))) return false;
+    return (await consumeRefreshToken(this.cache, refreshToken)) !== null;
+  }
+
   // ── Profile lookup ────────────────────────────────────────────────────────
 
   async me(hostId: string): Promise<{ hostId: string; handle?: string; namespaceId: string } | null> {

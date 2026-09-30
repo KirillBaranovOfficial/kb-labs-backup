@@ -60,7 +60,7 @@ describe('AdminUsersPage', () => {
   });
 
   it('renders user list with email and status', async () => {
-    vi.stubGlobal('fetch', mockFetch({ '/api/auth/users': { status: 200, body: USERS } }));
+    vi.stubGlobal('fetch', mockFetch({ '/api/auth/users': { status: 200, body: { users: USERS } } }));
     renderPage();
 
     await waitFor(() => expect(screen.getByText(/alice@test\.com/i)).toBeDefined());
@@ -70,7 +70,7 @@ describe('AdminUsersPage', () => {
 
   it('calls POST /api/auth/users/:id/disable for active user', async () => {
     const mockF = mockFetch({
-      '/api/auth/users': { status: 200, body: USERS },
+      '/api/auth/users': { status: 200, body: { users: USERS } },
       '/api/auth/users/u1/disable': { status: 200, body: { ok: true } },
     });
     vi.stubGlobal('fetch', mockF);
@@ -89,7 +89,7 @@ describe('AdminUsersPage', () => {
 
   it('calls POST /api/auth/users/:id/enable for disabled user', async () => {
     const mockF = mockFetch({
-      '/api/auth/users': { status: 200, body: USERS },
+      '/api/auth/users': { status: 200, body: { users: USERS } },
       '/api/auth/users/u2/enable': { status: 200, body: { ok: true } },
     });
     vi.stubGlobal('fetch', mockF);
@@ -104,5 +104,19 @@ describe('AdminUsersPage', () => {
       String(u).includes('/enable'),
     );
     expect(enableCalls).toHaveLength(1);
+  });
+
+  it('copies an admin-generated reset link', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const mockF = mockFetch({
+      '/api/auth/users': { status: 200, body: { users: USERS } },
+      '/api/auth/users/u1/password-reset-link': { status: 201, body: { resetUrl: 'https://gateway.test/reset-password/secret' } },
+    });
+    vi.stubGlobal('fetch', mockF);
+    renderPage();
+    await waitFor(() => expect(screen.getByText(/alice@test\.com/i)).toBeDefined());
+    await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: /copy reset link/i })[0]!); });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://gateway.test/reset-password/secret'));
   });
 });

@@ -29,6 +29,16 @@ export const PERMISSIONS = Object.freeze({
   INVITES_WRITE: 'invites:write',
   /** Register a new machine client (host). Replaces the old public `/auth/register`. */
   MACHINE_REGISTER: 'machine:register',
+  PROJECTS_READ: 'projects:read',
+  PROJECTS_WRITE: 'projects:write',
+  PLUGINS_READ: 'plugins:read',
+  PLUGINS_WRITE: 'plugins:write',
+  WORKFLOWS_READ: 'workflows:read',
+  WORKFLOWS_WRITE: 'workflows:write',
+  ACCOUNT_READ: 'account:read',
+  ACCOUNT_WRITE: 'account:write',
+  PLATFORM_SETTINGS_READ: 'platform-settings:read',
+  PLATFORM_SETTINGS_WRITE: 'platform-settings:write',
 } as const);
 
 /**

@@ -55,12 +55,13 @@ function makeCtx(captured: { errors: string[]; output: string[]; json: unknown[]
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200 }));
 });
 
 describe('kb auth logout', () => {
   it('LO-01: clears both stores when both exist', async () => {
     mockCredLoad.mockResolvedValueOnce({ accessToken: 'a' });
-    mockSessionLoad.mockResolvedValueOnce({ accessToken: 'b' });
+    mockSessionLoad.mockResolvedValueOnce({ gatewayUrl: 'https://gateway.test', refreshToken: 'refresh-b', accessToken: 'b' });
 
     const captured = { errors: [], output: [], json: [] };
     const exitCode = await authLogout.run(makeCtx(captured), [], {});
@@ -68,11 +69,12 @@ describe('kb auth logout', () => {
     expect(exitCode).toBe(0);
     expect(mockCredClear).toHaveBeenCalled();
     expect(mockSessionClear).toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledWith('https://gateway.test/auth/logout/cli', expect.objectContaining({ body: JSON.stringify({ refreshToken: 'refresh-b' }) }));
   });
 
   it('LO-02: clears only the store that exists (session-only)', async () => {
     mockCredLoad.mockResolvedValueOnce(null);
-    mockSessionLoad.mockResolvedValueOnce({ accessToken: 'b' });
+    mockSessionLoad.mockResolvedValueOnce({ gatewayUrl: 'https://gateway.test', refreshToken: 'refresh-b', accessToken: 'b' });
 
     const captured = { errors: [], output: [], json: [] };
     const exitCode = await authLogout.run(makeCtx(captured), [], {});

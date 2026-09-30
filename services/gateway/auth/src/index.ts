@@ -49,6 +49,10 @@ export type {
   CreateInviteInput,
   CreateInviteResult,
 } from './invites-store.js';
+export { PasswordResetStore } from './password-reset-store.js';
+export type { PasswordResetRecord } from './password-reset-store.js';
+export { AuthAuditStore } from './audit-store.js';
+export type { AuthAuditEvent } from './audit-store.js';
 export {
   SessionsStore,
   RefreshNotFoundError,
@@ -126,5 +130,6 @@ export type {
   DeviceCtx,
   ChangePasswordInput,
   ActivateInput,
+  CompletePasswordResetInput,
   AuthErrorCode,
 } from './user-auth-service.js';

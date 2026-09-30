@@ -35,6 +35,12 @@
         "gateway"
       ],
       "hint": "HMAC secret that signs session tokens (e.g. `openssl rand -hex 64`); without it the gateway uses a public development secret"
+    },
+    {
+      "id": "gateway.authStorage.filename",
+      "path": "/platform/adapterOptions/documentDatabase/filename",
+      "default": ".kb/database/kb.sqlite",
+      "hint": "Persistent database file for secured gateway identity, session, invite, and reset data"
     }
   ]
 }

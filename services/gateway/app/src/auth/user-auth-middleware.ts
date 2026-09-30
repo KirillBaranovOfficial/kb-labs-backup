@@ -40,13 +40,15 @@
  */
 
 import type { FastifyRequest, FastifyReply, FastifyError } from 'fastify';
-import type { UsersStore, JwtConfig, TenantResolver } from '@kb-labs/gateway-auth';
+import type { UsersStore, SessionsStore, JwtConfig, TenantResolver, IPolicyDecisionPoint } from '@kb-labs/gateway-auth';
+import type { AuthContext } from '@kb-labs/gateway-contracts';
 import { verifyUserAccessToken } from '@kb-labs/gateway-auth';
 import { COOKIE_ACCESS } from './user-cookies.js';
 import { extractBearerToken } from './tokens.js';
 
 export interface UserAuthContext {
   type: 'user';
+  source: 'cookie' | 'bearer';
   userId: string;
   tenantId: string;
   familyId: string;
@@ -60,6 +62,8 @@ declare module 'fastify' {
 
 export interface UserAuthMiddlewareDeps {
   users: UsersStore;
+  sessions: SessionsStore;
+  pdp: IPolicyDecisionPoint;
   tenantResolver: TenantResolver;
   jwtConfig: JwtConfig;
 }
@@ -117,12 +121,25 @@ export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
     if (!user || user.status !== 'active') {
       return sendUnauthorized(reply, 'Session no longer valid');
     }
+    if (!(await deps.sessions.hasActiveFamily(payload.familyId, payload.userId))) {
+      return sendUnauthorized(reply, 'Session revoked');
+    }
 
     request.userAuthContext = {
       type: 'user',
+      source: cookieToken ? 'cookie' : 'bearer',
       userId: payload.userId,
       tenantId: payload.tenantId,
       familyId: payload.familyId,
     };
+    const permissions = await deps.pdp.enumeratePermissions({ userId: payload.userId, tenantId: payload.tenantId, type: 'user' });
+    const authContext: AuthContext = {
+      type: 'user',
+      userId: payload.userId,
+      namespaceId: payload.tenantId,
+      tier: 'free',
+      permissions,
+    };
+    request.authContext = authContext;
   };
 };

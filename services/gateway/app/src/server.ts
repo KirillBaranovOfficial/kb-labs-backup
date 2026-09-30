@@ -22,6 +22,7 @@ import {
   type UsersStore,
   type SessionsStore,
   type InvitesStore,
+  type AuthAuditStore,
   type ProviderRegistry,
   type IPolicyDecisionPoint,
   type TenantResolver,
@@ -82,6 +83,7 @@ export interface UserAuthServerDeps {
   users: UsersStore;
   sessions: SessionsStore;
   invites: InvitesStore;
+  authAudit: AuthAuditStore;
   providers: ProviderRegistry;
   pdp: IPolicyDecisionPoint;
   tenantResolver: TenantResolver;
@@ -255,6 +257,8 @@ export async function createServer(
       "onRequest",
       createUserAuthMiddleware({
         users: userAuth.users,
+        sessions: userAuth.sessions,
+        pdp: userAuth.pdp,
         tenantResolver: userAuth.tenantResolver,
         jwtConfig,
       }),
@@ -373,6 +377,7 @@ export async function createServer(
             userAuthService: userAuth.userAuthService,
             cookieOpts: { cookieSecure: userAuth.cookieSecure },
           }),
+          userLogoutFn: (refreshToken) => userAuth.userAuthService.logout(refreshToken),
           pdp: userAuth.pdp,
         }
       : undefined;
@@ -391,6 +396,7 @@ export async function createServer(
           users: userAuth.users,
           sessions: userAuth.sessions,
           invites: userAuth.invites,
+          authAudit: userAuth.authAudit,
           providers: userAuth.providers,
           pdp: userAuth.pdp,
           tenantResolver: userAuth.tenantResolver,

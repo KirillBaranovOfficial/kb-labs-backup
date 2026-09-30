@@ -25,6 +25,7 @@ import { UsersStore } from '../users-store.js';
 import { CredentialsStore } from '../credentials-store.js';
 import { MembershipsStore } from '../memberships-store.js';
 import { InvitesStore } from '../invites-store.js';
+import { PasswordResetStore } from '../password-reset-store.js';
 import { SessionsStore } from '../sessions-store.js';
 import { ProviderRegistry } from '../provider-registry.js';
 import { createEmailPasswordProvider } from '../providers/email-password.js';
@@ -41,6 +42,7 @@ let users: UsersStore;
 let credentials: CredentialsStore;
 let memberships: MembershipsStore;
 let invites: InvitesStore;
+let passwordResets: PasswordResetStore;
 let sessions: SessionsStore;
 let svc: ReturnType<typeof createUserAuthService>;
 let nowMs: number;
@@ -52,6 +54,7 @@ beforeEach(() => {
   credentials = new CredentialsStore(docs);
   memberships = new MembershipsStore(docs);
   invites = new InvitesStore(docs, () => nowMs);
+  passwordResets = new PasswordResetStore(docs, () => nowMs);
   sessions = new SessionsStore(docs, { now: () => nowMs, refreshTtlMs: HOUR, graceWindowMs: 5_000 });
 
   const registry = new ProviderRegistry();
@@ -64,6 +67,7 @@ beforeEach(() => {
     credentials,
     memberships,
     invites,
+    passwordResets,
     sessions,
     providers: registry,
     passwordPolicy: createPasswordPolicy({ minLength: 8, maxLength: 256, hibpEnabled: false }),
@@ -423,6 +427,29 @@ describe('activate', () => {
     // Exactly one user account exists for that email in the tenant.
     const all = await users.listByTenant(tenant);
     expect(all.filter((u) => u.email === 'race@x.com')).toHaveLength(1);
+  });
+});
+
+describe('admin-generated password reset', () => {
+  it('consumes once, changes the password, and revokes every session family', async () => {
+    const userId = await seedActiveUser();
+    const session = await svc.login(
+      { providerId: 'email-password', input: { email: 'alice@x.com', password: 'correct-pw-12' } },
+      tenant, {},
+    );
+    const reset = await svc.issuePasswordReset({ userId, tenantId: tenant, createdBy: 'admin', ttlMs: HOUR });
+
+    await svc.completePasswordReset({ token: reset.token, newPassword: 'Replacement123!' });
+    expect(await sessions.listFamiliesByUser(userId)).toHaveLength(0);
+    await expect(svc.refresh(session.refresh.token)).rejects.toMatchObject({ code: 'invalid_refresh' });
+    await expect(svc.login(
+      { providerId: 'email-password', input: { email: 'alice@x.com', password: 'correct-pw-12' } }, tenant, {},
+    )).rejects.toMatchObject({ code: 'invalid_credentials' });
+    await expect(svc.login(
+      { providerId: 'email-password', input: { email: 'alice@x.com', password: 'Replacement123!' } }, tenant, {},
+    )).resolves.toMatchObject({ user: { userId } });
+    await expect(svc.completePasswordReset({ token: reset.token, newPassword: 'AnotherPassword123!' }))
+      .rejects.toMatchObject({ code: 'invalid_password_reset' });
   });
 });
 

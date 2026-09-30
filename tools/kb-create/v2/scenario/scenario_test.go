@@ -110,6 +110,57 @@ func TestScenarioValueRendersIntoManifestOwnedConfig(t *testing.T) {
 	}
 }
 
+func TestSecuredCustomScenarioSelectsPersistentAuthStore(t *testing.T) {
+	definition, err := Load("custom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := New(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = Answer(definition, state, "access.mode", []byte(`"secured"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = Answer(definition, state, "admin.email", []byte(`"admin@example.com"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := request.ProviderPreferences["documentDatabase"]; got != "sqlite-stores" {
+		t.Fatalf("secured auth store preference = %q, want sqlite-stores", got)
+	}
+	if len(request.Adapters) != 1 || request.Adapters[0].ID != "sqlite-stores" {
+		t.Fatalf("secured auth store adapters = %#v, want sqlite-stores", request.Adapters)
+	}
+	plan, err := resolve.Plan(request, source())
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundStore := false
+	for _, artifact := range plan.Artifacts {
+		if artifact.ID == "sqlite-stores" {
+			foundStore = true
+		}
+	}
+	if !foundStore {
+		t.Fatalf("secured plan artifacts do not include sqlite store: %#v", plan.Artifacts)
+	}
+	foundFilename := false
+	for _, patch := range plan.ConfigPatches {
+		if patch.Path == "/platform/adapterOptions/documentDatabase/filename" && patch.JSON == `".kb/database/kb.sqlite"` {
+			foundFilename = true
+		}
+	}
+	if !foundFilename {
+		t.Fatalf("secured plan does not configure persistent auth database: %#v", plan.ConfigPatches)
+	}
+}
+
 func TestScenarioRejectsUndeclaredConfigAndOption(t *testing.T) {
 	scenario, err := Load("custom")
 	if err != nil {
@@ -159,7 +210,7 @@ func TestPagedScenarioCompilesConditionalAndSecretFields(t *testing.T) {
 }
 
 func source() catalog.Catalog {
-	return catalog.Catalog{Schema: catalog.Schema, Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`}}}}, SDKs: []catalog.Component{{ID: "sdk", Version: "2.0.0", Package: "@kb/sdk", SHA256: "sdk"}}, Plugins: []catalog.Component{{ID: "commit", Version: "1", Package: "@kb/commit", SHA256: "commit"}, {ID: "marketplace", Version: "1", Package: "@kb/marketplace", SHA256: "marketplace"}, {ID: "review", Version: "1", Package: "@kb/review", SHA256: "review"}, {ID: "scaffold", Version: "1", Package: "@kb/scaffold", SHA256: "scaffold"}, {ID: "release", Version: "1", Package: "@kb/release", SHA256: "release"}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "state-broker", Version: "1", Package: "@kb/state", SHA256: "state"}, Provides: []string{"cache"}}}}
+	return catalog.Catalog{Schema: catalog.Schema, Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`}, {ID: "gateway.bootstrap.adminEmail", Path: "/gateway/auth/bootstrap/adminEmail"}, {ID: "gateway.authStorage.filename", Path: "/platform/adapterOptions/documentDatabase/filename", Default: `".kb/database/kb.sqlite"`}}}}, SDKs: []catalog.Component{{ID: "sdk", Version: "2.0.0", Package: "@kb/sdk", SHA256: "sdk"}}, Plugins: []catalog.Component{{ID: "commit", Version: "1", Package: "@kb/commit", SHA256: "commit"}, {ID: "marketplace", Version: "1", Package: "@kb/marketplace", SHA256: "marketplace"}, {ID: "review", Version: "1", Package: "@kb/review", SHA256: "review"}, {ID: "scaffold", Version: "1", Package: "@kb/scaffold", SHA256: "scaffold"}, {ID: "release", Version: "1", Package: "@kb/release", SHA256: "release"}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "state-broker", Version: "1", Package: "@kb/state", SHA256: "state"}, Provides: []string{"cache"}}, {Component: catalog.Component{ID: "sqlite-stores", Version: "1", Package: "@kb/sqlite", SHA256: "sqlite"}, Provides: []string{"documentDatabase"}}}}
 }
 
 // A field that is required only when it is visible (`when`) must not be

@@ -3,11 +3,7 @@
  *
  * Implements `IPolicyDecisionPoint` for this iteration. Two paths:
  *
- * - `check(identity, action)` consults the mock-RBAC map:
- *   tenant-admin → every PERMISSIONS value, tenant-member → none.
- *   Machine identities are temporarily allowed everything (this
- *   matches the existing machine-token behaviour and will tighten
- *   when the real PDP arrives in ClickUp 869def338).
+ * - `check(identity, action)` applies the admin/member policy.
  *
  * - `enumeratePermissions(identity)` returns the subset of canonical
  *   permissions the identity currently has. Used by GET /auth/permissions
@@ -40,11 +36,13 @@ describe('check', () => {
     expect(r).toEqual({ allow: false, reason: 'no_membership' });
   });
 
-  it('denies tenant-member on admin-actions', async () => {
+  it('denies tenant-member on admin-actions while allowing normal project use', async () => {
     await memberships.addMembership({ userId, tenantId, groupId: 'tenant-member' });
     const pdp = createStubPDP({ memberships });
     expect(await pdp.check(userIdentity, PERMISSIONS.USERS_WRITE))
       .toMatchObject({ allow: false });
+    expect(await pdp.check(userIdentity, PERMISSIONS.PROJECTS_READ))
+      .toEqual({ allow: true });
   });
 
   it('allows tenant-admin on admin-actions', async () => {
@@ -54,10 +52,12 @@ describe('check', () => {
       .toEqual({ allow: true });
   });
 
-  it('allows machine identities (machine-token compatibility for this iteration)', async () => {
+  it('allows only machine registration for machine identities', async () => {
     const pdp = createStubPDP({ memberships });
     expect(await pdp.check(machineIdentity, PERMISSIONS.MACHINE_REGISTER))
       .toEqual({ allow: true });
+    expect(await pdp.check(machineIdentity, PERMISSIONS.USERS_WRITE))
+      .toMatchObject({ allow: false });
   });
 
   it('only consults membership in the identity\'s own tenant', async () => {
@@ -83,10 +83,15 @@ describe('enumeratePermissions', () => {
     expect(await pdp.enumeratePermissions(userIdentity)).toEqual([]);
   });
 
-  it('returns [] for tenant-member (all user-facing perms are admin-only for now)', async () => {
+  it('returns only project, plugin, workflow, and own-account permissions for tenant-member', async () => {
     await memberships.addMembership({ userId, tenantId, groupId: 'tenant-member' });
     const pdp = createStubPDP({ memberships });
-    expect(await pdp.enumeratePermissions(userIdentity)).toEqual([]);
+    expect(await pdp.enumeratePermissions(userIdentity)).toEqual([
+      PERMISSIONS.PROJECTS_READ, PERMISSIONS.PROJECTS_WRITE,
+      PERMISSIONS.PLUGINS_READ, PERMISSIONS.PLUGINS_WRITE,
+      PERMISSIONS.WORKFLOWS_READ, PERMISSIONS.WORKFLOWS_WRITE,
+      PERMISSIONS.ACCOUNT_READ, PERMISSIONS.ACCOUNT_WRITE,
+    ]);
   });
 
   it('returns the full canonical set for tenant-admin', async () => {

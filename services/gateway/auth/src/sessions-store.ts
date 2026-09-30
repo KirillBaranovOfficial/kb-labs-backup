@@ -292,6 +292,14 @@ export class SessionsStore {
     });
   }
 
+  async hasActiveFamily(familyId: string, userId: string): Promise<boolean> {
+    await this.ensureSchema();
+    const [family] = await this.docs.find<FamilyDoc>(FAMILIES, {
+      $and: [{ familyId: { $eq: familyId } }, { userId: { $eq: userId } }],
+    }, { limit: 1 });
+    return family !== undefined;
+  }
+
   async revokeAllUserSessions(userId: string): Promise<void> {
     await this.ensureSchema();
     await this.docs.transaction(async (tx) => {
