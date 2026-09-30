@@ -31,6 +31,7 @@ services:
       KB_JOURNEY_FRONT_DOOR: ${KB_JOURNEY_FRONT_DOOR:-agent}
       KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}
       KB_JOURNEY_SERVICE_PROFILE: ${KB_JOURNEY_SERVICE_PROFILE:-fast}
+      DEBUG: ${DEBUG:-}
       GITHUB_STEP_SUMMARY: /tmp/journey-summary.md
       KB_JOURNEY_SUMMARY: /summary/journey-summary.md
     volumes:

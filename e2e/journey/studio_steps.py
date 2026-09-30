@@ -1,8 +1,12 @@
 """Helpers for setting up Studio browser coverage in an installed journey."""
 from __future__ import annotations
 
+from collections import deque
 import json
+import os
+import signal
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -53,27 +57,67 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
         return False, 0.0, message
 
     started = time.monotonic()
+    output_lines: deque[str] = deque(maxlen=40)
+    log_path = report.with_name(f"studio-playwright-{mode}.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        result = subprocess.run(command, env=env, text=True, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, timeout=timeout, check=False)
+        with log_path.open("w", encoding="utf-8") as log:
+            process = subprocess.Popen(command, env=env, text=True, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, bufsize=1, start_new_session=True)
+
+            def copy_output() -> None:
+                assert process.stdout is not None
+                with process.stdout as output_stream:
+                    for line in output_stream:
+                        rendered = line.rstrip("\r\n")
+                        output_lines.append(rendered)
+                        log.write(line)
+                        log.flush()
+                        print(f"[studio-playwright] {rendered}", flush=True)
+
+            output_thread = threading.Thread(target=copy_output, daemon=True)
+            output_thread.start()
+            try:
+                return_code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _signal_process_group(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    _signal_process_group(process.pid, signal.SIGKILL)
+                    process.wait()
+                raise
+            finally:
+                if process.poll() is None:
+                    _signal_process_group(process.pid, signal.SIGKILL)
+                    process.wait()
+                output_thread.join()
         elapsed = time.monotonic() - started
-        passed = result.returncode == 0
+        passed = return_code == 0
         message = "Studio browser journey passed"
         if not passed:
-            message = " ".join((result.stdout or "").split())[-700:] or f"Playwright exited {result.returncode}"
-    except subprocess.TimeoutExpired as error:
+            message = f"Playwright exited {return_code}" + _output_excerpt(output_lines)
+    except subprocess.TimeoutExpired:
         elapsed = time.monotonic() - started
-        output = error.stdout or ""
-        if isinstance(output, bytes):
-            output = output.decode(errors="replace")
-        excerpt = " ".join(output.split())[-700:]
         message = f"Playwright timed out after {timeout}s"
-        if excerpt:
-            message += f"; last output: {excerpt}"
+        message += _output_excerpt(output_lines)
         passed = False
 
     _record_step(report, mode, "PASS" if passed else "FAIL", elapsed, message)
     return passed, elapsed, message
+
+
+def _output_excerpt(lines: deque[str]) -> str:
+    if not lines:
+        return ""
+    return "\nLast Playwright output (up to 40 lines):\n" + "\n".join(lines)
+
+
+def _signal_process_group(process_id: int, signum: int) -> None:
+    try:
+        os.killpg(process_id, signum)
+    except ProcessLookupError:
+        pass
 
 
 def _record_step(report: Path, mode: str, status: str, duration: float, message: str) -> None:

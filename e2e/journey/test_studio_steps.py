@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,20 +60,27 @@ class StudioJourneyTests(unittest.TestCase):
         self.assertEqual(saved["steps"][0]["status"], "PASS")
         self.assertEqual(saved["steps"][0]["duration_seconds"], 1.25)
 
-    def test_playwright_timeout_is_recorded_as_fail_with_last_output_and_returns(self):
+    def test_playwright_timeout_streams_and_records_last_output(self):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "service-local.json"
             report.write_text(json.dumps({"status": "PASS", "steps": []}))
-            timeout = subprocess.TimeoutExpired(["playwright"], 180, output="last browser line")
-            with patch("studio_steps.subprocess.run", side_effect=timeout) as run:
-                passed, _elapsed, message = run_studio_browser_step(
-                    ["playwright"], {}, report, "local", True)
+            command = [sys.executable, "-u", "-c",
+                       "import time; [print(f'playwright line {i}', flush=True) for i in range(45)]; time.sleep(5)"]
+            streamed = io.StringIO()
+            with patch("studio_steps.subprocess.Popen", wraps=subprocess.Popen) as popen:
+                with redirect_stdout(streamed):
+                    passed, _elapsed, message = run_studio_browser_step(
+                        command, {}, report, "local", True, timeout=0.2)
             saved = json.loads(report.read_text())
+            log = (Path(directory) / "studio-playwright-local.log").read_text()
 
-        run.assert_called_once()
+        popen.assert_called_once()
         self.assertFalse(passed)
-        self.assertIn("timed out after 180s", message)
-        self.assertIn("last browser line", message)
+        self.assertIn("timed out after 0.2s", message)
+        self.assertIn("playwright line 44", message)
+        self.assertNotIn("playwright line 4\n", message)
+        self.assertIn("[studio-playwright] playwright line 44", streamed.getvalue())
+        self.assertIn("playwright line 44", log)
         self.assertEqual(saved["steps"][0]["capability"], "studio")
         self.assertEqual(saved["steps"][0]["status"], "FAIL")
 
