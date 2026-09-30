@@ -125,17 +125,37 @@ import json,os,sys
 path,start,first,status,*stages=sys.argv[1:]
 capability_path, *stages = stages
 capability_report=json.load(open(capability_path)) if os.path.isfile(capability_path) else None
+def stage_record(value):
+    name, result, duration = (value.split('|', 2) + [''])[:3]
+    return {'name':name, 'status':result, 'duration_seconds':int(duration) if duration else None}
 json.dump({'started_at':start,'status':'PASS' if status=='0' else 'FAIL','first_failure':first or None,
-           'stages':[{'name':x.split('|',1)[0],'status':x.split('|',1)[1]} for x in stages],
+           'stages':[stage_record(x) for x in stages],
            'capabilities': capability_report.get('capabilities',[]) if capability_report else [],
            'failed_steps':[item['first_failure'] for item in capability_report.get('capabilities',[]) if item.get('first_failure')] if capability_report else []},open(path,'w'),indent=2)
 PY
-  { echo "# Local gate report"; echo; echo "Started: $START"; echo "Status: $([[ $STATUS == 0 ]] && echo PASS || echo FAIL)"; echo "First failing stage: ${FIRST_FAILURE:-none}"; echo; echo '| Stage | Status |'; echo '|---|---|'; for item in "${STAGES[@]}"; do printf '| %s | %s |\n' "${item%%|*}" "${item##*|}"; done; if [[ -f "$OUT/capabilities.md" ]]; then echo; cat "$OUT/capabilities.md"; fi; echo; echo "Artifacts: $OUT"; } > "$REPORT"
+  { echo "# Local gate report"; echo; echo "Started: $START"; echo "Status: $([[ $STATUS == 0 ]] && echo PASS || echo FAIL)"; echo "First failing stage: ${FIRST_FAILURE:-none}"; echo; echo '| Stage | Status | Duration (s) |'; echo '|---|---:|---:|'; for item in "${STAGES[@]}"; do IFS='|' read -r name stage_status duration <<< "$item"; printf '| %s | %s | %s |\n' "$name" "$stage_status" "$duration"; done; if [[ -f "$OUT/capabilities.md" ]]; then echo; cat "$OUT/capabilities.md"; fi; echo; echo "Artifacts: $OUT"; } > "$REPORT"
   [[ "$STATUS" == 0 ]] || result=1
   exit "$result"
 }
 trap cleanup EXIT INT TERM
-stage() { local name="$1"; shift; echo "==> $name"; if "$@"; then STAGES+=("$name|PASS"); else STAGES+=("$name|FAIL"); FIRST_FAILURE="${FIRST_FAILURE:-$name}"; STATUS=1; return 1; fi; }
+stage() {
+  local name="$1"; shift
+  local started ended duration
+  started="$(date +%s)"
+  echo "==> $name"
+  if "$@"; then
+    ended="$(date +%s)"
+    duration="$((ended - started))"
+    STAGES+=("$name|PASS|$duration")
+  else
+    ended="$(date +%s)"
+    duration="$((ended - started))"
+    STAGES+=("$name|FAIL|$duration")
+    FIRST_FAILURE="${FIRST_FAILURE:-$name}"
+    STATUS=1
+    return 1
+  fi
+}
 stage 'frozen install' pnpm install --frozen-lockfile || exit 1
 stage 'affected build' env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run build --affected || exit 1
 stage 'affected lint type-check tests' env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run lint type-check test --affected || exit 1
