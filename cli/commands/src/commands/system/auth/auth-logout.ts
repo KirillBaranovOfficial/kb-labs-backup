@@ -32,8 +32,8 @@ export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
     ]);
 
     const savedTokens: Array<{ gatewayUrl: string; refreshToken: string }> = [];
-    if (existingSession) savedTokens.push(existingSession);
-    if (existingCredentials) savedTokens.push(existingCredentials);
+    if (existingSession) {savedTokens.push(existingSession);}
+    if (existingCredentials) {savedTokens.push(existingCredentials);}
     for (const identity of savedTokens) {
       let response: Response;
       try {
@@ -44,14 +44,14 @@ export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
         });
       } catch {
         const error = 'Could not reach a Gateway to revoke saved credentials. Check the Gateway and run `kb auth logout` again.';
-        if (flags.json) ctx.ui?.json({ ok: false, error });
-        else ctx.ui?.error?.(error);
+        if (flags.json) {ctx.ui?.json({ ok: false, error });}
+        else {ctx.ui?.error?.(error);}
         return { ok: false, error };
       }
       if (!response.ok) {
         const error = `Gateway rejected token revocation (HTTP ${response.status}). Run 'kb auth status', then 'kb auth logout' again.`;
-        if (flags.json) ctx.ui?.json({ ok: false, error });
-        else ctx.ui?.error?.(error);
+        if (flags.json) {ctx.ui?.json({ ok: false, error });}
+        else {ctx.ui?.error?.(error);}
         return { ok: false, error };
       }
     }

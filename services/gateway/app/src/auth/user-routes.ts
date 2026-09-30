@@ -162,7 +162,7 @@ function requireUser(request: FastifyRequest, reply: FastifyReply): UserAuthCont
 function checkCsrf(request: FastifyRequest, reply: FastifyReply): boolean {
   // Bearer-authenticated CLI/API clients cannot be targeted by browser CSRF.
   // Cookie-authenticated browser mutations still require the double-submit token.
-  if (!getCookies(request)[COOKIE_ACCESS]) return true;
+  if (!getCookies(request)[COOKIE_ACCESS]) {return true;}
   const cookieVal = getCookies(request)[COOKIE_CSRF];
   const headerVal = request.headers['x-csrf-token'];
   const headerStr = typeof headerVal === 'string' ? headerVal : undefined;
@@ -725,8 +725,8 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
   app.post<{ Params: { id: string } }>('/auth/users/:id/password-reset-link', {
     schema: { tags: ['Auth'], summary: 'Create a one-time password reset link for a tenant user (admin only)' },
   }, async (request, reply) => {
-    if (!(await requirePermission(request, reply, PERMISSIONS.USERS_WRITE))) return;
-    if (!checkCsrf(request, reply)) return;
+    if (!(await requirePermission(request, reply, PERMISSIONS.USERS_WRITE))) {return;}
+    if (!checkCsrf(request, reply)) {return;}
     const ctx = request.userAuthContext!;
     const target = await users.getById(request.params.id);
     if (!target || target.tenantId !== ctx.tenantId) {
@@ -769,27 +769,27 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
   // inherit the owner's current role and are only visible/revocable by owner.
   app.get('/auth/tokens', async (request, reply) => {
     const ctx = requireUser(request, reply);
-    if (!ctx) return;
+    if (!ctx) {return;}
     const tokens = await apiTokens.listByUser(ctx.userId);
     return reply.send({ tokens });
   });
 
   app.post<{ Body: { name?: string } }>('/auth/tokens', async (request, reply) => {
     const ctx = requireUser(request, reply);
-    if (!ctx) return;
-    if (!checkCsrf(request, reply)) return;
+    if (!ctx) {return;}
+    if (!checkCsrf(request, reply)) {return;}
     const name = request.body?.name?.trim();
-    if (!name || name.length > 80) return reply.code(400).send({ error: 'Bad Request', message: 'name is required and must be at most 80 characters' });
+    if (!name || name.length > 80) {return reply.code(400).send({ error: 'Bad Request', message: 'name is required and must be at most 80 characters' });}
     const created = await apiTokens.create({ userId: ctx.userId, tenantId: ctx.tenantId, name, ttlMs: 90 * 24 * 60 * 60 * 1000 });
     return reply.code(201).send({ token: created.token, tokenRecord: created.record });
   });
 
   app.post<{ Params: { id: string } }>('/auth/tokens/:id/revoke', async (request, reply) => {
     const ctx = requireUser(request, reply);
-    if (!ctx) return;
-    if (!checkCsrf(request, reply)) return;
+    if (!ctx) {return;}
+    if (!checkCsrf(request, reply)) {return;}
     const revoked = await apiTokens.revokeByUser(request.params.id, ctx.userId);
-    if (!revoked) return reply.code(404).send({ error: 'Not found', message: 'API token not found' });
+    if (!revoked) {return reply.code(404).send({ error: 'Not found', message: 'API token not found' });}
     return reply.send({ ok: true });
   });
 

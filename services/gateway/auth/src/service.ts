@@ -129,7 +129,7 @@ export class AuthService {
   }
 
   async revokeRefreshToken(refreshToken: string): Promise<boolean> {
-    if (!(await verifyRefreshToken(refreshToken, this.jwtConfig))) return false;
+    if (!(await verifyRefreshToken(refreshToken, this.jwtConfig))) {return false;}
     return (await consumeRefreshToken(this.cache, refreshToken)) !== null;
   }
 

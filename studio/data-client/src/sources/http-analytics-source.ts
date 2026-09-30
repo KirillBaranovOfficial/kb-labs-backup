@@ -21,7 +21,7 @@ export class HttpAnalyticsSource implements AnalyticsDataSource {
   constructor(private readonly client: HttpClient, private readonly projectId?: string) {}
 
   private path(path: string): string {
-    if (!this.projectId) throw new Error('Select a project to view project analytics.');
+    if (!this.projectId) {throw new Error('Select a project to view project analytics.');}
     return `/projects/${encodeURIComponent(this.projectId)}${path}`;
   }
 

@@ -6,16 +6,18 @@ cd "$ROOT"
 MODE="${1:-}"
 shift || true
 DRY_RUN=0
+KEEP_GOING=0
 PACKAGES=""
 while (($#)); do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --keep-going) KEEP_GOING=1 ;;
     --packages) (($# >= 2)) || { echo "local-gate: --packages needs a comma-separated value" >&2; exit 2; }; PACKAGES="$2"; shift ;;
     *) echo "local-gate: unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
-[[ "$MODE" == quick || "$MODE" == batch ]] || { echo "Usage: scripts/local-gate.sh quick [--packages a,b] [--dry-run] | batch [--dry-run]" >&2; exit 2; }
+[[ "$MODE" == quick || "$MODE" == batch ]] || { echo "Usage: scripts/local-gate.sh quick [--packages a,b] [--dry-run] | batch [--dry-run] [--keep-going]" >&2; exit 2; }
 
 if [[ "$MODE" == quick ]]; then
   if [[ -z "$PACKAGES" ]]; then
@@ -104,6 +106,7 @@ if ((DRY_RUN)); then
     '9. KB_JOURNEY_ONLY=service-secured:explore e2e/journey/run.sh --no-build' \
     '10. aggregate journey JSON with e2e/journey/nightly_report.py' \
     '11. colima stop and remove task-owned temporary resources'
+  if ((KEEP_GOING)); then echo 'keep-going: continue after failed stages; final status remains non-zero'; fi
   exit 0
 fi
 mkdir -p "$OUT"
@@ -153,7 +156,7 @@ stage() {
     STAGES+=("$name|FAIL|$duration")
     FIRST_FAILURE="${FIRST_FAILURE:-$name}"
     STATUS=1
-    return 1
+    return "$((1 - KEEP_GOING))"
   fi
 }
 stage 'frozen install' pnpm install --frozen-lockfile || exit 1
@@ -172,8 +175,7 @@ PY
 while IFS= read -r package; do stage "kb-create Go tests $package" bash -c 'cd tools/kb-create && env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET HOME="$1" go test "$2"' _ "$TEMP_HOME" "$package" || exit 1; done <<< "$go_packages"
 stage 'dependency audit' pnpm audit --audit-level moderate || exit 1
 stage 'secret scan' gitleaks detect --source . --config .gitleaks.toml --redact --no-banner || exit 1
-stage 'Colima start' colima start || exit 1
-COLIMA_STARTED=1
+if stage 'Colima start' colima start; then COLIMA_STARTED=1; elif (( ! KEEP_GOING )); then exit 1; fi
 TASK_IMAGE_IDS_BEFORE=""
 for image in kb-installer-journey:local kb-e2e-ci-publisher:latest kb-e2e-ci-platform:latest; do
   image_id="$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null || true)"

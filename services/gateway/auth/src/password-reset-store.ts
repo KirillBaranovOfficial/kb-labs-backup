@@ -55,11 +55,11 @@ export class PasswordResetStore {
     await this.ensureSchema();
     return this.docs.transaction(async (tx) => {
       const [record] = await tx.find<PasswordResetDoc>(COLLECTION, { tokenHash: { $eq: hashToken(token) } }, { limit: 1 });
-      if (!record || record.status !== 'active' || record.expiresAt <= this.now()) return null;
+      if (!record || record.status !== 'active' || record.expiresAt <= this.now()) {return null;}
       const updated = await tx.updateMany<PasswordResetDoc>(COLLECTION,
         { $and: [{ resetId: { $eq: record.resetId } }, { status: { $eq: 'active' } }, { expiresAt: { $gt: this.now() } }] },
         { $set: { status: 'used' } });
-      if (updated === 0) return null;
+      if (updated === 0) {return null;}
       const { tokenHash: _tokenHash, ...safeRecord } = record;
       return { ...safeRecord, status: 'used' };
     });

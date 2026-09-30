@@ -453,11 +453,11 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     }
 
     const merged = mergeScopedEntries(perScope);
-    if (!filter?.kind) return merged.entries;
+    if (!filter?.kind) {return merged.entries;}
     const matching: ScopedMarketplaceEntry[] = [];
     for (const entry of merged.entries) {
       const packageRoot = await this.resolveEntryPath(resolveScopeRoot(this.roots, { scope: entry.scope, projectRoot: ctx.projectRoot }), entry.id, entry);
-      if (packageRoot && await this.detectKind(packageRoot) === filter.kind) matching.push(entry);
+      if (packageRoot && await this.detectKind(packageRoot) === filter.kind) {matching.push(entry);}
     }
     return matching;
   }
@@ -671,8 +671,8 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     if (entry.source === 'marketplace' && this.extensionStore && entry.version) {
       return (await this.extensionStore.lookup({ name: id, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
     }
-    if (entry.link) return path.resolve(scopeRoot, entry.link);
-    if (entry.resolvedPath) return path.resolve(scopeRoot, entry.resolvedPath);
+    if (entry.link) {return path.resolve(scopeRoot, entry.link);}
+    if (entry.resolvedPath) {return path.resolve(scopeRoot, entry.resolvedPath);}
     return undefined;
   }
 

@@ -31,7 +31,10 @@ func TestRunSealsNormalizedReleaseExport(t *testing.T) {
 		}
 		source.Plugins = append(source.Plugins, component)
 	}
-	source.Adapters = []catalog.Adapter{{Component: catalog.Component{ID: "state-broker", Version: "2.0.0", Package: "@kb/state-broker", Tarball: "https://example.test/state-broker.tgz", SHA256: "state-broker"}, Provides: []string{"cache"}}}
+	source.Adapters = []catalog.Adapter{
+		{Component: catalog.Component{ID: "state-broker", Version: "2.0.0", Package: "@kb/state-broker", Tarball: "https://example.test/state-broker.tgz", SHA256: "state-broker"}, Provides: []string{"cache"}},
+		{Component: catalog.Component{ID: "sqlite-stores", Version: "2.0.0", Package: "@kb-labs/adapters-sqlite", Tarball: "https://example.test/adapters-sqlite.tgz", SHA256: "sqlite"}, Provides: []string{"documentDatabase", "kvStore"}},
+	}
 	export, err := json.Marshal(source)
 	if err != nil {
 		t.Fatal(err)

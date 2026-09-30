@@ -59,7 +59,7 @@ async function loadAdaptersFromLock(
   for (const [pkgId, entry] of Object.entries(lock.adapters ?? {})) {
     if (entry.enabled === false) { continue; }
 
-    if (!entry.resolvedPath) continue;
+    if (!entry.resolvedPath) {continue;}
     const pkgRoot = path.resolve(root, entry.resolvedPath);
 
     // Read main export path and npm package name from package.json.

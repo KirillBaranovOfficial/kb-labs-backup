@@ -172,7 +172,7 @@ export async function platformSync(
 
       try {
         logger.info?.(`platform-sync: installing ${packageId}@${entry.version}`);
-        if (!entry.version) throw new Error(`platform lock entry ${packageId} has no exact version`);
+        if (!entry.version) {throw new Error(`platform lock entry ${packageId} has no exact version`);}
         await installer!.install({
           root,
           name: packageId,

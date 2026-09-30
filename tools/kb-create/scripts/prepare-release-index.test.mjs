@@ -24,7 +24,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     packageArtifact(root, packageRoot, stage, '@kb-labs/workflow-daemon', '2.0.0', 'var manifest = { schema: "kb.service/1", id: "workflow", runtime: { port: 7778, healthCheck: "/health" } }; export { manifest };', { bin: { 'kb-workflow': './dist/index.js' } }),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-pino', '2.0.0', 'const manifest={id:"pino-logger",implements:["ILogger"],defaultFor:["logger"]}; export {manifest};'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-service-transport-http', '2.0.0', 'const manifest={id:"service-transport-http",implements:["IServiceTransport"]}; export {manifest};'),
-    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', 'const manifest={id:"sqlite",implements:["IKVStore"]}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', 'const manifest={id:"sqlite-stores",implements:["IDocumentDatabase","IKVStore"],defaultFor:["documentDatabase","kvStore"]}; export {manifest};'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-openai', '2.0.0', 'const manifest={id:"openai",implements:["ILLM"]}; export {manifest};'),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
@@ -80,7 +80,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   // capabilities the platform actually requires — so no adapter was ever
   // found for them and bootstrap failed with KB_INSTALL_PROVIDER_UNRESOLVED.
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'service-transport-http')?.provides, ['serviceTransport']);
-  assert.deepEqual(index.adapters.find(adapter => adapter.id === 'sqlite')?.provides, ['kvStore']);
+  assert.deepEqual(index.adapters.find(adapter => adapter.id === 'sqlite-stores')?.provides, ['documentDatabase', 'kvStore']);
 });
 
 test('fails closed when a configured platform adapter is not staged', () => {
@@ -174,6 +174,12 @@ function writeStageManifest(root, packageRoot, stage, artifacts) {
   }
   if (!packages.has('@kb-labs/adapters-state-broker')) {
     staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', 'const manifest={id:"state-broker",implements:"ICache",defaultFor:["cache"]}; export {manifest};'));
+  }
+  if (!packages.has('@kb-labs/adapters-sqlite')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', 'const manifest={id:"sqlite-stores",implements:["IDocumentDatabase","IKVStore"],defaultFor:["documentDatabase","kvStore"]}; export {manifest};'));
+  }
+  if (!packages.has('@kb-labs/adapters-service-transport-http')) {
+    staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-service-transport-http', '2.0.0', 'const manifest={id:"service-transport-http",implements:["IServiceTransport"]}; export {manifest};'));
   }
   if (!packages.has('@kb-labs/workflow-daemon') && !packages.has('@kb-labs/gateway-app')) {
     staged.push(packageArtifact(root, packageRoot, stage, '@kb-labs/gateway-app', '2.0.0', 'var manifest={schema:"kb.service/1",id:"gateway",runtime:{port:4000,healthCheck:"/health"}}; export {manifest};', { bin: { 'gateway-app': './dist/index.js' } }));
