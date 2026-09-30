@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from studio_steps import create_studio_member, record_studio_browser_step
+from studio_steps import create_studio_member, run_studio_browser_step
 from service_steps import record_runner_failure
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
@@ -106,7 +106,7 @@ def mcp_rpc(url: str, method: str, request_id: int, params=None, token=None):
     except urllib.error.HTTPError as error:
         raise RuntimeError(f"MCP {method} returned HTTP {error.code}") from error
     body = response.read().decode()
-    if body.lstrip().startswith("data:"):
+    if any(line.startswith("data:") for line in body.splitlines()):
         body = "\n".join(line[5:].strip() for line in body.splitlines() if line.startswith("data:"))
     return json.loads(body)
 
@@ -607,6 +607,13 @@ def main():
             "KB_STUDIO_PROJECT_NAME": project_name,
             "KB_ACCESS_MODE": mode,
         })
+        try:
+            recorded_service_result = json.loads(service_report.read_text())
+            studio_shell = next((step for step in recorded_service_result.get("steps", [])
+                                 if step.get("capability") == "studio" and step.get("name") == "Studio shell"), None)
+            studio_shell_passed = studio_shell is not None and studio_shell.get("status") == "PASS"
+        except (OSError, json.JSONDecodeError):
+            studio_shell_passed = False
         if mode == "secured":
             try:
                 member_email, member_password = create_studio_member(
@@ -618,17 +625,13 @@ def main():
                 studio_env["KB_STUDIO_MEMBER_PASSWORD"] = member_password
             except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
                 fail(f"Studio secured member setup: {error}")
-        studio_result, studio_elapsed = run([
+        studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
             "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
             "--config=/opt/kb-studio-playwright/playwright.config.mjs",
-        ], env=studio_env, timeout=180)
+        ], studio_env, service_report, mode, studio_shell_passed, timeout=180)
         TIMES["Studio browser journey"] = studio_elapsed
-        studio_passed = studio_result.returncode == 0
-        studio_message = "Studio browser journey passed"
         if not studio_passed:
-            studio_message = " ".join(studio_result.stdout.split())[-700:] or f"Playwright exited {studio_result.returncode}"
             fail(f"Studio browser journey: {studio_message}")
-        record_studio_browser_step(service_report, mode, studio_passed, studio_elapsed, studio_message)
 
     global PLATFORM_SIZE_MIB
     if PLATFORM.exists():
@@ -655,12 +658,16 @@ def main():
     return 0 if passed else 1
 
 
+def cleanup() -> None:
+    for process in PROCESSES:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=10)
+    shutil.rmtree(HOME, ignore_errors=True)
+
+
 if __name__ == "__main__":
     try:
         sys.exit(main())
     finally:
-        for process in PROCESSES:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=10)
-        shutil.rmtree(HOME, ignore_errors=True)
+        cleanup()

@@ -21,9 +21,9 @@ ADMIN_PASSWORD = os.getenv("KB_JOURNEY_ADMIN_PASSWORD", "")
 HTTP = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
 
-def request(path: str, *, method="GET", payload=None, token="") -> tuple[int, object, dict[str, str]]:
+def request(path: str, *, method="GET", payload=None, token="", accept="application/json") -> tuple[int, object, dict[str, str]]:
     body = json.dumps(payload).encode() if payload is not None else None
-    headers = {"Accept": "application/json"}
+    headers = {"Accept": accept}
     if body is not None:
         headers["Content-Type"] = "application/json"
     if token:
@@ -99,13 +99,13 @@ def checks(mode: str):
     yield ("project-scoped MCP tools/list", "mcp", lambda: mcp_probe(pid, auth_token()))
     yield ("Studio shell", "studio", lambda: expect("/", {200}, "Studio shell"))
     yield ("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
-    yield ("marketplace registry", "marketplace", lambda: expect("/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
+    yield ("marketplace registry", "marketplace", lambda: expect(f"/api/v1/projects/{pid}/rest/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
     yield ("plugin author scaffold API", "scaffold", lambda: expect("/api/v1/scaffold/templates", {200}, "plugin scaffold templates", token=auth_token()))
     if mode == "secured":
         yield ("admin invite API", "auth.invites", lambda: expect("/auth/invites", {200}, "invite management API", token=auth_token()))
-        yield ("admin password-reset link API", "auth.password-reset", lambda: expect(
-            "/auth/password-resets", {200, 201}, "admin-generated password-reset link API",
-            method="POST", payload={"email": "journey-member@example.test"}, token=auth_token()))
+        yield ("password reset completion API", "auth.password-reset", lambda: expect(
+            "/auth/password/reset", {400}, "password reset completion API",
+            method="POST", payload={"token": "journey-probe", "newPassword": "JourneyReplacement123!"}, token=auth_token()))
 
 
 def declared_capabilities(mode: str) -> set[str]:
@@ -132,9 +132,16 @@ def mcp_probe(project_id: str, token: str) -> str | None:
     if project_id == "{projectId}":
         return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
     status, body, _ = request(f"/api/v1/projects/{project_id}/mcp", method="POST", token=token,
+                              accept="application/json, text/event-stream",
                               payload={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
     if status != 200:
         return f"project-scoped MCP tools/list unavailable: POST /api/v1/projects/{project_id}/mcp returned HTTP {status}; enable the project MCP runtime and rerun the service journey"
+    if isinstance(body, str) and any(line.startswith("data:") for line in body.splitlines()):
+        data = "\n".join(line[5:].strip() for line in body.splitlines() if line.startswith("data:"))
+        try:
+            body = json.loads(data)
+        except json.JSONDecodeError:
+            return "project-scoped MCP tools/list returned an invalid SSE JSON-RPC event"
     if not isinstance(body, dict) or "result" not in body:
         return "project-scoped MCP tools/list returned no JSON-RPC result"
     return None

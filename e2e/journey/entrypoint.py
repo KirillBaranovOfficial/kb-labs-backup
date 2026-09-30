@@ -10,9 +10,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-def record_startup_failure(summary_path: str | Path, mode: str, error: Exception) -> None:
+def record_runner_failure(summary_path: str | Path, mode: str, error: Exception, phase: str) -> None:
+    name = "runner startup" if phase == "startup" else "runner crash"
     step = {
-        "name": "runner startup",
+        "name": name,
         "capability": "journey.runner",
         "mode": mode,
         "status": "FAIL",
@@ -43,15 +44,27 @@ def record_startup_failure(summary_path: str | Path, mode: str, error: Exception
 
 def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> int:
     try:
-        runpy.run_path(str(runner_path), run_name="__main__")
+        namespace = runpy.run_path(str(runner_path), run_name="journey_runner_module")
     except Exception as error:
         try:
-            record_startup_failure(summary_path, mode, error)
+            record_runner_failure(summary_path, mode, error, "startup")
         except OSError as write_error:
             print(f"Journey runner startup failed; could not write result: {write_error}", file=sys.stderr)
         print(f"Journey runner startup failed: {error.__class__.__name__}: {error}", file=sys.stderr)
         return 1
-    return 0
+    try:
+        return int(namespace["main"]())
+    except Exception as error:
+        try:
+            record_runner_failure(summary_path, mode, error, "crash")
+        except OSError as write_error:
+            print(f"Journey runner crashed; could not write result: {write_error}", file=sys.stderr)
+        print(f"Journey runner crashed: {error.__class__.__name__}: {error}", file=sys.stderr)
+        return 1
+    finally:
+        cleanup = namespace.get("cleanup")
+        if callable(cleanup):
+            cleanup()
 
 
 def main() -> int:

@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from nightly_report import aggregate, fingerprint, load_results, sync_issues
 from entrypoint import run_runner
-from service_runner import checks, declared_capabilities, discover_workflow
+from service_runner import checks, declared_capabilities, discover_workflow, mcp_probe
 from service_steps import Journey, record_runner_failure
 
 
@@ -74,6 +74,25 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(result["steps"][0]["name"], "runner startup")
         self.assertIn("simulated import failure", result["steps"][0]["message"])
         self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_runner_crash_is_labeled_separately_from_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            crashing_runner = root / "crashing_runner.py"
+            crashing_runner.write_text('def main():\n    raise RuntimeError("simulated run crash")\n')
+            with redirect_stderr(io.StringIO()):
+                status = run_runner(crashing_runner, root / "journey-summary.md", "local")
+            result = load_results(root)[0]
+        self.assertEqual(status, 1)
+        self.assertEqual(result["steps"][0]["name"], "runner crash")
+        self.assertIn("simulated run crash", result["steps"][0]["message"])
+
+    def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
+        event = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"tools":[]}}\n\n'
+        with patch("service_runner.request", return_value=(200, event, {})) as request:
+            failure = mcp_probe("prj_test", "token")
+        self.assertIsNone(failure)
+        self.assertEqual(request.call_args.kwargs["accept"], "application/json, text/event-stream")
 
     def test_dockerfile_copies_modules_imported_by_journey_scripts_together(self):
         root = Path(__file__).resolve().parents[2]
