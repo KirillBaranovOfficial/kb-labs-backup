@@ -37,7 +37,7 @@ test('WFD-P02: plugin workflow template has source=plugin', async ({ request }) 
     body.data?.workflows ?? body.data ?? body.workflows ?? []
 
   const template = workflows.find(w => w.id === 'plugin:@kb-labs/release/full-release')
-  test.skip(!template, 'Release plugin templates not loaded — check plugin installation')
+  expect(!template, 'Release plugin templates not loaded — check plugin installation').toBe(false)
 
   expect(template?.source).toBe('plugin')
 })
@@ -51,7 +51,7 @@ test('WFD-P03: plugin workflow template has description', async ({ request }) =>
     body.data?.workflows ?? body.data ?? body.workflows ?? []
 
   const template = workflows.find(w => w.id === 'plugin:@kb-labs/release/full-release')
-  test.skip(!template, 'Release plugin templates not loaded — check plugin installation')
+  expect(!template, 'Release plugin templates not loaded — check plugin installation').toBe(false)
 
   expect(typeof template?.description).toBe('string')
   expect(template?.description?.length).toBeGreaterThan(0)
@@ -63,7 +63,7 @@ test('WFD-P04: plugin template is resolvable by ID', async ({ request }) => {
 
   // May return 200 or 404 if template is not installed — skip gracefully
   if (res.status() === 404) {
-    test.skip(true, 'Template not found — check plugin installation and workflow discovery')
+    expect(true, 'Template not found — check plugin installation and workflow discovery').toBe(false)
     return
   }
 

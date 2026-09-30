@@ -1,0 +1,1 @@
+{"schema":"kb.service-journey/v1","run_id":"today-local","steps":[{"name":"workflow run","capability":"workflow","mode":"local","status":"PASS","duration_seconds":1.4,"message":"passed"},{"name":"MCP tools/list","capability":"mcp","mode":"local","status":"FAIL","duration_seconds":3.0,"message":"HTTP 404"}]}

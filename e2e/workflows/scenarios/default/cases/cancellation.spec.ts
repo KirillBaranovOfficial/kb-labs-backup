@@ -39,7 +39,7 @@ async function pollRunStatus(
 
 test('WC-01: cancel a running run — run transitions to cancelled or was already terminal', async ({ request }) => {
   const wf = await findFirstWorkflow(request);
-  test.skip(!wf, 'No workflow found in catalog — run kb-dev start first');
+  expect(!wf, 'No workflow found in catalog — run kb-dev start first').toBe(false);
 
   const runId = await startRun(request, wf!.id ?? wf!.name!);
 
@@ -55,7 +55,7 @@ test('WC-01: cancel a running run — run transitions to cancelled or was alread
 
 test('WC-02: cancel already-finished run returns graceful response (not 5xx)', async ({ request }) => {
   const wf = await findFirstWorkflow(request);
-  test.skip(!wf, 'No workflow found in catalog — run kb-dev start first');
+  expect(!wf, 'No workflow found in catalog — run kb-dev start first').toBe(false);
 
   const runId = await startRun(request, wf!.id ?? wf!.name!);
 
@@ -72,7 +72,7 @@ test('WC-02: cancel already-finished run returns graceful response (not 5xx)', a
 
 test('WC-03: SSE stream terminates after run is cancelled', async ({ request }) => {
   const wf = await findFirstWorkflow(request);
-  test.skip(!wf, 'No workflow found in catalog — run kb-dev start first');
+  expect(!wf, 'No workflow found in catalog — run kb-dev start first').toBe(false);
 
   const runId = await startRun(request, wf!.id ?? wf!.name!);
 

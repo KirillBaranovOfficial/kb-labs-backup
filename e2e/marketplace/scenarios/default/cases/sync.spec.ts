@@ -13,7 +13,7 @@ test('MS-01: POST /workspace/sync — returns structured response', async ({ req
     },
   })
   // 404 = route not yet registered in this build (older version)
-  test.skip(res.status() === 404, 'workspace/sync endpoint not available in this build')
+  expect(res.status() === 404, 'workspace/sync endpoint not available in this build').toBe(false)
   expect(res.status()).toBe(200)
   const body = await res.json()
   // Response must have at least one of: added / updated / removed / total
@@ -38,7 +38,7 @@ test('MS-02: POST /workspace/sync — idempotent (second call ≤ first)', async
   }
 
   const first = await request.post(`${MARKETPLACE}/api/v1/marketplace/workspace/sync`, payload)
-  test.skip(first.status() === 404, 'workspace/sync endpoint not available in this build')
+  expect(first.status() === 404, 'workspace/sync endpoint not available in this build').toBe(false)
   expect(first.status()).toBe(200)
   const firstBody = await first.json()
   const firstData = firstBody.data ?? firstBody
@@ -70,7 +70,7 @@ test('MS-03: sync with autoEnable=true — packages appear in listing', async ({
       autoEnable: true,
     },
   })
-  test.skip(sync.status() === 404, 'workspace/sync endpoint not available in this build')
+  expect(sync.status() === 404, 'workspace/sync endpoint not available in this build').toBe(false)
   expect(sync.status()).toBe(200)
 
   const list = await request.get(`${MARKETPLACE}/api/v1/marketplace/packages`)

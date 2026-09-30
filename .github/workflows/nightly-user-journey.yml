@@ -1,0 +1,106 @@
+name: Nightly user journeys
+
+on:
+  schedule:
+    - cron: '0 21 * * *' # 00:00 Europe/Moscow
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write # Updates the pinned status issue and failure-fingerprint issues.
+
+jobs:
+  installer:
+    name: Fresh install journeys
+    uses: ./.github/workflows/reusable-installer-journey.yml
+    with:
+      service-profile: nightly
+    permissions:
+      contents: read
+
+  services:
+    name: Service and auth regression suites
+    uses: ./.github/workflows/e2e-platform.yml
+    permissions:
+      contents: read
+
+  report:
+    name: Nightly report and issue sync
+    if: always()
+    needs: [installer, services]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: '3.12'
+      - name: Run report and issue-sync unit tests
+        run: python3 -m unittest discover -s e2e/journey -p 'test_*.py' -v
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          pattern: service-journey-results-*
+          path: .journey/nightly-results/service-details
+          merge-multiple: true
+      - name: Collect reusable workflow results
+        env:
+          INSTALLER_RESULT: ${{ needs.installer.result }}
+          SERVICES_RESULT: ${{ needs.services.result }}
+        run: |
+          mkdir -p .journey/nightly-results
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          for capability, variable in [('install-matrix', 'INSTALLER_RESULT'), ('service-regression', 'SERVICES_RESULT')]:
+              result = os.environ[variable]
+              status = 'PASS' if result == 'success' else 'FAIL' if result == 'failure' else 'BLOCKED'
+              Path(f'.journey/nightly-results/{capability}.json').write_text(json.dumps({'schema':'kb.service-journey/v1', 'steps':[{'name': capability, 'capability': capability, 'mode':'matrix', 'status':status, 'duration_seconds':0.0, 'message': 'passed' if status == 'PASS' else f'GitHub job result: {result}'}]}) + '\n')
+          PY
+      - name: Download previous nightly JSON artifact
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous_run=$(gh run list --workflow nightly-user-journey.yml --status completed --limit 10 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$previous_run" ]; then
+            gh run download "$previous_run" --name "nightly-user-journey-$previous_run" --dir .journey/previous || true
+          fi
+          find .journey/nightly-results/service-details -type f -name '*.json' -exec cp {} .journey/nightly-results/ \; 2>/dev/null || true
+      - name: Aggregate matrix, compare yesterday, and sync issues
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NIGHTLY_STATUS_ISSUE: '0'
+        run: |
+          if [ -f .journey/previous/report.json ]; then
+            python3 e2e/journey/nightly_report.py --results .journey/nightly-results --previous .journey/previous --json .journey/nightly-results/report.json --summary .journey/nightly-results/report.md || true
+          else
+            python3 e2e/journey/nightly_report.py --results .journey/nightly-results --json .journey/nightly-results/report.json --summary .journey/nightly-results/report.md || true
+          fi
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, 'e2e/journey')
+          from nightly_report import GitHubClient, sync_issues
+          import json
+          with open('.journey/nightly-results/report.json') as source:
+              report = json.load(source)
+          changes = sync_issues(GitHubClient(os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_TOKEN']), report, int(os.environ['NIGHTLY_STATUS_ISSUE']), os.environ['GITHUB_RUN_URL'])
+          print(json.dumps(changes, sort_keys=True))
+          PY
+      - name: Add detailed report to job summary
+        if: always()
+        run: cat .journey/nightly-results/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: nightly-user-journey-${{ github.run_id }}
+          path: .journey/nightly-results/
+          retention-days: 90
+          if-no-files-found: error
+      - name: Fail when required capability checks failed
+        if: always()
+        run: python3 -c "import json,sys; r=json.load(open('.journey/nightly-results/report.json')); print(r['status']); sys.exit(0 if r['status']=='PASS' else 1)"

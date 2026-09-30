@@ -8,14 +8,13 @@ import { GATEWAY, REST } from '@kb-labs/e2e-shared/urls.js'
  * shell loads, microfrontend chunks resolve, and the API is wired up to the
  * backend correctly.
  *
- * All tests skip gracefully when Studio is not served in the current
- * environment (minimal install without studio plugin).
+ * Studio is required by the fresh-install capability profile.
  */
 
 // SA-01: gateway root returns HTML
 test('SA-01: gateway / — returns HTML with <html> tag', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/`)
-  test.skip(res.status() === 404, 'Studio not served through gateway in this environment')
+  expect(res.status(), 'Studio shell is not served by the installed gateway').toBe(200)
   expect(res.status()).toBe(200)
   const text = await res.text()
   expect(text.toLowerCase()).toContain('<html')
@@ -24,7 +23,7 @@ test('SA-01: gateway / — returns HTML with <html> tag', async ({ request }) =>
 // SA-02: MF manifest is a valid JSON object with remotes
 test('SA-02: MF manifest — valid JSON with remotes map', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/mf-manifest.json`)
-  test.skip(res.status() === 404, 'Studio MF manifest not exposed in this environment')
+  expect(res.status(), 'Studio module manifest is missing from the installed gateway').not.toBe(404)
   expect(res.status()).toBe(200)
   const body = await res.json()
   // Manifest must be an object with at least one key (the shell or remotes map)
@@ -42,7 +41,7 @@ test('SA-02: MF manifest — valid JSON with remotes map', async ({ request }) =
 test('SA-03: MF chunk for workflow plugin resolves', async ({ request }) => {
   // Fetch manifest first to find an actual chunk URL
   const manifestRes = await request.get(`${GATEWAY}/mf-manifest.json`)
-  test.skip(manifestRes.status() === 404, 'Studio MF manifest not exposed')
+  expect(manifestRes.status(), 'Studio module manifest is missing from the installed gateway').not.toBe(404)
 
   const manifest = await manifestRes.json()
   // Find a URL that looks like a JS chunk
@@ -55,7 +54,7 @@ test('SA-03: MF chunk for workflow plugin resolves', async ({ request }) => {
     }
   }
   collectUrls(manifest)
-  test.skip(urls.length === 0, 'No JS chunks found in MF manifest')
+  expect(urls.length, 'Studio module manifest contains no loadable JavaScript chunks').toBeGreaterThan(0)
 
   // Verify the first chunk URL loads (200 or 304 = fine)
   const chunkUrl = urls[0].startsWith('http') ? urls[0] : `${GATEWAY}${urls[0]}`
@@ -81,7 +80,7 @@ test('SA-04: REST /api/v1/status responds for studio health bar', async ({ reque
 // SA-05: static assets under /assets/ are cacheable (Cache-Control header)
 test('SA-05: static assets have caching headers', async ({ request }) => {
   const manifestRes = await request.get(`${GATEWAY}/mf-manifest.json`)
-  test.skip(manifestRes.status() === 404, 'Studio not served')
+  expect(manifestRes.status(), 'Studio module manifest is missing from the installed gateway').not.toBe(404)
 
   // /mf-manifest.json itself should at minimum return no 5xx
   const headers = manifestRes.headers()

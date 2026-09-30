@@ -100,7 +100,7 @@ async function runTestPathsWorkflow(
   request: Parameters<Parameters<typeof test>[1]>[0]['request'],
 ): Promise<{ stdout: string; status: string }> {
   const wf = await findWorkflow(request, 'test-paths')
-  if (!wf) test.skip(true, 'test-paths workflow not found — check .kb/workflows/test-paths.yaml')
+  if (!wf) expect(true, 'test-paths workflow not found — check .kb/workflows/test-paths.yaml').toBe(false)
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
   expect(runId).toBeTruthy()

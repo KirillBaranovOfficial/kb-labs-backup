@@ -37,11 +37,8 @@ test('RT-02: SSE endpoint streams events (not buffered by proxy)', async ({ page
     timeout: 5000,
   }).catch(() => null)
 
-  // Skip if endpoint doesn't exist or requires auth
-  test.skip(
-    response === null || response.status() === 404 || response.status() === 401,
-    'SSE events endpoint not available or requires auth',
-  )
+  expect(response, 'SSE events endpoint must be reachable in the configured service mode').not.toBeNull()
+  expect([200], 'SSE events endpoint must be available without a missing-route/auth response').toContain(response!.status())
 
   expect(response!.status()).toBe(200)
   expect(response!.headers()['content-type']).toContain('text/event-stream')
