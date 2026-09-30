@@ -18,6 +18,7 @@ import { platformSyncCommand } from './platform/sync';
 import { webhookProvision, webhookList, webhookRevoke } from './webhook';
 import { configShow, configGet, configSet } from './config';
 import { projectAdd, projectList, projectShow, projectRemove } from './project';
+import { adapterBind } from './adapter';
 
 /**
  * Info Commands Group
@@ -114,4 +115,9 @@ export const projectGroup = defineSystemCommandGroup('project', 'Project registr
   projectList,
   projectShow,
   projectRemove,
+]);
+
+/** Adapter commands manage machine-installed adapters and project bindings. */
+export const adapterGroup = defineSystemCommandGroup('adapter', 'Adapter installation and binding commands', [
+  adapterBind,
 ]);

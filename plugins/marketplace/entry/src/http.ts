@@ -81,14 +81,15 @@ async function request<T>(method: string, path: string, body?: Record<string, un
         throw new Error('Marketplace authentication is required. Run `kb auth login` or choose local no-auth mode during installation.');
       }
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Marketplace ${path} failed (${response.status}): ${text}`);
+        throw new Error(await formatMarketplaceFailure(response));
       }
       if (response.status === 204) { return undefined as T; }
       return await response.json() as T;
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
-        throw new Error(`Marketplace ${path} timed out — is the marketplace service running? (kb-dev start marketplace)`);
+        throw new Error(
+          `Marketplace ${path} timed out. Check the installed platform with \`kb-create status\`; start it with \`kb-create start\` if it is stopped.`,
+        );
       }
       throw err;
     } finally {
@@ -96,6 +97,25 @@ async function request<T>(method: string, path: string, body?: Record<string, un
     }
   }
   throw new Error(`Marketplace ${path} failed after refreshing authentication`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function formatMarketplaceFailure(response: Response): Promise<string> {
+  let body: unknown;
+  try {
+    body = JSON.parse(await response.text()) as unknown;
+  } catch {
+    body = undefined;
+  }
+  const error = isRecord(body) && isRecord(body.error) ? body.error : body;
+  if (isRecord(error) && typeof error.message === 'string') {
+    const hint = typeof error.hint === 'string' ? ` Next: ${error.hint}` : '';
+    return `Marketplace request failed (${response.status}): ${error.message}.${hint}`;
+  }
+  return `Marketplace request failed (${response.status}). Check the installed platform with \`kb-create status\`; start it with \`kb-create start\` if it is stopped.`;
 }
 
 export async function post<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {

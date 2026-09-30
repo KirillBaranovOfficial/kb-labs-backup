@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+import { writeMarketplaceLock } from "@kb-labs/core-discovery";
 import { createAdaptersRoutes } from "../adapters-routes.js";
 
 interface ErrorBody {
@@ -114,6 +115,50 @@ describe("createAdaptersRoutes", () => {
     const listRes = await instance.inject({ method: "GET", url: `/api/v1/adapters?projectId=${projectId}` });
     const listBody = listRes.json() as DataBody<Array<{ name: string; options: Record<string, unknown> }>>;
     expect(listBody.data[0]?.options).toEqual({ ttlSeconds: 3600 });
+  });
+
+  it("POST bind writes an installed platform adapter into the project's adapter slot", async () => {
+    await writeMarketplaceLock(platformRoot, {
+      schema: "kb.marketplace/2",
+      installed: {
+        "@kb-labs/adapters-memory-cache": {
+          version: "1.2.0",
+          integrity: "sha256-fixture",
+          resolvedPath: "node_modules/@kb-labs/adapters-memory-cache",
+          installedAt: new Date().toISOString(),
+          source: "marketplace",
+          primaryKind: "adapter",
+          provides: ["adapter"],
+        },
+      },
+    });
+    const instance = await setup();
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/adapters/bind",
+      payload: { projectId, slot: "cache", packageId: "@kb-labs/adapters-memory-cache" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, data: { slot: "cache", packageId: "@kb-labs/adapters-memory-cache", changed: true } });
+    const written = JSON.parse(await readFile(join(projectDir, ".kb", "kb.config.json"), "utf8")) as {
+      platform?: { adapters?: { cache?: string } };
+    };
+    expect(written.platform?.adapters?.cache).toBe("@kb-labs/adapters-memory-cache");
+  });
+
+  it("POST bind refuses adapter packages absent from the machine marketplace lock", async () => {
+    const instance = await setup();
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/adapters/bind",
+      payload: { projectId, slot: "cache", packageId: "@kb-labs/not-installed" },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect((res.json() as ErrorBody).error.code).toBe("KB_ADAPTER_NOT_CONFIGURED");
   });
 
   it("POST configure without an options object returns KB_RUNTIME_INPUT_INVALID", async () => {

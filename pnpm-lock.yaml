@@ -6130,6 +6130,9 @@ importers:
       '@kb-labs/core-contracts':
         specifier: workspace:*
         version: link:../../../core/contracts
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:../../../core/discovery
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../../core/platform

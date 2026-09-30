@@ -5,20 +5,16 @@ import {
   UISpin,
   UIEmptyState,
   UIMessage,
-  UIButton,
-  UIIcon,
   UIRow,
   UICol,
   UIPage,
   UIPageHeader,
-  UISegmented,
   UITag,
 } from '@kb-labs/studio-ui-kit';
 import { useDataSources } from '@/providers/data-sources-provider';
 import type { PluginManifestEntry } from '@kb-labs/studio-data-client';
 import { MarketplaceCard } from '../components/marketplace-card';
 
-type KindFilter = 'all' | 'plugins' | 'adapters';
 type SurfaceFilter = 'all' | 'cli' | 'studio' | 'rest';
 
 export function PluginsPage() {
@@ -28,7 +24,6 @@ export function PluginsPage() {
   const [loading, setLoading] = useState(true);
   const [plugins, setPlugins] = useState<PluginManifestEntry[]>([]);
   const [search, setSearch] = useState('');
-  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [surfaceFilter, setSurfaceFilter] = useState<SurfaceFilter>('all');
 
   const loadPlugins = useCallback(async () => {
@@ -47,8 +42,6 @@ export function PluginsPage() {
 
   const counts = useMemo(() => ({
     all: plugins.length,
-    plugins: plugins.length,
-    adapters: 0,
     cli: plugins.filter(p => (p.manifest.cli?.commands?.length ?? 0) > 0).length,
     studio: plugins.filter(p => (p.manifest.studio?.pages?.length ?? 0) > 0).length,
     rest: plugins.filter(p => (p.manifest.rest?.routes?.length ?? 0) > 0).length,
@@ -56,9 +49,6 @@ export function PluginsPage() {
 
   const filtered = useMemo(() => {
     return plugins.filter(p => {
-      // This page only fetches the plugin registry — there's no adapter
-      // registry wired in yet, so every entry here is a plugin/extension.
-      if (kindFilter === 'adapters') {return false;}
       const m = p.manifest;
       if (search) {
         const q = search.toLowerCase();
@@ -70,17 +60,11 @@ export function PluginsPage() {
       if (surfaceFilter === 'rest' && !((m.rest?.routes?.length ?? 0) > 0)) {return false;}
       return true;
     });
-  }, [plugins, search, surfaceFilter, kindFilter]);
+  }, [plugins, search, surfaceFilter]);
 
   const handleClick = (plugin: PluginManifestEntry) => {
     navigate(`/marketplace/${encodeURIComponent(plugin.pluginId)}`);
   };
-
-  const kindTabs: { key: KindFilter; label: string; count: number }[] = [
-    { key: 'all',      label: 'All',      count: counts.all },
-    { key: 'plugins',  label: 'Extensions',  count: counts.plugins },
-    { key: 'adapters', label: 'Adapters', count: counts.adapters },
-  ];
 
   const surfaceChips: { key: SurfaceFilter; label: string; count: number }[] = [
     { key: 'cli',    label: 'CLI',       count: counts.cli },
@@ -102,31 +86,11 @@ export function PluginsPage() {
     <UIPage width="full">
       <UIPageHeader
         title="Marketplace"
-        description={`${counts.all} extension${counts.all !== 1 ? 's' : ''} installed`}
-        actions={
-          <UIButton variant="primary" icon={<UIIcon name="PlusOutlined" />}>
-            Install Extension
-          </UIButton>
-        }
+        description={`${counts.all} extension${counts.all !== 1 ? 's' : ''} in the catalog`}
       />
 
       {/* Filters bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
-
-        {/* Kind tabs */}
-        <UISegmented
-          value={kindFilter}
-          onChange={value => setKindFilter(value as KindFilter)}
-          options={kindTabs.map(tab => ({
-            label: (
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 2px' }}>
-                {tab.label}
-                <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{tab.count}</span>
-              </span>
-            ),
-            value: tab.key,
-          }))}
-        />
 
         {/* Surface chips */}
         <div style={{ display: 'flex', gap: 6 }}>

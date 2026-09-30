@@ -36,7 +36,9 @@ import {
   type ManifestConfigSchema,
 } from "@kb-labs/core-config";
 import { PlatformUserConfigSchema } from "@kb-labs/core-runtime";
+import { DiagnosticCollector, readMarketplaceLock } from "@kb-labs/core-discovery";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
+import { createErrorEnvelope } from "@kb-labs/core-platform";
 import { projectErrorEnvelope, showProject } from "@kb-labs/core-project-registry";
 import type { HostRoutes } from "@kb-labs/gateway-app";
 import { invalidBody, sendData, sendEnvelope } from "./envelope.js";
@@ -60,6 +62,12 @@ export interface AdapterEntry {
 interface ConfigureBody {
   projectId?: unknown;
   options?: unknown;
+}
+
+interface BindBody {
+  projectId?: unknown;
+  packageId?: unknown;
+  slot?: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -168,5 +176,45 @@ export function createAdaptersRoutes(options: AdaptersRoutesOptions): HostRoutes
         }
       },
     );
+
+    app.post<{ Body: BindBody }>("/api/v1/adapters/bind", async (request, reply) => {
+      const { projectId, packageId, slot } = request.body ?? {};
+      if (typeof projectId !== "string" || projectId.trim() === "") {
+        return sendEnvelope(reply, invalidBody("projectId", "must be a non-empty string"));
+      }
+      if (typeof packageId !== "string" || packageId.trim() === "") {
+        return sendEnvelope(reply, invalidBody("packageId", "must be a non-empty string"));
+      }
+      if (typeof slot !== "string" || !/^[a-z][a-z0-9-]*$/.test(slot)) {
+        return sendEnvelope(reply, invalidBody("slot", "must be a lowercase adapter slot name"));
+      }
+
+      try {
+        const project = await showProject(registry, projectId);
+        const lock = await readMarketplaceLock(platformRoot, new DiagnosticCollector());
+        const installed = lock?.installed[packageId];
+        if (!installed || installed.primaryKind !== "adapter") {
+          return sendEnvelope(reply, createErrorEnvelope("KB_ADAPTER_NOT_CONFIGURED", {
+            cause: `Adapter package ${packageId} is not installed on this platform.`,
+            details: { packageId },
+          }));
+        }
+
+        const path = ["platform", "adapters", slot];
+        const filePath = await resolveUserConfigFile(project.path);
+        const result = await setUserConfigValue({
+          filePath,
+          path,
+          value: packageId,
+          schema: PlatformUserConfigSchema,
+        });
+        return sendData(reply, { slot, packageId, file: result.filePath, changed: result.changed });
+      } catch (error) {
+        if (error instanceof ConfigWriteError) {
+          return sendEnvelope(reply, configErrorEnvelope(error));
+        }
+        return sendEnvelope(reply, projectErrorEnvelope(error));
+      }
+    });
   };
 }
