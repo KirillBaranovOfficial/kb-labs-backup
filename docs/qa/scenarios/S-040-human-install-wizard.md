@@ -1,6 +1,6 @@
 ---
 id: S-040
-title: Human — complete the V2 install wizard
+title: Human — complete the V2 interactive install
 persona: solo-developer
 area: platform-core
 priority: P0
@@ -12,7 +12,8 @@ surfaces: [cli]
 
 ## Goal
 
-A developer uses the wizard to choose a supported install and receives a request to inspect before applying.
+A developer uses the interactive `kb-create install` operation to choose and
+apply a supported install from the sealed release index.
 
 ## Prerequisites
 
@@ -22,7 +23,7 @@ A developer uses the wizard to choose a supported install and receives a request
 
 | # | Action | Expected |
 |---|---|---|
-| S-040.1 | Run `kb-create wizard --index release-index.json --request-platform-root "$PLATFORM_ROOT"` | Wizard presents compatible scenarios and prompts. |
-| S-040.2 | Choose a scenario and save the emitted request | Request JSON contains the chosen scenario and roots. |
-| S-040.3 | Run `kb-create plan --index release-index.json --input request.json --json` | Plan returns `ok: true` and the selected graph. |
-| S-040.4 | Apply the reviewed request | Output contains a receipt. |
+| S-040.1 | In a terminal, run `kb-create install --index release-index.json --platform-root "$PLATFORM_ROOT"` | The command prints `Set up KB Labs` and presents scenario questions in the terminal; it does not expose a separate `wizard` operation or emit a request file. |
+| S-040.2 | Answer the scenario prompts and continue the install | The displayed plan names the selected platform version and artifact count, then the command applies that plan and prints a success/next-step message. |
+| S-040.3 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` after install | Exits 0; JSON has `ok: true`, `installed: true`, `running: true`, and `reachable: true`. |
+| S-040.4 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok: true`, `installed: true`, and `platform.ok: true`. |

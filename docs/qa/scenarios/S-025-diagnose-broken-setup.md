@@ -19,12 +19,12 @@ with one structured answer for both a person and an agent.
 
 | # | Action | Expected |
 |---|---|---|
-| S-025.1 | Remove a required non-secret config value in an isolated fixture | `kb-create doctor --platform-root "$PLATFORM_ROOT"` returns a finding with owner, path, stable code and hint |
-| S-025.2 | Omit a required secret | Finding says only `missing`; it never prints the value or writes it to logs/telemetry |
-| S-025.3 | Create a stale generated service graph | Doctor/verification identifies graph drift instead of a later opaque service failure |
-| S-025.4 | Run `kb-create doctor --fix --platform-root "$PLATFORM_ROOT"` for a safe default or derived-file repair | A snapshot is taken and only manifest-declared safe repair occurs |
-| S-025.5 | Run `doctor --fix` with required user/secret input still missing | Fails safely with input requirement; no invented value/provider |
-| S-025.6 | Cause an apply/recovery failure | JSON includes `code`, `stage`, message, hint, `logPath` and redacted `diagnosticPath` |
+| S-025.1 | Remove a required non-secret config value in an isolated fixture and run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | Exits 1; JSON has `ok: false`; the matching entry in `findings` names the requirement `component`, JSON-pointer `path`, `code`, and remediation `hint`. |
+| S-025.2 | Omit a required secret and run the same doctor command | The matching finding identifies the requirement path and says it is missing; output, logs, and telemetry contain no secret value. |
+| S-025.3 | Replace `.kb/devservices.yaml` with a graph that differs from the active receipt, then run doctor | JSON has `ok: false`; `installation.checks` contains a failed `host-spec` or `devservices` check identifying the graph mismatch before a service command is attempted. |
+| S-025.4 | Run `kb-create doctor --fix --platform-root "$PLATFORM_ROOT" --json` when the fixture has a manifest-declared safe default | Exits 0; JSON has `ok: true`, `operation: "doctor-fix"`, non-empty `snapshot.id`, and `hostRestarted`; the generated value matches the manifest default. |
+| S-025.5 | Run doctor-fix when a required user or secret value is still missing | The result preserves that requirement in `findings` and `repair.requiredInput`; no value or provider is invented. **Product question:** whether doctor-fix should exit non-zero when safe fixes succeed but required input remains. |
+| S-025.6 | Cause an apply or recovery operation failure and inspect its JSON result | Exits non-zero; JSON has `ok: false`, `error.code`, `error.stage`, `error.message`, `error.hint`, `logPath`, and `diagnosticPath`; the dossier omits secret values. |
 
 ## Pass criteria
 
