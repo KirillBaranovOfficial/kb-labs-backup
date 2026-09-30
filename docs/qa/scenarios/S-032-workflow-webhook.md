@@ -1,6 +1,6 @@
 ---
 id: S-032
-title: S-032 — Workflow sends an outbound webhook on completion (not shipped)
+title: Workflow — Outbound completion webhook (not shipped)
 persona: solo-developer
 area: workflow
 priority: P1
@@ -12,8 +12,8 @@ surfaces: [cli]
 
 ## Goal
 
-Historical design record for a workflow automatically sending an outbound webhook after a run completes.
+Historical design record for a workflow automatically sending an outbound notification after a run completes.
 
 ## Removed capability and evidence
 
-The current workflow engine supports incoming webhook triggers (`plugins/workflow/engine/src/workflow-repository.ts:409-412`) but does not implement an outbound completion webhook. The workflow README lists run, cron, and live SSE behavior (`plugins/workflow/README.md:65-92,113-137`), and the approval ADR explicitly rejects a separate external webhook system (`plugins/workflow/docs/adr/0009-approval-steps.md:81`). This completion-notification capability is not present; incoming webhook triggers are a distinct supported capability.
+The current workflow service does not implement an outbound completion webhook or an inbound webhook delivery endpoint. Workflow YAML accepts an `on.webhook` trigger shape and converts it to a webhook trigger (`plugins/workflow/contracts/src/schemas.ts:198-219`; `plugins/workflow/engine/src/workflow-repository.ts:401-414`), but those declarations do not provide a callable HTTP ingress route. The workflow daemon API registers run, job, cron, approval, and stats routes, with no webhook delivery handler (`plugins/workflow/daemon/src/server.ts:113-124`). This historical case does not specify a supported webhook user journey; add one only after the public trigger URL, authentication, payload, and retry contract are defined.

@@ -1,6 +1,6 @@
 ---
 id: S-002
-title: Solo — First AI Workflow
+title: Solo — First project workflow
 persona: solo-developer
 area: workflow
 priority: P0
@@ -12,25 +12,21 @@ surfaces: [cli]
 
 ## Goal
 
-Developer starts platform services and runs their first workflow — either via CLI or Studio UI.
-Validates that the workflow engine is reachable, a run is created, and result is visible.
+A developer creates the documented local workflow example in a registered project, runs it through the project-scoped workflow service, and inspects its result.
 
 ## Prerequisites
 
-- [ ] KB Labs installed (`kb-create` done, project exists)
-- [ ] Services not yet started
-- [ ] Node.js 24+, no port conflicts on 4000, 5050, 7778, 3000
-
----
+- [ ] KB Labs installed and host running; `kb status` reports a healthy host.
+- [ ] The current project is registered. In an unregistered project, run `kb project add --init` first.
+- [ ] In secured mode, an authenticated gateway session is available.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-002.1 | Start the installed host with `kb-create start --platform-root "$PLATFORM_ROOT" --json` | Host reports success and its managed project runtime can be reached. |
-| S-002.2 | From the registered project, run `kb workflow run --workflow-id=<project>/<workflow> --input='{"key":"value"}'` | Run is accepted and returns a run ID. |
-| S-002.3 | Run `kb workflow runs list` | The new run appears with its workflow name and current status. |
-| S-002.4 | Run `kb workflow runs view <runId>` | Run reaches a terminal status and displays step results. |
-| S-002.5 | Open the Studio URL served by the installed host | Studio shell loads for the active project. |
-| S-002.6 | Open Studio Workflows → Runs and select the run | The same run ID and terminal status appear in Studio. |
-| S-002.7 | Run `kb-create stop --platform-root "$PLATFORM_ROOT" --json` | Host stops successfully. |
+| S-002.1 | From the registered project directory, run `kb workflow init` | CLI reports `Created .kb/workflows/hello.yml` and prints `Next: kb workflow lint && kb workflow run --workflow-id=hello`. The file contains the manual `hello` workflow and a `builtin:shell` step whose command is `echo hello-workflow`. |
+| S-002.2 | Run `kb workflow lint` | CLI reports `.kb/workflows/hello.yml` as valid and exits 0. |
+| S-002.3 | Run `kb workflow run --workflow-id=hello` | Within 30 seconds, CLI returns a non-empty run ID for workflow `hello`. |
+| S-002.4 | Run `kb workflow runs view <run-id>`, replacing the placeholder with the returned ID | Within 60 seconds, detail reports status `success`; the `hello` step output contains `hello-workflow`. |
+| S-002.5 | Run `kb workflow runs list --workflow=hello --json` | JSON includes the same run ID, workflow ID `hello`, and status `success`. |
+| S-002.6 | Run `kb workflow runs view <run-id>` with an unknown ID | CLI reports that the run was not found and gives a next action; it does not print a stack trace. |

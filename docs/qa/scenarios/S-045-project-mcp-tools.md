@@ -1,6 +1,6 @@
 ---
 id: S-045
-title: MCP — call project-scoped tools
+title: MCP — Connect to a project tool catalog
 persona: solo-developer
 area: agents
 priority: P1
@@ -12,16 +12,20 @@ surfaces: [agent, api]
 
 ## Goal
 
-An agent discovers and calls diagnostic tools for the selected project through its MCP endpoint.
+An agent client connects to the selected project's MCP endpoint, discovers that project's available command tools, and reads project diagnostics over Streamable HTTP.
 
 ## Prerequisites
 
-- [ ] Project runtime and MCP enabled for the project; MCP client.
+- [ ] Host running and project registered; the project MCP runtime is enabled.
+- [ ] The selected project has the `commit` plugin installed and at least one plugin command manifest.
+- [ ] In secured mode, a valid gateway bearer token is available to the agent client.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-045.1 | Initialize the project MCP endpoint through the host project route | Initialization returns a valid server response. |
-| S-045.2 | Call `tools/list` | Project tools and input schemas appear. |
-| S-045.3 | Call a read-only diagnostic tool | Structured result identifies the selected project. |
+| S-045.1 | Send JSON-RPC `initialize` to `POST /api/v1/projects/<project-id>/mcp` with `Content-Type: application/json`, `Accept: application/json, text/event-stream`, protocol version `2025-03-26`, empty client capabilities, and client info | HTTP 200 contains a JSON or SSE-framed JSON-RPC result with the negotiated protocol version, server info, and `tools` capability. |
+| S-045.2 | Send `notifications/initialized`, then call `tools/list` with the same headers | Result contains `tools` with each tool's `name`, `description`, and object `inputSchema`; the installed commit tool appears as `kb-labs-commit__commit` and schema generated from its CLI manifest flags. |
+| S-045.3 | Call `tools/call` for `kb-labs__mcp_diagnostics` with `{}` | Result has `isError: false` and text stating `All plugin commands loaded cleanly` when there are no manifest diagnostics. |
+| S-045.4 | In local mode, repeat initialize and `tools/list` without `Authorization` | Requests succeed through the loopback host and return the selected project's tool catalog. |
+| S-045.5 | In secured mode, call `tools/list` first without a bearer token and then with an invalid bearer token | Both requests return HTTP 401 and do not return a tool catalog. |
