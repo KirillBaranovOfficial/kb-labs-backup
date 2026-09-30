@@ -4,7 +4,7 @@
  * Provides CLI commands for interacting with Workflow Daemon via HTTP API.
  */
 
-import { defineCommandFlags, combinePermissions } from '@kb-labs/sdk';
+import { defineCommandFlags, combinePermissions, kbPlatformPreset } from '@kb-labs/sdk';
 import {
   healthFlags,
   metricsFlags,
@@ -37,8 +37,9 @@ import {
  * No file system or git access needed
  */
 const pluginPermissions = combinePermissions()
+  .with(kbPlatformPreset)
   .withFs({ mode: 'readWrite', allow: ['.kb/workflows/**'] })
-  .withEnv(['WORKFLOW_DAEMON_URL'])
+  .withEnv(['KB_PROJECT_ID', 'KB_GATEWAY_URL', 'HOME', 'KB_HOME'])
   .withNetwork({
     fetch: ['http://localhost:*', 'http://127.0.0.1:*'],
   })

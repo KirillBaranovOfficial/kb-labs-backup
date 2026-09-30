@@ -14,6 +14,10 @@ import type {
   WorkflowListResponse,
 } from '@kb-labs/workflow-contracts';
 import { useEnv } from '@kb-labs/sdk';
+import { deriveProjectId } from '@kb-labs/core-project-registry';
+import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
+import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
+import type { GatewayCredentials, SessionCredentials } from '@kb-labs/cli-runtime/gateway';
 
 /** Workflow run summary returned by GET /api/v1/runs */
 export interface WorkflowRunSummary {
@@ -123,24 +127,99 @@ export interface JobStatusDetail extends Omit<JobStatusInfo, 'result'> {
   }>;
 }
 
-const DEFAULT_DAEMON_URL = 'http://localhost:7778';
+const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:4000';
 
 export interface DaemonClientOptions {
   url?: string;
+  projectId?: string;
 }
 
-/**
- * Get workflow daemon URL from environment or default
- */
-export function getWorkflowDaemonUrl(): string {
-  return useEnv('WORKFLOW_DAEMON_URL') ?? DEFAULT_DAEMON_URL;
+interface WorkflowAuth {
+  gatewayUrl: string;
+  accessToken: string;
+  refresh: () => Promise<WorkflowAuth>;
+}
+
+async function loadWorkflowAuth(): Promise<WorkflowAuth | null> {
+  const sessions = new SessionManager();
+  const session = await sessions.load();
+  if (session) {
+    const current = sessions.isExpired(session) ? await sessions.refresh(session) : session;
+    return toWorkflowAuth(current, () => sessions.refresh(current));
+  }
+  const credentials = new CredentialsManager();
+  const machine = await credentials.load();
+  if (!machine) { return null; }
+  const current = credentials.isExpired(machine) ? await credentials.refresh(machine) : machine;
+  return toWorkflowAuth(current, () => credentials.refresh(current));
+}
+
+function toWorkflowAuth(
+  credentials: GatewayCredentials | SessionCredentials,
+  refresh: () => Promise<GatewayCredentials | SessionCredentials>,
+): WorkflowAuth {
+  return {
+    gatewayUrl: credentials.gatewayUrl,
+    accessToken: credentials.accessToken,
+    refresh: async () => toWorkflowAuth(await refresh(), refresh),
+  };
+}
+
+/** Build the only installed workflow API address: through the project gateway route. */
+export function getWorkflowDaemonUrl(
+  projectId = useEnv('KB_PROJECT_ID') ?? deriveProjectId(process.cwd()),
+): string {
+  if (!projectId) {
+    throw new Error('Workflow needs a registered project. Run `kb project add --init` from the project directory, then retry.');
+  }
+  const gatewayUrl = useEnv('KB_GATEWAY_URL') ?? DEFAULT_GATEWAY_URL;
+  return `${gatewayUrl.replace(/\/$/, '')}${projectWorkflowRoute(projectId)}`;
 }
 
 export class WorkflowDaemonClient {
   private readonly baseUrl: string;
+  private authState: WorkflowAuth | null | undefined;
 
   constructor(options: DaemonClientOptions = {}) {
-    this.baseUrl = options.url ?? useEnv('WORKFLOW_DAEMON_URL') ?? DEFAULT_DAEMON_URL;
+    const projectId = options.projectId ?? useEnv('KB_PROJECT_ID') ?? deriveProjectId(process.cwd());
+    this.baseUrl = options.url ?? getWorkflowDaemonUrl(projectId);
+  }
+
+  private async authorizedFetch(url: string, init?: RequestInit): Promise<Response> {
+    if (this.authState === undefined) {
+      this.authState = await loadWorkflowAuth();
+    }
+    const send = (auth: WorkflowAuth | null): Promise<Response> => {
+      const target = new URL(url);
+      const headers = new Headers(init?.headers);
+      if (auth) {
+        const gateway = new URL(auth.gatewayUrl);
+        target.protocol = gateway.protocol;
+        target.host = gateway.host;
+        target.port = gateway.port;
+        headers.set('Authorization', `Bearer ${auth.accessToken}`);
+      }
+      return fetch(target.toString(), { ...init, headers });
+    };
+
+    let response = await send(this.authState);
+    if (response.status === 401 && this.authState) {
+      this.authState = await this.authState.refresh();
+      response = await send(this.authState);
+    }
+    if (response.status === 401) {
+      throw new Error('Workflow access requires a login. Run `kb auth login` and retry.');
+    }
+    return response;
+  }
+
+  /** Send an API request through this client's project route and gateway auth. */
+  fetchApi(url: string, init?: RequestInit): Promise<Response> {
+    return this.authorizedFetch(url, init);
+  }
+
+  async fetchRunEvents(runId: string, init?: RequestInit): Promise<Response> {
+    return this.authorizedFetch(this.getRunEventsUrl(runId), init);
   }
 
   /**
@@ -183,7 +262,7 @@ export class WorkflowDaemonClient {
    * Health check
    */
   async health(): Promise<{ ok: boolean; service: string }> {
-    const response = await fetch(`${this.baseUrl}/health`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/health`);
     if (!response.ok) {
       throw new Error(`Health check failed: ${response.statusText}`);
     }
@@ -194,7 +273,7 @@ export class WorkflowDaemonClient {
    * Get workflow metrics (raw metrics data from daemon)
    */
   async getMetrics(): Promise<WorkflowMetricsData> {
-    const response = await fetch(`${this.baseUrl}/metrics`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/metrics`);
     if (!response.ok) {
       throw new Error(`Failed to get metrics: ${response.statusText}`);
     }
@@ -207,7 +286,7 @@ export class WorkflowDaemonClient {
    */
   async getJobStatus(jobId: string): Promise<JobStatusDetail> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -223,7 +302,7 @@ export class WorkflowDaemonClient {
    */
   async getJobSteps(jobId: string): Promise<JobStepsResponse> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}/steps`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}/steps`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -239,7 +318,7 @@ export class WorkflowDaemonClient {
    */
   async getJobLogs(jobId: string): Promise<JobLogsResponse['logs']> {
     const encodedJobId = this.validateAndEncodeJobId(jobId);
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}/logs`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs/${encodedJobId}/logs`);
     if (response.status === 404) {
       throw new Error(`Job ${jobId} not found`);
     }
@@ -255,7 +334,7 @@ export class WorkflowDaemonClient {
    * Get active executions
    */
   async getExecutions(): Promise<JobStatusInfo[]> {
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs`);
     if (!response.ok) {
       throw new Error(`Failed to get executions: ${response.statusText}`);
     }
@@ -269,7 +348,7 @@ export class WorkflowDaemonClient {
    * Get cron jobs
    */
   async getCronJobs(): Promise<CronListResponse> {
-    const response = await fetch(`${this.baseUrl}/api/v1/cron`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/cron`);
     if (!response.ok) {
       throw new Error(`Failed to get cron jobs: ${response.statusText}`);
     }
@@ -285,7 +364,7 @@ export class WorkflowDaemonClient {
     input?: unknown;
     priority?: number;
   }): Promise<{ id: string; status: string }> {
-    const response = await fetch(`${this.baseUrl}/api/v1/jobs`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/jobs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -323,7 +402,7 @@ export class WorkflowDaemonClient {
     if (params.tags) { query.set('tags', params.tags); }
 
     const qs = query.toString();
-    const response = await fetch(`${this.baseUrl}/api/v1/workflows${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/workflows${qs ? `?${qs}` : ''}`);
     if (!response.ok) {
       throw new Error(`Failed to list workflows: ${response.statusText}`);
     }
@@ -337,7 +416,7 @@ export class WorkflowDaemonClient {
    */
   async getWorkflow(id: string): Promise<WorkflowInfo> {
     const encodedId = encodeURIComponent(id);
-    const response = await fetch(`${this.baseUrl}/api/v1/workflows/${encodedId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/workflows/${encodedId}`);
     if (response.status === 404) {
       throw new Error(`Workflow ${id} not found`);
     }
@@ -362,7 +441,7 @@ export class WorkflowDaemonClient {
     if (params.workflowId) { query.set('workflowId', params.workflowId); }
 
     const qs = query.toString();
-    const response = await fetch(`${this.baseUrl}/api/v1/runs${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs${qs ? `?${qs}` : ''}`);
     if (!response.ok) {
       throw new Error(`Failed to list runs: ${response.statusText}`);
     }
@@ -376,7 +455,7 @@ export class WorkflowDaemonClient {
    */
   async getRun(runId: string): Promise<WorkflowRunDetail> {
     const encodedId = encodeURIComponent(runId);
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}`);
     if (response.status === 404) {
       throw new Error(`Run ${runId} not found`);
     }
@@ -406,7 +485,7 @@ export class WorkflowDaemonClient {
 
     const encodedId = encodeURIComponent(runId);
     const qs = query.toString();
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}/logs${qs ? `?${qs}` : ''}`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}/logs${qs ? `?${qs}` : ''}`);
     if (response.status === 404) {
       throw new Error(`Run ${runId} not found`);
     }
@@ -440,7 +519,7 @@ export class WorkflowDaemonClient {
     }>;
   }> {
     const encodedId = encodeURIComponent(runId);
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}/approvals`);
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}/approvals`);
     if (!response.ok) {
       const message = await response
         .json()
@@ -477,7 +556,7 @@ export class WorkflowDaemonClient {
     data?: Record<string, unknown>
   ): Promise<{ runId: string; jobId: string; stepId: string; action: string; resolved: boolean }> {
     const encodedId = encodeURIComponent(runId);
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}/approvals/resolve`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}/approvals/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ jobId, stepId, action, comment, data }),
@@ -501,7 +580,7 @@ export class WorkflowDaemonClient {
    */
   async cancelRun(runId: string): Promise<void> {
     const encodedId = encodeURIComponent(runId);
-    const response = await fetch(`${this.baseUrl}/api/v1/runs/${encodedId}/cancel`, {
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/runs/${encodedId}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
@@ -522,7 +601,7 @@ export class WorkflowDaemonClient {
     workflowId: string,
     request: WorkflowRunRequest = {}
   ): Promise<{ runId: string; status: string }> {
-    const response = await fetch(
+    const response = await this.authorizedFetch(
       `${this.baseUrl}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`,
       {
         method: 'POST',
@@ -551,7 +630,7 @@ export class WorkflowDaemonClient {
     runId: string,
     request: WorkflowRerunRequest = {},
   ): Promise<{ runId: string; status: string }> {
-    const response = await fetch(
+    const response = await this.authorizedFetch(
       `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/rerun`,
       {
         method: 'POST',
@@ -581,7 +660,7 @@ export class WorkflowDaemonClient {
     runId: string,
     request: WorkflowRestartRequest = {},
   ): Promise<WorkflowRestartResponse> {
-    const response = await fetch(
+    const response = await this.authorizedFetch(
       `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/restart`,
       {
         method: 'POST',
@@ -602,4 +681,9 @@ export class WorkflowDaemonClient {
     const payload = await this.parseJsonResponse<{ ok: boolean; data?: WorkflowRestartResponse }>(response);
     return this.unwrapData<WorkflowRestartResponse>(payload);
   }
+}
+
+/** Shared authenticated fetch for REST handlers that proxy workflow responses. */
+export function fetchWorkflowApi(url: string, init?: RequestInit): Promise<Response> {
+  return new WorkflowDaemonClient().fetchApi(url, init);
 }

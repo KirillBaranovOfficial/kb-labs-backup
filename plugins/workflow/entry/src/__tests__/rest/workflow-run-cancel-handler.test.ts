@@ -3,7 +3,8 @@ import { createMockContext } from '@kb-labs/shared-testing-e2e/cli';
 import type { RestInput } from '@kb-labs/sdk';
 
 vi.mock('../../http-client.js', () => ({
-  getWorkflowDaemonUrl: () => 'http://localhost:7778',
+  getWorkflowDaemonUrl: () => 'http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow',
+  fetchWorkflowApi: (url: string, init?: RequestInit) => fetch(url, init),
 }));
 
 import handler from '../../rest/workflow-run-cancel-handler.js';
@@ -45,7 +46,7 @@ describe('workflow-run-cancel-handler (REST)', () => {
 
     expect(result).toEqual({ runId: 'run-123', cancelled: true });
     expect(fetch).toHaveBeenCalledWith(
-      'http://localhost:7778/api/v1/runs/run-123/cancel',
+      'http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/api/v1/runs/run-123/cancel',
       expect.objectContaining({ method: 'POST' }),
     );
   });

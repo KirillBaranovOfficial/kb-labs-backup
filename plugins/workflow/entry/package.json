@@ -34,6 +34,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/cli-runtime": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "@kb-labs/workflow-contracts": "workspace:*",

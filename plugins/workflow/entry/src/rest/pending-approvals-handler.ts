@@ -4,7 +4,7 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client.js';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client.js';
 
 interface PendingApprovalsParams {
   runId: string;
@@ -33,7 +33,7 @@ export default defineHandler({
     ctx.platform.logger.info(`[pending-approvals-handler] Fetching pending approvals for run ${runId}`);
 
     try {
-      const response = await fetch(url);
+      const response = await fetchWorkflowApi(url);
 
       if (!response.ok) {
         if (response.status === 404) {

@@ -25,6 +25,7 @@ describe("workflow daemon entrypoints", () => {
         serviceId: "workflow",
         startDir: "/some/root",
         defaultPort: 7778,
+        defaultHost: "127.0.0.1",
         portEnvVar: "WORKFLOW_PORT",
         setup,
       }),

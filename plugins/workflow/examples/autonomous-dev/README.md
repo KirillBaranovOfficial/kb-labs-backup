@@ -47,4 +47,4 @@ into a silent false green. (Cross-job restart + the honest-fail guard live in
 - Quality uses `kb-devkit run <task> --affected` to scope checks to the changed
   package(s) instead of building the whole monorepo.
 - Requires: `claude` CLI, `gh` CLI authenticated, `kb` with clickup/review/commit
-  plugins, a running workflow daemon.
+  plugins, and a running KB Labs host.

@@ -45,7 +45,7 @@ beforeEach(() => {
   MockedClient.mockImplementation(function MockedClientImplementation() {
     return makeClient({
       ...defaultWorkflowClient,
-      getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+      getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/api/v1/runs/${runId}/events`,
     });
   });
 });
@@ -60,7 +60,7 @@ describe('workflow:runs watch', () => {
       return makeClient({
         ...defaultWorkflowClient,
         listRuns: async () => [],
-        getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+        getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/api/v1/runs/${runId}/events`,
       });
     });
 
@@ -77,7 +77,7 @@ describe('workflow:runs watch', () => {
       return makeClient({
         ...defaultWorkflowClient,
         listRuns: async () => [{ id: 'run-latest', name: 'deploy', status: 'running' as const, createdAt: new Date().toISOString() }],
-        getRunEventsUrl: (runId: string) => `http://localhost:7778/api/v1/runs/${runId}/events`,
+        getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/api/v1/runs/${runId}/events`,
       });
     });
     mockFetchWithSse([

@@ -4,7 +4,7 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
 
 interface JobsListQuery {
   type?: string;
@@ -56,7 +56,7 @@ export default defineHandler({
     ctx.platform.logger.info(`[jobs-list-handler] Fetching jobs from ${url}`);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWorkflowApi(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

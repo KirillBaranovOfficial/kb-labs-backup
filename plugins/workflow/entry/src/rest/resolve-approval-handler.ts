@@ -4,7 +4,7 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client.js';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client.js';
 
 interface ResolveApprovalParams {
   runId: string;
@@ -46,7 +46,7 @@ export default defineHandler({
     ctx.platform.logger.info(`[resolve-approval-handler] Resolving approval for run ${runId}, step ${body.stepId}: ${body.action}`);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWorkflowApi(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

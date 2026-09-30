@@ -4,7 +4,7 @@
  */
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
-import { getWorkflowDaemonUrl } from '../http-client';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
 
 interface CronInfo {
   id: string;
@@ -38,7 +38,7 @@ export default defineHandler({
     ctx.platform.logger.info(`[cron-list-handler] Fetching cron jobs from ${url}`);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWorkflowApi(url, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

@@ -46,21 +46,10 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
     logger,
   });
 
-  const isProduction = process.env.NODE_ENV === 'production';
-  const requireAuth = process.env.KB_DAEMON_REQUIRE_AUTH === 'false'
-    ? false
-    : (process.env.KB_DAEMON_REQUIRE_AUTH === 'true' || isProduction);
-  const daemonApiKey = process.env.KB_DAEMON_API_KEY;
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') ?? [
     'http://localhost:3000',
     'http://localhost:5173',
   ];
-
-  if (requireAuth && !daemonApiKey) {
-    throw new Error(
-      'KB_DAEMON_API_KEY is required when daemon auth is enabled (KB_DAEMON_REQUIRE_AUTH=true or NODE_ENV=production)',
-    );
-  }
 
   const observability = new HttpObservabilityCollector({
     serviceId: 'workflow',
@@ -85,29 +74,11 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
     cors: {
       origin: (origin: string | undefined, callback: (err: Error | null, allow: boolean) => void) => {
         if (!origin) {
-          const isDevelopment =
-            process.env.KB_DAEMON_REQUIRE_AUTH === 'false' || process.env.NODE_ENV !== 'production';
-          if (isDevelopment) { callback(null, true); } else { callback(new Error('Origin header required in production'), false); }
+          callback(null, true);
           return;
         }
         if (allowedOrigins.includes(origin)) { callback(null, true); } else { callback(new Error(`Origin ${origin} not allowed by CORS`), false); }
       },
-    },
-
-    onRequest: async (request, reply) => {
-      if (!requireAuth || request.url === '/health') {
-        return;
-      }
-      const apiKeyHeader = request.headers['x-api-key'];
-      const authHeader = request.headers.authorization;
-      const bearerToken =
-        typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
-          ? authHeader.slice('Bearer '.length).trim()
-          : undefined;
-      const token = (typeof apiKeyHeader === 'string' ? apiKeyHeader : undefined) ?? bearerToken;
-      if (!token || token !== daemonApiKey) {
-        reply.code(401).send({ ok: false, error: 'Unauthorized' });
-      }
     },
 
     registerRoutes: async (server) => {

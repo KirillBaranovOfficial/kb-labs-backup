@@ -99,7 +99,7 @@
       "pages": [
         { "slug": "guides/first-plugin",         "type": "manual", "owners": ["sdk/**", "plugins/scaffold/**"] },
         { "slug": "guides/first-adapter",        "type": "manual", "owners": ["sdk/**", "adapters/**"] },
-        { "slug": "guides/first-workflow",       "type": "manual", "owners": ["plugins/workflow/entry/src/manifest.ts", "plugins/workflow/engine/**", "plugins/workflow/contracts/**", "plugins/workflow/builtins/**", "plugins/workflow/daemon/src/api/workflows-api.ts", "tools/kb-dev/**", "studio/**"] },
+        { "slug": "guides/first-workflow",       "type": "manual", "owners": ["plugins/workflow/entry/src/manifest.ts", "plugins/workflow/entry/src/commands/init.ts", "plugins/workflow/entry/src/http-client.ts", "plugins/workflow/contracts/src/routes.ts", "plugins/workflow/engine/**", "plugins/workflow/contracts/**", "plugins/workflow/builtins/**", "plugins/workflow/daemon/src/api/workflows-api.ts", "services/host/app/src/project-runtime/**", "tools/kb-dev/**", "studio/**"] },
         { "slug": "guides/add-studio-page",      "type": "manual", "owners": ["studio/**", "sdk/**"] },
         { "slug": "guides/llm-setup",            "type": "manual", "owners": ["tools/kb-create/**", "cli/commands/src/commands/system/config/**", "adapters/openai/**"] },
         { "slug": "guides/testing",              "type": "manual", "owners": ["shared/testing/**", "shared/testing-e2e/**", "infra/devkit/vitest/**", "infra/devkit/vitest.config.ts", "infra/devkit/fixtures/web/tests/**", "infra/devkit/templates/package-json/**", "devkit.yaml"] },

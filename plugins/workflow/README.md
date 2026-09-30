@@ -10,11 +10,10 @@
 
 ## Overview
 
-Workflow provides a daemon (`:7778`) that executes multi-step jobs, manages a
-job queue, and runs cron schedules. The CLI plugin connects to the daemon over
-HTTP and gives you full visibility into runs, jobs, and logs. You define
-workflows as code — the engine handles retries, prioritization, cancellation,
-and approval gates.
+Workflow executes multi-step jobs, manages a job queue, and runs cron
+schedules in a project runtime managed by the KB Labs host. The CLI and Studio
+use the project-aware host API, so local and secured projects share the same
+workflow routes.
 
 ---
 
@@ -23,7 +22,7 @@ and approval gates.
 - Job queue with priority and retry support
 - Cron scheduling — define recurring workflows with cron expressions
 - Approval gates — pause a run and wait for human or programmatic sign-off
-- Real-time log and progress streaming over WebSocket
+- Live run and log updates over server-sent events (SSE)
 - Re-run failed runs from the point of failure
 - Cancellation at job or run level
 - Studio UI — dashboard, run history, definition browser, job queue, cron list
@@ -36,15 +35,9 @@ and approval gates.
 
 **Services**
 
-The workflow CLI plugin connects to the workflow daemon over HTTP. No platform
-services (LLM, cache, etc.) are required by the CLI itself — those are consumed
-by the workflow handlers running inside the daemon.
-
-**Environment variables**
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `WORKFLOW_DAEMON_URL` | No | `http://localhost:7778` | Workflow daemon URL |
+The workflow CLI resolves the registered project from the current directory
+and sends requests through the host. Local mode uses the loopback gateway
+without login; secured mode uses the signed-in gateway session.
 
 ---
 
@@ -54,7 +47,9 @@ by the workflow handlers running inside the daemon.
 pnpm kb marketplace install @kb-labs/workflow-entry
 ```
 
-The workflow daemon is started automatically by `kb-dev start`.
+The host starts project runtimes on demand. A project with enabled scheduled
+workflows starts when the host starts and stays warm while those schedules are
+enabled.
 
 ---
 
@@ -70,13 +65,12 @@ kb workflow metrics                    # queue stats: running, queued, completed
 ### Runs
 
 ```bash
-kb workflow runs-list                  # list all workflow runs
-kb workflow runs-list --status=failed
-kb workflow runs-list --workflow=release-manager/create-release
-kb workflow runs-view <runId>          # full run details: jobs, steps, inputs, errors
-kb workflow runs-view <runId> --log-failed   # only failed step logs (fastest root cause)
-kb workflow runs-watch <runId>         # stream run events live
-kb workflow runs-rerun <runId>         # resubmit with same inputs
+kb workflow runs list                  # list all workflow runs
+kb workflow runs list --status=failed
+kb workflow runs view <runId>          # full run details: jobs, steps, inputs, errors
+kb workflow runs view <runId> --log-failed   # only failed step logs (fastest root cause)
+kb workflow runs watch <runId>         # stream run events live
+kb workflow runs rerun <runId>         # resubmit with same inputs
 ```
 
 ### Running workflows
@@ -109,44 +103,20 @@ kb workflow job-run --handler=mind:rag-query --input='{"text":"test"}' --wait
 | `kb workflow list` | List active jobs |
 | `kb workflow job-run` | Submit a raw job |
 | `kb workflow run` | Run a workflow by ID |
-| `kb workflow runs-list` | List all runs |
-| `kb workflow runs-view` | Full run details |
-| `kb workflow runs-watch` | Stream run events live |
-| `kb workflow runs-rerun` | Re-run a workflow |
+| `kb workflow runs list` | List all runs |
+| `kb workflow runs view` | Full run details |
+| `kb workflow runs watch` | Stream run events live |
+| `kb workflow runs rerun` | Re-run a workflow |
 
 ---
 
 ## REST API
 
-Base path: `/plugins/workflow`
-
-Requires the `gateway` plugin.
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/plugins/workflow/stats` | Dashboard statistics |
-| `GET` | `/plugins/workflow/workflows` | List workflow definitions |
-| `GET` | `/plugins/workflow/workflows/:id` | Workflow definition detail |
-| `POST` | `/plugins/workflow/workflows/:id/run` | Start a workflow run |
-| `GET` | `/plugins/workflow/workflows/:id/runs` | Run history for a workflow |
-| `POST` | `/plugins/workflow/workflows/runs/:runId/cancel` | Cancel a run |
-| `GET` | `/plugins/workflow/runs` | All runs across all workflows |
-| `GET` | `/plugins/workflow/runs/:runId` | Run detail |
-| `GET` | `/plugins/workflow/workflows/jobs` | List jobs |
-| `GET` | `/plugins/workflow/workflows/jobs/:jobId` | Job detail |
-| `GET` | `/plugins/workflow/workflows/jobs/:jobId/logs` | Job logs |
-| `GET` | `/plugins/workflow/workflows/jobs/:jobId/steps` | Job steps |
-| `POST` | `/plugins/workflow/workflows/jobs/:jobId/cancel` | Cancel a job |
-| `GET` | `/plugins/workflow/workflows/cron` | List cron jobs |
-| `GET` | `/plugins/workflow/runs/:runId/pending-approvals` | List pending approvals |
-| `POST` | `/plugins/workflow/runs/:runId/approve` | Resolve an approval gate |
-
-**WebSocket** — `/v1/ws/plugins/workflow`
-
-| Channel | Description |
-|---------|-------------|
-| `/logs/:jobId` | Real-time job log stream |
-| `/progress/:jobId` | Real-time job progress updates |
+Workflow requests use the selected project's host route:
+`/api/v1/projects/{projectId}/workflow/...`. The host applies the project's
+authentication policy and forwards the request to its runtime. Use the CLI
+commands above or the SDK's project workflow API instead of calling a daemon
+port directly.
 
 ---
 
@@ -170,8 +140,7 @@ Adds a **Workflows** section to KB Labs Studio (sidebar order 10).
 
 | Category | Scope | Reason |
 |----------|-------|--------|
-| Network | `http://localhost:*`, `http://127.0.0.1:*` | HTTP calls to workflow daemon |
-| Environment | `WORKFLOW_DAEMON_URL` | Daemon URL override |
+| Network | Host gateway origin | Project-scoped workflow API calls |
 | Quotas | 30 sec timeout, 128 MB RAM | Lightweight HTTP client |
 
 ---
@@ -181,7 +150,7 @@ Adds a **Workflows** section to KB Labs Studio (sidebar order 10).
 ### 1.0.0
 
 - Initial release: health, metrics, status, logs, list, job-run, run, runs-list/view/watch/rerun commands
-- REST API + WebSocket proxy to workflow daemon
+- Project-scoped REST API with SSE run updates
 - Studio: Dashboard, Runs, Definitions, Jobs, Crons
 
 ---

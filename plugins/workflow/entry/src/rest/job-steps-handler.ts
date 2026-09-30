@@ -5,7 +5,7 @@
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import type { JobStepsResponse } from '@kb-labs/workflow-contracts';
-import { getWorkflowDaemonUrl } from '../http-client.js';
+import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client.js';
 
 export default defineHandler({
   async execute(
@@ -20,7 +20,7 @@ export default defineHandler({
     ctx.platform.logger.info(`[job-steps-handler] Fetching steps from ${url}`);
 
     try {
-      const response = await fetch(url);
+      const response = await fetchWorkflowApi(url);
 
       if (!response.ok) {
         if (response.status === 404) {

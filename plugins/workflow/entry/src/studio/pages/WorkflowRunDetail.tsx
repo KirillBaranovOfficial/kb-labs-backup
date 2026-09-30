@@ -535,9 +535,10 @@ const STATE_EVENT_PREFIXES = ['run.', 'job.', 'step.']
 export default function WorkflowRunDetail() {
   const params = useParams<{ runId: string }>()
   const runId = params.runId ?? null
+  const { projectId, picker, hasProjects } = useWorkflowProject()
   const { data: runData, isLoading, error, refetch } = useData<{ run: WorkflowRun }>(
-    runId ? `/exec/api/v1/runs/${runId}` : '/exec/api/v1/runs/__none__',
-    { enabled: !!runId, pollingMs: 10_000 },
+    projectWorkflowEndpoint(projectId, runId ? `api/v1/runs/${encodeURIComponent(runId)}` : 'api/v1/runs/__none__'),
+    { enabled: !!runId && hasProjects, pollingMs: 10_000 },
   )
 
   const [localRun, setLocalRun] = useState<WorkflowRun | null>(null)
@@ -547,11 +548,11 @@ export default function WorkflowRunDetail() {
   }, [runData])
 
   const run = localRun
-  const cancelMutation = useMutateData<void, void>(`/exec/api/v1/runs/${runId ?? '__none__'}/cancel`)
+  const cancelMutation = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `api/v1/runs/${encodeURIComponent(runId ?? '__none__')}/cancel`))
   const resolveApproval = useMutateData<
     { runId: string; jobId: string; stepId: string; action: string; comment?: string },
     unknown
-  >(`/exec/api/v1/runs/${runId ?? '__none__'}/approvals/resolve`)
+  >(projectWorkflowEndpoint(projectId, `api/v1/runs/${encodeURIComponent(runId ?? '__none__')}/approvals/resolve`))
   const isRunActive = run != null && !TERMINAL_STATUSES.has(run.status)
 
   const [lastEventAt, setLastEventAt] = useState<Date | undefined>(undefined)
@@ -562,7 +563,7 @@ export default function WorkflowRunDetail() {
   }, [])
 
   const { events, error: logError, connectionStatus } = useSSE<WorkflowLogEvent>(
-    isRunActive && runId && !isLoading ? `/exec/api/v1/runs/${runId}/events` : null,
+    isRunActive && runId && !isLoading ? projectWorkflowEndpoint(projectId, `api/v1/runs/${encodeURIComponent(runId)}/events`) : null,
     { events: 'workflow.event', terminalEvents: ['workflow.done'], params: { follow: 1 }, reconnect: true, onEvent: handleSseEvent },
   )
 
@@ -616,6 +617,7 @@ export default function WorkflowRunDetail() {
         ]}
         actions={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {picker}
             <ConnectionBadge status={connectionStatus} lastEventAt={lastEventAt} />
             <UIButton onClick={() => refetch()} disabled={isLoading}>
               Refresh

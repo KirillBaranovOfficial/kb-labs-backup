@@ -5538,9 +5538,15 @@ importers:
 
   plugins/workflow/entry:
     dependencies:
+      '@kb-labs/cli-runtime':
+        specifier: workspace:*
+        version: link:../../../cli/runtime
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../../core/platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../../core/project-registry
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
@@ -6108,6 +6114,9 @@ importers:
       '@kb-labs/shared-daemon':
         specifier: workspace:*
         version: link:../../../shared/daemon
+      yaml:
+        specifier: ^2.8.0
+        version: 2.8.3
       zod:
         specifier: ^3.25.76
         version: 3.25.76
