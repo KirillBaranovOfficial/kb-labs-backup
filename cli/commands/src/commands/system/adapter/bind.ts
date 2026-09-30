@@ -30,7 +30,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
     'Writes platform.adapters.<slot> in the current project configuration. The adapter package must first be installed in the machine platform.',
   category: 'adapter',
   examples: generateExamples('adapter bind', 'kb', [
-    { flags: {}, description: 'cache @kb-labs/adapters-fs-cache' },
+    { flags: {}, description: 'storage @kb-labs/adapters-fs' },
     { flags: { 'dry-run': true, json: true }, description: 'llm @kb-labs/adapters-openai' },
   ]),
   flags: {
