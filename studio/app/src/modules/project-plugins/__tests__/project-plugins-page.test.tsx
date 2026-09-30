@@ -26,7 +26,7 @@ function makeProject(overrides: Partial<ProjectEntry> = {}): ProjectEntry {
     lastUsedAt: null,
     path: '/workspace/demo',
     stateDir: '/home/user/.kb/state/prj_1',
-    runtime: { state: 'stopped', restarts: 0 },
+    runtime: { state: 'stopped', restarts: 0, keptRunningSchedules: 0 },
     ...overrides,
   };
 }

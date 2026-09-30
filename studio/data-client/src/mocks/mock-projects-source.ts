@@ -18,7 +18,7 @@ function makeEntry(overrides: Partial<ProjectEntry>): ProjectEntry {
     lastUsedAt: null,
     path: '/workspace/sample-project',
     stateDir: '/home/user/.kb/state/prj_0000000000000000',
-    runtime: { state: 'stopped', restarts: 0 },
+    runtime: { state: 'stopped', restarts: 0, keptRunningSchedules: 0 },
     ...overrides,
   };
 }
@@ -31,7 +31,7 @@ export class MockProjectsSource implements ProjectsDataSource {
       path: '/workspace/kb-labs-workspace',
       stateDir: '/home/user/.kb/state/prj_aaaaaaaaaaaaaaaa',
       lastUsedAt: new Date(Date.now() - 3_600_000).toISOString(),
-      runtime: { state: 'ready', lastUsedAt: new Date(Date.now() - 60_000).toISOString(), restarts: 0 },
+      runtime: { state: 'ready', lastUsedAt: new Date(Date.now() - 60_000).toISOString(), restarts: 0, keptRunningSchedules: 0 },
     }),
     makeEntry({
       id: 'prj_bbbbbbbbbbbbbbbb',

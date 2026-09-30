@@ -53,12 +53,13 @@ function runtimeInfoFor(
     .status()
     .runtimes.find((candidate) => candidate.projectId === projectId);
   if (!runtime) {
-    return { state: "stopped", restarts: 0 };
+    return { state: "stopped", restarts: 0, keptRunningSchedules: 0 };
   }
   return {
     state: runtime.state as ProjectRuntimeState,
     lastUsedAt: runtime.lastUsedAt,
     restarts: runtime.restarts,
+    keptRunningSchedules: runtime.keptRunningSchedules,
   };
 }
 

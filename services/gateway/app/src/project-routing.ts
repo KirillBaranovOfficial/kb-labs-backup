@@ -47,6 +47,7 @@ export interface ProjectRuntimeSummary {
   lastUsedAt: string;
   inflight: number;
   restarts: number;
+  keptRunningSchedules?: number;
 }
 
 export interface ProjectRoutingStatus {

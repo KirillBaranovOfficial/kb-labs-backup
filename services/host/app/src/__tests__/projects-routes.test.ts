@@ -83,6 +83,7 @@ describe("createProjectsRoutes", () => {
             lastUsedAt: "2026-01-01T00:00:00.000Z",
             inflight: 0,
             restarts: 2,
+            keptRunningSchedules: 0,
           },
         ],
       }),
@@ -92,7 +93,12 @@ describe("createProjectsRoutes", () => {
 
     expect(res.statusCode).toBe(200);
     const body = res.json() as DataBody<{ runtime: { state: string; restarts: number } }>;
-    expect(body.data.runtime).toEqual({ state: "ready", lastUsedAt: "2026-01-01T00:00:00.000Z", restarts: 2 });
+    expect(body.data.runtime).toEqual({
+      state: "ready",
+      lastUsedAt: "2026-01-01T00:00:00.000Z",
+      restarts: 2,
+      keptRunningSchedules: 0,
+    });
   });
 
   it("GET /api/v1/projects/:id returns KB_PROJECT_UNKNOWN for an unregistered id", async () => {

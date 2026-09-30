@@ -4,7 +4,7 @@
  * runtime script standing in for `kb-project-runtime`.
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -29,7 +29,7 @@ interface HealthBody {
   projectRuntimes: {
     limit: number;
     active: number;
-    runtimes: Array<{ projectId: string; state: string; inflight: number }>;
+    runtimes: Array<{ projectId: string; state: string; inflight: number; keptRunningSchedules?: number; pid?: number }>;
   };
 }
 
@@ -279,6 +279,57 @@ describe("kb-host project routing", () => {
     // The next request starts it again.
     const again = await reply(subject, a.id, "/rest/whoami");
     expect(again.pid).not.toBe(pid);
+  });
+
+  it("starts scheduled workflow projects at host boot and keeps them warm", async () => {
+    const a = await registered();
+    const workflows = join(a.root, ".kb", "workflows");
+    await mkdir(workflows, { recursive: true });
+    await writeFile(join(workflows, "scheduled.yml"), [
+      "name: scheduled",
+      "version: 1.0.0",
+      "on:",
+      "  manual: true",
+      "  schedule:",
+      '    cron: "* * * * *"',
+      "jobs: {}",
+      "",
+    ].join("\n"));
+    await writeFile(join(workflows, "stored-active.yml"), [
+      "id: stored-active",
+      "status: active",
+      "spec:",
+      "  on:",
+      "    schedule:",
+      '      cron: "0 * * * *"',
+      "",
+    ].join("\n"));
+    await writeFile(join(workflows, "stored-paused.yml"), [
+      "id: stored-paused",
+      "status: paused",
+      "spec:",
+      "  on:",
+      "    schedule:",
+      '      cron: "30 * * * *"',
+      "",
+    ].join("\n"));
+    const subject = await host({}, { idleTimeoutMs: 30, sweepIntervalMs: 10, startPollMs: 10 });
+
+    await waitFor(async () => {
+      const health = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+      return health.projectRuntimes.runtimes.some(
+        (runtime) => runtime.projectId === a.id && runtime.state === "ready",
+      );
+    }, "the scheduled runtime to start during host startup");
+
+    const before = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+    expect(before.projectRuntimes.runtimes[0]).toMatchObject({
+      projectId: a.id,
+      keptRunningSchedules: 2,
+    });
+    const pid = (await reply(subject, a.id, "/rest/whoami")).pid;
+    await new Promise<void>((resolve) => setTimeout(resolve, 120));
+    expect(isAlive(pid)).toBe(true);
   });
 
   it("stops every project runtime when the host shuts down, leaving no orphans", async () => {
