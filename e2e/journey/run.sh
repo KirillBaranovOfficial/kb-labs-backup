@@ -57,8 +57,8 @@ if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
     human:default) run_journey human explore human-default ;;
     human:nondefault) run_journey human commit human-nondefault ;;
     negative:*) run_journey agent commit "${KB_JOURNEY_ONLY#negative:}" ;;
-    service-local:*) run_journey agent "${KB_JOURNEY_ONLY#service-local:}" default ;;
-    service-secured:*) run_journey human "${KB_JOURNEY_ONLY#service-secured:}" secured ;;
+    service-local:*) KB_JOURNEY_SERVICE_PROFILE=nightly run_journey agent "${KB_JOURNEY_ONLY#service-local:}" default ;;
+    service-secured:*) KB_JOURNEY_SERVICE_PROFILE=nightly run_journey human "${KB_JOURNEY_ONLY#service-secured:}" secured ;;
     service-modes)
       run_journey agent commit default
       run_journey human explore secured

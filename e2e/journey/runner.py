@@ -17,6 +17,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from studio_steps import create_studio_member, record_studio_browser_step
+
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = os.getenv("KB_JOURNEY_FRONT_DOOR", "agent")
 SCENARIO = os.getenv("KB_JOURNEY_SCENARIO", "commit")
@@ -542,7 +544,7 @@ def main():
                 stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: {command}-output ==\n{result.stdout[-5000:]}\n")
             fail(f"kb-create {command}: expected human summary '{key}'")
 
-    local_service_journey = FRONT == "agent" and SCENARIO == "commit" and VARIANT == "default"
+    local_service_journey = FRONT == "agent" and SCENARIO == "explore" and VARIANT == "default"
     secured_service_journey = FRONT == "human" and VARIANT.endswith("secured")
     if BASE_ENV.get("KB_JOURNEY_SERVICE_PROFILE") == "nightly" and (local_service_journey or secured_service_journey):
         mode = "secured" if secured_service_journey else "local"
@@ -573,6 +575,7 @@ def main():
             project_payload = json.loads(project_add.stdout)
             project_id = find_project_id(project_payload)
         except json.JSONDecodeError:
+            project_payload = {}
             project_id = ""
         service_env["KB_JOURNEY_PROJECT_ID"] = project_id
         service_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-{mode}.json")
@@ -587,6 +590,38 @@ def main():
             except (OSError, json.JSONDecodeError):
                 detail = "service journey result JSON could not be read"
             fail(f"{mode} service journey: {detail}")
+
+        project = project_payload.get("project", project_payload) if isinstance(project_payload, dict) else {}
+        project_name = str(project.get("name") or "") if isinstance(project, dict) else ""
+        studio_env = service_env.copy()
+        studio_env.update({
+            "GATEWAY_URL": "http://127.0.0.1:4000",
+            "KB_STUDIO_PROJECT_ID": project_id,
+            "KB_STUDIO_PROJECT_NAME": project_name,
+            "KB_ACCESS_MODE": mode,
+        })
+        if mode == "secured":
+            try:
+                member_email, member_password = create_studio_member(
+                    "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"])
+                studio_env["KB_STUDIO_ADMIN_EMAIL"] = service_env["KB_JOURNEY_ADMIN_EMAIL"]
+                studio_env["KB_STUDIO_ADMIN_PASSWORD"] = service_env["KB_JOURNEY_ADMIN_PASSWORD"]
+                studio_env["KB_STUDIO_MEMBER_EMAIL"] = member_email
+                studio_env["KB_STUDIO_MEMBER_PASSWORD"] = member_password
+            except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
+                fail(f"Studio secured member setup: {error}")
+        studio_result, studio_elapsed = run([
+            "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
+            "--config=/opt/kb-studio-playwright/playwright.config.mjs",
+        ], env=studio_env, timeout=180)
+        TIMES["Studio browser journey"] = studio_elapsed
+        studio_passed = studio_result.returncode == 0
+        studio_message = "Studio browser journey passed"
+        if not studio_passed:
+            studio_message = " ".join(studio_result.stdout.split())[-700:] or f"Playwright exited {studio_result.returncode}"
+            fail(f"Studio browser journey: {studio_message}")
+        record_studio_browser_step(service_report, mode, studio_passed, studio_elapsed, studio_message)
 
     global PLATFORM_SIZE_MIB
     if PLATFORM.exists():

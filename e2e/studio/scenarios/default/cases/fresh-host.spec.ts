@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
-import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
+
+const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 
 const enabled = process.env.KB_STUDIO_FRESH_HOST_JOURNEY === '1'
 const mode = process.env.KB_ACCESS_MODE ?? 'local'
