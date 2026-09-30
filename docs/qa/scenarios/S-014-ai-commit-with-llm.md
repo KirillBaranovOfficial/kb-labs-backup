@@ -1,59 +1,27 @@
 ---
 id: S-014
-title: AI Commit — with real LLM
+title: S-014 — Generate and apply an AI commit with a real LLM
 persona: solo-developer
+area: plugins
 priority: P0
-automation: e2e-done
-e2e: domain workflow E2E; the V2 post-publish journey covers the installed
-  plugin/workflow path, while LLM credentials remain a domain concern
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer stages changes and generates an AI commit message using a real LLM (not heuristic fallback).
-Requires valid gateway credentials.
+
+A developer uses the commit plugin with configured gateway credentials to draft and apply a commit message from staged changes.
 
 ## Prerequisites
-- [ ] KB Labs installed with valid `.env` (KB_GATEWAY_CLIENT_ID + KB_GATEWAY_CLIENT_SECRET)
-- [ ] Git repo with staged changes
-- [ ] Gateway reachable at `https://api.kblabs.ru`
 
----
+- [ ] Git repository with staged changes and a configured LLM adapter or secured gateway.
 
 ## Steps
 
-### Phase 1 — Dry run
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | Stage changes: `git add <file>` | Changes staged | | ⬜ |
-| 2 | `kb commit commit --dry-run` | Output contains `LLM: Phase` — real LLM used | | ⬜ |
-| 3 | Proposed commit message is meaningful (not generic) | Not `chore(.): update configuration` | | ⬜ |
-| 4 | Dry run does NOT create a commit | `git log` unchanged | | ⬜ |
-
-### Phase 2 — Real commit
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 5 | `kb commit commit --yes` | Commit created with AI message | | ⬜ |
-| 6 | `git log --oneline -1` | Message follows conventional commits format | | ⬜ |
-| 7 | Message describes actual change (not generic) | Meaningful message | | ⬜ |
-
-### Phase 3 — Multi-file changes
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 8 | Stage changes across 3+ files | All files included in diff sent to LLM | | ⬜ |
-| 9 | `kb commit commit --dry-run` | Commit message covers all changed areas | | ⬜ |
-
-### Phase 4 — Edge cases
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 10 | No staged changes | Clear message: "nothing to commit" | | ⬜ |
-| 11 | LLM timeout / network error | Graceful fallback to heuristic, not crash | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-014.1 | Run `kb commit commit --dry-run` | A proposed message is printed and no commit is created. |
+| S-014.2 | Confirm the output identifies the configured LLM path rather than heuristic fallback | Output makes the selected generation path observable. |
+| S-014.3 | Run `kb commit commit --yes` | A commit is created with a message describing the staged changes. |

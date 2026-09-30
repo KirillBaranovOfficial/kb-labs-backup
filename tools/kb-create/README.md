@@ -148,6 +148,14 @@ steps (`swap` package):
 snapshot taken before it (`KB_UPDATE_NO_SNAPSHOT` when there is none). Failures
 write a diagnostic dossier under `.kb/diagnostics/`.
 
+Uninstall and rollback require explicit confirmation. A terminal prompts with
+the affected platform scope; uninstall preserves project files. Non-interactive
+and `--json` callers must pass `--yes`, for example:
+
+```bash
+kb-create uninstall --platform-root ./ci-platform --yes
+```
+
 ### Doctor: installation and platform, and recovery
 
 `doctor --platform-root <root>` answers two different questions and reports them

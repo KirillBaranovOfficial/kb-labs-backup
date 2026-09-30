@@ -1,7 +1,7 @@
 ---
 title: "Installation"
 description: "Install KB Labs locally or apply a release index from CI."
-updatedAt: "2026-09-30"
+updatedAt: "2026-10-01"
 order: 2
 ---
 
@@ -69,8 +69,13 @@ Do not use a hand-built index or copy version metadata from another release.
 ## Uninstall
 
 ```bash
-kb-create uninstall
+kb-create uninstall --yes
 ```
+
+In a terminal, uninstall lists the platform root, installed services, receipt,
+and snapshots it will remove, confirms that project files are kept, and asks
+before proceeding. Non-interactive callers must pass `--yes`; without it the
+launcher returns an error with the exact command to rerun.
 
 To remove an installation outside the default location, supply the same
 `--platform-root PATH` used for install.

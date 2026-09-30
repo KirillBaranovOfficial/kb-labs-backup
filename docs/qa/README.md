@@ -1,138 +1,82 @@
-# KB Labs — QA Scenarios
+# KB Labs — QA case catalog
 
-Manual scenario testing — the source of truth for what a real user can do in the system.
-Forms the basis for automated e2e tests and pre-release regression checks.
+`docs/qa/scenarios/*.md` is the source of truth for user-facing product cases. A case describes an observable user outcome, its prerequisites, and stable step IDs. Coverage is derived from test claims and actual run results; case files do not declare their own automation or coverage.
 
-> **Launcher cutover:** PC-001, S-001 and S-023–S-025 are the maintained V2
-> launcher acceptance cases. They use a sealed release index, request/plan,
-> receipt and snapshot operations. Older scenario files that mention
-> positional `kb-create`, `marketplace.lock`, `kb.config.json`, `validate`,
-> `install-service` or `swap` are historical product/design records, not
-> executable V2 launcher instructions. Their feature intent remains useful;
-> migrate their command-level steps before treating them as release gates.
-> See [QA and E2E strategy](TESTING-STRATEGY.md).
+## Case-first workflow
 
-## How to use
+1. **Catalog:** add or update the user case in `scenarios/` first. Keep `id` stable and assign each step a stable ID such as `S-010.4`. Expected outcomes must be visible and checkable.
+2. **Claims:** tests declare the exact steps they verify next to the test: journey step metadata uses `cases=["S-010.4"]`; Playwright titles include `@S-020.3`; Go and Vitest tests use `// case: S-023.2` immediately above the test.
+3. **Run:** execute the relevant journey or test suite and retain its result JSON. A claim alone does not prove a step passed.
+4. **Coverage:** use `kb qa cases` to compare the catalog, claims, and run results. Steps report PASS, FAIL, NOT RUN, or NOT COVERED; a case passes only when every step passes. Unknown case or step IDs are errors.
 
-### Manual run (pre-release)
+A test claim records its kind (`journey`, `e2e`, or `unit`). A unit claim cannot satisfy a user-flow step in a release case. Release readiness applies to cases with `status: active` and `release: true` for each listed mode. `historical` cases are retained as design records and are not release-gated.
 
-1. Pick the scenarios to run (at minimum all P0)
-2. Go through each step in order, fill in **Actual** and **Status**
-3. Copy `runs/TEMPLATE.md` → `runs/YYYY-MM-DD.md`, paste results there
-4. File bugs for every FAIL, link them in the run log
+## Frontmatter
 
-### Automation status
+Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `status` (`active`/`planned`/`historical`), `release` (`true`/`false`), `modes` (`local`/`secured`), and `surfaces` (`cli`/`studio`/`api`/`agent`). Do not add `automation` or `e2e` fields. Historical duplicate records may include `superseded_by: S-023` to point to the active case that now owns that capability. Keep the superseding case ID valid and stable; `superseded_by` does not change the historical status.
 
-| Value | Meaning |
-|---|---|
-| `manual` | No automated test yet |
-| `e2e-todo` | Planned, not written |
-| `e2e-done` | Covered — link in `e2e` field |
+## Cases
 
-### Priority
+| ID | Title | Persona | Priority | Status | Release | Modes | Surfaces | Superseded by |
+|---|---|---|---|---|---|---|---|---|
+| [PC-001](PC-001-clean-install.md) | Clean V2 install from released artifacts | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [PC-002](PC-002-first-start.md) | PC-002 — Start the V2 host and confirm services | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [PC-003](PC-003-health-diagnostics.md) | PC-003 — Diagnose platform health | solo-developer | P0 | active | false | [local, secured] | [cli] | — |
+| [PC-004](PC-004-service-restart.md) | PC-004 — Restart and recover host services | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
+| [PC-005](PC-005-platform-update.md) | PC-005 — Platform update superseded by S-023 | solo-developer | P0 | historical | false | [local, secured] | [cli] | S-023 |
+| [PC-006](PC-006-platform-rollback.md) | PC-006 — Platform rollback superseded by S-024 | solo-developer | P1 | historical | false | [local, secured] | [cli] | S-024 |
+| [PC-007](PC-007-broken-setup.md) | PC-007 — Broken setup repair superseded by S-025 | solo-developer | P1 | historical | false | [local, secured] | [cli] | S-025 |
+| [S-001](S-001-solo-install-first-run.md) | Solo — install and first verified run | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [S-002](S-002-solo-first-workflow.md) | Solo — First AI Workflow | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [S-003](S-003-solo-plugin-author.md) | S-003 — Scaffold and link a plugin author’s local loop | plugin-author | P1 | active | true | [local, secured] | [cli] | — |
+| [S-004](S-004-team-admin-cloud-deploy.md) | S-004 — Deploy a platform to a remote host | team-admin | P0 | active | false | [local, secured] | [cli] | — |
+| [S-005](S-005-team-member-connect.md) | S-005 — Team member connects to a secured platform | team-member | P1 | active | false | [local, secured] | [cli] | — |
+| [S-006](S-006-workflow-create-yaml.md) | S-006 — Define a workflow from YAML | solo-developer | P0 | active | false | [local, secured] | [cli] | — |
+| [S-007](S-007-workflow-run-with-inputs.md) | S-007 — Run a workflow with inputs | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [S-008](S-008-workflow-cancel.md) | S-008 — Cancel a running workflow | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
+| [S-009](S-009-workflow-history-logs.md) | S-009 — Inspect workflow history and logs | solo-developer | P1 | active | true | [local, secured] | [cli] | — |
+| [S-010](S-010-marketplace-install-plugin.md) | Marketplace — Install plugin | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [S-011](S-011-marketplace-enable-disable.md) | Marketplace — Enable / disable plugin | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
+| [S-012](S-012-marketplace-update-plugin.md) | S-012 — Update a pinned marketplace plugin | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
+| [S-013](S-013-plugin-full-cycle.md) | S-013 — Full plugin authoring cycle superseded by S-003 | plugin-author | P0 | historical | false | [local, secured] | [cli] | S-003 |
+| [S-014](S-014-ai-commit-with-llm.md) | S-014 — Generate and apply an AI commit with a real LLM | solo-developer | P0 | active | false | [local, secured] | [cli] | — |
+| [S-015](S-015-ai-code-review.md) | AI Code Review | solo-developer | P0 | active | false | [local, secured] | [cli] | — |
+| [S-016](S-016-mind-rag-search.md) | Mind — RAG search | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
+| [S-017](S-017-gateway-own-key.md) | S-017 — Configure a project’s own LLM key | solo-developer | P0 | active | false | [local, secured] | [cli, studio] | — |
+| [S-018](S-018-gateway-switch-provider.md) | S-018 — Switch the configured LLM provider | solo-developer | P1 | active | false | [local, secured] | [cli, studio] | — |
+| [S-019](S-019-gateway-usage-quota.md) | S-019 — Cumulative gateway usage and quota (not shipped) | solo-developer | P1 | historical | false | [local, secured] | [cli] | — |
+| [S-020](S-020-studio-first-login.md) | Studio — First login | solo-developer | P0 | active | true | [secured] | [studio] | — |
+| [S-021](S-021-studio-workflow-runs.md) | S-021 — View workflow runs in Studio | solo-developer | P1 | active | true | [local, secured] | [studio] | — |
+| [S-022](S-022-studio-trigger-workflow.md) | S-022 — Trigger a workflow from Studio | solo-developer | P1 | active | true | [local, secured] | [studio] | — |
+| [S-023](S-023-platform-update.md) | Platform — update from a new sealed index | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [S-024](S-024-platform-rollback.md) | Platform — rollback to a V2 snapshot | solo-developer | P1 | active | true | [local, secured] | [cli] | — |
+| [S-025](S-025-diagnose-broken-setup.md) | Platform — diagnose and safely repair a V2 setup | solo-developer | P1 | active | true | [local, secured] | [cli] | — |
+| [S-026](S-026-plugin-publish.md) | S-026 — Publish a plugin to the marketplace registry | plugin-author | P1 | active | false | [local, secured] | [cli] | — |
+| [S-027](S-027-workflow-live-progress.md) | S-027 — Follow live workflow progress | solo-developer | P0 | active | false | [local, secured] | [cli] | — |
+| [S-028](S-028-workflow-real-work.md) | S-028 — Workflow performs real work | solo-developer | P0 | active | false | [local, secured] | [cli] | — |
+| [S-029](S-029-workflow-failure-visibility.md) | S-029 — Workflow failure is visible and actionable | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [S-030](S-030-long-running-command.md) | Plugin command — Long-running, progress visible, cancellable | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
+| [S-031](S-031-session-expired.md) | Session expired — clear prompt to re-login | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
+| [S-032](S-032-workflow-webhook.md) | S-032 — Workflow sends an outbound webhook on completion (not shipped) | solo-developer | P1 | historical | false | [local, secured] | [cli] | — |
+| [S-033](S-033-platform-team-composition-validated-before-ship.md) | S-033 — Validate a platform composition before shipping | platform-team | P0 | active | false | [local, secured] | [cli] | — |
+| [S-034](S-034-platform-team-full-image-matrix-published.md) | Platform Team — Full Image Matrix Published on Release | platform-team | P0 | planned | false | [local, secured] | [cli] | — |
+| [S-035](S-035-team-admin-try-container-five-minutes.md) | Team Admin — Try KB Labs in a Container Without a Rebuild | team-admin | P0 | planned | false | [local, secured] | [cli] | — |
+| [S-036](S-036-team-admin-override-composition-without-rebuild.md) | Team Admin — Override Composition Without Rebuilding | team-admin | P0 | planned | false | [local, secured] | [cli] | — |
+| [S-037](S-037-team-admin-catch-broken-composition-before-deploy.md) | S-037 — Admin composition check superseded by S-033 | team-admin | P0 | historical | false | [local, secured] | [cli] | S-033 |
+| [S-038](S-038-team-admin-missing-secret-fails-fast.md) | Team Admin — Missing Secret Fails Fast Instead of Booting Broken | team-admin | P0 | planned | false | [local, secured] | [cli] | — |
+| [S-039](S-039-agent-apply-json.md) | Agent — apply a V2 request as JSON | solo-developer | P0 | active | true | [local, secured] | [agent, cli] | — |
+| [S-040](S-040-human-install-wizard.md) | Human — complete the V2 install wizard | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [S-041](S-041-local-and-secured-auth.md) | Authentication — local access and secured login | team-member | P0 | active | true | [local, secured] | [cli, studio, api] | — |
+| [S-042](S-042-admin-invite-reset-link.md) | Team Admin — invite a member and issue a reset link | team-admin | P1 | active | true | [secured] | [studio, cli, api] | — |
+| [S-043](S-043-project-registry-and-isolation.md) | Projects — register and isolate project extensions | solo-developer | P0 | active | true | [local, secured] | [cli, studio] | — |
+| [S-044](S-044-workflow-run-history-logs-cron.md) | S-044 — Configure and inspect a workflow cron schedule | solo-developer | P1 | active | true | [local, secured] | [cli, studio, api] | — |
+| [S-045](S-045-project-mcp-tools.md) | MCP — call project-scoped tools | solo-developer | P1 | active | true | [local, secured] | [agent, api] | — |
+| [S-046](S-046-studio-projects-extensions-workflows.md) | S-046 — Manage project plugins and adapters in Studio | solo-developer | P1 | active | true | [local, secured] | [studio] | — |
+| [S-047](S-047-marketplace-install-pin-uninstall.md) | S-047 — Uninstall a marketplace plugin | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
+| [S-048](S-048-project-adapter-binding.md) | Adapters — bind a platform adapter with project config | solo-developer | P1 | active | true | [local, secured] | [cli] | — |
+| [S-049](S-049-plugin-author-scaffold-link-loop.md) | S-049 — Plugin author loop superseded by S-003 | plugin-author | P1 | historical | false | [local] | [cli] | S-003 |
+| [S-050](S-050-platform-uninstall.md) | Platform — uninstall a V2 installation safely | solo-developer | P1 | active | true | [local, secured] | [cli, agent] | — |
+| [S-051](S-051-unified-error-envelope.md) | Errors — show the unified actionable error envelope | solo-developer | P1 | active | true | [local, secured] | [cli, api, agent] | — |
+## Manual run records
 
-| Priority | Meaning |
-|---|---|
-| P0 | Blocks release — must pass before any publish |
-| P1 | Important — must pass before stable tag |
-| P2 | Nice to have — can ship with known issue |
-
----
-
-## Scenario Index
-
-### Install & First Run
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-001](scenarios/S-001-solo-install-first-run.md) | Solo — Install & First Run | solo-developer | P0 | e2e-done |
-| [S-023](scenarios/S-023-platform-update.md) | Platform — Update | solo-developer | P0 | e2e-done |
-| [S-024](scenarios/S-024-platform-rollback.md) | Platform — Rollback | solo-developer | P1 | e2e-done |
-| [S-025](scenarios/S-025-diagnose-broken-setup.md) | Platform — Diagnose broken setup | solo-developer | P1 | e2e-done |
-
-### Workflows
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-002](scenarios/S-002-solo-first-workflow.md) | Solo — First Workflow | solo-developer | P0 | e2e-todo |
-| [S-006](scenarios/S-006-workflow-create-yaml.md) | Workflow — Create from YAML | solo-developer | P0 | e2e-todo |
-| [S-007](scenarios/S-007-workflow-run-with-inputs.md) | Workflow — Run with inputs | solo-developer | P0 | e2e-todo |
-| [S-008](scenarios/S-008-workflow-cancel.md) | Workflow — Cancel running workflow | solo-developer | P1 | e2e-todo |
-| [S-009](scenarios/S-009-workflow-history-logs.md) | Workflow — Run history and logs | solo-developer | P1 | e2e-todo |
-
-### Plugins & Marketplace
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-003](scenarios/S-003-solo-plugin-author.md) | Solo — Create & Run Plugin | plugin-author | P1 | e2e-done |
-| [S-013](scenarios/S-013-plugin-full-cycle.md) | Plugin — Full authoring cycle | plugin-author | P0 | e2e-done |
-| [S-010](scenarios/S-010-marketplace-install-plugin.md) | Marketplace — Install plugin | solo-developer | P0 | manual |
-| [S-011](scenarios/S-011-marketplace-enable-disable.md) | Marketplace — Enable / disable plugin | solo-developer | P1 | manual |
-| [S-012](scenarios/S-012-marketplace-update-plugin.md) | Marketplace — Update plugin | solo-developer | P1 | manual |
-| [S-026](scenarios/S-026-plugin-publish.md) | Plugin — Publish to marketplace | plugin-author | P1 | manual |
-
-### AI Features
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-014](scenarios/S-014-ai-commit-with-llm.md) | AI Commit — with real LLM | solo-developer | P0 | e2e-done |
-| [S-015](scenarios/S-015-ai-code-review.md) | AI Code Review | solo-developer | P0 | manual |
-| [S-016](scenarios/S-016-mind-rag-search.md) | Mind — RAG search | solo-developer | P1 | manual |
-
-### Gateway & Config
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-017](scenarios/S-017-gateway-own-key.md) | Gateway — Connect own LLM key | solo-developer | P0 | manual |
-| [S-018](scenarios/S-018-gateway-switch-provider.md) | Gateway — Switch LLM provider | solo-developer | P1 | manual |
-| [S-019](scenarios/S-019-gateway-usage-quota.md) | Gateway — Usage and quota | solo-developer | P1 | manual |
-
-### Studio
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-020](scenarios/S-020-studio-first-login.md) | Studio — First login | solo-developer | P0 | manual |
-| [S-021](scenarios/S-021-studio-workflow-runs.md) | Studio — View workflow runs | solo-developer | P1 | manual |
-| [S-022](scenarios/S-022-studio-trigger-workflow.md) | Studio — Trigger workflow from UI | solo-developer | P1 | manual |
-
-### Execution & Runtime
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-027](scenarios/S-027-workflow-live-progress.md) | Workflow — Live progress while running | solo-developer | P0 | e2e-todo |
-| [S-028](scenarios/S-028-workflow-real-work.md) | Workflow — Does real work (shell/http/file) | solo-developer | P0 | e2e-todo |
-| [S-029](scenarios/S-029-workflow-failure-visibility.md) | Workflow — Failure is visible and actionable | solo-developer | P0 | e2e-todo |
-| [S-030](scenarios/S-030-long-running-command.md) | Plugin command — Long-running, cancellable | solo-developer | P1 | manual |
-| [S-031](scenarios/S-031-session-expired.md) | Session expired — clear prompt to re-login | solo-developer | P1 | manual |
-| [S-032](scenarios/S-032-workflow-webhook.md) | Workflow — Sends webhook on completion | solo-developer | P1 | manual |
-
-### Team (requires VPS / team setup)
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-004](scenarios/S-004-team-admin-cloud-deploy.md) | Team Admin — Cloud Deploy | team-admin | P0 | manual |
-| [S-005](scenarios/S-005-team-member-connect.md) | Team Member — Connect to Cloud | team-member | P1 | manual |
-
-### Cloud Delivery — Internal (Platform Team ships containers)
-
-How KB Labs builds and publishes correct, complete container images. See
-[ADR-0037](../adr/0037-containers-are-canonical-cloud-delivery.md).
-
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-033](scenarios/S-033-platform-team-composition-validated-before-ship.md) | Platform Team — Composition Validated Before Ship | platform-team | P0 | e2e-done |
-| [S-034](scenarios/S-034-platform-team-full-image-matrix-published.md) | Platform Team — Full Image Matrix Published on Release | platform-team | P0 | manual |
-
-### Cloud Delivery — User-Facing (Admin deploys and consumes containers)
-
-How an admin with no monorepo access deploys and gets value from a published
-image. Same ADR, opposite side of the same mechanism as the section above —
-S-033/S-037 share one command (`kb-create validate`), S-035/S-036 share one
-e2e fixture.
-
-| ID | Title | Persona | Priority | Automation |
-|---|---|---|---|---|
-| [S-035](scenarios/S-035-team-admin-try-container-five-minutes.md) | Team Admin — Try KB Labs in a Container Without a Rebuild | team-admin | P0 | e2e-done |
-| [S-036](scenarios/S-036-team-admin-override-composition-without-rebuild.md) | Team Admin — Override Composition Without Rebuilding | team-admin | P0 | e2e-done |
-| [S-037](scenarios/S-037-team-admin-catch-broken-composition-before-deploy.md) | Team Admin — Catch a Broken Composition Before Deploying | team-admin | P0 | e2e-done |
-| [S-038](scenarios/S-038-team-admin-missing-secret-fails-fast.md) | Team Admin — Missing Secret Fails Fast Instead of Booting Broken | team-admin | P0 | e2e-todo |
-
----
-
-## Run Log
-
-| Date | Scope | Result | Link |
-|---|---|---|---|
-| 2026-06-05 | S-001, S-002 (old binaries) + S-001 (2.94.0) | ❌ FAIL | [runs/2026-06-05.md](runs/2026-06-05.md) |
+Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.

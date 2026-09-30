@@ -1,7 +1,7 @@
 ---
 title: "V2 Installs in CI"
 description: "Apply a sealed KB Labs release index non-interactively with kb-create."
-updatedAt: "2026-09-30"
+updatedAt: "2026-10-01"
 order: 8
 ---
 
@@ -38,12 +38,12 @@ kb-create apply --json --index ./release-index.json \
 ```bash
 kb-create status --platform-root ./ci-platform --json
 kb-create doctor --platform-root ./ci-platform --json
-kb-create uninstall --platform-root ./ci-platform
+kb-create uninstall --platform-root ./ci-platform --yes
 ```
 
 The `--json` flag makes status and doctor suitable for automation. Keep the
 platform root isolated to the job or runner so uninstall cannot affect a
-shared installation.
+shared installation. Non-interactive uninstall requires `--yes`.
 
 ## Installation prerequisites and recovery
 

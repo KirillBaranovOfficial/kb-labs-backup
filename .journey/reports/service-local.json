@@ -1,0 +1,97 @@
+{
+  "schema": "kb.service-journey/v1",
+  "run_id": "09567cf5-f6ee-446a-8b8d-c4cc84fc4fe4",
+  "started_at": "2026-09-30T21:20:59.324635+00:00",
+  "duration_seconds": 0.77,
+  "status": "FAIL",
+  "first_failure": {
+    "name": "Studio fresh-host browser journey",
+    "capability": "studio",
+    "mode": "local",
+    "status": "FAIL",
+    "duration_seconds": 180.043,
+    "message": "Playwright timed out after 180s"
+  },
+  "steps": [
+    {
+      "name": "gateway readiness",
+      "capability": "gateway",
+      "mode": "local",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "project registration",
+      "capability": "projects",
+      "mode": "local",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "workflow health",
+      "capability": "workflow",
+      "mode": "local",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "workflow discovery",
+      "capability": "workflow",
+      "mode": "local",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "workflow execution endpoint",
+      "capability": "workflow",
+      "mode": "local",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "project-scoped MCP tools/list",
+      "capability": "mcp",
+      "mode": "local",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "Studio shell",
+      "capability": "studio",
+      "mode": "local",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "Studio project API",
+      "capability": "studio",
+      "mode": "local",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "marketplace registry",
+      "capability": "marketplace",
+      "mode": "local",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "Studio fresh-host browser journey",
+      "capability": "studio",
+      "mode": "local",
+      "status": "FAIL",
+      "duration_seconds": 180.043,
+      "message": "Playwright timed out after 180s"
+    }
+  ]
+}

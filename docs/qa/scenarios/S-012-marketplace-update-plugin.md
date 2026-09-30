@@ -1,48 +1,27 @@
 ---
 id: S-012
-title: Marketplace — Update plugin
+title: S-012 — Update a pinned marketplace plugin
 persona: solo-developer
+area: marketplace
 priority: P1
-automation: manual
-e2e: —
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer updates an installed plugin to a newer version. Commands continue to work after update.
+
+A project user updates an installed plugin to a newer available version and verifies the new pin and command.
 
 ## Prerequisites
-- [ ] Plugin installed at older version
-- [ ] Newer version available in registry
 
----
+- [ ] Registry contains two versions of a plugin; project currently has the older version pinned.
 
 ## Steps
 
-### Phase 1 — Check for updates
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | `kb marketplace plugins list --outdated` (if exists) | Shows plugins with newer versions available | | ⬜ |
-| 2 | `kb marketplace plugins list` | Shows current vs latest version per plugin | | ⬜ |
-
-### Phase 2 — Update
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 3 | `kb marketplace update <plugin-name>` | Downloads new version, swaps atomically | | ⬜ |
-| 4 | `cat .kb/marketplace.lock` | Version bumped, old integrity replaced | | ⬜ |
-| 5 | `kb --help` | Plugin commands still visible after update | | ⬜ |
-| 6 | Run a command from updated plugin | Works correctly | | ⬜ |
-
-### Phase 3 — Update all
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 7 | `kb marketplace update` (no args) | Updates all outdated plugins | | ⬜ |
-| 8 | Rollback if update fails mid-way | Previous version still works | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-012.1 | Run `kb marketplace update <package-id>` | Update completes or reports the available version when explicitly requested. |
+| S-012.2 | Run `kb marketplace plugins list` and inspect `.kb/marketplace.lock` | Project records the resolved exact version and integrity. |
+| S-012.3 | Invoke a command from the updated plugin | Command remains available and returns its documented result. |

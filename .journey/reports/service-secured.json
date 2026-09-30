@@ -1,0 +1,105 @@
+{
+  "schema": "kb.service-journey/v1",
+  "run_id": "ec300c58-444c-4185-9869-af929d406794",
+  "started_at": "2026-09-30T21:26:46.763318+00:00",
+  "duration_seconds": 1.038,
+  "status": "FAIL",
+  "first_failure": {
+    "name": "Studio fresh-host browser journey",
+    "capability": "studio",
+    "mode": "secured",
+    "status": "FAIL",
+    "duration_seconds": 180.022,
+    "message": "Playwright timed out after 180s"
+  },
+  "steps": [
+    {
+      "name": "gateway readiness",
+      "capability": "gateway",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "secured admin CLI login",
+      "capability": "auth.secured",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "project registration",
+      "capability": "projects",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "workflow health",
+      "capability": "workflow",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "workflow discovery",
+      "capability": "workflow",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "workflow execution endpoint",
+      "capability": "workflow",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "project-scoped MCP tools/list",
+      "capability": "mcp",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "Studio shell",
+      "capability": "studio",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "Studio project API",
+      "capability": "studio",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "marketplace registry",
+      "capability": "marketplace",
+      "mode": "secured",
+      "status": "PASS",
+      "duration_seconds": 0.0,
+      "message": "passed"
+    },
+    {
+      "name": "Studio fresh-host browser journey",
+      "capability": "studio",
+      "mode": "secured",
+      "status": "FAIL",
+      "duration_seconds": 180.022,
+      "message": "Playwright timed out after 180s"
+    }
+  ]
+}

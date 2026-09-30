@@ -31,6 +31,17 @@ class FakeResponse:
 
 
 class StudioJourneyTests(unittest.TestCase):
+    def test_runner_playwright_version_matches_studio_e2e_lockfile(self):
+        repository = Path(__file__).parents[2]
+        studio_lock = (repository / "pnpm-lock.yaml").read_text().split("\n  e2e/studio:\n", 1)[1]
+        studio_lock = studio_lock.split("\n  e2e/tests:\n", 1)[0]
+        playwright_lock = studio_lock.split("      '@playwright/test':\n", 1)[1]
+        expected_version = playwright_lock.splitlines()[1].strip().removeprefix("version: ")
+        dockerfile = (Path(__file__).parent / "Dockerfile.runner").read_text()
+
+        self.assertIn("FROM node:24-bookworm", dockerfile)
+        self.assertIn(f"@playwright/test@{expected_version}", dockerfile)
+
     def test_secured_member_is_created_through_invite_and_activation(self):
         responses = [
             FakeResponse({"accessToken": "admin-token"}),

@@ -2,9 +2,12 @@
 id: S-030
 title: Plugin command — Long-running, progress visible, cancellable
 persona: solo-developer
+area: plugins
 priority: P1
-automation: manual
-e2e: —
+status: active
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
@@ -21,25 +24,25 @@ Developer runs a command that takes time. Terminal shows progress, Ctrl+C cancel
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 1 | `kb review run --scope=all` | Progress indicator from first second | Spinner visible immediately: `⠋ Running heuristic analysis...` | ✅ |
-| 2 | Output streams incrementally | Something updates regularly | Spinner updates, result in ~3.5s | ✅ |
-| 3 | User can tell working vs hung | Spinner/dots | Spinner present | ✅ |
+| S-030.1 | `kb review run --scope=all` | Progress indicator from first second | Spinner visible immediately: `⠋ Running heuristic analysis...` | ✅ |
+| S-030.2 | Output streams incrementally | Something updates regularly | Spinner updates, result in ~3.5s | ✅ |
+| S-030.3 | User can tell working vs hung | Spinner/dots | Spinner present | ✅ |
 
 ### Phase 2 — Ctrl+C
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 4 | Ctrl+C during review | Graceful exit with message | Process terminates (SIGINT sent) | ✅ |
-| 5 | No orphaned processes | No zombie node processes | Service processes remain (expected), review process gone | ✅ |
-| 6 | Terminal prompt restored | Not stuck | Prompt returns | ✅ |
-| — | Worker EPIPE after Ctrl+C | Silent | `[Worker worker_xxx] Uncaught exception: Error: write EPIPE` printed to log | ⚠️ |
+| S-030.4 | Ctrl+C during review | Graceful exit with message | Process terminates (SIGINT sent) | ✅ |
+| S-030.5 | No orphaned processes | No zombie node processes | Service processes remain (expected), review process gone | ✅ |
+| S-030.6 | Terminal prompt restored | Not stuck | Prompt returns | ✅ |
+| S-030.7 | Worker EPIPE after Ctrl+C | Silent | `[Worker worker_xxx] Uncaught exception: Error: write EPIPE` printed to log | ⚠️ |
 
 ### Phase 3 — Timeout and concurrent
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 7 | Command hangs beyond timeout | Times out with message | Not tested | ⬜ |
-| 9 | Two parallel `kb review run` | Both complete | Not tested | ⬜ |
+| S-030.8 | Command hangs beyond timeout | Times out with message | Not tested | ⬜ |
+| S-030.9 | Two parallel `kb review run` | Both complete | Not tested | ⬜ |
 
 ---
 

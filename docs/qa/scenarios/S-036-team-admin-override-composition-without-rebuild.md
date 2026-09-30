@@ -2,9 +2,12 @@
 id: S-036
 title: Team Admin — Override Composition Without Rebuilding
 persona: team-admin
+area: platform-core
 priority: P0
-automation: e2e-done
-e2e: e2e/deploy/config-override/test.sh
+status: planned
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
@@ -31,15 +34,15 @@ proposition of ADR-0037 ("composition is injected, not baked").
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 1 | `docker run -v ./my-kb.config.json:/app/.kb/kb.config.json:ro <image>` | Starts using the mounted config, not the image's baked default | | ⬜ |
-| 2 | Change an adapter in the mounted file, restart the container (no rebuild) | New adapter takes effect immediately | | ⬜ |
+| S-036.1 | `docker run -v ./my-kb.config.json:/app/.kb/kb.config.json:ro <image>` | Starts using the mounted config, not the image's baked default | | ⬜ |
+| S-036.2 | Change an adapter in the mounted file, restart the container (no rebuild) | New adapter takes effect immediately | | ⬜ |
 
 ### Phase 2 — Partial override (lock still needs the package)
 
 | # | Action | Expected | Actual | Status |
 |---|--------|----------|--------|--------|
-| 3 | Mount a config naming an adapter whose package is NOT in the image's `node_modules` | Container starts (config accepted) but the specific adapter fails to load | | ⬜ |
-| 4 | This is caught before deploy, not discovered here | Confirm `kb-create validate --lock <image's lock>` on the same config fails first — see [S-037](S-037-team-admin-catch-broken-composition-before-deploy.md) | | ⬜ |
+| S-036.3 | Mount a config naming an adapter whose package is NOT in the image's `node_modules` | Container starts (config accepted) but the specific adapter fails to load | | ⬜ |
+| S-036.4 | This is caught before deploy, not discovered here | Confirm `kb-create validate --lock <image's lock>` on the same config fails first — see [S-037](S-037-team-admin-catch-broken-composition-before-deploy.md) | | ⬜ |
 
 ---
 

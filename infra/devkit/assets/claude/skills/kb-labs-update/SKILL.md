@@ -85,6 +85,6 @@ and switch to the `kb-labs-troubleshoot` skill.
   will desynchronise the install.
 - Never delete `.kb/kb.config.json` to "start fresh" — it is the main platform
   config and cannot be trivially recreated.
-- If the user wants to downgrade, the cleanest path is `kb-create uninstall`
+- If the user wants to downgrade, the cleanest path is `kb-create uninstall --yes`
   followed by `kb-create` at the desired version. Warn them that project state
   under `.kb/` is preserved by default but plugin data may be incompatible.

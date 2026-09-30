@@ -1,47 +1,19 @@
 ---
 id: S-019
-title: Gateway — Usage and quota
+title: S-019 — Cumulative gateway usage and quota (not shipped)
 persona: solo-developer
+area: gateway
 priority: P1
-automation: manual
-e2e: —
+status: historical
+release: false
+modes: [local, secured]
+surfaces: [cli]
 ---
 
 ## Goal
-Developer can view how many LLM requests they've used and what their quota is.
 
-## Prerequisites
-- [ ] KB Labs installed with KB Labs Gateway credentials
-- [ ] At least 1 LLM request made (from S-014 or similar)
+Historical product-design record for account-wide token usage and quota reporting.
 
----
+## Removed capability and evidence
 
-## Steps
-
-### Phase 1 — View usage
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 1 | `kb gateway usage` (or similar command) | Shows requests used / quota remaining | | ⬜ |
-| 2 | `kb gateway usage --json` | Machine-readable: `{used, limit, resetAt}` | | ⬜ |
-| 3 | Usage increments after each LLM call | Count goes up | | ⬜ |
-
-### Phase 2 — Quota enforcement
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 4 | Approach quota limit | Warning shown before hitting limit | | ⬜ |
-| 5 | Exceed quota | Clear message: "quota exceeded, upgrade or use own key" — not silent 401 | | ⬜ |
-
-### Phase 3 — Studio view (if implemented)
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| 6 | Open Studio → Gateway / Usage section | Usage chart visible | | ⬜ |
-| 7 | Data matches CLI output | Consistent numbers | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+The current gateway exposes token usage metadata on individual LLM responses, but does not provide a cumulative usage or quota capability. The gateway route implementation returns per-response usage (`services/gateway/app/src/llm/routes.ts:177-180,211-214`); repository QA observations record that no `kb gateway usage` command or usage API endpoint exists (`docs/qa/runs/2026-06-05.md:27-28,57,156-159`). This case remains historical until cumulative usage/quota is implemented.
