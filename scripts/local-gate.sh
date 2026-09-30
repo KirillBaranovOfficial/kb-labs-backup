@@ -120,12 +120,17 @@ cleanup() {
   fi
   if [[ -n "${COLIMA_STARTED:-}" ]]; then colima stop || STATUS=1; fi
   if [[ -n "${TEMP_HOME:-}" ]]; then chmod -R u+w "$TEMP_HOME" 2>/dev/null || true; rm -rf "$TEMP_HOME"; fi
-  python3 - "$JSON" "$START" "$FIRST_FAILURE" "$STATUS" "${STAGES[@]}" <<'PY'
-import json,sys
+  python3 - "$JSON" "$START" "$FIRST_FAILURE" "$STATUS" "$OUT/capabilities.json" "${STAGES[@]}" <<'PY'
+import json,os,sys
 path,start,first,status,*stages=sys.argv[1:]
-json.dump({'started_at':start,'status':'PASS' if status=='0' else 'FAIL','first_failure':first or None,'stages':[{'name':x.split('|',1)[0],'status':x.split('|',1)[1]} for x in stages]},open(path,'w'),indent=2)
+capability_path, *stages = stages
+capability_report=json.load(open(capability_path)) if os.path.isfile(capability_path) else None
+json.dump({'started_at':start,'status':'PASS' if status=='0' else 'FAIL','first_failure':first or None,
+           'stages':[{'name':x.split('|',1)[0],'status':x.split('|',1)[1]} for x in stages],
+           'capabilities': capability_report.get('capabilities',[]) if capability_report else [],
+           'failed_steps':[item['first_failure'] for item in capability_report.get('capabilities',[]) if item.get('first_failure')] if capability_report else []},open(path,'w'),indent=2)
 PY
-  { echo "# Local gate report"; echo; echo "Started: $START"; echo "Status: $([[ $STATUS == 0 ]] && echo PASS || echo FAIL)"; echo "First failing step: ${FIRST_FAILURE:-none}"; echo; echo '| Stage | Status |'; echo '|---|---|'; for item in "${STAGES[@]}"; do printf '| %s | %s |\n' "${item%%|*}" "${item##*|}"; done; echo; echo "Artifacts: $OUT"; } > "$REPORT"
+  { echo "# Local gate report"; echo; echo "Started: $START"; echo "Status: $([[ $STATUS == 0 ]] && echo PASS || echo FAIL)"; echo "First failing stage: ${FIRST_FAILURE:-none}"; echo; echo '| Stage | Status |'; echo '|---|---|'; for item in "${STAGES[@]}"; do printf '| %s | %s |\n' "${item%%|*}" "${item##*|}"; done; if [[ -f "$OUT/capabilities.md" ]]; then echo; cat "$OUT/capabilities.md"; fi; echo; echo "Artifacts: $OUT"; } > "$REPORT"
   [[ "$STATUS" == 0 ]] || result=1
   exit "$result"
 }
