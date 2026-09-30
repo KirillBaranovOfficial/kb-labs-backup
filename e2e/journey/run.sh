@@ -36,7 +36,7 @@ fi
 
 mkdir -p .journey/reports
 rm -f .journey/reports/journey-summary.md
-"${COMPOSE[@]}" build runner
+"${COMPOSE[@]}" build publisher runner
 "${COMPOSE[@]}" up -d --wait verdaccio
 "${COMPOSE[@]}" run --rm publisher
 
@@ -60,14 +60,17 @@ if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
     *) echo "Unknown KB_JOURNEY_ONLY value: $KB_JOURNEY_ONLY" >&2; exit 2 ;;
   esac
 else
-  while IFS= read -r scenario_file; do
-    scenario=$(basename "$scenario_file" .json)
-    [[ "$scenario" == custom ]] && continue
-    run_journey agent "$scenario" default
-  done < <(find tools/kb-create/v2/scenario/scenarios -maxdepth 1 -name '*.json' -print | sort)
+  # Exercise repeat/install and PTY paths before the remaining scenarios use
+  # the 2 GiB VM's memory budget. Every runner still starts with a clean HOME.
+  run_journey agent commit default
   run_journey agent commit input
   run_journey human explore human-default
   run_journey human commit human-nondefault
+  while IFS= read -r scenario_file; do
+    scenario=$(basename "$scenario_file" .json)
+    [[ "$scenario" == custom || "$scenario" == commit ]] && continue
+    run_journey agent "$scenario" default
+  done < <(find tools/kb-create/v2/scenario/scenarios -maxdepth 1 -name '*.json' -print | sort)
   for variant in wrong-node occupied-port relative-path; do
     run_journey agent commit "$variant"
   done

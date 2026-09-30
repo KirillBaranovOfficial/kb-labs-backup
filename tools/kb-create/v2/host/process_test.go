@@ -145,12 +145,12 @@ func TestPortInUse(t *testing.T) {
 		t.Fatal("expected early port conflict")
 	} else {
 		var typed *contracts.LauncherError
-		if !errors.As(err, &typed) || typed.Code != "KB_HOST_PORT_IN_USE" || typed.Details["port"] != fmt.Sprint(f.port) || typed.Details["pid"] == "" || typed.Details["command"] == "" {
+		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Details["port"] != fmt.Sprint(f.port) || typed.Details["pid"] == "" || typed.Details["command"] == "" {
 			t.Fatalf("port diagnostic lacks owner details: %#v", err)
 		}
 	}
 	_, err = f.runner.Start(context.Background())
-	if code := launcherCode(t, err); code != "KB_HOST_PORT_IN_USE" {
+	if code := launcherCode(t, err); code != "KB_INSTALL_PORT_IN_USE" {
 		t.Fatalf("code %s", code)
 	}
 	if _, statErr := os.Stat(f.runner.State.HostPID()); !os.IsNotExist(statErr) {

@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	"sort"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/doctor"
+	"github.com/kb-labs/create/v2/installed"
 )
 
 type Runner interface {
@@ -83,9 +86,40 @@ func (p Pnpm) Install(items []contracts.Artifact) error {
 		return err
 	}
 	if len(specs) == 0 {
-		return nil
+		return p.materializeManifests(items)
 	}
-	return p.run("add", specs...)
+	if err := p.run("add", specs...); err != nil {
+		return err
+	}
+	return p.materializeManifests(items)
+}
+
+func (p Pnpm) materializeManifests(items []contracts.Artifact) error {
+	for _, item := range items {
+		if item.Kind == "binary" {
+			continue
+		}
+		manifest := installed.Manifest{Schema: installed.ManifestSchema, ID: item.ID, Package: item.Package, Version: item.Version}
+		for _, requirement := range item.Config {
+			manifest.Requirements = append(manifest.Requirements, doctor.Requirement{
+				ID: requirement.ID, Path: requirement.Path, Required: requirement.Required,
+				Secret: requirement.Secret, Hint: requirement.Hint, Env: requirement.Env,
+				Services: append([]string(nil), requirement.Services...), Default: []byte(requirement.Default),
+			})
+		}
+		data, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return fmt.Errorf("encode installed manifest for %s: %w", item.Package, err)
+		}
+		path := filepath.Join(p.Root, "node_modules", filepath.FromSlash(item.Package), "kb-create.manifest.json")
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			return fmt.Errorf("prepare installed manifest for %s: %w", item.Package, err)
+		}
+		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+			return fmt.Errorf("write installed manifest for %s: %w", item.Package, err)
+		}
+	}
+	return nil
 }
 func (p Pnpm) Restore() error {
 	if err := p.prepare(); err != nil {
@@ -147,6 +181,12 @@ func (p Pnpm) run(command string, specs ...string) error {
 		log = io.Discard
 	}
 	if err := runner.Run(context.Background(), log, "pnpm", args...); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() < 0 {
+			failure := contracts.NewLauncherError(contracts.CodePackageManagerKilled, "The package manager was killed, likely out of memory. The tuned install peaked at 992.3 MiB RSS (the unbounded run reached 1.14 GiB); this install requires 1.20 GiB available memory.", "Free memory, then rerun `kb-create install`.", err)
+			failure.Details = map[string]string{"requiredAvailableMemory": "1.20 GiB", "unboundedPeakMemory": "1.14 GiB", "tunedPeakMemory": "992.3 MiB"}
+			return failure
+		}
 		return fmt.Errorf("pnpm %s exact artifacts: %w", command, err)
 	}
 	return nil
@@ -162,7 +202,23 @@ func (p Pnpm) prepare() error {
 	if err := p.preparePackageJSON(); err != nil {
 		return err
 	}
+	if err := p.prepareNpmrc(); err != nil {
+		return err
+	}
 	return p.prepareWorkspaceYAML()
+}
+
+func (p Pnpm) prepareNpmrc() error {
+	if p.Registry == "" {
+		return nil
+	}
+	path := filepath.Join(p.Root, ".npmrc")
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.WriteFile(path, []byte("registry="+p.Registry+"\n"), 0o600)
 }
 
 func (p Pnpm) preparePackageJSON() error {
@@ -195,6 +251,10 @@ func (p Pnpm) prepareWorkspaceYAML() error {
 		return err
 	}
 	var buf bytes.Buffer
+	buf.WriteString("autoInstallPeers: false\n")
+	buf.WriteString("childConcurrency: 1\n")
+	buf.WriteString("networkConcurrency: 4\n")
+	buf.WriteString("sideEffectsCache: false\n")
 	buf.WriteString("allowBuilds:\n")
 	for _, name := range approvedNativeBuilds {
 		fmt.Fprintf(&buf, "  %q: true\n", name)
@@ -303,7 +363,7 @@ func (p Pnpm) tarball(item contracts.Artifact) (string, error) {
 		return "", err
 	}
 	if fmt.Sprintf("%x", sha256.Sum256(data)) != item.SHA256 {
-		return "", fmt.Errorf("package %s checksum mismatch", item.ID)
+		return "", fmt.Errorf("package %s checksum mismatch: expected %s, got %x", item.ID, item.SHA256, sha256.Sum256(data))
 	}
 	return path, nil
 }

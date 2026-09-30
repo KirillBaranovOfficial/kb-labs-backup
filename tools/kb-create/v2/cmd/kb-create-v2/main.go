@@ -229,7 +229,7 @@ func (i invocation) run(output *os.File) int {
 	}
 	if operation == "apply" || operation == "update" {
 		if err := i.ensureNode(); err != nil {
-			write(output, failure("KB_INSTALL_TOOLCHAIN_UNSUPPORTED", "Node.js preflight failed", "install Node.js 24.x, then rerun kb-create install", err))
+			write(output, failure(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.", "Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`).", err))
 			return 2
 		}
 	}
@@ -275,6 +275,16 @@ func (i invocation) run(output *os.File) int {
 		return 2
 	}
 	if operation == "apply" {
+		root := response.Plan.Request.PlatformRoot
+		if err := preflight.CheckInstallResources(root); err != nil {
+			var typed *contracts.LauncherError
+			if errors.As(err, &typed) {
+				write(output, map[string]any{"ok": false, "error": typed})
+			} else {
+				write(output, failure(contracts.CodeResourceCheckFailed, "The launcher could not check available memory and disk space.", "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again.", err))
+			}
+			return 2
+		}
 		if err := host.CheckPorts(*response.Plan); err != nil {
 			write(output, map[string]any{"ok": false, "error": asLauncherError(err)})
 			return 2
@@ -383,7 +393,7 @@ func (i invocation) runInstall(output *os.File) int {
 		humanOut = i.InstallOutput
 	}
 	if err := i.ensureNode(); err != nil {
-		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_TOOLCHAIN_UNSUPPORTED", "Node.js 24.x is required before installation.", "Install Node.js 24, then run `kb-create install`.", err))
+		writeHumanFailure(humanOut, contracts.NewLauncherError(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.", "Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`).", err))
 		return 2
 	}
 	home, err := os.UserHomeDir()
@@ -405,6 +415,15 @@ func (i invocation) runInstall(output *os.File) int {
 	root, err = filepath.Abs(root)
 	if err != nil {
 		writeHumanFailure(humanOut, contracts.NewLauncherError(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `kb-create install --platform-root PATH`.", err))
+		return 2
+	}
+	if err := preflight.CheckInstallResources(root); err != nil {
+		var typed *contracts.LauncherError
+		if errors.As(err, &typed) {
+			writeHumanFailure(humanOut, typed)
+		} else {
+			writeHumanFailure(humanOut, contracts.NewLauncherError(contracts.CodeResourceCheckFailed, "The launcher could not check available memory and disk space.", "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again.", err))
+		}
 		return 2
 	}
 	phaseStart := time.Now()
@@ -704,6 +723,9 @@ func failure(code, message, hint string, cause error) map[string]any {
 }
 
 func writeFailureDossier(output *os.File, plan contracts.ResolvedInstallPlan, correlationID, logPath string, cause error) {
-	launcherError := contracts.NewLauncherError(contracts.CodeApplyFailed, "V2 operation did not reach a verified installation", "Inspect the local log and diagnostic dossier, then fix the reported prerequisite or run doctor --fix.", cause)
+	var launcherError *contracts.LauncherError
+	if !errors.As(cause, &launcherError) {
+		launcherError = contracts.NewLauncherError(contracts.CodeApplyFailed, "V2 operation did not reach a verified installation", "Inspect the local log and diagnostic dossier, then fix the reported prerequisite or run doctor --fix.", cause)
+	}
 	writeLauncherFailure(output, plan.Request.PlatformRoot, correlationID, logPath, launcherError, &plan)
 }

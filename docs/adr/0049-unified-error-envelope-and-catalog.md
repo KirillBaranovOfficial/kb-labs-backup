@@ -43,6 +43,15 @@ message/hint templates), source at
 generated (`go generate`) and a test catches a stale file. Documentation pages
 are generated from it.
 
+Installer preflight uses `KB_INSTALL_NODE_VERSION` for an unsupported Node.js
+major, `KB_INSTALL_MEMORY_INSUFFICIENT` when available memory is below 1.20 GiB,
+the measured 992.3 MiB pnpm peak plus 236.5 MiB headroom, and `KB_INSTALL_NO_DISK_SPACE`
+when less than 2 GiB is free on the platform root filesystem. The disk reserve
+is more than four times the measured 446.7 MiB installed root. `KB_INSTALL_PORT_IN_USE`
+reports a required port already held by another process. A package manager
+terminated by a signal uses `KB_INSTALL_PACKAGE_MANAGER_KILLED` so low-memory
+termination is diagnosable.
+
 **Writing rules.** A message answers in order: what happened, why, what to do;
 without an answer to the third the error is not ready. One sentence about the
 user, concrete cause (port, path, version, plugin), an executable `hint`,

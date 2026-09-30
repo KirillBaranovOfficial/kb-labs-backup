@@ -79,7 +79,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 	}
 	graph.PlatformVersion, graph.Profile = platform.Version, profileName(request.ServiceProfile)
-	artifacts := []contracts.Artifact{{ID: platform.ID, Kind: "platform", Package: platform.Package, Version: platform.Version, SHA256: platform.SHA256, Tarball: platform.Tarball}}
+	artifacts := []contracts.Artifact{{ID: platform.ID, Kind: "platform", Package: platform.Package, Version: platform.Version, SHA256: platform.SHA256, Tarball: platform.Tarball, Config: platform.Config}}
 	for _, member := range platform.Members {
 		item := artifact(member, "platform-member")
 		item.Registry = registryKind(source, member.Package)
@@ -223,7 +223,7 @@ func registryKind(source catalog.Catalog, pkg string) string {
 }
 
 func artifact(c catalog.Component, kind string) contracts.Artifact {
-	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, Tarball: c.Tarball}
+	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, Tarball: c.Tarball, Config: c.Config}
 }
 func findPlatform(items []catalog.PlatformBundle, version string) (catalog.PlatformBundle, bool) {
 	for _, v := range items {

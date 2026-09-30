@@ -84,6 +84,42 @@
       "hint": "Use Node.js 24.x and pnpm 11.x, or update the runtime and retry."
     },
     {
+      "code": "KB_INSTALL_NODE_VERSION",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "Node.js {version} is unsupported; KB Labs requires Node.js 24.x.",
+      "hint": "Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`)."
+    },
+    {
+      "code": "KB_INSTALL_MEMORY_INSUFFICIENT",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": true,
+      "message": "The platform install needs at least {minimum} of available memory; {available} is available.",
+      "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again."
+    },
+    {
+      "code": "KB_INSTALL_RESOURCE_CHECK_FAILED",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": true,
+      "message": "The launcher could not check available memory and disk space.",
+      "hint": "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again."
+    },
+    {
+      "code": "KB_INSTALL_PACKAGE_MANAGER_KILLED",
+      "area": "install",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": true,
+      "message": "The package manager was killed, likely out of memory. The tuned install peaked at 992.3 MiB RSS (the unbounded run reached 1.14 GiB); this install requires 1.20 GiB available memory.",
+      "hint": "Free memory, then rerun `kb-create install`."
+    },
+    {
       "code": "KB_INSTALL_OPERATION_INVALID",
       "area": "install",
       "stage": "preflight",
@@ -318,13 +354,13 @@
       "hint": "Use \"kb-create status\" or \"kb-create restart\"."
     },
     {
-      "code": "KB_HOST_PORT_IN_USE",
-      "area": "host",
-      "stage": "start",
+      "code": "KB_INSTALL_PORT_IN_USE",
+      "area": "install",
+      "stage": "preflight",
       "severity": "error",
       "retryable": false,
       "message": "Port {port} is used by another application.",
-      "hint": "Stop the application that uses the port, or change the host port in the installation config, then run \"kb-create start\" again."
+      "hint": "Stop the application using the port, then run `kb-create install` again."
     },
     {
       "code": "KB_HOST_START_FAILED",

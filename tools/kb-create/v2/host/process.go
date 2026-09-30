@@ -79,7 +79,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		_ = conn.Close()
 		_, port, _ := net.SplitHostPort(address)
 		owner := listenerOwner(port)
-		return Info{}, hostError("KB_HOST_PORT_IN_USE", "Port "+port+" is already in use.", "Stop the application using this port, then run `kb-create install` again.", nil, map[string]string{"port": port, "address": address, "pid": owner.PID, "command": owner.Command})
+		return Info{}, hostError(contracts.CodePortInUse, "Port "+port+" is already in use.", "Stop the application using this port, then run `kb-create install` again.", nil, map[string]string{"port": port, "address": address, "pid": owner.PID, "command": owner.Command})
 	}
 	logFile, err := os.OpenFile(r.State.HostLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -265,7 +265,7 @@ func CheckPorts(plan contracts.ResolvedInstallPlan) error {
 			continue
 		}
 		owner := listenerOwner(port)
-		return hostError("KB_HOST_PORT_IN_USE", "Port "+port+" required by "+purpose+" is already in use.", "Stop the application using this port, then run `kb-create install` again.", err, map[string]string{"port": port, "pid": owner.PID, "command": owner.Command, "purpose": purpose})
+		return hostError(contracts.CodePortInUse, "Port "+port+" required by "+purpose+" is already in use.", "Stop the application using this port, then run `kb-create install` again.", err, map[string]string{"port": port, "pid": owner.PID, "command": owner.Command, "purpose": purpose})
 	}
 	return nil
 }

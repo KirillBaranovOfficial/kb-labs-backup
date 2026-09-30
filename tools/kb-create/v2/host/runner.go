@@ -72,7 +72,7 @@ func NewRunner(platformRoot string, state State) (*ProcessRunner, error) {
 // committed: the host starts under a scratch state directory (so it never
 // touches the pid file of a real, supervised host), must become healthy, and is
 // stopped again. A host that is already running on the same port fails the
-// probe with KB_HOST_PORT_IN_USE, which is the right answer.
+// probe with KB_INSTALL_PORT_IN_USE, which is the right answer.
 type Prober struct {
 	PlatformRoot string
 	State        State

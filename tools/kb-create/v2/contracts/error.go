@@ -60,6 +60,11 @@ const (
 const (
 	CodeOperationInvalid       = "KB_INSTALL_OPERATION_INVALID"
 	CodeToolchainUnsupported   = "KB_INSTALL_TOOLCHAIN_UNSUPPORTED"
+	CodeNodeVersion            = "KB_INSTALL_NODE_VERSION"
+	CodeMemoryInsufficient     = "KB_INSTALL_MEMORY_INSUFFICIENT"
+	CodeResourceCheckFailed    = "KB_INSTALL_RESOURCE_CHECK_FAILED"
+	CodePackageManagerKilled   = "KB_INSTALL_PACKAGE_MANAGER_KILLED"
+	CodePortInUse              = "KB_INSTALL_PORT_IN_USE"
 	CodeIncompatibleComponents = "KB_INSTALL_INCOMPATIBLE_COMPONENTS"
 	CodeProviderUnresolved     = "KB_INSTALL_PROVIDER_UNRESOLVED"
 	CodeProviderAmbiguous      = "KB_INSTALL_PROVIDER_AMBIGUOUS"
