@@ -1,28 +1,31 @@
 ---
 id: S-017
-title: S-017 — Configure a project’s own LLM key
+title: Configure an LLM adapter with the user's own key
 persona: solo-developer
 area: gateway
-priority: P0
+priority: P1
 status: active
 release: false
 modes: [local, secured]
-surfaces: [cli, studio]
+surfaces: [cli]
 ---
 
 ## Goal
 
-A developer configures an LLM adapter key through the supported config layer and makes an LLM-backed operation available.
+A developer stores an LLM adapter selection and secret reference at platform scope so LLM-backed project features can use the developer's provider.
 
 ## Prerequisites
 
-- [ ] OpenAI adapter installed and a valid key supplied through the local secret environment.
+- [ ] The LLM adapter package is installed at platform scope.
+- [ ] `OPENAI_API_KEY` is available to the platform process through the local secret environment.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-017.1 | Set `OPENAI_API_KEY` in the local secret environment | Secret is available to the platform process and is not written in plain text to project config. |
-| S-017.2 | Configure the LLM adapter through Studio’s adapter form or `kb config set` for the appropriate scope | Effective adapter selection and key reference are saved at the selected scope. |
-| S-017.3 | Run an LLM-backed command | Request succeeds using the configured provider. |
-| S-017.4 | Inspect user config and command output | Key value is not printed or persisted in plain text. |
+| S-017.1 | Run `kb config set --scope platform platform.adapters.llm @kb-labs/adapters-openai` | The platform user config records `@kb-labs/adapters-openai` at `platform.adapters.llm`. |
+| S-017.2 | Run `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'` | The platform user config stores the literal environment reference, not the key value. |
+| S-017.3 | Run an LLM-backed command in a project using the platform config | The request uses the configured LLM adapter. |
+| S-017.4 | Inspect the platform config and command output | Neither contains the resolved API key. |
+
+LLM configuration is optional for platform onboarding, so this case is not a core release gate.
