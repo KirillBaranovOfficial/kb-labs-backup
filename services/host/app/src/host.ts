@@ -428,7 +428,10 @@ export async function createHostConfig(
         { ...ctx, logger: ctx.logger.forComponent("gateway") },
         {
           configure: (config) =>
-            applyHostGatewayPolicy(config, { auth: settings.auth, upstreams }),
+            applyHostGatewayPolicy(
+              { ...config, studio: config.studio ?? { enabled: true } },
+              { auth: settings.auth, upstreams },
+            ),
           projectRouting: createProjectRouting({ registry, manager, logger }),
           hostRoutes: combineHostRoutes(
             createProjectsRoutes({ registry, manager }),

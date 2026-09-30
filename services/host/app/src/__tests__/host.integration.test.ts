@@ -28,6 +28,10 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
   it("serves the gateway on the configured port and proxies marketplace and state", async () => {
     running = await startTestHost();
 
+    const studio = await running.fetchGateway("/");
+    expect(studio.status).toBe(200);
+    expect(await studio.text()).toContain("__KB_STUDIO_CONFIG__");
+
     const health = await running.fetchGateway("/health");
     expect(health.status).toBe(200);
     const body = (await health.json()) as HealthBody;
