@@ -123,6 +123,19 @@ class LocalGateExecutionTests(unittest.TestCase):
         actual_names = [stage["name"] for stage in report["stages"]]
         self.assertEqual(dry_names, actual_names)
 
+    def test_full_dry_run_names_the_manifest_journey_matrix(self):
+        dry, _, _ = self.run_gate("--full", "--dry-run")
+        self.assertEqual(dry.returncode, 0, dry.stderr)
+        self.assertIn("full scenario manifest journey matrix", dry.stdout)
+
+    def test_quick_mode_rejects_full_matrix_flag(self):
+        result = subprocess.run(
+            ["bash", "scripts/local-gate.sh", "quick", "--full"], cwd=self.root,
+            text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--full is only available with batch", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
