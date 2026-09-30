@@ -47,6 +47,15 @@ apps/studio/
 
 The app uses a plugin registry to dynamically render Studio widgets exposed by plugins.
 
+## Project marketplace
+
+The project Plugins page installs and uninstalls plugin package specs through
+the host API and manages each project's enabled state. The Adapters page
+installs adapter packages at machine scope, binds an installed package to a
+slot in the selected project, and edits project-scoped adapter options. Both
+pages use the host's `/api/v1/plugins` and `/api/v1/adapters` routes; they do
+not edit marketplace locks or config files directly.
+
 ## Scripts
 
 From `kb-labs-studio` repo root:
@@ -70,5 +79,4 @@ pnpm --filter kb-labs-studio-app test     # Run Vitest tests
 Key environment variables (via Vite):
 
 - `VITE_API_BASE_URL` — base URL of REST API (defaults to `/api/v1`)
-
 

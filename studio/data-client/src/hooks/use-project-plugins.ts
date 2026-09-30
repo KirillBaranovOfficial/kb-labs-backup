@@ -22,3 +22,19 @@ export function useSetProjectPluginEnabled(source: ProjectPluginsDataSource, pro
     },
   });
 }
+
+export function useInstallProjectPlugin(source: ProjectPluginsDataSource, projectId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (spec: string) => source.installPlugin(projectId as string, spec),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: qk.projectPlugins.list(projectId ?? '') }); },
+  });
+}
+
+export function useUninstallProjectPlugin(source: ProjectPluginsDataSource, projectId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (packageId: string) => source.uninstallPlugin(projectId as string, packageId),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: qk.projectPlugins.list(projectId ?? '') }); },
+  });
+}

@@ -9,6 +9,8 @@
 import * as React from 'react';
 import {
   UIEmptyState,
+  UIButton,
+  UIInput,
   UIMessage,
   UIPage,
   UIPageHeader,
@@ -19,15 +21,18 @@ import {
   type UITableColumn,
 } from '@kb-labs/studio-ui-kit';
 import { useDataSources } from '@/providers/data-sources-provider';
-import { useProjectPlugins, useSetProjectPluginEnabled } from '@kb-labs/studio-data-client';
+import { useProjectPlugins, useSetProjectPluginEnabled, useInstallProjectPlugin, useUninstallProjectPlugin } from '@kb-labs/studio-data-client';
 import type { ProjectPluginEntry } from '@kb-labs/studio-data-client';
 import { ProjectPicker } from '@/components/project-picker';
 
 export function ProjectPluginsPage() {
   const [projectId, setProjectId] = React.useState<string | null>(null);
+  const [spec, setSpec] = React.useState('');
   const { projectPlugins: source } = useDataSources();
   const { data: plugins, isLoading } = useProjectPlugins(source, projectId);
   const setEnabled = useSetProjectPluginEnabled(source, projectId);
+  const installPlugin = useInstallProjectPlugin(source, projectId);
+  const uninstallPlugin = useUninstallProjectPlugin(source, projectId);
 
   const handleToggle = React.useCallback(
     async (plugin: ProjectPluginEntry, enabled: boolean) => {
@@ -40,6 +45,27 @@ export function ProjectPluginsPage() {
     },
     [setEnabled],
   );
+
+  const handleInstall = React.useCallback(async () => {
+    const requested = spec.trim();
+    if (!projectId || !requested) {return;}
+    try {
+      await installPlugin.mutateAsync(requested);
+      setSpec('');
+      UIMessage.success(`Installed ${requested} for this project`);
+    } catch (error) {
+      UIMessage.error(error instanceof Error ? error.message : 'Failed to install the plugin');
+    }
+  }, [installPlugin, projectId, spec]);
+
+  const handleUninstall = React.useCallback(async (packageId: string) => {
+    try {
+      await uninstallPlugin.mutateAsync(packageId);
+      UIMessage.success(`Uninstalled ${packageId} from this project`);
+    } catch (error) {
+      UIMessage.error(error instanceof Error ? error.message : 'Failed to uninstall the plugin');
+    }
+  }, [uninstallPlugin]);
 
   const columns: UITableColumn<ProjectPluginEntry>[] = [
     {
@@ -76,6 +102,16 @@ export function ProjectPluginsPage() {
         />
       ),
     },
+    {
+      key: 'actions',
+      title: '',
+      width: 120,
+      render: (_value, plugin) => (
+        <UIButton variant="text" danger loading={uninstallPlugin.isPending} onClick={() => handleUninstall(plugin.id)}>
+          Uninstall
+        </UIButton>
+      ),
+    },
   ];
 
   return (
@@ -83,7 +119,21 @@ export function ProjectPluginsPage() {
       <UIPageHeader
         title="Plugins"
         description="Enable or disable plugins for the selected project."
-        actions={<ProjectPicker value={projectId} onChange={setProjectId} />}
+        actions={(
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ProjectPicker value={projectId} onChange={setProjectId} />
+            <UIInput
+              aria-label="Plugin package and version"
+              placeholder="@scope/plugin@1.2.3"
+              value={spec}
+              onChange={(event) => setSpec(event.target.value)}
+              style={{ width: 240 }}
+            />
+            <UIButton variant="primary" disabled={!projectId || !spec.trim()} loading={installPlugin.isPending} onClick={handleInstall}>
+              Install
+            </UIButton>
+          </div>
+        )}
       />
       {!projectId ? null : isLoading ? (
         <UISpin />

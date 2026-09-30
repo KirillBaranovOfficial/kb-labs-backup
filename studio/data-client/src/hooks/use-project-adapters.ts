@@ -21,3 +21,17 @@ export function useConfigureProjectAdapter(source: ProjectAdaptersDataSource, pr
     },
   });
 }
+
+export function useInstallAndBindProjectAdapter(source: ProjectAdaptersDataSource, projectId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ spec, slot }: { spec: string; slot: string }) => {
+      if (!projectId) {throw new Error('Choose a project before binding an adapter.');}
+      const installed = await source.installAdapter(spec);
+      return source.bindAdapter(projectId, slot, installed.id);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.projectAdapters.list(projectId ?? '') });
+    },
+  });
+}

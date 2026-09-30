@@ -39,6 +39,22 @@ export class MockProjectPluginsSource implements ProjectPluginsDataSource {
     return [...this.entriesFor(projectId)];
   }
 
+  async installPlugin(projectId: string, spec: string): Promise<unknown> {
+    const id = spec.split('@').slice(0, spec.startsWith('@') ? 2 : 1).join('@');
+    const entries = this.entriesFor(projectId);
+    if (entries.some((entry) => entry.id === id)) {return { installed: [{ id }] };}
+    entries.push({ id, version: '1.0.0', source: 'marketplace', primaryKind: 'plugin', provides: ['plugin'], enabled: true, scope: 'project' });
+    return { installed: [{ id }] };
+  }
+
+  async uninstallPlugin(projectId: string, packageId: string): Promise<{ id: string; removed: boolean }> {
+    const entries = this.entriesFor(projectId);
+    const index = entries.findIndex((entry) => entry.id === packageId);
+    if (index < 0) {throw new KBError(errorCodes.NOT_FOUND, `No plugin "${packageId}" in this project.`, 404);}
+    entries.splice(index, 1);
+    return { id: packageId, removed: true };
+  }
+
   private setEnabled(projectId: string, packageId: string, enabled: boolean): { id: string; enabled: boolean } {
     const entries = this.entriesFor(projectId);
     const found = entries.find((entry) => entry.id === packageId);

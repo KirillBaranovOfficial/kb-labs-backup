@@ -39,9 +39,9 @@ kb marketplace install @kb-labs/adapters-fs@1.2.3 --scope platform
 kb adapter bind storage @kb-labs/adapters-fs
 ```
 
-`kb adapter bind` writes `platform.adapters.storage` in the current project's `.kb/kb.config.json[c]`. It refuses packages that are absent from the platform lock or are not adapters. Use `kb config set platform.adapterOptions.storage '<json-value>'` to configure adapter options in the project.
+`kb adapter bind` writes `platform.adapters.storage` in the current project's `.kb/kb.config.json[c]`. It refuses packages that are absent from the platform lock or are not adapters. Use `kb config set platform.adapterOptions.storage '{"baseDir":".kb/storage"}'` to configure adapter options in the project.
 
-Studio can list and configure adapters through `/api/v1/adapters?projectId=<project-id>`. Bind an installed machine adapter with:
+Studio's project Plugins page accepts a package spec and installs or uninstalls through host routes; its enable switch updates the project lock. The Adapters page installs a package at machine scope, binds it to the selected project's slot, and configures its options. The bind API is:
 
 ```http
 POST /api/v1/adapters/bind

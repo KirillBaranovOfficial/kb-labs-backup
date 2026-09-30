@@ -10,6 +10,7 @@ import * as React from 'react';
 import {
   UIButton,
   UIEmptyState,
+  UIInput,
   UIPage,
   UIPageHeader,
   UISpin,
@@ -18,16 +19,30 @@ import {
   type UITableColumn,
 } from '@kb-labs/studio-ui-kit';
 import { useDataSources } from '@/providers/data-sources-provider';
-import { useProjectAdapters } from '@kb-labs/studio-data-client';
+import { useProjectAdapters, useInstallAndBindProjectAdapter } from '@kb-labs/studio-data-client';
 import type { ProjectAdapterEntry } from '@kb-labs/studio-data-client';
 import { ProjectPicker } from '@/components/project-picker';
 import { AdapterConfigModal } from '../components/adapter-config-modal';
 
 export function ProjectAdaptersPage() {
   const [projectId, setProjectId] = React.useState<string | null>(null);
+  const [packageSpec, setPackageSpec] = React.useState('');
+  const [slot, setSlot] = React.useState('');
   const { projectAdapters: source } = useDataSources();
   const { data: adapters, isLoading } = useProjectAdapters(source, projectId);
   const [editing, setEditing] = React.useState<ProjectAdapterEntry | null>(null);
+  const installAndBind = useInstallAndBindProjectAdapter(source, projectId);
+
+  const handleInstallAndBind = React.useCallback(async () => {
+    try {
+      const result = await installAndBind.mutateAsync({ spec: packageSpec.trim(), slot: slot.trim() });
+      UIMessage.success(`Installed ${result.packageId} and bound it to ${result.slot}`);
+      setPackageSpec('');
+      setSlot('');
+    } catch (error) {
+      UIMessage.error(error instanceof Error ? error.message : 'Failed to install or bind the adapter');
+    }
+  }, [installAndBind, packageSpec, slot]);
 
   const columns: UITableColumn<ProjectAdapterEntry>[] = [
     {
@@ -62,8 +77,17 @@ export function ProjectAdaptersPage() {
     <UIPage>
       <UIPageHeader
         title="Adapters"
-        description="Configure the adapters bound to the selected project."
-        actions={<ProjectPicker value={projectId} onChange={setProjectId} />}
+        description="Install adapters at machine scope, then bind a slot for the selected project."
+        actions={(
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ProjectPicker value={projectId} onChange={setProjectId} />
+            <UIInput aria-label="Adapter package and version" placeholder="@scope/adapter@1.2.3" value={packageSpec} onChange={(event) => setPackageSpec(event.target.value)} style={{ width: 230 }} />
+            <UIInput aria-label="Adapter slot" placeholder="slot" value={slot} onChange={(event) => setSlot(event.target.value)} style={{ width: 100 }} />
+            <UIButton variant="primary" disabled={!projectId || !packageSpec.trim() || !slot.trim()} loading={installAndBind.isPending} onClick={handleInstallAndBind}>
+              Install and bind
+            </UIButton>
+          </div>
+        )}
       />
       {!projectId ? null : isLoading ? (
         <UISpin />

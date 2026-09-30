@@ -30,6 +30,8 @@ function stubMarketplace(overrides: Partial<MarketplaceClient> = {}): Marketplac
   return {
     listPackages: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
     setEnabled: vi.fn().mockResolvedValue(undefined),
+    installPackages: vi.fn().mockResolvedValue({ installed: [] }),
+    uninstallPackages: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as MarketplaceClient;
 }
@@ -152,5 +154,38 @@ describe("createPluginsRoutes", () => {
 
     expect(res.statusCode).toBe(400);
     expect((res.json() as ErrorBody).error.code).toBe("KB_RUNTIME_INPUT_INVALID");
+  });
+
+  it("POST /plugins/install installs a package into the selected project scope", async () => {
+    const marketplace = stubMarketplace({ installPackages: vi.fn().mockResolvedValue({ installed: [{ id: "@kb/demo", version: "1.0.0" }] }) });
+    const instance = await setup(marketplace);
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/plugins/install",
+      payload: { projectId, spec: "@kb/demo@1.0.0" },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(marketplace.installPackages).toHaveBeenCalledWith({
+      specs: ["@kb/demo@1.0.0"], scope: "project", projectRoot: projectDir,
+    });
+  });
+
+  it("POST /plugins/uninstall removes the package pin from the selected project", async () => {
+    const marketplace = stubMarketplace();
+    const instance = await setup(marketplace);
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/plugins/uninstall",
+      payload: { projectId, packageId: "@kb/demo" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, data: { id: "@kb/demo", removed: true } });
+    expect(marketplace.uninstallPackages).toHaveBeenCalledWith({
+      packageIds: ["@kb/demo"], scope: "project", projectRoot: projectDir,
+    });
   });
 });

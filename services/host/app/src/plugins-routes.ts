@@ -39,6 +39,11 @@ interface EnableDisableBody {
   packageId?: unknown;
 }
 
+interface InstallBody {
+  projectId?: unknown;
+  spec?: unknown;
+}
+
 /** Resolves a registered project id to its absolute path. */
 async function resolveProjectRoot(registry: IProjectRegistry, projectId: string): Promise<string> {
   const summary = await showProject(registry, projectId);
@@ -123,5 +128,39 @@ export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
       "/api/v1/plugins/disable",
       (request, reply) => setEnabled(request, reply, false),
     );
+
+    app.post<{ Body: InstallBody }>("/api/v1/plugins/install", async (request, reply) => {
+      const { projectId, spec } = request.body ?? {};
+      if (!requireString(reply, projectId, "projectId") || !requireString(reply, spec, "spec")) {
+        return reply;
+      }
+      try {
+        const projectRoot = await resolveProjectRoot(registry, projectId);
+        const result = await marketplace.installPackages({ specs: [spec], scope: "project", projectRoot });
+        return sendData(reply, result, 201);
+      } catch (error) {
+        if (error instanceof MarketplaceClientError) {
+          return sendEnvelope(reply, marketplaceErrorEnvelope(error));
+        }
+        return sendEnvelope(reply, projectErrorEnvelope(error));
+      }
+    });
+
+    app.post<{ Body: EnableDisableBody }>("/api/v1/plugins/uninstall", async (request, reply) => {
+      const { projectId, packageId } = request.body ?? {};
+      if (!requireString(reply, projectId, "projectId") || !requireString(reply, packageId, "packageId")) {
+        return reply;
+      }
+      try {
+        const projectRoot = await resolveProjectRoot(registry, projectId);
+        await marketplace.uninstallPackages({ packageIds: [packageId], scope: "project", projectRoot });
+        return sendData(reply, { id: packageId, removed: true });
+      } catch (error) {
+        if (error instanceof MarketplaceClientError) {
+          return sendEnvelope(reply, marketplaceErrorEnvelope(error));
+        }
+        return sendEnvelope(reply, projectErrorEnvelope(error));
+      }
+    });
   };
 }

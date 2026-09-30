@@ -26,6 +26,6 @@ kb marketplace install @kb-labs/adapters-fs@1.2.3 --scope platform
 kb adapter bind storage @kb-labs/adapters-fs
 ```
 
-Команда bind записывает `platform.adapters.storage` в `.kb/kb.config.json[c]` проекта. Параметры адаптера настраиваются отдельно для проекта командой `kb config set platform.adapterOptions.storage '<json-value>'`.
+Команда bind записывает `platform.adapters.storage` в `.kb/kb.config.json[c]` проекта. Параметры адаптера настраиваются отдельно для проекта командой `kb config set platform.adapterOptions.storage '<json-value>`. В Studio на странице **Plugins** выбранного проекта можно устанавливать, включать, выключать и удалять плагины. На странице **Adapters** можно установить адаптер на машину, привязать его к слоту проекта и настроить параметры.
 
 Привязка отклоняется, если пакет отсутствует в marketplace lock платформы или не распознан как адаптер. В таком случае установите адаптер командой `kb marketplace install … --scope platform`.
