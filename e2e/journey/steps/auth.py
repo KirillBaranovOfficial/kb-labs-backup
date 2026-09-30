@@ -53,7 +53,7 @@ def run_secured_auth_steps(base_url: str, admin_email: str, admin_password: str,
     _request(base_url, "/auth/me", expected=401)
     admin_access, admin_refresh = _login(base_url, admin_email, admin_password)
     me = _request(base_url, "/auth/me", token=admin_access)
-    if me.get("user", {}).get("email") != admin_email:
+    if me.get("email") != admin_email:
         raise AssertionError(f"admin /auth/me returned the wrong identity: {me!r}")
     permissions = _request(base_url, "/auth/permissions", token=admin_access)
     if not permissions.get("permissions"):
