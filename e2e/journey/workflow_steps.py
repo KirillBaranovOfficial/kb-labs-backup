@@ -3,16 +3,25 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
+from steps.auth import assert_cli_session_absent, assert_platform_auth_required
 
 
 def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120):
+    cli_path = env.get("KB_JOURNEY_CLI_PATH")
+    if cli_path:
+        return subprocess.run(
+            [cli_path, *args], env=env, cwd=cwd, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            timeout=timeout, check=False,
+        )
     return subprocess.run(
-        ["bash", "-c", '. "$HOME/.profile"; kb "$@"', "kb", *args],
+        ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"', "kb", *args],
         env=env, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         timeout=timeout, check=False,
     )
@@ -52,32 +61,35 @@ def _terminal_run(run_id: str, *, env: dict[str, str], cwd: Path,
 def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
     """Check deny-by-default plugin dispatch, then restore the admin CLI session."""
     def verify_auth() -> None:
-        allowlisted = [
-            ["auth", "status", "--json"],
-            ["auth", "login", "--help"],
-            ["version"],
-            ["health", "--json"],
-        ]
-        for command in allowlisted:
-            result = run_cli(command, env=env, cwd=project)
-            if result.returncode != 0:
-                raise AssertionError(f"allowlisted {' '.join(command)} failed without a session")
         commands = [
+            ["config", "show", "--json"],
             ["workflow", "defs", "list", "--json"],
             ["marketplace", "plugins", "list", "--json"],
             ["qa", "cases", "validate", "--json"],
         ]
-        for command in commands:
-            result = run_cli(command, env=env, cwd=project)
-            try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError as error:
-                raise AssertionError(f"unauthenticated {' '.join(command)} did not return JSON") from error
-            error = payload.get("error") if isinstance(payload, dict) else None
-            if (result.returncode == 0 or not isinstance(error, dict)
-                    or error.get("code") != "KB_AUTH_REQUIRED"
-                    or error.get("hint") != 'Run "kb auth login".'):
-                raise AssertionError(f"unauthenticated {' '.join(command)} returned an unexpected result: {payload!r}")
+        with tempfile.TemporaryDirectory(prefix="kb-anonymous-cli-home-") as anonymous_home:
+            anonymous_env = env.copy()
+            anonymous_env["HOME"] = anonymous_home
+            platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
+            cli_path = env.get("KB_JOURNEY_CLI_PATH")
+            if not platform_root or not cli_path:
+                raise AssertionError("anonymous CLI auth checks require explicit platform and CLI paths")
+            anonymous_env["KB_PLATFORM_ROOT"] = platform_root
+            anonymous_env["KB_PROJECT_ROOT"] = str(project)
+            status = run_cli(["auth", "status", "--json"], env=anonymous_env, cwd=project)
+            assert_cli_session_absent(status)
+            allowlisted = [
+                ["auth", "login", "--help"],
+                ["version"],
+                ["health", "--json"],
+            ]
+            for command in allowlisted:
+                result = run_cli(command, env=anonymous_env, cwd=project)
+                if result.returncode != 0:
+                    raise AssertionError(f"allowlisted {' '.join(command)} failed without a session")
+            for command in commands:
+                result = run_cli(command, env=anonymous_env, cwd=project)
+                assert_platform_auth_required(result, command)
 
         email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
         password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")

@@ -15,19 +15,28 @@ class WorkflowJourneyTests(unittest.TestCase):
     def test_secured_plugin_commands_are_gated_and_admin_login_recovers(self):
         authenticated = [False]
         calls = []
+        call_homes = []
+        call_envs = []
 
         def fake_run(args, *, env, cwd, timeout=120):
             args = list(args)
             calls.append(args)
-            if args in (["auth", "status", "--json"], ["auth", "login", "--help"], ["version"], ["health", "--json"]):
+            call_homes.append(env["HOME"])
+            call_envs.append({key: env.get(key) for key in ("KB_JOURNEY_CLI_PATH", "KB_PLATFORM_ROOT", "KB_PROJECT_ROOT")})
+            if args == ["auth", "status", "--json"]:
+                return CompletedProcess(args, 0, json.dumps({
+                    "ok": True, "authenticated": False, "session": {"authenticated": False},
+                }))
+            if args in (["auth", "login", "--help"], ["version"], ["health", "--json"]):
                 return CompletedProcess(args, 0, json.dumps({"ok": True}))
-            if args[:3] in (["workflow", "defs", "list"], ["marketplace", "plugins", "list"], ["qa", "cases", "validate"]):
+            if args[:3] in (["config", "show", "--json"], ["workflow", "defs", "list"],
+                            ["marketplace", "plugins", "list"], ["qa", "cases", "validate"]):
                 if not authenticated[0]:
                     return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
                         "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                         "hint": 'Run "kb auth login".',
                     }}))
-                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": [{"id": "hello"}]}))
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"id": "hello"}}))
             if args[:2] == ["auth", "login"]:
                 self.assertIn("admin@example.test", args)
                 self.assertIn("admin-password", args)
@@ -38,26 +47,37 @@ class WorkflowJourneyTests(unittest.TestCase):
         old_run_cli = workflow_steps.run_cli
         workflow_steps.run_cli = fake_run
         try:
-            journey = Journey("secured", "workflow-auth")
-            workflow_steps.run_secured_cli_auth_step(
-                journey,
-                env={"KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
-                     "KB_JOURNEY_ADMIN_PASSWORD": "admin-password"},
-                project=Path("/tmp/project"),
-            )
+            with tempfile.TemporaryDirectory() as home:
+                shared_home = home
+                journey = Journey("secured", "workflow-auth")
+                workflow_steps.run_secured_cli_auth_step(
+                    journey,
+                    env={"HOME": home,
+                         "KB_JOURNEY_CLI_PATH": "/installed/bin/kb",
+                         "KB_JOURNEY_PLATFORM_ROOT": "/installed/platform",
+                         "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+                         "KB_JOURNEY_ADMIN_PASSWORD": "admin-password"},
+                    project=Path("/tmp/project"),
+                )
         finally:
             workflow_steps.run_cli = old_run_cli
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
         self.assertEqual(calls[:4], [["auth", "status", "--json"], ["auth", "login", "--help"], ["version"], ["health", "--json"]])
-        self.assertEqual(calls[4:7], [
+        self.assertEqual(calls[4:8], [
+            ["config", "show", "--json"],
             ["workflow", "defs", "list", "--json"],
             ["marketplace", "plugins", "list", "--json"],
             ["qa", "cases", "validate", "--json"],
         ])
-        self.assertEqual(calls[7][:2], ["auth", "login"])
-        self.assertEqual(calls[8:], calls[4:7])
+        self.assertEqual(calls[8][:2], ["auth", "login"])
+        self.assertEqual(calls[9:], calls[4:8])
+        self.assertTrue(all(call_home != shared_home for call_home in call_homes[:8]))
+        self.assertTrue(all(call_home == shared_home for call_home in call_homes[8:]))
+        self.assertTrue(all(call_env["KB_JOURNEY_CLI_PATH"] == "/installed/bin/kb" for call_env in call_envs[:8]))
+        self.assertTrue(all(call_env["KB_PLATFORM_ROOT"] == "/installed/platform"
+                            and call_env["KB_PROJECT_ROOT"] == "/tmp/project" for call_env in call_envs[:8]))
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-007.4", "kind": "journey", "status": "PASS"},
             {"claimId": "S-041.12", "kind": "journey", "status": "PASS"},
