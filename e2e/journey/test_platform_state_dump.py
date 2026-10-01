@@ -38,10 +38,17 @@ class PlatformStateDumpTests(unittest.TestCase):
             (platform / "node_modules/@kb-labs/sample").mkdir(parents=True)
             (platform / ".kb/marketplace.lock").write_text('{"commit":"abc","token":"lock-secret"}')
             (platform / ".kb/kb.config.jsonc").write_text('{\n  "apiKey": "config-secret",\n  // retained comment\n}\n')
-            (platform / ".kb/v2/receipt.json").write_text('{"password":"receipt-secret"}')
+            (platform / ".kb/v2/receipt.json").write_text(json.dumps({
+                "password": "receipt-secret",
+                "plan": {"artifacts": [
+                    {"id": "sample", "package": "@kb-labs/sample", "version": "1.2.3"},
+                    {"id": "missing", "package": "@kb-labs/missing", "version": "4.5.6"},
+                ]},
+            }))
             (platform / "node_modules/@kb-labs/sample/package.json").write_text(
                 '{"name":"@kb-labs/sample","version":"1.2.3"}'
             )
+            (platform / "node_modules/@kb-labs/sample/kb-create.manifest.json").write_text('{}\n')
             (platform / ".kb/logs/oversized.log").write_text("skip-this-" + "x" * (MAX_DUMP_BYTES // 2))
             (platform / ".kb/logs/recent.log").write_text(
                 "\n".join(f"line-{number}" for number in range(500)) + "\nJourneyPassw0rd!\n"
@@ -70,6 +77,11 @@ class PlatformStateDumpTests(unittest.TestCase):
 
             self.assertTrue((destination / ".kb/marketplace.lock").is_file())
             self.assertTrue((destination / ".kb/v2/receipt.json").is_file())
+            manifests = json.loads((destination / "receipt-artifact-manifests.json").read_text())
+            self.assertEqual(manifests, [
+                {"id": "sample", "package": "@kb-labs/sample", "version": "1.2.3", "manifestExists": True},
+                {"id": "missing", "package": "@kb-labs/missing", "version": "4.5.6", "manifestExists": False},
+            ])
             self.assertIn("sample@1.2.3", (destination / "kb-labs-packages.txt").read_text())
             tail = (destination / ".kb/logs/recent.log").read_text()
             self.assertIn("line-499", tail)
