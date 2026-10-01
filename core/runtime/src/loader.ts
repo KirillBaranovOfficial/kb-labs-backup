@@ -21,6 +21,7 @@ import { SnapshotManager } from './snapshot-manager.js';
 import { RunExecutor } from './run-executor.js';
 import { RunOrchestrator } from './run-orchestrator.js';
 import { createDefaultExecutionPolicyLLM } from './wrappers/default-execution-policy-llm.js';
+import { resolveInstalledAdapterDefaults } from './default-adapters.js';
 
 import { ResourceManager } from './core/resource-manager.js';
 import { JobScheduler } from './core/job-scheduler.js';
@@ -176,10 +177,9 @@ async function loadAdapter<T>(adapterPath: string, cwd: string, options?: unknow
  *    last line of defence that turns the silent miss into a thrown
  *    error.
  *
- * 3. **Not configured** → install the policy-driven fallback from
- *    `ADAPTER_DEFAULTS[slot].defaultFallback`. Either an InMemory honest
- *    implementation or a NoOp stub that throws `AdapterUnavailableError`
- *    on use.
+ * 3. **Not configured** → installed platforms resolve any available local
+ *    manifest `defaultFor` provider before this function runs. Only slots
+ *    without such a provider reach `ADAPTER_DEFAULTS`' InMemory or NoOp policy.
  *
  * After this function returns, every slot in `ADAPTER_DEFAULTS` is
  * guaranteed to be filled (except `snapshotManager`, which has no
@@ -191,6 +191,7 @@ async function loadAdapter<T>(adapterPath: string, cwd: string, options?: unknow
 export function fillAdapterFallbacksAndRecord(
   container: PlatformContainer,
   adapters: Record<string, AdapterValue | undefined>,
+  installedPlatform = false,
 ): void {
   const status = getAdapterStatusRegistry();
   const now = (): string => new Date().toISOString();
@@ -260,6 +261,13 @@ export function fillAdapterFallbacksAndRecord(
         recordedAt: now(),
       });
       continue;
+    }
+
+    if (installedPlatform && 'preferInstalledDefault' in desc && desc.preferInstalledDefault && !configuredPkg) {
+      throw new Error(
+        `Platform startup aborted: installed platform has no configured or manifest-discovered local default for "${slot}". ` +
+          `Install a local adapter for this slot, then bind it with \`kb adapter bind ${slot} <package>\`.`,
+      );
     }
 
     // Branch 1b: adapter present but not in config — bootstrap fallback
@@ -525,10 +533,23 @@ export async function initPlatform(
   }
 
   platform.logger.debug(`initPlatform initializing NEW platform pid=${process.pid}`);
-  const { adapters = {}, adapterOptions = {}, core = {}, execution = {} } = config;
-
+  const { core = {}, execution = {} } = config;
   // 🔍 Detect if running in child process (sandbox worker)
   const isChildProcess = !!process.send; // Has IPC channel = forked child
+  const adapterRoot = platformRoot ?? cwd;
+  const installedPlatform = Boolean(platformRoot) || await fs.access(path.join(adapterRoot, '.kb', 'marketplace.lock'))
+    .then(() => true)
+    .catch(() => false);
+  const defaultedConfig = isChildProcess ? {
+    adapters: (config.adapters ?? {}) as Record<string, unknown>,
+    adapterOptions: config.adapterOptions ?? {},
+  } : await resolveInstalledAdapterDefaults({
+    adapters: (config.adapters ?? {}) as Record<string, unknown>,
+    adapterOptions: config.adapterOptions ?? {},
+  }, adapterRoot, cwd);
+  const adapters = defaultedConfig.adapters as NonNullable<PlatformConfig['adapters']>;
+  const adapterOptions = defaultedConfig.adapterOptions as NonNullable<PlatformConfig['adapterOptions']>;
+
   const initStartedAt = Date.now();
 
   await platform.emitLifecyclePhase('start', {
@@ -604,6 +625,7 @@ export async function initPlatform(
     fillAdapterFallbacksAndRecord(
       platform,
       adapters as Record<string, AdapterValue | undefined>,
+      installedPlatform && !isChildProcess,
     );
 
     // ⚠️ CRITICAL: Do NOT create ExecutionBackend in child process!
@@ -928,6 +950,7 @@ export async function initPlatform(
     fillAdapterFallbacksAndRecord(
       platform,
       adapters as Record<string, AdapterValue | undefined>,
+      installedPlatform && !isChildProcess,
     );
 
     // ══════════════════════════════════════════════════════════════════════

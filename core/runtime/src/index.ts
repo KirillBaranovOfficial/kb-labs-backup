@@ -33,6 +33,7 @@ export type {
 
 // Loader
 export { initPlatform, resetPlatform } from "./loader.js";
+export { resolveInstalledAdapterDefaults, resolveDiscoveredAdapterDefaults } from "./default-adapters.js";
 
 // Canonical platform launch path (all process surfaces).
 export {
