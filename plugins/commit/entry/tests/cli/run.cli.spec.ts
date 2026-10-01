@@ -33,7 +33,7 @@ vi.mock('../../src/rest/handlers/scope-resolver.js', () => ({
 }));
 
 import { generateCommitPlan, applyCommitPlan, hasChanges, getGitStatus, savePlan, saveToHistory, clearPlan } from '@kb-labs/commit-core';
-import { AdapterUnavailableError } from '@kb-labs/sdk';
+import { AdapterCredentialsMissingError, AdapterUnavailableError } from '@kb-labs/sdk';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import runCommand from '../../src/cli/commands/run.js';
 import generateCommand from '../../src/cli/commands/generate.js';
@@ -200,5 +200,31 @@ describe('commit:generate (adapter errors)', () => {
         actions: [{ command: 'kb adapter bind llm @kb-labs/adapters-openai' }],
       },
     });
+  });
+
+  // case: S-054.8
+  it('returns a typed missing OpenAI key envelope in JSON mode when OpenAI is bound', async () => {
+    vi.mocked(generateCommitPlan).mockRejectedValueOnce(new AdapterCredentialsMissingError(
+      'llm', 'OPENAI_API_KEY', 'platform.adapterOptions.llm.apiKey',
+    ));
+
+    const { ui, captured } = createCapturedUI();
+    const ctx = createMockContext({
+      ui,
+      cwd: '/project',
+      platformConfig: { platform: { adapters: { llm: '@kb-labs/adapters-openai' } } },
+    });
+    const result = await generateCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
+
+    expect(result.ok).toBe(false);
+    expect(captured.json[0]).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_ADAPTER_CREDENTIALS_MISSING',
+        message: expect.stringContaining('OPENAI_API_KEY'),
+        hint: expect.stringContaining("kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"),
+      },
+    });
+    expect(captured.json[0]).toMatchObject({ error: { hint: expect.stringContaining('No request was sent') } });
   });
 });

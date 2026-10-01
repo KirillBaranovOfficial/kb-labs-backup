@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { AdapterUnavailableError } from '../errors.js';
+import { AdapterCredentialsMissingError, AdapterUnavailableError } from '../errors.js';
 import {
   ERROR_STAGES,
   createErrorEnvelope,
@@ -111,6 +111,18 @@ describe('renderTemplate', () => {
 });
 
 describe('toErrorEnvelope (platform errors)', () => {
+  // case: S-054.8
+  it('maps a bound adapter missing credentials to an actionable credential envelope', () => {
+    const envelope = toErrorEnvelope(new AdapterCredentialsMissingError(
+      'llm', 'OPENAI_API_KEY', 'platform.adapterOptions.llm.apiKey',
+    ));
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+    expect(envelope.code).toBe('KB_ADAPTER_CREDENTIALS_MISSING');
+    expect(envelope.message).toContain('OPENAI_API_KEY');
+    expect(envelope.hint).toContain("kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env");
+    expect(envelope.hint).toContain('No request was sent');
+  });
+
   it('maps a not-configured adapter to KB_ADAPTER_NOT_CONFIGURED', () => {
     const envelope = toErrorEnvelope(new AdapterUnavailableError('llm'), { correlationId: 'c1' });
     expect(validateErrorEnvelope(envelope)).toEqual([]);

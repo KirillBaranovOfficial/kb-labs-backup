@@ -205,6 +205,8 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
 
     journey.step("missing LLM returns a typed bind hint", "adapter",
                  lambda: _assert_missing_llm(runner, base_env, project_a, cli), cases=["S-054.5"])
+    journey.step("bound OpenAI LLM reports its missing key", "adapter",
+                 lambda: _assert_missing_openai_key(runner, base_env, project_a, platform_root, cli), cases=["S-054.8"])
     def assert_missing_vector_store() -> None:
         install = ["marketplace", "install", "@kb-labs/mind-entry", "--json"]
         if _json(cli(install), install).get("ok") is not True:
@@ -345,6 +347,35 @@ def _assert_missing_llm(runner: CommandRunner, env: dict[str, str], project: Pat
             config_path.unlink(missing_ok=True)
         else:
             config_path.write_bytes(original_config)
+
+
+def _assert_missing_openai_key(runner: CommandRunner, env: dict[str, str], project: Path, platform_root: Path, cli) -> None:
+    bind = ["config", "set", "--scope", "platform", "platform.adapters.llm", "@kb-labs/adapters-openai", "--json"]
+    _json(cli(bind), bind)
+    enable = ["config", "set", "commit.llm.enabled", "true", "--json"]
+    _json(cli(enable), enable)
+    command = ["commit", "generate", "--json"]
+    result = runner(["kb", *command], cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
+    if result.returncode == 0:
+        raise RuntimeError("bound OpenAI LLM unexpectedly generated a commit plan without an API key")
+    payload = _json(result, command)
+    error = payload.get("error")
+    if not isinstance(error, dict) or error.get("code") != "KB_ADAPTER_CREDENTIALS_MISSING":
+        raise RuntimeError("bound OpenAI LLM did not return KB_ADAPTER_CREDENTIALS_MISSING")
+    message = str(error.get("message", ""))
+    hint = str(error.get("hint", ""))
+    expected_command = "kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"
+    if "OPENAI_API_KEY" not in message or expected_command not in hint or "No request was sent" not in hint:
+        raise RuntimeError("missing-key error does not identify the key, setup command, and no-send guarantee")
+    doctor_command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--json"]
+    doctor_result = runner(doctor_command, cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
+    doctor = _json(doctor_result, doctor_command)
+    findings = doctor.get("findings")
+    if not isinstance(findings, list) or not any(
+        isinstance(row, dict) and row.get("path") == "/platform/adapterOptions/llm/apiKey"
+        for row in findings
+    ):
+        raise RuntimeError("kb-create doctor does not report the missing OpenAI API key")
 
 
 def _assert_missing_vector_store(runner: CommandRunner, env: dict[str, str], project: Path) -> None:
