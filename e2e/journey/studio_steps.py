@@ -14,6 +14,37 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+PLAYWRIGHT_HEADLESS_SHELL = Path("chromium_headless_shell-1217/chrome-linux/headless_shell")
+PLAYWRIGHT_IMAGE_REBUILD_COMMAND = "e2e/journey/run.sh --no-build"
+
+
+def create_studio_environment(service_env: dict[str, str], *, mode: str, project_id: str,
+                              project_name: str, project_root: str, kb_bin: str) -> dict[str, str]:
+    studio_env = service_env.copy()
+    studio_env.update({
+        "GATEWAY_URL": "http://127.0.0.1:4000",
+        "KB_STUDIO_PROJECT_ID": project_id,
+        "KB_STUDIO_PROJECT_NAME": project_name,
+        "KB_ACCESS_MODE": mode,
+        "KB_STUDIO_FRESH_HOST_JOURNEY": "1",
+        "KB_STUDIO_FIRST_TIER_JOURNEY": "1",
+        "KB_STUDIO_PROJECT_ROOT": project_root,
+        "KB_STUDIO_KB_BIN": kb_bin,
+    })
+    return studio_env
+
+
+def _playwright_browser_preflight(env: dict[str, str]) -> str | None:
+    browsers_path = env.get("PLAYWRIGHT_BROWSERS_PATH")
+    if not browsers_path:
+        return ("PLAYWRIGHT_BROWSERS_PATH is not set; rebuild the runner image with "
+                f"`{PLAYWRIGHT_IMAGE_REBUILD_COMMAND}`.")
+    executable = Path(browsers_path) / PLAYWRIGHT_HEADLESS_SHELL
+    if not executable.is_file():
+        return (f"Playwright Chromium headless shell is missing at {executable}; "
+                f"rebuild the runner image with `{PLAYWRIGHT_IMAGE_REBUILD_COMMAND}`.")
+    return None
+
 
 def create_studio_member(base_url: str, admin_email: str, admin_password: str) -> tuple[str, str]:
     def post(path: str, payload: dict, token: str = "") -> dict:
@@ -56,6 +87,10 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
         message = "Playwright was not run because the Studio shell check failed"
         _record_step(report, mode, "BLOCKED", 0.0, message)
         return False, 0.0, message
+    preflight_error = _playwright_browser_preflight(env)
+    if preflight_error:
+        _record_step(report, mode, "FAIL", 0.0, preflight_error)
+        return False, 0.0, preflight_error
 
     started = time.monotonic()
     output_lines: deque[str] = deque(maxlen=40)

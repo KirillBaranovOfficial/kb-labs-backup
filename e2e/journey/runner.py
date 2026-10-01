@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from studio_steps import create_studio_member, run_studio_browser_step
+from studio_steps import create_studio_environment, create_studio_member, run_studio_browser_step
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
 from release_index import channel_platform_version, stable_platform_version
@@ -986,17 +986,14 @@ def main():
 
         project = project_payload.get("project", project_payload) if isinstance(project_payload, dict) else {}
         project_name = str(project.get("name") or "") if isinstance(project, dict) else ""
-        studio_env = service_env.copy()
-        studio_env.update({
-            "GATEWAY_URL": "http://127.0.0.1:4000",
-            "KB_STUDIO_PROJECT_ID": project_id,
-            "KB_STUDIO_PROJECT_NAME": project_name,
-            "KB_ACCESS_MODE": mode,
-            "KB_STUDIO_FRESH_HOST_JOURNEY": "1",
-            "KB_STUDIO_FIRST_TIER_JOURNEY": "1",
-            "KB_STUDIO_PROJECT_ROOT": str(PROJECT),
-            "KB_STUDIO_KB_BIN": str(BIN / "kb"),
-        })
+        studio_env = create_studio_environment(
+            service_env,
+            mode=mode,
+            project_id=project_id,
+            project_name=project_name,
+            project_root=str(PROJECT),
+            kb_bin=str(BIN / "kb"),
+        )
         cron_id = "studio-a"
         (PROJECT / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
         (PROJECT / ".kb" / "crons" / f"{cron_id}.yml").write_text(
