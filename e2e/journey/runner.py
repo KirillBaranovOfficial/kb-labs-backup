@@ -686,7 +686,15 @@ def main():
             fail(f"{mode} service journey: {detail}")
 
         workflow_journey = Journey(mode, f"workflow-{mode}")
-        run_workflow_journey(workflow_journey, env=service_env, project=PROJECT)
+        def restart_for_workflow_history() -> None:
+            restart_host(launcher, env)
+
+        run_workflow_journey(
+            workflow_journey,
+            env=service_env,
+            project=PROJECT,
+            restart_host=restart_for_workflow_history,
+        )
         workflow_result = workflow_journey.result()
         merge_workflow_result(service_report, workflow_result.__dict__)
         if workflow_result.status != "PASS":
@@ -701,6 +709,58 @@ def main():
             "KB_STUDIO_PROJECT_NAME": project_name,
             "KB_ACCESS_MODE": mode,
             "KB_STUDIO_FRESH_HOST_JOURNEY": "1",
+        })
+        cron_id = "studio-a"
+        (PROJECT / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
+        (PROJECT / ".kb" / "crons" / f"{cron_id}.yml").write_text(
+            "schedule: '0 0 * * *'\nworkflow: journey-hello\ninput:\n  message: studio-a\nenabled: true\n",
+            encoding="utf-8")
+        project_a_plugin_cron_ids = []
+        project_a_user_cron_ids = []
+        project_a_cron_error = "project A cron list did not contain the fixture user and plugin crons"
+        cron_list_deadline = time.monotonic() + 30
+        while time.monotonic() < cron_list_deadline:
+            project_a_cron_list, _ = run(
+                ["bash", "-c", '. "$HOME/.profile"; kb workflow crons list --json'],
+                env=studio_env, cwd=PROJECT, timeout=120)
+            try:
+                project_a_crons = json.loads(project_a_cron_list.stdout)["data"]["crons"]
+                project_a_plugin_cron_ids = [str(cron["id"]) for cron in project_a_crons
+                                             if isinstance(cron, dict) and cron.get("source") == "plugin"]
+                project_a_user_cron_ids = [str(cron["id"]) for cron in project_a_crons
+                                           if isinstance(cron, dict) and cron.get("source") == "user"]
+                if (project_a_cron_list.returncode == 0 and project_a_plugin_cron_ids
+                        and cron_id in project_a_user_cron_ids):
+                    break
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                project_a_cron_error = str(error)
+            time.sleep(1)
+        else:
+            fail(f"Studio schedule journey could not list project A crons: {project_a_cron_error}")
+        project_b_root = HOME / "studio-project-b"
+        (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
+        (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
+        (project_b_root / ".kb" / "workflows" / "studio-b-workflow.yml").write_text(
+            "name: studio-b-workflow\nversion: 1.0.0\non:\n  manual: true\njobs:\n  smoke:\n    runsOn: local\n    steps:\n"
+            "      - name: Log B\n        id: log-b\n        uses: builtin:shell\n        with:\n          command: 'echo studio-b'\n",
+            encoding="utf-8")
+        (project_b_root / ".kb" / "crons" / "studio-b.yml").write_text(
+            "schedule: '0 0 * * *'\nworkflow: studio-b-workflow\nenabled: true\n", encoding="utf-8")
+        project_b_registered, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add --init --json'],
+                                      env=service_env, cwd=project_b_root, timeout=180)
+        try:
+            project_b_id = str(json.loads(project_b_registered.stdout)["project"]["id"])
+        except (KeyError, ValueError, TypeError):
+            project_b_id = ""
+            fail("Studio schedule journey could not register project B")
+        studio_env.update({
+            "KB_STUDIO_CRON_PROJECT_ROOT": str(PROJECT),
+            "KB_STUDIO_CRON_ID": cron_id,
+            "KB_STUDIO_PROJECT_A_PLUGIN_CRON_IDS": ",".join(project_a_plugin_cron_ids),
+            "KB_STUDIO_PROJECT_A_USER_CRON_IDS": ",".join(project_a_user_cron_ids),
+            "KB_STUDIO_PROJECT_B_ID": project_b_id,
+            "KB_STUDIO_PROJECT_B_CRON_ID": "studio-b",
+            "KB_STUDIO_PLAYWRIGHT_JSON": str(service_report.with_name(f"studio-playwright-{mode}.json")),
         })
         try:
             recorded_service_result = json.loads(service_report.read_text())

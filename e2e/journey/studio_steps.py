@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import deque
 import json
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -104,6 +105,7 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
         passed = False
 
     _record_step(report, mode, "PASS" if passed else "FAIL", elapsed, message)
+    _record_playwright_case_claims(report, env.get("KB_STUDIO_PLAYWRIGHT_JSON", ""))
     return passed, elapsed, message
 
 
@@ -127,6 +129,40 @@ def _record_step(report: Path, mode: str, status: str, duration: float, message:
         return
     _append_step(result, mode, status, duration, message)
     report.write_text(json.dumps(result, indent=2) + "\n")
+
+
+def _record_playwright_case_claims(report: Path, json_report: str) -> None:
+    if not json_report:
+        return
+    try:
+        payload = json.loads(Path(json_report).read_text(encoding="utf-8"))
+        result = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    claims: dict[str, str] = {}
+
+    def visit(suite: dict) -> None:
+        for spec in suite.get("specs", []):
+            title = str(spec.get("title", ""))
+            ids = re.findall(r"@(S-\d{3}\.\d+)", title)
+            tests = spec.get("tests", [])
+            statuses = [res.get("status") for test in tests for res in test.get("results", [])]
+            status = "PASS" if statuses and all(item == "passed" for item in statuses) else "FAIL"
+            for case_id in ids:
+                claims[case_id] = status
+        for child in suite.get("suites", []):
+            visit(child)
+
+    for suite in payload.get("suites", []):
+        visit(suite)
+    if not claims:
+        return
+    case_run = result.setdefault("case_run", {})
+    existing = {item.get("claimId"): item for item in case_run.get("claims", []) if isinstance(item, dict)}
+    existing.update({case_id: {"claimId": case_id, "kind": "journey", "status": status}
+                     for case_id, status in claims.items()})
+    case_run["claims"] = [existing[key] for key in sorted(existing)]
+    report.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
 
 def _append_step(result: dict, mode: str, status: str, duration: float, message: str) -> None:

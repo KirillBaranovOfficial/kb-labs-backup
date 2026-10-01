@@ -71,26 +71,6 @@ describe('workflow:list', () => {
     expect((captured.table[0]!.rows[0] as { status: string }).status).toBe('running');
   });
 
-  it('CLI-04: --type cron renders cron jobs table', async () => {
-    MockedClient.mockImplementation(function MockedClientImplementation() {
-      return makeClient({
-        getCronJobs: async () => ({
-          crons: [
-            { id: 'cron-1', schedule: '*/5 * * * *', enabled: true, jobType: 'workflow', timezone: 'UTC' },
-          ],
-        }),
-      });
-    });
-
-    const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui });
-    const result = await listCommand.execute(ctx, mockCLIInput({ flags: { type: 'cron' } }));
-
-    expect(result.ok).toBe(true);
-    expect(captured.table[0]!.rows.length).toBe(1);
-    expect((captured.table[0]!.rows[0] as { id: string }).id).toBe('cron-1');
-  });
-
   it('CLI-05: empty execution list renders empty state without throwing', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
@@ -136,17 +116,4 @@ describe('workflow:list', () => {
     expect(captured.warnings.some((w: { message: string }) => w.message.includes('deprecated'))).toBe(true);
   });
 
-  it('CLI-08: does NOT emit deprecation warning when --type=cron', async () => {
-    MockedClient.mockImplementation(function MockedClientImplementation() {
-      return makeClient({
-        getCronJobs: async () => ({ crons: [] }),
-      });
-    });
-
-    const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui });
-    await listCommand.execute(ctx, mockCLIInput({ flags: { type: 'cron' } }));
-
-    expect(captured.warnings.some((w: { message: string }) => w.message.includes('deprecated'))).toBe(false);
-  });
 });

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from studio_steps import create_studio_member, record_studio_browser_step, run_studio_browser_step
+from studio_steps import create_studio_member, record_studio_browser_step, run_studio_browser_step, _record_playwright_case_claims
 
 
 class FakeResponse:
@@ -109,6 +109,23 @@ class StudioJourneyTests(unittest.TestCase):
         self.assertEqual(elapsed, 0.0)
         self.assertIn("shell check failed", message)
         self.assertEqual(saved["steps"][0]["status"], "BLOCKED")
+
+    def test_playwright_tagged_cases_are_merged_into_release_claims(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "service-local.json"
+            playwright = Path(directory) / "playwright.json"
+            report.write_text(json.dumps({"case_run": {"claims": []}}))
+            playwright.write_text(json.dumps({"suites": [{"specs": [{
+                "title": "Studio schedules @S-055.2 toggles a project cron",
+                "tests": [{"results": [{"status": "passed"}]}],
+            }]}]}))
+
+            _record_playwright_case_claims(report, str(playwright))
+            saved = json.loads(report.read_text())
+
+        self.assertEqual(saved["case_run"]["claims"], [
+            {"claimId": "S-055.2", "kind": "journey", "status": "PASS"},
+        ])
 
 
 if __name__ == "__main__":

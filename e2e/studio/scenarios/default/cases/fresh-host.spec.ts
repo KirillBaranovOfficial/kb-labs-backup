@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 
@@ -65,5 +66,76 @@ test('fresh host Studio journey: local access or secured admin and member access
       await expect(memberPage.getByTestId('forbidden-page')).toBeVisible()
       await memberContext.close()
     })
+  }
+})
+
+async function openCrons(page: import('@playwright/test').Page) {
+  await page.addInitScript((selectedProjectId: string | undefined) => {
+    if (selectedProjectId) localStorage.setItem('kb.workflow.projectId', selectedProjectId)
+  }, projectId)
+  await page.goto(`${GATEWAY}/`)
+  if (mode === 'secured') {
+    await signIn(page, process.env.KB_STUDIO_ADMIN_EMAIL!, process.env.KB_STUDIO_ADMIN_PASSWORD!)
+  }
+  await page.goto(`${GATEWAY}/p/workflows/crons`)
+  await expect(page.getByText('Workflow Crons', { exact: true })).toBeVisible()
+}
+
+test('Studio schedules @S-055.1 shows user and read-only plugin crons', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  await openCrons(page)
+  const cronId = process.env.KB_STUDIO_CRON_ID!
+  await expect(page.getByText(cronId, { exact: true })).toBeVisible()
+  for (const column of ['Schedule', 'Target', 'Status', 'Last Run', 'Next Run', 'Source', 'Action']) {
+    await expect(page.getByRole('columnheader', { name: column })).toBeVisible()
+  }
+  const userRow = page.getByRole('row').filter({ hasText: cronId })
+  await expect(userRow).toContainText('0 0 * * *')
+  await expect(userRow).toContainText('journey-hello')
+  await expect(userRow).toContainText('Enabled')
+  await expect(userRow.locator('td').nth(5)).toContainText('-')
+  await expect(userRow.locator('td').nth(6)).not.toContainText('-')
+  const pluginRow = page.getByRole('row').filter({ hasText: 'Read only' })
+  await expect(pluginRow).toContainText('plugin')
+  await expect(pluginRow.locator('td').nth(1)).not.toBeEmpty()
+  await expect(pluginRow.locator('td').nth(2)).not.toBeEmpty()
+  await expect(pluginRow.locator('td').nth(6)).not.toBeEmpty()
+})
+
+test('Studio schedules @S-055.2 toggles a project cron', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  await openCrons(page)
+  const row = page.getByRole('row').filter({ hasText: process.env.KB_STUDIO_CRON_ID! })
+  await row.getByRole('button', { name: 'Disable' }).click()
+  await expect(row.getByText('Disabled', { exact: true })).toBeVisible()
+  const response = await page.request.get(`${GATEWAY}/api/v1/projects/${encodeURIComponent(projectId!)}/workflow/api/v1/crons`)
+  expect(response.status()).toBe(200)
+  const payload = await response.json() as { data?: { crons?: Array<{ id: string; enabled: boolean }> } }
+  expect(payload.data?.crons?.find(cron => cron.id === process.env.KB_STUDIO_CRON_ID)?.enabled).toBe(false)
+})
+
+test('Studio schedules @S-055.3 reflects a CLI disable', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  await openCrons(page)
+  execFileSync('kb', ['workflow', 'crons', 'disable', process.env.KB_STUDIO_CRON_ID!], {
+    cwd: process.env.KB_STUDIO_CRON_PROJECT_ROOT,
+    env: process.env,
+    stdio: 'pipe',
+  })
+  await page.reload()
+  const row = page.getByRole('row').filter({ hasText: process.env.KB_STUDIO_CRON_ID! })
+  await expect(row.getByText('Disabled', { exact: true })).toBeVisible()
+})
+
+test('Studio schedules @S-055.4 isolates schedules by project', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  await openCrons(page)
+  await page.getByLabel('Workflow project').selectOption(process.env.KB_STUDIO_PROJECT_B_ID!)
+  await expect(page.getByText(process.env.KB_STUDIO_PROJECT_B_CRON_ID!, { exact: true })).toBeVisible()
+  for (const cronId of (process.env.KB_STUDIO_PROJECT_A_USER_CRON_IDS ?? '').split(',').filter(Boolean)) {
+    await expect(page.getByText(cronId, { exact: true })).toHaveCount(0)
+  }
+  for (const cronId of (process.env.KB_STUDIO_PROJECT_A_PLUGIN_CRON_IDS ?? '').split(',').filter(Boolean)) {
+    await expect(page.getByText(cronId, { exact: true })).toBeVisible()
   }
 })

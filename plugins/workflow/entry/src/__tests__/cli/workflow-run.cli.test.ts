@@ -144,4 +144,16 @@ describe('workflow:run', () => {
     expect(result.ok).toBe(false);
     expect(captured.errors.length).toBeGreaterThan(0);
   });
+
+  it('rejects cron as a manual trigger type because schedules are cron entities', async () => {
+    const { ui, captured } = createCapturedUI();
+    const result = await workflowRunCommand.execute(
+      createMockContext({ ui }),
+      mockCLIInput({ flags: { 'workflow-id': 'e2e-hello', 'trigger-type': 'cron' } }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect([...captured.errors, ...captured.warnings.map(item => item.message)].join(' ')).toContain('Expected manual');
+    expect(mockRunWorkflow).not.toHaveBeenCalled();
+  });
 });
