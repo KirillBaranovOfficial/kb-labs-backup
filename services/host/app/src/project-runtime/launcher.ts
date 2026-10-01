@@ -31,7 +31,8 @@ import type {
   RuntimeProject,
 } from "./manager.js";
 
-const OUTPUT_TAIL_BYTES = 8 * 1024;
+const OUTPUT_TAIL_BYTES = 256 * 1024;
+const HEALTH_STATUS_BYTES = 4 * 1024;
 
 /**
  * Variables that would make a runtime bind or resolve something the host owns
@@ -70,6 +71,7 @@ function isWindows(): boolean {
 class ChildRuntime implements RuntimeProcess {
   readonly exited: Promise<RuntimeExit>;
   private output = "";
+  private healthStatus = "";
   private done = false;
   private stopping: Promise<void> | undefined;
 
@@ -102,6 +104,14 @@ class ChildRuntime implements RuntimeProcess {
 
   outputTail(): string {
     return this.output;
+  }
+
+  recordHealthStatus(statusCode: number, body: string): void {
+    this.healthStatus = `HTTP ${statusCode}: ${body.slice(0, HEALTH_STATUS_BYTES)}`;
+  }
+
+  lastHealthStatus(): string {
+    return this.healthStatus;
   }
 
   stop(): Promise<void> {
@@ -168,8 +178,24 @@ export function probeRuntime(runtime: RuntimeProcess): Promise<boolean> {
         timeout: 2000,
       },
       (res) => {
-        res.resume();
-        resolve(res.statusCode === 200);
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        res.on("data", (chunk: Buffer) => {
+          if (bytes >= HEALTH_STATUS_BYTES) {
+            return;
+          }
+          const remaining = HEALTH_STATUS_BYTES - bytes;
+          const bounded = chunk.subarray(0, remaining);
+          chunks.push(bounded);
+          bytes += bounded.length;
+        });
+        res.once("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          if ("recordHealthStatus" in runtime && typeof runtime.recordHealthStatus === "function") {
+            runtime.recordHealthStatus(res.statusCode ?? 0, body);
+          }
+          resolve(res.statusCode === 200);
+        });
       },
     );
     req.once("timeout", () => {

@@ -53,6 +53,10 @@ export interface RuntimeProcess {
   stop(): Promise<void>;
   /** Last output of the process, for the cause of a failed start. */
   outputTail(): string;
+  /** Latest failed readiness response, when the launcher can capture it. */
+  lastHealthStatus?(): string;
+  /** Records a readiness response so startup failure logs can identify modules. */
+  recordHealthStatus?(statusCode: number, body: string): void;
 }
 
 export interface RuntimeLauncher {
@@ -545,8 +549,10 @@ export class ProjectRuntimeManager {
       }
       if (this.now() >= deadline) {
         await runtime.stop().catch(() => undefined);
+        const healthStatus = runtime.lastHealthStatus?.();
+        const healthDetail = healthStatus ? `; health: ${healthStatus}` : "";
         throw new Error(
-          `the runtime was not healthy within ${this.options.startTimeoutMs} ms${this.tail(runtime)}`,
+          `the runtime was not healthy within ${this.options.startTimeoutMs} ms${healthDetail}${this.tail(runtime)}`,
         );
       }
       await new Promise<void>((resolve) => {
@@ -579,7 +585,12 @@ export class ProjectRuntimeManager {
     this.options.logger.error(
       "Project runtime could not be started",
       undefined,
-      { projectId: entry.project.id, cause },
+      {
+        projectId: entry.project.id,
+        cause,
+        startupOutput: entry.process?.outputTail(),
+        healthStatus: entry.process?.lastHealthStatus?.(),
+      },
     );
     this.failures.set(entry.project.id, {
       at: this.now(),
