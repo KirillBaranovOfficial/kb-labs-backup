@@ -462,7 +462,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                  assert_missing_vector_store, cases=["S-054.6"])
 
     try:
-        add = ["project", "add", str(project_b), "--init", "--json"]
+        add = ["project", "add", str(project_b), "--json"]
         if _json(cli(add), add).get("ok") is not True:
             raise RuntimeError("could not register project B for adapter isolation check")
         project_b_registered = True

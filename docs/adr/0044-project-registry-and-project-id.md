@@ -43,9 +43,9 @@ There is no host process yet, so the registry must be usable directly from the C
    in time fails with `KB_PROJECT_REGISTRY_LOCKED`.
 7. **Per-project state path** is `<root>/state/<projectId>/`. This change only adds the path helper; moving existing
    runtime files out of `<repo>/.kb/` is a separate task.
-8. **`add` never modifies a project silently.** A folder that already has `.kb/` is picked up as-is. A folder without
-   `.kb/` is not registered and gets a typed `initializationRequired` result; `--init` creates the minimal `.kb/`
-   through the routine the platform already uses for workspace init (`initWorkspaceConfig`), then registers it.
+8. **`add` only registers the canonical path.** A project is registered whether or not it has a `.kb/` directory.
+   Registration never reads or writes files in the project repository; the registry is the source of truth for
+   project membership. Project config and runtime state remain separate concerns.
 9. **`remove` only unregisters.** It never deletes the folder, `.kb/` or the runtime state directory, and follows the
    destructive-action protocol (ADR-0025): severity `low`, reversible, confirmed with `--yes`.
 10. **Commands** `kb project add | list | show | remove` are system commands (tier S namespace `project`, see
@@ -88,7 +88,7 @@ There is no host process yet, so the registry must be usable directly from the C
   `core/project-registry/src/state-dir.ts`. There is no fallback to the old in-repo location; files left there are
   ignored. Adapter defaults under `.kb/` moved to the state directory when the user sets no path. The inventory and
   the paths that remain are in `docs/architecture/target/13-runtime-state-inventory.md`.
-- Follow-ups: move kb-dev logs and pids (see the inventory) to `state/<projectId>/`; wire `--init` to the future init flow; host takes over the
+- Follow-ups: move kb-dev logs and pids (see the inventory) to `state/<projectId>/`; host takes over the
   registry; reserve `project` in the namespace list.
 
 ## References

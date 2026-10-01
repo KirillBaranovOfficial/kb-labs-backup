@@ -114,7 +114,7 @@ describe('ProjectsPage', () => {
     });
 
     await waitFor(() =>
-      expect(addProject).toHaveBeenCalledWith({ path: '/workspace/demo', name: undefined, init: false }),
+      expect(addProject).toHaveBeenCalledWith({ path: '/workspace/demo', name: undefined }),
     );
   });
 });

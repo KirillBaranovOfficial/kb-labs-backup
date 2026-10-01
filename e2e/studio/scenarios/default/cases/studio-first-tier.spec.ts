@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { mkdtemp, mkdir, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -44,16 +44,7 @@ test('S-046.4-.6 and S-124.7: inspect, register, and safely unregister a project
     await page.getByRole('button', { name: 'Add project', exact: true }).click()
     await page.getByLabel('Folder path').fill(projectPath)
     await page.getByRole('button', { name: 'Register', exact: true }).click()
-    await expect(page.getByText('Initialize project?', { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: 'Back', exact: true }).click()
-    await expect(page.getByText('Initialize project?', { exact: true })).toHaveCount(0)
     expect(await readdir(projectPath)).toEqual([])
-    await expect(page.getByText(projectPath, { exact: true })).toHaveCount(0)
-
-    await mkdir(join(projectPath, '.kb'))
-    await page.getByRole('button', { name: 'Add project', exact: true }).click()
-    await page.getByLabel('Folder path').fill(projectPath)
-    await page.getByRole('button', { name: 'Register', exact: true }).click()
     await expect(page.getByText(projectPath, { exact: true })).toBeVisible()
     await expect(page.getByText(`Registered ${projectPath}`, { exact: true })).toBeVisible()
 

@@ -120,50 +120,37 @@ describe('project add / list', () => {
     expect(list.text.join('')).toContain(a);
   });
 
-  it('defaults to the current folder', async () => {
-    mkdirSync(join(cwd, '.kb'));
+  it('registers the current folder without requiring or creating .kb/', async () => {
     const res = await run(projectAdd, []);
     expect(res.code).toBe(0);
     expect(res.json[0]?.project?.path).toBe(cwd);
+    expect(existsSync(join(cwd, '.kb'))).toBe(false);
   });
 
-  it('does not create .kb/ silently: returns a typed initializationRequired result and registers nothing', async () => {
+  it('registers an uninitialized project without writing into its repository', async () => {
     const bare = makeProject('bare', false);
+    const filesBefore = readdirSync(bare);
 
     const res = await run(projectAdd, [bare]);
 
-    expect(res.code).toBe(1);
-    expect(res.json[0]).toMatchObject({
-      ok: false,
-      initializationRequired: true,
-      path: bare,
-      nextStep: `kb project add ${bare} --init`,
-    });
-    expect(readdirSync(bare)).toEqual([]);
-    expect(existsSync(join(kbHome, 'projects.json'))).toBe(false);
-  });
-
-  it('with --init creates the minimal .kb/ and registers the project', async () => {
-    const bare = makeProject('bare', false);
-
-    const res = await run(projectAdd, [bare], { init: true });
-
     expect(res.code).toBe(0);
-    expect(res.json[0]).toMatchObject({ ok: true, initialized: true });
-    expect(existsSync(join(bare, '.kb'))).toBe(true);
+    expect(res.json[0]).toMatchObject({ ok: true, project: { path: bare } });
+    expect(Object.keys(res.json[0] ?? {})).not.toContain('initialized');
+    expect(readdirSync(bare)).toEqual(filesBefore);
+    expect(existsSync(join(bare, '.kb'))).toBe(false);
     const list = await run(projectList, []);
     expect(list.json[0]?.projects).toHaveLength(1);
   });
 
-  it('--dry-run changes nothing, not even with --init', async () => {
+  it('--dry-run plans registration without requiring or creating .kb/', async () => {
     const bare = makeProject('bare', false);
     const declared = makeProject('declared', true);
 
     const plain = await run(projectAdd, [declared], { 'dry-run': true });
-    const withInit = await run(projectAdd, [bare], { 'dry-run': true, init: true });
+    const uninitialized = await run(projectAdd, [bare], { 'dry-run': true });
 
-    expect(plain.json[0]).toMatchObject({ ok: true, dryRun: true, wouldInitialize: false });
-    expect(withInit.json[0]).toMatchObject({ ok: true, dryRun: true, wouldInitialize: true });
+    expect(plain.json[0]).toMatchObject({ ok: true, dryRun: true, project: { path: declared } });
+    expect(uninitialized.json[0]).toMatchObject({ ok: true, dryRun: true, project: { path: bare } });
     expect(readdirSync(bare)).toEqual([]);
     expect(existsSync(join(kbHome, 'projects.json'))).toBe(false);
   });

@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
@@ -43,15 +44,36 @@ func TestRequestScenarioCompilesSameDeclarativeAnswersAsMachineRequest(t *testin
 	// Provider metadata supplies the scenario default, so only channel/profile
 	// are prompted and this journey works with a finite non-terminal reader.
 	var output bytes.Buffer
-	request, err := RequestScenario(source, "/platform", "commit", IO{In: bytes.NewBufferString("\n\n"), Out: &output})
+	projectRoot := t.TempDir()
+	projectRoot, err = filepath.EvalSymlinks(projectRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.ScenarioID != "commit" || request.Platform.Channel != contracts.ChannelStable || request.ProviderPreferences["cache"] != "state-broker" {
+	request, err := RequestScenario(source, "/platform", "commit", projectRoot, IO{In: bytes.NewBufferString("\n\n"), Out: &output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.ScenarioID != "commit" || request.Platform.Channel != contracts.ChannelStable || request.ProviderPreferences["cache"] != "state-broker" || request.ProjectRoot != projectRoot {
 		t.Fatalf("request = %#v", request)
 	}
 	if bytes.Contains(output.Bytes(), []byte("Cache provider")) {
 		t.Fatalf("infrastructure provider should use its declared default: %s", output.String())
+	}
+	interactiveProject := t.TempDir()
+	interactiveProject, err = filepath.EvalSymlinks(interactiveProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var interactiveOutput bytes.Buffer
+	interactive, err := RequestScenario(source, "/platform", "commit", "", IO{
+		In:  bytes.NewBufferString(interactiveProject + "\n\n\n"),
+		Out: &interactiveOutput,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interactive.ProjectRoot != interactiveProject || !bytes.Contains(interactiveOutput.Bytes(), []byte("Project directory")) {
+		t.Fatalf("interactive project selection = %#v, output=%s", interactive, interactiveOutput.String())
 	}
 	machine := request
 	machine.ScenarioID = "commit"

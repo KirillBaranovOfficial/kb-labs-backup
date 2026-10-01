@@ -10,7 +10,7 @@ into that runner.
 1. Start from a fresh project directory and register it:
 
    ```bash
-   kb project add --init
+   kb project add
    ```
 
 2. Create and lint the no-network sample:

@@ -6,6 +6,11 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ## 2026-10-01
 
+### Project membership comes from the platform registry
+
+`kb project add <path>` registers the canonical path regardless of whether the repository contains `.kb/`. The platform does not create files in the user's repository during registration, and a repository's `.kb/` directory is not the authority for whether it is a project. Project configuration and state ownership are tracked as separate follow-up work.
+Cases: S-043, S-124, S-187.
+
 ### Adapters and LLM settings are platform-only
 
 Adapter bindings, adapter options, LLM credentials, and model selection are

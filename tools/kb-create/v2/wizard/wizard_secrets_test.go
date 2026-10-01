@@ -47,11 +47,11 @@ func storedSecrets(t *testing.T, root string) map[string]string {
 	return values
 }
 
-// custom: channel, profile, Studio access, then (secured only) email, password + confirmation, signing secret.
+// custom: project path, channel, profile, Studio access, then (secured only) email, password + confirmation, signing secret.
 func runCustom(t *testing.T, root, input string) (contracts.InstallRequest, string, error) {
 	t.Helper()
 	var output bytes.Buffer
-	request, err := RequestScenario(gatewaySource(t), root, "custom", IO{In: bytes.NewBufferString(input), Out: &output})
+	request, err := RequestScenario(gatewaySource(t), root, "custom", "", IO{In: bytes.NewBufferString("\n" + input), Out: &output})
 	return request, output.String(), err
 }
 
@@ -197,9 +197,9 @@ func TestInjectedSecretReaderIsUsedForSecretsOnly(t *testing.T) {
 	root := t.TempDir()
 	var asked int
 	var output bytes.Buffer
-	_, err := RequestScenario(gatewaySource(t), root, "custom", IO{
+	_, err := RequestScenario(gatewaySource(t), root, "custom", "", IO{
 		// Everything except secrets comes from In.
-		In:  bytes.NewBufferString("\n\nsecured\nadmin@example.com\n\n"),
+		In:  bytes.NewBufferString("\n\n\nsecured\nadmin@example.com\n\n"),
 		Out: &output,
 		ReadSecret: func() (string, error) {
 			asked++

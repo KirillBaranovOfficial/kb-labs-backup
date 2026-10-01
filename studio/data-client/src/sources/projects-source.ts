@@ -11,8 +11,6 @@ export interface AddProjectParams {
   path: string;
   /** Alias; defaults to the folder name. */
   name?: string;
-  /** Create the minimal `.kb/` when the folder has none. */
-  init?: boolean;
 }
 
 export interface ProjectsDataSource {

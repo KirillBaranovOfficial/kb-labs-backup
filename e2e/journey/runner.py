@@ -184,7 +184,7 @@ def mcp_rpc(url: str, method: str, request_id: int, params=None, token=None):
 
 
 def verify_project_mcp(env: dict[str, str], local: bool):
-    registered, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add --init --json'],
+    registered, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add --json'],
                         env=env, cwd=PROJECT, timeout=180)
     if not require(registered, step="register project for MCP"):
         return
@@ -256,11 +256,13 @@ def pty_install(command: list[str], env: dict[str, str], choice: str = "", acces
                     sent_access_mode = True
                     last_prompt = "Studio access (secured)"
                     continue
-                prompts = re.findall(r"(?im)^.*(?:\?|\[.*(?:default|y/n|yes/no).*\]|default[^\n]*:|press enter[^\n]*|select[^\n]*:|admin email[^\n]*:|admin tenant[^\n]*:|admin password[^\n]*:|confirm admin password[^\n]*:|session signing secret[^\n]*:).*?$", visible)
+                prompts = re.findall(r"(?im)^.*(?:\?|\[.*(?:default|y/n|yes/no).*\]|default[^\n]*:|press enter[^\n]*|select[^\n]*:|project directory[^\n]*:|admin email[^\n]*:|admin tenant[^\n]*:|admin password[^\n]*:|confirm admin password[^\n]*:|session signing secret[^\n]*:).*?$", visible)
                 prompt = prompts[-1] if prompts else ""
                 if prompt and prompt != last_prompt:
                     answer = ""
-                    if access_mode == "secured" and re.search(r"Studio access", prompt, re.I):
+                    if re.search(r"Project directory", prompt, re.I):
+                        answer = str(PROJECT)
+                    elif access_mode == "secured" and re.search(r"Studio access", prompt, re.I):
                         answer = "secured"
                     elif access_mode == "secured" and re.search(r"Admin email", prompt, re.I):
                         answer = "journey-admin@example.test"
@@ -532,6 +534,7 @@ def main():
         append_summary(passed)
         return 0 if passed else failure_exit()
     if FRONT == "human" and not VARIANT.endswith("secured"):
+        PROJECT.mkdir(parents=True, exist_ok=True)
         choice = "commit" if VARIANT == "human-nondefault" else ""
         access_mode = "secured" if VARIANT.endswith("secured") else "local"
         code, output, duration, apply_offset = pty_install(
@@ -552,13 +555,17 @@ def main():
         if not re.search(r"(?i)next|success|installed|ready", output):
             fail("kb-create install: terminal showed no success and next steps")
         human_install_ok = (code == 0 and "Set up KB Labs" in output
-                            and re.search(r"Plan: platform [^,]+, \d+ artifacts", output) is not None
+                            and re.search(r"Plan: platform [^,]+ at [^,]+, \d+ artifacts", output) is not None
                             and "Applying installation" in output
+                            and f"; project {PROJECT.resolve()}" in output
+                            and str(PROJECT.resolve()) in output
+                            and not (PROJECT / ".kb").exists()
+                            and "Verification: platform installed" in output
                             and re.search(r"(?i)next|success|installed|ready", output) is not None)
         if FRONT == "human" and not VARIANT.endswith("secured"):
             record_case("human interactive install",
                        human_install_ok, "interactive install did not show a plan and success result",
-                       cases=["PC-001.2", "S-040.1", "S-040.2"])
+                       cases=["PC-001.2", "S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3"])
     else:
         operation = "plan" if VARIANT in {"input", "relative-path"} else "apply"
         install_scenario = "custom" if VARIANT.endswith("secured") else SCENARIO
@@ -877,7 +884,7 @@ def main():
         lint, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow lint --json'], env=env, cwd=PROJECT, timeout=120)
         if lint.returncode != 0:
             fail(f"workflow fixture lint: `kb workflow lint --json` exited {lint.returncode}; {' '.join(lint.stdout.split())[-500:]}")
-        project_add, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add "$1" --init --json', "journey", str(PROJECT)],
+        project_add, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add "$1" --json', "journey", str(PROJECT)],
                              env=env, cwd=PROJECT, timeout=90)
         try:
             project_payload = json.loads(project_add.stdout)
@@ -885,7 +892,7 @@ def main():
         except json.JSONDecodeError:
             project_payload = {}
             project_id = ""
-        if not require(project_add, step="kb project add --init") or not project_id:
+        if not require(project_add, step="kb project add") or not project_id:
             fail("project registration did not return a project ID")
         service_env["KB_JOURNEY_PROJECT_ID"] = project_id
         service_env["KB_JOURNEY_PROJECT_ROOT"] = str(PROJECT)
@@ -1052,7 +1059,7 @@ def main():
             encoding="utf-8")
         (project_b_root / ".kb" / "crons" / "studio-b.yml").write_text(
             "schedule: '0 0 * * *'\nworkflow: studio-b-workflow\nenabled: true\n", encoding="utf-8")
-        project_b_registered, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add --init --json'],
+        project_b_registered, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add --json'],
                                       env=service_env, cwd=project_b_root, timeout=180)
         try:
             project_b_id = str(json.loads(project_b_registered.stdout)["project"]["id"])

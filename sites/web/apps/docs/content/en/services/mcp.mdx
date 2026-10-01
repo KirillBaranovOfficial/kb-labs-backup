@@ -1,7 +1,7 @@
 ---
 title: "Project MCP server"
 description: "Connect an MCP client to a project's KB Labs tools through the host."
-updatedAt: "2026-09-30"
+updatedAt: "2026-10-01"
 order: 7
 ---
 
@@ -14,7 +14,8 @@ http://127.0.0.1:4000/api/v1/projects/<project-id>/mcp
 ```
 
 Find the project's id with `kb project show --json` from its directory. Register
-an uninitialized folder with `kb project add --init` first.
+an unregistered folder with `kb project add`; this records its canonical path
+without creating files in the project.
 Print a client configuration for the current project with `kb mcp config claude`,
 `kb mcp config codex`, or `kb mcp config cursor`.
 
