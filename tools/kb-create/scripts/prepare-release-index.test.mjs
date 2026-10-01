@@ -7,6 +7,58 @@ import { join } from 'node:path';
 
 const script = new URL('./prepare-release-index.mjs', import.meta.url);
 
+// case: S-054.2
+test('seals recursive runtime peers of platform members and SDK, and validates published imports', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-index-runtime-peers-'));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', {
+      peerDependencies: { '@kb-labs/core-runtime': '^2.0.0', '@kb-labs/perm-presets': '^2.0.0' },
+    }, { 'dist/index.js': 'import { presets } from "@kb-labs/perm-presets";' }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-contracts', '2.0.0', '', {
+      peerDependencies: { '@kb-labs/shared-tool-kit': '^2.0.0' },
+    }, { 'dist/index.js': 'export { createTool } from "@kb-labs/shared-tool-kit";' }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/perm-presets', '2.0.0', '', {}, { 'dist/index.js': 'export const presets = {};' }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/shared-tool-kit', '2.0.0', '', {}, { 'dist/index.js': 'export const createTool = () => {};' }),
+  ];
+  writeStageManifest(root, packageRoot, stage, artifacts);
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  const output = join(root, 'release-index.json');
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
+    '--binary-manifest', binaryManifest, '--platform-member-packages', '@kb-labs/core-contracts', '--output', output], { stdio: 'pipe' });
+  const index = JSON.parse(readFileSync(output, 'utf8'));
+  const members = index.platforms[0].members.map(member => member.package);
+  assert.ok(members.includes('@kb-labs/perm-presets'));
+  assert.ok(members.includes('@kb-labs/shared-tool-kit'));
+});
+
+// case: S-054.2
+test('fails when a published bare runtime import is neither a dependency nor a sealed peer', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-index-unresolved-import-'));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', {
+      peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' },
+    }, { 'dist/index.js': 'import "@kb-labs/perm-presets";' }),
+  ];
+  writeStageManifest(root, packageRoot, stage, artifacts);
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
+    '--binary-manifest', binaryManifest, '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /runtime import @kb-labs\/perm-presets.*neither a dependency nor a sealed peer/);
+});
+
 test('prepares a sealed index from staged plugin, service and adapter manifests', () => {
   const root = mkdtempSync(join(tmpdir(), 'kb-release-index-'));
   const stage = join(root, 'stage');

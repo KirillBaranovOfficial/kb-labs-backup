@@ -22,10 +22,11 @@ function expectRequiredExports(
 
 describe("SDK Entrypoint Contracts", () => {
   // case: S-003.1
-  it("bundles shared-tool-kit into the SDK runtime entrypoint", async () => {
+  it("keeps runtime peer packages external for the platform install", async () => {
     const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
     const runtime = await readFile(path.join(packageRoot, "dist", "index.js"), "utf8");
-    expect(runtime).not.toContain("@kb-labs/shared-tool-kit");
+    expect(runtime).toContain("@kb-labs/shared-tool-kit");
+    expect(runtime).toContain("@kb-labs/shared-command-kit");
   });
 
   it("keeps required root exports", () => {
