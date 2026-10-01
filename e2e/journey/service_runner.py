@@ -272,6 +272,23 @@ def configure_installed_cli_path() -> None:
         os.environ["PATH"] = os.pathsep.join([bin_dir, *current])
 
 
+def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runner=subprocess.run) -> None:
+    """Restore the CLI session after the auth journey intentionally logs out."""
+    email = env.get("KB_JOURNEY_ADMIN_EMAIL", "").strip()
+    password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+    if not email or not password:
+        raise RuntimeError("secured service journey needs admin credentials; rerun with KB_JOURNEY_ADMIN_EMAIL and KB_JOURNEY_ADMIN_PASSWORD")
+    command = [str(kb_path), "auth", "login", "--gateway-url",
+               env.get("KB_JOURNEY_BASE_URL", BASE_URL), "--email", email,
+               "--password", password]
+    result = runner(command, cwd=env.get("HOME"), env=env, capture_output=True,
+                    text=True, timeout=90, check=False)
+    if result.returncode != 0:
+        detail = " ".join((result.stdout + " " + result.stderr).split())
+        suffix = f"; {detail}" if detail else ""
+        raise RuntimeError(f"`kb auth login` failed while restoring the secured service journey session{suffix}")
+
+
 def _run_installed_flows(journey: Journey, project_root: str, registry: str) -> None:
     env = os.environ.copy()
     journey.step("adapter defaults flow", "adapter",
@@ -391,6 +408,10 @@ def main() -> int:
     journey = Journey(args.mode, args.run_id or str(uuid.uuid4()))
     try:
         configure_installed_cli_path()
+        if args.mode == "secured":
+            journey.step("restore secured CLI login", "auth.secured",
+                         lambda: restore_secured_cli_login(
+                             Path.home() / ".local/bin/kb", os.environ.copy()))
         project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")
         registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
         if project_root:

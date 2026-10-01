@@ -60,7 +60,7 @@ class PlatformStateDumpTests(unittest.TestCase):
             kb = binaries / "kb"
             kb.write_text(
                 "#!/bin/sh\n"
-                "if [ \"$1\" = plugins ]; then echo 'plugins command failed'; exit 7; fi\n"
+                "if [ \"$1\" = marketplace ] && [ \"$2\" = plugins ]; then echo 'marketplace plugins command failed'; exit 7; fi\n"
                 "echo 'diag command failed'; exit 8\n"
             )
             kb.chmod(0o755)
@@ -94,7 +94,8 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertNotIn("config-secret", (destination / ".kb/kb.config.jsonc").read_text())
             self.assertNotIn("receipt-secret", (destination / ".kb/v2/receipt.json").read_text())
             self.assertNotIn("diag-secret", (destination / ".kb/diagnostics/recent.json").read_text())
-            self.assertIn("exit_code: 7", (destination / "kb-plugins-list.txt").read_text())
+            self.assertIn("exit_code: 7", (destination / "kb-marketplace-plugins-platform.txt").read_text())
+            self.assertIn("exit_code: 7", (destination / "kb-marketplace-plugins-project.txt").read_text())
             self.assertIn("exit_code: 8", (destination / "kb-command-diagnostic.txt").read_text())
             self.assertIn("exit_code: 9", (destination / "kb-create-status.txt").read_text())
             self.assertIn("First failure:", (destination / "index.md").read_text())
