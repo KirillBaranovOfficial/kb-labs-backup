@@ -47,7 +47,11 @@ class Journey:
         started = time.monotonic()
         try:
             message = check()
-            status = "PASS" if message is None else "FAIL"
+            if isinstance(message, str) and message.startswith("BLOCKED:"):
+                status = "BLOCKED"
+                message = message.removeprefix("BLOCKED:").strip()
+            else:
+                status = "PASS" if message is None else "FAIL"
         except Exception as error:  # Include a concise error, not a raw traceback.
             status = "FAIL"
             message = str(error) or error.__class__.__name__
