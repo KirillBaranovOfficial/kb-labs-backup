@@ -172,6 +172,7 @@ describe('executeToolCall', () => {
     executeCommandV3.mockReset();
   });
 
+  // case: S-140.3
   it('reports an error for an unknown tool and never executes', async () => {
     const result = await executeToolCall({
       name: 'ghost__nope',
@@ -182,7 +183,9 @@ describe('executeToolCall', () => {
       resolvePlatform,
     });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('Unknown tool');
+    expect(result.structuredContent).toMatchObject({ code: 'KB_RUNTIME_MCP_UNKNOWN_TOOL', message: expect.stringContaining('ghost__nope') });
+    expect(textOf(result)).toContain('KB_RUNTIME_MCP_UNKNOWN_TOOL:');
+    expect(textOf(result)).toContain('tools/list');
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
 
@@ -197,7 +200,8 @@ describe('executeToolCall', () => {
       resolvePlatform,
     });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('Not authorized');
+    expect(result.structuredContent).toMatchObject({ code: 'KB_RUNTIME_MCP_TOOL_FORBIDDEN' });
+    expect(textOf(result)).toContain('KB_RUNTIME_MCP_TOOL_FORBIDDEN:');
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
 
@@ -211,6 +215,28 @@ describe('executeToolCall', () => {
       resolvePlatform,
     });
     expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ code: 'KB_RUNTIME_MCP_TOOL_FORBIDDEN' });
+    expect(executeCommandV3).not.toHaveBeenCalled();
+  });
+
+  // case: S-140.4
+  it('rejects arguments whose values violate the listed JSON schema', async () => {
+    const typedTool = { ...tool, inputSchema: { type: 'object', properties: { force: { type: 'boolean' } } } };
+    const result = await executeToolCall({
+      name: typedTool.name,
+      args: { force: 'yes' },
+      visibleTools: [typedTool],
+      permits: allow,
+      tenantId: 't1',
+      resolvePlatform,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      code: 'KB_RUNTIME_MCP_INVALID_ARGUMENTS',
+      message: expect.stringContaining('force'),
+      details: { argument: 'force', expected: 'boolean' },
+    });
+    expect(textOf(result)).toContain('KB_RUNTIME_MCP_INVALID_ARGUMENTS:');
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
 
@@ -283,5 +309,6 @@ describe('executeToolCall', () => {
       resolvePlatform,
     });
     expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ code: 'KB_RUNTIME_MCP_TOOL_FAILED' });
   });
 });

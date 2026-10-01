@@ -93,7 +93,7 @@ class ServiceJourneyTests(unittest.TestCase):
     def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
         import json
         tools = [{"name": name, "inputSchema": {"type": "object"}}
-                 for name in ("commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics")]
+                 for name in ("kb-labs-commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics")]
         event = 'event: message\ndata: ' + json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}) + '\n\n'
         with patch("service_runner.request", return_value=(200, event, {})) as request:
             failure = mcp_probe("prj_test", "token")
