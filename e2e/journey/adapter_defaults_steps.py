@@ -156,6 +156,33 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("fresh install retains optional OpenAI warning metadata", "adapter",
                  assert_optional_openai_requirement_in_install_plan, cases=["S-054.15"])
 
+    def assert_sdk_helper_packages_are_not_installed() -> None:
+        sdk_runtime_peers = {
+            "@kb-labs/core-platform",
+            "@kb-labs/core-runtime",
+            "@kb-labs/core-sys",
+            "@kb-labs/perm-presets",
+            "@kb-labs/shared-cli-ui",
+            "@kb-labs/shared-command-kit",
+            "@kb-labs/shared-tool-kit",
+        }
+        package_root = platform_root / "node_modules" / "@kb-labs"
+        missing = sorted(name for name in sdk_runtime_peers if not (package_root / name.removeprefix("@kb-labs/") / "package.json").is_file())
+        if missing:
+            raise RuntimeError(f"installed platform is missing SDK runtime peers: {', '.join(missing)}")
+        helpers = {
+            "shared-testing",
+            "shared-testing-e2e",
+            "shared-testing-platform",
+            "studio-plugin-tools",
+        }
+        installed_helpers = sorted(name for name in helpers if (package_root / name / "package.json").exists())
+        if installed_helpers:
+            raise RuntimeError(f"installed platform contains SDK test/build helpers: {', '.join(installed_helpers)}")
+
+    journey.step("installed platform excludes SDK test and build helpers", "installer",
+                 assert_sdk_helper_packages_are_not_installed, cases=["S-054.16"])
+
     def assert_installed_layout_cli_loads_defaults() -> None:
         rows = rows_for(project_a)
         if rows["storage"].get("implementation") != "@kb-labs/adapters-fs" or rows["storage"].get("mode") != "real":

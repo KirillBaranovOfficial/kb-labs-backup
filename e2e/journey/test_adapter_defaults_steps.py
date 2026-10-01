@@ -41,6 +41,13 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             openai_package = platform_root / "node_modules" / "@kb-labs" / "adapters-openai" / "package.json"
             openai_package.parent.mkdir(parents=True)
             openai_package.write_text('{"name":"@kb-labs/adapters-openai","version":"2.120.1"}\n')
+            for package_name in (
+                "core-platform", "core-runtime", "core-sys", "perm-presets",
+                "shared-cli-ui", "shared-command-kit", "shared-tool-kit",
+            ):
+                package_path = platform_root / "node_modules" / "@kb-labs" / package_name / "package.json"
+                package_path.parent.mkdir(parents=True)
+                package_path.write_text(json.dumps({"name": f"@kb-labs/{package_name}", "version": "2.120.1"}) + "\n")
             (platform_root / "package.json").write_text(json.dumps({
                 "name": "kb-platform",
                 "dependencies": {},
@@ -251,7 +258,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                        side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(health_adapters()).encode())):
                 run_adapter_default_steps(journey, project_a, env, fake_run)
 
-            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 16)} | {f"S-048.{number}" for number in range(1, 7)}
+            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(claims, expected)

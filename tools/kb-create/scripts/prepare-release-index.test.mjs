@@ -37,6 +37,81 @@ test('seals recursive runtime peers of platform members and SDK, and validates p
   assert.ok(members.includes('@kb-labs/shared-tool-kit'));
 });
 
+// case: S-054.16
+test('seals declared SDK runtime entrypoints and leaves optional helper peers out', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-index-optional-peers-'));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const runtimePeers = [
+    '@kb-labs/core-platform', '@kb-labs/core-runtime', '@kb-labs/core-sys',
+    '@kb-labs/perm-presets', '@kb-labs/shared-cli-ui',
+    '@kb-labs/shared-command-kit', '@kb-labs/shared-tool-kit',
+  ];
+  const helperPeers = [
+    '@kb-labs/shared-testing', '@kb-labs/shared-testing-e2e',
+    '@kb-labs/shared-testing-platform', '@kb-labs/studio-plugin-tools',
+  ];
+  const peerDependencies = Object.fromEntries([...runtimePeers, ...helperPeers].map(name => [name, '^2.0.0']));
+  const peerDependenciesMeta = Object.fromEntries(helperPeers.map(name => [name, { optional: true }]));
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', {
+      peerDependencies,
+      peerDependenciesMeta,
+      exports: {
+        '.': { import: './dist/index.js' },
+        './testing': { import: './dist/testing/index.js' },
+        './studio-build': { import: './dist/studio-build/index.js' },
+      },
+      kbLabs: { release: { nonRuntimeEntrypoints: ['./testing', './studio-build'] } },
+    }, {
+      'dist/index.js': runtimePeers.map(name => `import "${name}";`).join('\n'),
+      'dist/testing/index.js': helperPeers.slice(0, 3).map(name => `import "${name}";`).join('\n'),
+      'dist/studio-build/index.js': 'import "@kb-labs/studio-plugin-tools";',
+    }),
+    ...[...runtimePeers, ...helperPeers].map(name => packageArtifact(root, packageRoot, stage, name, '2.0.0', '')),
+  ];
+  writeStageManifest(root, packageRoot, stage, artifacts);
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  const output = join(root, 'release-index.json');
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
+    '--binary-manifest', binaryManifest, '--output', output], { stdio: 'pipe' });
+  const members = JSON.parse(readFileSync(output, 'utf8')).platforms[0].members.map(member => member.package);
+  for (const peer of runtimePeers) assert.ok(members.includes(peer), `${peer} must remain sealed`);
+  for (const peer of helperPeers) assert.ok(!members.includes(peer), `${peer} must stay out of the platform`);
+});
+
+// case: S-054.16
+test('fails when a runtime entrypoint statically imports an optional peer', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-index-optional-runtime-import-'));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', {
+      peerDependencies: { '@kb-labs/core-runtime': '^2.0.0', '@kb-labs/shared-testing': '^2.0.0' },
+      peerDependenciesMeta: { '@kb-labs/shared-testing': { optional: true } },
+      exports: { '.': { import: './dist/index.js' }, './testing': { import: './dist/testing/index.js' } },
+      kbLabs: { release: { nonRuntimeEntrypoints: ['./testing'] } },
+    }, {
+      'dist/index.js': 'import "@kb-labs/shared-testing";',
+      'dist/testing/index.js': 'import "@kb-labs/shared-testing";',
+    }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/shared-testing', '2.0.0', ''),
+  ];
+  writeStageManifest(root, packageRoot, stage, artifacts);
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  const result = spawnSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
+    '--binary-manifest', binaryManifest, '--output', join(root, 'release-index.json')], { encoding: 'utf8' });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /runtime entrypoint .* statically imports optional peer @kb-labs\/shared-testing/);
+});
+
 // case: S-054.2
 test('fails when a published bare runtime import is neither a dependency nor a sealed peer', () => {
   const root = mkdtempSync(join(tmpdir(), 'kb-release-index-unresolved-import-'));
