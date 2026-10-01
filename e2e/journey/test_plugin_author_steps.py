@@ -32,6 +32,9 @@ if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and
     (entry / "package.json").write_text('{"name":"demo-entry","version":"0.1.0"}')
     core.write_text('return { greeting: `Hello, ${who} from demo!` };\n')
 elif args[:3] == ["marketplace", "link", "--link"]:
+    if os.environ.get("FAIL_MARKETPLACE_LINK"):
+        print("simulated marketplace link failure")
+        raise SystemExit(1)
     if not (root / args[3] / "package.json").is_file():
         raise SystemExit("entry package is missing")
     lock_path.write_text(json.dumps({"plugins": {"demo": {
@@ -68,7 +71,8 @@ if args == ["install"]:
     raise SystemExit(0)
 if args == ["-w", "build"]:
     if os.environ.get("FAIL_PNPM_BUILD"):
-        print("simulated build error")
+        detail = os.environ.get("LONG_BUILD_ERROR", "simulated build error")
+        print(detail)
         raise SystemExit(2)
     plugin = Path.cwd()
     source = (plugin / "packages/demo-core/src/hello.ts").read_text()
@@ -165,6 +169,23 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             {"claimId": "S-003.2", "kind": "journey", "status": "FAIL"},
         ])
         self.assertFalse((self.project / ".kb/plugins/demo").exists())
+
+    def test_build_failure_keeps_the_complete_pnpm_policy_diagnostic(self):
+        self.env["FAIL_PNPM_BUILD"] = "1"
+        self.env["LONG_BUILD_ERROR"] = "ERR_PNPM_MINIMUM_RELEASE_AGE" + "x" * 800
+
+        result = self.run_flow()
+
+        self.assertIn("ERR_PNPM_MINIMUM_RELEASE_AGE", result.first_failure["message"])
+
+    def test_link_failure_is_recorded_without_masking_it_with_a_blocked_step_error(self):
+        self.env["FAIL_MARKETPLACE_LINK"] = "1"
+
+        result = self.run_flow()
+
+        self.assertEqual(result.status, "FAIL")
+        self.assertEqual(result.first_failure["name"], "link plugin to project")
+        self.assertIn("simulated marketplace link failure", result.first_failure["message"])
 
 
 if __name__ == "__main__":
