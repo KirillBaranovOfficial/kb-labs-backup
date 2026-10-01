@@ -15,9 +15,9 @@ KB Labs distinguishes **two** logical roots, which may coincide (dev mode) or di
 | Root            | What it is                                                                                       | Where it lives                                      |
 | --------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
 | **platformRoot** | Directory that contains the installed KB Labs platform code (parent of `node_modules/@kb-labs/*`) | `/opt/kb-labs` (installed), workspace root (dev)    |
-| **projectRoot**  | Directory that contains the user's `.kb/kb.config.json` and all per-project plugin state         | `~/work/my-app` (installed), workspace root (dev)   |
+| **projectRoot**  | Registered directory containing the user's current working directory                              | `~/work/my-app` (installed), workspace root (dev)   |
 
-**Why two roots?** Plugin discovery needs to scan the platform's `node_modules`, while platform state (`.kb/qa`, `.kb/mind`, `.kb/marketplace.lock`, adapter storage paths like `.kb/database/kb.sqlite`) belongs to the user's project. Until the platform moved out of the workspace, both assumptions resolved to the same `cwd` — and the codebase silently conflated them. This package makes the distinction explicit.
+**Why two roots?** Plugin discovery needs to scan the platform's `node_modules`, while project-specific data is keyed by the registered project in platform state. This package keeps the platform location separate from the project directory selected by the registry.
 
 ## 🏗️ Architecture
 
@@ -35,7 +35,7 @@ const { platformRoot, projectRoot, sameLocation, sources } = await resolveRoots(
 ```
 
 - `sameLocation: true` ⇒ dev mode (both roots are the same directory).
-- `sources.platform` / `sources.project` describe how each root was discovered (`'explicit' | 'env' | 'module' | 'marker' | 'config' | 'repo' | 'fallback'`).
+- `sources.platform` / `sources.project` describe how each root was discovered. Project source is always `'registry'`.
 
 #### `resolvePlatformRoot(options)`
 
@@ -54,19 +54,16 @@ Priority chain:
 
 #### `resolveProjectRoot(options)`
 
-Finds the user's project root — the directory containing `.kb/kb.config.json`.
-
-Priority chain:
-
-1. Explicit `cwd` option.
-2. Env vars: `KB_PROJECT_ROOT` (preferred) or legacy `KB_LABS_WORKSPACE_ROOT` / `KB_LABS_REPO_ROOT`.
-3. Nearest `.kb/kb.config.json` ancestor walking up from `startDir`.
-4. Repository root via `findRepoRoot`.
-5. Fallback to `startDir`.
+Finds the deepest registered project containing the current working directory.
+The resolver reads `<KB_HOME>/projects.json` (`~/.kb/projects.json` by
+default). A repository `.kb` directory, Git boundary, package marker, or
+project-root environment override does not establish membership. If no
+registered project contains the directory, it throws `KB_PROJECT_UNKNOWN`;
+register the directory with `kb project add <path>`.
 
 #### `resolveWorkspaceRoot(options)` — deprecated alias
 
-Kept as an alias of `resolveProjectRoot` for backwards compatibility. Prefer the explicit name.
+Resolves through the same project registry as `resolveProjectRoot`.
 
 ## 🚀 Quick Start
 
@@ -93,16 +90,16 @@ console.log({ platformRoot, projectRoot, sameLocation })
 ### In dev mode (monorepo workspace)
 
 ```text
-platformRoot === projectRoot === <workspace-root>
+platformRoot === projectRoot === <registered-workspace-root>
 sameLocation:   true
-sources:        { platform: 'module', project: 'config' }
+sources:        { platform: 'module', project: 'registry' }
 ```
 
 ### In installed mode
 
 ```text
 platformRoot:  /opt/kb-labs                    (from KB_PLATFORM_ROOT or moduleUrl walk-up)
-projectRoot:   /home/user/work/my-project      (from .kb/kb.config.json walk-up)
+projectRoot:   /home/user/work/my-project      (from the platform project registry)
 sameLocation:  false
 ```
 
@@ -112,7 +109,7 @@ sameLocation:  false
 - **Multiple discovery signals**: explicit options, env vars, `import.meta.url` walk-up, marker walk-up, repo root.
 - **Dev/installed parity**: same API works in workspace dev mode and in deployed/installed mode; callers don't need to branch.
 - **Nested-workspace aware**: handles the KB Labs "workspace of workspaces" layout where sub-repos each have their own `pnpm-workspace.yaml`.
-- **Backwards compatible**: legacy `resolveWorkspaceRoot` and `KB_LABS_WORKSPACE_ROOT` / `KB_LABS_REPO_ROOT` env vars still work.
+- **Registry ownership**: project identity does not depend on files in the consumer repository.
 
 ## 🔧 Configuration
 
@@ -121,9 +118,6 @@ sameLocation:  false
 | Variable                  | Purpose                                                                       |
 | ------------------------- | ----------------------------------------------------------------------------- |
 | `KB_PLATFORM_ROOT`        | Override platform root (installer wrapper, CI).                                |
-| `KB_PROJECT_ROOT`         | Override project root.                                                         |
-| `KB_LABS_WORKSPACE_ROOT`  | Legacy alias for `KB_PROJECT_ROOT` (kept for backwards compatibility).         |
-| `KB_LABS_REPO_ROOT`       | Legacy alias for `KB_PROJECT_ROOT` (kept for backwards compatibility).         |
 
 ## 🤝 Contributing
 
