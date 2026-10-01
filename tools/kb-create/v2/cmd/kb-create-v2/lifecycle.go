@@ -81,7 +81,7 @@ func (i invocation) runUpdate(ctx context.Context, output *os.File, plan contrac
 			return snapshot.ID, updateErr
 		},
 		Restore: func(_ context.Context, id string) error {
-			_, restoreErr := lifecycle.Rollback(root, id, deps.Artifacts.Restore)
+			_, restoreErr := lifecycle.Rollback(root, id, restoreReceiptArtifacts(root, deps.Artifacts))
 			return restoreErr
 		},
 	})
@@ -157,7 +157,7 @@ func (i invocation) runRecovery(output *os.File) int {
 		Name:            operation,
 		PreviousVersion: installedVersion(root),
 		Restore: func(_ context.Context, id string) error {
-			_, restoreErr := lifecycle.Rollback(root, id, installer.Restore)
+			_, restoreErr := lifecycle.Rollback(root, id, restoreReceiptArtifacts(root, installer))
 			return restoreErr
 		},
 	}
@@ -176,7 +176,7 @@ func (i invocation) runRecovery(output *os.File) int {
 			snapshot, rollbackErr = lifecycle.Mutate(root, time.Now().UTC(), func() error {
 				_, err := runtime.Rollback(root, target, deps)
 				return err
-			}, nil, installer.Restore)
+			}, nil, restoreReceiptArtifacts(root, installer))
 			return snapshot.ID, rollbackErr
 		}
 	}
@@ -193,6 +193,18 @@ func (i invocation) runRecovery(output *os.File) int {
 	}
 	write(output, map[string]any{"ok": true, "operation": operation, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning && operation != "uninstall", "logPath": transcript.Path()})
 	return 0
+}
+
+func restoreReceiptArtifacts(root string, installer interface {
+	Restore([]contracts.Artifact) error
+}) lifecycle.PackageRestore {
+	return func() error {
+		active, err := receipt.Read(root)
+		if err != nil {
+			return fmt.Errorf("read restored receipt before restoring packages: %w", err)
+		}
+		return installer.Restore(active.Plan.Artifacts)
+	}
 }
 
 func recoveryConfirmationHint(i invocation, operation, root string) string {

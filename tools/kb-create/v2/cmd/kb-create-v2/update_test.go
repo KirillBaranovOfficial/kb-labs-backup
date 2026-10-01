@@ -26,7 +26,7 @@ func (r *recordingInstaller) Install(items []contracts.Artifact) error {
 	r.installed = append(r.installed, items...)
 	return nil
 }
-func (r *recordingInstaller) Restore() error { r.restores++; return nil }
+func (r *recordingInstaller) Restore([]contracts.Artifact) error { r.restores++; return nil }
 
 // updatePlan is the resolved plan of platform 2.0.0 whose host is the fake host.
 func updatePlan(t *testing.T, root string, port int, hostArgs ...string) contracts.ResolvedInstallPlan {

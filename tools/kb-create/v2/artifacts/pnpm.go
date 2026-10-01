@@ -20,6 +20,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/installed"
+	"gopkg.in/yaml.v3"
 )
 
 type Runner interface {
@@ -81,6 +82,9 @@ func (p Pnpm) Install(items []contracts.Artifact) error {
 	if err := p.prepare(); err != nil {
 		return err
 	}
+	if err := p.mergeMinimumReleaseAgeExclude(items); err != nil {
+		return err
+	}
 	specs, err := p.specs(items)
 	if err != nil {
 		return err
@@ -121,8 +125,11 @@ func (p Pnpm) materializeManifests(items []contracts.Artifact) error {
 	}
 	return nil
 }
-func (p Pnpm) Restore() error {
+func (p Pnpm) Restore(items []contracts.Artifact) error {
 	if err := p.prepare(); err != nil {
+		return err
+	}
+	if err := p.mergeMinimumReleaseAgeExclude(items); err != nil {
 		return err
 	}
 	return p.run("install")
@@ -236,13 +243,9 @@ func (p Pnpm) preparePackageJSON() error {
 	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
 
-// prepareWorkspaceYAML only writes when the file is absent, same guard as
-// preparePackageJSON: pnpm itself rewrites this file during install (e.g. it
-// appends entries to minimumReleaseAgeExclude), so unconditionally
-// regenerating it on every apply would discard pnpm's own additions from a
-// prior run. A project bootstrapped by an older kb-create version (before
-// this file existed) still gets it written on its next apply, since the
-// file won't exist yet there either.
+// prepareWorkspaceYAML creates the base settings only when the file is absent.
+// Plan release-age exclusions are merged separately on every install/restore,
+// preserving pnpm and user entries from previous operations.
 func (p Pnpm) prepareWorkspaceYAML() error {
 	path := filepath.Join(p.Root, "pnpm-workspace.yaml")
 	if _, err := os.Stat(path); err == nil {
@@ -260,6 +263,71 @@ func (p Pnpm) prepareWorkspaceYAML() error {
 		fmt.Fprintf(&buf, "  %q: true\n", name)
 	}
 	return os.WriteFile(path, buf.Bytes(), 0o600)
+}
+
+// mergeMinimumReleaseAgeExclude trusts only exact versions in the verified
+// plan. This lets pnpm install freshly published sealed artifacts without
+// weakening its release-age policy for dependencies resolved outside the plan.
+func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
+	path := filepath.Join(p.Root, "pnpm-workspace.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read pnpm workspace configuration: %w", err)
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("parse pnpm workspace configuration: %w", err)
+	}
+	if len(document.Content) == 0 || document.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("pnpm workspace configuration must be a YAML mapping")
+	}
+	root := document.Content[0]
+	var exclusions *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "minimumReleaseAgeExclude" {
+			exclusions = root.Content[i+1]
+			break
+		}
+	}
+	if exclusions == nil {
+		exclusions = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "minimumReleaseAgeExclude"}, exclusions)
+	} else if exclusions.Kind != yaml.SequenceNode {
+		return fmt.Errorf("pnpm workspace minimumReleaseAgeExclude must be a list")
+	}
+	seen := make(map[string]struct{}, len(exclusions.Content)+len(items))
+	for _, entry := range exclusions.Content {
+		if entry.Kind != yaml.ScalarNode || entry.Tag != "!!str" {
+			return fmt.Errorf("pnpm workspace minimumReleaseAgeExclude entries must be strings")
+		}
+		seen[entry.Value] = struct{}{}
+	}
+	versions := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.Kind == "binary" {
+			continue
+		}
+		if item.Package == "" || item.Version == "" {
+			return fmt.Errorf("artifact %q must declare package and exact version", item.ID)
+		}
+		versions = append(versions, item.Package+"@"+item.Version)
+	}
+	sort.Strings(versions)
+	for _, version := range versions {
+		if _, exists := seen[version]; exists {
+			continue
+		}
+		seen[version] = struct{}{}
+		exclusions.Content = append(exclusions.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: version})
+	}
+	merged, err := yaml.Marshal(&document)
+	if err != nil {
+		return fmt.Errorf("encode pnpm workspace configuration: %w", err)
+	}
+	if err := os.WriteFile(path, merged, 0o600); err != nil {
+		return fmt.Errorf("write pnpm workspace configuration: %w", err)
+	}
+	return nil
 }
 
 func (p Pnpm) specs(items []contracts.Artifact) ([]string, error) {
