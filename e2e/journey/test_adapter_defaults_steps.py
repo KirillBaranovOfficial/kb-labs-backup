@@ -32,6 +32,9 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             sealed_package = platform_root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
             sealed_package.parent.mkdir(parents=True)
             sealed_package.write_text('{"name":"@kb-labs/workflow-daemon","version":"2.120.1"}\n')
+            openai_package = platform_root / "node_modules" / "@kb-labs" / "adapters-openai" / "package.json"
+            openai_package.parent.mkdir(parents=True)
+            openai_package.write_text('{"name":"@kb-labs/adapters-openai","version":"2.120.1"}\n')
             (platform_root / "package.json").write_text(json.dumps({
                 "name": "kb-platform",
                 "dependencies": {"@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow.tgz"},

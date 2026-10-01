@@ -293,6 +293,7 @@ test('the release index requires and binds the persistent fresh-install defaults
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-eventbus-cache', '2.0.0', 'const manifest={id:"eventbus-cache",implements:"IEventBus"}; export {manifest};'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', 'const manifest={id:"sqlite-stores",implements:["IDocumentDatabase","IKVStore"],defaultFor:["documentDatabase","kvStore"]}; export {manifest};'),
     packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-analytics-sqlite', '2.0.0', 'const manifest={id:"analytics",implements:"IAnalytics",defaultFor:["analytics"]}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-openai', '2.0.0', 'const manifest={id:"openai-llm",implements:"ILLM",defaultFor:["llm"]}; export {manifest};'),
   ];
   writeStageManifest(root, packageRoot, stage, artifacts);
   const binaryManifest = join(root, 'binary-manifest.json');
@@ -312,13 +313,14 @@ test('the release index requires and binds the persistent fresh-install defaults
   const output = join(root, 'release-index.json');
   execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
     '--binary-manifest', binaryManifest,
-    '--platform-requires', Object.keys(bindings).join(','),
+    '--platform-requires', [...Object.keys(bindings), 'llm'].join(','),
     '--platform-adapter-config', JSON.stringify(bindings),
     '--platform-adapter-options', JSON.stringify(options), '--output', output], { stdio: 'pipe' });
   const index = JSON.parse(readFileSync(output, 'utf8'));
-  assert.deepEqual(index.platforms[0].requires.map(({ capability }) => capability).sort(), Object.keys(bindings).sort());
+  assert.deepEqual(index.platforms[0].requires.map(({ capability }) => capability).sort(), [...Object.keys(bindings), 'llm'].sort());
   assert.deepEqual(JSON.parse(index.platforms[0].config.find(item => item.id === 'platform.adapters').default), bindings);
   assert.deepEqual(JSON.parse(index.platforms[0].config.find(item => item.id === 'platform.adapterOptions').default), options);
+  assert.deepEqual(index.adapters.find(adapter => adapter.id === 'openai-llm')?.defaultFor, ['llm']);
 });
 
 // --- package-declared configuration requirements (kb-create.requirements.json) ---

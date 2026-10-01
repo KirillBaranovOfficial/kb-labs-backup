@@ -129,6 +129,9 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("notifier does not use the local in-process default")
         if rows["llm"].get("mode") != "real" or rows["llm"].get("credentialsStatus") != "missing" or rows["llm"].get("missingCredentials") != ["OPENAI_API_KEY"]:
             raise RuntimeError("implicit OpenAI LLM default does not report its missing credential")
+        openai_package = platform_root / "node_modules" / "@kb-labs" / "adapters-openai" / "package.json"
+        if not openai_package.is_file() or json.loads(openai_package.read_text()).get("name") != "@kb-labs/adapters-openai":
+            raise RuntimeError("sealed base install does not include the implicit OpenAI LLM default")
         if rows["vectorStore"].get("mode") != "unconfigured" or rows["vectorStore"].get("implementation") is not None:
             raise RuntimeError("vector store is not left unconfigured by the default pack")
         for slot in ("embeddings", "snapshotManager"):
@@ -141,6 +144,10 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         rows = rows_for(project_a)
         if rows["storage"].get("implementation") != "@kb-labs/adapters-fs" or rows["storage"].get("mode") != "real":
             raise RuntimeError("installed-layout CLI did not load the sealed filesystem storage default")
+        if rows["storage"].get("baseDir") != str(project_a / ".kb" / "data"):
+            raise RuntimeError("installed-layout CLI did not resolve storage beneath the project's .kb/data directory")
+        if rows["kvStore"].get("implementation") != "@kb-labs/adapters-sqlite/kv":
+            raise RuntimeError("installed-layout CLI did not load the sealed SQLite KV export subpath")
 
     journey.step("installed-layout CLI loads sealed adapter defaults", "adapter",
                  assert_installed_layout_cli_loads_defaults, cases=["S-054.12"])
