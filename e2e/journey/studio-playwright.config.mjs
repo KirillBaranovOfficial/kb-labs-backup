@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: '/opt/kb-studio-playwright',
-  testMatch: ['fresh-host.spec.ts'],
+  testMatch: ['**/*.spec.ts'],
   reporter: 'line',
   timeout: 120_000,
   globalTimeout: 150_000,

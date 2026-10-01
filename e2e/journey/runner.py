@@ -859,6 +859,7 @@ def main():
             "KB_STUDIO_PROJECT_NAME": project_name,
             "KB_ACCESS_MODE": mode,
             "KB_STUDIO_FRESH_HOST_JOURNEY": "1",
+            "KB_STUDIO_FIRST_TIER_JOURNEY": "1",
         })
         try:
             recorded_service_result = json.loads(service_report.read_text())

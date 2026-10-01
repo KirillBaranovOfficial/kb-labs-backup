@@ -16,7 +16,7 @@ async function signIn(page: import('@playwright/test').Page, email: string, pass
   await expect(page).toHaveURL(`${GATEWAY}/`)
 }
 
-test('fresh host Studio journey: local access or secured admin and member access', async ({ page, browser }) => {
+test('S-020.1-.7 and S-125.1-.3: fresh host Studio dashboard, navigation, session, and access controls', async ({ page, browser }) => {
   test.skip(!enabled, 'Enabled by the fresh-install journey hook')
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the project registered by the fresh-install journey').toBeTruthy()
   expect(projectName, 'KB_STUDIO_PROJECT_NAME must identify the project registered by the fresh-install journey').toBeTruthy()
@@ -28,6 +28,11 @@ test('fresh host Studio journey: local access or secured admin and member access
       const password = process.env.KB_STUDIO_ADMIN_PASSWORD
       expect(email, 'KB_STUDIO_ADMIN_EMAIL is required in secured mode').toBeTruthy()
       expect(password, 'KB_STUDIO_ADMIN_PASSWORD is required in secured mode').toBeTruthy()
+      await expect(page).toHaveURL(/\/login$/)
+      await page.getByLabel('Email').fill(email!)
+      await page.getByLabel('Password').fill('incorrect-journey-password')
+      await page.getByRole('button', { name: /sign in|log in/i }).click()
+      await expect(page.getByText('Invalid credentials', { exact: true })).toBeVisible()
       await signIn(page, email!, password!)
     } else {
       await expect(page).not.toHaveURL(/\/login$/)
@@ -40,6 +45,20 @@ test('fresh host Studio journey: local access or secured admin and member access
     await expect(page.getByText(projectName!, { exact: true })).toBeVisible()
     await page.goto(`${GATEWAY}/`)
     await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
+    if (mode === 'secured') {
+      await page.reload()
+      await expect(page.getByText(process.env.KB_STUDIO_ADMIN_EMAIL!, { exact: true }).first()).toBeVisible()
+      await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
+    }
+  })
+
+  await test.step('navigate to first-tier pages from Studio navigation', async () => {
+    await page.goto(`${GATEWAY}/projects`)
+    await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible()
+    await page.goto(`${GATEWAY}/analytics/overview`)
+    await expect(page.getByRole('heading', { name: 'Analytics Overview', exact: true })).toBeVisible()
+    await page.goto(`${GATEWAY}/observability/logs`)
+    await expect(page.getByRole('heading', { name: 'Logs', exact: true })).toBeVisible()
   })
 
   await test.step('list the commit plugin for the active project', async () => {
@@ -52,6 +71,14 @@ test('fresh host Studio journey: local access or secured admin and member access
   })
 
   if (mode === 'secured') {
+    await test.step('logout returns the browser to the login form', async () => {
+      await page.getByRole('button', { name: new RegExp(process.env.KB_STUDIO_ADMIN_EMAIL!, 'i') }).click()
+      await page.getByRole('menuitem', { name: 'Logout', exact: true }).click()
+      await expect(page).toHaveURL(/\/login$/)
+      await page.goto(`${GATEWAY}/`)
+      await expect(page).toHaveURL(/\/login$/)
+    })
+
     await test.step('member has no admin navigation or access', async () => {
       const email = process.env.KB_STUDIO_MEMBER_EMAIL
       const password = process.env.KB_STUDIO_MEMBER_PASSWORD
