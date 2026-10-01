@@ -41,7 +41,12 @@ export function resolveDiscoveredAdapterDefaults(
   for (const adapter of packages.values()) {
     const manifest = adapter.module.manifest;
     if (!manifest || typeof manifest !== 'object') {continue;}
-    const defaultFor = (manifest as { defaultFor?: unknown }).defaultFor;
+    const declared = manifest as { defaultFor?: unknown; configSchema?: Record<string, { required?: boolean; default?: unknown; secret?: boolean; env?: string }> };
+    const hasUnprovidedStructure = Object.values(declared.configSchema ?? {}).some(option =>
+      option.required && option.default === undefined && !(option.secret && option.env),
+    );
+    if (hasUnprovidedStructure) {continue;}
+    const defaultFor = declared.defaultFor;
     if (!Array.isArray(defaultFor)) {continue;}
     for (const slot of defaultFor) {
       if (typeof slot !== 'string' || adapters[slot]) {continue;}

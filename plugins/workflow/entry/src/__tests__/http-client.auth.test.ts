@@ -23,4 +23,15 @@ describe('WorkflowDaemonClient shared gateway client', () => {
       undefined,
     );
   });
+
+  // case: S-054.3
+  it('preserves the message from an error envelope returned by the workflow catalog', async () => {
+    gatewayApiFetch.mockResolvedValue(new Response(
+      JSON.stringify({ ok: false, error: { code: 'WORKFLOW_NOT_READY', message: 'Workflow catalog is unavailable', hint: 'Start the workflow service.' } }),
+      { status: 500, headers: { 'content-type': 'application/json' } },
+    ));
+
+    await expect(new WorkflowDaemonClient({ projectId: 'prj_0123456789abcdef' }).runWorkflow('e2e-hello'))
+      .rejects.toThrow('Workflow catalog is unavailable');
+  });
 });

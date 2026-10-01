@@ -238,8 +238,10 @@ pnpm build
 ### Listing and binding adapters
 
 `kb adapter list` reports the current project's effective adapter package,
-mode, and storage directory. `--json` includes every runtime slot and marks
-provider-backed slots that need explicit configuration.
+mode, and storage directory. For providers with manifest-declared credentials,
+`--json` also reports `credentialsStatus` and missing credential names without
+exposing values. JSON includes every runtime slot and marks provider-backed
+slots that need explicit configuration.
 
 ```bash
 kb adapter list --json

@@ -32,3 +32,10 @@ func TestRequirementsRejectsSecretDefault(t *testing.T) {
 		t.Fatal("expected secret default rejection")
 	}
 }
+
+func TestRequirementsPreserveOptionalCredentialWarningMetadata(t *testing.T) {
+	items, err := requirements([]doctor.Requirement{{ID: "openai.apiKey", Path: "/platform/adapterOptions/llm/apiKey", Required: true, Optional: true, Secret: true, Env: "OPENAI_API_KEY", Services: []string{"gateway"}, Action: "set OPENAI_API_KEY to enable LLM features"}})
+	if err != nil || len(items) != 1 || !items[0].Optional || items[0].Action != "set OPENAI_API_KEY to enable LLM features" {
+		t.Fatalf("projected requirements/error = %#v / %v", items, err)
+	}
+}

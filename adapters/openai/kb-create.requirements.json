@@ -5,9 +5,11 @@
       "id": "openai.apiKey",
       "path": "/platform/adapterOptions/llm/apiKey",
       "secret": true,
+      "optional": true,
       "required": true,
       "env": "OPENAI_API_KEY",
       "services": ["gateway"],
+      "action": "set OPENAI_API_KEY to enable LLM features",
       "hint": "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"
     }
   ]

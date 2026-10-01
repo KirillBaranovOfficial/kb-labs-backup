@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -75,6 +76,7 @@ func (i invocation) runDoctor(output *os.File) int {
 	}
 	var input doctor.Input
 	var err error
+	var manifestFindings []doctor.Finding
 	if i.DoctorInput != "" {
 		data, readErr := os.ReadFile(i.DoctorInput)
 		if readErr != nil {
@@ -87,13 +89,26 @@ func (i invocation) runDoctor(output *os.File) int {
 			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--platform-root is required for automatic doctor", "pass the V2 platform root or a manifest-derived --doctor-input", nil))
 			return 2
 		}
-		input, err = automaticDoctorInput(i.PlatformRoot)
+		active, readErr := receipt.Read(i.PlatformRoot)
+		if readErr != nil {
+			err = fmt.Errorf("read active V2 receipt: %w", readErr)
+		} else {
+			issues, inspectErr := installed.InspectProjections(i.PlatformRoot, active.Plan.Artifacts)
+			if inspectErr != nil {
+				err = inspectErr
+			} else if len(issues) > 0 {
+				manifestFindings = projectionFindings(issues)
+			} else {
+				input, err = automaticDoctorInput(i.PlatformRoot)
+			}
+		}
 	}
 	if err != nil {
 		write(output, failure("KB_INSTALL_DOCTOR_INPUT_INVALID", "installed manifest diagnostics could not be prepared", "install exact V2 artifacts that ship matching V2 manifests", err))
 		return 2
 	}
 	findings := doctor.Diagnose(input.Manifests, input.Configured)
+	findings = append(findings, manifestFindings...)
 	response := doctor.Response{Findings: findings, Repair: doctor.PlanRepair(findings)}
 	if i.PlatformRoot != "" {
 		if active, readErr := receipt.Read(i.PlatformRoot); readErr == nil {
@@ -121,7 +136,7 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		response.Installation, response.Platform = &installation, &platform
 	}
-	response.OK = len(findings) == 0 && (response.Installation == nil || response.Installation.OK) && (response.Platform == nil || response.Platform.OK)
+	response.OK = !doctor.HasErrors(findings) && (response.Installation == nil || response.Installation.OK) && (response.Platform == nil || response.Platform.OK)
 	response.Installed = response.Installation != nil && response.Installation.OK
 	if response.Platform != nil {
 		for _, check := range response.Platform.Checks {
@@ -136,6 +151,9 @@ func (i invocation) runDoctor(output *os.File) int {
 		if response.Running {
 			response.Next = "cd ~/any-project && kb commit"
 		}
+	}
+	if len(manifestFindings) > 0 {
+		response.Next = "kb-create doctor --fix"
 	}
 	if i.DoctorFix {
 		if i.PlatformRoot == "" {
@@ -165,6 +183,24 @@ func (i invocation) runDoctor(output *os.File) int {
 			fmt.Fprintf(output, "Platform version: %s\n", response.PlatformVersion)
 		}
 		fmt.Fprintf(output, "Installed: %s\nRunning: %s\nReachable: %s\nNext: %s\n", installed, running, reachable, next)
+		var warnings []doctor.Finding
+		for _, finding := range response.Findings {
+			if finding.Severity == doctor.SeverityWarning {
+				warnings = append(warnings, finding)
+				continue
+			}
+			fmt.Fprintf(output, "Finding %s: package=%s path=%s\nHint: %s\n", finding.Code, finding.Component, finding.Path, finding.Hint)
+		}
+		if len(warnings) > 0 {
+			fmt.Fprintln(output, "Warnings:")
+			for _, warning := range warnings {
+				action := warning.Action
+				if action == "" {
+					action = warning.Hint
+				}
+				fmt.Fprintf(output, "Warning %s: %s\n", warning.Code, action)
+			}
+		}
 		if response.Platform != nil {
 			writeDoctorPlatformChecks(output, response.Platform.Checks)
 		}
@@ -221,6 +257,14 @@ func (i invocation) inspectPlatform(state host.State) doctor.Section {
 // back like a failed update.
 func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int {
 	root := i.PlatformRoot
+	projectionRepairRequested := false
+	for _, finding := range response.Findings {
+		if finding.Code == "KB_INSTALL_MANIFEST_PROJECTION_INVALID" {
+			projectionRepairRequested = true
+			break
+		}
+	}
+	unresolvedRequiredInput := false
 	state, err := host.StateHome()
 	if err != nil {
 		write(output, map[string]any{"ok": false, "error": asLauncherError(err)})
@@ -241,6 +285,26 @@ func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int 
 		Name:            "repair",
 		PreviousVersion: installedVersion(root),
 		Change: func(context.Context, bool) (string, error) {
+			active, receiptErr := receipt.Read(root)
+			if receiptErr != nil {
+				return "", receiptErr
+			}
+			if err := installed.EnsureProjections(root, active.Plan.Artifacts); err != nil {
+				return "", err
+			}
+			input, inputErr := automaticDoctorInput(root)
+			if inputErr != nil {
+				return "", inputErr
+			}
+			response.Findings = doctor.Diagnose(input.Manifests, input.Configured)
+			response.Repair = doctor.PlanRepair(response.Findings)
+			if projectionRepairRequested {
+				// Restoring a missing projection can reveal unrelated required
+				// credentials. Those cannot block the explicitly requested file
+				// repair, and remain visible in the resulting findings.
+				unresolvedRequiredInput = len(response.Repair.RequiredInput) > 0
+				response.Repair.RequiredInput = nil
+			}
 			var fixErr error
 			snapshot, fixErr = runtime.DoctorFix(root, response.Repair, runtime.Dependencies{})
 			return snapshot.ID, fixErr
@@ -254,7 +318,11 @@ func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int 
 		writeLauncherFailure(output, root, correlationID, "", asLauncherError(err), nil)
 		return 1
 	}
-	write(output, map[string]any{"ok": true, "operation": "doctor-fix", "findings": response.Findings, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning})
+	fixOK := !unresolvedRequiredInput
+	write(output, map[string]any{"ok": fixOK, "operation": "doctor-fix", "findings": response.Findings, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning})
+	if !fixOK {
+		return 1
+	}
 	return 0
 }
 
@@ -311,4 +379,18 @@ func automaticDoctorInput(platformRoot string) (doctor.Input, error) {
 		return doctor.Input{}, err
 	}
 	return installed.DoctorInput(platformRoot, active.Plan.Artifacts, configured)
+}
+
+func projectionFindings(issues []installed.ProjectionIssue) []doctor.Finding {
+	findings := make([]doctor.Finding, 0, len(issues))
+	for _, issue := range issues {
+		findings = append(findings, doctor.Finding{
+			Code:      "KB_INSTALL_MANIFEST_PROJECTION_INVALID",
+			Severity:  doctor.SeverityError,
+			Component: issue.Package,
+			Path:      filepath.Join("node_modules", issue.Package, "kb-create.manifest.json"),
+			Hint:      issue.Reason + ". Run `kb-create doctor --fix`.",
+		})
+	}
+	return findings
 }
