@@ -26,8 +26,20 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             run_counter = 0
             host_running = True
             platform_root = (home / "kb-platform").resolve()
+            receipt = platform_root / ".kb" / "v2" / "receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text('{"id":"sealed"}\n')
+            sealed_package = platform_root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
+            sealed_package.parent.mkdir(parents=True)
+            sealed_package.write_text('{"name":"@kb-labs/workflow-daemon","version":"2.120.1"}\n')
+            (platform_root / "package.json").write_text(json.dumps({
+                "name": "kb-platform",
+                "dependencies": {"@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow.tgz"},
+            }))
+            (platform_root / "pnpm-workspace.yaml").write_text(
+                'overrides:\n  "@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow.tgz"\n')
             platform_config = platform_root / ".kb" / "kb.config.jsonc"
-            platform_config.parent.mkdir(parents=True)
+            platform_config.parent.mkdir(parents=True, exist_ok=True)
             platform_config.write_text(json.dumps({"platform": {
                 "adapters": {
                     "analytics": "@kb-labs/adapters-analytics-sqlite",
@@ -179,6 +191,16 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/mind-entry":
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+                if args[:3] == ["marketplace", "install", "@kb-labs/adapters-analytics-file"]:
+                    workspace = (platform_root / "pnpm-workspace.yaml").read_text()
+                    if '"@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow.tgz"' not in workspace:
+                        error = {
+                            "code": "MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING",
+                            "message": "The installed platform is missing kb-create's sealed artifact overrides. No package was installed.",
+                            "hint": f'Run "kb-create update --platform-root {platform_root}" and retry "kb marketplace install @kb-labs/adapters-analytics-file@2.120.1 --scope platform".',
+                        }
+                        return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:2] == ["project", "remove"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command}")
@@ -210,7 +232,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                        side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(health_adapters()).encode())):
                 run_adapter_default_steps(journey, project_a, env, fake_run)
 
-            expected = {f"S-054.{number}" for number in range(1, 9)} | {"S-054.10", "S-054.11"} | {f"S-048.{number}" for number in range(1, 7)}
+            expected = {f"S-054.{number}" for number in range(1, 9)} | {"S-054.10", "S-054.11", "S-054.12"} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(claims, expected)
@@ -219,6 +241,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn(("kb", "commit", "generate", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind-entry", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root), "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root)), calls)
             self.assertIn(("kb-create", "status", "--platform-root", str(platform_root), "--json"), calls)
