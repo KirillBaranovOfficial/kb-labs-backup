@@ -115,6 +115,7 @@ export interface PlatformInitResult {
 export async function initializePlatform(
   cwd: string,
   moduleUrl?: string,
+  options: { skipAdapterInitialization?: boolean } = {},
 ): Promise<PlatformInitResult> {
   ensureLifecycleHooksRegistered();
 
@@ -154,9 +155,19 @@ export async function initializePlatform(
       projectRoot,
       sources,
     } = loadResult;
+    if (options.skipAdapterInitialization) {
+      return {
+        platform,
+        platformConfig,
+        rawConfig,
+        effectiveConfig,
+        platformRoot,
+        projectRoot,
+      };
+    }
     try {
-      // Relative adapter paths (e.g. ".kb/database/kb.sqlite") must resolve
-      // against the project root — this is where the user's .kb/ lives.
+      // User-supplied relative adapter paths are rooted at the project root;
+      // built-in defaults are absolute paths under the platform state home.
       // Pass platformRoot so initPlatform finds marketplace.lock in the
       // right place when platform is installed separately from the project.
       const platformInstance = await initPlatform(
@@ -237,6 +248,14 @@ export async function initializePlatform(
 
   // Full fallback: config could not be loaded at all.
   const fallbackConfig: PlatformConfig = { adapters: {} };
+  if (options.skipAdapterInitialization) {
+    return {
+      platform,
+      platformConfig: fallbackConfig,
+      platformRoot: cwd,
+      projectRoot: cwd,
+    };
+  }
   const platformInstance = await initPlatform(
     fallbackConfig,
     cwd,

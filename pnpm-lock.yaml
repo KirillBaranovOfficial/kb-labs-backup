@@ -1932,6 +1932,9 @@ importers:
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../project-registry
       '@kb-labs/core-resource-broker':
         specifier: workspace:*
         version: link:../resource-broker

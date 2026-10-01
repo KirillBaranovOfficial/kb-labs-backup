@@ -82,6 +82,8 @@ export async function executeCli(
   options: CliRuntimeOptions = {},
 ): Promise<number | void> {
   const cwd = options.cwd ?? process.cwd();
+  const parse = options.parseArgs ?? parseArgs;
+  const { cmdPath, rest, global, flagsObj } = parse(argv);
 
   loadEnvFile(cwd);
 
@@ -92,7 +94,9 @@ export async function executeCli(
     effectiveConfig,
     platformRoot,
     projectRoot,
-  } = await initializePlatform(cwd, options.moduleUrl);
+  } = await initializePlatform(cwd, options.moduleUrl, {
+    skipAdapterInitialization: global.help && isPlatformAuthExemptFlag('help'),
+  });
 
   if (platformRoot) {
     loadEnvFile(platformRoot);
@@ -111,7 +115,6 @@ export async function executeCli(
 
   const env = options.env ?? process.env;
   const version = resolveVersion(options.version, env);
-  const parse = options.parseArgs ?? parseArgs;
   const registryStore = options.registry ?? registry;
   const jsonPresenterFactory =
     options.createJsonPresenter ?? createJsonPresenter;
@@ -125,8 +128,6 @@ export async function executeCli(
         : undefined;
       return createCliRuntime({ ...runtimeOptions, context: providedContext });
     });
-
-  const { cmdPath, rest, global, flagsObj } = parse(argv);
 
   applyLogLevel(global.debug, global.logLevel, env.KB_LOG_LEVEL);
 
