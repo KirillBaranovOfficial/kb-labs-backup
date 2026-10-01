@@ -72,9 +72,6 @@ interface InternalModuleSpec {
   upstreamName: string;
   prefix: string;
   rewritePrefix?: string;
-  /** Legacy well-known port, only used if the transport does not know the id. */
-  legacyPort: number;
-  portEnvVar: string;
   setup: (ctx: ServiceContext) => Promise<Teardown>;
 }
 
@@ -84,8 +81,6 @@ const INTERNAL_MODULES: readonly InternalModuleSpec[] = [
     serviceId: "marketplace",
     upstreamName: "marketplace",
     prefix: "/api/v1/marketplace",
-    legacyPort: 5070,
-    portEnvVar: "KB_MARKETPLACE_PORT",
     setup: setupMarketplace,
   },
   {
@@ -95,8 +90,6 @@ const INTERNAL_MODULES: readonly InternalModuleSpec[] = [
     prefix: "/api/v1/state",
     // The state daemon serves /state/* and /health at its root.
     rewritePrefix: "",
-    legacyPort: 7777,
-    portEnvVar: "KB_STATE_DAEMON_PORT",
     setup: setupState,
   },
 ];
@@ -113,9 +106,8 @@ function isSelected(settings: HostSettings, id: HostModuleId): boolean {
 
 /**
  * An internal module must bind the loopback port the host's transport gave it.
- * If the transport does not know the service, runHost falls back to the
- * well-known default port (e.g. 5070/7777), which could collide with another
- * platform on the machine: refuse instead of binding it.
+ * A host-internal module must have a transport-owned listen address; refuse
+ * to bind it when that address is absent.
  */
 function assertInternalAddress(ctx: ServiceContext, serviceId: string): void {
   const address = ctx.platform
@@ -225,6 +217,8 @@ export async function createHostConfig(
   options: HostOptions = {},
 ): Promise<HostConfig> {
   const ports = await reserveLoopbackPorts(INTERNAL_MODULES.length);
+  const statePort = ports[INTERNAL_MODULES.findIndex((module) => module.serviceId === "state-daemon")]!;
+  const stateDaemonUrl = `http://${INTERNAL_BIND_HOST}:${statePort}`;
   const generated = createGeneratedTransport(
     Object.fromEntries(
       INTERNAL_MODULES.map((spec, index) => [spec.serviceId, ports[index]!]),
@@ -300,8 +294,6 @@ export async function createHostConfig(
     defineHostModule({
       id: spec.id,
       serviceId: spec.serviceId,
-      defaultPort: spec.legacyPort,
-      portEnvVar: spec.portEnvVar,
       // Internal modules never bind beyond loopback; no host env override.
       defaultHost: INTERNAL_BIND_HOST,
       setup: async (ctx) => {
@@ -355,9 +347,8 @@ export async function createHostConfig(
           env: {
             KB_PLATFORM_ROOT: ctx.platformRoot,
             KB_MCP_AUTH_MODE: settings.auth === "off" ? "local" : "secured",
-            ...(internalBaseUrl(ctx, "gateway")
-              ? { KB_GATEWAY_URL: internalBaseUrl(ctx, "gateway") }
-              : {}),
+            KB_STATE_DAEMON_URL: stateDaemonUrl,
+            KB_GATEWAY_URL: `http://${INTERNAL_BIND_HOST}:${ctx.port}`,
           },
           ...(overrides.stopTimeoutMs !== undefined
             ? { stopTimeoutMs: overrides.stopTimeoutMs }
@@ -454,7 +445,10 @@ export async function createHostConfig(
     appId: HOST_APP_ID,
     startDir: options.startDir,
     moduleUrl: options.moduleUrl,
-    platform: { assemblyHook },
+    platform: {
+      assemblyHook,
+      hostServiceEnvironment: { KB_STATE_DAEMON_URL: stateDaemonUrl },
+    },
     // Gateway last: it starts once its upstreams are listening and, torn down
     // in reverse order, stops accepting traffic first.
     modules: [...internal, gateway],

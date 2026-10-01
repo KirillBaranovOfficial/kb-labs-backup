@@ -20,10 +20,6 @@ import { flattenZodIssues } from '@kb-labs/core-config';
 // ── ContainerExecutionConfig ──────────────────────────────────────────────────
 
 export const ContainerExecutionConfigSchema = z.object({
-  /** URL for the Gateway's internal dispatch endpoint (used by loader.ts RoutingBackend transport). */
-  gatewayDispatchUrl: z.string().url({
-    message: 'execution.container.gatewayDispatchUrl must be a valid URL (e.g. "http://localhost:4000/internal/dispatch")',
-  }),
   /** Internal secret for the dispatch endpoint. */
   gatewayInternalSecret: z.string().min(1, {
     message: 'execution.container.gatewayInternalSecret must not be empty. Use ${ENV_VAR} to reference an environment variable.',
@@ -33,7 +29,7 @@ export const ContainerExecutionConfigSchema = z.object({
   image: z.string().optional(),
   pullPolicy: z.enum(['Always', 'IfNotPresent', 'Never']).optional(),
   dockerFlags: z.array(z.string()).optional(),
-});
+}).strict();
 
 // ── ExecutionRetryConfig ──────────────────────────────────────────────────────
 
@@ -68,6 +64,12 @@ export const ExecutionConfigSchema = z.object({
   }).optional(),
 
   container: ContainerExecutionConfigSchema.optional(),
+
+  workspaceAgent: z.object({
+    enabled: z.boolean(),
+    internalSecret: z.string().min(1),
+    fallback: z.enum(['local', 'error']).optional(),
+  }).strict().optional(),
 
   retry: ExecutionRetryConfigSchema.optional(),
 }).superRefine((cfg, ctx) => {

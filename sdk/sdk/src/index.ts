@@ -178,6 +178,8 @@ export {
 } from "@kb-labs/shared-command-kit";
 
 // Re-export platform adapter types from core-platform
+export { getHostServiceAddress, HostServiceAddressError } from '@kb-labs/core-platform';
+export type { HostServiceEnvironment, HostServiceId } from '@kb-labs/core-platform';
 export type {
   ILLM,
   LLMOptions,

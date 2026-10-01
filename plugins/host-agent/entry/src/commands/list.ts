@@ -3,7 +3,7 @@
  * List all connected Workspace Agents via Gateway REST API.
  */
 
-import { defineCommand, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, getHostServiceAddress, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
 import { GatewayApiError, gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -46,7 +46,9 @@ export default defineCommand({
           // No agent config
         }
       }
-      gatewayUrl = gatewayUrl ?? ctx.runtime?.env?.('KB_GATEWAY_URL') ?? 'http://localhost:4000';
+      gatewayUrl = gatewayUrl ?? getHostServiceAddress('gateway', {
+        KB_GATEWAY_URL: ctx.runtime?.env?.('KB_GATEWAY_URL'),
+      });
 
       let hosts: HostEntry[] = [];
       try {
