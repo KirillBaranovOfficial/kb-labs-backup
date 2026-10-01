@@ -103,6 +103,11 @@ There is no retention policy for run history yet.
 
 kb-dev and kb-devkit are functionally solid and need cases and tests only. kb-deploy and kb-monitor need stabilization. Deployment and container cases (S-004, S-034 to S-038) stay planned and outside the release until that phase.
 
+### One UX outcome contract across every surface
+
+All TypeScript and Go CLIs and HTTP/MCP machine results use `{ok:true,data,meta?}` for success and `{ok:false,error}` for failure. Failures use the existing platform `ErrorEnvelope` and `KB_*` catalog; unknown failures use `KB_RUNTIME_UNEXPECTED` with a correlation ID and a stack only in structured logs. CLI exit codes are shared: 0 for a normally completed command call, 2 for invalid usage/input, and 1 for other operation failures. A normal return, including void, verifies completion of the command call only; any product postcondition is owned by its case. Human errors use one renderer for code, message, known cause, and next step. Registry-driven coverage is required across commands, HTTP routes, MCP tools, and Studio error boundaries.
+Cases: S-203.
+
 ## 2026-10-02
 
 ### Platform CLI authentication gate
