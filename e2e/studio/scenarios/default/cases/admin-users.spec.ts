@@ -2,6 +2,9 @@ import { test, expect, type Page } from '@playwright/test'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 const enabled = process.env.KB_STUDIO_FRESH_HOST_JOURNEY === '1'
+const secured = process.env.KB_ACCESS_MODE === 'secured'
+
+test.skip(!enabled || !secured, 'User administration exists only in the secured fresh-install journey')
 
 async function signIn(page: Page, email: string, password: string) {
   await page.goto(`${GATEWAY}/`)
@@ -13,8 +16,6 @@ async function signIn(page: Page, email: string, password: string) {
 }
 
 test('tenant admin manages users, roles, and invites @S-106.1 @S-106.2 @S-106.3 @S-106.4 @S-106.5 @S-106.6 @S-107.1 @S-107.2 @S-107.3', async ({ page, browser }) => {
-  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
-  test.skip((process.env.KB_ACCESS_MODE ?? 'local') !== 'secured', 'User administration exists only in secured mode')
   const adminEmail = process.env.KB_STUDIO_ADMIN_EMAIL
   const adminPassword = process.env.KB_STUDIO_ADMIN_PASSWORD
   const memberEmail = process.env.KB_STUDIO_MEMBER_EMAIL
