@@ -38,6 +38,7 @@ import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
 import { createContextLogger } from "@kb-labs/core-platform";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
+import { isPlatformAuthExempt, isPlatformAuthExemptFlag } from "./platform-auth-policy";
 
 declare global {
   var __KB_PLATFORM_CONFIG__: PlatformConfig | undefined;
@@ -149,7 +150,7 @@ export async function executeCli(
   });
 
   // ── Handle --version early ─────────────────────────────────────────────────
-  if (global.version) {
+  if (global.version && isPlatformAuthExemptFlag('version')) {
     const presenter = textPresenterFactory(global.quiet);
     if (global.json) {
       presenter.json({ ok: true, version });
@@ -160,7 +161,7 @@ export async function executeCli(
   }
 
   // ── Handle --help with no command → global help ────────────────────────────
-  if (global.help && cmdPath.length === 0) {
+  if (global.help && isPlatformAuthExemptFlag('help') && cmdPath.length === 0) {
     const presenter = textPresenterFactory(global.quiet);
     if (global.json) {
       presenter.json({
@@ -356,7 +357,7 @@ export async function executeCli(
       const cmd = routeResult.cmd;
       const actualRest = routeResult.rest;
 
-      if (global.help) {
+      if (global.help && isPlatformAuthExemptFlag('help')) {
         const lines = [`${cmd.name}: ${cmd.describe}`];
         if (cmd.longDescription) {
           lines.push("", cmd.longDescription);
@@ -374,7 +375,13 @@ export async function executeCli(
       try {
         const runtime = await runtimeFactory(runtimeInitOptions);
         const v3Context = createSystemCommandContext(cliContext, platform);
-        const exitCode = await runtime.middleware.execute(
+        const commandPath = cmd.category ? `${cmd.category} ${cmd.name}` : cmd.name;
+        const gated = await dispatchWithPlatformAuthGate({
+          accessMode: resolveCliAccessMode(),
+          commandPath,
+          commandKind: 'system',
+          hasAuth: resolveCliAccessMode() !== 'secured' || isPlatformAuthExempt(commandPath, 'system') || await hasUsablePlatformAuth(),
+        }, async () => runtime.middleware.execute(
           cliContext,
           async () => {
             const code = await cmd.run(v3Context, actualRest, {
@@ -383,8 +390,8 @@ export async function executeCli(
             });
             return typeof code === "number" ? code : 0;
           },
-        );
-        return exitCode;
+        ));
+        return reportGateResult(gated, global.json, presenter);
       } catch (error: unknown) {
         return handleExecutionError(error, presenter);
       }
@@ -402,7 +409,7 @@ export async function executeCli(
         return 0;
       }
 
-      if (global.help) {
+      if (global.help && isPlatformAuthExemptFlag('help')) {
         if (global.json) {
           presenter.json({
             ok: true,
@@ -471,19 +478,12 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
     rawConfig?.execution as Record<string, unknown> | undefined
   )?.mode;
 
-  const gatewayConfig = rawConfig?.gateway as Record<string, unknown> | undefined;
-  const accessConfig = gatewayConfig?.access as Record<string, unknown> | undefined;
-  const accessMode = accessConfig?.mode;
-  const pluginManifest = p.manifestCmd.v3Manifest ?? p.manifestCmd.manifest.manifestV2;
-  const declaration = pluginManifest?.cli?.commands.find(
-    (command) => command.path === commandPath,
-  );
+  const accessMode = resolveCliAccessMode();
   const gated = await dispatchWithPlatformAuthGate({
     accessMode,
-    requiresPlatformAuth: declaration?.requiresPlatformAuth === true,
-    hasAuth: accessMode === 'secured' && declaration?.requiresPlatformAuth === true
-      ? await hasUsablePlatformAuth()
-      : true,
+    commandPath,
+    commandKind: 'plugin',
+    hasAuth: accessMode !== 'secured' || await hasUsablePlatformAuth(),
   }, async () => {
     if (executionMode !== "in-process") {
       const gatewayClient = await tryResolveGateway();
@@ -514,11 +514,26 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
       `Plugin command "${commandPath}" is not available for execution. Ensure the command has a handler in its manifest.`,
     );
   });
+  return reportGateResult(gated, p.global.json, p.presenter);
+}
+
+function resolveCliAccessMode(): unknown {
+  const rawConfig = globalThis.__KB_RAW_CONFIG__;
+  const gatewayConfig = rawConfig?.gateway as Record<string, unknown> | undefined;
+  const accessConfig = gatewayConfig?.access as Record<string, unknown> | undefined;
+  return accessConfig?.mode;
+}
+
+function reportGateResult<T>(
+  gated: { error: import('@kb-labs/core-platform').ErrorEnvelope } | { value: T },
+  json: boolean | undefined,
+  presenter: Presenter,
+): T | number {
   if ('error' in gated) {
-    if (p.global.json && typeof p.presenter.json === 'function') {
-      p.presenter.json({ ok: false, error: gated.error });
+    if (json && typeof presenter.json === 'function') {
+      presenter.json({ ok: false, error: gated.error });
     } else {
-      p.presenter.error(`${gated.error.code}: ${gated.error.message} ${gated.error.hint}`);
+      presenter.error(`${gated.error.code}: ${gated.error.message} ${gated.error.hint}`);
     }
     return 1;
   }

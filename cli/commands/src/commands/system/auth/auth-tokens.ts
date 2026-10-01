@@ -1,5 +1,14 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
-import { SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
+import type { ErrorEnvelope } from '@kb-labs/core-platform';
+
+function errorEnvelope(error: unknown): ErrorEnvelope | null {
+  if (typeof error !== 'object' || error === null || !('envelope' in error)) { return null; }
+  const envelope = error.envelope;
+  return typeof envelope === 'object' && envelope !== null && 'code' in envelope && 'message' in envelope
+    ? envelope as ErrorEnvelope
+    : null;
+}
 
 type TokenFlags = {
   name: { type: 'string'; description: string };
@@ -34,18 +43,23 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
       else {ctx.ui?.error?.(error);}
       return { ok: false, error };
     };
-    const manager = new SessionManager();
-    let session = await manager.load();
-    if (!session) {return fail('Sign in first with `kb auth login --gateway-url <url> --email <email> --password <password>`, then retry `kb auth tokens`.');}
-    if (manager.isExpired(session)) {
-      try { session = await manager.refresh(session); }
-      catch { return fail('The saved session could not be refreshed. Run `kb auth login`, then retry `kb auth tokens`.'); }
-    }
-    const request = async (path: string, method = 'GET', body?: Record<string, string | number>): Promise<Response> => fetch(`${session.gatewayUrl}${path}`, {
+    const request = async (path: string, method = 'GET', body?: Record<string, string | number>): Promise<Response> => gatewayApiFetch(`http://127.0.0.1:4000${path}`, {
       method,
-      headers: { Authorization: `Bearer ${session.accessToken}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: body ? { 'Content-Type': 'application/json' } : {},
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
+    const showGatewayError = (error: unknown) => {
+      const envelope = errorEnvelope(error);
+      if (envelope) {
+        if (flags.json) { ctx.ui?.json({ ok: false, error: envelope }); }
+        else {
+          const permission = envelope.details?.permission;
+          ctx.ui?.error?.(`${envelope.code}: ${envelope.message}${permission ? ` (permission: ${permission})` : ''} ${envelope.hint}`);
+        }
+        return { ok: false, error: envelope.message };
+      }
+      return fail(error instanceof Error ? error.message : String(error));
+    };
     try {
       if (flags.revoke) {
         const response = await request(`/auth/tokens/${encodeURIComponent(flags.revoke)}/revoke`, 'POST');
@@ -77,8 +91,8 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
       else if (result.tokens.length === 0) {ctx.ui?.write?.('No API tokens. Create one with `kb auth tokens --name "nightly CI"`.\n');}
       else {ctx.ui?.write?.(result.tokens.map((token) => `${token.tokenId}  ${token.name}  ${token.expiresAt ? `expires ${new Date(token.expiresAt).toISOString()}` : 'no expiry'}${token.revokedAt ? '  revoked' : ''}`).join('\n') + '\n');}
       return { ok: true, tokens: result.tokens };
-    } catch {
-      return fail('Could not reach the Gateway. Check the Gateway and retry `kb auth tokens`.');
+    } catch (error) {
+      return showGatewayError(error);
     }
   },
 });

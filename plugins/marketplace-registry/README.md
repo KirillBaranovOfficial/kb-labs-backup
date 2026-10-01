@@ -36,10 +36,12 @@ broken releases, and manage deprecation — all backed by the Registry daemon
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `KB_REGISTRY_TOKEN` | Yes (publish) | Registry auth token |
 | `KB_REGISTRY_AUTHOR_HANDLE` | Yes (publish) | Your author handle |
 | `KB_REGISTRY_URL` | No | Override registry URL |
 | `KB_GATEWAY_URL` | No | Override gateway URL |
+
+Authentication uses the platform session from `kb auth login`; the CLI attaches
+and refreshes it through the shared Gateway client.
 
 **Registry daemon port:** `:5071` (depends on `state-daemon`)
 
@@ -78,7 +80,7 @@ kb hub deprecate --message "Use @kb-labs/new-plugin instead"
 
 | Category | Scope | Reason |
 |----------|-------|--------|
-| Environment | `KB_REGISTRY_TOKEN`, `KB_REGISTRY_AUTHOR_HANDLE`, `KB_REGISTRY_URL`, `KB_GATEWAY_URL` | Auth and routing |
+| Environment | `KB_REGISTRY_AUTHOR_HANDLE`, `KB_REGISTRY_URL`, `KB_GATEWAY_URL` | Author identity and routing |
 
 ---
 

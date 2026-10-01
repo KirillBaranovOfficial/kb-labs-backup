@@ -9,6 +9,7 @@
 import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
 import type { WorkflowRunDetail } from '../http-client.js';
 import { WorkflowDaemonClient } from '../http-client.js';
+import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 
 interface RunsViewFlags {
   'run-id'?: string;
@@ -231,7 +232,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
             // Run still in progress — stream live via SSE
             ctx.ui?.info?.(`Streaming logs for run ${runId} (Ctrl+C to stop)...`);
             const eventsUrl = client.getRunEventsUrl(runId);
-            const response = await fetch(eventsUrl, { headers: { Accept: 'text/event-stream' } });
+            const response = await gatewayApiFetch(eventsUrl, { headers: { Accept: 'text/event-stream' } });
             if (!response.ok || !response.body) {
               throw new Error(`Failed to connect to events stream: ${response.statusText}`);
             }

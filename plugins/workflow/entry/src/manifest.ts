@@ -74,7 +74,6 @@ export const manifest = {
     commands: [
       {
         path: 'workflow init',
-        requiresPlatformAuth: false,
         category: 'Workflows',
         operationType: 'mutate' as const,
         describe: 'Create a runnable local workflow example.',
@@ -84,7 +83,6 @@ export const manifest = {
       },
       {
         path: 'workflow health',
-        requiresPlatformAuth: true,
         category: 'Daemon',
         operationType: 'read' as const,
         describe: 'Check workflow daemon health status.',
@@ -97,7 +95,6 @@ export const manifest = {
       },
       {
         path: 'workflow metrics',
-        requiresPlatformAuth: true,
         category: 'Daemon',
         operationType: 'read' as const,
         describe: 'Get workflow daemon metrics.',
@@ -110,7 +107,6 @@ export const manifest = {
       },
       {
         path: 'workflow lint',
-        requiresPlatformAuth: false,
         category: 'Daemon',
         operationType: 'read' as const,
         describe: 'Validate workflow files against the schema.',
@@ -129,7 +125,6 @@ export const manifest = {
       },
       {
         path: 'workflow job status',
-        requiresPlatformAuth: true,
         category: 'Jobs',
         operationType: 'read' as const,
         describe: 'Get raw job status.',
@@ -142,7 +137,6 @@ export const manifest = {
       },
       {
         path: 'workflow job logs',
-        requiresPlatformAuth: true,
         category: 'Jobs',
         operationType: 'read' as const,
         describe: 'Get raw job logs.',
@@ -157,7 +151,6 @@ export const manifest = {
       },
       {
         path: 'workflow job list',
-        requiresPlatformAuth: true,
         category: 'Jobs',
         operationType: 'read' as const,
         describe: 'List active raw jobs.',
@@ -171,7 +164,6 @@ export const manifest = {
       },
       {
         path: 'workflow crons list',
-        requiresPlatformAuth: true,
         category: 'Workflows',
         operationType: 'read' as const,
         describe: 'List user and plugin workflow crons.',
@@ -181,7 +173,6 @@ export const manifest = {
       },
       {
         path: 'workflow crons enable',
-        requiresPlatformAuth: true,
         category: 'Workflows',
         operationType: 'mutate' as const,
         describe: 'Enable a user workflow cron.',
@@ -191,7 +182,6 @@ export const manifest = {
       },
       {
         path: 'workflow crons disable',
-        requiresPlatformAuth: true,
         category: 'Workflows',
         operationType: 'mutate' as const,
         describe: 'Disable a user workflow cron.',
@@ -201,7 +191,6 @@ export const manifest = {
       },
       {
         path: 'workflow job run',
-        requiresPlatformAuth: true,
         category: 'Jobs',
         operationType: 'execute' as const,
         describe: 'Submit a raw job for execution.',
@@ -219,7 +208,6 @@ export const manifest = {
       },
       {
         path: 'workflow runs list',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'read' as const,
         describe: 'List workflow runs.',
@@ -237,7 +225,6 @@ export const manifest = {
       },
       {
         path: 'workflow runs view',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'read' as const,
         describe: 'View run details for incident investigation.',
@@ -260,7 +247,6 @@ export const manifest = {
       },
       {
         path: 'workflow runs watch',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'execute' as const,
         describe: 'Stream workflow run events in real-time.',
@@ -274,7 +260,6 @@ export const manifest = {
       },
       {
         path: 'workflow runs rerun',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'mutate' as const,
         describe: 'Rerun a workflow run.',
@@ -292,7 +277,6 @@ export const manifest = {
       },
       {
         path: 'workflow runs restart',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'mutate' as const,
         describe: 'Restart a run from a specific step.',
@@ -310,7 +294,6 @@ export const manifest = {
       },
       {
         path: 'workflow runs cancel',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'mutate' as const,
         describe: 'Cancel a workflow run.',
@@ -326,7 +309,6 @@ export const manifest = {
       },
       {
         path: 'workflow runs logs',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'read' as const,
         describe: 'Fetch logs for a workflow run.',
@@ -344,7 +326,6 @@ export const manifest = {
       },
       {
         path: 'workflow runs status',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'read' as const,
         describe: 'Show status summary for a workflow run.',
@@ -360,7 +341,6 @@ export const manifest = {
       },
       {
         path: 'workflow runs approve',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'mutate' as const,
         describe: 'Approve or reject a pending approval step in a workflow run.',
@@ -381,7 +361,6 @@ export const manifest = {
       },
       {
         path: 'workflow defs list',
-        requiresPlatformAuth: true,
         category: 'Definitions',
         operationType: 'read' as const,
         describe: 'List workflow definitions.',
@@ -400,7 +379,6 @@ export const manifest = {
       },
       {
         path: 'workflow defs view',
-        requiresPlatformAuth: true,
         category: 'Definitions',
         operationType: 'read' as const,
         describe: 'View workflow definition details.',
@@ -418,7 +396,6 @@ export const manifest = {
       },
       {
         path: 'workflow run',
-        requiresPlatformAuth: true,
         category: 'Runs',
         operationType: 'execute' as const,
         describe: 'Run workflow by ID.',

@@ -4,6 +4,7 @@
  */
 
 import { defineCommand, validationError, handleError, type PluginContextV3, type CLIInput, type CommandResult } from '@kb-labs/sdk';
+import { GatewayApiError, gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 import { writeFile, mkdir, stat } from 'node:fs/promises';
 import { join, resolve, normalize } from 'node:path';
 import { homedir, hostname } from 'node:os';
@@ -78,21 +79,24 @@ export default defineCommand({
       // POST /auth/register
       let res: Response;
       try {
-        res = await fetch(`${gatewayUrl}/auth/register`, {
+        res = await gatewayApiFetch(`${gatewayUrl}/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, namespaceId, capabilities: ['filesystem', 'git', 'execution', 'search', 'shell'] }),
         });
       } catch (err) {
+        if (err instanceof GatewayApiError) {
+          handleError(ctx, err, flags.json);
+          return { ok: false, error: err.envelope.message };
+        }
         handleError(ctx, err instanceof Error ? new Error(`Failed to reach Gateway: ${err.message}`) : err, flags.json);
         return { ok: false, error: err instanceof Error ? `Failed to reach Gateway: ${err.message}` : String(err) };
       }
 
       if (!res.ok) {
-        const rawBody = await res.text().catch(() => '');
-        const body = rawBody.slice(0, 200).replace(/[\r\n]/g, ' ');
-        handleError(ctx, new Error(`Gateway returned ${res.status}: ${body}`), flags.json);
-        return { ok: false, error: `Gateway returned ${res.status}: ${body}` };
+        const message = `Gateway returned HTTP ${res.status}. Check the gateway and retry kb workspace:register --gateway ${gatewayUrl}.`;
+        handleError(ctx, new Error(message), flags.json);
+        return { ok: false, error: message };
       }
 
       let data: { clientId?: string; clientSecret?: string; hostId?: string };

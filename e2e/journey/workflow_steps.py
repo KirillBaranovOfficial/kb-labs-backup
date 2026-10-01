@@ -50,18 +50,34 @@ def _terminal_run(run_id: str, *, env: dict[str, str], cwd: Path,
 
 
 def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
-    """Check the unauthenticated error, then restore an authorized CLI session."""
+    """Check deny-by-default plugin dispatch, then restore the admin CLI session."""
     def verify_auth() -> None:
-        result = run_cli(["workflow", "defs", "list", "--json"], env=env, cwd=project)
-        try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise AssertionError("unauthenticated workflow discovery did not return JSON") from error
-        error = payload.get("error") if isinstance(payload, dict) else None
-        if (result.returncode == 0 or not isinstance(error, dict)
-                or error.get("code") != "KB_AUTH_REQUIRED"
-                or error.get("hint") != 'Run "kb auth login".'):
-            raise AssertionError(f"unauthenticated workflow discovery returned an unexpected result: {payload!r}")
+        allowlisted = [
+            ["auth", "status", "--json"],
+            ["auth", "login", "--help"],
+            ["version"],
+            ["health", "--json"],
+        ]
+        for command in allowlisted:
+            result = run_cli(command, env=env, cwd=project)
+            if result.returncode != 0:
+                raise AssertionError(f"allowlisted {' '.join(command)} failed without a session")
+        commands = [
+            ["workflow", "defs", "list", "--json"],
+            ["marketplace", "plugins", "list", "--json"],
+            ["qa", "cases", "validate", "--json"],
+        ]
+        for command in commands:
+            result = run_cli(command, env=env, cwd=project)
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                raise AssertionError(f"unauthenticated {' '.join(command)} did not return JSON") from error
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if (result.returncode == 0 or not isinstance(error, dict)
+                    or error.get("code") != "KB_AUTH_REQUIRED"
+                    or error.get("hint") != 'Run "kb auth login".'):
+                raise AssertionError(f"unauthenticated {' '.join(command)} returned an unexpected result: {payload!r}")
 
         email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
         password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
@@ -72,9 +88,18 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
                          "--email", email, "--password", password], env=env, cwd=project)
         if login.returncode != 0:
             raise AssertionError(f"admin CLI login failed: {' '.join(login.stdout.split())[-400:]}")
-        _json_cli(["workflow", "defs", "list", "--json"], env=env, cwd=project)
+        for command in commands:
+            resumed = run_cli(command, env=env, cwd=project)
+            try:
+                payload = json.loads(resumed.stdout)
+            except json.JSONDecodeError as error:
+                raise AssertionError(f"authenticated {' '.join(command)} did not return JSON") from error
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error, dict) and error.get("code") == "KB_AUTH_REQUIRED":
+                raise AssertionError(f"authenticated {' '.join(command)} still returned KB_AUTH_REQUIRED")
 
-    journey.step("secured workflow authentication", "workflow", verify_auth, cases=["S-007.4", "S-041.7", "S-041.8"])
+    journey.step("secured CLI deny-by-default authentication", "workflow", verify_auth,
+                 cases=["S-007.4", "S-041.7", "S-041.8", "S-041.12"])
 
 
 def _logs(run_id: str, *, env: dict[str, str], cwd: Path) -> str:

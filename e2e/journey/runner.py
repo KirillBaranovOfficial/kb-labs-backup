@@ -23,7 +23,7 @@ from platform_channel_steps import run_platform_channel_steps
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import Journey, record_runner_failure
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
-from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_status, run_local_auth_steps, run_secured_auth_steps
+from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status, run_local_auth_steps, run_secured_auth_steps
 from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
 from platform_state_dump import PlatformStateDumpOnce
 
@@ -935,6 +935,11 @@ def main():
                                             password="JourneyReplacement123!",
                                             base_url="http://127.0.0.1:4000"),
                 cases=["S-041.6"],
+            )
+            auth_journey.step(
+                "member reset-link command returns the shared permission envelope", "auth.accounts",
+                lambda: run_cli_auth_forbidden(str(BIN / "kb"), service_env),
+                cases=["S-041.9"],
             )
             auth_journey.step(
                 "change password and manage browser sessions", "auth.accounts",

@@ -81,6 +81,21 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
             raise AssertionError(f"kb auth tokens returned unexpected JSON: {tokens_payload!r}")
 
 
+def run_cli_auth_forbidden(cli_path: str, env: dict[str, str], *, user_id: str = "member-1") -> None:
+    """A logged-in member must get the gateway's typed permission denial."""
+    args = [cli_path, "auth", "reset-link", "--user-id", user_id, "--json"]
+    result = subprocess.run(args, env=env, text=True, capture_output=True, check=False)
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise AssertionError("member auth reset-link did not return JSON") from error
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if (result.returncode == 0 or not isinstance(error, dict)
+            or error.get("code") != "KB_AUTH_FORBIDDEN"
+            or error.get("details", {}).get("permission") != "users:write"):
+        raise AssertionError(f"member auth reset-link returned an unexpected result: {payload!r}")
+
+
 def _combined(result: subprocess.CompletedProcess[str]) -> str:
     """Output of a command whose stderr may already be merged into stdout (stderr is None)."""
     return (result.stdout or "") + (result.stderr or "")

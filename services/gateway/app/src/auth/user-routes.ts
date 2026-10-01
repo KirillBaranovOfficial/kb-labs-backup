@@ -736,7 +736,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     );
 
     if (!decision.allow) {
-      void reply.code(403).send({ error: 'Forbidden', message: `Permission denied: ${permission}` });
+      void reply.code(403).send({ error: 'Forbidden', message: 'Permission denied', permission });
       return false;
     }
     return true;
@@ -840,7 +840,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       { userId: ctx.userId, tenantId: ctx.tenantId, type: 'user' },
       PERMISSIONS.USERS_WRITE,
     )).allow) {
-      return reply.code(403).send({ error: 'Forbidden', message: 'Only admins may invite another admin' });
+      return reply.code(403).send({ error: 'Forbidden', message: 'Permission denied', permission: PERMISSIONS.USERS_WRITE });
     }
 
     // Allow callers to specify a custom TTL (e.g., short-lived invites for testing

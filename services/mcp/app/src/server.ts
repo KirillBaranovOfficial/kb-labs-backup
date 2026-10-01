@@ -43,7 +43,7 @@ import { type PlatformResolver } from './mcp/tool-router.js';
 import { resolveVisibleTools, executeToolCall } from './mcp/request-handler.js';
 import { McpObservabilityCollector } from './observability/collector.js';
 import type { ToolBuildDiagnostic } from './mcp/tool-builder.js';
-import { rejectsUnauthenticatedRequest, type McpAuthMode } from './mcp/auth-mode.js';
+import { mcpUnauthenticatedResponse, rejectsUnauthenticatedRequest, type McpAuthMode } from './mcp/auth-mode.js';
 
 /** Built-in diagnostic tool: always visible to authenticated callers, never
  * derived from a plugin manifest — reports which plugin commands failed to
@@ -184,11 +184,6 @@ export class McpDaemonServer {
         .header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         .header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Mcp-Session-Id');
 
-      // Short-circuit preflight immediately — no auth or MCP processing needed.
-      if (request.method === 'OPTIONS') {
-        return reply.code(204).send();
-      }
-
       const reqLogger = request.kbLogger ?? logger;
 
       // 1. Verify the gateway token. Local mode permits tokenless requests;
@@ -198,7 +193,14 @@ export class McpDaemonServer {
         () => null,
       );
       if (rejectsUnauthenticatedRequest(this.opts.authMode ?? 'secured', Boolean(authCtx))) {
-        return reply.code(401).send({ error: 'unauthorized' });
+        const unauthenticated = mcpUnauthenticatedResponse();
+        return reply.code(unauthenticated.statusCode).send(unauthenticated.body);
+      }
+
+      // The secured transport authenticates every HTTP method, including
+      // browser preflight. Local mode reaches this branch without a token.
+      if (request.method === 'OPTIONS') {
+        return reply.code(204).send();
       }
       const tenantId = authCtx?.namespaceId ?? 'anonymous';
 

@@ -4,6 +4,7 @@
  */
 
 import { defineCommand, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { GatewayApiError, gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -47,35 +48,9 @@ export default defineCommand({
       }
       gatewayUrl = gatewayUrl ?? ctx.runtime?.env?.('KB_GATEWAY_URL') ?? 'http://localhost:4000';
 
-      // Get auth token
-      let token: string | undefined;
-      try {
-        const configPath = join(homedir(), '.kb', 'agent.json');
-        const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-        if (config.clientId && config.clientSecret) {
-          const tokenRes = await fetch(`${gatewayUrl}/auth/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ clientId: config.clientId, clientSecret: config.clientSecret }),
-          });
-          if (tokenRes.ok) {
-            const body = await tokenRes.json() as { accessToken?: string };
-            token = body.accessToken;
-          }
-        }
-      } catch {
-        // Auth failed — try without
-      }
-
-      // Fetch hosts
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
       let hosts: HostEntry[] = [];
       try {
-        const res = await fetch(`${gatewayUrl}/hosts`, { headers });
+        const res = await gatewayApiFetch(`${gatewayUrl}/hosts`);
         if (res.ok) {
           const body = await res.json() as { hosts: HostEntry[] };
           hosts = body.hosts;
@@ -84,6 +59,10 @@ export default defineCommand({
           return { ok: false, error: `Failed to list hosts: HTTP ${res.status}`, result: { hosts: [] } };
         }
       } catch (err) {
+        if (err instanceof GatewayApiError) {
+          handleError(ctx, err, input.json);
+          return { ok: false, error: err.envelope.message, result: { hosts: [] } };
+        }
         handleError(ctx, new Error(`Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`), input.json);
         return { ok: false, error: `Cannot reach Gateway at ${gatewayUrl}`, result: { hosts: [] } };
       }
