@@ -112,6 +112,10 @@ kb-dev and kb-devkit are functionally solid and need cases and tests only. kb-de
 Fresh local and secured installs resolve the same built-in adapter for every platform slot with a persistent local implementation, including when the user has not added a binding. Defaults are replaceable through `kb adapter bind <slot> <package>`; replacing a provider does not migrate or delete data held by the previous provider. An available persistent adapter must never be silently replaced by an InMemory fallback. LLM, embeddings, and vector store remain unconfigured and return typed adapter-required errors without configured providers. Durable account, workflow, KV, document, and analytics data survives a host restart.
 Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11.
 
+### Secured sessions survive host lifecycle operations
+
+Secured browser and CLI sessions remain valid across host restart, update, and rollback until their access tokens expire or an explicit revocation occurs; logout, administrator revocation, and password reset remain the mechanisms that invalidate sessions. This follows the product principle “persistent local defaults, no headache, nothing to redo from scratch.” A host lifecycle operation must not make users sign in again. Cases: S-041.4, S-023, S-024.
+
 ### Platform members: core plugins only
 
 The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.

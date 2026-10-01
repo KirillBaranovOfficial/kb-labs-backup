@@ -47,6 +47,19 @@ def _hash(path: Path) -> str | None:
         return None
 
 
+def _changed_paths(previous: object, current: object, prefix: str = "plan") -> list[str]:
+    if isinstance(previous, dict) and isinstance(current, dict):
+        return [path for key in sorted(set(previous) | set(current))
+                for path in _changed_paths(previous.get(key), current.get(key), f"{prefix}.{key}")]
+    if isinstance(previous, list) and isinstance(current, list):
+        paths = [path for index, (left, right) in enumerate(zip(previous, current))
+                 for path in _changed_paths(left, right, f"{prefix}[{index}]")]
+        if len(previous) != len(current):
+            paths.append(f"{prefix}.length")
+        return paths
+    return [] if previous == current else [prefix]
+
+
 def run_platform_update_steps(
     *,
     mode: str,
@@ -67,6 +80,7 @@ def run_platform_update_steps(
     config_paths = [platform_root / ".kb/kb.config.jsonc"]
     snapshot_id = ""
     updated_plan_hash = ""
+    updated_plan: dict = {}
     config_hashes: dict[str, str | None] = {}
 
     def save_known_good_state() -> None:
@@ -100,7 +114,7 @@ def run_platform_update_steps(
     journey.step("plan the newer sealed release", "platform.update", plan_new_release, cases=["S-023.2"])
 
     def update() -> None:
-        nonlocal snapshot_id, updated_plan_hash
+        nonlocal snapshot_id, updated_plan_hash, updated_plan
         result = _json_command(run_command, [launcher, "update", "--json", "--index", str(update_index),
                                             "--input", str(request_file)], "update platform")
         snapshot = result.get("snapshot")
@@ -112,6 +126,7 @@ def run_platform_update_steps(
         updated_plan_hash = str(receipt.get("plan", {}).get("planHash") or "")
         if not updated_plan_hash:
             raise RuntimeError("update receipt did not include its resolved plan hash")
+        updated_plan = receipt["plan"]
         if result.get("hostRestarted") is not True:
             raise RuntimeError("update did not report that the running host restarted")
         if not result.get("logPath"):
@@ -129,9 +144,10 @@ def run_platform_update_steps(
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"], "updated status")
         if status.get("ok") is not True or status.get("running") is not True or status.get("reachable") is not True:
             raise RuntimeError("kb-create status did not confirm the updated host is healthy")
-        changed = [str(path) for path in config_paths if config_hashes.get(str(path)) != _hash(path)]
-        if changed:
-            raise RuntimeError(f"generated config changed during update: {', '.join(changed)}")
+        config_hash = _hash(config_paths[0])
+        verified_hash = receipt.get("verification", {}).get("configSha256")
+        if not config_hash or config_hash != verified_hash:
+            raise RuntimeError("generated config is missing or does not match the updated receipt verification hash")
         if verify_user is not None:
             login = verify_user()
             if login.returncode != 0:
@@ -155,6 +171,16 @@ def run_platform_update_steps(
                  cases=["S-023.5"])
 
     def repeat_update() -> None:
+        preview = _json_command(run_command, [launcher, "plan", "--json", "--index", str(update_index),
+                                              "--input", str(request_file)], "repeat update plan")
+        preview_plan = preview.get("plan", {})
+        preview_hash = str(preview_plan.get("planHash") or "")
+        if preview_hash != updated_plan_hash:
+            changed_fields = _changed_paths(updated_plan, preview_plan)
+            raise RuntimeError(
+                f"repeat update plan drift before mutation: first={updated_plan_hash!r}, "
+                f"preview={preview_hash!r}, changed fields={changed_fields}"
+            )
         result = _json_command(run_command, [launcher, "update", "--json", "--index", str(update_index),
                                             "--input", str(request_file)], "repeat update")
         receipt = result.get("receipt")
@@ -164,8 +190,13 @@ def run_platform_update_steps(
         plan = receipt.get("plan", {})
         if plan.get("serviceGraph", {}).get("platformVersion") != updated_version:
             raise RuntimeError("repeat update changed the resolved platform version")
-        if plan.get("planHash") != updated_plan_hash:
-            raise RuntimeError("repeat update changed the resolved plan hash")
+        repeated_plan_hash = str(plan.get("planHash") or "")
+        if repeated_plan_hash != updated_plan_hash:
+            changed_fields = _changed_paths(updated_plan, plan)
+            raise RuntimeError(
+                f"repeat update changed the resolved plan hash: first={updated_plan_hash!r}, "
+                f"repeat={repeated_plan_hash!r}, changed fields={changed_fields}"
+            )
         if result.get("hostRestarted") is not True:
             raise RuntimeError("repeat update did not report that the running host restarted")
         if not snapshot.get("id"):

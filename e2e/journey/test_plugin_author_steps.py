@@ -186,6 +186,9 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.status, "FAIL")
         self.assertEqual(result.first_failure["name"], "link plugin to project")
         self.assertIn("simulated marketplace link failure", result.first_failure["message"])
+        self.assertEqual(result.steps[-1]["status"], "BLOCKED")
+        self.assertEqual(result.steps[-1]["name"], "unlink plugin")
+        self.assertIn("plugin was not linked", result.steps[-1]["message"])
 
 
 if __name__ == "__main__":

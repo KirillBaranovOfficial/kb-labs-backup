@@ -819,14 +819,16 @@ describe('POST /auth/activate', () => {
     expect(cookies.map((c) => c.split('=')[0])).toContain(COOKIE_ACCESS);
   });
 
-  it('returns 401 for an invalid token', async () => {
+  // case: S-105.3
+  it('returns 422 for an unknown invite token', async () => {
     const r = await ctx.app.inject({
       method: 'POST',
       url: '/auth/activate',
       headers: { host: HOST },
       payload: { token: 'totally-invalid-token', password: 'NewPassword123!' },
     });
-    expect(r.statusCode).toBe(401);
+    expect(r.statusCode).toBe(422);
+    expect(r.json()).toMatchObject({ error: 'invalid_invite', message: 'Invalid or expired invite' });
   });
 
   it('returns 400 when token is missing', async () => {
