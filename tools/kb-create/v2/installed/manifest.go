@@ -47,7 +47,7 @@ func DoctorInput(platformRoot string, artifacts []contracts.Artifact, configured
 			if err != nil {
 				return doctor.Input{}, fmt.Errorf("check configured secret %s: %w", requirement.ID, err)
 			}
-			result.Configured[requirement.ID] = exists
+			result.Configured[requirement.ID] = exists || configured[requirement.Path] || (requirement.Env != "" && os.Getenv(requirement.Env) != "")
 		}
 	}
 	return result, nil

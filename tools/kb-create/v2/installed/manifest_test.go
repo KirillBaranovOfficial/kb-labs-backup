@@ -24,6 +24,27 @@ func TestDoctorInputRequiresExactInstalledManifest(t *testing.T) {
 	}
 }
 
+func TestDoctorInputRecognizesConfiguredSecretOption(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "node_modules", "@kb", "plugin")
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"schema":"kb.create.artifact-manifest/v2","id":"plugin","package":"@kb/plugin","version":"1.2.3","requirements":[{"id":"openai.apiKey","path":"/platform/adapterOptions/llm/apiKey","secret":true,"required":true,"env":"OPENAI_API_KEY","hint":"set key"}]}`)
+	if err := os.WriteFile(filepath.Join(path, "kb-create.manifest.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input, err := DoctorInput(root, []contracts.Artifact{{ID: "plugin", Package: "@kb/plugin", Version: "1.2.3"}}, map[string]bool{"/platform/adapterOptions/llm/apiKey": true})
+	if err != nil || !input.Configured["openai.apiKey"] {
+		t.Fatalf("input/error = %#v / %v", input, err)
+	}
+	t.Setenv("OPENAI_API_KEY", "configured")
+	input, err = DoctorInput(root, []contracts.Artifact{{ID: "plugin", Package: "@kb/plugin", Version: "1.2.3"}}, map[string]bool{})
+	if err != nil || !input.Configured["openai.apiKey"] {
+		t.Fatalf("environment-backed input/error = %#v / %v", input, err)
+	}
+}
+
 func TestDoctorInputRejectsMissingManifest(t *testing.T) {
 	_, err := DoctorInput(t.TempDir(), []contracts.Artifact{{ID: "plugin", Package: "@kb/plugin", Version: "1.2.3"}}, map[string]bool{})
 	if err == nil {

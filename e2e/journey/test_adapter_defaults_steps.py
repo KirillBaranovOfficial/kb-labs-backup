@@ -63,8 +63,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                           for slot in ("vectorStore", "llm", "embeddings", "snapshotManager")],
                     ]
                     if args[-1] == "--json":
-                        result = {"ok": True, "platform": {"ok": True, "checks": statuses}}
-                        return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
+                        bound = config(project_a).get("platform", {}).get("adapters", {}).get("llm") == "@kb-labs/adapters-openai"
+                        findings = ([{"code": "KB_INSTALL_INPUT_REQUIRED", "component": "openai", "path": "/platform/adapterOptions/llm/apiKey", "hint": "set OPENAI_API_KEY"}] if bound else [])
+                        result = {"ok": not findings, "findings": findings, "platform": {"ok": True, "checks": statuses}}
+                        return subprocess.CompletedProcess(command, int(bool(findings)), json.dumps(result), "")
                     return subprocess.CompletedProcess(command, 0,
                         "Adapter storage: mode=real implementation=@kb-labs/adapters-fs\n", "")
                 if command[0] == "kb-create" and args[:2] in (["stop", "--platform-root"], ["start", "--platform-root"]):
@@ -105,6 +107,11 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 if args[:2] == ["config", "set"]:
                     if args[2:4] == ["commit.llm.enabled", "true"]:
                         return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+                    if args[2:4] == ["--scope", "platform"] and args[4] == "platform.adapters.llm":
+                        value = config(root)
+                        value.setdefault("platform", {}).setdefault("adapters", {})["llm"] = args[5]
+                        write_config(root, value)
+                        return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                     value = config(root)
                     value.setdefault("platform", {}).setdefault("adapterOptions", {})["storage"] = json.loads(args[3])
                     write_config(root, value)
@@ -136,6 +143,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     run_id = args[3]
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"id": run_id, "status": "success"}}), "")
                 if args[:2] == ["commit", "generate"]:
+                    if config(root).get("platform", {}).get("adapters", {}).get("llm") == "@kb-labs/adapters-openai":
+                        error = {"code": "KB_ADAPTER_CREDENTIALS_MISSING", "message": "Adapter llm is missing OPENAI_API_KEY.",
+                                 "hint": "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env. No request was sent."}
+                        return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                     error = {"code": "KB_ADAPTER_NOT_CONFIGURED", "details": {"service": "llm"},
                              "actions": [{"command": "kb adapter bind llm @kb-labs/adapters-openai"}]}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
@@ -152,7 +163,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             journey = Journey("local", "adapter-defaults-fixture")
             run_adapter_default_steps(journey, project_a, env, fake_run)
 
-            expected = {f"S-054.{number}" for number in range(1, 8)} | {f"S-048.{number}" for number in range(1, 7)}
+            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(claims, expected)

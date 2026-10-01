@@ -11,6 +11,7 @@ import {
   findRepoRoot,
   displayArtifacts,
   handleError,
+  AdapterCredentialsMissingError,
   AdapterUnavailableError,
   toErrorEnvelope,
   type PluginContextV3,
@@ -112,7 +113,7 @@ export default defineCommand({
         });
       } catch (err) {
         analyzeLoader.fail('Failed to generate commit plan');
-        if (err instanceof AdapterUnavailableError && err.reason === 'not-configured') {
+        if ((err instanceof AdapterUnavailableError && err.reason === 'not-configured') || err instanceof AdapterCredentialsMissingError) {
           if (flags.json) {
             ctx.ui?.json?.({ ok: false, error: toErrorEnvelope(err) });
           } else {

@@ -8,7 +8,7 @@
  * `@kb-labs/plugin-contracts`; both delegate here for the rest.
  */
 
-import { AdapterUnavailableError } from '../errors.js';
+import { AdapterCredentialsMissingError, AdapterUnavailableError } from '../errors.js';
 import { createErrorEnvelope, type CreateEnvelopeOptions } from './catalog.js';
 import type { ErrorEnvelope } from './types.js';
 
@@ -16,6 +16,21 @@ export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'a
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+  if (error instanceof AdapterCredentialsMissingError) {
+    const envReference = '${' + error.credential + '}';
+    const command = `kb config set ${error.configurationPath} '${envReference}' --allow-missing-env`;
+    return createErrorEnvelope('KB_ADAPTER_CREDENTIALS_MISSING', {
+      ...options,
+      cause: error.message,
+      details: {
+        service: error.slot,
+        credential: error.credential,
+        path: error.configurationPath,
+        command,
+      },
+      actions: [{ id: 'configure-adapter-credential', label: 'Configure adapter credential', command }],
+    });
+  }
   if (error instanceof AdapterUnavailableError) {
     if (error.reason === 'load-failed') {
       return createErrorEnvelope('KB_HOST_ADAPTER_UNAVAILABLE', {

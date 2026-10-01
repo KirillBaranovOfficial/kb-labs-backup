@@ -287,9 +287,7 @@ func automaticDoctorInput(platformRoot string) (doctor.Input, error) {
 	paths := make([]string, 0)
 	for _, manifest := range manifests {
 		for _, requirement := range manifest.Requirements {
-			if !requirement.Secret {
-				paths = append(paths, requirement.Path)
-			}
+			paths = append(paths, requirement.Path)
 		}
 	}
 	configured, err := installed.ConfiguredPaths(platformRoot, paths)
