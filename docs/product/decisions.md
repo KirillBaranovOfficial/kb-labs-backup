@@ -103,6 +103,11 @@ There is no retention policy for run history yet.
 
 kb-dev and kb-devkit are functionally solid and need cases and tests only. kb-deploy and kb-monitor need stabilization. Deployment and container cases (S-004, S-034 to S-038) stay planned and outside the release until that phase.
 
+### Workspace CLI resolves configured adapters from the workspace
+
+In a monorepo development checkout, configured adapter packages resolve directly from pnpm workspace package roots only when the platform-owned config contains `"platform": { "mode": "development" }`. This explicit marker is absent from kb-create's rendered installed-platform config; a retained `pnpm-workspace.yaml` does not enable workspace resolution. The root package does not mirror every adapter binding as a dependency, because that duplicates `.kb/kb.config.jsonc` and can drift. Adapter classification follows the KB manifest, and only configured platform adapters resolve from the platform workspace. A bound invalid package returns typed `KB_HOST_ADAPTER_UNAVAILABLE`; if the package is absent from both workspace and lock, the error directs the operator to `kb marketplace install <package> --scope platform`. An unbuilt workspace adapter returns the build command `pnpm build`.
+Cases: S-179.5, S-179.6, S-179.7, S-179.8, S-179.9, S-179.10, S-179.11, S-179.12.
+
 ## 2026-10-02
 
 ### Platform CLI authentication gate
