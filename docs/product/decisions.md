@@ -153,6 +153,13 @@ shared copy; ordinary package dependencies remain dependencies. The SDK does
 not bundle peer packages such as `shared-tool-kit` and `shared-command-kit` as
 special cases.
 
+The release sealer analyzes SDK exports except subpaths declared in
+`kbLabs.release.nonRuntimeEntrypoints`; test and build helper subpaths are
+omitted there, while new exports remain runtime by default. Optional SDK peers
+are consumer-provided and are not platform members.
+If a declared runtime entrypoint statically imports an optional peer, sealing
+fails so runtime code cannot rely on a package the platform does not provide.
+
 Cases: S-003.1, S-054.2.
 
 ### Adapter installs preserve sealed platform artifacts
