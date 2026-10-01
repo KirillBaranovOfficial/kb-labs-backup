@@ -881,10 +881,10 @@ def main():
                 lambda: run_bootstrap_recovery_steps(
                     launcher, str(PLATFORM), service_env["KB_JOURNEY_ADMIN_EMAIL"],
                     service_env["KB_JOURNEY_ADMIN_PASSWORD"], recovered_password, env, run,
+                    on_valid_password=lambda password: service_env.__setitem__("KB_JOURNEY_ADMIN_PASSWORD", password),
                 ),
                 cases=["S-100.2", "S-100.3", "S-100.4"],
             )
-            service_env["KB_JOURNEY_ADMIN_PASSWORD"] = recovered_password
             auth_journey.step(
                 "tenant roles, API token lifecycle, last-admin guard, and invite revocation",
                 "auth.accounts",

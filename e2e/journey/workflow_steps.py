@@ -60,6 +60,12 @@ def _logs(run_id: str, *, env: dict[str, str], cwd: Path) -> str:
 def _write_workflows(project: Path) -> None:
     workflows = project / ".kb" / "workflows"
     workflows.mkdir(parents=True, exist_ok=True)
+    (workflows / "hello.yml").write_text(
+        "name: hello\nversion: 1.0.0\non:\n  manual: true\njobs:\n  hello:\n    runsOn: local\n    steps:\n"
+        "      - name: Say hello\n        id: hello\n        uses: builtin:shell\n"
+        "        with:\n          command: echo hello-workflow\n",
+        encoding="utf-8",
+    )
     (workflows / "journey-hello.yml").write_text(
         "name: journey-hello\nversion: 1.0.0\n"
         "inputs:\n  message:\n    type: string\n    required: true\n"
@@ -107,7 +113,7 @@ def _wait_for_workflow_fixtures(*, env: dict[str, str], cwd: Path,
         workflows = _json_cli(["workflow", "defs", "list", "--json"], env=env, cwd=cwd)
         if isinstance(workflows, list):
             names = {item.get("id") for item in workflows if isinstance(item, dict)}
-            if {"journey-hello", "journey-fails", "journey-cron-target"}.issubset(names):
+            if {"hello", "journey-hello", "journey-fails", "journey-cron-target"}.issubset(names):
                 return
         sleep(1)
     raise AssertionError("project workflow catalog did not discover the journey fixtures within 30s")
@@ -270,7 +276,14 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                          sleep: Callable[[float], None] = time.sleep) -> None:
     """Run each workflow release case in the registered project."""
     prepare_workflow_fixtures(project)
-    _wait_for_workflow_fixtures(env=env, cwd=project, clock=clock, sleep=sleep)
+
+    def discover_fixtures() -> None:
+        _wait_for_workflow_fixtures(env=env, cwd=project, clock=clock, sleep=sleep)
+
+    discovery = journey.step("discover installed project workflow definitions", "workflow",
+                             discover_fixtures, cases=["S-006.3"])
+    if discovery.status != "PASS":
+        return
     successful_id = ""
     failed_id = ""
 
