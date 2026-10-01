@@ -1,7 +1,7 @@
 ---
 title: "Triggers"
-description: "Manual, push, schedule, webhook — how workflows get started."
-updatedAt: "2026-04-07"
+description: "Manual, push, and webhook triggers, plus separate cron schedules."
+updatedAt: "2026-10-01"
 order: 3
 ---
 
@@ -19,10 +19,6 @@ interface WorkflowTrigger {
     secret?: string;
     path?: string;
     headers?: Record<string, string>;
-  };
-  schedule?: {
-    cron: string;         // min length 1
-    timezone?: string;
   };
 }
 ```
@@ -127,23 +123,20 @@ if: "${{ trigger.payload.action == 'opened' }}"
 }
 ```
 
-## `schedule`
+## Cron schedules
 
-```json
-{
-  "on": {
-    "schedule": {
-      "cron": "0 3 * * *",
-      "timezone": "Europe/London"
-    }
-  }
-}
+Scheduling is a separate project entity. Create `.kb/crons/nightly.yml` to run an existing workflow:
+
+```yaml
+schedule: "0 3 * * *"
+timezone: "Europe/London"
+workflow: release-manager
+input:
+  channel: stable
+enabled: true
 ```
 
-Runs on a cron schedule.
-
-- **`cron`** — standard 5-field cron expression (`minute hour day month weekday`). The schema requires a non-empty string; the cron parser lives in the engine's scheduler.
-- **`timezone`** — IANA timezone name (`Europe/London`, `America/New_York`, `UTC`). When omitted, the engine uses its own timezone. Make this explicit in production — you almost always want a fixed timezone, not "whatever server this runs on".
+Use `kb workflow crons list`, `kb workflow crons disable nightly`, and `kb workflow crons enable nightly` to inspect and manage it. A workflow can have multiple cron files with different inputs. The run's `trigger.type` is `'schedule'`, and `metadata.cronId` identifies the schedule. A project cron can also target a registered job handler, for example `handler: steward:daily-review` with an optional `input` mapping. Plugin manifest crons are listed read-only.
 
 Examples:
 
@@ -155,24 +148,21 @@ Examples:
 "0 0 1 * *"        // first of the month at midnight
 ```
 
-The run's `trigger.type` is `'schedule'`. There's no payload from the scheduler itself — you can use `env` and `inputs` (via defaults) to parameterize scheduled runs.
-
 ## Combining triggers
 
-All four can be set simultaneously:
+All three workflow triggers can be set simultaneously:
 
 ```json
 {
   "on": {
     "manual": true,
     "push": true,
-    "schedule": { "cron": "0 */6 * * *" },
     "webhook": { "secret": "..." }
   }
 }
 ```
 
-The engine subscribes to every set trigger. A run from any source takes the same workflow through the same jobs — only `trigger.type` and `trigger.payload` differ. Use `if` expressions when you need behavior that's conditional on the trigger source:
+The engine subscribes to each workflow trigger. Cron schedules are configured separately and start the same workflow with schedule metadata. Use `if` expressions when you need behavior that's conditional on the trigger source:
 
 ```ts
 if: "${{ trigger.type == 'manual' || trigger.type == 'push' }}"
@@ -208,7 +198,6 @@ If you forget to set any trigger, the spec fails to parse with:
 
 Other common failures:
 
-- `schedule.cron` is an empty string.
 - `webhook: { secret: '' }` — an empty secret is rejected by the `min(1)` constraint.
 - `schedule.timezone: ''` — same.
 

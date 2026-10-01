@@ -9,7 +9,7 @@ import { exportSnapshot } from '@kb-labs/steward-core';
  */
 const job = defineJob({
   id: 'export-backup',
-  schedule: '1d',
+  schedule: '0 0 * * *',
   describe: 'Snapshots all collections for the private-repo backup',
   handler: async (_input: JobInput, ctx: PluginContextV3) => {
     try {

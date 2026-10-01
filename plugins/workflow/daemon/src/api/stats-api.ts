@@ -83,7 +83,7 @@ export function registerStatsAPI(options: StatsAPIOptions): void {
     let cronStats = { total: 0, enabled: 0, disabled: 0 };
     if (cronScheduler) {
       try {
-        const { crons } = hostService.listCron();
+        const { crons } = await hostService.listCron();
         const enabled = crons.filter((c) => c.enabled).length;
         cronStats = { total: crons.length, enabled, disabled: crons.length - enabled };
       } catch {

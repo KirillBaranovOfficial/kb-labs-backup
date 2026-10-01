@@ -15,7 +15,7 @@ import {
   assertTransition,
   type WorkflowEventName,
 } from '@kb-labs/workflow-constants'
-import type { ICache, IEventBus, ILogger, IAnalytics, ISnapshotManager, Unsubscribe } from '@kb-labs/core-platform'
+import type { ICache, IStorage, IEventBus, ILogger, IAnalytics, ISnapshotManager, Unsubscribe } from '@kb-labs/core-platform'
 import type { ClassifiedFailure, RetryPolicyConfig } from '@kb-labs/core-contracts'
 import { classifyFailure, decideRetry } from '@kb-labs/core-retry'
 import { StateStore } from './state-store'
@@ -41,6 +41,8 @@ export interface WorkflowEngineOptions {
   maxWorkflowDepth?: number
   /** Platform cache adapter (REQUIRED) */
   cache: ICache
+  /** Project storage adapter (REQUIRED) — durable workflow run records */
+  storage: IStorage
   /** Platform event bus adapter (REQUIRED) */
   events: IEventBus
   /** Platform logger (REQUIRED) */
@@ -81,7 +83,7 @@ export class WorkflowEngine {
     this.analytics = options.analytics
     this.instanceId = options.instanceId ?? randomUUID()
 
-    this.stateStore = new StateStore(options.cache, this.logger)
+    this.stateStore = new StateStore(options.cache, options.storage, this.logger)
     this.concurrency = new ConcurrencyManager(
       options.cache,
       this.logger,

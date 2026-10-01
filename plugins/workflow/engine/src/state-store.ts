@@ -1,23 +1,11 @@
 import type { JobRun, StepRun, WorkflowRun } from '@kb-labs/workflow-contracts'
-import type { ICache } from '@kb-labs/core-platform'
+import type { ICache, IStorage } from '@kb-labs/core-platform'
 import {
   assertTransition,
   type AssertTransitionOptions,
 } from '@kb-labs/workflow-constants'
 import type { EngineLogger } from './types'
 import { withLock } from './lock'
-
-/**
- * Run records must outlive individual workflow steps. Some steps (e.g. release
- * checks packing + clean-installing every package) run for tens of minutes
- * with no intermediate persistence call. Cache backends default `set()` TTL
- * to a few minutes (e.g. InMemoryStateBroker: 300_000ms) for ordinary ephemeral
- * caching — without an explicit override here, a long-running step's record
- * silently expires mid-flight, `getRun`/`updateRun` start returning null, and
- * the step's real result is never persisted (surfaces as a bogus "Daemon
- * restarted — run was abandoned" once something else touches the run).
- */
-const RUN_TTL_MS = 24 * 60 * 60 * 1000 // 24h
 
 /**
  * How long a daemon's liveness claim on this shared state store stays valid
@@ -50,34 +38,44 @@ export interface DaemonLease {
 
 export class StateStore {
   private readonly cache: ICache
+  private readonly storage: IStorage
 
   constructor(
     cache: ICache,
+    storage: IStorage,
     private readonly logger: EngineLogger,
   ) {
     this.cache = cache
+    this.storage = storage
   }
 
   async saveRun(run: WorkflowRun): Promise<void> {
-    const key = `kb:run:${run.id}`
-    this.logger.debug('Persisting workflow run', { runId: run.id, key })
-
-    // Save run data
-    await this.cache.set(key, JSON.stringify(run), RUN_TTL_MS)
-
-    // Add to sorted set index (score = createdAt timestamp for time-based ordering)
-    const timestamp = new Date(run.createdAt).getTime()
-    await this.cache.zadd('workflow:runs:index', timestamp, run.id)
+    const path = runRecordPath(run.id)
+    this.logger.debug('Persisting workflow run', { runId: run.id, path })
+    await this.storage.write(path, Buffer.from(JSON.stringify(run), 'utf8'))
+    try {
+      await this.cache.zadd('workflow:runs:index', new Date(run.createdAt).getTime(), run.id)
+    } catch (error) {
+      this.logger.warn('Failed to update workflow run index; storage record is durable', {
+        runId: run.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   async getRun(runId: string): Promise<WorkflowRun | null> {
-    const key = `kb:run:${runId}`
-    const payload = await this.cache.get<string>(key)
+    const payload = await this.storage.read(runRecordPath(runId))
     if (!payload) {
       return null
     }
     try {
-      return JSON.parse(payload) as WorkflowRun
+      const run: unknown = JSON.parse(payload.toString('utf8'))
+      if (!run || typeof run !== 'object' || Array.isArray(run)
+          || !('id' in run) || run.id !== runId || !('jobs' in run) || !Array.isArray(run.jobs)) {
+        this.logger.error('Stored workflow run does not match its storage key', undefined, { runId })
+        return null
+      }
+      return run as WorkflowRun
     } catch (error) {
       this.logger.error('Failed to parse stored workflow run', error instanceof Error ? error : undefined, {
         runId,
@@ -87,20 +85,76 @@ export class StateStore {
   }
 
   async deleteRun(runId: string): Promise<void> {
-    const key = `kb:run:${runId}`
-
-    // Remove from cache
-    await this.cache.delete(key)
-
-    // Remove from sorted set index
-    await this.cache.zrem('workflow:runs:index', runId)
+    await this.storage.delete(runRecordPath(runId))
+    try {
+      await this.cache.zrem('workflow:runs:index', runId)
+    } catch (error) {
+      this.logger.warn('Failed to remove workflow run from cache index', {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   async getAllRunIds(): Promise<string[]> {
-    // Get all run IDs from sorted set index (ordered by creation time)
-    // Score range: -inf to +inf (all runs)
-    const runIds = await this.cache.zrangebyscore('workflow:runs:index', -Infinity, Infinity)
-    return runIds ?? []
+    const paths = await this.storage.list('workflows/')
+    const ids = paths.flatMap((path) => {
+      const match = /^workflows\/([^/]+)\.json$/.exec(path)
+      return match?.[1] ? [match[1]] : []
+    })
+    let indexed: string[] = []
+    try {
+      indexed = [...new Set(await this.cache.zrangebyscore('workflow:runs:index', -Infinity, Infinity) ?? [])]
+    } catch (error) {
+      this.logger.warn('Failed to read workflow run cache index; rebuilding from storage', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    if (indexed.length === ids.length && ids.every((id) => indexed.includes(id))) {
+      return indexed
+    }
+
+    const records = await Promise.all(paths.flatMap((path) => {
+      const match = /^workflows\/([^/]+)\.json$/.exec(path)
+      if (!match?.[1]) { return [] }
+      return [this.storage.read(path).then((payload) => {
+        if (!payload) { return null }
+        try {
+          const run: unknown = JSON.parse(payload.toString('utf8'))
+          // The platform core runtime has a separate workflow engine and may
+          // use the shared `workflows/` prefix for its own run representation.
+          // Only records with the daemon engine's jobs array belong in this
+          // state store's history index.
+          if (run && typeof run === 'object' && !Array.isArray(run) && !('jobs' in run)) {
+            return null
+          }
+          if (!run || typeof run !== 'object' || Array.isArray(run)
+              || !('id' in run) || run.id !== match[1]
+              || !('createdAt' in run) || typeof run.createdAt !== 'string') {
+            this.logger.error('Stored workflow run is missing history fields', undefined, { path })
+            return null
+          }
+          return { id: match[1], createdAt: run.createdAt }
+        } catch (error) {
+          this.logger.error('Failed to parse stored workflow run', error instanceof Error ? error : undefined, { path })
+          return null
+        }
+      })]
+    }))
+    const sorted = records
+      .filter((record): record is { id: string; createdAt: string } => record !== null)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    try {
+      for (const id of indexed) { await this.cache.zrem('workflow:runs:index', id) }
+      for (const record of sorted) {
+        await this.cache.zadd('workflow:runs:index', new Date(record.createdAt).getTime(), record.id)
+      }
+    } catch (error) {
+      this.logger.warn('Failed to rebuild workflow run cache index', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    return sorted.map(({ id }) => id)
   }
 
   /**
@@ -329,9 +383,13 @@ export class StateStore {
   }
 }
 
+function runRecordPath(runId: string): string {
+  if (!runId || runId.includes('/') || runId.includes('\\') || runId === '.' || runId === '..') {
+    throw new Error(`Invalid workflow run ID: ${runId}`)
+  }
+  return `workflows/${runId}.json`
+}
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
-
-
-

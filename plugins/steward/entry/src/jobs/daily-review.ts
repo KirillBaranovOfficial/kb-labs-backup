@@ -31,7 +31,7 @@ function renderMarkdown(review: DailyReview): string {
  */
 const job = defineJob({
   id: 'daily-review',
-  schedule: '1d',
+  schedule: '0 0 * * *',
   describe: 'Generates the daily review artifact',
   handler: async (_input: JobInput, ctx: PluginContextV3) => {
     try {

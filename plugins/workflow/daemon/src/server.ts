@@ -43,6 +43,7 @@ export async function createServer(options: CreateServerOptions): Promise<Fastif
     jobBroker,
     workflowService,
     cronScheduler,
+    cronDiscovery,
     logger,
   });
 

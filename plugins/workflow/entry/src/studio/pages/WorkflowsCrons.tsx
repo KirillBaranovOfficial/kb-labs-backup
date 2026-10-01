@@ -11,8 +11,9 @@ import {
   UITypographyText,
   UIBadge,
   UIIcon,
+  UIButton,
 } from '@kb-labs/sdk/studio';
-import { useData } from '@kb-labs/sdk/studio';
+import { useData, useMutateData } from '@kb-labs/sdk/studio';
 import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes';
 import { UICard } from '@kb-labs/sdk/studio';
 import { UIPage, UIPageHeader } from '@kb-labs/sdk/studio';
@@ -20,7 +21,7 @@ import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker';
 
 export default function WorkflowsCrons() {
   const { projectId, picker, hasProjects } = useWorkflowProject();
-  const { data: cronsData, isLoading } = useData<{ crons: Array<Record<string, unknown>> }>(projectWorkflowEndpoint(projectId, 'api/v1/crons'), { enabled: hasProjects });
+  const { data: cronsData, isLoading, refetch } = useData<{ crons: Array<CronInfo> }>(projectWorkflowEndpoint(projectId, 'api/v1/crons'), { enabled: hasProjects });
 
   const formatDate = (date?: Date | string) => {
     if (!date) {return '-';}
@@ -48,11 +49,11 @@ export default function WorkflowsCrons() {
       ),
     },
     {
-      title: 'Job Type',
-      dataIndex: 'jobType',
-      key: 'jobType',
-      render: (jobType: string) => (
-        <UITypographyText className="typo-body">{jobType}</UITypographyText>
+      title: 'Target',
+      dataIndex: 'target',
+      key: 'target',
+      render: (target: CronInfo['target']) => (
+        <UITypographyText className="typo-body">{'workflow' in target ? target.workflow : target.handler}</UITypographyText>
       ),
     },
     {
@@ -77,18 +78,18 @@ export default function WorkflowsCrons() {
       title: 'Last Run',
       dataIndex: 'lastRun',
       key: 'lastRun',
-      render: (date?: Date | string) => (
+      render: (lastRun?: CronInfo['lastRun']) => (
         <UISpace className="gap-tight">
           <UIIcon name="CalendarOutlined" className="text-secondary" />
-          <UITypographyText className="typo-caption">{formatDate(date)}</UITypographyText>
+          <UITypographyText className="typo-caption">{lastRun ? `${lastRun.status} · ${formatDate(lastRun.time)}` : '-'}</UITypographyText>
         </UISpace>
       ),
     },
     {
       title: 'Next Run',
-      dataIndex: 'nextRun',
-      key: 'nextRun',
-      render: (date?: Date | string) => (
+      dataIndex: 'nextFireAt',
+      key: 'nextFireAt',
+      render: (date?: string) => (
         date ? (
           <UISpace className="gap-tight">
             <UIIcon name="CalendarOutlined" className="text-info" />
@@ -100,15 +101,20 @@ export default function WorkflowsCrons() {
       ),
     },
     {
-      title: 'Plugin',
-      dataIndex: 'pluginId',
-      key: 'pluginId',
-      render: (pluginId?: string) => (
-        pluginId ? (
-          <UITag color="blue">{pluginId}</UITag>
-        ) : (
-          <UITypographyText className="typo-caption text-tertiary">-</UITypographyText>
-        )
+      title: 'Source',
+      dataIndex: 'source',
+      key: 'source',
+      render: (source: CronInfo['source']) => (
+        <UITag color={source === 'plugin' ? 'blue' : 'default'}>{source}</UITag>
+      ),
+    },
+    {
+      title: 'Action',
+      key: 'action',
+      render: (_: unknown, cron: CronInfo) => cron.source === 'user' ? (
+        <CronToggle projectId={projectId} cron={cron} onSuccess={() => void refetch()} />
+      ) : (
+        <UITypographyText className="typo-caption text-tertiary">Read only</UITypographyText>
       ),
     },
   ];
@@ -119,8 +125,8 @@ export default function WorkflowsCrons() {
   return (
     <UIPage width="full">
       <UIPageHeader
-        title="Cron Jobs"
-        description="Scheduled recurring tasks"
+        title="Workflow Crons"
+        description="Project schedules for workflow automations"
         actions={picker}
         breadcrumbs={[
           { title: 'Home', href: '/' },
@@ -165,4 +171,23 @@ export default function WorkflowsCrons() {
       </UICard>
     </UIPage>
   );
+}
+
+interface CronInfo {
+  id: string;
+  source: 'user' | 'plugin';
+  schedule: string;
+  timezone?: string;
+  target: { workflow: string } | { handler: string };
+  enabled: boolean;
+  lastRun?: { id: string; status: string; time: string };
+  nextFireAt?: string;
+}
+
+function CronToggle({ projectId, cron, onSuccess }: { projectId: string; cron: CronInfo; onSuccess: () => void }) {
+  const action = cron.enabled ? 'disable' : 'enable';
+  const mutation = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `api/v1/crons/${encodeURIComponent(cron.id)}/${action}`));
+  return <UIButton size="small" loading={mutation.isLoading} onClick={() => {
+    mutation.mutateAsync().then(onSuccess).catch(() => {});
+  }}>{cron.enabled ? 'Disable' : 'Enable'}</UIButton>;
 }

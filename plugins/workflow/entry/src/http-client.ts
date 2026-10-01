@@ -356,6 +356,20 @@ export class WorkflowDaemonClient {
     return this.unwrapData<CronListResponse>(data);
   }
 
+  async setCronEnabled(id: string, enabled: boolean): Promise<{ enabled: boolean }> {
+    const action = enabled ? 'enable' : 'disable';
+    const response = await this.authorizedFetch(`${this.baseUrl}/api/v1/crons/${encodeURIComponent(id)}/${action}`, {
+      method: 'POST',
+    });
+    const data = await this.parseJsonResponse<unknown>(response);
+    if (!response.ok) {
+      const error = data && typeof data === 'object' && 'error' in data ? String(data.error) : response.statusText;
+      const code = data && typeof data === 'object' && 'code' in data ? String(data.code) : '';
+      throw new Error(code ? `${code}: ${error}` : error);
+    }
+    return this.unwrapData<{ enabled: boolean }>(data);
+  }
+
   /**
    * Submit a job for execution
    */

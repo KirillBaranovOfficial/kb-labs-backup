@@ -1,15 +1,16 @@
 # @kb-labs/workflow-engine
 
-Workflow orchestration engine for KB Labs. Provides job scheduling, state management, Redis coordination, and workflow execution.
+Workflow orchestration engine for KB Labs. Provides job scheduling, durable run history through the project storage adapter, coordination, and workflow execution.
 
 ## Vision & Purpose
 
-**@kb-labs/workflow-engine** provides workflow orchestration engine for KB Labs. It includes job scheduling, state management, Redis coordination, event bus, retry logic, concurrency control, and timeout handling.
+**@kb-labs/workflow-engine** provides workflow orchestration engine for KB Labs. It includes job scheduling, durable workflow state, cache-backed coordination, event bus, retry logic, concurrency control, and timeout handling.
 
 ### Core Goals
 
 - **Job Scheduling**: Intelligent job scheduling with dependency resolution
-- **Redis Coordination**: Distributed state management and coordination through Redis
+- **Durable run state**: Workflow history and step outputs through `IStorage`
+- **Cache coordination**: Idempotency, locks, and distributed coordination through `ICache`
 - **Event Bus**: Event streaming for workflow observability
 - **Retry Logic**: Configurable retry policies for jobs and steps
 - **Concurrency Control**: Idempotency and concurrency group management
@@ -31,7 +32,8 @@ Workflow Engine
     ├──► WorkflowEngine (main orchestrator)
     ├──► Job Scheduling
     ├──► State Management
-    ├──► Redis Coordination
+    ├──► Storage (durable workflow runs)
+    ├──► Cache (coordination and locks)
     ├──► Event Bus
     ├──► Retry Logic
     ├──► Concurrency Control
@@ -58,13 +60,14 @@ Workflow Engine
 ## ✨ Features
 
 - **Job scheduling** with dependency resolution
-- **Redis coordination** for distributed state
+- **Storage-backed run history** with step outputs retained across host restarts
+- **Cache coordination** for idempotency, leases, and concurrency locks
 - **Event bus** for workflow observability
 - **Retry logic** with configurable policies
 - **Concurrency control** with idempotency
 - **Timeout handling** for jobs and steps
 - **Worker system** for background processing
-- **State management** with Redis persistence
+- **Run state** persisted through the project's `IStorage` adapter at `workflows/<runId>.json`
 - **Nested workflows** - call workflows from within workflows
 - **Conditional execution** - `if` expressions for steps and jobs
 - **Step outputs** - capture and use outputs between steps
@@ -223,9 +226,22 @@ src/__tests__/
 
 ## 🔄 Migration & Breaking Changes
 
-### Migration from Previous Versions
+### Persistence contract
 
-No breaking changes in current version (0.1.0).
+Pass the project's `cache`, `storage`, and `eventBus` adapters when creating an engine. The cache coordinates live work; `IStorage` is the source of truth for workflow run records. Each record is JSON at `workflows/<runId>.json` and contains the run, jobs, steps, status, trigger, metadata, artifacts, and step outputs. The default storage binding in the built-in adapter pack uses the filesystem; the logical key stays the same for other storage adapters.
+
+```ts
+const engine = new WorkflowEngine({
+  cache: platform.cache,
+  storage: platform.storage,
+  events: platform.eventBus,
+  logger: platform.logger,
+});
+```
+
+Shell stdout and stderr are included in step outputs. The daemon uses those persisted outputs with the structured platform log reader so run logs remain available after the host restarts.
+
+This engine constructor now requires `storage`; callers must bind the project's storage adapter. No run migration is performed.
 
 ### Breaking Changes in Future Versions
 
@@ -236,16 +252,14 @@ No breaking changes in current version (0.1.0).
 ### Example 1: Create Engine and Run Workflow
 
 ```typescript
-import { WorkflowEngine, createRedisClient } from '@kb-labs/workflow-engine';
+import { WorkflowEngine } from '@kb-labs/workflow-engine';
 import type { WorkflowSpec } from '@kb-labs/workflow-contracts';
 
-const redis = await createRedisClient({
-  url: process.env.KB_REDIS_URL || 'redis://localhost:6379',
-});
-
 const engine = new WorkflowEngine({
-  redis,
-  logger: getLogger('workflow'),
+  cache: platform.cache,
+  storage: platform.storage,
+  events: platform.eventBus,
+  logger: platform.logger,
 });
 
 const run = await engine.run(spec, {
@@ -273,7 +287,12 @@ await worker.start();
 ```typescript
 import { WorkflowEngine } from '@kb-labs/workflow-engine';
 
-const engine = new WorkflowEngine({ redis });
+const engine = new WorkflowEngine({
+  cache: platform.cache,
+  storage: platform.storage,
+  events: platform.eventBus,
+  logger: platform.logger,
+});
 
 engine.on('run.started', (event) => {
   console.log('Run started:', event.runId);

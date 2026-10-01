@@ -79,10 +79,6 @@ export const listFlags = defineFlags({
     type: 'string',
     description: 'Filter by status (running, completed, failed)',
   },
-  type: {
-    type: 'string',
-    description: 'Filter by type: "runs" (active executions), "cron" (scheduled jobs)',
-  },
 });
 
 /**

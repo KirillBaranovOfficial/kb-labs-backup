@@ -100,43 +100,24 @@ export interface JobCancelResponse {
 }
 
 /**
- * Cron job registration request (POST /api/cron)
- */
-export interface CronRegistrationRequest {
-  /** Cron job ID (unique per plugin) */
-  id: string;
-  /** Cron schedule expression */
-  schedule: string;
-  /** Job type to execute (pluginId:jobId) */
-  jobType: string;
-  /** Job payload */
-  payload?: unknown;
-  /** Timezone (default: UTC) */
-  timezone?: string;
-  /** Enabled flag (default: true) */
-  enabled?: boolean;
-}
-
-/**
  * Cron job info (GET /api/cron)
  */
 export interface CronInfo {
   /** Cron job ID */
   id: string;
+  source: 'user' | 'plugin';
   /** Cron schedule expression */
   schedule: string;
   /** Job type */
-  jobType: string;
+  target: { workflow: string } | { handler: string };
+  input?: Record<string, unknown>;
   /** Timezone */
   timezone?: string;
   /** Enabled flag */
   enabled: boolean;
   /** Last run time */
-  lastRun?: Date | string;
-  /** Next run time */
-  nextRun?: Date | string;
-  /** Plugin ID (if plugin-provided) */
-  pluginId?: string;
+  lastRun?: { id: string; status: string; time: string };
+  nextFireAt?: string;
 }
 
 /**
@@ -145,6 +126,7 @@ export interface CronInfo {
 export interface CronListResponse {
   /** List of cron jobs */
   crons: CronInfo[];
+  errors: Array<{ file: string; reason: string }>;
 }
 
 /**
@@ -257,13 +239,17 @@ export const JobCancelResponseSchema = z.object({
  */
 export const CronInfoSchema = z.object({
   id: z.string(),
+  source: z.enum(['user', 'plugin']),
   schedule: z.string(),
-  jobType: z.string(),
+  target: z.union([
+    z.object({ workflow: z.string().min(1) }).strict(),
+    z.object({ handler: z.string().min(1) }).strict(),
+  ]),
+  input: z.record(z.string(), z.unknown()).optional(),
   timezone: z.string().optional(),
   enabled: z.boolean(),
-  lastRun: z.union([z.string(), z.date()]).optional(),
-  nextRun: z.union([z.string(), z.date()]).optional(),
-  pluginId: z.string().optional(),
+  lastRun: z.object({ id: z.string(), status: z.string(), time: z.string() }).optional(),
+  nextFireAt: z.string().optional(),
 })
 
 /**
@@ -271,6 +257,7 @@ export const CronInfoSchema = z.object({
  */
 export const CronListResponseSchema = z.object({
   crons: z.array(CronInfoSchema),
+  errors: z.array(z.object({ file: z.string(), reason: z.string() })).default([]),
 })
 
 /**

@@ -26,9 +26,14 @@ function walk(dir) {
 function deprecatedCommandRules() {
   const text = readFileSync(workflowManifest, 'utf8');
   const rules = [];
-  const deprecatedPattern = /\bpath\s*:\s*(['"])([^'"]+)\1[\s\S]{0,500}?\bdescribe\s*:\s*(['"])(\(Deprecated\)[^'"]*Use:\s*kb\s+([^'"]+))\3/g;
-  for (const match of text.matchAll(deprecatedPattern)) {
-    rules.push({ command: `kb ${match[2]}`, replacement: `kb ${match[5].trim()}` });
+  // Scope path and describe to one command object. A bounded lookahead across
+  // the manifest can pair a new command with a later deprecated description.
+  for (const entry of text.split(/\n\s{6}\},\s*\n/)) {
+    const pathMatch = entry.match(/\bpath\s*:\s*(['"])([^'"]+)\1/);
+    const describeMatch = entry.match(/\bdescribe\s*:\s*(['"])(\(Deprecated\)[^'"]*Use:\s*kb\s+([^'"]+))\1/);
+    if (pathMatch && describeMatch) {
+      rules.push({ command: `kb ${pathMatch[2]}`, replacement: `kb ${describeMatch[3].trim()}` });
+    }
   }
 
   const runText = readFileSync(workflowRunSource, 'utf8');
