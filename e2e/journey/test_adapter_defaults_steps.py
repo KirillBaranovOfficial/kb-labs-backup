@@ -26,9 +26,19 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             run_counter = 0
             host_running = True
             platform_root = (home / "kb-platform").resolve()
+            platform_config = platform_root / ".kb" / "kb.config.jsonc"
+            platform_config.parent.mkdir(parents=True)
+            platform_config.write_text(json.dumps({"platform": {
+                "adapters": {
+                    "analytics": "@kb-labs/adapters-analytics-sqlite",
+                    "eventBus": "@kb-labs/adapters-eventbus-cache",
+                },
+                "adapterOptions": {"analytics": {"filename": ".kb/analytics/analytics.sqlite"}},
+            }}))
 
             def config(root: Path) -> dict:
-                config_file = root / ".kb" / "kb.config.json"
+                jsonc_file = root / ".kb" / "kb.config.jsonc"
+                config_file = jsonc_file if jsonc_file.exists() else root / ".kb" / "kb.config.json"
                 return json.loads(config_file.read_text()) if config_file.exists() else {}
 
             def write_config(root: Path, value: dict) -> None:
@@ -56,14 +66,18 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                             return subprocess.CompletedProcess(command, 1, json.dumps(result), "")
                         return subprocess.CompletedProcess(command, 1,
                             f'Adapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `kb-create start --platform-root "{platform_root}"`.\n', "")
+                    analytics_provider = config(root).get("platform", {}).get("adapters", {}).get(
+                        "analytics", "@kb-labs/adapters-analytics-sqlite")
                     statuses = [
                         {"slot": "storage", "mode": "real", "implementation": "@kb-labs/adapters-fs"},
                         {"slot": "cache", "mode": "real", "implementation": "@kb-labs/adapters-state-broker"},
                         *[{"slot": slot, "mode": "real", "implementation": slot}
-                          for slot in ("logger", "analytics", "documentDatabase", "kvStore")],
+                          for slot in ("logger", "documentDatabase", "kvStore")],
+                        {"slot": "analytics", "mode": "real", "implementation": analytics_provider},
+                        {"slot": "eventBus", "mode": "real", "implementation": "@kb-labs/adapters-eventbus-cache"},
                         {"slot": "logs", "mode": "real", "implementation": "HybridLogReader"},
                         *[{"slot": slot, "mode": "inmemory", "implementation": slot}
-                          for slot in ("eventBus", "config", "invoke", "artifacts", "notifier")],
+                          for slot in ("config", "invoke", "artifacts", "notifier")],
                         *[{"slot": slot, "mode": "noop", "implementation": slot}
                           for slot in ("vectorStore", "llm", "embeddings")],
                     ]
@@ -77,19 +91,23 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 if command[0] == "kb-create" and args[:2] in (["stop", "--platform-root"], ["start", "--platform-root"]):
                     host_running = args[0] == "start"
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+                if command[0] == "kb-create" and args[:2] == ["restart", "--platform-root"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:3] == ["adapter", "list", "--json"]:
                     value = config(root)
                     options = value.get("platform", {}).get("adapterOptions", {}).get("storage", {})
                     override = value.get("platform", {}).get("adapters", {}).get("storage")
+                    analytics_provider = value.get("platform", {}).get("adapters", {}).get(
+                        "analytics", "@kb-labs/adapters-analytics-sqlite")
                     rows = [
                         {"slot": "storage", "implementation": "@kb-labs/adapters-fs", "mode": "real",
                         "baseDir": str(root / options.get("baseDir", ".kb/data")), "networkRequired": False},
                         {"slot": "cache", "implementation": "@kb-labs/adapters-state-broker", "mode": "real", "networkRequired": False},
                         {"slot": "logger", "implementation": "@kb-labs/adapters-pino", "mode": "real", "networkRequired": False},
-                        {"slot": "analytics", "implementation": "@kb-labs/adapters-analytics-sqlite", "mode": "real", "networkRequired": False},
+                        {"slot": "analytics", "implementation": analytics_provider, "mode": "real", "networkRequired": False},
                         {"slot": "documentDatabase", "implementation": "@kb-labs/adapters-sqlite", "mode": "real", "networkRequired": False},
                         {"slot": "kvStore", "implementation": "@kb-labs/adapters-sqlite", "mode": "real", "networkRequired": False},
-                        {"slot": "eventBus", "implementation": "InMemoryEventBus", "mode": "inmemory", "networkRequired": False},
+                        {"slot": "eventBus", "implementation": "@kb-labs/adapters-eventbus-cache", "mode": "real", "networkRequired": False},
                         {"slot": "invoke", "implementation": "InMemoryInvoke", "mode": "inmemory", "networkRequired": False},
                         {"slot": "artifacts", "implementation": "InMemoryArtifacts", "mode": "inmemory", "networkRequired": False},
                         {"slot": "config", "implementation": "InMemoryConfig", "mode": "inmemory", "networkRequired": False},
@@ -123,7 +141,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "scope": "project"}), "")
                 if args[:2] == ["adapter", "bind"]:
                     value = config(root)
-                    value.setdefault("platform", {}).setdefault("adapters", {})["storage"] = args[3]
+                    value.setdefault("platform", {}).setdefault("adapters", {})[args[2]] = args[3]
                     write_config(root, value)
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:2] == ["adapter", "unbind"]:
@@ -170,18 +188,29 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 {"slot": "storage", "mode": "real", "implementation": "@kb-labs/adapters-fs"},
                 {"slot": "cache", "mode": "real", "implementation": "@kb-labs/adapters-state-broker"},
                 *[{"slot": slot, "mode": "real", "implementation": slot}
-                  for slot in ("logger", "analytics", "documentDatabase", "kvStore")],
+                  for slot in ("logger", "documentDatabase", "kvStore")],
+                {"slot": "analytics", "mode": "real", "implementation": None},
+                {"slot": "eventBus", "mode": "real", "implementation": "@kb-labs/adapters-eventbus-cache"},
                 {"slot": "logs", "mode": "real", "implementation": "HybridLogReader"},
                 *[{"slot": slot, "mode": "inmemory", "implementation": slot}
-                  for slot in ("eventBus", "config", "invoke", "artifacts", "notifier")],
+                  for slot in ("config", "invoke", "artifacts", "notifier")],
                 *[{"slot": slot, "mode": "noop", "implementation": slot}
                   for slot in ("vectorStore", "llm", "embeddings")],
             ]
+
+            def health_adapters() -> list[dict]:
+                # The host reports the provider currently bound in the platform config.
+                bound = {**config(platform_root).get("platform", {}).get("adapters", {}),
+                         **config(project_a).get("platform", {}).get("adapters", {})}
+                provider = bound.get("analytics", "@kb-labs/adapters-analytics-sqlite")
+                return [{**row, "implementation": provider} if row["slot"] == "analytics" else row
+                        for row in runtime_adapters]
+
             with patch("adapter_defaults_steps.urllib.request.urlopen",
-                       side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(runtime_adapters).encode())):
+                       side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(health_adapters()).encode())):
                 run_adapter_default_steps(journey, project_a, env, fake_run)
 
-            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-048.{number}" for number in range(1, 7)}
+            expected = {f"S-054.{number}" for number in range(1, 9)} | {"S-054.10", "S-054.11"} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(claims, expected)

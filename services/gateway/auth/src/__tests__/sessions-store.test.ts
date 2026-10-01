@@ -173,6 +173,17 @@ describe('revokeAllUserSessions / revokeAllUserSessionsExcept', () => {
     // The other family's refresh is gone (not-found, not reuse).
     await expect(sessions.rotateRefresh(b.refreshJti)).rejects.toBeInstanceOf(RefreshNotFoundError);
   });
+
+  // case: S-041.4
+  it('keeps an active session family when SessionsStore reopens against the same document database', async () => {
+    const issued = await sessions.createSession({ userId: 'u1', tenantId: 't1', deviceCtx: {} });
+    const reopenedSessions = new SessionsStore(docs, { now, refreshTtlMs: HOUR, graceWindowMs: 5_000 });
+
+    expect(await reopenedSessions.hasActiveFamily(issued.familyId, 'u1')).toBe(true);
+    expect(await reopenedSessions.listFamiliesByUser('u1')).toHaveLength(1);
+    const rotated = await reopenedSessions.rotateRefresh(issued.refreshJti);
+    expect(rotated.familyId).toBe(issued.familyId);
+  });
 });
 
 describe('listFamiliesByUser', () => {

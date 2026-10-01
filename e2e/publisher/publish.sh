@@ -4,7 +4,7 @@
 # inside that tarball; pnpm publish <tarball> can resolve the package from its
 # current working directory and republish workspace:* metadata.
 #
-# Idempotent: runs safely on warm Verdaccio volumes (packages already exist).
+# Idempotent for matching package bytes on warm Verdaccio volumes.
 # Runs once and exits 0 — Docker Compose waits for this to complete
 # before starting the platform container.
 set -e
@@ -77,14 +77,44 @@ publish_set() {
   find "$set_dir" -maxdepth 1 -type f -name '*.tgz' -print 2>/dev/null | sort
 }
 
-# Worker: published-or-conflict → echo ✓/~ and exit 0; anything else → exit 1.
+# Filter base tarballs whose name@version is supplied by the PR overlay.
+# This is a local-set decision and does not consult the registry.
+filter_superseded_tarballs() {
+  base_dir="$1"
+  pr_dir="$2"
+  python3 - "$base_dir" "$pr_dir" <<'PY'
+import glob
+import json
+import sys
+import tarfile
+
+base_dir, pr_dir = sys.argv[1:]
+
+def identity(tarball):
+    with tarfile.open(tarball, "r:gz") as archive:
+        package = json.load(archive.extractfile("package/package.json"))
+    return f"{package['name']}@{package['version']}"
+
+pr_identities = {identity(path) for path in glob.glob(f"{pr_dir}/*.tgz")}
+for path in sorted(glob.glob(f"{base_dir}/*.tgz")):
+    package_version = identity(path)
+    if package_version in pr_identities:
+        print(f"  ~ {package_version} (superseded by PR tarball)", file=sys.stderr)
+    else:
+        print(path)
+PY
+}
+
+# Worker: published-or-identical-conflict → echo ✓/~ and exit 0; otherwise exit 1.
 # REGISTRY is exported above; the worker reads it from env.
 WORKER='
   tarball="$1"
   pkg=$(basename "$tarball")
   # npm refuses prerelease versions without a dist-tag; tag them by their
   # prerelease id (e.g. 2.1.0-canary.1 -> canary) so latest stays stable.
-  version=$(tar -xOzf "$tarball" package/package.json | python3 -c "import sys,json; print(json.load(sys.stdin)[\"version\"])")
+  metadata=$(tar -xOzf "$tarball" package/package.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[\"name\"]+\" \"+d[\"version\"])")
+  name=${metadata%% *}
+  version=${metadata#* }
   tag_args=""
   case "$version" in
     *-*) prerelease="${version#*-}"; tag_args="--tag ${prerelease%%.*}" ;;
@@ -94,8 +124,26 @@ WORKER='
     exit 0
   } || true
   if echo "$OUTPUT" | grep -qi "409\|E409\|already present\|already exists\|EPUBLISHCONFLICT\|is already published\|cannot publish over the previously published versions"; then
-    echo "  ~ $pkg (already exists — skipped)"
-    exit 0
+    remote_integrity=$(npm view "$name@$version" dist.integrity --registry "$REGISTRY" 2>/dev/null || true)
+    remote_shasum=$(npm view "$name@$version" dist.shasum --registry "$REGISTRY" 2>/dev/null || true)
+    local_integrity=$(python3 -c "import base64,hashlib,sys; data=open(sys.argv[1],\"rb\").read(); print(\"sha512-\"+base64.b64encode(hashlib.sha512(data).digest()).decode())" "$tarball")
+    local_shasum=$(python3 -c "import hashlib,sys; print(hashlib.sha1(open(sys.argv[1],\"rb\").read()).hexdigest())" "$tarball")
+    if [ -n "$remote_integrity" ] && [ "$remote_integrity" = "$local_integrity" ]; then
+      echo "  ~ $name@$version (already exists; matching tarball digest: $local_integrity)"
+      exit 0
+    fi
+    if [ -z "$remote_integrity" ] && [ -n "$remote_shasum" ] && [ "$remote_shasum" = "$local_shasum" ]; then
+      echo "  ~ $name@$version (already exists; matching tarball digest: sha1-$local_shasum)"
+      exit 0
+    fi
+    registry_digest="${remote_integrity:-${remote_shasum:-unavailable}}"
+    local_digest="$local_integrity"
+    if [ -z "$remote_integrity" ] && [ -n "$remote_shasum" ]; then
+      local_digest="sha1-$local_shasum"
+    fi
+    echo "ERROR: $name@$version already exists in Verdaccio with different tarball bytes (registry digest: $registry_digest; local digest: $local_digest)."
+    echo "Hint: start from an empty registry with docker volume rm e2e_verdaccio-storage or bump the package version."
+    exit 1
   fi
   echo "  ✗ $pkg"
   echo "$OUTPUT" | grep -v "^npm notice" | head -3 | sed "s/^/    /"
@@ -106,7 +154,12 @@ export REGISTRY
 
 publish_tarballs() {
   set_dir="$1"
-  tarballs="$(publish_set "$set_dir")"
+  superseding_dir="${2:-}"
+  if [ -n "$superseding_dir" ]; then
+    tarballs="$(filter_superseded_tarballs "$set_dir" "$superseding_dir")"
+  else
+    tarballs="$(publish_set "$set_dir")"
+  fi
   [ -n "$(echo "$tarballs" | tr -d '[:space:]')" ] || return 0
   total=$(echo "$tarballs" | sed '/^$/d' | wc -l | tr -d ' ')
   if echo "$tarballs" | xargs -n 1 -P "$PARALLELISM" -I {} sh -c "$WORKER" _ {}; then
@@ -117,15 +170,15 @@ publish_tarballs() {
   fi
 }
 
-# In the PR fast lane publish the PR overlay as a complete phase first.
-# Verdaccio rejects a second publish of the same version, so publishing base
-# afterwards leaves the PR tarball active for changed packages while filling
-# all unchanged ones. Keeping phases separate avoids an xargs race.
-if [ -d /packages/pr ]; then
-  publish_tarballs /packages/pr
-  publish_tarballs /packages/base
+# In the PR fast lane publish the PR overlay first, then omit base tarballs
+# whose name@version is already in the local PR set. Digest checks still apply
+# to every registry conflict in either phase.
+PACKAGES_DIR="${PUBLISH_PACKAGES_DIR:-/packages}"
+if [ -d "$PACKAGES_DIR/pr" ]; then
+  publish_tarballs "$PACKAGES_DIR/pr"
+  publish_tarballs "$PACKAGES_DIR/base" "$PACKAGES_DIR/pr"
 else
-  publish_tarballs /packages
+  publish_tarballs "$PACKAGES_DIR"
 fi
 
 echo "==> All packages ready in Verdaccio"

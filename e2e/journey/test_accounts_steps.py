@@ -2,14 +2,51 @@ from __future__ import annotations
 
 import sys
 import unittest
+from http.cookiejar import Cookie, CookieJar
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from steps.accounts import run_password_and_session_steps, run_secured_account_steps
+from steps.accounts import _browser_call, run_password_and_session_steps, run_secured_account_steps
 
 
 class SecuredAccountsJourneyTests(unittest.TestCase):
+    def test_browser_call_forwards_secure_cookies_to_internal_http_gateway(self):
+        jar = CookieJar()
+        for name, value in (("kb_access", "access"), ("kb_csrf", "csrf")):
+            jar.set_cookie(Cookie(
+                version=0, name=name, value=value, port=None, port_specified=False,
+                domain="gateway.test", domain_specified=False, domain_initial_dot=False,
+                path="/", path_specified=True, secure=True, expires=None, discard=True,
+                comment=None, comment_url=None, rest={}, rfc2109=False,
+            ))
+
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def read():
+                return b"{}"
+
+        class Opener:
+            def open(self, request, timeout):
+                self.request = request
+                self.timeout = timeout
+                return Response()
+
+        opener = Opener()
+        with patch("steps.accounts.urllib.request.build_opener", return_value=opener):
+            _browser_call("http://gateway.test", jar, "/auth/me")
+
+        self.assertIn("kb_access=access", opener.request.get_header("Cookie"))
+        self.assertIn("kb_csrf=csrf", opener.request.get_header("Cookie"))
+
     # case: S-103.1, S-103.2, S-103.3, S-103.4, S-103.5, S-104.7, S-105.1, S-105.2, S-105.3, S-105.4
     def test_roles_tokens_last_admin_and_invite_revocation(self):
         calls: list[tuple[str, str, dict | None, int]] = []

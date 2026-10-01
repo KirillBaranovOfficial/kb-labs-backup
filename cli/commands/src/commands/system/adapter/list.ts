@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 import { ADAPTER_DEFAULTS, type AdapterSlot } from '@kb-labs/core-platform';
-import { loadPlatformConfig, type AdaptersConfig } from '@kb-labs/core-runtime';
+import { loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
@@ -53,18 +53,24 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
   async handler(ctx) {
     const loaded = await loadPlatformConfig({ startDir: getContextCwd(ctx), loadEnvFile: false });
     const config = loaded.platformConfig;
+    const resolvedDefaults = await resolveInstalledAdapterDefaults({
+      adapters: Object.fromEntries(Object.entries(config.adapters ?? {})),
+      adapterOptions: Object.fromEntries(Object.entries(config.adapterOptions ?? {})),
+    }, loaded.platformRoot, loaded.projectRoot);
+    const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
+    const effectiveAdapterOptions = resolvedDefaults.adapterOptions as Record<string, unknown>;
     const rows = (Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[]).map((slot): AdapterRow => {
       const configKey = CONFIG_KEY_BY_SLOT[slot];
-      const configured = configKey ? config.adapters?.[configKey] : undefined;
+      const configured = configKey ? effectiveAdapters[configKey] : undefined;
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
       const packageId = configuredPackage ? packageName(configuredPackage) : undefined;
-      const option = configKey ? config.adapterOptions?.[configKey] : undefined;
+      const option = configKey ? effectiveAdapterOptions[configKey] : undefined;
       const baseDir = slot === 'storage' && option && typeof option === 'object' &&
         'baseDir' in option && typeof option.baseDir === 'string'
         ? path.resolve(loaded.projectRoot, option.baseDir)
         : undefined;
       const localLogsAvailable = slot === 'logs' &&
-        Boolean(config.adapters?.logRingBuffer || config.adapters?.logPersistence);
+        Boolean(effectiveAdapters.logRingBuffer || effectiveAdapters.logPersistence);
       return {
         slot,
         implementation: localLogsAvailable ? 'HybridLogReader' : packageId ?? (ADAPTER_DEFAULTS[slot].implementation === 'unavailable' ? null : ADAPTER_DEFAULTS[slot].implementation),
@@ -75,7 +81,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       };
     });
     const knownSlots = new Set(rows.map((row) => row.slot));
-    for (const [slot, configured] of Object.entries(config.adapters ?? {})) {
+    for (const [slot, configured] of Object.entries(effectiveAdapters)) {
       if (knownSlots.has(slot)) {continue;}
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
       if (!configuredPackage) {continue;}

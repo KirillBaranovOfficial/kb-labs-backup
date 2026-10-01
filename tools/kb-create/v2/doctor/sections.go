@@ -105,7 +105,7 @@ func stateCheck(state host.State) Check {
 // InspectPlatform checks the running host: its process, the gateway health
 // document (upstreams and adapters) and sign-in readiness. A stopped host is a
 // finding with its own fix, not a crash of the check.
-func InspectPlatform(ctx context.Context, status host.Status, client *http.Client) Section {
+func InspectPlatform(ctx context.Context, status host.Status, client *http.Client, bindings []contracts.ProviderBinding) Section {
 	if client == nil {
 		client = &http.Client{Timeout: 3 * time.Second}
 	}
@@ -120,14 +120,14 @@ func InspectPlatform(ctx context.Context, status host.Status, client *http.Clien
 	}
 	checks := []Check{{ID: "host-process", OK: true, Detail: fmt.Sprintf("pid %d", status.PID)}}
 	checks = append(checks, healthChecks(ctx, client, status.HealthURL)...)
-	checks = append(checks, adapterChecks(ctx, client, status.HealthURL)...)
+	checks = append(checks, adapterChecks(ctx, client, status.HealthURL, bindings)...)
 	checks = append(checks, authChecks(ctx, client, status.HealthURL)...)
 	return NewSection(checks)
 }
 
 // adapterChecks reads the gateway's runtime registry rather than inferring
 // providers from the install manifest. This reports what the host loaded.
-func adapterChecks(ctx context.Context, client *http.Client, healthURL string) []Check {
+func adapterChecks(ctx context.Context, client *http.Client, healthURL string, bindings []contracts.ProviderBinding) []Check {
 	parsed, err := url.Parse(healthURL)
 	if err != nil {
 		return []Check{{ID: "adapters", Detail: "Adapter status cannot be checked because the host health URL is invalid."}}
@@ -145,15 +145,48 @@ func adapterChecks(ctx context.Context, client *http.Client, healthURL string) [
 	if len(statuses) == 0 {
 		return []Check{{ID: "adapters", Detail: "The running host has not reported any adapter slots."}}
 	}
-	checks := make([]Check, 0, len(statuses))
+	expected := make(map[string]string, len(bindings))
+	for _, binding := range bindings {
+		if healthReportedSlot(binding.Capability) {
+			expected[binding.Capability] = binding.Package
+		}
+	}
+	checks := make([]Check, 0, len(statuses)+len(bindings))
+	seen := make(map[string]bool, len(statuses))
 	for _, adapter := range statuses {
+		seen[adapter.Slot] = true
+		provider, hasPersistentProvider := expected[adapter.Slot]
+		fallback := hasPersistentProvider && (adapter.Mode == "inmemory" || adapter.Mode == "noop")
+		detail := fmt.Sprintf("%s is loaded in %s mode using %s.", adapter.Slot, adapter.Mode, adapter.Implementation)
+		hint := ""
+		if fallback {
+			detail = fmt.Sprintf("%s has a configured persistent provider (%s) but loaded the %s fallback.", adapter.Slot, provider, adapter.Mode)
+			hint = fmt.Sprintf("From a project using this platform, run `kb adapter bind %s %s`.", adapter.Slot, provider)
+		}
 		checks = append(checks, Check{
-			ID: "adapter:" + adapter.Slot, OK: true,
+			ID: "adapter:" + adapter.Slot, OK: !fallback,
 			Slot: adapter.Slot, Mode: adapter.Mode, Implementation: adapter.Implementation,
-			Detail: fmt.Sprintf("%s is loaded in %s mode using %s.", adapter.Slot, adapter.Mode, adapter.Implementation),
+			Detail: detail, Hint: hint,
 		})
 	}
+	for slot, provider := range expected {
+		if !seen[slot] {
+			checks = append(checks, Check{ID: "adapter:" + slot, Slot: slot,
+				Detail: fmt.Sprintf("%s has a configured persistent provider (%s) but was not reported by the host.", slot, provider),
+				Hint:   fmt.Sprintf("From a project using this platform, run `kb adapter bind %s %s`.", slot, provider)})
+		}
+	}
 	return checks
+}
+
+func healthReportedSlot(slot string) bool {
+	switch slot {
+	case "logger", "analytics", "vectorStore", "llm", "embeddings", "cache", "config", "storage",
+		"eventBus", "invoke", "documentDatabase", "kvStore", "logs", "artifacts", "snapshotManager", "notifier":
+		return true
+	default:
+		return false
+	}
 }
 
 // errNotJSON marks a 2xx answer whose body is not the JSON document asked for.

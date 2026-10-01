@@ -223,8 +223,13 @@ class ServiceJourneyTests(unittest.TestCase):
         with patch("service_runner.request", return_value=(200, "ready", {})):
             self.assertIn("without a JSON object", expect_json("/ready", "gateway readiness"))
 
-    def test_secured_auth_journey_rejects_wrong_identity_after_restart(self):
+    # case: S-041.4
+    def test_secured_auth_journey_preserves_session_until_logout_after_restart(self):
+        calls = []
+        state = {"admin_revoked": False}
+
         def fake_request(_base, path, *, method="GET", token=None, body=None, expected=200):
+            calls.append((method, path, token, body, expected))
             if path == "/auth/permissions":
                 return {"permissions": ["users:read"]}
             if path == "/auth/users" and expected == 200:
@@ -234,23 +239,48 @@ class ServiceJourneyTests(unittest.TestCase):
             if path.endswith("password-reset-link"):
                 return {"resetUrl": "http://localhost/reset-password/reset-token"}
             if path == "/auth/me" and token == "admin-access":
+                self.assertEqual(expected, 401 if state["admin_revoked"] else 200)
+                return {} if state["admin_revoked"] else {"email": "admin@example.test"}
+            if path == "/auth/me" and token == "fresh-admin-token":
+                self.assertEqual(expected, 200)
                 return {"email": "admin@example.test"}
-            if path == "/auth/me" and token == "restarted-admin-token":
-                return {"email": "wrong@example.test"}
+            if path == "/auth/logout/cli" and body == {"refreshToken": "admin-refresh"}:
+                state["admin_revoked"] = True
+                return {"ok": True}
+            if path == "/auth/refresh/cli" and body == {"refreshToken": "admin-refresh"}:
+                return {"error": "invalid_session"}
             return {}
 
         logins = iter([
             ("admin-access", "admin-refresh"),
             ("member-access", "member-refresh"),
             ("member-replacement-access", "member-replacement-refresh"),
-            ("restarted-admin-token", "restarted-admin-refresh"),
-            ("restarted-member-token", "restarted-member-refresh"),
+            ("fresh-admin-token", "fresh-admin-refresh"),
         ])
+
+        def fake_login(_base, email, password):
+            calls.append(("LOGIN", email, password, None, None))
+            return next(logins)
+
+        def restart_host():
+            calls.append(("RESTART", "", None, None, None))
+            return "http://gateway.test/restarted"
+
         with patch("steps.auth._request", side_effect=fake_request), \
-             patch("steps.auth._login", side_effect=lambda *_args: next(logins)):
-            with self.assertRaisesRegex(AssertionError, "fresh admin login after restart returned the wrong identity"):
-                run_secured_auth_steps("http://gateway.test", "admin@example.test", "secret",
-                                       "member@example.test", lambda: "http://gateway.test/restarted")
+             patch("steps.auth._login", side_effect=fake_login):
+            run_secured_auth_steps("http://gateway.test", "admin@example.test", "secret",
+                                   "member@example.test", restart_host)
+
+        restart = calls.index(("RESTART", "", None, None, None))
+        restart_check = calls.index(("GET", "/auth/me", "admin-access", None, 200), restart)
+        logout = calls.index(("POST", "/auth/logout/cli", None, {"refreshToken": "admin-refresh"}, 200))
+        revoked_check = calls.index(("GET", "/auth/me", "admin-access", None, 401))
+        fresh_login = calls.index(("LOGIN", "admin@example.test", "secret", None, None), restart)
+        fresh_check = calls.index(("GET", "/auth/me", "fresh-admin-token", None, 200))
+        self.assertLess(restart_check, logout)
+        self.assertLess(logout, revoked_check)
+        self.assertLess(revoked_check, fresh_login)
+        self.assertLess(fresh_login, fresh_check)
 
     def test_dockerfile_copies_modules_imported_by_journey_scripts_together(self):
         root = Path(__file__).resolve().parents[2]

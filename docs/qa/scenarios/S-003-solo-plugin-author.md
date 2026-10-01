@@ -17,6 +17,7 @@ A plugin author scaffolds a plugin, builds it, links it into a project with the 
 ## Prerequisites
 
 - [ ] V2 platform and initialized project; pnpm and workspace dependencies available.
+- [ ] In secured mode, sign in to the installed CLI as an administrator before linking the generated plugin.
 
 ## Steps
 

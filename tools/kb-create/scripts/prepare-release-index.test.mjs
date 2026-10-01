@@ -267,7 +267,7 @@ test('the default platform.adapters baseline keeps the credential-free logger an
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
-  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","logger":"@kb-labs/adapters-pino","logRingBuffer":"@kb-labs/adapters-log-ringbuffer","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}', '--platform-member-packages', '@kb-labs/workflow-daemon', '--output', output], { stdio: 'pipe' });
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport,logger,logRingBuffer', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","logger":"@kb-labs/adapters-pino","logRingBuffer":"@kb-labs/adapters-log-ringbuffer","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}', '--platform-member-packages', '@kb-labs/workflow-daemon', '--output', output], { stdio: 'pipe' });
   const index = JSON.parse(readFileSync(output, 'utf8'));
   const adaptersDefault = JSON.parse(index.platforms[0].config.find(entry => entry.id === 'platform.adapters').default);
   assert.deepEqual(adaptersDefault, {
@@ -277,6 +277,48 @@ test('the default platform.adapters baseline keeps the credential-free logger an
   });
   // The excluded adapter is still shipped as a platform member for opt-in.
   assert.ok(index.platforms[0].members.some(member => member.package === '@kb-labs/adapters-openai'));
+});
+
+test('the release index requires and binds the persistent fresh-install defaults', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-index-persistent-defaults-'));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '^2.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-fs', '2.0.0', 'const manifest={id:"fs",implements:"IStorage",defaultFor:["storage"]}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-state-broker', '2.0.0', 'const manifest={id:"state-broker",implements:"ICache",defaultFor:["cache"]}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-eventbus-cache', '2.0.0', 'const manifest={id:"eventbus-cache",implements:"IEventBus"}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-sqlite', '2.0.0', 'const manifest={id:"sqlite-stores",implements:["IDocumentDatabase","IKVStore"],defaultFor:["documentDatabase","kvStore"]}; export {manifest};'),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-analytics-sqlite', '2.0.0', 'const manifest={id:"analytics",implements:"IAnalytics",defaultFor:["analytics"]}; export {manifest};'),
+  ];
+  writeStageManifest(root, packageRoot, stage, artifacts);
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [] }));
+  const bindings = {
+    storage: '@kb-labs/adapters-fs', cache: '@kb-labs/adapters-state-broker',
+    eventBus: '@kb-labs/adapters-eventbus-cache',
+    documentDatabase: '@kb-labs/adapters-sqlite', kvStore: '@kb-labs/adapters-sqlite/kv',
+    analytics: '@kb-labs/adapters-analytics-sqlite',
+  };
+  const options = {
+    storage: { baseDir: '.kb/data' },
+    documentDatabase: { filename: '.kb/database/kb.sqlite' },
+    kvStore: { filename: '.kb/database/kb.sqlite' },
+    analytics: { filename: '.kb/analytics/analytics.sqlite' },
+  };
+  const output = join(root, 'release-index.json');
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage,
+    '--binary-manifest', binaryManifest,
+    '--platform-requires', Object.keys(bindings).join(','),
+    '--platform-adapter-config', JSON.stringify(bindings),
+    '--platform-adapter-options', JSON.stringify(options), '--output', output], { stdio: 'pipe' });
+  const index = JSON.parse(readFileSync(output, 'utf8'));
+  assert.deepEqual(index.platforms[0].requires.map(({ capability }) => capability).sort(), Object.keys(bindings).sort());
+  assert.deepEqual(JSON.parse(index.platforms[0].config.find(item => item.id === 'platform.adapters').default), bindings);
+  assert.deepEqual(JSON.parse(index.platforms[0].config.find(item => item.id === 'platform.adapterOptions').default), options);
 });
 
 // --- package-declared configuration requirements (kb-create.requirements.json) ---

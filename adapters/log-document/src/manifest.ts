@@ -19,6 +19,7 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "extension",
   implements: "ILogPersistence",
+  defaultFor: ["logPersistence"],
   extends: {
     adapter: "logger",
     hook: "onLog",

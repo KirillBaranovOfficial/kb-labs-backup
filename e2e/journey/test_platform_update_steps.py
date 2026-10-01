@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / ".kb/v2").mkdir(parents=True)
         (self.root / ".kb/kb.config.jsonc").write_text('{"stable":true}\n')
+        self.config = self.root / ".kb/kb.config.jsonc"
         self.receipt = self.root / ".kb/v2/receipt.json"
         self._write_receipt("3.0.0")
         self.commands: list[list[str]] = []
@@ -26,6 +28,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
     def _write_receipt(self, version: str):
         self.receipt.write_text(json.dumps({
             "plan": {"serviceGraph": {"platformVersion": version}},
+            "verification": {"configSha256": hashlib.sha256(self.config.read_bytes()).hexdigest()},
         }))
 
     def fake_kb(self, args: list[str]) -> subprocess.CompletedProcess:
@@ -33,9 +36,12 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         stdout = ""
         code = 0
         if args[1] == "plan":
-            stdout = json.dumps({"ok": True, "plan": {"serviceGraph": {"platformVersion": "3.0.1"}}})
+            stdout = json.dumps({"ok": True, "plan": {
+                "serviceGraph": {"platformVersion": "3.0.1"}, "planHash": "resolved-plan-hash",
+            }})
         elif args[1] == "update":
             update_count = sum(command[1] == "update" for command in self.commands)
+            self.config.write_text('{"stable":true,"platform":"3.0.1"}\n')
             self._write_receipt("3.0.1")
             stdout = json.dumps({"ok": True, "receipt": {"plan": {"serviceGraph": {"platformVersion": "3.0.1"}, "planHash": "resolved-plan-hash"}},
                                  "snapshot": {"id": f"snapshot-{update_count}"},
@@ -45,6 +51,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                 stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_NO_SNAPSHOT", "hint": "restore a named snapshot"}})
                 code = 1
             else:
+                self.config.write_text('{"stable":true}\n')
                 self._write_receipt("3.0.0")
                 stdout = json.dumps({"ok": True, "snapshot": {"id": "snapshot-1"},
                                      "hostRestarted": True, "logPath": "/logs/rollback.log"})
@@ -75,7 +82,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
         self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} | {f"S-024.{step}" for step in (1, 2, 3, 4, 5)})
         self.assertEqual([command[1] for command in self.commands], [
-            "status", "plan", "update", "status", "project", "update", "rollback", "rollback", "status", "project", "doctor",
+            "status", "plan", "update", "status", "project", "plan", "update", "rollback", "rollback", "status", "project", "doctor",
         ])
         for operation in ("plan", "update"):
             command = next(args for args in self.commands if args[1] == operation)
@@ -102,6 +109,27 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(report.first_failure["name"], "plan the newer sealed release")
         self.assertEqual(report.first_failure["cases"], ["S-023.2"])
         self.assertIn("exit 2", report.first_failure["message"])
+
+    def test_repeat_plan_drift_names_changed_plan_fields_before_mutation(self):
+        def drifting(args: list[str]) -> subprocess.CompletedProcess:
+            result = self.fake_kb(args)
+            if args[1] == "plan" and sum(command[1] == "update" for command in self.commands) > 0:
+                payload = json.loads(result.stdout)
+                payload["plan"]["planHash"] = "drifted-plan-hash"
+                payload["plan"]["scenarioStateDigest"] = "changed-state"
+                result = subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+            return result
+
+        result = run_platform_update_steps(
+            mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            base_version="3.0.0", updated_version="3.0.1", run_command=drifting,
+        )
+        failure = result.result().first_failure
+        self.assertEqual(failure["cases"], ["S-023.6"])
+        self.assertIn("plan.planHash", failure["message"])
+        self.assertIn("plan.scenarioStateDigest", failure["message"])
+        self.assertEqual(sum(command[1] == "update" for command in self.commands), 1)
 
 
 if __name__ == "__main__":
