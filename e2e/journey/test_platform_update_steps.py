@@ -15,7 +15,6 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / ".kb/v2").mkdir(parents=True)
         (self.root / ".kb/kb.config.jsonc").write_text('{"stable":true}\n')
-        (self.root / ".kb/devservices.yaml").write_text("services: []\n")
         self.receipt = self.root / ".kb/v2/receipt.json"
         self._write_receipt("3.0.0")
         self.commands: list[list[str]] = []

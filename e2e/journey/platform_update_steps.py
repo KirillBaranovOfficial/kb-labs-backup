@@ -20,7 +20,7 @@ def _run(args: list[str]) -> subprocess.CompletedProcess:
 def _json_command(run_command: CommandRunner, args: list[str], label: str) -> dict:
     result = run_command(args)
     if result.returncode != 0:
-        raise RuntimeError(f"{label}: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
+        raise RuntimeError(f"{label}: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}{_log_tail(result.stdout)}")
     try:
         value = json.loads(result.stdout)
     except json.JSONDecodeError as error:
@@ -28,6 +28,16 @@ def _json_command(run_command: CommandRunner, args: list[str], label: str) -> di
     if not isinstance(value, dict):
         raise RuntimeError(f"{label}: expected a JSON object")
     return value
+
+
+def _log_tail(stdout: str) -> str:
+    """The end of the operation log named by a failed launcher result, so the journey report shows the cause."""
+    try:
+        log_path = json.loads(stdout).get("logPath")
+        text = Path(log_path).read_text(encoding="utf-8", errors="replace") if log_path else ""
+    except (json.JSONDecodeError, AttributeError, OSError, TypeError):
+        return ""
+    return f"; operation log tail: {' '.join(text.split())[-1500:]}" if text else ""
 
 
 def _hash(path: Path) -> str | None:
@@ -54,7 +64,7 @@ def run_platform_update_steps(
     journey = Journey(mode, f"platform-update-{mode}")
     root = str(platform_root)
     receipt_path = platform_root / ".kb/v2/receipt.json"
-    config_paths = [platform_root / ".kb/kb.config.jsonc", platform_root / ".kb/devservices.yaml"]
+    config_paths = [platform_root / ".kb/kb.config.jsonc"]
     snapshot_id = ""
     updated_plan_hash = ""
     config_hashes: dict[str, str | None] = {}
