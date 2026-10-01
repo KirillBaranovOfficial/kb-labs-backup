@@ -40,6 +40,7 @@ fi
 
 mkdir -p .journey/reports
 rm -f .journey/reports/journey-summary.md
+find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
 "${COMPOSE[@]}" build publisher runner
 "${COMPOSE[@]}" up -d --wait verdaccio
 "${COMPOSE[@]}" run --rm publisher

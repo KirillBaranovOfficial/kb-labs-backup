@@ -25,6 +25,7 @@ from service_steps import Journey, record_runner_failure
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
 from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_status, run_local_auth_steps, run_secured_auth_steps
 from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
+from platform_state_dump import PlatformStateDumpOnce
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = os.getenv("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -42,6 +43,9 @@ PLATFORM_SIZE_MIB: float | None = None
 PROCESSES: list[subprocess.Popen] = []
 FIRST_FAILURE = ""
 CASE_JOURNEY: Journey | None = None
+LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
+LAST_COMMAND_CWD: str | None = None
+STATE_DUMP_GUARD = PlatformStateDumpOnce()
 
 
 def record_case(name: str, passed: bool, message: str, *, cases: list[str]) -> None:
@@ -51,7 +55,9 @@ def record_case(name: str, passed: bool, message: str, *, cases: list[str]) -> N
 
 
 def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
-    global MAX_PNPM_RSS_MIB
+    global MAX_PNPM_RSS_MIB, LAST_COMMAND_ENV, LAST_COMMAND_CWD
+    LAST_COMMAND_ENV = dict(env or BASE_ENV)
+    LAST_COMMAND_CWD = str(cwd) if cwd else str(Path.cwd())
     started = time.monotonic()
     proc = subprocess.Popen(args, cwd=cwd, env=env or BASE_ENV, text=True,
                             stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
@@ -124,6 +130,28 @@ def fail(message: str):
     global FIRST_FAILURE
     if not FIRST_FAILURE:
         FIRST_FAILURE = message
+
+
+def dump_failure_state() -> None:
+    report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
+    mode = "secured" if VARIANT.endswith("secured") else "local"
+    STATE_DUMP_GUARD.dump(
+        PLATFORM, report.parent, mode=mode, front=FRONT_DOOR, scenario=SCENARIO,
+        variant=VARIANT, first_failure=FIRST_FAILURE or "journey reported FAIL",
+        env=LAST_COMMAND_ENV, cwd=LAST_COMMAND_CWD, admin_password="JourneyPassw0rd!" if mode == "secured" else "",
+    )
+
+
+def failure_exit() -> int:
+    dump_failure_state()
+    return 1
+
+
+def capture_case_failure() -> None:
+    if CASE_JOURNEY is None or CASE_JOURNEY.result().status != "FAIL" or FIRST_FAILURE:
+        return
+    first = CASE_JOURNEY.result().first_failure or {}
+    fail(f"{first.get('name', 'journey step')}: {first.get('message', 'reported FAIL')}")
 
 
 def require(result, expected=0, step="command"):
@@ -428,6 +456,7 @@ def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
 
 def main():
     global FIRST_FAILURE, CASE_JOURNEY
+    STATE_DUMP_GUARD.reset()
     env = BASE_ENV.copy()
     env["HOME"] = str(HOME)
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
@@ -464,7 +493,7 @@ def main():
         if not passed:
             fail(f"wrong Node major: expected KB_INSTALL_NODE_VERSION and Node 24 hint; {launcher.stdout.strip()[:300]}")
         append_summary(passed)
-        return 0 if passed else 1
+        return 0 if passed else failure_exit()
 
     if VARIANT == "occupied-port":
         listener = subprocess.Popen(["python3", "-u", "-c", "import http.server; s=http.server.HTTPServer(('0.0.0.0',4000),http.server.SimpleHTTPRequestHandler); print('ready', flush=True); s.serve_forever()"], stdout=subprocess.PIPE, text=True)
@@ -481,11 +510,11 @@ def main():
     TIMES["install.sh"] = elapsed
     if not require(result, step="install.sh"):
         append_summary(False)
-        return 1
+        return failure_exit()
     if not (BIN / "kb-create").exists():
         fail("install.sh: kb-create binary was not installed")
         append_summary(False)
-        return 1
+        return failure_exit()
 
     launcher = str(BIN / "kb-create")
     version, _ = run([launcher, "--version"], env=env, timeout=30)
@@ -501,7 +530,7 @@ def main():
         if not passed:
             fail(f"port conflict: expected KB_INSTALL_PORT_IN_USE for port 4000; {' '.join(result.stdout.split())[-500:]}")
         append_summary(passed)
-        return 0 if passed else 1
+        return 0 if passed else failure_exit()
     if FRONT == "human" and not VARIANT.endswith("secured"):
         choice = "commit" if VARIANT == "human-nondefault" else ""
         access_mode = "secured" if VARIANT.endswith("secured") else "local"
@@ -561,16 +590,16 @@ def main():
             if not passed:
                 fail(f"relative platform root: expected a successful plan with an absolute normalized root; {' '.join(result.stdout.split())[-500:]}")
             append_summary(passed)
-            return 0 if passed else 1
+            return 0 if passed else failure_exit()
         if not require(result, step=f"kb-create {operation} --json"):
             append_summary(False)
-            return 1
+            return failure_exit()
         try:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError:
             fail("kb-create apply --json: output was not one JSON document")
             append_summary(False)
-            return 1
+            return failure_exit()
         if payload.get("ok") is not True:
             fail("kb-create apply --json: result did not report ok=true")
         if operation == "plan":
@@ -604,22 +633,23 @@ def main():
                 TIMES["apply"] += elapsed
                 if not require(result, step="kb-create apply --input launcher request"):
                     append_summary(False)
-                    return 1
+                    return failure_exit()
                 try:
                     if json.loads(result.stdout).get("ok") is not True:
                         fail("kb-create apply --input: result did not report ok=true")
                 except json.JSONDecodeError:
                     fail("kb-create apply --input: output was not one JSON document")
 
+    capture_case_failure()
     if FIRST_FAILURE:
         append_summary(False)
-        return 1
+        return failure_exit()
 
     result, elapsed = run([launcher, "start", "--platform-root", str(PLATFORM)], env=env, timeout=300)
     TIMES["start"] = elapsed
     if not require(result, step="kb-create start"):
         append_summary(False)
-        return 1
+        return failure_exit()
     record_case("start host", result.returncode == 0,
                "kb-create start did not start the configured host", cases=["PC-002.1"])
 
@@ -639,7 +669,7 @@ def main():
         with Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name("journey-diagnostics.log").open("a") as stream:
             stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: first-command-output ==\n{result.stdout[-5000:]}\n")
         append_summary(False)
-        return 1
+        return failure_exit()
     else:
         if FRONT == "agent" and SCENARIO == "commit":
             result, elapsed = run(["bash", "-c", '. "$HOME/.profile"; kb commit --dry-run --scope root'],
@@ -938,7 +968,7 @@ def main():
         if not service_report.exists():
             # Nothing to merge workflow claims into; the failure above names the cause.
             append_summary(False)
-            return 1
+            return failure_exit()
         workflow_journey = Journey(mode, f"workflow-{mode}")
         def restart_for_workflow_history() -> None:
             restart_host(launcher, env)
@@ -1052,6 +1082,9 @@ def main():
     scope_is_separate = PLATFORM.resolve() != PROJECT.resolve() and PLATFORM.exists() and PROJECT.is_dir()
     record_case("inspect uninstall scope", scope_is_separate,
                 "platform root is not separate from the project directory", cases=["S-050.1"])
+    capture_case_failure()
+    if FIRST_FAILURE:
+        dump_failure_state()
     refused, _ = run([*uninstall_args, "--json"], env=env, timeout=120)
     try:
         refusal_payload = json.loads(refused.stdout)
@@ -1065,6 +1098,9 @@ def main():
                   and (PLATFORM / ".kb/v2/receipt.json").is_file())
     record_case("non-TTY uninstall requires confirmation", refusal_ok,
                 "non-TTY uninstall did not require --yes or left the receipt unchanged", cases=["S-050.4"])
+    capture_case_failure()
+    if FIRST_FAILURE:
+        dump_failure_state()
     if FRONT_DOOR == "human":
         result, _ = run_tty_confirmation(uninstall_args, env=env, timeout=180)
     else:
@@ -1117,9 +1153,10 @@ def main():
                              and (PROJECT / "note.txt").read_text() == "journey first value\n")
         record_case("project files survive uninstall", project_preserved,
                     "platform uninstall removed or changed the separate project fixture", cases=["S-050.7"])
+    capture_case_failure()
     passed = not FIRST_FAILURE
     append_summary(passed)
-    return 0 if passed else 1
+    return 0 if passed else failure_exit()
 
 
 def cleanup() -> None:

@@ -9,6 +9,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from platform_state_dump import dump_platform_state
+
 
 def record_runner_failure(summary_path: str | Path, mode: str, error: Exception, phase: str) -> None:
     name = "runner startup" if phase == "startup" else "runner crash"
@@ -47,6 +49,17 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
         namespace = runpy.run_path(str(runner_path), run_name="journey_runner_module")
     except Exception as error:
         try:
+            dump_platform_state(
+                Path.home() / "kb-platform", Path(summary_path).parent, mode=mode,
+                front=os.getenv("KB_JOURNEY_FRONT_DOOR", "agent"),
+                scenario=os.getenv("KB_JOURNEY_SCENARIO", "commit"),
+                variant=os.getenv("KB_JOURNEY_VARIANT", "default"),
+                first_failure=f"runner startup: {error.__class__.__name__}: {error}",
+                env=os.environ, admin_password=os.getenv("KB_JOURNEY_ADMIN_PASSWORD", ""),
+            )
+        except Exception as dump_error:
+            print(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}", file=sys.stderr)
+        try:
             record_runner_failure(summary_path, mode, error, "startup")
         except OSError as write_error:
             print(f"Journey runner startup failed; could not write result: {write_error}", file=sys.stderr)
@@ -55,6 +68,23 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
     try:
         return int(namespace["main"]())
     except Exception as error:
+        try:
+            report = Path(summary_path)
+            environment = namespace.get("env")
+            dump = namespace.get("STATE_DUMP_GUARD")
+            write_dump = dump.dump if dump is not None else dump_platform_state
+            write_dump(
+                namespace.get("PLATFORM", Path.home() / "kb-platform"), report.parent,
+                mode=mode, front=os.getenv("KB_JOURNEY_FRONT_DOOR", "agent"),
+                scenario=os.getenv("KB_JOURNEY_SCENARIO", "commit"),
+                variant=os.getenv("KB_JOURNEY_VARIANT", "default"),
+                first_failure=f"{error.__class__.__name__}: {error}",
+                env=namespace.get("LAST_COMMAND_ENV") or environment or os.environ,
+                cwd=namespace.get("LAST_COMMAND_CWD"),
+                admin_password="JourneyPassw0rd!" if mode == "secured" else "",
+            )
+        except Exception as dump_error:
+            print(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}", file=sys.stderr)
         try:
             record_runner_failure(summary_path, mode, error, "crash")
         except OSError as write_error:
