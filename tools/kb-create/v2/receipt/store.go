@@ -72,6 +72,31 @@ func CreateSnapshot(platformRoot string, now time.Time) (contracts.Snapshot, err
 }
 
 func RestoreSnapshot(platformRoot, id string) (contracts.Snapshot, error) {
+	snapshot, err := ReadSnapshot(platformRoot, id)
+	if err != nil {
+		return contracts.Snapshot{}, err
+	}
+	keys := make([]string, 0, len(snapshot.Files))
+	for relative := range snapshot.Files {
+		keys = append(keys, relative)
+	}
+	sort.Strings(keys)
+	for _, relative := range keys {
+		path := filepath.Join(platformRoot, relative)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			return contracts.Snapshot{}, err
+		}
+		if err := os.WriteFile(path, snapshot.Files[relative], 0o600); err != nil {
+			return contracts.Snapshot{}, err
+		}
+	}
+	return snapshot, nil
+}
+
+// ReadSnapshot validates a saved recovery boundary without applying any of
+// its files. Lifecycle rollback uses this to restore external artifacts before
+// the snapshot becomes the single writer of generated platform files.
+func ReadSnapshot(platformRoot, id string) (contracts.Snapshot, error) {
 	data, err := os.ReadFile(SnapshotPath(platformRoot, id))
 	if err != nil {
 		return contracts.Snapshot{}, err
@@ -91,13 +116,6 @@ func RestoreSnapshot(platformRoot, id string) (contracts.Snapshot, error) {
 	for _, relative := range keys {
 		if filepath.IsAbs(relative) || filepath.Clean(relative) != relative || relative == "." || relative == ".." {
 			return contracts.Snapshot{}, fmt.Errorf("snapshot contains unsafe managed path %q", relative)
-		}
-		path := filepath.Join(platformRoot, relative)
-		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-			return contracts.Snapshot{}, err
-		}
-		if err := os.WriteFile(path, snapshot.Files[relative], 0o600); err != nil {
-			return contracts.Snapshot{}, err
 		}
 	}
 	return snapshot, nil

@@ -22,7 +22,7 @@ func TestMutateRestoresReceiptAndConfigWhenVerificationFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	packageRestored := false
-	snapshot, err := Mutate(root, time.Unix(2, 0), func() error { return os.WriteFile(config, []byte("after"), 0o600) }, func() error { return errors.New("readiness failed") }, func() error { packageRestored = true; return nil })
+	snapshot, err := Mutate(root, time.Unix(2, 0), func() error { return os.WriteFile(config, []byte("after"), 0o600) }, func() error { return errors.New("readiness failed") }, func([]contracts.Artifact) error { packageRestored = true; return nil })
 	if err == nil || !strings.Contains(err.Error(), "restored snapshot "+snapshot.ID) {
 		t.Fatalf("err = %v", err)
 	}

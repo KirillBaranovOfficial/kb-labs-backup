@@ -169,7 +169,7 @@ func Update(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depend
 		var applyErr error
 		result, applyErr = Apply(ctx, plan, deps)
 		return applyErr
-	}, nil, restorePlanArtifacts(plan.Request.PlatformRoot, deps.Artifacts))
+	}, nil, restorePlanArtifacts(deps.Artifacts))
 	if err != nil {
 		return contracts.InstallReceipt{}, snapshot, err
 	}
@@ -206,7 +206,7 @@ func Uninstall(platformRoot string, deps Dependencies) (contracts.Snapshot, erro
 			return err
 		}
 		return receipt.Delete(platformRoot)
-	}, nil, restorePlanArtifacts(platformRoot, deps.Artifacts))
+	}, nil, restorePlanArtifacts(deps.Artifacts))
 	if err != nil {
 		return snapshot, err
 	}
@@ -226,7 +226,7 @@ func Rollback(platformRoot, snapshotID string, deps Dependencies) (contracts.Sna
 	if deps.Artifacts == nil {
 		return contracts.Snapshot{}, fmt.Errorf("rollback: artifact installer is required")
 	}
-	snapshot, err := lifecycle.Rollback(platformRoot, snapshotID, restorePlanArtifacts(platformRoot, deps.Artifacts))
+	snapshot, err := lifecycle.Rollback(platformRoot, snapshotID, restorePlanArtifacts(deps.Artifacts))
 	if err != nil {
 		return snapshot, err
 	}
@@ -260,14 +260,8 @@ func DoctorFix(platformRoot string, repair doctor.RepairPlan, deps Dependencies)
 	}, nil)
 }
 
-func restorePlanArtifacts(platformRoot string, installer ArtifactInstaller) lifecycle.PackageRestore {
-	return func() error {
-		active, err := receipt.Read(platformRoot)
-		if err != nil {
-			return fmt.Errorf("read restored receipt before restoring packages: %w", err)
-		}
-		return installer.Restore(active.Plan.Artifacts)
-	}
+func restorePlanArtifacts(installer ArtifactInstaller) lifecycle.PackageRestore {
+	return installer.Restore
 }
 
 func removeProjections(platformRoot string) error {
