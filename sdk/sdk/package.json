@@ -58,6 +58,14 @@
       "import": "./dist/platform/index.js"
     }
   },
+  "kbLabs": {
+    "release": {
+      "nonRuntimeEntrypoints": [
+        "./testing",
+        "./studio-build"
+      ]
+    }
+  },
   "files": [
     "dist"
   ],
@@ -147,6 +155,9 @@
       "optional": true
     },
     "@kb-labs/shared-testing-platform": {
+      "optional": true
+    },
+    "@kb-labs/studio-plugin-tools": {
       "optional": true
     }
   },

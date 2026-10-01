@@ -7,7 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { builtinModules } from 'node:module';
 
@@ -358,31 +358,75 @@ const builtinPackageNames = new Set(builtinModules.flatMap(name => [name, name.r
 const runtimeImportsFor = item => {
   const dist = join(staging, 'node_modules', item.name, 'dist');
   if (!existsSync(dist)) return [];
-  const files = [];
+  const allFiles = [];
   const visit = directory => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) visit(path);
-      else if (/\.(?:c|m)?js$/.test(entry.name)) files.push(path);
+      else if (/\.(?:c|m)?js$/.test(entry.name)) allFiles.push(path);
     }
   };
   visit(dist);
+  const packageJSON = packageJSONFor(item);
+  const nonRuntimeEntrypoints = packageJSON.kbLabs?.release?.nonRuntimeEntrypoints;
+  let files = allFiles;
+  if (nonRuntimeEntrypoints !== undefined) {
+    if (!Array.isArray(nonRuntimeEntrypoints) || nonRuntimeEntrypoints.some(name => typeof name !== 'string')) {
+      throw new Error(`${item.name} kbLabs.release.nonRuntimeEntrypoints must be an array of export names`);
+    }
+    const exports = packageJSON.exports;
+    if (!exports || typeof exports !== 'object' || Array.isArray(exports)) {
+      throw new Error(`${item.name} declares non-runtime entrypoints without an exports map`);
+    }
+    const unknownEntrypoints = nonRuntimeEntrypoints.filter(name => !Object.hasOwn(exports, name));
+    if (unknownEntrypoints.length) {
+      throw new Error(`${item.name} declares non-runtime entrypoints that are absent from exports: ${unknownEntrypoints.join(', ')}`);
+    }
+    const runtimeEntrypoints = Object.keys(exports).filter(name => !nonRuntimeEntrypoints.includes(name));
+    const targetFor = value => {
+      if (typeof value === 'string') return value;
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+      return targetFor(value.import ?? value.node ?? value.default);
+    };
+    files = runtimeEntrypoints.map(name => {
+      const target = targetFor(exports[name]);
+      if (!target || !target.startsWith('./dist/')) {
+        throw new Error(`${item.name} runtime export ${name} must resolve to a JavaScript file under dist`);
+      }
+      const path = join(dirname(join(staging, 'node_modules', item.name, 'package.json')), target);
+      if (!existsSync(path) || !/\.(?:c|m)?js$/.test(path)) {
+        throw new Error(`${item.name} runtime export ${name} points to a missing JavaScript file: ${target}`);
+      }
+      return path;
+    });
+  }
   const imports = new Map();
+  const visited = new Set();
   const patterns = [
     /^\s*(?:import|export)\s+[^;]*?\s+from\s*["']([^"']+)["']/gm,
     /^\s*import\s*["']([^"']+)["']/gm,
     /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
   ];
-  for (const file of files) {
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    if (visited.has(file)) continue;
+    visited.add(file);
     const source = readFileSync(file, 'utf8');
     for (const pattern of patterns) {
-      for (const match of source.matchAll(pattern)) imports.set(match[1], { specifier: match[1], optional: false });
+      for (const match of source.matchAll(pattern)) {
+        imports.set(match[1], { specifier: match[1], optional: false, static: true });
+        if (match[1].startsWith('.')) {
+          const base = join(dirname(file), match[1]);
+          const relativeFile = [base, `${base}.js`, `${base}.mjs`, `${base}.cjs`, join(base, 'index.js')].find(existsSync);
+          if (relativeFile && relativeFile.startsWith(dist)) files.push(relativeFile);
+        }
+      }
     }
     for (const match of source.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g)) {
       const before = source.slice(Math.max(0, match.index - 400), match.index);
       const after = source.slice(match.index + match[0].length, match.index + match[0].length + 400);
       const optional = before.lastIndexOf('try {') > before.lastIndexOf('}') && /}\s*catch\s*(?:\([^)]*\))?\s*{/.test(after);
-      imports.set(match[1], { specifier: match[1], optional });
+      imports.set(match[1], { specifier: match[1], optional, static: false });
     }
   }
   return [...imports.values()];
@@ -421,7 +465,10 @@ for (let index = 0; index < packagesToValidate.length; index += 1) {
   ]);
   const dependencyClosure = dependencyClosureFor(packageName);
   const peers = new Set(Object.keys(packageJSON.peerDependencies ?? {}));
-  for (const { specifier, optional } of runtimeImportsFor(item)) {
+  const optionalPeers = new Set(Object.entries(packageJSON.peerDependenciesMeta ?? {})
+    .filter(([, metadata]) => metadata?.optional === true)
+    .map(([name]) => name));
+  for (const { specifier, optional, static: staticImport } of runtimeImportsFor(item)) {
     if (specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('node:')) continue;
     const dependency = packageRootFor(specifier);
     if (builtinPackageNames.has(dependency)) continue;
@@ -429,6 +476,12 @@ for (let index = 0; index < packagesToValidate.length; index += 1) {
     // npm resolves external dependencies through each package's installed
     // dependency graph. This sealer only owns @kb-labs artifacts and peers.
     if (!dependency.startsWith('@kb-labs/')) continue;
+    if (optionalPeers.has(dependency)) {
+      if (staticImport) {
+        throw new Error(`${packageName} runtime entrypoint ${specifier} statically imports optional peer ${dependency}`);
+      }
+      continue;
+    }
     const declaredByPackage = dependencies.has(dependency) || dependencyClosure.has(dependency) || peers.has(dependency);
     if (optional && !declaredByPackage) continue;
     if (!declaredByPackage) {
