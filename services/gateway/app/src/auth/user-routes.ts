@@ -45,6 +45,7 @@ import type {
   SessionsStore,
   ApiTokensStore,
   InvitesStore,
+  MembershipsStore,
   AuthAuditStore,
   ProviderRegistry,
   IPolicyDecisionPoint,
@@ -68,6 +69,25 @@ import {
 } from './user-cookies.js';
 
 export type { UserAuthContext };
+
+const tenantMutationTails = new Map<string, Promise<void>>();
+
+async function withTenantMutationLock<T>(tenantId: string, mutation: () => Promise<T>): Promise<T> {
+  const previous = tenantMutationTails.get(tenantId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  tenantMutationTails.set(tenantId, queued);
+  await previous;
+  try {
+    return await mutation();
+  } finally {
+    release();
+    if (tenantMutationTails.get(tenantId) === queued) {
+      tenantMutationTails.delete(tenantId);
+    }
+  }
+}
 
 // ── Service interface (matches createUserAuthService return type) ──────────────
 
@@ -105,6 +125,7 @@ export interface UserAuthServiceForRoutes {
 export interface UserAuthRouteDeps {
   userAuthService: UserAuthServiceForRoutes;
   users: UsersStore;
+  memberships: MembershipsStore;
   sessions: SessionsStore;
   apiTokens: ApiTokensStore;
   invites: InvitesStore;
@@ -287,7 +308,7 @@ async function recordLoginFailure(
 // ── Route registrar ───────────────────────────────────────────────────────────
 
 export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRouteDeps): void {
-  const { userAuthService, users, sessions, invites, apiTokens, authAudit, providers, pdp, tenantResolver, bootstrapTenantId, cookieOpts, inviteTtlMs, rateLimiter, authRateLimit, oauthState, oauthCallbackPerIpPerMinute } = deps;
+  const { userAuthService, users, memberships, sessions, invites, apiTokens, authAudit, providers, pdp, tenantResolver, bootstrapTenantId, cookieOpts, inviteTtlMs, rateLimiter, authRateLimit, oauthState, oauthCallbackPerIpPerMinute } = deps;
   // Apply config defaults so the rest of the handler can use them without null-checks.
   const authRateLimitCfg = { loginPerIpPerMinute: 10, loginPerEmailPerMinute: 5, ...authRateLimit };
 
@@ -733,7 +754,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       return reply.code(404).send({ error: 'Not found', message: 'User not found' });
     }
     const reset = await userAuthService.issuePasswordReset({
-      userId: target.userId, tenantId: target.tenantId, createdBy: ctx.userId, ttlMs: 60 * 60 * 1000,
+      userId: target.userId, tenantId: target.tenantId, createdBy: ctx.userId, ttlMs: 24 * 60 * 60 * 1000,
     });
     await authAudit.record({
       action: 'user.password_reset_link_created', actorUserId: ctx.userId,
@@ -774,13 +795,22 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     return reply.send({ tokens });
   });
 
-  app.post<{ Body: { name?: string } }>('/auth/tokens', async (request, reply) => {
+  app.post<{ Body: { name?: string; expiresInDays?: number } }>('/auth/tokens', async (request, reply) => {
     const ctx = requireUser(request, reply);
     if (!ctx) {return;}
     if (!checkCsrf(request, reply)) {return;}
     const name = request.body?.name?.trim();
     if (!name || name.length > 80) {return reply.code(400).send({ error: 'Bad Request', message: 'name is required and must be at most 80 characters' });}
-    const created = await apiTokens.create({ userId: ctx.userId, tenantId: ctx.tenantId, name, ttlMs: 90 * 24 * 60 * 60 * 1000 });
+    const expiresInDays = request.body?.expiresInDays;
+    if (expiresInDays !== undefined && (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 365)) {
+      return reply.code(400).send({ error: 'Bad Request', message: 'expiresInDays must be an integer from 1 to 365' });
+    }
+    const created = await apiTokens.create({
+      userId: ctx.userId,
+      tenantId: ctx.tenantId,
+      name,
+      ...(expiresInDays === undefined ? {} : { ttlMs: expiresInDays * 24 * 60 * 60 * 1000 }),
+    });
     return reply.code(201).send({ token: created.token, tokenRecord: created.record });
   });
 
@@ -873,13 +903,57 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
 
     const ctx = request.userAuthContext!;
     const all = await users.listByTenant(ctx.tenantId);
+    const tenantMemberships = await memberships.listByTenant(ctx.tenantId);
+    const groupByUser = new Map(tenantMemberships.map((membership) => [membership.userId, membership.groupId]));
     return reply.send({
       users: all.map((u) => ({
         userId: u.userId,
         email: u.email,
         tenantId: u.tenantId,
         status: u.status,
+        role: groupByUser.get(u.userId) === 'tenant-admin' ? 'admin' : 'member',
       })),
+    });
+  });
+
+  async function isLastActiveAdmin(tenantId: string, userId: string): Promise<boolean> {
+    const tenantMemberships = await memberships.listByTenant(tenantId);
+    const activeAdmins = await Promise.all(tenantMemberships
+      .filter((membership) => membership.groupId === 'tenant-admin')
+      .map(async (membership) => ({ membership, user: await users.getById(membership.userId) })));
+    return activeAdmins.filter(({ user }) => user?.status === 'active').length === 1
+      && activeAdmins.some(({ membership, user }) => membership.userId === userId && user?.status === 'active');
+  }
+
+  app.post<{ Params: { id: string }; Body: { role?: string } }>('/auth/users/:id/role', {
+    schema: { tags: ['Auth'], summary: 'Change a tenant user role (admin only)' },
+  }, async (request, reply) => {
+    if (!(await requirePermission(request, reply, PERMISSIONS.USERS_WRITE))) {return;}
+    if (!checkCsrf(request, reply)) {return;}
+
+    const ctx = request.userAuthContext!;
+    return withTenantMutationLock(ctx.tenantId, async () => {
+      const target = await users.getById(request.params.id);
+      if (!target || target.tenantId !== ctx.tenantId) {
+        return reply.code(404).send({ error: 'Not found', message: 'User not found' });
+      }
+      const { role } = request.body ?? {};
+      if (role !== 'admin' && role !== 'member') {
+        return reply.code(400).send({ error: 'Bad Request', message: 'role must be admin or member' });
+      }
+      const groupId = role === 'admin' ? 'tenant-admin' : 'tenant-member';
+      const currentMembership = (await memberships.listByUser(target.userId))
+        .find((membership) => membership.tenantId === ctx.tenantId);
+      if (!currentMembership) {
+        return reply.code(404).send({ error: 'Not found', message: 'User membership not found' });
+      }
+      if (groupId === 'tenant-member' && currentMembership.groupId === 'tenant-admin'
+        && target.status === 'active' && await isLastActiveAdmin(ctx.tenantId, target.userId)) {
+        return reply.code(409).send({ error: 'last_admin', message: 'The last active administrator cannot be demoted' });
+      }
+      await memberships.setGroup(target.userId, ctx.tenantId, groupId);
+      await authAudit.record({ action: 'user.role_changed', actorUserId: ctx.userId, targetUserId: target.userId, tenantId: ctx.tenantId });
+      return reply.send({ ok: true, role });
     });
   });
 
@@ -893,20 +967,29 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     if (!checkCsrf(request, reply)) {return;}
 
     const ctx = request.userAuthContext!;
-    const { id } = request.params;
-    const target = await users.getById(id);
-    // Tenant-ownership guard: an admin may only act on users in their own
-    // tenant. requirePermission only proves "you are an admin of ctx.tenantId",
-    // not that the target belongs there. Return 404 (not 403) so we don't leak
-    // the existence of users in other tenants.
-    if (!target || target.tenantId !== ctx.tenantId) {
-      return reply.code(404).send({ error: 'Not found', message: 'User not found' });
-    }
+    return withTenantMutationLock(ctx.tenantId, async () => {
+      const { id } = request.params;
+      const target = await users.getById(id);
+      // Tenant-ownership guard: an admin may only act on users in their own
+      // tenant. requirePermission only proves "you are an admin of ctx.tenantId",
+      // not that the target belongs there. Return 404 (not 403) so we don't leak
+      // the existence of users in other tenants.
+      if (!target || target.tenantId !== ctx.tenantId) {
+        return reply.code(404).send({ error: 'Not found', message: 'User not found' });
+      }
 
-    await users.setStatus(id, 'disabled');
-    await sessions.revokeAllUserSessions(id);
+      const membership = (await memberships.listByUser(target.userId))
+        .find((entry) => entry.tenantId === ctx.tenantId);
+      if (target.status === 'active' && membership?.tenantId === ctx.tenantId
+        && membership.groupId === 'tenant-admin' && await isLastActiveAdmin(ctx.tenantId, target.userId)) {
+        return reply.code(409).send({ error: 'last_admin', message: 'The last active administrator cannot be disabled' });
+      }
 
-    return reply.send({ ok: true });
+      await users.setStatus(id, 'disabled');
+      await sessions.revokeAllUserSessions(id);
+
+      return reply.send({ ok: true });
+    });
   });
 
   // ── POST /auth/users/:id/enable ─────────────────────────────────────────────
@@ -917,14 +1000,16 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     if (!checkCsrf(request, reply)) {return;}
 
     const ctx = request.userAuthContext!;
-    const { id } = request.params;
-    const target = await users.getById(id);
-    // Tenant-ownership guard (see /disable). 404 to avoid cross-tenant leakage.
-    if (!target || target.tenantId !== ctx.tenantId) {
-      return reply.code(404).send({ error: 'Not found', message: 'User not found' });
-    }
+    return withTenantMutationLock(ctx.tenantId, async () => {
+      const { id } = request.params;
+      const target = await users.getById(id);
+      // Tenant-ownership guard (see /disable). 404 to avoid cross-tenant leakage.
+      if (!target || target.tenantId !== ctx.tenantId) {
+        return reply.code(404).send({ error: 'Not found', message: 'User not found' });
+      }
 
-    await users.setStatus(id, 'active');
-    return reply.send({ ok: true });
+      await users.setStatus(id, 'active');
+      return reply.send({ ok: true });
+    });
   });
 }

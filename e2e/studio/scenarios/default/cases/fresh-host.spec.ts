@@ -80,7 +80,7 @@ test('S-020.1-.7 and S-125.1-.3: fresh host Studio dashboard, navigation, sessio
       await expect(page).toHaveURL(/\/login$/)
     })
 
-    await test.step('member has no admin navigation or access', async () => {
+    await test.step('[S-108.1] member has no Users or Invites navigation', async () => {
       const email = process.env.KB_STUDIO_MEMBER_EMAIL
       const password = process.env.KB_STUDIO_MEMBER_PASSWORD
       expect(email, 'KB_STUDIO_MEMBER_EMAIL is required in secured mode').toBeTruthy()
@@ -89,8 +89,22 @@ test('S-020.1-.7 and S-125.1-.3: fresh host Studio dashboard, navigation, sessio
       const memberPage = await memberContext.newPage()
       await signIn(memberPage, email!, password!)
       await expect(memberPage.getByRole('link', { name: 'Settings' })).toHaveCount(0)
-      await memberPage.goto(`${GATEWAY}/admin/users`)
-      await expect(memberPage.getByTestId('forbidden-page')).toBeVisible()
+      await expect(memberPage.getByRole('link', { name: 'Users' })).toHaveCount(0)
+      await expect(memberPage.getByRole('link', { name: 'Invites' })).toHaveCount(0)
+      await test.step('[S-108.2] deny direct user and invite administration routes', async () => {
+        await memberPage.goto(`${GATEWAY}/admin/users`)
+        await expect(memberPage.getByTestId('forbidden-page')).toBeVisible()
+        await expect(memberPage.getByText('403 — Forbidden')).toBeVisible()
+        await expect(memberPage.getByText('You do not have permission to view this page.')).toBeVisible()
+        await memberPage.goto(`${GATEWAY}/admin/invites`)
+        await expect(memberPage.getByTestId('forbidden-page')).toBeVisible()
+        await expect(memberPage.getByText('403 — Forbidden')).toBeVisible()
+        await expect(memberPage.getByText('You do not have permission to view this page.')).toBeVisible()
+      })
+      await test.step('[S-108.3] keep member project access', async () => {
+        await memberPage.goto(`${GATEWAY}/projects`)
+        await expect(memberPage.getByText(projectName!, { exact: true })).toBeVisible()
+      })
       await memberContext.close()
     })
   }

@@ -22,7 +22,8 @@ A user gives an agent or CI a named personal token, then revokes access when it 
 
 | # | Action | Expected |
 |---|---|---|
-| S-103.1 | Run `kb auth tokens --name "nightly CI" --json` | JSON contains `ok: true`, one `token` secret, and `tokenRecord` metadata with name `nightly CI` and expiry within 90 days; the secret is printed only on creation. |
+| S-103.1 | Run `kb auth tokens --name "nightly CI" --expires-in-days 90 --json` | JSON contains `ok: true`, one `token` secret, and `tokenRecord` metadata with name `nightly CI` and expiry within 90 days; the secret is printed only on creation. |
 | S-103.2 | Run `kb auth tokens --json` | The token list contains the token ID, name, issue and expiry times, and no token secret. |
 | S-103.3 | Send `GET <gateway-url>/auth/me` with `Authorization: Bearer <token>` | HTTP 200 JSON contains the token owner's `email` and `tenantId`. |
 | S-103.4 | Run `kb auth tokens --revoke <token-id> --json`, then repeat `GET <gateway-url>/auth/me` with the revoked secret | Revocation JSON reports `ok: true`; the profile request returns HTTP 401. |
+| S-103.5 | Run `kb auth tokens --name "local agent" --json` without an expiry option | The new token is usable and its metadata has no expiry. |

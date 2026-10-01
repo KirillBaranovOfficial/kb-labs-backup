@@ -45,4 +45,33 @@ describe('kb auth tokens', () => {
     expect(fetch).toHaveBeenCalledWith('https://gateway.test/auth/tokens/tok-1/revoke', expect.objectContaining({ method: 'POST' }));
     expect(output.join('')).toContain('Revoked');
   });
+
+  it('creates a token with an optional expiry expressed in days', async () => {
+    const output: string[] = [];
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 201,
+      json: async () => ({ token: 'kbl_pat_secret', tokenRecord: { tokenId: 'tok-2', name: 'nightly CI', issuedAt: 1, expiresAt: 2 } }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const json: unknown[] = [];
+    const code = await authTokens.run(makeContext(output, [], json), [], {
+      name: 'nightly CI', 'expires-in-days': '90', json: true,
+    });
+    expect(code).toBe(0);
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string))
+      .toEqual({ name: 'nightly CI', expiresInDays: 90 });
+    expect(json[0]).toMatchObject({ ok: true, token: 'kbl_pat_secret' });
+  });
+
+  it('rejects an invalid expiry with the exact retry command', async () => {
+    const errors: string[] = [];
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const code = await authTokens.run(makeContext([], errors, []), [], {
+      name: 'nightly CI', 'expires-in-days': '0',
+    });
+    expect(code).toBe(1);
+    expect(errors[0]).toContain('kb auth tokens --name <name> --expires-in-days 90');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
