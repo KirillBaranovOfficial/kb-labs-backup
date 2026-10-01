@@ -36,6 +36,7 @@ import { generateCommitPlan, applyCommitPlan, hasChanges, getGitStatus, savePlan
 import { AdapterUnavailableError } from '@kb-labs/sdk';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import runCommand from '../../src/cli/commands/run.js';
+import generateCommand from '../../src/cli/commands/generate.js';
 
 const mockPlan = {
   commits: [
@@ -179,5 +180,25 @@ describe('commit:commit (run)', () => {
       .rejects.toBeInstanceOf(AdapterUnavailableError);
     expect(generateCommitPlan).not.toHaveBeenCalled();
     expect(applyCommitPlan).not.toHaveBeenCalled();
+  });
+});
+
+describe('commit:generate (adapter errors)', () => {
+  it('returns the typed adapter envelope in JSON mode when the LLM is unconfigured', async () => {
+    vi.mocked(generateCommitPlan).mockRejectedValueOnce(new AdapterUnavailableError('llm'));
+
+    const { ui, captured } = createCapturedUI();
+    const ctx = createRunContext(ui);
+    const result = await generateCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
+
+    expect(result.ok).toBe(false);
+    expect(captured.json[0]).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_ADAPTER_NOT_CONFIGURED',
+        details: { service: 'llm' },
+        actions: [{ command: 'kb adapter bind llm @kb-labs/adapters-openai' }],
+      },
+    });
   });
 });
