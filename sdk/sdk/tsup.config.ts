@@ -18,9 +18,6 @@ export default defineConfig({
     'studio-build/index': 'src/studio-build/index.ts',
     'platform/index': 'src/platform/index.ts',
   },
-  // Bundle internal runtime helpers into SDK so installed consumers do not
-  // need to provide undeclared transitive packages alongside the SDK.
-  noExternal: ['@kb-labs/shared-command-kit', '@kb-labs/shared-tool-kit'],
   dts: { resolve: true },
   treeshake: false,
 });

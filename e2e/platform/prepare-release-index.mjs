@@ -29,7 +29,7 @@ const output = resolve(required('--output'));
 const sealer = resolve(required('--sealer'));
 const prepareScript = resolve(value('--prepare-script') ?? '/src/kb-create/scripts/prepare-release-index.mjs');
 const releaseConfigPath = resolve(value('--release-config') ?? '.kb/kb.config.jsonc');
-const stage = resolve('/tmp/kb-e2e-release-stage');
+const stage = resolve(process.env.KB_JOURNEY_RELEASE_STAGE ?? '/tmp/kb-e2e-release-stage');
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
