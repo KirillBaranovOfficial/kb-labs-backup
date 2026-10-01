@@ -84,7 +84,7 @@ export function HealthBanner() {
     : 'Mock mode';
 
   const description = isDown
-    ? `Not ready at /api/ready${readyReason ? ` — ${readyReason}` : ''}`
+    ? `Source: gateway. Not ready at /api/ready${readyReason ? ` — ${readyReason}` : ''}. Run kb-create status --platform-root <platform-root> or kb-create doctor --platform-root <platform-root>.`
     : isDegraded
     ? `Some services may be unavailable${pluginMetrics?.failed ? ` · ${pluginMetrics.failed} plugin mount(s) failed` : ''}`
     : 'Using mock data for development';

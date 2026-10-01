@@ -28,8 +28,10 @@ import {
 import { UIRangePicker, UICheckbox } from '@kb-labs/studio-ui-kit';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useLogStream } from '@kb-labs/studio-data-client';
 import { useDataSources } from '../../../providers/data-sources-provider';
+import { useProjectContext } from '../../../providers/project-context-provider';
 import type { LogRecord, LogSummarizeResponse } from '@kb-labs/studio-data-client';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
@@ -235,8 +237,16 @@ function LogRow({ log }: { log: LogRecord }) {
  * - Statistics for AI summarization
  */
 export function LogsPage() {
+  const [searchParams] = useSearchParams();
+  const { setProjectId } = useProjectContext();
+  const requestedProjectId = searchParams.get('projectId');
+  const requestedExecutionId = searchParams.get('executionId');
+  const [executionIdFilter, setExecutionIdFilter] = useState<string | null>(requestedExecutionId);
   const sources = useDataSources();
-  const { logs: streamLogs, isConnected, error, clearLogs } = useLogStream(sources.observability);
+  const { logs: streamLogs, isConnected, error, clearLogs } = useLogStream(
+    sources.observability,
+    executionIdFilter ? { executionId: executionIdFilter } : undefined,
+  );
   const [viewMode, setViewMode] = useState<'live' | 'history'>('live');
   const [searchQuery, setSearchQuery] = useState('');
   const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
@@ -266,6 +276,11 @@ export function LogsPage() {
   const [timeRange, setTimeRange] = useState<string>('15m');
   const [customTimeRange, setCustomTimeRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [groupBy, setGroupBy] = useState<'none' | 'trace' | 'execution' | 'plugin'>('none');
+
+  useEffect(() => {
+    if (requestedProjectId) {setProjectId(requestedProjectId);}
+    setExecutionIdFilter(requestedExecutionId);
+  }, [requestedProjectId, requestedExecutionId, setProjectId]);
 
   // AI Summarize Modal
   const [summarizeModalOpen, setSummarizeModalOpen] = useState(false);
@@ -306,6 +321,9 @@ export function LogsPage() {
         }
         if (pluginFilter) {
           query.plugin = pluginFilter;
+        }
+        if (executionIdFilter) {
+          query.executionId = executionIdFilter;
         }
         if (searchQuery.trim()) {
           query.search = searchQuery.trim();
@@ -353,6 +371,7 @@ export function LogsPage() {
     historyPageSize,
     levelFilter,
     pluginFilter,
+    executionIdFilter,
     timeRange,
     customTimeRange,
     searchQuery,
@@ -369,6 +388,9 @@ export function LogsPage() {
     // In history mode level/plugin/time/search are applied on backend.
     // In live mode apply all filters client-side.
     if (viewMode !== 'history') {
+      if (executionIdFilter) {
+        filtered = filtered.filter((log) => log.executionId === executionIdFilter);
+      }
       if (levelFilter) {
         filtered = filtered.filter((log) => log.level === levelFilter);
       }
@@ -551,8 +573,8 @@ export function LogsPage() {
 
         {viewMode === 'history' && historyError && (
           <UIAlert
-            message="Failed to load historical logs"
-            description={historyError.message}
+            message="Observability logs unavailable"
+            description="Source: REST API observability logs. Run kb-create doctor --platform-root <platform-root> to diagnose the unavailable service."
             variant="error"
             showIcon
           />
