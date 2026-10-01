@@ -245,6 +245,7 @@
                 "emoji": "🔌",
                 "scopes": [
                   "adapters",
+                  "adapters-fs",
                   "adapters-openai",
                   "adapters-redis",
                   "adapters-mongodb",
