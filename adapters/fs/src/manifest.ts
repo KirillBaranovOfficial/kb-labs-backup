@@ -29,8 +29,8 @@ export const manifest: AdapterManifest = {
   configSchema: {
     baseDir: {
       type: "string",
-      default: "process.cwd()",
-      description: "Base directory for all file operations",
+      default: "<KB_HOME>/state/<projectId>/storage",
+      description: "Base directory for all file operations; omitted paths use platform state for the current project",
     },
   },
 };

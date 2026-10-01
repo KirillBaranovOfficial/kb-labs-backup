@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { resolveDiscoveredAdapterDefaults } from '../default-adapters.js';
 import type { DiscoveredAdapter } from '../discover-adapters.js';
 
@@ -34,9 +35,39 @@ describe('resolveDiscoveredAdapterDefaults', () => {
     });
     expect(resolved.adapterOptions).toEqual({
       storage: { baseDir: 'user/data' },
-      documentDatabase: { filename: '.kb/database/kb.sqlite' },
-      kvStore: { filename: '.kb/database/kb.sqlite' },
+      documentDatabase: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
+      kvStore: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
     });
+  });
+
+  it('defaults every persistent built-in adapter path under the machine project state directory', () => {
+    const previousHome = process.env.KB_HOME;
+    process.env.KB_HOME = '/machine/kb';
+    try {
+      const sqlite = discovered('@kb-labs/adapters-sqlite', {
+        defaultFor: ['documentDatabase', 'kvStore'],
+        implements: ['IDocumentDatabase', 'IKVStore'],
+      });
+      const storage = discovered('@kb-labs/adapters-fs', {
+        defaultFor: ['storage'], implements: 'IStorage',
+      });
+      const analytics = discovered('@kb-labs/adapters-analytics-sqlite', {
+        defaultFor: ['analytics'], implements: 'IAnalytics',
+      });
+      const resolved = resolveDiscoveredAdapterDefaults({ adapters: {}, adapterOptions: {} }, new Map([
+        [sqlite.packageName, sqlite], [storage.packageName, storage], [analytics.packageName, analytics],
+      ]), '/project');
+
+      expect(resolved.adapterOptions).toEqual({
+        storage: { baseDir: resolveRuntimeStatePath('/project', ['storage']) },
+        documentDatabase: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
+        kvStore: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
+        analytics: { filename: resolveRuntimeStatePath('/project', ['analytics', 'analytics.sqlite']) },
+      });
+    } finally {
+      if (previousHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousHome;
+    }
   });
 
   it('keeps an explicit provider binding ahead of the discovered default', () => {

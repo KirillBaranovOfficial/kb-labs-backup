@@ -29,7 +29,7 @@ describe('DuckDBAnalytics', () => {
     const { events, total } = await db.getEvents();
     expect(total).toBe(1);
     expect(events[0]?.type).toBe('llm.complete');
-    expect(events[0]?.payload?.model).toBe('gpt-4');
+    expect(events[0]?.payload).toEqual({ model: 'gpt-4', totalTokens: 100 });
   });
 
   it('getEvents filters by type', async () => {
@@ -60,7 +60,7 @@ describe('DuckDBAnalytics', () => {
     await db.identify('user-123', { plan: 'pro' });
     const { events } = await db.getEvents({ type: 'identity' });
     expect(events).toHaveLength(1);
-    expect(events[0]?.payload?.userId).toBe('user-123');
+    expect(events[0]?.payload).toEqual({ userId: 'user-123', plan: 'pro' });
   });
 
   // ── getStats ───────────────────────────────────────────────────────────────

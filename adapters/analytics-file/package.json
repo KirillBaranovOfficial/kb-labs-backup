@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/adapters-analytics-file",
-  "description": "File-based analytics adapter for KB Labs platform (writes JSONL to .kb/analytics/buffer)",
+  "description": "File-based analytics adapter for KB Labs platform (writes JSONL to platform state)",
   "version": "2.120.1",
   "type": "module",
   "main": "./dist/index.js",

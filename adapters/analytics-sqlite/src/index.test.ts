@@ -35,7 +35,7 @@ describe('SQLiteAnalytics', () => {
     const { events, total } = await db.getEvents();
     expect(total).toBe(1);
     expect(events[0]?.type).toBe('llm.complete');
-    expect(events[0]?.payload?.model).toBe('gpt-4');
+    expect(events[0]?.payload).toEqual({ model: 'gpt-4', totalTokens: 100 });
   });
 
   it('getEvents filters by type', async () => {
@@ -46,21 +46,13 @@ describe('SQLiteAnalytics', () => {
     expect(events[0]?.type).toBe('llm.complete');
   });
 
-  it('getEvents filters by runId', async () => {
+  it('getEvents filters by source', async () => {
     await db.track('llm.complete');
-
-    const db2 = new SQLiteAnalytics({
-      dbPath: ':memory:',
-      context: { source: { product: 'test', version: '1.0.0' }, runId: 'other-run' },
-    });
-    // same :memory: → different instance, different DB; test isolation via runId filter on same db
+    db.setSource({ product: 'other', version: '1.0.0' });
     await db.track('llm.complete');
-    // override run_id via a second adapter on the same in-memory db isn't possible
-    // so we verify filtering on a known run_id
-    const { events } = await db.getEvents({ runId: 'run-test' });
-    expect(events.length).toBeGreaterThan(0);
-    expect(events.every((e) => e.runId === 'run-test')).toBe(true);
-    db2.close();
+    const { events, total } = await db.getEvents({ source: 'other' });
+    expect(total).toBe(1);
+    expect(events[0]?.source.product).toBe('other');
   });
 
   it('getEvents pagination works', async () => {
@@ -83,8 +75,7 @@ describe('SQLiteAnalytics', () => {
     await db.identify('user-123', { plan: 'pro' });
     const { events } = await db.getEvents({ type: 'identity' });
     expect(events).toHaveLength(1);
-    expect(events[0]?.payload?.userId).toBe('user-123');
-    expect(events[0]?.payload?.plan).toBe('pro');
+    expect(events[0]?.payload).toEqual({ userId: 'user-123', plan: 'pro' });
   });
 
   // ── getStats ───────────────────────────────────────────────────────────────
