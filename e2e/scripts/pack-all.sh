@@ -78,6 +78,16 @@ done < <(cd "$REPO_ROOT" && find . \
   -name "package.json" \
   | sort)
 
+# The deterministic LLM is an E2E-only registry package. Keep the broad e2e/
+# exclusion above, then add this single fixture to the candidate tarballs.
+FIXTURE_DIR="$REPO_ROOT/e2e/fixtures/adapters/llm-deterministic"
+if (cd "$FIXTURE_DIR" && pnpm pack --pack-destination "$OUT_DIR" --silent); then
+  PACKED=$((PACKED+1))
+else
+  echo "ERROR: could not pack @kb-labs/e2e-llm-deterministic"
+  exit 1
+fi
+
 echo ""
 echo "==> Done: $PACKED packed, $SKIPPED skipped (private/not-built), $FAILED failed"
 echo "    Output: $OUT_DIR ($(find "$OUT_DIR" -maxdepth 1 -type f -name '*.tgz' 2>/dev/null | wc -l | tr -d ' ') tarballs)"

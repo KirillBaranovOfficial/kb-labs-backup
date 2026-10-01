@@ -96,7 +96,7 @@ const result = spawnSync(process.execPath, [
   // how the V2 resolver binds a capability (installed-but-unrequired
   // adapters are deliberately left unbound); .kb/overlays cannot rebind
   // platform adapters.
-  '--platform-requires', 'serviceTransport,logger,logRingBuffer',
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer,analytics',
   '--platform-adapter-config', adapterConfig,
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
@@ -124,7 +124,7 @@ const update = spawnSync(process.execPath, [
   '--artifacts-dir', updatePackagesDir,
   '--binary-manifest', binaryManifest,
   '--platform-version', updateVersion,
-  '--platform-requires', 'serviceTransport,logger,logRingBuffer',
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer,analytics',
   '--platform-adapter-config', adapterConfig,
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
