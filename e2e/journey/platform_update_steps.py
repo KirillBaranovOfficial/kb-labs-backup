@@ -119,7 +119,7 @@ def run_platform_update_steps(
         snapshot_id = str(snapshot["id"])
 
     journey.step("update the running host and save its recovery snapshot", "platform.update", update,
-                 cases=["S-023.3", "S-024.1"])
+                 cases=["S-023.3", "S-023.7", "S-024.1"])
 
     def verify_updated_install() -> None:
         receipt = json.loads(receipt_path.read_text())
@@ -141,13 +141,17 @@ def run_platform_update_steps(
                  cases=["S-023.4"])
 
     def project_command() -> None:
-        result = run_command([kb_binary, "commit", "--dry-run", "--scope", "root"])
+        result = run_command([kb_binary, "project", "list", "--json"])
         if result.returncode != 0:
-            raise RuntimeError(f"project command after update: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
-        if 'scope "root"' not in result.stdout:
-            raise RuntimeError("project command after update did not report the configured root scope")
+            raise RuntimeError(f"project list after update: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("project list after update did not return JSON") from error
+        if payload.get("ok") is not True or not isinstance(payload.get("projects"), list):
+            raise RuntimeError("project list after update did not return ok=true and a projects array")
 
-    journey.step("run the project commit dry-run after update", "platform.update", project_command,
+    journey.step("run the core project list command after update", "platform.update", project_command,
                  cases=["S-023.5"])
 
     def repeat_update() -> None:
@@ -218,9 +222,15 @@ def run_platform_update_steps(
             login = verify_user()
             if login.returncode != 0:
                 raise RuntimeError(f"admin login failed after rollback: {' '.join(login.stdout.split())[-400:]}")
-        command = run_command([kb_binary, "commit", "--dry-run", "--scope", "root"])
+        command = run_command([kb_binary, "project", "list", "--json"])
         if command.returncode != 0:
-            raise RuntimeError(f"project command after rollback: exit {command.returncode}; {' '.join(command.stdout.split())[-500:]}")
+            raise RuntimeError(f"project list after rollback: exit {command.returncode}; {' '.join(command.stdout.split())[-500:]}")
+        try:
+            payload = json.loads(command.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("project list after rollback did not return JSON") from error
+        if payload.get("ok") is not True or not isinstance(payload.get("projects"), list):
+            raise RuntimeError("project list after rollback did not return ok=true and a projects array")
 
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
                  cases=["S-024.3"])
