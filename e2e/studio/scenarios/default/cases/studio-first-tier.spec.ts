@@ -128,7 +128,7 @@ test('S-120.7 and S-125.4: unavailable gateway keeps Dashboard visible with reco
   await expect(page.getByText('Gateway health is unavailable', { exact: true })).toBeVisible()
   await expect(page.getByText('Gateway unavailable', { exact: true })).toBeVisible()
   await expect(page.getByText('kb-create status --platform-root <platform-root>', { exact: false }).first()).toBeVisible()
-  await expect(page.getByText('kb-create doctor --platform-root <platform-root>', { exact: false })).toBeVisible()
+  await expect(page.getByText('kb-create doctor --platform-root <platform-root>', { exact: false }).first()).toBeVisible()
   await expect(page.getByRole('progressbar')).toHaveCount(0)
 })
 
