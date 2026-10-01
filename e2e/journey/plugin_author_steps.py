@@ -170,7 +170,7 @@ def run_plugin_author_flow(
         if linked:
             _record_unlink()
         else:
-            journey.blocked("unlink plugin", "plugin was not linked")
+            journey.blocked("unlink plugin", "plugin-author", "plugin was not linked")
         shutil.rmtree(plugin_root, ignore_errors=True)
         return
 

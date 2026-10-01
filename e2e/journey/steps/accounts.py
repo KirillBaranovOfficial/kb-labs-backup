@@ -15,6 +15,12 @@ from .auth import _login, _request
 def _browser_call(base_url: str, jar: http.cookiejar.CookieJar, path: str, *, method: str = "GET",
                   body: dict | None = None, csrf: bool = False, expected: int = 200) -> dict:
     headers = {"Accept": "application/json"}
+    # The journey talks to the gateway over its internal HTTP listener. Its
+    # production Secure cookies must still be forwarded as a browser would
+    # send them through the HTTPS ingress.
+    cookie_header = "; ".join(f"{cookie.name}={cookie.value}" for cookie in jar)
+    if cookie_header:
+        headers["Cookie"] = cookie_header
     if body is not None:
         headers["Content-Type"] = "application/json"
     if csrf:
