@@ -7,14 +7,35 @@ import { AdapterUnavailableError } from '@kb-labs/core-platform';
 import type { DiscoveredAdapter } from '../discover-adapters.js';
 
 describe('loadDiscoveredAdapterModule', () => {
+  // case: S-054.2
   it('creates a typed, actionable error for a bound adapter package that cannot load', () => {
-    const error = configuredAdapterLoadError('llm', '@kb-labs/adapters-openai');
+    const cause = Object.assign(new Error("Cannot find package 'openai' imported from /platform/node_modules/@kb-labs/adapters-openai/dist/llm.js"), {
+      code: 'ERR_MODULE_NOT_FOUND',
+    });
+    const error = configuredAdapterLoadError('llm', '@kb-labs/adapters-openai', cause, '/platform');
 
     expect(error).toBeInstanceOf(AdapterUnavailableError);
     expect(error.slot).toBe('llm');
     expect(error.reason).toBe('load-failed');
     expect(error.message).toContain('package "@kb-labs/adapters-openai"');
+    expect(error.message).toContain('ERR_MODULE_NOT_FOUND');
+    expect(error.message).toContain("Cannot find package 'openai'");
+    expect(error.message).not.toContain('kb marketplace install');
+    expect(error.message).toContain('kb-create doctor --platform-root "/platform"');
+    expect(error.cause).toBe(cause);
+  });
+
+  // case: S-054.2
+  it('suggests installation only when the configured package itself is missing', () => {
+    const cause = Object.assign(new Error("Cannot find package '@kb-labs/adapters-openai' imported from /platform/host.js"), {
+      code: 'ERR_MODULE_NOT_FOUND',
+    });
+    const error = configuredAdapterLoadError('llm', '@kb-labs/adapters-openai', cause, '/platform');
+
     expect(error.message).toContain('kb marketplace install @kb-labs/adapters-openai --scope platform');
+    expect(error.message).toContain('ERR_MODULE_NOT_FOUND');
+    expect(error.message).not.toContain('kb-create doctor');
+    expect(error.cause).toBe(cause);
   });
 
   let root: string;
