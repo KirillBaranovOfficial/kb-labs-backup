@@ -5,14 +5,13 @@ from collections import deque
 import json
 import os
 import re
-import signal
 import subprocess
-import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from invocations import invocation_link, open_http, record_invocation, run_streaming_command
 
 PLAYWRIGHT_HEADLESS_SHELL = Path("chromium_headless_shell-1217/chrome-linux/headless_shell")
 PLAYWRIGHT_IMAGE_REBUILD_COMMAND = "e2e/journey/run.sh --no-build"
@@ -58,11 +57,7 @@ def create_studio_member(base_url: str, admin_email: str, admin_password: str) -
             headers["Authorization"] = f"Bearer {token}"
         request = urllib.request.Request(
             f"{base_url}{path}", data=json.dumps(payload).encode(), headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                status, raw = response.status, response.read()
-        except urllib.error.HTTPError as error:
-            status, raw = error.code, error.read()
+        status, raw, _ = open_http(urllib.request.urlopen, request, timeout=20, env=os.environ)
         if status not in {200, 201}:
             raise RuntimeError(f"POST {path} returned HTTP {status}")
         return json.loads(raw) if raw else {}
@@ -93,46 +88,44 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
         _record_step(report, mode, "BLOCKED", 0.0, message)
         return False, 0.0, message
     preflight_error = _playwright_browser_preflight(env)
+    if not preflight_error and mode == "secured":
+        required_credentials = (
+            "KB_STUDIO_ADMIN_EMAIL", "KB_STUDIO_ADMIN_PASSWORD",
+            "KB_STUDIO_MEMBER_EMAIL", "KB_STUDIO_MEMBER_PASSWORD",
+        )
+        missing_credentials = [key for key in required_credentials if not env.get(key)]
+        if missing_credentials:
+            preflight_error = (
+                "secured admin-users Playwright setup did not provide "
+                + ", ".join(missing_credentials)
+                + "; complete the isolated admin and member setup before rerunning the secured journey"
+            )
     if preflight_error:
         _record_step(report, mode, "FAIL", 0.0, preflight_error)
         return False, 0.0, preflight_error
 
     started = time.monotonic()
     output_lines: deque[str] = deque(maxlen=40)
+    return_code: int | None = None
+    invocation_error: str | None = None
     log_path = report.with_name(f"studio-playwright-{mode}.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with log_path.open("w", encoding="utf-8") as log:
-            process = subprocess.Popen(command, env=env, text=True, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, bufsize=1, start_new_session=True)
+            def copy_output(rendered: str) -> None:
+                output_lines.append(rendered)
+                log.write(rendered + "\n")
+                log.flush()
+                print(f"[studio-playwright] {rendered}", flush=True)
 
-            def copy_output() -> None:
-                assert process.stdout is not None
-                with process.stdout as output_stream:
-                    for line in output_stream:
-                        rendered = line.rstrip("\r\n")
-                        output_lines.append(rendered)
-                        log.write(line)
-                        log.flush()
-                        print(f"[studio-playwright] {rendered}", flush=True)
-
-            output_thread = threading.Thread(target=copy_output, daemon=True)
-            output_thread.start()
             try:
-                return_code = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                _signal_process_group(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    _signal_process_group(process.pid, signal.SIGKILL)
-                    process.wait()
-                raise
-            finally:
-                if process.poll() is None:
-                    _signal_process_group(process.pid, signal.SIGKILL)
-                    process.wait()
-                output_thread.join()
+                result, _duration = run_streaming_command(
+                    command, env=env, timeout=timeout, on_output_line=copy_output,
+                    start_new_session=True)
+                return_code = result.returncode
+            except subprocess.TimeoutExpired as error:
+                return_code = -1
+                raise error
         elapsed = time.monotonic() - started
         passed = return_code == 0
         message = "Studio browser journey passed"
@@ -142,7 +135,20 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
         elapsed = time.monotonic() - started
         message = f"Playwright timed out after {timeout}s"
         message += _output_excerpt(output_lines)
+        invocation_error = f"timed out after {timeout}s"
         passed = False
+    except OSError as error:
+        elapsed = time.monotonic() - started
+        message = f"Playwright could not start: {error}"
+        invocation_error = f"{error.__class__.__name__}: {error}"
+        passed = False
+
+    record_invocation(kind="command", argv=command, cwd=Path.cwd(), env=env,
+                      exit_code=return_code, stdout="\n".join(output_lines),
+                      duration_seconds=elapsed, error=invocation_error)
+    evidence = invocation_link("S-106.1,S-106.2,S-106.3,S-106.4,S-106.5,S-106.6,S-107.1,S-107.2,S-107.3")
+    if not passed and evidence:
+        message += f"; invocation evidence: {evidence}"
 
     _record_step(report, mode, "PASS" if passed else "FAIL", elapsed, message)
     _record_playwright_case_claims(report, env.get("KB_STUDIO_PLAYWRIGHT_JSON", ""))

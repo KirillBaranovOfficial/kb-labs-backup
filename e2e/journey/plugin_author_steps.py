@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
+from invocations import run_command, run_with_runner
 
 
 PLUGIN_NAME = "demo"
@@ -65,11 +66,28 @@ def run_plugin_author_flow(
     kb_path: Path,
     registry: str,
     *,
-    command_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    command_runner: Callable[..., subprocess.CompletedProcess[str]] = run_command,
     base_env: dict[str, str] | None = None,
 ) -> None:
     """Run S-003 in an installed project and record each catalog step."""
     project = project_root.resolve()
+    original_runner = command_runner
+    def command_runner(command, **kwargs):
+        options = dict(kwargs)
+        timeout = options.pop("timeout", 300)
+        options.pop("capture_output", None)
+        options.pop("text", None)
+        options.pop("stdout", None)
+        options.pop("stderr", None)
+        result = run_with_runner(original_runner, command, timeout=timeout, **options)
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        return subprocess.CompletedProcess(command, result.returncode,
+                                            stdout=stdout + stderr, stderr=stderr)
     plugin_root = project / PLUGIN_DIR
     entry = project / ENTRY_DIR
     core_source = project / CORE_SOURCE

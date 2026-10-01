@@ -24,6 +24,9 @@ fi
 cleanup() { "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
 
+mkdir -p .journey/reports
+export KB_JOURNEY_INVOCATIONS="$ROOT/.journey/reports"
+
 if [[ "${1:-}" == "--prepare-only" ]]; then
   e2e/journey/prepare-candidate.sh
   exit

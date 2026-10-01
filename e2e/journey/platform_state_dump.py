@@ -88,8 +88,8 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
 def _command(output: Path, label: str, args: list[str], *, env: Mapping[str, str], cwd: Path,
              admin_password: str, timeout: int = 30, budget: int = MAX_DUMP_BYTES) -> int:
     try:
-        result = subprocess.run(args, cwd=cwd, env=dict(env), capture_output=True, text=True,
-                                timeout=timeout, check=False)
+        from invocations import run_command
+        result = run_command(args, cwd=cwd, env=env, timeout=timeout)
         body = f"exit_code: {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     except (OSError, subprocess.TimeoutExpired) as error:
         body = f"error: {error.__class__.__name__}: {error}"
