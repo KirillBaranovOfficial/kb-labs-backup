@@ -1,4 +1,5 @@
-import { defineCommand, useEnv, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useEnv, validationError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { handleMarketplaceError } from '../errors.js';
 import { post } from '../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../scope.js';
 import * as fs from 'node:fs/promises';
@@ -53,7 +54,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
         if (err instanceof CliScopeError) {
           validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleError(ctx, err, flags.json);
+          handleMarketplaceError(ctx, err, flags.json);
         }
         return { ok: false, error: 'Marketplace scope is not configured', result: { added: [], skipped: [], total: 0 } };
       }
@@ -101,7 +102,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
 
         return { ok: true, result };
       } catch (err) {
-        handleError(ctx, err, flags.json);
+        handleMarketplaceError(ctx, err, flags.json);
         return { ok: false, error: err instanceof Error ? err.message : String(err), result: { added: [], skipped: [], total: 0 } };
       }
     },

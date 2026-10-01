@@ -19,7 +19,9 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandR
 
 def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str:
     if result.returncode != 0:
-        detail = " ".join((result.stderr or result.stdout).split())[-500:]
+        detail = " ".join((result.stderr or result.stdout).split())
+        if len(detail) > 2200:
+            detail = f"{detail[:1700]} … {detail[-500:]}"
         raise RuntimeError(f"`{' '.join(command)}` exited {result.returncode}: {detail}")
     return result.stdout
 
@@ -70,6 +72,49 @@ def _entries(payload: dict) -> list[dict]:
     return entries
 
 
+def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[str, str],
+                                     runner: CommandRunner) -> None:
+    """Prove the missing-session error, then save the admin CLI session."""
+    if journey.mode != "secured":
+        return
+
+    def assert_auth_required() -> None:
+        command = ["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"]
+        result = _run(command, cwd=project, env=env, runner=runner)
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("unauthenticated marketplace list did not return JSON") from error
+        failure = payload.get("error") if isinstance(payload, dict) else None
+        if (result.returncode == 0 or not isinstance(failure, dict)
+                or failure.get("code") != "KB_AUTH_REQUIRED"
+                or failure.get("message") != "Authentication is required."
+                or failure.get("hint") != 'Run "kb auth login".'):
+            raise RuntimeError("unauthenticated marketplace list did not return KB_AUTH_REQUIRED with the login hint")
+
+    journey.step("secured marketplace requires a saved CLI session", "marketplace",
+                 assert_auth_required, cases=["S-010.6"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    gateway = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
+    email = env.get("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
+    password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+    if not password:
+        raise RuntimeError("secured marketplace journey needs KB_JOURNEY_ADMIN_PASSWORD")
+    login = ["kb", "auth", "login", "--gateway-url", gateway,
+             "--email", email, "--password", password, "--json"]
+    result = _run(login, cwd=project, env=env, runner=runner)
+    if result.returncode != 0:
+        raise RuntimeError("secured admin CLI login failed; check the isolated journey credentials")
+
+    status = ["kb", "auth", "status", "--json"]
+    auth_status = _json(_run(status, cwd=project, env=env, runner=runner), status)
+    session = auth_status.get("session")
+    if not isinstance(session, dict) or session.get("authenticated") is not True:
+        raise RuntimeError("secured marketplace CLI login did not save a user session")
+
+
 def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: str,
                           env: dict[str, str] | None = None,
                           runner: CommandRunner = subprocess.run) -> None:
@@ -84,6 +129,9 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     unrelated_package = "@kb-labs/qa-entry"
     commit_version = _registry_version(commit_package, registry, base_env, runner)
     unrelated_version = _registry_version(unrelated_package, registry, base_env, runner)
+    authenticate_secured_marketplace(journey, project, base_env, runner)
+    if journey.steps and journey.steps[-1].status != "PASS":
+        return
     platform_list = ["marketplace", "plugins", "list", "--scope", "platform", "--json"]
     platform_plugins = _entries(_json(cli(platform_list), platform_list))
     if any(item.get("id") == commit_package for item in platform_plugins):
