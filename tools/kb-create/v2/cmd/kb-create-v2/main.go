@@ -83,7 +83,7 @@ func Execute() int {
 	adapters := flag.String("adapters", "", "comma-separated adapter IDs or id@version pins")
 	var providers repeatedValue
 	flag.Var(&providers, "provider", "provider preference capability=adapter (repeatable/comma-separated)")
-	policy := flag.String("policy", "strict", "compatibility policy: strict, compatible, upgrade-safe")
+	policy := flag.String("policy", "strict", "compatibility policy: strict or compatible")
 	offline := flag.Bool("offline", false, "use offline artifact source")
 	secretEnv := flag.String("secret-env", "", "comma-separated requirement=ENV_VAR secret sources (never serialized)")
 	doctorInput := flag.String("doctor-input", "", "path to V2 manifest-derived doctor JSON")
@@ -274,6 +274,17 @@ func (i invocation) run(output *os.File) int {
 	if !response.OK {
 		write(output, response)
 		return 2
+	}
+	if operation == "update" {
+		active, readErr := receipt.Read(response.Plan.Request.PlatformRoot)
+		if readErr != nil {
+			write(output, failure(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", readErr))
+			return 2
+		}
+		if validationErr := resolve.ValidateUpdate(active, *response.Plan, source); validationErr != nil {
+			write(output, map[string]any{"ok": false, "error": asLauncherError(validationErr)})
+			return 2
+		}
 	}
 	if operation == "apply" || operation == "update" {
 		request, changed, requestErr := requestWithGeneratedSecrets(response.Plan.Request, response.Plan.Artifacts)

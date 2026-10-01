@@ -12,7 +12,7 @@
     "heroDocsBtn": "Documentation",
     "apiDocsBtn": "Documentation",
     "heroTitle": "State",
-    "ctaDescription": "kb-dev start brings up the State Daemon automatically. Switch the backend in config — don't touch your services.",
+    "ctaDescription": "On an installed platform, the State Daemon starts with platform services. Install KB Labs with kb-create, then choose a backend in the platform config.",
     "ctaTitle": "Starts with the platform.",
     "ctaInstallBtn": "Install",
     "modes": [

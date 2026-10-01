@@ -10,6 +10,7 @@ import {
   useConfig,
   findRepoRoot,
   handleError,
+  AdapterUnavailableError,
   type PluginContextV3,
   type CLIInput,
 } from '@kb-labs/sdk';
@@ -45,6 +46,10 @@ async function resolveContext(ctx: PluginContextV3, flags: CommitFlags) {
   const scopeCwd = resolveScopePath(cwd, effectiveScope, config.scope?.scopes);
   const rawPlatformConfig = await ctx.platform.config.getRawConfig();
   const llmConfigured = hasConfiguredLLM(rawPlatformConfig);
+
+  if (config.llm.enabled && !llmConfigured) {
+    throw new AdapterUnavailableError('llm');
+  }
 
   const llmComplete =
     llm && config.llm.enabled && llmConfigured

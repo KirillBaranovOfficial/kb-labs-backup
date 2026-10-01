@@ -84,10 +84,6 @@ export const listFlags = {
     type: 'string',
     description: 'Filter by status (running, completed, failed)',
   },
-  type: {
-    type: 'string',
-    description: 'Filter by type: "runs" (active executions), "cron" (scheduled jobs)',
-  },
 } as const;
 
 export type ListFlags = typeof listFlags;
@@ -165,7 +161,7 @@ export const workflowRunFlags = {
   },
   'trigger-type': {
     type: 'string',
-    description: 'Trigger type: manual, api, or cron',
+    description: 'Trigger type: manual',
   },
   'trigger-user': {
     type: 'string',

@@ -2,13 +2,81 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { readMarketplaceLock, writeMarketplaceLock, createEmptyLock, addToMarketplaceLock, removeFromMarketplaceLock } from '../marketplace-lock.js';
 import { DiagnosticCollector } from '../diagnostics.js';
+
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 
 describe('marketplace-lock v3', () => {
   let tmpDir: string;
   beforeEach(async () => { tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-lock-test-')); });
   afterEach(async () => { await fs.rm(tmpDir, { recursive: true, force: true }); });
+
+  // case: S-179.1
+  it('loads the committed developer workspace lock with the v3 validator', async () => {
+    const diag = new DiagnosticCollector();
+    const lock = await readMarketplaceLock(workspaceRoot, diag);
+
+    expect(lock?.schema).toBe('kb.marketplace/3');
+    expect(Object.keys(lock?.plugins ?? {}).length).toBeGreaterThan(0);
+    expect(diag.getEvents().filter(event => event.severity === 'error')).toEqual([]);
+  });
+
+  // case: S-179.4
+  it('keeps workspace plugins and adapters in their v3 lock sections', async () => {
+    const lock = await readMarketplaceLock(workspaceRoot, new DiagnosticCollector());
+    expect(Object.keys(lock?.plugins ?? [])).toEqual(expect.arrayContaining([
+      '@kb-labs/agents',
+      '@kb-labs/clickup',
+      '@kb-labs/commit',
+      '@kb-labs/devlink',
+      '@kb-labs/github',
+      '@kb-labs/host-agent',
+      '@kb-labs/impact',
+      '@kb-labs/inbox',
+      '@kb-labs/marketplace',
+      '@kb-labs/marketplace-registry',
+      '@kb-labs/mind',
+      '@kb-labs/policy',
+      '@kb-labs/qa',
+      '@kb-labs/quality',
+      '@kb-labs/release',
+      '@kb-labs/review',
+      '@kb-labs/scaffold',
+      '@kb-labs/site-tools',
+      '@kb-labs/steward',
+      '@kb-labs/workflow',
+    ]));
+    expect(Object.keys(lock?.adapters ?? [])).toEqual(expect.arrayContaining([
+      '@kb-labs/adapters-analytics-duckdb',
+      '@kb-labs/adapters-analytics-file',
+      '@kb-labs/adapters-analytics-sqlite',
+      '@kb-labs/adapters-environment-docker',
+      '@kb-labs/adapters-eventbus-cache',
+      '@kb-labs/adapters-fs',
+      '@kb-labs/adapters-kblabs-gateway',
+      '@kb-labs/adapters-log-document',
+      '@kb-labs/adapters-log-ringbuffer',
+      '@kb-labs/adapters-mongodb',
+      '@kb-labs/adapters-openai',
+      '@kb-labs/adapters-pino',
+      '@kb-labs/adapters-qdrant',
+      '@kb-labs/adapters-redis',
+      '@kb-labs/adapters-s3',
+      '@kb-labs/adapters-service-transport-http',
+      '@kb-labs/adapters-snapshot-localfs',
+      '@kb-labs/adapters-sqlite',
+      '@kb-labs/adapters-state-broker',
+      '@kb-labs/adapters-telegram',
+      '@kb-labs/adapters-vibeproxy',
+      '@kb-labs/adapters-voyage-ai',
+      '@kb-labs/adapters-workspace-agent',
+      '@kb-labs/adapters-workspace-localfs',
+      '@kb-labs/adapters-workspace-worktree',
+      '@kb-labs/data-store',
+    ]));
+  });
 
   it('writes sorted, machine independent project pins', async () => {
     const lock = createEmptyLock();

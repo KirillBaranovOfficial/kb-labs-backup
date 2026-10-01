@@ -21,9 +21,8 @@ const (
 type CompatibilityPolicy string
 
 const (
-	PolicyStrict      CompatibilityPolicy = "strict"
-	PolicyCompatible  CompatibilityPolicy = "compatible"
-	PolicyUpgradeSafe CompatibilityPolicy = "upgrade-safe"
+	PolicyStrict     CompatibilityPolicy = "strict"
+	PolicyCompatible CompatibilityPolicy = "compatible"
 )
 
 type ArtifactSource string
@@ -91,7 +90,7 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	if r.Policy == "" {
 		r.Policy = PolicyStrict
 	}
-	if r.Policy != PolicyStrict && r.Policy != PolicyCompatible && r.Policy != PolicyUpgradeSafe {
+	if r.Policy != PolicyStrict && r.Policy != PolicyCompatible {
 		return InstallRequest{}, fmt.Errorf("unsupported compatibility policy %q", r.Policy)
 	}
 	if r.Source == "" {

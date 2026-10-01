@@ -10,12 +10,14 @@
 import * as React from 'react';
 import { RequirePermission } from '@/auth/guards';
 import { authClient } from '../auth/shared-client.js';
+import { AdminInvitesPage } from './admin-invites-page.js';
 
 interface UserRecord {
   userId: string;
   email: string;
   tenantId: string;
   status: 'active' | 'disabled' | 'pending';
+  role: 'admin' | 'member';
 }
 
 interface UsersResponse { users: UserRecord[]; }
@@ -55,11 +57,24 @@ function UsersList() {
     setError(null);
     setResetMessage(null);
     try {
-      const result = await authClient.fetch<{ resetUrl: string }>(`/auth/users/${user.userId}/password-reset-link`, { method: 'POST' });
+      const result = await authClient.fetch<{ resetUrl: string; expiresAt: number }>(`/auth/users/${user.userId}/password-reset-link`, { method: 'POST' });
       await navigator.clipboard.writeText(result.resetUrl);
-      setResetMessage(`Password reset link for ${user.email} copied to clipboard.`);
+      setResetMessage(`24-hour password reset link for ${user.email} copied to clipboard.`);
     } catch {
       setError(`Could not create a password reset link for ${user.email}.`);
+    }
+  };
+
+  const handleRoleChange = async (user: UserRecord, role: UserRecord['role']) => {
+    setError(null);
+    try {
+      await authClient.fetch<{ ok: boolean }>(`/auth/users/${user.userId}/role`, {
+        method: 'POST',
+        body: JSON.stringify({ role }),
+      });
+      await loadUsers();
+    } catch {
+      setError(`Could not change ${user.email}'s role. The last active administrator must remain an admin.`);
     }
   };
 
@@ -76,6 +91,7 @@ function UsersList() {
           <thead>
             <tr>
               <th style={thStyle}>Email</th>
+              <th style={thStyle}>Role</th>
               <th style={thStyle}>Status</th>
               <th style={thStyle}>Actions</th>
             </tr>
@@ -84,6 +100,16 @@ function UsersList() {
             {users.map((user) => (
               <tr key={user.userId}>
                 <td style={tdStyle}>{user.email}</td>
+                <td style={tdStyle}>
+                  <label htmlFor={`role-${user.userId}`} style={{ position: 'absolute', clip: 'rect(0 0 0 0)' }}>
+                    Role for {user.email}
+                  </label>
+                  <select id={`role-${user.userId}`} aria-label={`Role for ${user.email}`} value={user.role}
+                    onChange={(event) => void handleRoleChange(user, event.target.value as UserRecord['role'])}>
+                    <option value="admin">Admin</option>
+                    <option value="member">Member</option>
+                  </select>
+                </td>
                 <td style={tdStyle}>{user.status}</td>
                 <td style={tdStyle}>
                   {user.status === 'active' ? (
@@ -103,6 +129,9 @@ function UsersList() {
           </tbody>
         </table>
       )}
+      <section aria-label="Invites" style={{ marginTop: '2rem' }}>
+        <AdminInvitesPage />
+      </section>
     </div>
   );
 }

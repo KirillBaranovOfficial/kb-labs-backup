@@ -10,7 +10,7 @@ export interface ApiTokenRecord {
   tenantId: string;
   name: string;
   issuedAt: number;
-  expiresAt: number;
+  expiresAt?: number;
   revokedAt?: number;
 }
 
@@ -39,7 +39,7 @@ export class ApiTokensStore {
     await this.initialised;
   }
 
-  async create(input: { userId: string; tenantId: string; name: string; ttlMs: number }): Promise<{ record: ApiTokenRecord; token: string }> {
+  async create(input: { userId: string; tenantId: string; name: string; ttlMs?: number }): Promise<{ record: ApiTokenRecord; token: string }> {
     await this.ensureSchema();
     const now = this.now();
     const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
@@ -49,7 +49,7 @@ export class ApiTokensStore {
       tenantId: input.tenantId,
       name: input.name,
       issuedAt: now,
-      expiresAt: now + input.ttlMs,
+      ...(input.ttlMs === undefined ? {} : { expiresAt: now + input.ttlMs }),
     };
     await this.docs.insertOne<ApiTokenDoc>(COLLECTION, { ...record, tokenHash: hash(token) });
     return { record, token };
@@ -59,7 +59,7 @@ export class ApiTokensStore {
     if (!token.startsWith(TOKEN_PREFIX)) {return null;}
     await this.ensureSchema();
     const [record] = await this.docs.find<ApiTokenDoc>(COLLECTION, { tokenHash: { $eq: hash(token) } }, { limit: 1 });
-    if (!record || record.revokedAt !== undefined || record.expiresAt <= this.now()) {return null;}
+    if (!record || record.revokedAt !== undefined || (record.expiresAt !== undefined && record.expiresAt <= this.now())) {return null;}
     const { tokenHash: _hash, ...publicRecord } = record;
     return publicRecord;
   }

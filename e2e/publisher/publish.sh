@@ -82,7 +82,14 @@ publish_set() {
 WORKER='
   tarball="$1"
   pkg=$(basename "$tarball")
-  OUTPUT=$(npm publish "$tarball" --registry "$REGISTRY" 2>&1) && {
+  # npm refuses prerelease versions without a dist-tag; tag them by their
+  # prerelease id (e.g. 2.1.0-canary.1 -> canary) so latest stays stable.
+  version=$(tar -xOzf "$tarball" package/package.json | python3 -c "import sys,json; print(json.load(sys.stdin)[\"version\"])")
+  tag_args=""
+  case "$version" in
+    *-*) prerelease="${version#*-}"; tag_args="--tag ${prerelease%%.*}" ;;
+  esac
+  OUTPUT=$(npm publish "$tarball" --registry "$REGISTRY" $tag_args 2>&1) && {
     echo "  ✓ $pkg"
     exit 0
   } || true

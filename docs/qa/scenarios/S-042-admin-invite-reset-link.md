@@ -7,22 +7,26 @@ priority: P1
 status: active
 release: true
 modes: [secured]
-surfaces: [studio, cli, api]
+surfaces: [cli, api]
 ---
 
 ## Goal
 
-An administrator provisions a member with a one-time invite and recovers an existing member with a one-time reset link.
+An administrator provisions a member with a one-time invite and recovers an existing member with a one-time reset link shared out of band.
 
 ## Prerequisites
 
-- [ ] Secured gateway, admin account, test tenant, and Studio Users page.
+- [ ] Secured gateway, authenticated tenant-admin account, and disposable tenant.
+- [ ] No user exists yet for the invited email.
+- [ ] Existing member account has an active session for the password-reset flow.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-042.1 | Create an invite for a new member in Studio Users | Admin flow returns an activation link with the selected member role. |
-| S-042.2 | Activate the invite, then attempt to reuse its link | First activation succeeds; reuse is rejected. |
-| S-042.3 | Run `kb auth reset-link --user-id <user-id>` as admin | Outputs a one-time reset URL and expiry. |
-| S-042.4 | Redeem the reset URL with a new password and log in | New password works; old sessions are revoked. |
+| S-042.1 | Send `POST <gateway-url>/auth/invites` with the admin session, CSRF token, and JSON `{"email":"member@example.test","role":"member"}` | HTTP 201 JSON contains `inviteId` and an `activationUrl` on the gateway host. |
+| S-042.2 | Submit the `activationUrl` token to `POST <gateway-url>/auth/activate` with JSON `{"token":"<activation-token>","password":"MemberPass123!"}` | HTTP 200 JSON is `{"ok":true}`; `GET /auth/me` with the returned session identifies `member@example.test`. |
+| S-042.3 | Submit the same activation token again to `POST <gateway-url>/auth/activate` | HTTP 422 JSON contains `error: "invalid_invite"` and `message: "Invalid or expired invite"`. |
+| S-042.4 | As admin run `kb auth reset-link --user-id <user-id> --json` | JSON contains `ok: true`, `resetUrl`, and `expiresAt`; the URL expires 24 hours after creation. |
+| S-042.5 | Send `POST <gateway-url>/auth/password/reset` with JSON `{"token":"<reset-token>","newPassword":"NewMemberPass123!"}` | HTTP 200 JSON is `{"ok":true}`; the target user's existing sessions are revoked, a login with the new password succeeds, and a login with the old password returns HTTP 401 `{"error":"invalid_credentials"}`. |
+| S-042.6 | Submit the consumed reset token to `POST <gateway-url>/auth/password/reset` again | HTTP 400 JSON contains `error: "invalid_password_reset"` and `message: "This reset link is invalid, expired, or already used"`. |

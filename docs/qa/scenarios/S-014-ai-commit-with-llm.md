@@ -1,9 +1,9 @@
 ---
 id: S-014
-title: S-014 — Generate and apply an AI commit with a real LLM
+title: Commit plugin — Generate a commit with a real LLM
 persona: solo-developer
 area: plugins
-priority: P0
+priority: P1
 status: active
 release: false
 modes: [local, secured]
@@ -12,16 +12,20 @@ surfaces: [cli]
 
 ## Goal
 
-A developer uses the commit plugin with configured gateway credentials to draft and apply a commit message from staged changes.
+A developer uses an explicitly configured real LLM provider to draft and apply a commit message for staged changes.
 
 ## Prerequisites
 
-- [ ] Git repository with staged changes and a configured LLM adapter or secured gateway.
+- [ ] The `@kb-labs/commit` plugin is installed and enabled in the project.
+- [ ] A real LLM adapter is installed, bound to the project's LLM slot, and configured with valid credentials.
+- [ ] A Git repository contains staged changes.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-014.1 | Run `kb commit commit --dry-run` | A proposed message is printed and no commit is created. |
-| S-014.2 | Confirm the output identifies the configured LLM path rather than heuristic fallback | Output makes the selected generation path observable. |
-| S-014.3 | Run `kb commit commit --yes` | A commit is created with a message describing the staged changes. |
+| S-014.1 | Run `kb commit commit --dry-run --json` | JSON output contains a generated plan with `plan.metadata.llmUsed: true`, and no Git commit is created. |
+| S-014.2 | Inspect the generation result/diagnostics | The selected real LLM provider is identified; the result does not claim heuristic generation. |
+| S-014.3 | Run `kb commit commit` | A commit is created and `git log -1 --format=%s` prints its generated subject. |
+
+A real provider and credentials are not guaranteed in the platform release contour, so this case is not a release gate.

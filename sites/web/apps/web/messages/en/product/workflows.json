@@ -31,7 +31,7 @@
         },
         {
           "label": "AI code review",
-          "desc": "On every commit or PR: diff → LLM review → inline comments → approval gate."
+          "desc": "Call this workflow manually, through the API or Studio, or from another workflow."
         },
         {
           "label": "QA regression tracker",
@@ -44,7 +44,7 @@
       ],
       "heroTitleGradient": "Releases, reviews, agents.",
       "ctaDescription": "Install KB Labs and run your first workflow in under an hour. No cloud dependency, no sign-up.",
-      "triggersTitle": "Start from anything.",
+      "triggersTitle": "Start a workflow.",
       "mentalModelEyebrow": "Mental model",
       "useCases": [
         {
@@ -78,12 +78,12 @@
       "heroEyebrow": "Workflow Engine",
       "ctaTitle": "Replace your script chaos with workflows.",
       "mentalModelPara1": "A workflow is a YAML file that lives in your repo, gets reviewed in PRs, and ships in the same release as the rest of your code. No GUI-only logic, no hidden state.",
-      "triggersSubtitle": "Workflows trigger on schedules, webhooks, API calls, or manually from the CLI.",
+      "triggersSubtitle": "Run workflows manually from CLI or Studio, through the API, from another workflow, or on a cron schedule. Webhook triggers are planned.",
       "heroTitleSecond": "One engine.",
       "triggersEyebrow": "Triggers",
       "primitivesTitle": "Three building blocks.",
       "mentalModelTitle": "Workflows are code. Not config.",
-      "triggerCustom": "+ custom trigger",
+      "triggerCustom": "+ workflow call",
       "useCasesTitle": "What teams use workflows for.",
       "docsBtn": "Read the docs",
       "primitives": [
@@ -122,20 +122,16 @@
           "description": "One-click run from the web UI with real-time log stream."
         },
         {
-          "label": "Schedule",
-          "description": "Cron-based recurring runs — QA scans, nightly builds."
+          "label": "Cron schedule",
+          "description": "Run workflows on a recurring schedule."
         },
         {
           "label": "API call",
           "description": "POST to the workflow endpoint from any system."
         },
         {
-          "label": "Git push",
-          "description": "Run on every commit to a branch or tag."
-        },
-        {
-          "label": "Pull request",
-          "description": "Trigger review and QA gates on PR open or update."
+          "label": "Workflow call",
+          "description": "Call a workflow from another workflow."
         }
       ]
     }

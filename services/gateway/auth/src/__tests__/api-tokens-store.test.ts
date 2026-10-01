@@ -31,4 +31,13 @@ describe('ApiTokensStore', () => {
     expect(await store.revokeByUser(created.record.tokenId, 'u1')).toBe(true);
     expect(await store.findActive(created.token)).toBeNull();
   });
+
+  it('keeps a token active without expiry until the owner revokes it', async () => {
+    const created = await store.create({ userId: 'u1', tenantId: 't1', name: 'agent' });
+    expect(created.record).not.toHaveProperty('expiresAt');
+    now = Number.MAX_SAFE_INTEGER;
+    expect(await store.findActive(created.token)).toMatchObject(created.record);
+    expect(await store.revokeByUser(created.record.tokenId, 'u1')).toBe(true);
+    expect(await store.findActive(created.token)).toBeNull();
+  });
 });

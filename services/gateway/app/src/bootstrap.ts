@@ -311,6 +311,7 @@ export async function startGateway(
     userAuth = {
       userAuthService,
       users,
+      memberships,
       sessions,
       apiTokens,
       invites,

@@ -20,6 +20,21 @@ describe('ApiTokensPage', () => {
     await waitFor(() => expect(screen.getByText('kbl_pat_once')).toBeTruthy());
     expect(screen.getByText(/nightly CI · expires/)).toBeTruthy();
     expect(fetch).toHaveBeenCalledWith('/auth/tokens', expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(fetch.mock.calls[1]?.[1]?.body as string)).toEqual({ name: 'nightly CI' });
+  });
+
+  it('creates a token with the selected optional expiry', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ tokens: [] })
+      .mockResolvedValueOnce({ token: 'kbl_pat_expiring' })
+      .mockResolvedValueOnce({ tokens: [] });
+    _setAuthClientForTesting({ fetch } as unknown as AuthHttpClient);
+    render(<ApiTokensPage />);
+    fireEvent.change(screen.getByLabelText('Token name'), { target: { value: 'deploy bot' } });
+    fireEvent.change(screen.getByLabelText('Expiry'), { target: { value: '90' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create token' }));
+    await waitFor(() => expect(screen.getByText('kbl_pat_expiring')).toBeTruthy());
+    expect(JSON.parse(fetch.mock.calls[1]?.[1]?.body as string)).toEqual({ name: 'deploy bot', expiresInDays: 90 });
   });
 
   it('revokes a token from the owner list', async () => {

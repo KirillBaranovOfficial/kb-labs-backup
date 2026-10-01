@@ -39,7 +39,7 @@ describe('commit:reset', () => {
 
     const result = await resetCommand.execute(ctx as never, {} as ResetInput);
 
-    expect(result.exitCode).toBe(0);
+    expect(result.ok).toBe(true);
     expect(clearPlan).toHaveBeenCalledOnce();
     expect(captured.success.length).toBeGreaterThan(0);
   });
@@ -51,7 +51,7 @@ describe('commit:reset', () => {
 
     const result = await resetCommand.execute(ctx as never, {} as ResetInput);
 
-    expect(result.exitCode).toBe(0);
+    expect(result.ok).toBe(true);
     expect(clearPlan).not.toHaveBeenCalled();
     expect(captured.infos.length).toBeGreaterThan(0);
   });
@@ -62,7 +62,7 @@ describe('commit:reset', () => {
 
     const result = await resetCommand.execute(ctx as never, mockCLIInput<ResetFlags>({ flags: { 'dry-run': true } }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result.ok).toBe(true);
     expect(clearPlan).not.toHaveBeenCalled();
     expect(captured.infos.length).toBeGreaterThan(0);
     expect(captured.infos[0]?.message).toContain('Dry-run');

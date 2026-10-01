@@ -20,7 +20,7 @@ export function DashboardPage() {
             variant="error"
             showIcon
             message="Gateway health is unavailable"
-            description={health.error instanceof Error ? health.error.message : ready.error instanceof Error ? ready.error.message : 'Check the local gateway.'}
+            description="Source: gateway health/readiness. Run kb-create status --platform-root <platform-root> or kb-create doctor --platform-root <platform-root>."
           />
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

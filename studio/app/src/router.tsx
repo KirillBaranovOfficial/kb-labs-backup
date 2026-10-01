@@ -146,6 +146,10 @@ function LayoutContent() {
       }
     }
 
+    if (auth.permissions.has('users:read')) {
+      items.push({ key: 'admin-users', label: 'Users', path: '/admin/users' });
+    }
+
     // Platform settings are administrator-only.
     if (auth.permissions.has('platform-settings:read')) items.push(settingsNavigation);
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/semrange"
 )
 
 const Schema = "kb.create.release-index/v2"
@@ -111,6 +112,9 @@ func Validate(source Catalog) error {
 		if err := platform.Host.Validate(); err != nil {
 			return fmt.Errorf("platform bundle %q declares an invalid host: %w", key, err)
 		}
+		if err := semrange.Validate(platform.SDKRange); err != nil {
+			return fmt.Errorf("platform %s SDK range is invalid: %w", key, err)
+		}
 		for _, binary := range platform.Binaries {
 			if binary.ID == "" || binary.OS == "" || binary.Arch == "" || binary.URL == "" || binary.SHA256 == "" || binary.Filename == "" {
 				return fmt.Errorf("platform bundle %q has incomplete binary artifact", key)
@@ -126,10 +130,16 @@ func Validate(source Catalog) error {
 		if component.ID == "" || component.Version == "" || component.Package == "" || component.SHA256 == "" || component.Tarball == "" {
 			return fmt.Errorf("component must declare ID, version, package, tarball and sha256")
 		}
+		if err := validateComponentRanges(component); err != nil {
+			return err
+		}
 	}
 	for _, adapter := range source.Adapters {
 		if adapter.ID == "" || adapter.Version == "" || adapter.Package == "" || adapter.SHA256 == "" || adapter.Tarball == "" {
 			return fmt.Errorf("adapter must declare ID, version, package, tarball and sha256")
+		}
+		if err := validateComponentRanges(adapter.Component); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -139,7 +149,7 @@ func Validate(source Catalog) error {
 // matrix. Package ranges remain useful for plugin/provider declarations, but
 // platform, SDK and binary selection is accepted only when the candidate
 // labels are explicitly related in the sealed index.
-func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, os, arch string) error {
+func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, os, arch string, policy contracts.CompatibilityPolicy) error {
 	if source.Compatibility == nil {
 		return fmt.Errorf("release index has no compatibility matrix")
 	}
@@ -150,7 +160,7 @@ func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, o
 	}
 	if sdkVersion != "" {
 		sdkID := "sdk@" + sdkVersion
-		if _, ok := compatibilityLabel(source.Compatibility.Labels, sdkID, "sdk"); !ok || !requiresLabel(platform, sdkID) {
+		if _, ok := compatibilityLabel(source.Compatibility.Labels, sdkID, "sdk"); !ok || !requiresCompatibleLabel(platform, sdkID, sdkVersion, policy) {
 			return fmt.Errorf("compatibility matrix does not relate %s to %s", platformID, sdkID)
 		}
 	}
@@ -160,6 +170,30 @@ func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, o
 		if !ok || !requiresLabel(binary, platformID) || (sdkVersion != "" && !requiresLabel(binary, "sdk@"+sdkVersion)) {
 			return fmt.Errorf("compatibility matrix does not relate binary %s to the selected platform/SDK", binaryID)
 		}
+	}
+	return nil
+}
+
+func requiresCompatibleLabel(label CompatibilityLabel, wanted, version string, policy contracts.CompatibilityPolicy) bool {
+	for _, relation := range label.Requires {
+		if relation.Label == wanted {
+			return true
+		}
+		if policy == contracts.PolicyCompatible && relation.Constraint != "" {
+			if ok, err := semrange.Satisfies(version, relation.Constraint); err == nil && ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validateComponentRanges(component Component) error {
+	if err := semrange.Validate(component.PlatformRange); err != nil {
+		return fmt.Errorf("component %s platform range is invalid: %w", component.ID, err)
+	}
+	if err := semrange.Validate(component.SDKRange); err != nil {
+		return fmt.Errorf("component %s SDK range is invalid: %w", component.ID, err)
 	}
 	return nil
 }
@@ -203,6 +237,11 @@ func validateCompatibility(matrix CompatibilityMatrix, source Catalog) error {
 		}
 	}
 	for _, label := range matrix.Labels {
+		for _, relation := range label.Requires {
+			if err := semrange.Validate(relation.Constraint); err != nil {
+				return fmt.Errorf("compatibility relation %s -> %s has invalid range: %w", label.ID, relation.Label, err)
+			}
+		}
 		for _, relation := range label.Requires {
 			if !known[relation.Label] {
 				return fmt.Errorf("compatibility label %q references absent label %q", label.ID, relation.Label)

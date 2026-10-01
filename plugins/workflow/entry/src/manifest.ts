@@ -72,6 +72,7 @@ export const manifest = {
       { path: 'workflow runs', describe: 'Workflow run management (list, view, watch, rerun)' },
       { path: 'workflow job', describe: 'Raw job execution' },
       { path: 'workflow defs', describe: 'Workflow definition discovery (list, view)' },
+      { path: 'workflow crons', describe: 'Workflow schedule management' },
     ],
     commands: [
       {
@@ -155,20 +156,46 @@ export const manifest = {
         ],
       },
       {
+        path: 'workflow crons list',
+        category: 'Workflows',
+        operationType: 'read' as const,
+        describe: 'List user and plugin workflow crons.',
+        handler: './commands/crons-list.js#default',
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow crons list', 'kb workflow crons list --json'],
+      },
+      {
+        path: 'workflow crons enable',
+        category: 'Workflows',
+        operationType: 'mutate' as const,
+        describe: 'Enable a user workflow cron.',
+        handler: './commands/crons-set-enabled.js#enableCommand',
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow crons enable nightly-release'],
+      },
+      {
+        path: 'workflow crons disable',
+        category: 'Workflows',
+        operationType: 'mutate' as const,
+        describe: 'Disable a user workflow cron.',
+        handler: './commands/crons-set-enabled.js#disableCommand',
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow crons disable nightly-release'],
+      },
+      {
         path: 'workflow list',
         category: 'Jobs',
         operationType: 'read' as const,
         describe: '(Deprecated) List active executions. Use: kb workflow runs list',
         longDescription:
-          'Lists all currently active workflow executions or cron jobs. Can be filtered by status (running, queued, ' +
-          'completed, failed, cancelled) or type (runs, cron). ' +
+          'Lists all currently active workflow executions. Can be filtered by status (running, queued, ' +
+          'completed, failed, cancelled). ' +
           'DEPRECATED: use "kb workflow runs list" for run listing.',
         handler: './commands/list.js#default',
         flags: defineCommandFlags(listFlags),
         examples: [
           'kb workflow list',
           'kb workflow list --status=running',
-          'kb workflow list --type=cron',
           'kb workflow list --json',
         ],
       },

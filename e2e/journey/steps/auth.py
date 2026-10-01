@@ -8,6 +8,7 @@ Call ``run_local_auth_steps(base_url)`` after a local install.
 from __future__ import annotations
 
 import json
+import subprocess
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -45,6 +46,72 @@ def run_local_auth_steps(base_url: str) -> None:
     user = profile.get("user", profile)
     if user.get("userId") != "local-admin" and user.get("handle") != "local-admin":
         raise AssertionError(f"local /auth/me did not identify local-admin: {profile!r}")
+
+
+def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bool,
+                        email: str | None = None, base_url: str | None = None,
+                        password: str | None = None) -> None:
+    """Prove the CLI status surface in local and secured mode."""
+    def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([cli_path, *args], env=env, text=True, capture_output=True, check=False)
+
+    if authenticated:
+        if not base_url or not email or not password:
+            raise ValueError("secured CLI auth status requires gateway URL, email, and password")
+        login = invoke(["auth", "login", "--gateway-url", base_url, "--email", email, "--password", password])
+        if login.returncode != 0:
+            raise AssertionError(f"kb auth login failed: {(login.stdout + login.stderr)[-400:]}")
+    status = invoke(["auth", "status", "--json"])
+    try:
+        status_payload = json.loads(status.stdout)
+    except json.JSONDecodeError as error:
+        raise AssertionError(f"kb auth status --json did not return JSON: {status.stdout[-400:]}") from error
+    session = status_payload.get("session", {})
+    if status.returncode != 0 or status_payload.get("ok") is not True or session.get("authenticated") is not authenticated:
+        raise AssertionError(f"kb auth status returned unexpected JSON: {status_payload!r}")
+    if email and session.get("email") != email:
+        raise AssertionError(f"kb auth status returned the wrong email: {session!r}")
+    if authenticated:
+        tokens = invoke(["auth", "tokens", "--json"])
+        try:
+            tokens_payload = json.loads(tokens.stdout)
+        except json.JSONDecodeError as error:
+            raise AssertionError(f"kb auth tokens --json did not return JSON: {tokens.stdout[-400:]}") from error
+        if tokens.returncode != 0 or tokens_payload.get("ok") is not True:
+            raise AssertionError(f"kb auth tokens returned unexpected JSON: {tokens_payload!r}")
+
+
+def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
+                                 old_password: str, new_password: str, env: dict[str, str],
+                                 invoke: Callable[..., tuple[subprocess.CompletedProcess[str], float]]) -> None:
+    """Exercise stopped-host recovery, recovered login, and the running-host guard."""
+    login = _request("http://127.0.0.1:4000", "/auth/login/cli", method="POST",
+                     body={"email": email, "password": old_password})
+    if not login.get("accessToken"):
+        raise AssertionError("bootstrap admin login did not return an access token")
+    initial_profile = _request("http://127.0.0.1:4000", "/auth/me", token=login["accessToken"])
+    tenant = initial_profile.get("tenantId")
+    if not tenant:
+        raise AssertionError("bootstrap administrator profile did not include tenantId")
+    stopped, _ = invoke([launcher, "stop", "--platform-root", platform_root], env=env)
+    if stopped.returncode != 0:
+        raise AssertionError(f"kb-create stop failed: {(stopped.stdout + stopped.stderr)[-400:]}")
+    recover_args = [launcher, "doctor", "--platform-root", platform_root, "--recover", "--email", email,
+                    "--tenant", tenant, "--password-stdin", "--yes"]
+    recovered, _ = invoke(recover_args, env=env, input_text=new_password + "\n")
+    if recovered.returncode != 0 or new_password in (recovered.stdout + recovered.stderr):
+        raise AssertionError("kb-create doctor --recover failed or echoed the supplied password")
+    started, _ = invoke([launcher, "start", "--platform-root", platform_root], env=env)
+    if started.returncode != 0:
+        raise AssertionError(f"kb-create start failed: {(started.stdout + started.stderr)[-400:]}")
+    access, _ = _login("http://127.0.0.1:4000", email, new_password)
+    profile = _request("http://127.0.0.1:4000", "/auth/me", token=access)
+    if profile.get("email") != email or profile.get("tenantId") != tenant:
+        raise AssertionError(f"recovered bootstrap credentials returned the wrong profile: {profile!r}")
+    running_recovery, _ = invoke(recover_args, env=env, input_text=new_password + "\n")
+    output = (running_recovery.stdout + running_recovery.stderr).lower()
+    if running_recovery.returncode == 0 or "stopped" not in output or "kb-create stop" not in output or "kb-create start" not in output:
+        raise AssertionError("running-host recovery did not explain that the host must be stopped and restarted")
 
 
 def run_secured_auth_steps(base_url: str, admin_email: str, admin_password: str,
@@ -87,8 +154,10 @@ def run_secured_auth_steps(base_url: str, admin_email: str, admin_password: str,
     _login(base_url, member_email, "JourneyReplacement123!")
 
     restarted_url = restart_host()
-    _request(restarted_url, "/auth/login/cli", method="POST",
-             body={"email": admin_email, "password": admin_password})
+    restarted_admin_access, _ = _login(restarted_url, admin_email, admin_password)
+    restarted_admin = _request(restarted_url, "/auth/me", token=restarted_admin_access)
+    if restarted_admin.get("email") != admin_email:
+        raise AssertionError(f"fresh admin login after restart returned the wrong identity: {restarted_admin!r}")
     _request(restarted_url, "/auth/login/cli", method="POST",
              body={"email": member_email, "password": "JourneyReplacement123!"})
     _request(restarted_url, "/auth/me", token=admin_access, expected=401)

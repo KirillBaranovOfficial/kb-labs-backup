@@ -5,7 +5,7 @@ vi.mock('@kb-labs/sdk', () => ({
   useEnv: (name: string) => process.env[name],
 }));
 
-import { getWorkflowDaemonUrl } from '../http-client.js';
+import { getWorkflowDaemonUrl, WorkflowDaemonClient } from '../http-client.js';
 
 describe('workflow project gateway address', () => {
   afterEach(() => {
@@ -28,5 +28,22 @@ describe('workflow project gateway address', () => {
     expect(getWorkflowDaemonUrl()).toBe(
       `http://127.0.0.1:4000/api/v1/projects/${deriveProjectId(process.cwd())}/workflow`,
     );
+  });
+
+  it('lists cron schedules through the daemon plural route', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      data: { crons: [{ id: 'user:journey-cron', schedule: '* * * * *', enabled: true }] },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    try {
+      const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
+      await expect(client.getCronJobs()).resolves.toMatchObject({
+        crons: [{ id: 'user:journey-cron', schedule: '* * * * *', enabled: true }],
+      });
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4312/workflow/api/v1/crons', expect.any(Object));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

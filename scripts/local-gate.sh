@@ -197,7 +197,10 @@ if [[ "${INSTALL_FAILED:-0}" == 1 ]]; then
 else
 stage "${STAGE_NAMES[1]}" env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run build --affected || exit 1
 stage "${STAGE_NAMES[2]}" pnpm kb qa cases validate || exit 1
-stage "${STAGE_NAMES[3]}" env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run lint type-check test --affected || exit 1
+# The release plugin (Commit) suites always run: a change elsewhere must not
+# leave the only release-contour plugin untested (they were red unnoticed).
+RELEASE_PLUGIN_PACKAGES='@kb-labs/commit-entry,@kb-labs/commit-core'
+stage "${STAGE_NAMES[3]}" bash -c 'env KB_DEVKIT_BASE_REF=local/main...HEAD kb-devkit run lint type-check test --affected && kb-devkit run test --packages "$1"' _ "$RELEASE_PLUGIN_PACKAGES" || exit 1
 TEMP_HOME="$(mktemp -d)"
 go_index=0
 while IFS= read -r package; do stage "${STAGE_NAMES[$((GO_STAGE_START + go_index))]}" bash -c 'cd tools/kb-create && env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET HOME="$1" go test "$2"' _ "$TEMP_HOME" "$package" || exit 1; go_index=$((go_index + 1)); done <<< "$go_packages"

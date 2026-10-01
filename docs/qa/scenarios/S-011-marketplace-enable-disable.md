@@ -1,50 +1,31 @@
 ---
 id: S-011
-title: Marketplace — Enable / disable plugin
+title: Marketplace — Enable and disable an installed plugin
 persona: solo-developer
 area: marketplace
 priority: P1
 status: active
-release: false
+release: true
 modes: [local, secured]
 surfaces: [cli]
 ---
 
 ## Goal
-Developer can temporarily disable a plugin without uninstalling it, and re-enable it later.
+
+A developer disables an installed plugin for the current project without uninstalling it, then enables it again.
 
 ## Prerequisites
-- [ ] At least one plugin installed (e.g. from S-010)
-- [ ] Services running
 
----
+- [ ] The `@kb-labs/commit` plugin is installed in the current project.
+- [ ] Run commands from that project root.
 
 ## Steps
 
-### Phase 1 — Disable
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-011.1 | `kb marketplace plugins disable <name>` | Plugin marked disabled | | ⬜ |
-| S-011.2 | `kb --help` after disable | Plugin commands no longer visible | | ⬜ |
-| S-011.3 | `cat .kb/marketplace.lock` | Plugin entry has `"enabled": false` | | ⬜ |
-
-### Phase 2 — Re-enable
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-011.4 | `kb marketplace plugins enable <name>` | Plugin re-enabled | | ⬜ |
-| S-011.5 | `kb --help` | Plugin commands back | | ⬜ |
-
-### Phase 3 — Edge cases
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-011.6 | Disable a plugin that has running commands | Graceful — completes current, then disables | | ⬜ |
-| S-011.7 | Disable non-existent plugin | Clear error: "plugin not found" | | ⬜ |
-
----
-
-## Result
-## Bugs
-## Notes
+| # | Action | Expected |
+|---|---|---|
+| S-011.1 | Run `kb marketplace plugins disable @kb-labs/commit` | CLI reports `Disabled @kb-labs/commit (project)`. The package remains installed. |
+| S-011.2 | Run `kb marketplace plugins list` | The output shows `@kb-labs/commit` in the disabled count and marks its row `⏸`. |
+| S-011.3 | Run `kb commit --help` | Commit plugin commands are not available while the package is disabled. |
+| S-011.4 | Run `kb marketplace plugins enable @kb-labs/commit` | CLI reports `Enabled @kb-labs/commit (project)`. |
+| S-011.5 | Run `kb marketplace plugins list` and `kb commit --help` | The package is shown as enabled and its commit commands are available. |
+| S-011.6 | Run `kb marketplace plugins disable @kb-labs/not-installed` | Command reports the package cannot be found and leaves the marketplace lock unchanged. |

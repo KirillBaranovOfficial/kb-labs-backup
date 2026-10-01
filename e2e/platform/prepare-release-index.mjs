@@ -9,6 +9,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
+import { stablePlatformVersion } from './release-index-version.mjs';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -110,7 +111,7 @@ const result = spawnSync(process.execPath, [
   // how the V2 resolver binds a capability (installed-but-unrequired
   // adapters are deliberately left unbound); .kb/overlays cannot rebind
   // platform adapters.
-  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache',
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache,analytics',
   '--platform-adapter-config', adapterConfig,
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
@@ -124,13 +125,15 @@ if (result.status !== 0) process.exit(result.status ?? 1);
 // The update journey needs a second sealed release. Give core-runtime and the
 // SDK a journey-only patch package version while retaining their code, so the
 // stable channel and package verification resolve one coherent N+1 release.
-const baseVersion = JSON.parse(readFileSync(output, 'utf8')).profiles?.default?.platformVersion;
+const baseVersion = stablePlatformVersion(JSON.parse(readFileSync(output, 'utf8')));
 const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(baseVersion ?? '');
 if (!match) throw new Error(`platform release version is not a stable semantic version: ${baseVersion}`);
 const updateVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
 const updateOutput = join(resolve(output, '..'), 'release-index-update.json');
 const updatePackagesDir = join(resolve(output, '..'), 'update-packages');
-prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion);
+// Derive from the sealed base stage (exactly the wanted packages, one version
+// each); the registry publisher reads packagesDir.
+prepareJourneyUpdatePackages(stage, updatePackagesDir, updateVersion, { publishDir: packagesDir });
 const update = spawnSync(process.execPath, [
   prepareScript,
   '--flow', 'platform',
@@ -138,7 +141,7 @@ const update = spawnSync(process.execPath, [
   '--artifacts-dir', updatePackagesDir,
   '--binary-manifest', binaryManifest,
   '--platform-version', updateVersion,
-  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache',
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache,analytics',
   '--platform-adapter-config', adapterConfig,
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
@@ -148,6 +151,31 @@ const update = spawnSync(process.execPath, [
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (update.status !== 0) process.exit(update.status ?? 1);
+
+// Re-seal the same runtime and SDK tarballs under a canary prerelease version.
+// This is an immutable channel entry with a visible version marker, not a
+// rewrite of the installed platform or a resolver shortcut.
+const canaryVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 2}-canary.1`;
+const canaryPackagesDir = join(resolve(output, '..'), 'canary-packages');
+prepareJourneyUpdatePackages(stage, canaryPackagesDir, canaryVersion, { publishDir: packagesDir });
+const canaryOutput = join(resolve(output, '..'), 'release-index-canary.json');
+const canary = spawnSync(process.execPath, [
+  prepareScript,
+  '--flow', 'platform',
+  '--channel', 'canary',
+  '--artifacts-dir', canaryPackagesDir,
+  '--binary-manifest', binaryManifest,
+  '--platform-version', canaryVersion,
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache,analytics',
+  '--platform-adapter-config', adapterConfig,
+  '--platform-adapter-options', adapterOptions,
+  '--platform-member-packages', platformMembers,
+  '--adapter-overrides', adapterOverrides,
+  '--registry', 'http://verdaccio:4873',
+  '--output', canaryOutput,
+  '--sealer-bin', sealer,
+], { stdio: 'inherit' });
+if (canary.status !== 0) process.exit(canary.status ?? 1);
 
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');

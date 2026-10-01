@@ -18,50 +18,10 @@ export default defineCommand<unknown, ListInput, unknown>({
       const flags = input.flags ?? input;
       const outputJson = flags.json ?? false;
       const statusFilter = flags.status;
-      const typeFilter = flags.type;
-
-      if (typeFilter !== 'cron') {
-        ctx.ui?.warn?.('workflow list is deprecated; use: kb workflow runs list');
-      }
+      ctx.ui?.warn?.('workflow list is deprecated; use: kb workflow runs list');
 
       try {
         const client = new WorkflowDaemonClient();
-
-        // Handle --type cron filter
-        if (typeFilter === 'cron') {
-          const result = await client.getCronJobs();
-          const cronJobs = result.crons ?? [];
-
-          if (outputJson) {
-            ctx.ui?.json?.({ ok: true, data: result });
-          } else {
-            if (cronJobs.length === 0) {
-              ctx.ui?.warn?.('No cron jobs found');
-              ctx.ui?.info?.('');
-              ctx.ui?.info?.('To add cron jobs:');
-              ctx.ui?.info?.('  1. Plugin manifests: Add "cron" section to manifest.ts');
-              ctx.ui?.info?.('  2. User YAML: Create .kb/jobs/*.yml files');
-            } else {
-                ctx.ui?.table?.(
-                cronJobs.map(job => ({
-                  id: job.id,
-                  schedule: `${job.schedule} (${job.timezone || 'UTC'})`,
-                  enabled: job.enabled ? 'yes' : 'no',
-                  type: job.jobType || 'unknown',
-                })),
-                [
-                  { header: 'ID', key: 'id' },
-                  { header: 'Schedule', key: 'schedule' },
-                  { header: 'Enabled', key: 'enabled' },
-                  { header: 'Type', key: 'type' },
-                ],
-              );
-              ctx.ui?.success?.(`${cronJobs.length} cron job${cronJobs.length === 1 ? '' : 's'}`);
-            }
-          }
-
-          return { ok: true };
-        }
 
         // Default: list active executions (runs)
         let executions = await client.getExecutions();

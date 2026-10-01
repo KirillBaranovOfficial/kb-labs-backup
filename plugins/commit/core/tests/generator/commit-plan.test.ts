@@ -37,19 +37,18 @@ describe('generateCommitPlan - LLM gating', () => {
     await rm(repoDir, { recursive: true, force: true });
   });
 
-  it('never calls the gateway LLM when llmComplete is undefined (LLM disabled)', async () => {
+  it('requires a configured LLM for plan generation when llmComplete is undefined', async () => {
     const llm = mockLLM();
     const { cleanup } = createTestContext({ platform: { llm } });
 
     try {
-      const plan = await generateCommitPlan({
+      await expect(generateCommitPlan({
         cwd: repoDir,
         llmComplete: undefined, // exactly what resolveContext() passes when config.llm.enabled is false
-      });
+      })).rejects.toMatchObject({ slot: 'llm', reason: 'not-configured' });
 
       expect(llm.complete).not.toHaveBeenCalled();
       expect(llm.chatWithTools).not.toHaveBeenCalled();
-      expect(plan.commits.length).toBeGreaterThan(0);
     } finally {
       cleanup();
     }

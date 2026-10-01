@@ -12,8 +12,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
-from service_runner import checks, declared_capabilities, discover_workflow, mcp_probe
+from service_runner import checks, declared_capabilities, discover_workflow, expect_json, mcp_diagnostics, mcp_initialize, mcp_probe
 from service_steps import Journey, record_runner_failure
+from steps.auth import run_secured_auth_steps
 
 
 class FakeGitHub:
@@ -90,11 +91,65 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertIn("simulated run crash", result["steps"][0]["message"])
 
     def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
-        event = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"diagnostics","inputSchema":{"type":"object"}}]}}\n\n'
+        import json
+        tools = [{"name": name, "inputSchema": {"type": "object"}}
+                 for name in ("kb-labs-commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics")]
+        event = 'event: message\ndata: ' + json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": tools}}) + '\n\n'
         with patch("service_runner.request", return_value=(200, event, {})) as request:
             failure = mcp_probe("prj_test", "token")
         self.assertIsNone(failure)
         self.assertEqual(request.call_args.kwargs["accept"], "application/json, text/event-stream")
+
+    def test_mcp_initialize_checks_protocol_response(self):
+        response = {"result": {"protocolVersion": "2025-03-26"}}
+        with patch("service_runner.request", return_value=(200, response, {})) as request:
+            self.assertIsNone(mcp_initialize("prj_test", "token"))
+        self.assertEqual(request.call_args.kwargs["payload"]["method"], "initialize")
+        with patch("service_runner.request", return_value=(200, {"result": {}}, {})):
+            self.assertIn("no result", mcp_initialize("prj_test", "token"))
+
+    def test_mcp_diagnostics_checks_clean_project_result(self):
+        result = {"result": {"isError": False, "content": [{"text": "Project loaded cleanly"}]}}
+        with patch("service_runner.request", return_value=(200, result, {})) as request:
+            self.assertIsNone(mcp_diagnostics("prj_test", "token"))
+        self.assertEqual(request.call_args.kwargs["payload"]["params"]["name"], "kb-labs__mcp_diagnostics")
+        with patch("service_runner.request", return_value=(200, {"result": {"isError": True, "content": []}}, {})):
+            self.assertIn("did not report", mcp_diagnostics("prj_test", "token"))
+
+    def test_health_claim_requires_json_object(self):
+        with patch("service_runner.request", return_value=(200, {"ready": True}, {})):
+            self.assertIsNone(expect_json("/ready", "gateway readiness"))
+        with patch("service_runner.request", return_value=(200, "ready", {})):
+            self.assertIn("without a JSON object", expect_json("/ready", "gateway readiness"))
+
+    def test_secured_auth_journey_rejects_wrong_identity_after_restart(self):
+        def fake_request(_base, path, *, method="GET", token=None, body=None, expected=200):
+            if path == "/auth/permissions":
+                return {"permissions": ["users:read"]}
+            if path == "/auth/users" and expected == 200:
+                return {"users": [{"email": "member@example.test", "userId": "member-1"}]}
+            if path == "/auth/invites":
+                return {"activationUrl": "http://localhost/activate/invite-token"}
+            if path.endswith("password-reset-link"):
+                return {"resetUrl": "http://localhost/reset-password/reset-token"}
+            if path == "/auth/me" and token == "admin-access":
+                return {"email": "admin@example.test"}
+            if path == "/auth/me" and token == "restarted-admin-token":
+                return {"email": "wrong@example.test"}
+            return {}
+
+        logins = iter([
+            ("admin-access", "admin-refresh"),
+            ("member-access", "member-refresh"),
+            ("member-replacement-access", "member-replacement-refresh"),
+            ("restarted-admin-token", "restarted-admin-refresh"),
+            ("restarted-member-token", "restarted-member-refresh"),
+        ])
+        with patch("steps.auth._request", side_effect=fake_request), \
+             patch("steps.auth._login", side_effect=lambda *_args: next(logins)):
+            with self.assertRaisesRegex(AssertionError, "fresh admin login after restart returned the wrong identity"):
+                run_secured_auth_steps("http://gateway.test", "admin@example.test", "secret",
+                                       "member@example.test", lambda: "http://gateway.test/restarted")
 
     def test_dockerfile_copies_modules_imported_by_journey_scripts_together(self):
         root = Path(__file__).resolve().parents[2]

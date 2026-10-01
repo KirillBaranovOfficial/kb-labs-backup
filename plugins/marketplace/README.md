@@ -4,7 +4,7 @@ Marketplace manages plugin and adapter packages for an installed KB Labs platfor
 
 ## Project plugins
 
-Run from the project root. Schema v3 of `.kb/marketplace.lock` records each plugin's exact version, tarball integrity, source kind, and enabled state. It contains no machine-specific path or install timestamp; runtime resolution uses the machine's shared extension store. Install does not update project `package.json`, the package-manager lockfile, or `node_modules`. Run `kb marketplace sync` to regenerate a v2 lock.
+Run from the project root. Schema v3 of `.kb/marketplace.lock` records each plugin's exact version, tarball integrity, source kind, and enabled state. It contains no machine-specific path or install timestamp; runtime resolution uses the machine's shared extension store. Install does not update project `package.json`, the package-manager lockfile, or `node_modules`. Run `kb marketplace sync` to regenerate the lock in schema v3.
 
 ```bash
 kb marketplace install @kb-labs/commit-entry@1.2.3
@@ -34,3 +34,5 @@ kb adapter unbind storage
 
 The bind command verifies that the platform marketplace lock records the package as an adapter before writing `platform.adapters.<slot>` in the current project's config.
 `kb adapter unbind <slot>` clears that project binding and leaves its adapter options intact. Use `--dry-run --json` to validate without writing.
+
+From the monorepo root, `kb marketplace sync --scope platform` records built workspace plugins under `plugins` and adapters under the machine-only `adapters` section of `.kb/marketplace.lock`.

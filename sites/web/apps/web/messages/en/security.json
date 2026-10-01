@@ -146,7 +146,7 @@
       {
         "name": "Open Source",
         "status": "Available",
-        "description": "MIT-licensed. Full source code available on GitHub for audit and contribution.",
+        "description": "Dual-licensed under KBPL 1.1 and MIT. Full source code is available on GitHub for audit and contribution.",
         "statusClass": "available"
       },
       {
@@ -156,9 +156,9 @@
         "statusClass": "available"
       },
       {
-        "name": "RBAC & SSO",
-        "status": "In progress",
-        "description": "Role-based access control and SSO (SAML/OIDC) planned for Enterprise tier.",
+        "name": "Roles and SSO",
+        "status": "Partial",
+        "description": "Admin/member roles and invite-managed accounts are available. Finer-grained RBAC and SSO (SAML/OIDC) are on the roadmap.",
         "statusClass": "in-progress"
       }
     ],

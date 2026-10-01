@@ -121,7 +121,7 @@ describe('toErrorEnvelope (platform errors)', () => {
       command: 'kb adapter bind llm @kb-labs/adapters-openai',
     });
     expect(envelope.correlationId).toBe('c1');
-    expect(envelope.hint).toContain('kb adapter bind llm');
+    expect(envelope.hint).toContain('kb adapter bind llm @kb-labs/adapters-openai');
     expect(envelope.actions?.[0]?.command).toBe(
       'kb adapter bind llm @kb-labs/adapters-openai',
     );

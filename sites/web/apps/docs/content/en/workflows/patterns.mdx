@@ -1,7 +1,7 @@
 ---
 title: "Patterns"
 description: "Copy-paste recipes for common workflow shapes."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-01"
 order: 9
 ---
 
@@ -139,10 +139,7 @@ Runs nightly, does cleanup, alerts only on failure.
 {
   "name": "nightly-maintenance",
   "version": "1",
-  "on": {
-    "schedule": { "cron": "0 3 * * *", "timezone": "Europe/London" },
-    "manual":   true
-  },
+  "on": { "manual": true },
   "jobs": {
     "cleanup": {
       "runsOn": "sandbox",
@@ -162,7 +159,16 @@ Runs nightly, does cleanup, alerts only on failure.
 }
 ```
 
-**Why `manual: true` too:** when the scheduled run fails, you want a "re-run now" button — not "wait until 3am tomorrow".
+Schedule this workflow from `.kb/crons/nightly-maintenance.yml`:
+
+```yaml
+schedule: "0 3 * * *"
+timezone: "Europe/London"
+workflow: nightly-maintenance
+enabled: true
+```
+
+The workflow remains manually runnable, so a failed scheduled run can be retried immediately.
 
 ## Loop: apply → review → gate
 
@@ -220,7 +226,7 @@ Fan out the same job across several repos, then aggregate.
 {
   "name": "multi-repo-audit",
   "version": "1",
-  "on": { "manual": true, "schedule": { "cron": "0 4 * * 1" } },
+  "on": { "manual": true },
   "jobs": {
     "audit-core": {
       "runsOn": "sandbox",
@@ -255,6 +261,14 @@ Fan out the same job across several repos, then aggregate.
 ```
 
 **Trade-off:** you're copy-pasting job blocks. A future matrix mechanism would let you declare this once and expand at run time, but today you write the jobs explicitly. If you're doing this a lot, generate the spec programmatically instead of hand-writing it.
+
+To run the audit every Monday at 4am, add `.kb/crons/weekly-audit.yml`:
+
+```yaml
+schedule: "0 4 * * 1"
+workflow: multi-repo-audit
+enabled: true
+```
 
 ## Webhook-driven release
 
@@ -304,7 +318,7 @@ Pull the last 7 days of lint reports and render a trend. The `merge` config reso
 {
   "name": "weekly-quality",
   "version": "1",
-  "on": { "schedule": { "cron": "0 9 * * 1" } },
+  "on": { "manual": true },
   "jobs": {
     "aggregate-lint": {
       "runsOn": "local",
@@ -326,6 +340,8 @@ Pull the last 7 days of lint reports and render a trend. The `merge` config reso
   }
 }
 ```
+
+Create `.kb/crons/weekly-quality.yml` with `schedule: "0 9 * * 1"`, `workflow: weekly-quality`, and `enabled: true` to start this aggregation weekly.
 
 ## Long-running job with progress updates
 

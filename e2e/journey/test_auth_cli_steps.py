@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).parent))
+from steps.accounts import run_cli_logout_steps
+from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_status
+
+
+class CliAuthJourneyTests(unittest.TestCase):
+    # case: S-041.5, S-041.6, S-100.1
+    def test_local_status_and_secured_login_status_tokens_commands(self):
+        calls: list[list[str]] = []
+
+        def invoke(args, *, env, text, capture_output, check):
+            calls.append(args)
+            if args[1:3] == ["auth", "status"]:
+                payload = {"ok": True, "session": {"authenticated": bool(state["email"]),
+                                                       **({"email": state["email"]} if state["email"] else {})}}
+            elif args[1:3] == ["auth", "login"]:
+                state["email"] = "member@example.test" if "member@example.test" in args else "admin@example.test"
+                payload = {"ok": True}
+            elif args[1:3] == ["auth", "tokens"]:
+                payload = {"ok": True, "tokens": []}
+            else:
+                raise AssertionError(args)
+            return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+        state = {"email": None}
+        with patch("steps.auth.subprocess.run", side_effect=invoke):
+            run_cli_auth_status("/isolated/bin/kb", {"HOME": "/isolated"}, authenticated=False)
+            state["email"] = None
+            run_cli_auth_status("/isolated/bin/kb", {"HOME": "/isolated"}, authenticated=True,
+                                email="member@example.test", password="MemberPass123!",
+                                base_url="http://gateway.test")
+
+        self.assertEqual(calls[0], ["/isolated/bin/kb", "auth", "status", "--json"])
+        self.assertIn(["/isolated/bin/kb", "auth", "login", "--gateway-url", "http://gateway.test",
+                       "--email", "member@example.test", "--password", "MemberPass123!"], calls)
+        self.assertIn(["/isolated/bin/kb", "auth", "tokens", "--json"], calls)
+
+    # case: S-100.2, S-100.3, S-100.4
+    def test_bootstrap_recovery_uses_stopped_host_command_and_checks_running_guard(self):
+        commands = []
+        doctor_calls = 0
+
+        def invoke(args, *, env, input_text=None):
+            nonlocal doctor_calls
+            commands.append((args, input_text))
+            if args[1] == "doctor":
+                doctor_calls += 1
+            if args[1] == "doctor" and doctor_calls == 2:
+                return subprocess.CompletedProcess(args, 1,
+                    'Recovery needs the host to be stopped. Run "kb-create stop", recover, then "kb-create start".', ""), 0.0
+            return subprocess.CompletedProcess(args, 0, "done", ""), 0.0
+
+        with patch("steps.auth._login", return_value=("new", "refresh")), \
+             patch("steps.auth._request", side_effect=[{"accessToken": "old"}, {"tenantId": "tenant-1"},
+                 {"email": "admin@example.test", "tenantId": "tenant-1"}]):
+            run_bootstrap_recovery_steps("/bin/kb-create", "/isolated/platform", "admin@example.test",
+                                         "OldPass123!", "NewPass123!", {"HOME": "/isolated"}, invoke)
+
+        recover = [args for args, _ in commands if "--recover" in args]
+        self.assertEqual(len(recover), 2)
+        self.assertIn("--platform-root", recover[0])
+        self.assertIn("--password-stdin", recover[0])
+        self.assertIn("--yes", recover[0])
+        self.assertIn((recover[0], "NewPass123!\n"), commands)
+
+    # case: S-102.3
+    def test_cli_logout_removes_session_and_status_reports_unauthenticated(self):
+        commands = []
+
+        def invoke(args, *, env, text, capture_output, check):
+            commands.append(args)
+            payload = {"ok": True, "message": "Logged out. Credentials removed."} if args[2] == "logout" else {
+                "ok": True, "session": {"authenticated": False}}
+            return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+        with patch("steps.accounts.subprocess.run", side_effect=invoke):
+            run_cli_logout_steps("/isolated/bin/kb", {"HOME": "/isolated"})
+        self.assertEqual(commands, [["/isolated/bin/kb", "auth", "logout", "--json"],
+                                    ["/isolated/bin/kb", "auth", "status", "--json"]])
+
+
+if __name__ == "__main__":
+    unittest.main()

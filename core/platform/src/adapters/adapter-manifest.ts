@@ -169,6 +169,12 @@ export interface AdapterManifest {
    */
   version: string;
 
+  /** Release compatibility constraints copied into the sealed platform index. */
+  compatibility?: {
+    platformRange?: string;
+    sdkRange?: string;
+  };
+
   /**
    * Adapter description (optional).
    * Brief explanation of what this adapter does.

@@ -13,7 +13,7 @@ describe('plugin executor adapter errors', () => {
     expect(handled).toBe(true);
     expect(errorOutput).toHaveBeenCalledOnce();
     expect(errorOutput.mock.calls[0]?.[0]).toBe(
-      'Service llm is not configured. Configure it with: kb config set platform.adapters.llm @kb-labs/adapters-openai',
+      'Service llm is not configured. Configure it with: kb adapter bind llm @kb-labs/adapters-openai',
     );
     expect(errorOutput.mock.calls[0]?.[0]).not.toContain(' at ');
   });

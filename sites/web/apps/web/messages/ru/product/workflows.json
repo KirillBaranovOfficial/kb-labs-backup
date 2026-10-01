@@ -31,7 +31,7 @@
         },
         {
           "label": "AI code review",
-          "desc": "На каждый коммит или PR: дифф → LLM-ревью → inline комментарии → гейт аппрува."
+          "desc": "Запускайте вручную, через API или Studio, а также из другого workflow."
         },
         {
           "label": "QA-трекер регрессий",
@@ -44,7 +44,7 @@
       ],
       "heroTitleGradient": "Релизы, ревью, агенты.",
       "ctaDescription": "Установите KB Labs и запустите первый воркфлоу меньше чем за час. Без облачных зависимостей, без регистрации.",
-      "triggersTitle": "Запускайте из чего угодно.",
+      "triggersTitle": "Запустите workflow.",
       "mentalModelEyebrow": "Ментальная модель",
       "useCases": [
         {
@@ -78,12 +78,12 @@
       "heroEyebrow": "Движок воркфлоу",
       "ctaTitle": "Замените хаос скриптов воркфлоу.",
       "mentalModelPara1": "Воркфлоу — YAML-файл, который живёт в вашем репозитории, ревьюится в PR и выходит в том же релизе, что и остальной код. Никакой GUI-only логики, никакого скрытого состояния.",
-      "triggersSubtitle": "Воркфлоу запускаются по расписанию, вебхукам, API-вызовам или вручную из CLI.",
+      "triggersSubtitle": "Запускайте workflow вручную из CLI или Studio, через API, из другого workflow или по cron-расписанию. Webhook-триггеры пока в roadmap.",
       "heroTitleSecond": "Один движок.",
       "triggersEyebrow": "Триггеры",
       "primitivesTitle": "Три строительных блока.",
       "mentalModelTitle": "Воркфлоу — это код. Не конфиг.",
-      "triggerCustom": "+ кастомный триггер",
+      "triggerCustom": "+ вызов workflow",
       "useCasesTitle": "Для чего команды используют воркфлоу.",
       "docsBtn": "Документация",
       "primitives": [
@@ -122,20 +122,16 @@
           "description": "Один клик из web-UI с потоком логов в реальном времени."
         },
         {
-          "label": "Расписание",
-          "description": "Cron-based периодические запуски — QA-сканы, ночные сборки."
+          "label": "Cron-расписание",
+          "description": "Запуск workflow по расписанию."
         },
         {
           "label": "API-вызов",
           "description": "POST на endpoint воркфлоу из любой системы."
         },
         {
-          "label": "Git push",
-          "description": "Запуск на каждый коммит в ветку или тег."
-        },
-        {
-          "label": "Pull request",
-          "description": "Триггер ревью и QA-гейтов при открытии или обновлении PR."
+          "label": "Вызов workflow",
+          "description": "Запустите один workflow из другого."
         }
       ]
     }

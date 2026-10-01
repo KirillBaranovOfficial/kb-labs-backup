@@ -506,7 +506,10 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const autoEnable = opts.autoEnable ?? false;
     const diag = new DiagnosticCollector();
     const lock = await readMarketplaceLock(scopeRoot, diag) ?? createEmptyLock();
-    const existingIds = new Set(Object.keys(lock.plugins));
+    const existingIds = new Set([
+      ...Object.keys(lock.plugins),
+      ...Object.keys(lock.adapters ?? {}),
+    ]);
 
     const added: SyncResult['added'] = [];
     const skipped: SyncResult['skipped'] = [];
@@ -527,7 +530,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
     await writeMarketplaceLock(scopeRoot, lock);
 
-    return { added, skipped, total: Object.keys(lock.plugins).length };
+    return { added, skipped, total: Object.keys(lock.plugins).length + Object.keys(lock.adapters ?? {}).length };
   }
 
   private async _syncPackage(
@@ -586,14 +589,16 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       version: pkgVersion,
       integrity,
       resolvedPath: relativeToRoot(scopeRoot, pkgDir),
-      source: 'local',
+      source: primaryKind === 'adapter' ? 'platform' : 'local',
       primaryKind,
       provides,
     });
 
     if (!autoEnable) { entry.enabled = false; }
 
-    lock.plugins[resolvedId] = entry;
+    const target = primaryKind === 'adapter' ? (lock.adapters ??= {}) : lock.plugins;
+    target[resolvedId] = entry;
+    existingIds.add(resolvedId);
     added.push({ id: resolvedId, primaryKind, version: pkgVersion });
   }
 

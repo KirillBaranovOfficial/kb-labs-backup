@@ -1,6 +1,6 @@
 ---
 id: S-046
-title: S-046 — Manage project plugins and adapters in Studio
+title: Studio — Switch project context and inspect its extensions
 persona: solo-developer
 area: studio
 priority: P1
@@ -22,6 +22,9 @@ A Studio user selects among registered projects and verifies that each shows its
 
 | # | Action | Expected |
 |---|---|---|
-| S-046.1 | Open Studio and select project A | Project A is named as the active project. |
-| S-046.2 | Open Plugins and Adapters | Only the extensions bound/installed for project A are shown. |
-| S-046.3 | Select project B and open the same views | Project B is active and its distinct plugin and adapter set is shown. |
+| S-046.1 | Open Studio and select the project named `project-a` in the project selector | The active project selector displays `project-a`. |
+| S-046.2 | Open `/plugins` and `/adapters` with project A selected | The Plugins view lists only `@kb-labs/workflow`; the Adapters view lists only project A's bound storage adapter. |
+| S-046.3 | Select the project named `project-b`, then reopen `/plugins` and `/adapters` | The selector displays `project-b`; Plugins lists only `@kb-labs/commit` and Adapters lists only project B's bound storage adapter. |
+| S-046.4 | Open Projects | The table shows each registered project's name, path, runtime status, `.kb/` declaration, and last-used value; an empty registry instead shows `No projects registered` and `Add project`. |
+| S-046.5 | Choose Add project, enter an initialized project folder, and select Register | A success message identifies the registered folder and the project appears in the table. |
+| S-046.6 | Choose Remove for the new project's row and confirm with Unregister | The row disappears and Studio reports `Unregistered <name>; files were not touched.`; project folder and runtime state remain. |

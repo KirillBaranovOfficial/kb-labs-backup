@@ -1,9 +1,9 @@
 ---
 id: S-038
-title: Team Admin — Missing Secret Fails Fast Instead of Booting Broken
+title: Team admin — Missing production secret fails at service startup
 persona: team-admin
 area: platform-core
-priority: P0
+priority: P1
 status: planned
 release: false
 modes: [local, secured]
@@ -12,55 +12,19 @@ surfaces: [cli]
 
 ## Goal
 
-An admin deploys a service and forgets to set a required secret
-(`GATEWAY_JWT_SECRET`, `OPENAI_API_KEY`, etc.), referenced in config as
-`${VAR}`. In production, the process refuses to start with a clear error
-naming the missing variable — it never boots "successfully" with a literal
-`${VAR}` string baked into its live config and fails mysteriously on first
-real request instead.
-
----
+An administrator receives an actionable startup error when a required config environment reference is unset in a production service container.
 
 ## Prerequisites
 
-- [ ] A config with a `${VAR}` placeholder for a required value
-- [ ] `NODE_ENV=production` set (as every shipped image does)
-
----
+- [ ] A service image with a config value referencing `${REQUIRED_SECRET}`.
+- [ ] Docker Engine is installed and running.
 
 ## Steps
 
-### Phase 1 — Missing variable in production mode
+| # | Action | Expected |
+|---|---|---|
+| S-038.1 | Start the service container with `NODE_ENV=production` and without `REQUIRED_SECRET` | The process exits non-zero during startup; the diagnostic names `REQUIRED_SECRET` and gives the next action to provide it. |
+| S-038.2 | Start the same container with `REQUIRED_SECRET` set to a valid test value | The service starts and its documented health endpoint returns HTTP 200 within 30 seconds. |
+| S-038.3 | Run a development service container with `NODE_ENV=development` and the same secret unset | Startup behavior follows the development config contract; the operator can distinguish an unresolved reference from a resolved secret in its diagnostic. |
 
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-038.1 | Start the service with the referenced env var unset, `NODE_ENV=production` | Process exits non-zero at boot, error names the missing variable | | ⬜ |
-| S-038.2 | Set the variable, restart | Boots normally | | ⬜ |
-
-### Phase 2 — Same scenario outside production (dev ergonomics preserved)
-
-| # | Action | Expected | Actual | Status |
-|---|--------|----------|--------|--------|
-| S-038.3 | Same missing variable, `NODE_ENV` unset/`development` | Boots anyway, with a logged warning and the literal `${VAR}` left in place (fails lazily at first use, not at boot) | | ⬜ |
-
----
-
-## Result
-
-<!-- PASS / FAIL / PARTIAL -->
-
-## Bugs
-
-## Notes
-
-- **Mechanism-level coverage exists and passes** —
-  `core/runtime/src/__tests__/config-loader.test.ts` has
-  `'throws on an unresolved ${VAR} placeholder when NODE_ENV=production'`
-  (confirmed to fail before the fix, pass after — see commit history) and
-  `'leaves an unresolved ${VAR} placeholder intact outside production'` for
-  Phase 2. Run: `pnpm --filter @kb-labs/core-runtime run test -- config-loader.test.ts`.
-- **Not yet proven at container level** — booting a real published image
-  with a secret withheld and observing the actual exit code/log line needs a
-  real built image, same CI gap as [S-034](S-034-platform-team-full-image-matrix-published.md).
-  Marked `e2e-todo` rather than `e2e-done` for that reason, even though the
-  underlying logic is fully tested.
+This planned container-level case is separate from the existing config-loader unit behavior and is outside the platform-core release gate until the kb-deploy phase.

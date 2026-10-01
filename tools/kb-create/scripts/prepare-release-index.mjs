@@ -259,6 +259,8 @@ const component = (item, manifest, id = item.name.split('/').pop().replace(/-ent
   package: item.name,
   tarball: tarballURL(item),
   sha256: item.sha256,
+  ...(manifest?.compatibility?.platformRange ? { platformRange: manifest.compatibility.platformRange } : {}),
+  ...(manifest?.compatibility?.sdkRange ? { sdkRange: manifest.compatibility.sdkRange } : {}),
   config: manifest?.requirements ?? [],
 });
 

@@ -47,9 +47,8 @@ without login; secured mode uses the signed-in gateway session.
 pnpm kb marketplace install @kb-labs/workflow-entry
 ```
 
-The host starts project runtimes on demand. A project with enabled scheduled
-workflows starts when the host starts and stays warm while those schedules are
-enabled.
+The host starts project runtimes on demand. A project with any enabled file in
+`.kb/crons/` stays warm while that schedule is enabled.
 
 ---
 
@@ -73,6 +72,14 @@ kb workflow runs watch <runId>         # stream run events live
 kb workflow runs rerun <runId>         # resubmit with same inputs
 ```
 
+The daemon stores each run through the project's storage adapter at
+`workflows/<runId>.json`. The record includes run status, trigger and metadata,
+jobs, steps, artifact references, and step outputs. The filesystem adapter is
+the default in the built-in adapter pack. The cache coordinates live work but
+does not provide workflow history. Completed shell stdout/stderr are retained
+in step outputs so `kb workflow runs logs <runId>` can still show them after a
+host restart.
+
 ### Running workflows
 
 ```bash
@@ -88,9 +95,41 @@ kb workflow logs   --job-id=abc123     # execution logs
 kb workflow logs   --job-id=abc123 --follow  # stream logs live
 kb workflow list                       # active jobs
 kb workflow list   --status=running
-kb workflow list   --type=cron
 kb workflow job-run --handler=mind:rag-query --input='{"text":"test"}' --wait
 ```
+
+### Crons
+
+Each `.kb/crons/<id>.yml` file schedules one existing workflow or registered
+job handler. For example, `nightly.yml` can contain:
+
+```yaml
+schedule: "0 2 * * *"
+timezone: "UTC"
+workflow: nightly-release
+input:
+  channel: stable
+enabled: true
+```
+
+```bash
+kb workflow crons list --json
+kb workflow crons disable nightly
+kb workflow crons enable nightly
+```
+
+Plugin manifest crons appear in the same list as read-only entries. User crons
+may target a workflow (each workflow may have multiple cron files with different
+inputs) or a registered job handler:
+
+```yaml
+schedule: "0 2 * * *"
+handler: steward:daily-review
+input:
+  channel: team
+```
+
+The handler must be declared in an installed plugin's `jobs.handlers` manifest.
 
 **Full command reference**
 

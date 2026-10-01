@@ -32,6 +32,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import { createInMemoryDocumentDatabase, createInMemoryKVStore } from '@kb-labs/sdk/testing';
 import type { ICache } from '@kb-labs/core-platform';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
 import {
   UsersStore,
   CredentialsStore,
@@ -86,6 +87,7 @@ interface TestCtx {
   sessions: SessionsStore;
   apiTokens: ApiTokensStore;
   invites: InvitesStore;
+  pdp: ReturnType<typeof createStubPDP>;
 }
 
 interface BuildAppOpts {
@@ -149,6 +151,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   const userRouteDeps = {
     userAuthService,
     users,
+    memberships,
     sessions,
     apiTokens,
     invites,
@@ -160,7 +163,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
     cookieOpts: { cookieSecure: false },
     accessTtlSec: 900,
     refreshTtlSec: HOUR / 1000,
-    inviteTtlMs: HOUR,
+    inviteTtlMs: 7 * 24 * HOUR,
     jwtConfig: JWT,
     ...(rateLimiter ? { rateLimiter, authRateLimit: opts.rateLimit } : {}),
   };
@@ -194,7 +197,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   registerUserAuthRoutes(app, userRouteDeps);
 
   await app.ready();
-  return { app, users, credentials, memberships, sessions, apiTokens, invites };
+  return { app, users, credentials, memberships, sessions, apiTokens, invites, pdp };
 }
 
 // ── Seed helpers ──────────────────────────────────────────────────────────────
@@ -948,6 +951,7 @@ describe('personal API tokens', () => {
     expect(created.statusCode).toBe(201);
     const body = created.json() as { token: string; tokenRecord: { tokenId: string; userId: string } };
     expect(body.token).toMatch(/^kbl_pat_/);
+    expect(body.tokenRecord).not.toHaveProperty('expiresAt');
 
     const list = await ctx.app.inject({ method: 'GET', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader } });
     expect(list.json()).toMatchObject({ tokens: [{ tokenId: body.tokenRecord.tokenId, userId: body.tokenRecord.userId, name: 'build agent' }] });
@@ -960,6 +964,26 @@ describe('personal API tokens', () => {
     });
     expect(revoked.statusCode).toBe(200);
     expect((await ctx.app.inject({ method: 'GET', url: '/auth/me', headers: { host: HOST, authorization: `Bearer ${body.token}` } })).statusCode).toBe(401);
+  });
+
+  it('accepts a caller-selected token expiry and rejects expiry outside the supported range', async () => {
+    const { cookieHeader, csrfToken } = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const createdAt = Date.now();
+    const created = await ctx.app.inject({
+      method: 'POST', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+      payload: { name: 'expiring agent', expiresInDays: 90 },
+    });
+    expect(created.statusCode).toBe(201);
+    const record = created.json().tokenRecord as { expiresAt: number };
+    expect(record.expiresAt).toBeGreaterThanOrEqual(createdAt + 90 * 24 * HOUR - 5_000);
+    expect(record.expiresAt).toBeLessThanOrEqual(createdAt + 90 * 24 * HOUR + 5_000);
+
+    const invalid = await ctx.app.inject({
+      method: 'POST', url: '/auth/tokens', headers: { host: HOST, cookie: cookieHeader, 'x-csrf-token': csrfToken },
+      payload: { name: 'invalid expiry', expiresInDays: 366 },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json().message).toBe('expiresInDays must be an integer from 1 to 365');
   });
 
   it('does not let an owner revoke another user API token', async () => {
@@ -1073,6 +1097,9 @@ describe('POST /auth/invites (admin only)', () => {
     const body = r.json() as { activationUrl: string; inviteId: string };
     expect(body.activationUrl).toContain('/activate/');
     expect(body.inviteId).toBeTruthy();
+    const created = await ctx.invites.findById(body.inviteId);
+    expect(created?.expiresAt).toBeGreaterThanOrEqual(Date.now() + 7 * 24 * HOUR - 5_000);
+    expect(created?.expiresAt).toBeLessThanOrEqual(Date.now() + 7 * 24 * HOUR + 5_000);
   });
 
   it('returns 403 for a non-admin member', async () => {
@@ -1163,6 +1190,67 @@ describe('GET /auth/users (admin only)', () => {
     const body = r.json() as { users: { userId: string }[] };
     expect(Array.isArray(body.users)).toBe(true);
     expect(body.users.some((u) => u.userId === 'admin-1')).toBe(true);
+    expect(body.users.find((u) => u.userId === 'admin-1')).toHaveProperty('role', 'admin');
+  });
+
+  it('changes a tenant user role and updates permissions on their next request', async () => {
+    await ctx.users.create({ userId: 'role-target', tenantId: TENANT_ID, email: 'member@test.com', status: 'active' });
+    await ctx.memberships.addMembership({ userId: 'role-target', tenantId: TENANT_ID, groupId: 'tenant-member' });
+    await ctx.credentials.setCredential({ userId: 'role-target', providerId: 'email-password', hash: await bcryptjs.hash('MemberPass123!', 4) });
+    const admin = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const changed = await ctx.app.inject({
+      method: 'POST', url: '/auth/users/role-target/role',
+      headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken },
+      payload: { role: 'admin' },
+    });
+    expect(changed.statusCode).toBe(200);
+    const listed = await ctx.app.inject({ method: 'GET', url: '/auth/users', headers: { host: HOST, cookie: admin.cookieHeader } });
+    expect(listed.json().users.find((user: { userId: string }) => user.userId === 'role-target').role).toBe('admin');
+    const member = await loginAndGetCookies(ctx.app, { email: 'member@test.com', password: 'MemberPass123!' });
+    const permissions = await ctx.app.inject({ method: 'GET', url: '/auth/permissions', headers: { host: HOST, cookie: member.cookieHeader } });
+    expect(permissions.json().permissions).toContain('users:read');
+  });
+
+  it('prevents disabling or demoting the final active administrator', async () => {
+    const admin = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    const disable = await ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/disable',
+      headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken } });
+    expect(disable.statusCode).toBe(409);
+    expect(disable.json()).toMatchObject({ error: 'last_admin' });
+    const demote = await ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/role',
+      headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken }, payload: { role: 'member' } });
+    expect(demote.statusCode).toBe(409);
+    expect(demote.json()).toMatchObject({ error: 'last_admin' });
+    expect((await ctx.users.getById('admin-1'))?.status).toBe('active');
+  });
+
+  it('serializes concurrent demotions of the last two admins so exactly one remains active', async () => {
+    await seedAdmin(ctx, { userId: 'admin-2', email: 'admin2@test.com', password: 'Password123!' });
+    const admin = await loginAndGetCookies(ctx.app, { email: 'admin@test.com', password: 'Password123!' });
+    let permissionChecks = 0;
+    let releaseChecks!: () => void;
+    const bothChecksStarted = new Promise<void>((resolve) => { releaseChecks = resolve; });
+    const checkPermission = ctx.pdp.check.bind(ctx.pdp);
+    ctx.pdp.check = async (principal, permission) => {
+      if (permission === PERMISSIONS.USERS_WRITE) {
+        permissionChecks += 1;
+        if (permissionChecks === 2) {releaseChecks();}
+        if (permissionChecks <= 2) {await bothChecksStarted;}
+      }
+      return checkPermission(principal, permission);
+    };
+    const [firstResult, secondResult] = await Promise.all([
+      ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/role',
+        headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken }, payload: { role: 'member' } }),
+      ctx.app.inject({ method: 'POST', url: '/auth/users/admin-2/role',
+        headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken }, payload: { role: 'member' } }),
+    ]);
+
+    expect([firstResult.statusCode, secondResult.statusCode].sort()).toEqual([200, 409]);
+    const memberships = await ctx.memberships.listByTenant(TENANT_ID);
+    const adminMemberships = memberships.filter((membership) => membership.groupId === 'tenant-admin');
+    const activeAdmins = await Promise.all(adminMemberships.map(async ({ userId }) => ctx.users.getById(userId)));
+    expect(activeAdmins.filter((user) => user?.status === 'active')).toHaveLength(1);
   });
 });
 
@@ -1449,12 +1537,15 @@ describe('admin password reset links', () => {
     await ctx.credentials.setCredential({ userId: 'member-reset', providerId: 'email-password', hash: await bcryptjs.hash('OldPassword123!', 4) });
     const admin = await ctx.app.inject({ method: 'POST', url: '/auth/login/cli', headers: { host: HOST }, payload: { email: 'admin@test.com', password: 'Password123!' } });
     const adminToken = (admin.json() as { accessToken: string }).accessToken;
+    const issuedAt = Date.now();
     const issued = await ctx.app.inject({
       method: 'POST', url: '/auth/users/member-reset/password-reset-link',
       headers: { host: HOST, authorization: `Bearer ${adminToken}` },
     });
     expect(issued.statusCode).toBe(201);
-    const resetUrl = (issued.json() as { resetUrl: string }).resetUrl;
+    const { resetUrl, expiresAt } = issued.json() as { resetUrl: string; expiresAt: number };
+    expect(expiresAt).toBeGreaterThanOrEqual(issuedAt + 24 * HOUR - 5_000);
+    expect(expiresAt).toBeLessThanOrEqual(issuedAt + 24 * HOUR + 5_000);
     const token = new URL(resetUrl).pathname.split('/').at(-1);
     expect(token).toBeTruthy();
 

@@ -23,13 +23,13 @@ function scalar(value: string): string {
 }
 
 function list(value: string | undefined, lines: string[], start: number): string[] {
-  if (value === undefined) return [];
+  if (value === undefined) {return [];}
   const inline = value.match(/^\[([^\]]*)\]$/);
-  if (inline) return (inline[1] ?? '').split(',').map(scalar).filter(Boolean);
+  if (inline) {return (inline[1] ?? '').split(',').map(scalar).filter(Boolean);}
   const result: string[] = [];
   for (let index = start; index < lines.length; index += 1) {
     const line = lines[index] ?? '';
-    if (!/^\s+-\s+/.test(line)) break;
+    if (!/^\s+-\s+/.test(line)) {break;}
     result.push(scalar(line.replace(/^\s+-\s+/, '')));
   }
   return result;
@@ -100,10 +100,10 @@ function parseCase(file: string, source: string, errors: QACatalogDiagnostic[]):
   for (let i = close + 1; i < lines.length; i += 1) {
     const line = lines[i] ?? '';
     if (/^##\s+Steps\s*$/.test(line)) { inSteps = true; continue; }
-    if (inSteps && /^##\s+/.test(line)) break;
-    if (!inSteps || !/^\s*\|/.test(line) || /^\s*\|\s*[-:| ]+\|?\s*$/.test(line)) continue;
+    if (inSteps && /^##\s+/.test(line)) {break;}
+    if (!inSteps || !/^\s*\|/.test(line) || /^\s*\|\s*[-:| ]+\|?\s*$/.test(line)) {continue;}
     const cells = line.split('|').slice(1, -1).map(cell => cell.trim());
-    if (cells.length < 3 || cells[0] === '#') continue;
+    if (cells.length < 3 || cells[0] === '#') {continue;}
     const stepId = cells[0] ?? '';
     const action = cells[1] ?? '';
     const expected = cells[2] ?? '';
@@ -116,7 +116,7 @@ function parseCase(file: string, source: string, errors: QACatalogDiagnostic[]):
     steps.push({ id: stepId, action, expected, line: i + 1 });
   }
   if (!steps.length && status !== 'historical') { errors.push(diagnostic(file, close + 1, 'Steps section has no step rows')); invalid = true; }
-  if (invalid) return undefined;
+  if (invalid) {return undefined;}
   return {
     id, title: value('title'), persona: value('persona'), area: value('area'),
     priority: priority as QACasePriority, status: status as QACaseStatus, release: release === 'true',
@@ -133,13 +133,13 @@ export function parseQACatalog(directory: string): QACatalogResult {
   } catch {
     return { cases, diagnostics: [diagnostic(directory, 1, 'catalog directory cannot be read')] };
   }
-  if (files.length === 0) return { cases, diagnostics: [diagnostic(directory, 1, 'catalog contains no Markdown case files')] };
+  if (files.length === 0) {return { cases, diagnostics: [diagnostic(directory, 1, 'catalog contains no Markdown case files')] };}
   const ids = new Set<string>();
   for (const filePath of files) {
     const file = relative(process.cwd(), filePath);
     const result = parseCase(file, readFileSync(filePath, 'utf8'), diagnostics);
-    if (!result) continue;
-    if (ids.has(result.id)) diagnostics.push(diagnostic(file, 1, `duplicate case id ${result.id}`));
+    if (!result) {continue;}
+    if (ids.has(result.id)) {diagnostics.push(diagnostic(file, 1, `duplicate case id ${result.id}`));}
     else { ids.add(result.id); cases.push(result); }
   }
   for (const testCase of cases) {

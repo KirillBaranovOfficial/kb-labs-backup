@@ -39,6 +39,7 @@ These flat skills are auto-loaded by their `globs`; consult only the one matchin
 - `tool-kb-dev.md`, `tool-kb-devkit.md`, `tool-kb-deploy.md`, `tool-kb-monitor.md`, `tool-release.md`, `tool-generate.md`
 - `commit.md`, `aeza-proxy.md`, `kb-labs-site-voice.md`, `clickup.md`
 - `docs-authoring.md` — auto-loaded for Markdown and MDX edits across the repository.
+- `intent-flow.md` — start any user-visible change here: intent → case → tests → code (ADR-0050); product decisions live in `docs/product/decisions.md`.
 
 The `kb-labs-*` folders are managed by KB Labs and are intentionally not maintained here.
 

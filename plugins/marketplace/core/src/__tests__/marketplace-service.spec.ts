@@ -46,6 +46,18 @@ async function createPluginDir(
   return { dir, integrity: computeIntegrity(pkgJson) };
 }
 
+async function createAdapterDir(tmpDir: string, name: string, id: string): Promise<string> {
+  const dir = path.join(tmpDir, 'packages', name);
+  await fs.mkdir(path.join(dir, 'dist'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
+    name: id,
+    version: '1.0.0',
+    kb: { manifest: './dist/adapter-manifest.js' },
+  }));
+  await fs.writeFile(path.join(dir, 'dist', 'adapter-manifest.js'), 'export const manifest = { implements: "ITestAdapter" };');
+  return dir;
+}
+
 /**
  * Create a package directory that is NOT a KB Labs entity — just a plain
  * npm package with package.json and no kb.plugin.json / manifest.
@@ -615,6 +627,24 @@ describe('MarketplaceService', () => {
       // Verify lock file updated
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
       expect(lock!.plugins['@kb-labs/found-plugin']).toBeDefined();
+    });
+
+    // case: S-179.4
+    it('records workspace adapters in the platform adapters lock section', async () => {
+      const adapterDir = await createAdapterDir(tmpDir, 'found-adapter', '@kb-labs/found-adapter');
+      const service = new MarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()) });
+
+      const result = await service.sync({ scope: 'platform' }, { include: ['packages/*'] });
+
+      expect(result.added).toContainEqual({ id: '@kb-labs/found-adapter', primaryKind: 'adapter', version: '1.0.0' });
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.adapters?.['@kb-labs/found-adapter']).toMatchObject({
+        source: 'platform',
+        resolvedPath: `./${path.relative(tmpDir, adapterDir)}`,
+      });
+      expect(lock?.plugins['@kb-labs/found-adapter']).toBeUndefined();
+      expect((await service.list({ scope: 'platform' }, { kind: 'adapter' })).map(entry => entry.id))
+        .toContain('@kb-labs/found-adapter');
     });
 
     it('skips packages already in lock', async () => {

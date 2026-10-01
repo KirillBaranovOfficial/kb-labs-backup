@@ -1,6 +1,6 @@
 ---
 id: S-026
-title: S-026 — Publish a plugin to the marketplace registry
+title: Marketplace registry — Publish a plugin package
 persona: plugin-author
 area: marketplace
 priority: P1
@@ -12,16 +12,20 @@ surfaces: [cli]
 
 ## Goal
 
-A plugin author publishes a built plugin package to the configured marketplace registry.
+A plugin author publishes a built plugin package to a configured KB Labs registry and verifies that the published version can be installed.
 
 ## Prerequisites
 
-- [ ] Plugin package passes validation and author is authenticated to a test registry.
+- [ ] A valid plugin package with `package.json` fields `name`, `version`, and `kb.manifest`.
+- [ ] The author is authenticated to a disposable test registry.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-026.1 | Run `kb hub publish` from the plugin package context | Validation and publication complete successfully. |
-| S-026.2 | Inspect the test registry for the published package and version | Registry metadata matches the package manifest. |
-| S-026.3 | Install the published version into a disposable project | Marketplace resolves and installs that exact version. |
+| S-026.1 | From the plugin root, run `kb hub publish` | The registry response identifies the package name, version, visibility, and install command. |
+| S-026.2 | Inspect the test registry entry | Registry metadata identifies the same package name and version as `package.json`. |
+| S-026.3 | In a disposable project, run `kb marketplace install <package-name>@<version>` | The exact published version is installed and recorded in the project lock. |
+| S-026.4 | From a directory without a KB Labs plugin `package.json`, run `kb hub publish` | CLI reports that it cannot read the package manifest and instructs the author to run from the plugin root. |
+
+Publishing to the registry is plugin-author and registry-maintainer tooling, not a platform-core release requirement.

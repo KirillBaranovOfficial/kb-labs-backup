@@ -81,6 +81,28 @@ describe('JobBroker._queryLogs — null/undefined log safety', () => {
     expect(result).toHaveLength(0);
   });
 
+  it('reconstructs completed step output from the durable run record after restart', async () => {
+    const run = {
+      id: 'run-persisted',
+      createdAt: '2026-10-01T00:00:00.000Z',
+      finishedAt: '2026-10-01T00:00:05.000Z',
+      jobs: [{ steps: [{
+        id: 'step-1', name: 'Print known line', finishedAt: '2026-10-01T00:00:04.000Z',
+        outputs: { stdout: 'durable-workflow-log\n', stderr: '' },
+      }] }],
+    };
+    const broker = new JobBroker(
+      buildEngine(run) as never,
+      mockLogger(),
+      buildPlatform({ logs: [] }) as never,
+    );
+
+    await expect(broker.getRunLogs('run-persisted')).resolves.toMatchObject([{
+      timestamp: '2026-10-01T00:00:04.000Z', level: 'info',
+      message: 'durable-workflow-log', stepId: 'step-1', stepName: 'Print known line', stream: 'stdout',
+    }]);
+  });
+
   it('filters out log entries with missing fields object', async () => {
     const run = {
       id: 'run-4',

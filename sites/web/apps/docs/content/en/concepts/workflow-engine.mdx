@@ -1,11 +1,11 @@
 ---
 title: "Workflow Engine"
 description: "Jobs, steps, triggers, and artifacts."
-updatedAt: "2026-08-09"
+updatedAt: "2026-10-01"
 order: 5
 ---
 
-The workflow engine orchestrates multi-step jobs across plugins. Workflows are declarative, have typed inputs and artifacts, and can run on schedules, webhooks, or be triggered manually. A workflow is the right tool when you need to chain several plugin operations together, run them with dependencies, or run them automatically in response to an event.
+The workflow engine orchestrates multi-step jobs across plugins. A **workflow** is an automation scenario with typed inputs and artifacts. A **job** is a background task. A **cron** is a separate schedule that targets a workflow. This separation lets one workflow have several schedules with different inputs.
 
 This page covers the mental model. For hands-on usage see [Guides → Your First Workflow](/guides/your-first-workflow). For the full spec see [Workflows → Spec Reference](/workflows/spec-reference).
 
@@ -52,10 +52,10 @@ Both workflows and plugin CLI commands call plugin handler code. The difference 
 | **Invocation** | `pnpm kb <cmd>` | `kb workflow:run` or trigger |
 | **Coordination** | Single handler | Multiple handlers across plugins |
 | **State** | Ephemeral (handler returns) | Persisted (jobs, artifacts, logs) |
-| **Triggers** | Manual only | Manual, push, schedule, webhook |
+| **Triggers** | Manual only | Manual, push, webhook |
 | **Long-running** | No (CLI blocks) | Yes (daemon manages lifecycle) |
 
-Use a plugin command for a single-purpose tool. Use a workflow when you need to compose commands, pass artifacts between steps, or run things on a schedule.
+Use a plugin command for a single-purpose tool. Use a workflow when you need to compose commands and pass artifacts between steps. Add a cron when that workflow should run on a schedule.
 
 ## Jobs and steps
 
@@ -118,12 +118,14 @@ Triggered by the commit plugin's post-commit hook or via a repository webhook ro
 ### Schedule (cron)
 
 ```yaml
-on:
-  schedule:
-    - cron: "0 9 * * 1-5"   # weekdays at 09:00
+schedule: "0 9 * * 1-5"   # weekdays at 09:00
+workflow: ai-review
+input:
+  base: main
+enabled: true
 ```
 
-The workflow daemon maintains a cron scheduler. Cron expressions follow standard five-field syntax.
+Save the file as `.kb/crons/workday-review.yml`. Cron expressions use standard five-field syntax. List or change the schedule with `kb workflow crons list`, `kb workflow crons disable workday-review`, and `kb workflow crons enable workday-review`. The workflow itself stays unchanged when a cron is enabled or disabled.
 
 ### Webhook
 

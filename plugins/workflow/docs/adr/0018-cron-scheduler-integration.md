@@ -1,5 +1,7 @@
 # ADR-0018: CronScheduler Integration
 
+> **Superseded (2026-10-01):** This ADR documents the former inline workflow-in-`.kb/jobs` model. Project schedules now live in `.kb/crons/<id>.yml` and target exactly one existing workflow or registered job handler; `UserCronJobSchema` and all `.kb/jobs` discovery are removed. See the current model in [`README.md`](../../README.md) and the cron API reference in [`REST-API.md`](../REST-API.md).
+
 **Status:** Accepted
 **Date:** 2026-01-20
 **Deciders:** KB Labs Team

@@ -40,7 +40,7 @@
         { "slug": "concepts/plugin-system",   "type": "manual", "owners": ["core/plugin-runtime/**", "core/plugin-contracts/**"] },
         { "slug": "concepts/adapter-system",  "type": "manual", "owners": ["core/platform/**", "adapters/**"] },
         { "slug": "concepts/execution-model", "type": "manual", "owners": ["core/plugin-execution/**", "core/sandbox/**"] },
-        { "slug": "concepts/workflow-engine", "type": "manual", "owners": ["plugins/workflow/engine/**", "plugins/workflow/contracts/**"] },
+        { "slug": "concepts/workflow-engine", "type": "manual", "owners": ["plugins/workflow/engine/**", "plugins/workflow/contracts/**", "plugins/workflow/daemon/src/cron-discovery.ts", "plugins/workflow/entry/src/manifest.ts"] },
         { "slug": "concepts/permissions",     "type": "manual", "owners": ["core/policy/**", "shared/perm-presets/**"] },
         { "slug": "concepts/multi-tenancy",   "type": "manual", "owners": ["core/tenant/**"] },
         { "slug": "concepts/llm-routing",     "type": "manual", "owners": ["core/llm-router/**"], "status": "missing" }
@@ -229,7 +229,7 @@
         { "slug": "services/rest-api",        "type": "hybrid", "owners": ["plugins/rest-api/**"] },
         { "slug": "services/studio",          "type": "manual", "owners": ["studio/app/**"] },
         { "slug": "services/host-agent",      "type": "manual", "owners": ["plugins/host-agent/**"] },
-        { "slug": "services/workflow-daemon", "type": "manual", "owners": ["plugins/workflow/daemon/**"] }
+        { "slug": "services/workflow-daemon", "type": "manual", "owners": ["plugins/workflow/daemon/**", "plugins/workflow/contracts/src/cron.ts", "plugins/workflow/contracts/src/rest-api.ts", "plugins/workflow/entry/src/commands/crons-*.ts", "plugins/workflow/engine/src/state-store.ts", "services/host/app/src/project-runtime/workflow-schedules.ts"] }
       ]
     },
 

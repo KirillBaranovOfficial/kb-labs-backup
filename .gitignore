@@ -177,3 +177,8 @@ tools/kb-env/kb-env
 
 # Local gate run reports
 .kb/local-gate/
+
+# Journey gate outputs (candidate binaries, release index, reports)
+.journey/
+__pycache__/
+*.pyc

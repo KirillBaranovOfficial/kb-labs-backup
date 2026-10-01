@@ -146,7 +146,7 @@
       {
         "name": "Open Source",
         "status": "Доступно",
-        "description": "Лицензия MIT. Полный исходный код доступен на GitHub для аудита и контрибуций.",
+        "description": "Двойное лицензирование: KBPL 1.1 и MIT. Полный исходный код доступен на GitHub для аудита и вклада в проект.",
         "statusClass": "available"
       },
       {
@@ -156,9 +156,9 @@
         "statusClass": "available"
       },
       {
-        "name": "RBAC и SSO",
-        "status": "Планируется",
-        "description": "Ролевое управление доступом и SSO (SAML/OIDC) запланированы для Enterprise-тарифа.",
+        "name": "Роли и SSO",
+        "status": "Частично доступно",
+        "description": "Роли admin и member, а также доступ по приглашениям уже работают. Более гибкий RBAC и SSO (SAML/OIDC) остаются в roadmap.",
         "statusClass": "planned"
       }
     ],
