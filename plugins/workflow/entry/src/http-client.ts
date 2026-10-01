@@ -570,10 +570,19 @@ export class WorkflowDaemonClient {
     );
 
     if (!response.ok) {
-      const error = (await response.json().catch(() => ({ error: response.statusText }))) as {
-        error?: string;
-      };
-      throw new Error(error.error || `Failed to run workflow: ${response.statusText}`);
+      const payload: unknown = await response.json().catch(() => undefined);
+      const envelope = asRecord(payload);
+      const error = asRecord(envelope.error);
+      const message = typeof error.message === 'string'
+        ? error.message
+        : typeof envelope.message === 'string'
+          ? envelope.message
+          : typeof envelope.error === 'string'
+            ? envelope.error
+            : `Failed to run workflow: ${response.statusText}`;
+      const code = typeof error.code === 'string' ? error.code : typeof envelope.code === 'string' ? envelope.code : undefined;
+      const hint = typeof error.hint === 'string' ? error.hint : typeof envelope.hint === 'string' ? envelope.hint : undefined;
+      throw new Error([code, message, hint].filter(Boolean).join(': '));
     }
 
     const payload = await this.parseJsonResponse<{ ok: boolean; data?: { runId: string; status: string } }>(response);
@@ -638,6 +647,12 @@ export class WorkflowDaemonClient {
     const payload = await this.parseJsonResponse<{ ok: boolean; data?: WorkflowRestartResponse }>(response);
     return this.unwrapData<WorkflowRestartResponse>(payload);
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 /** Shared authenticated fetch for REST handlers that proxy workflow responses. */
