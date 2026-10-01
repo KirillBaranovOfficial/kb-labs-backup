@@ -23,7 +23,7 @@ A plugin author scaffolds a plugin, builds it, links it into a project with the 
 
 | # | Action | Expected |
 |---|---|---|
-| S-003.1 | On an installed platform, run `kb scaffold run plugin demo --mode standalone --yes` | Scaffold creates the plugin package tree under `.kb/plugins/demo` in standalone mode, and the generated entry package can import `@kb-labs/sdk` without requiring `@kb-labs/shared-tool-kit` to be installed separately in the platform package graph. |
+| S-003.1 | On an installed platform, run `kb scaffold run plugin demo --mode standalone --yes` | Scaffold creates the plugin package tree under `.kb/plugins/demo` in standalone mode, and the generated entry package can import `@kb-labs/sdk`; the installed platform contains the SDK's runtime peer packages as shared platform artifacts, including `@kb-labs/shared-tool-kit`. |
 | S-003.2 | Build the generated plugin using its documented package build command | Entry package builds successfully and emits its manifest. |
 | S-003.3 | Run `kb marketplace link --link .kb/plugins/demo/packages/demo-entry` | `kb marketplace plugins list --json` shows `demo` as a local project plugin, and `.kb/marketplace.lock` records its relative path. |
 | S-003.4 | Run `kb --help` and `kb demo hello` | The `demo` command group is listed and the command prints `Hello, World from demo!`. |

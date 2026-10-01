@@ -139,6 +139,22 @@ Secured browser and CLI sessions remain valid across host restart, update, and r
 The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.
 Cases: S-006, S-008, S-010, S-160.
 
+### 2026-10-01: Platform installs seal runtime peer dependencies
+
+The platform release index includes every runtime peer dependency reachable
+from its installed platform members and SDK, recursively. SDK peers are shared
+platform copies for all plugins, so the platform install owns those artifacts;
+plugins do not install their own copies. The release sealer derives this set
+from the exact staged package manifests and published `dist` imports. Internal
+imports must resolve through a declared dependency or a peer sealed in the
+platform set; external packages resolve through the npm dependency graph.
+Packages imported at runtime remain peers when the host provides the
+shared copy; ordinary package dependencies remain dependencies. The SDK does
+not bundle peer packages such as `shared-tool-kit` and `shared-command-kit` as
+special cases.
+
+Cases: S-003.1, S-054.2.
+
 ### Adapter installs preserve sealed platform artifacts
 
 Platform adapters remain installed in the platform root because runtime adapter discovery reads their package paths from the platform marketplace lock. Before adding an adapter, marketplace records exact `file:.kb/v2/cache/packages/*.tgz` dependencies as pnpm overrides, so pnpm cannot replace sealed packages while resolving the new adapter. Plugin packages continue to use the shared extension store at both scopes.
