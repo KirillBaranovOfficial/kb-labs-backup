@@ -161,7 +161,6 @@ export class NpmPackageSource implements PackageSource {
 /** Check that kb-create owns and has written every sealed archive override. */
 export async function assertSealedPlatformOverrides(root: string, packageId: string, version: string): Promise<void> {
   const receiptPath = path.join(root, '.kb', 'v2', 'receipt.json');
-  const packageJsonPath = path.join(root, 'package.json');
   const workspacePath = path.join(root, 'pnpm-workspace.yaml');
   try {
     await fs.access(receiptPath);
@@ -169,28 +168,17 @@ export async function assertSealedPlatformOverrides(root: string, packageId: str
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return; }
     throw error;
   }
-  let packageJson: {
-    dependencies?: Record<string, string>;
-    devDependencies?: Record<string, string>;
-    optionalDependencies?: Record<string, string>;
-  };
-  try {
-    packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8'));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new PlatformArtifactPinsError(root, packageId, version);
-    }
-    throw error;
-  }
+  let receipt: { plan?: { artifacts?: Array<{ package?: unknown; sha256?: unknown; tarball?: unknown; kind?: unknown }> } };
+  receipt = JSON.parse(await fs.readFile(receiptPath, 'utf8')) as typeof receipt;
   const sealed = new Map<string, string>();
-  for (const dependencies of [packageJson.dependencies, packageJson.devDependencies, packageJson.optionalDependencies]) {
-    for (const [name, spec] of Object.entries(dependencies ?? {})) {
-      if (spec.startsWith('file:.kb/v2/cache/packages/')) {
-        sealed.set(name, spec);
-      }
+  for (const artifact of receipt.plan?.artifacts ?? []) {
+    if (artifact.kind === 'binary' || typeof artifact.tarball !== 'string' || !artifact.tarball) { continue; }
+    if (typeof artifact.package !== 'string' || typeof artifact.sha256 !== 'string' || !artifact.sha256) {
+      throw new Error('Installed platform receipt contains an invalid sealed artifact identity. Run "kb-create doctor --platform-root <platform-root>".');
     }
+    sealed.set(artifact.package, `file:.kb/v2/cache/packages/${artifact.sha256}.tgz`);
   }
-  if (sealed.size === 0) { return; }
+  if (sealed.size === 0) { throw new PlatformArtifactPinsError(root, packageId, version); }
   let workspace;
   try {
     workspace = await fs.readFile(workspacePath, 'utf8');

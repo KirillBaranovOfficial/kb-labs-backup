@@ -28,16 +28,19 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             platform_root = (home / "kb-platform").resolve()
             receipt = platform_root / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
-            receipt.write_text('{"id":"sealed"}\n')
+            receipt.write_text(json.dumps({"id": "sealed", "plan": {"artifacts": [
+                {"id": "workflow", "kind": "service", "package": "@kb-labs/workflow-daemon",
+                 "version": "2.120.1", "sha256": "workflow-digest", "tarball": "registry/workflow.tgz"},
+            ]}}) + "\n")
             sealed_package = platform_root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
             sealed_package.parent.mkdir(parents=True)
             sealed_package.write_text('{"name":"@kb-labs/workflow-daemon","version":"2.120.1"}\n')
             (platform_root / "package.json").write_text(json.dumps({
                 "name": "kb-platform",
-                "dependencies": {"@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow.tgz"},
+                "dependencies": {},
             }))
             (platform_root / "pnpm-workspace.yaml").write_text(
-                'overrides:\n  "@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow.tgz"\n')
+                'overrides:\n  "@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow-digest.tgz"\n')
             platform_config = platform_root / ".kb" / "kb.config.jsonc"
             platform_config.parent.mkdir(parents=True, exist_ok=True)
             platform_config.write_text(json.dumps({"platform": {
@@ -201,7 +204,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:3] == ["marketplace", "install", "@kb-labs/adapters-analytics-file"]:
                     workspace = (platform_root / "pnpm-workspace.yaml").read_text()
-                    if '"@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow.tgz"' not in workspace:
+                    if '"@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow-digest.tgz"' not in workspace:
                         error = {
                             "code": "MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING",
                             "message": "The installed platform is missing kb-create's sealed artifact overrides. No package was installed.",

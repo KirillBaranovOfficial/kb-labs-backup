@@ -20,7 +20,7 @@ CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 def _run(runner: CommandRunner, command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     result = runner(command, cwd=str(cwd), env=env, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
-        detail = " ".join((result.stderr or result.stdout).split())[-400:]
+        detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())[-400:]
         raise RuntimeError(f"`{' '.join(command)}` exited {result.returncode}: {detail}")
     return result
 
@@ -296,18 +296,18 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
 
     def assert_marketplace_requires_kb_create_pins() -> None:
         workspace_file = platform_root / "pnpm-workspace.yaml"
+        receipt_file = platform_root / ".kb" / "v2" / "receipt.json"
         package_file = platform_root / "package.json"
         original_workspace = workspace_file.read_bytes()
-        package = json.loads(package_file.read_text())
-        sealed_dependencies = {
-            **package.get("dependencies", {}),
-            **package.get("devDependencies", {}),
-            **package.get("optionalDependencies", {}),
-        }
-        sealed = next(((name, spec) for name, spec in sealed_dependencies.items()
-                       if isinstance(spec, str) and spec.startswith("file:.kb/v2/cache/packages/")), None)
+        original_package = package_file.read_bytes()
+        receipt = json.loads(receipt_file.read_text())
+        artifacts = receipt.get("plan", {}).get("artifacts", [])
+        sealed = next(((item.get("package"), item.get("sha256")) for item in artifacts
+                       if isinstance(item, dict) and item.get("kind") != "binary"
+                       and isinstance(item.get("package"), str) and isinstance(item.get("sha256"), str)
+                       and isinstance(item.get("tarball"), str) and item.get("tarball")), None)
         if sealed is None:
-            raise RuntimeError("the installed platform has no sealed package dependency to check")
+            raise RuntimeError("the installed platform receipt contains no sealed package artifacts to check")
         name, _ = sealed
         text = original_workspace.decode("utf-8")
         override_line = re.compile(rf"(?m)^  (?:{re.escape(json.dumps(name))}|'{re.escape(name)}'|{re.escape(name)}):.*(?:\n|$)")
@@ -317,7 +317,6 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         before = _platform_snapshot(platform_root)
         workspace_file.write_text(without_pin)
         before_missing_pins = workspace_file.read_bytes()
-        before_package_manifest = package_file.read_bytes()
         command = ["kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"]
         try:
             result = runner(command, cwd=str(project_a), env=base_env,
@@ -337,7 +336,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 raise RuntimeError("marketplace did not return the typed kb-create update hint for missing sealed artifact pins")
             if _platform_snapshot(platform_root) != before:
                 raise RuntimeError("rejected adapter install changed the platform receipt or package versions")
-            if workspace_file.read_bytes() != before_missing_pins or package_file.read_bytes() != before_package_manifest:
+            if workspace_file.read_bytes() != before_missing_pins or package_file.read_bytes() != original_package:
                 raise RuntimeError("rejected adapter install changed the platform package manifest or pnpm config")
         finally:
             workspace_file.write_bytes(original_workspace)

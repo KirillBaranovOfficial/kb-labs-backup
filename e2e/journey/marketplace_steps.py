@@ -20,7 +20,7 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandR
 
 def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str:
     if result.returncode != 0:
-        detail = " ".join((result.stderr or result.stdout).split())
+        detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
         if len(detail) > 2200:
             detail = f"{detail[:1700]} … {detail[-500:]}"
         raise RuntimeError(f"`{' '.join(command)}` exited {result.returncode}: {detail}")
@@ -178,9 +178,39 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     if commit_package in before.get("plugins", {}):
         raise RuntimeError(f"{commit_package} is already pinned in the fresh project before the install case")
     install_commit = ["marketplace", "install", f"{commit_package}@{commit_version}", "--json"]
+    install_commit_platform = ["marketplace", "install", f"{commit_package}@{commit_version}",
+                              "--scope", "platform", "--json"]
     sealed_platform_before = _platform_snapshot(platform_root)
     def install_exact_commit() -> None:
-        _output(cli(install_commit), install_commit)
+        project_result = _json(cli(install_commit), install_commit)
+        project_installed = project_result.get("installed")
+        if (project_result.get("scope") != "project" or not isinstance(project_installed, list)
+                or not any(isinstance(item, dict) and item.get("id") == commit_package
+                           and item.get("version") == commit_version for item in project_installed)):
+            raise RuntimeError("project marketplace install did not return the selected plugin version as JSON")
+        platform_result = _json(cli(install_commit_platform), install_commit_platform)
+        platform_installed = platform_result.get("installed")
+        if (platform_result.get("scope") != "platform" or not isinstance(platform_installed, list)
+                or not any(isinstance(item, dict) and item.get("id") == commit_package
+                           and item.get("version") == commit_version for item in platform_installed)):
+            raise RuntimeError("platform marketplace install did not return the selected plugin version as JSON")
+        project_lock = json.loads(lock_file.read_text())
+        project_entry = project_lock.get("plugins", {}).get(commit_package)
+        if (project_lock.get("schema") != "kb.marketplace/3" or not isinstance(project_entry, dict)
+                or project_entry.get("version") != commit_version
+                or not str(project_entry.get("resolvedPath", "")).startswith("store:")):
+            raise RuntimeError("project marketplace install did not pin the exact plugin from the shared extension store")
+        platform_lock_file = platform_root / ".kb" / "marketplace.lock"
+        try:
+            platform_lock = json.loads(platform_lock_file.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("platform marketplace install did not write a readable lock") from error
+        platform_entry = platform_lock.get("plugins", {}).get(commit_package)
+        if (platform_lock.get("schema") != "kb.marketplace/3" or not isinstance(platform_entry, dict)
+                or platform_entry.get("version") != commit_version
+                or platform_entry.get("source") != "marketplace"
+                or not str(platform_entry.get("resolvedPath", "")).startswith("store:")):
+            raise RuntimeError("platform marketplace install did not pin the exact plugin from the shared extension store")
         if _platform_snapshot(platform_root) != sealed_platform_before:
             raise RuntimeError("marketplace install changed the platform receipt or installed package versions")
     journey.step(
