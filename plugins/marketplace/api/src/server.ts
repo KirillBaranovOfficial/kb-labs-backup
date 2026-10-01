@@ -14,8 +14,8 @@ import type { ILogger } from '@kb-labs/core-platform';
 import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/core-contracts';
 import { registerRoutes } from './routes/index.js';
 import type { MarketplaceService } from '@kb-labs/marketplace-core';
-import { ScopeResolutionError, AdapterScopeError, InvalidEntityError } from '@kb-labs/marketplace-core';
-import { PackageInstallError } from '@kb-labs/marketplace-npm';
+import { ScopeResolutionError, AdapterScopeError, InvalidEntityError, PackageClassificationError } from '@kb-labs/marketplace-core';
+import { PackageInstallError, PackageMetadataError, PlatformArtifactPinsError } from '@kb-labs/marketplace-npm';
 import { ScopeRequestError } from './scope-parser.js';
 
 export interface CreateServerOptions {
@@ -110,12 +110,29 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
             message: err.message,
           });
         }
+        if (err instanceof PackageClassificationError || err instanceof PackageMetadataError) {
+          const status = err instanceof PackageMetadataError && err.code === 'PACKAGE_NOT_FOUND' ? 404 : 422;
+          return reply.code(status).send({
+            error: err.name,
+            code: err.code,
+            message: err.message,
+            hint: err.hint,
+          });
+        }
         if (err instanceof PackageInstallError) {
           const status = err.code === 'NOT_FOUND' ? 404 : 422;
           return reply.code(status).send({
             error: err.name,
             code: err.code,
             message: err.message,
+          });
+        }
+        if (err instanceof PlatformArtifactPinsError) {
+          return reply.code(409).send({
+            error: err.name,
+            code: err.code,
+            message: err.message,
+            hint: err.hint,
           });
         }
         // Fallback to Fastify default behaviour.

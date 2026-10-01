@@ -24,7 +24,7 @@ Developer discovers a plugin in the marketplace and installs it. Plugin commands
 
 | # | Action | Expected |
 |---|---|---|
-| S-010.1 | From the project root, run `kb marketplace install @kb-labs/commit-entry@<version>` | Selected exact version is installed into the project extension store. |
+| S-010.1 | From the project root, run `kb marketplace install @kb-labs/commit-entry@<version>` | Selected exact version is installed into the shared extension store and pinned in the selected scope. The platform receipt and every installed package version under the platform's `node_modules` are identical before and after the install. |
 | S-010.2 | Run `kb marketplace plugins list` | Installed plugin, version, and enabled state are listed. |
 | S-010.3 | Inspect `.kb/marketplace.lock` | Schema v3 entry has exact version, integrity, source kind, and enabled state. |
 | S-010.4 | Run a documented command from the installed plugin | Command is discoverable and returns its documented result. |

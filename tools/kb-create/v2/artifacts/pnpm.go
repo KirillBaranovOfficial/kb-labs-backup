@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
@@ -62,8 +63,7 @@ type Pnpm struct {
 // the monorepo's own tooling already relies on into the executor invocation:
 // better-sqlite3 (native binary, used by the shipped SQLite adapters),
 // esbuild and unrs-resolver (native binaries pulled in transitively by
-// tsup-based tooling), and @kb-labs/devkit (a benign, non-fatal `|| true`
-// postinstall that generates local tsup config — see infra/devkit/package.json).
+// tsup-based tooling).
 //
 // This is written into pnpm-workspace.yaml's `allowBuilds` map (the format
 // `pnpm approve-builds --all` itself writes) rather than passed as a CLI
@@ -71,11 +71,11 @@ type Pnpm struct {
 // repo's own packageManager field) mis-parses a comma-joined value as a
 // single "name@version-union" spec — and therefore fails with
 // ERR_PNPM_INVALID_VERSION_UNION — the moment the list has more than one
-// entry AND at least one is scoped (contains "@"), which every combination
-// including @kb-labs/devkit hits. Confirmed directly against pnpm 11.4.0:
+// entry and includes a scoped package (contains "@"). Confirmed directly
+// against pnpm 11.4.0:
 // the CLI flag breaks on this exact list (comma-joined or repeated), while
 // this config file's `allowBuilds` map handles it cleanly.
-var approvedNativeBuilds = []string{"better-sqlite3", "esbuild", "unrs-resolver", "@kb-labs/devkit"}
+var approvedNativeBuilds = []string{"better-sqlite3", "esbuild", "unrs-resolver"}
 
 func (p Pnpm) Install(items []contracts.Artifact) error {
 	if err := p.prepare(); err != nil {
@@ -86,6 +86,9 @@ func (p Pnpm) Install(items []contracts.Artifact) error {
 	}
 	specs, err := p.specs(items)
 	if err != nil {
+		return err
+	}
+	if err := p.mergeSealedArtifactOverrides(items); err != nil {
 		return err
 	}
 	if len(specs) == 0 {
@@ -113,6 +116,9 @@ func (p Pnpm) Restore(items []contracts.Artifact) error {
 		return err
 	}
 	if err := p.mergeMinimumReleaseAgeExclude(items); err != nil {
+		return err
+	}
+	if err := p.mergeSealedArtifactOverrides(items); err != nil {
 		return err
 	}
 	if err := p.run("install"); err != nil {
@@ -314,6 +320,86 @@ func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
 		return fmt.Errorf("write pnpm workspace configuration: %w", err)
 	}
 	return nil
+}
+
+// mergeSealedArtifactOverrides makes kb-create the owner of pnpm's single-copy
+// rule. Each sealed package name must resolve to its exact cached archive,
+// including when it appears as a transitive dependency of another artifact.
+func (p Pnpm) mergeSealedArtifactOverrides(items []contracts.Artifact) error {
+	path := filepath.Join(p.Root, "pnpm-workspace.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read pnpm workspace configuration: %w", err)
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("parse pnpm workspace configuration: %w", err)
+	}
+	if len(document.Content) == 0 || document.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("pnpm workspace configuration must be a YAML mapping")
+	}
+	sealed := make(map[string]string, len(items))
+	for _, item := range items {
+		if item.Kind == "binary" || item.Tarball == "" {
+			continue
+		}
+		if item.Package == "" || item.SHA256 == "" {
+			return fmt.Errorf("sealed artifact %q must declare package and sha256 for pnpm override", item.ID)
+		}
+		sealed[item.Package] = filepath.ToSlash(filepath.Join("file:.kb", "v2", "cache", "packages", item.SHA256+".tgz"))
+	}
+	if len(sealed) == 0 {
+		return nil
+	}
+	root := document.Content[0]
+	var overrides *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "overrides" {
+			overrides = root.Content[i+1]
+			break
+		}
+	}
+	if overrides == nil {
+		overrides = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "overrides"}, overrides)
+	} else if overrides.Kind != yaml.MappingNode {
+		return fmt.Errorf("pnpm workspace overrides must be a mapping")
+	}
+
+	for i := 0; i+1 < len(overrides.Content); {
+		name := overrides.Content[i].Value
+		value := overrides.Content[i+1]
+		_, replace := sealed[name]
+		managed := value.Kind == yaml.ScalarNode && strings.HasPrefix(value.Value, "file:.kb/v2/cache/packages/")
+		if replace || managed {
+			overrides.Content = append(overrides.Content[:i], overrides.Content[i+2:]...)
+			continue
+		}
+		i += 2
+	}
+	for _, name := range sortedKeys(sealed) {
+		overrides.Content = append(overrides.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name},
+			&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: sealed[name]},
+		)
+	}
+	merged, err := yaml.Marshal(&document)
+	if err != nil {
+		return fmt.Errorf("encode pnpm workspace configuration: %w", err)
+	}
+	if err := os.WriteFile(path, merged, 0o600); err != nil {
+		return fmt.Errorf("write pnpm workspace configuration: %w", err)
+	}
+	return nil
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (p Pnpm) specs(items []contracts.Artifact) ([]string, error) {

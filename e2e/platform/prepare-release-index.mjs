@@ -40,7 +40,6 @@ const wanted = [
   ...(registryManifest.adapters ?? []).map(item => item.name),
 ].filter(Boolean);
 const wantedSet = new Set(wanted);
-const adapterPackageNames = new Set((registryManifest.adapters ?? []).map(item => item.name).filter(Boolean));
 const packages = new Map();
 
 for (const filename of readdirSync(packagesDir).filter(name => name.endsWith('.tgz'))) {
@@ -75,13 +74,7 @@ const platformRequires = releaseConfig.platformRequires.join(',');
 // Core plugins (`default: true`: workflow, marketplace, scaffold) ship as
 // platform members, as release.flows.platform.platformMembers does for the
 // real release. Every other plugin comes from the marketplace.
-const platformMembers = [
-  ...(registryManifest.core ?? []).map(item => item.name),
-  ...(registryManifest.plugins ?? []).filter(item => item.default === true).map(item => item.pkg),
-]
-  .filter(name => name && name !== '@kb-labs/core-runtime' && name !== '@kb-labs/sdk')
-  .filter(name => !adapterPackageNames.has(name) && !name.startsWith('@kb-labs/adapters-') && name !== '@kb-labs/data-store')
-  .join(',');
+const platformMembers = releaseConfig.platformMembers.join(',');
 const adapterOverrides = JSON.stringify({
   '@kb-labs/adapters-service-transport-http': {
     schema: 'kb.adapter/1',

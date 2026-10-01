@@ -88,6 +88,7 @@ function createMockSource(pluginDirs: Map<string, { dir: string; version: string
         version: info.version,
         integrity: info.integrity,
         source: 'marketplace',
+        primaryKind: 'plugin',
       };
     },
     async install(pkg: ResolvedPackage, _root: string): Promise<InstalledPackage> {
@@ -124,6 +125,25 @@ describe('MarketplaceService', () => {
   // ── install ──────────────────────────────────────────────────────────
 
   describe('install', () => {
+    it('rejects packages without source metadata before installing', async () => {
+      const install = vi.fn(async (): Promise<InstalledPackage> => {
+        throw new Error('must not install an unclassified package');
+      });
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: '@kb-labs/unknown-entry', version: '1.0.0', integrity: '', source: 'marketplace' };
+        },
+        install,
+        async remove() {},
+      };
+      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const { PackageClassificationError } = await import('../marketplace-service.js');
+
+      await expect(service.install({ scope: 'platform' }, ['@kb-labs/unknown-entry']))
+        .rejects.toBeInstanceOf(PackageClassificationError);
+      expect(install).not.toHaveBeenCalled();
+    });
+
     it('installs project pins into the shared store and changes only marketplace.lock', async () => {
       const projectRoot = path.join(tmpDir, 'project');
       await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
@@ -188,14 +208,30 @@ describe('MarketplaceService', () => {
       expect(lock!.plugins['@kb-labs/test-plugin']!.source).toBe('platform');
     });
 
-    it('keeps platform-scope packages in the platform graph when a shared store is configured', async () => {
-      const { dir, integrity } = await createPluginDir(tmpDir, 'platform-plugin', '@kb-labs/platform-plugin');
-      const source = createMockSource(new Map([
-        ['@kb-labs/platform-plugin', { dir, version: '1.0.0', integrity }],
-      ]));
+    it('installs platform-scope plugin entry packages in the shared store', async () => {
+      const packageId = '@kb-labs/custom-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'platform-plugin', packageId);
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: packageId, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
+        },
+        async install(): Promise<InstalledPackage> { throw new Error('platform plugin must use the extension store'); },
+        async remove() {},
+      };
       const sourceInstall = vi.spyOn(source, 'install');
       const storeResolve = vi.fn(async () => {
-        throw new Error('Platform packages must not use the project extension store');
+        return {
+          entry: {
+            schema: 'kb.store-entry/1' as const,
+            name: packageId,
+            version: '1.0.0',
+            kind: 'plugin' as const,
+            integrity,
+            installedAt: new Date().toISOString(),
+          },
+          packageRoot: dir,
+          entryDir: path.join(tmpDir, 'store', 'entries', 'platform-plugin'),
+        };
       });
       const store: IExtensionStore = {
         root: path.join(tmpDir, 'store'),
@@ -207,11 +243,44 @@ describe('MarketplaceService', () => {
       };
       const service = new MarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
 
-      const result = await service.install({ scope: 'platform' }, ['@kb-labs/platform-plugin']);
+      const result = await service.install({ scope: 'platform' }, [packageId]);
+
+      expect(sourceInstall).not.toHaveBeenCalled();
+      expect(storeResolve).toHaveBeenCalledOnce();
+      expect(result.installed[0]?.primaryKind).toBe('plugin');
+    });
+
+    it('keeps platform adapters in the platform package graph', async () => {
+      const packageId = '@kb-labs/adapters-test';
+      const packageRoot = await createAdapterDir(tmpDir, 'platform-adapter', packageId);
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: packageId, version: '1.0.0', integrity: 'sha256-fixture', source: 'marketplace', primaryKind: 'adapter' };
+        },
+        async install(): Promise<InstalledPackage> {
+          return { id: packageId, version: '1.0.0', packageRoot, integrity: 'sha256-fixture' };
+        },
+        async remove() {},
+      };
+      const sourceInstall = vi.spyOn(source, 'install');
+      const storeResolve = vi.fn(async () => { throw new Error('Platform adapters must not use the plugin store'); });
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        resolve: storeResolve,
+        async listEntries() { return []; },
+      };
+      const service = new MarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+
+      const result = await service.install({ scope: 'platform' }, [packageId]);
 
       expect(sourceInstall).toHaveBeenCalledOnce();
       expect(storeResolve).not.toHaveBeenCalled();
-      expect(result.installed[0]?.primaryKind).toBe('plugin');
+      expect(result.installed[0]?.primaryKind).toBe('adapter');
+      const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
+      expect(lock?.adapters?.[packageId]?.resolvedPath).toBe('./packages/platform-adapter');
     });
 
     it('installs multiple plugins in one call', async () => {

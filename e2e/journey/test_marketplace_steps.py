@@ -7,11 +7,31 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from marketplace_steps import _output, authenticate_secured_marketplace, run_marketplace_steps
+from marketplace_steps import _output, _platform_snapshot, authenticate_secured_marketplace, run_marketplace_steps
 from service_steps import Journey
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_platform_snapshot_detects_receipt_and_package_version_changes(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-platform-snapshot-") as directory:
+            root = Path(directory)
+            receipt = root / ".kb" / "v2" / "receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text('{"version":"1"}\n')
+            package = root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
+            package.parent.mkdir(parents=True)
+            package.write_text('{"name":"@kb-labs/workflow-daemon","version":"2.120.1"}\n')
+
+            before = _platform_snapshot(root)
+            receipt.write_text('{"version":"2.120.2"}\n')
+            self.assertNotEqual(before, _platform_snapshot(root))
+            receipt.write_text('{"version":"2.120.1"}\n')
+
+            before = _platform_snapshot(root)
+            package.write_text('{"name":"@kb-labs/workflow-daemon","version":"2.120.2"}\n')
+
+            self.assertNotEqual(before, _platform_snapshot(root))
+
     def test_marketplace_failure_detail_keeps_error_start_and_end(self):
         command = ["kb", "marketplace", "install", "@kb-labs/qa-entry"]
         raw = "ERR_PNPM_RESOLUTION_FAILURE: root cause " + ("detail " * 400) + "final context"
@@ -79,7 +99,15 @@ class MarketplaceStepTests(unittest.TestCase):
             project = home / "project-a"
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
-            env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project)}
+            platform_root = home / "kb-platform"
+            receipt = platform_root / ".kb" / "v2" / "receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text('{"version":"2.120.1"}\n')
+            package = platform_root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
+            package.parent.mkdir(parents=True)
+            package.write_text('{"name":"@kb-labs/workflow-daemon","version":"2.120.1"}\n')
+            env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
+                   "KB_JOURNEY_PLATFORM_ROOT": str(platform_root)}
             calls: list[tuple[str, ...]] = []
 
             def lock(path: Path, *, platform: bool = False) -> dict:

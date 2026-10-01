@@ -56,6 +56,73 @@ func TestPnpmReportsExpectedAndReceivedTarballChecksums(t *testing.T) {
 	}
 }
 
+func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "pnpm-workspace.yaml")
+	if err := os.WriteFile(workspace, []byte("overrides:\n  lodash: 4.17.21\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := contracts.Artifact{ID: "platform", Kind: "platform-member", Package: "@kb/platform", Version: "2.0.0", SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("old"))), Tarball: "https://registry.test/platform-old.tgz"}
+	oldRuntime := contracts.Artifact{ID: "runtime", Kind: "core", Package: "@kb/runtime", Version: "2.0.0", SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("old-runtime"))), Tarball: "https://registry.test/runtime-old.tgz"}
+	updated := contracts.Artifact{ID: "platform", Kind: "platform-member", Package: "@kb/platform", Version: "2.1.0", SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("new"))), Tarball: "https://registry.test/platform-new.tgz"}
+	updatedRuntime := contracts.Artifact{ID: "runtime", Kind: "core", Package: "@kb/runtime", Version: "2.1.0", SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("new-runtime"))), Tarball: "https://registry.test/runtime-new.tgz"}
+	for _, payload := range [][]byte{[]byte("old"), []byte("old-runtime"), []byte("new"), []byte("new-runtime")} {
+		sum := fmt.Sprintf("%x", sha256.Sum256(payload))
+		cache := filepath.Join(root, ".kb", "v2", "cache", "packages")
+		if err := os.MkdirAll(cache, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(cache, sum+".tgz"), payload, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pm := Pnpm{Root: root, Runner: &fakeRunner{}}
+	if err := pm.Install([]contracts.Artifact{old, oldRuntime}); err != nil {
+		t.Fatalf("initial install: %v", err)
+	}
+	assertSealedArtifactOverrides(t, workspace, []contracts.Artifact{old, oldRuntime})
+	if err := pm.Install([]contracts.Artifact{updated, updatedRuntime}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	assertSealedArtifactOverrides(t, workspace, []contracts.Artifact{updated, updatedRuntime})
+	if err := pm.Restore([]contracts.Artifact{old, oldRuntime}); err != nil {
+		t.Fatalf("rollback package restore: %v", err)
+	}
+	assertSealedArtifactOverrides(t, workspace, []contracts.Artifact{old, oldRuntime})
+}
+
+func assertSealedArtifactOverrides(t *testing.T, workspace string, artifacts []contracts.Artifact) {
+	t.Helper()
+	data, err := os.ReadFile(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Overrides map[string]string `yaml:"overrides"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatalf("parse pnpm workspace config: %v", err)
+	}
+	if config.Overrides["lodash"] != "4.17.21" {
+		t.Fatalf("unrelated override was lost: %#v", config.Overrides)
+	}
+	wantNames := make(map[string]struct{}, len(artifacts))
+	for _, artifact := range artifacts {
+		want := filepath.ToSlash(filepath.Join("file:.kb", "v2", "cache", "packages", artifact.SHA256+".tgz"))
+		wantNames[artifact.Package] = struct{}{}
+		if config.Overrides[artifact.Package] != want {
+			t.Fatalf("override for %s = %q, want %q; config: %s", artifact.Package, config.Overrides[artifact.Package], want, data)
+		}
+	}
+	for name, value := range config.Overrides {
+		if strings.HasPrefix(value, "file:.kb/v2/cache/packages/") {
+			if _, exists := wantNames[name]; !exists {
+				t.Fatalf("stale sealed override remains for %s: %q", name, value)
+			}
+		}
+	}
+}
+
 func TestPnpmReportsSignalTerminationAsLikelyMemoryFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("signal termination is only available on Unix")
@@ -79,7 +146,7 @@ func (run runnerFunc) Run(ctx context.Context, output io.Writer, name string, ar
 // Regression coverage for the mechanism, not just its absence from the pnpm
 // invocation: pnpm 11.4.0 mis-parses a comma-joined --allow-build value as a
 // single "name@version-union" spec (ERR_PNPM_INVALID_VERSION_UNION) the
-// moment the list mixes a scoped package (like @kb-labs/devkit) with others
+// moment the list mixes scoped packages with others
 // — confirmed directly against that pnpm version. The fix moves the
 // approval list into pnpm-workspace.yaml's `allowBuilds` map instead, which
 // handles scoped names correctly since it's YAML, not a CLI string.
@@ -104,6 +171,9 @@ func TestPnpmWritesWorkspaceAllowBuildsList(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pnpm-workspace.yaml = %q, missing %q", got, want)
 		}
+	}
+	if strings.Contains(got, "@kb-labs/devkit") {
+		t.Fatalf("pnpm-workspace.yaml must not approve @kb-labs/devkit build scripts: %q", got)
 	}
 }
 

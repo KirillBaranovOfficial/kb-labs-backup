@@ -126,10 +126,37 @@ Secured browser and CLI sessions remain valid across host restart, update, and r
 The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.
 Cases: S-006, S-008, S-010, S-160.
 
+### Adapter installs preserve sealed platform artifacts
+
+Platform adapters remain installed in the platform root because runtime adapter discovery reads their package paths from the platform marketplace lock. Before adding an adapter, marketplace records exact `file:.kb/v2/cache/packages/*.tgz` dependencies as pnpm overrides, so pnpm cannot replace sealed packages while resolving the new adapter. Plugin packages continue to use the shared extension store at both scopes.
+Cases: S-010.1, S-054.11.
+
+### Superseding decision: kb-create owns sealed artifact overrides
+
+The installed platform's package-manager configuration belongs to kb-create,
+which seals the release artifacts. Install and update write an override for
+every sealed package to its exact cached `file:` archive; snapshots include
+`pnpm-workspace.yaml`, so rollback restores the previous pins. Marketplace
+never edits package-manager configuration. A platform without a required pin
+gets a typed error directing its operator to `kb-create update` rather than an
+automatic repair. This keeps direct and transitive instances of a sealed
+package on the same artifact and makes lifecycle recovery deterministic.
+Cases: S-010.1, S-054.11, S-054.12.
+
 ### One storage default
 
 `@kb-labs/adapters-fs` is the only adapter that declares itself the default for `storage`. `@kb-labs/data-store` stays installable and bindable, but two defaults made install resolution ambiguous.
 Cases: S-047, S-048.
+
+### Marketplace plugins never mutate the sealed platform dependency graph
+
+Marketplace plugin entry packages use the shared extension store at both project
+and platform scope. The selected scope still controls the marketplace lock and
+visibility; it does not decide whether pnpm may rewrite the installed platform's
+package graph. Platform adapters remain installed in the platform graph because
+the host resolves them as platform runtime providers. This supersedes ADR-0048
+D1's platform-scope plugin placement, which predates sealed installed receipts.
+Cases: S-010.1, S-123.1.
 
 ### Proposed: sealed service lifecycle after installation — needs owner confirmation
 
