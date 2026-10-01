@@ -10,21 +10,19 @@ from typing import Callable
 
 from service_steps import Journey
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
+from invocations import run_command
 
 
 def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120):
     cli_path = env.get("KB_JOURNEY_CLI_PATH")
     if cli_path:
-        return subprocess.run(
-            [cli_path, *args], env=env, cwd=cwd, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            timeout=timeout, check=False,
-        )
-    return subprocess.run(
-        ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"', "kb", *args],
-        env=env, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        timeout=timeout, check=False,
-    )
+        command = [cli_path, *args]
+    else:
+        command = ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"', "kb", *args]
+    result = run_command(command, env=env, cwd=cwd, timeout=timeout)
+    return subprocess.CompletedProcess(command, result.returncode,
+                                        stdout=(result.stdout or "") + (result.stderr or ""),
+                                        stderr=result.stderr)
 
 
 def _json_cli(args: list[str], *, env: dict[str, str], cwd: Path) -> object:
@@ -70,6 +68,7 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
         with tempfile.TemporaryDirectory(prefix="kb-anonymous-cli-home-") as anonymous_home:
             anonymous_env = env.copy()
             anonymous_env["HOME"] = anonymous_home
+            anonymous_env["KB_JOURNEY_HOME_LABEL"] = "anonymous"
             platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
             cli_path = env.get("KB_JOURNEY_CLI_PATH")
             if not platform_root or not cli_path:

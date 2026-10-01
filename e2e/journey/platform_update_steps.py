@@ -8,13 +8,10 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
+from invocations import run_command as invoke_command, run_with_runner
 
 
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
-
-
-def _run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
 
 
 def _json_command(run_command: CommandRunner, args: list[str], label: str) -> dict:
@@ -70,10 +67,16 @@ def run_platform_update_steps(
     request_file: Path,
     base_version: str,
     updated_version: str,
-    run_command: CommandRunner = _run,
+    run_command: CommandRunner = invoke_command,
     verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
     verify_contract_transition: Callable[[], None] | None = None,
 ) -> Journey:
+    command_runner = run_command
+    def run_command(args: list[str]) -> subprocess.CompletedProcess:
+        result = run_with_runner(command_runner, args)
+        return subprocess.CompletedProcess(args, result.returncode,
+                                            stdout=(result.stdout or "") + (result.stderr or ""),
+                                            stderr=result.stderr)
     """Update the running installation, exercise a project command, and roll back."""
     journey = Journey(mode, f"platform-update-{mode}")
     root = str(platform_root)

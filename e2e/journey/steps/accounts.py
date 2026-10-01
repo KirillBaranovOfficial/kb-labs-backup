@@ -8,8 +8,10 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 import subprocess
+import os
 
 from .auth import _login, _request
+from invocations import open_http, run_command
 
 
 def _browser_call(base_url: str, jar: http.cookiejar.CookieJar, path: str, *, method: str = "GET",
@@ -31,11 +33,7 @@ def _browser_call(base_url: str, jar: http.cookiejar.CookieJar, path: str, *, me
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(base_url.rstrip("/") + path, data=data, headers=headers, method=method)
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-    try:
-        with opener.open(request, timeout=15) as response:
-            status, raw = response.status, response.read()
-    except urllib.error.HTTPError as error:
-        status, raw = error.code, error.read()
+    status, raw, _ = open_http(opener.open, request, timeout=15, env=os.environ)
     if status != expected:
         raise AssertionError(f"{method} {path}: expected HTTP {expected}, got {status}: {raw[:300]!r}")
     return json.loads(raw) if raw else {}
@@ -81,7 +79,7 @@ def run_password_and_session_steps(base_url: str, email: str, password: str) -> 
 
 def run_cli_logout_steps(cli_path: str, env: dict[str, str]) -> None:
     def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([cli_path, *args], env=env, text=True, capture_output=True, check=False)
+        return run_command([cli_path, *args], env=env)
 
     logout = invoke(["auth", "logout", "--json"])
     try:

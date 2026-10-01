@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from service_steps import Journey
+from invocations import run_command
 
 
 def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
@@ -18,10 +19,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
         env.pop("KB_NET_OFFSET", None)
 
         def run(*args: str) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(
-                ["node", str(cli), *args], cwd=repo_root, env=env,
-                capture_output=True, text=True, check=False, timeout=120,
-            )
+            return run_command(["node", str(cli), *args], cwd=repo_root, env=env, timeout=120)
 
         def register_checkout() -> str | None:
             result = subprocess.run(

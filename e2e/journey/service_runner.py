@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import Journey
+from invocations import open_http, run_command, run_with_runner
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
 from marketplace_steps import _registry_version, _output
@@ -160,12 +161,7 @@ def request(path: str, *, method="GET", payload=None, token="", accept="applicat
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(BASE_URL + path, data=body, headers=headers, method=method)
     try:
-        with HTTP.open(req, timeout=15) as response:
-            raw = response.read()
-            status = response.status
-            response_headers = dict(response.headers.items())
-    except urllib.error.HTTPError as error:
-        raw, status, response_headers = error.read(), error.code, dict(error.headers.items())
+        status, raw, response_headers = open_http(HTTP.open, req, timeout=15, env=os.environ)
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
     try:
@@ -387,7 +383,7 @@ def configure_installed_cli_path() -> None:
         os.environ["PATH"] = os.pathsep.join([bin_dir, *current])
 
 
-def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runner=subprocess.run) -> None:
+def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runner=run_command) -> None:
     """Restore the CLI session after the auth journey intentionally logs out."""
     email = env.get("KB_JOURNEY_ADMIN_EMAIL", "").strip()
     password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
@@ -396,8 +392,7 @@ def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runne
     command = [str(kb_path), "auth", "login", "--gateway-url",
                env.get("KB_JOURNEY_BASE_URL", BASE_URL), "--email", email,
                "--password", password]
-    result = runner(command, cwd=env.get("HOME"), env=env, capture_output=True,
-                    text=True, timeout=90, check=False)
+    result = run_with_runner(runner, command, cwd=env.get("HOME"), env=env, timeout=90)
     if result.returncode != 0:
         detail = " ".join((result.stdout + " " + result.stderr).split())
         suffix = f"; {detail}" if detail else ""
@@ -434,14 +429,19 @@ def _find_project_id(payload: object) -> str:
 
 def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
     """Prepare the staged note commit required by S-140.2 in the isolated KB state."""
-    subprocess.run(["git", "-C", str(project_root), "config", "user.name", "KB Labs Journey"],
-                   check=True, capture_output=True, text=True)
-    subprocess.run(["git", "-C", str(project_root), "config", "user.email", "journey@example.com"],
-                   check=True, capture_output=True, text=True)
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        command = ["git", "-C", str(project_root), *args]
+        result = run_command(command, cwd=project_root, env=env, timeout=30)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, command,
+                                                output=result.stdout, stderr=result.stderr)
+        return result
+
+    git("config", "user.name", "KB Labs Journey")
+    git("config", "user.email", "journey@example.com")
 
     def git_files(*args: str) -> list[str]:
-        result = subprocess.run(["git", "-C", str(project_root), *args], capture_output=True,
-                               check=True, text=True)
+        result = git(*args)
         return [line for line in result.stdout.splitlines() if line]
 
     status = {
@@ -480,8 +480,15 @@ def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
 
 
 def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
-                         runner=subprocess.run) -> str:
+                         runner=run_command) -> str:
     """Install Commit into project A and register a clean project B for isolation."""
+    command_runner = runner
+    def runner(command, **kwargs):
+        options = dict(kwargs)
+        timeout = options.pop("timeout", 120)
+        options.pop("capture_output", None)
+        options.pop("text", None)
+        return run_with_runner(command_runner, command, timeout=timeout, **options)
     project_a = Path(project_root).resolve()
     package = "@kb-labs/commit-entry"
     version = _registry_version(package, registry, env, runner)
@@ -494,7 +501,12 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     home = Path(env["HOME"])
     project_b = home / "project-b-mcp"
     project_b.mkdir(parents=True, exist_ok=False)
-    subprocess.run(["git", "init", "-q", str(project_b)], check=True)
+    result = run_command(["git", "init", "-q", str(project_b)], cwd=project_b.parent,
+                         env=env, timeout=30)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode,
+                                            ["git", "init", "-q", str(project_b)],
+                                            output=result.stdout, stderr=result.stderr)
     register = ["kb", "project", "add", str(project_b), "--json"]
     result = runner(register, cwd=str(project_b), env=env, capture_output=True,
                     text=True, timeout=120)
@@ -520,6 +532,7 @@ def main() -> int:
     parser.add_argument("--output", default="service-journey.json")
     parser.add_argument("--run-id")
     args = parser.parse_args()
+    os.environ.setdefault("KB_JOURNEY_INVOCATIONS", str(Path(args.output).resolve().parent))
     journey = Journey(args.mode, args.run_id or str(uuid.uuid4()))
     try:
         configure_installed_cli_path()

@@ -13,12 +13,13 @@ from typing import Callable
 
 from service_steps import Journey
 from marketplace_steps import _platform_snapshot
+from invocations import open_http, run_command, run_with_runner
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def _run(runner: CommandRunner, command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    result = runner(command, cwd=str(cwd), env=env, capture_output=True, text=True, timeout=300)
+    result = run_with_runner(runner, command, cwd=str(cwd), env=env, timeout=300)
     if result.returncode != 0:
         detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())[-400:]
         raise RuntimeError(f"`{' '.join(command)}` exited {result.returncode}: {detail}")
@@ -69,10 +70,33 @@ def _project_state_dir(project_root: Path, env: dict[str, str]) -> Path:
 
 def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                               env: dict[str, str] | None = None,
-                              runner: CommandRunner = subprocess.run) -> None:
+                              runner: CommandRunner = run_command) -> None:
     """Run S-054 and S-048 using installed `kb` commands in both auth modes."""
     project_a = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
+    command_runner = runner
+    def runner(command, **kwargs):
+        options = dict(kwargs)
+        timeout = options.pop("timeout", 300)
+        options.pop("capture_output", None)
+        text_mode = options.pop("text", True)
+        options.pop("stdout", None)
+        options.pop("stderr", None)
+        result = run_with_runner(command_runner, command, timeout=timeout, **options)
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        if text_mode:
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+        elif isinstance(stdout, str):
+            stdout = stdout.encode()
+            stderr = stderr.encode() if isinstance(stderr, str) else stderr
+        elif isinstance(stderr, str):
+            stderr = stderr.encode()
+        return subprocess.CompletedProcess(command, result.returncode,
+                                            stdout=stdout + stderr, stderr=stderr)
     base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project_a)
     project_state = _project_state_dir(project_a, base_env)
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
@@ -234,8 +258,12 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         health_url = host_status.get("host", {}).get("healthUrl")
         if not isinstance(health_url, str) or not health_url:
             raise RuntimeError("`kb-create status --json` returned no host health URL")
-        with urllib.request.urlopen(health_url.rsplit("/", 1)[0] + "/health/adapters", timeout=10) as response:
-            runtime_adapters = json.loads(response.read())
+        health_request = urllib.request.Request(health_url.rsplit("/", 1)[0] + "/health/adapters")
+        health_status, health_body, _ = open_http(
+            urllib.request.urlopen, health_request, timeout=10, env=base_env)
+        if health_status != 200:
+            raise RuntimeError(f"GET {health_request.full_url} returned HTTP {health_status}")
+        runtime_adapters = json.loads(health_body)
         if not isinstance(runtime_adapters, list):
             raise RuntimeError("GET /health/adapters returned no adapter list")
         expected_adapters = {row.get("slot"): row for row in runtime_adapters if isinstance(row, dict)}

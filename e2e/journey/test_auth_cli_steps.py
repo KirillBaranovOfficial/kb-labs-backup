@@ -57,7 +57,7 @@ class CliAuthJourneyTests(unittest.TestCase):
     def test_local_status_and_secured_login_status_tokens_commands(self):
         calls: list[list[str]] = []
 
-        def invoke(args, *, env, text, capture_output, check):
+        def invoke(args, **_kwargs):
             calls.append(args)
             if args[1:3] == ["auth", "status"]:
                 payload = {"ok": True, "session": {"authenticated": bool(state["email"]),
@@ -174,7 +174,7 @@ class CliAuthJourneyTests(unittest.TestCase):
     def test_cli_logout_removes_session_and_status_reports_unauthenticated(self):
         commands = []
 
-        def invoke(args, *, env, text, capture_output, check):
+        def invoke(args, **_kwargs):
             commands.append(args)
             payload = {"ok": True, "message": "Logged out. Credentials removed."} if args[2] == "logout" else {
                 "ok": True, "session": {"authenticated": False}}

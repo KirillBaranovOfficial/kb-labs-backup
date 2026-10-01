@@ -20,6 +20,7 @@ from studio_steps import (
     run_studio_browser_step,
     _record_playwright_case_claims,
 )
+from invocations import invocation_context
 
 
 class FakeResponse:
@@ -105,6 +106,31 @@ class StudioJourneyTests(unittest.TestCase):
         self.assertEqual(saved["steps"][0]["status"], "FAIL")
         self.assertEqual(saved["steps"][0]["message"], message)
 
+    def test_secured_admin_users_requires_every_exported_credential_before_playwright(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "service-secured.json"
+            report.write_text(json.dumps({"status": "PASS", "steps": []}))
+            browsers_path = Path(directory) / "browsers"
+            executable = browsers_path / PLAYWRIGHT_HEADLESS_SHELL
+            executable.parent.mkdir(parents=True)
+            executable.write_text("fake executable for preflight")
+            env = {"PLAYWRIGHT_BROWSERS_PATH": str(browsers_path)}
+
+            with patch("studio_steps.subprocess.Popen") as popen:
+                passed, elapsed, message = run_studio_browser_step(
+                    ["playwright"], env, report, "secured", True)
+
+            self.assertFalse(passed)
+            self.assertEqual(elapsed, 0.0)
+            self.assertEqual(
+                message,
+                "secured admin-users Playwright setup did not provide "
+                "KB_STUDIO_ADMIN_EMAIL, KB_STUDIO_ADMIN_PASSWORD, KB_STUDIO_MEMBER_EMAIL, "
+                "KB_STUDIO_MEMBER_PASSWORD; complete the isolated admin and member setup "
+                "before rerunning the secured journey",
+            )
+            popen.assert_not_called()
+
     def test_playwright_subprocess_receives_browser_path(self):
         with tempfile.TemporaryDirectory() as directory:
             browsers_path = Path(directory) / "browsers"
@@ -125,6 +151,33 @@ class StudioJourneyTests(unittest.TestCase):
 
         self.assertTrue(passed, message)
         self.assertIn(str(browsers_path), log)
+
+    def test_playwright_invocation_records_the_actual_exit_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            browsers_path = root / "browsers"
+            executable = browsers_path / PLAYWRIGHT_HEADLESS_SHELL
+            executable.parent.mkdir(parents=True)
+            executable.write_text("fake executable for preflight")
+            report = root / "service-local.json"
+            report.write_text(json.dumps({"status": "PASS", "steps": []}))
+            env = {
+                "PLAYWRIGHT_BROWSERS_PATH": str(browsers_path),
+                "KB_JOURNEY_INVOCATIONS": str(root / "reports"),
+            }
+
+            with invocation_context(report_root=root / "reports"):
+                passed, _elapsed, message = run_studio_browser_step(
+                    [sys.executable, "-c", "import sys; print('playwright failure'); sys.exit(7)"],
+                    env, report, "local", True)
+            records = [json.loads(line) for line in
+                       (root / "reports" / "invocations" / "calls.jsonl").read_text().splitlines()]
+            evidence = next(record for record in records if record["argv"] and record["argv"][0] == sys.executable)
+
+        self.assertFalse(passed)
+        self.assertIn("Playwright exited 7", message)
+        self.assertEqual(evidence["exit_code"], 7)
+        self.assertEqual(evidence["stdout"], "playwright failure\n")
 
     def test_secured_member_is_created_through_invite_and_activation(self):
         responses = [

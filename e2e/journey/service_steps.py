@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
+from invocations import invocation_context, invocation_link
 
 
 @dataclass
@@ -47,8 +48,10 @@ class Journey:
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
              details: Callable[[], dict[str, Any]] | None = None) -> StepResult:
         started = time.monotonic()
+        case_ids = list(cases)
         try:
-            message = check()
+            with invocation_context(step_id=",".join(case_ids) or name):
+                message = check()
             if isinstance(message, str) and message.startswith("BLOCKED:"):
                 status = "BLOCKED"
                 message = message.removeprefix("BLOCKED:").strip()
@@ -57,9 +60,15 @@ class Journey:
         except Exception as error:  # Include a concise error, not a raw traceback.
             status = "FAIL"
             message = str(error) or error.__class__.__name__
+        step_details = details() if details is not None else None
+        if status == "FAIL":
+            reference = invocation_link(",".join(case_ids) or name)
+            if reference:
+                step_details = dict(step_details or {})
+                step_details["invocation_evidence"] = reference
         result = StepResult(name, capability, self.mode, status,
-                            round(time.monotonic() - started, 3), message or "passed", list(cases),
-                            details() if details is not None else None)
+                            round(time.monotonic() - started, 3), message or "passed", case_ids,
+                            step_details)
         self.steps.append(result)
         return result
 

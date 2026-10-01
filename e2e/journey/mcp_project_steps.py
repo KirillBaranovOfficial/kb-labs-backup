@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-import subprocess
+
+from invocations import run_command
 
 
 
@@ -163,12 +165,8 @@ def apply_commit_plan(project_id: str, token: str, project_root: str) -> str | N
     commits = re.findall(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", text, flags=re.IGNORECASE)
     if not commits:
         return "commit apply output did not contain a commit SHA"
-    history = subprocess.run(
-        ["git", "-C", project_root, "log", "--format=%h", "--all"],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
+    history = run_command(["git", "-C", project_root, "log", "--format=%h", "--all"],
+                          env=os.environ, timeout=30)
     if history.returncode != 0:
         return "could not inspect project A Git history after the commit tool call"
     if not any(commit.lower() in {line.lower() for line in history.stdout.splitlines()} for commit in commits):

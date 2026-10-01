@@ -5,17 +5,19 @@ import json
 import hashlib
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
+from invocations import invocation_context, run_command, run_with_runner
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner) -> subprocess.CompletedProcess[str]:
-    return runner(command, cwd=str(cwd), env=env, capture_output=True, text=True, timeout=300)
+    return run_with_runner(runner, command, cwd=cwd, env=env, timeout=300)
 
 
 def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str:
@@ -40,8 +42,8 @@ def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
 
 def _registry_version(package_id: str, registry: str, env: dict[str, str], runner: CommandRunner) -> str:
     command = ["npm", "view", package_id, "version", "--json", f"--registry={registry}"]
-    result = runner(command, cwd=env["KB_JOURNEY_PROJECT_ROOT"], env=env,
-                    capture_output=True, text=True, timeout=120)
+    result = run_with_runner(runner, command, cwd=env["KB_JOURNEY_PROJECT_ROOT"], env=env,
+                             timeout=120)
     raw = _output(result, command)
     try:
         version = json.loads(raw)
@@ -50,6 +52,29 @@ def _registry_version(package_id: str, registry: str, env: dict[str, str], runne
     if not isinstance(version, str) or not version:
         raise RuntimeError(f"`{' '.join(command)}` did not resolve one published version")
     return version
+
+
+def wait_for_marketplace_ready(project: Path, env: dict[str, str], runner: CommandRunner,
+                               *, timeout: float = 60) -> None:
+    """Wait for the installed product's marketplace health check before registry reads."""
+    command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+    deadline = time.monotonic() + timeout
+    last_problem = "health check did not return"
+    while time.monotonic() < deadline:
+        result = _run(command, cwd=project, env=env, runner=runner)
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            payload = {}
+        if result.returncode == 0 and isinstance(payload, dict) and payload.get("ok") is True:
+            return
+        last_problem = (result.stderr or result.stdout or f"exit {result.returncode}").strip()[-800:]
+        time.sleep(0.5)
+    raise RuntimeError(
+        "marketplace did not become healthy within 60 seconds; "
+        f"`{' '.join(command)}` last reported: {last_problem}; "
+        "check the journey registry and rerun `e2e/journey/run.sh --no-build`."
+    )
 
 
 def _project_config(root: Path) -> tuple[Path, dict]:
@@ -122,18 +147,21 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         raise RuntimeError("secured marketplace journey needs KB_JOURNEY_ADMIN_PASSWORD")
     login = ["kb", "auth", "login", "--gateway-url", gateway,
              "--email", email, "--password", password, "--json"]
-    result = _run(login, cwd=project, env=env, runner=runner)
+    with invocation_context(step_id="S-041.12"):
+        result = _run(login, cwd=project, env=env, runner=runner)
     if result.returncode != 0:
         raise RuntimeError("secured admin CLI login failed; check the isolated journey credentials")
 
     status = ["kb", "auth", "status", "--json"]
-    auth_status = _json(_run(status, cwd=project, env=env, runner=runner), status)
+    with invocation_context(step_id="S-041.12"):
+        auth_status = _json(_run(status, cwd=project, env=env, runner=runner), status)
     session = auth_status.get("session")
     if not isinstance(session, dict) or session.get("authenticated") is not True:
         raise RuntimeError("secured marketplace CLI login did not save a user session")
 
     command = ["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"]
-    resumed = _run(command, cwd=project, env=env, runner=runner)
+    with invocation_context(step_id="S-041.12"):
+        resumed = _run(command, cwd=project, env=env, runner=runner)
     try:
         payload = json.loads(resumed.stdout)
     except json.JSONDecodeError as error:
@@ -145,7 +173,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
 
 def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: str,
                           env: dict[str, str] | None = None,
-                          runner: CommandRunner = subprocess.run) -> None:
+                          runner: CommandRunner = run_command) -> None:
     """Execute S-010 and S-047 in the isolated installed platform."""
     project = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
@@ -156,11 +184,13 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
 
     commit_package = "@kb-labs/commit-entry"
     unrelated_package = "@kb-labs/qa-entry"
-    commit_version = _registry_version(commit_package, registry, base_env, runner)
-    unrelated_version = _registry_version(unrelated_package, registry, base_env, runner)
     authenticate_secured_marketplace(journey, project, base_env, runner)
     if journey.steps and journey.steps[-1].status != "PASS":
         return
+    with invocation_context(step_id="S-010.1"):
+        wait_for_marketplace_ready(project, base_env, runner)
+        commit_version = _registry_version(commit_package, registry, base_env, runner)
+        unrelated_version = _registry_version(unrelated_package, registry, base_env, runner)
     platform_list = ["marketplace", "plugins", "list", "--scope", "platform", "--json"]
     platform_plugins = _entries(_json(cli(platform_list), platform_list))
     if any(item.get("id") == commit_package for item in platform_plugins):

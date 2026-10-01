@@ -11,6 +11,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from invocations import open_http
+
 
 def fingerprint(step: dict) -> str:
     key = "|".join(str(step.get(field, "")) for field in ("capability", "mode", "name"))
@@ -153,11 +155,13 @@ class GitHubClient:
                                                   "X-GitHub-Api-Version": "2022-11-28",
                                                   "Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                raw = response.read()
-                return json.loads(raw) if raw else {}
-        except urllib.error.HTTPError as error:
-            raise RuntimeError(f"GitHub issue API returned HTTP {error.code}: {error.read().decode(errors='replace')[:300]}") from error
+            status, raw, _ = open_http(urllib.request.urlopen, request, timeout=20,
+                                      env={"GH_TOKEN": self.token})
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"GitHub issue API request failed: {error}") from error
+        if status < 200 or status >= 300:
+            raise RuntimeError(f"GitHub issue API returned HTTP {status}: {raw.decode(errors='replace')[:300]}")
+        return json.loads(raw) if raw else {}
 
     def list_open(self):
         page = 1

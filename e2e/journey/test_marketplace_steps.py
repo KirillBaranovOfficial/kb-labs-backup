@@ -1,17 +1,129 @@
 import json
+import ast
 import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from marketplace_steps import _output, _platform_snapshot, authenticate_secured_marketplace, run_marketplace_steps
+from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               run_marketplace_steps, wait_for_marketplace_ready)
 from service_steps import Journey
+from invocations import invocation_context, open_http, run_command
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_command_and_http_steps_do_not_bypass_the_invocation_helper(self):
+        root = Path(__file__).parent
+        guarded = [source for source in root.rglob("*.py")
+                   if source.name != "invocations.py" and not source.name.startswith("test_")]
+        violations = []
+
+        class CallGuard(ast.NodeVisitor):
+            def __init__(self, source):
+                self.source = source
+
+            def visit_Call(self, node):
+                function = node.func
+                if (isinstance(function, ast.Attribute)
+                        and function.attr in {"run", "Popen", "check_output", "call"}
+                        and isinstance(function.value, ast.Name)
+                        and function.value.id == "subprocess"):
+                    violations.append(f"{self.source.name}:{node.lineno} calls subprocess.{function.attr} directly")
+                if (isinstance(function, ast.Attribute) and function.attr == "urlopen"
+                        and isinstance(function.value, ast.Attribute)
+                        and function.value.attr == "request"):
+                    violations.append(f"{self.source.name}:{node.lineno} calls urllib.request.urlopen directly")
+                self.generic_visit(node)
+
+            def visit_FunctionDef(self, node):
+                self._check_defaults(node.args.defaults, node.lineno)
+                self._check_defaults([value for value in node.args.kw_defaults if value is not None], node.lineno)
+                self.generic_visit(node)
+
+            visit_AsyncFunctionDef = visit_FunctionDef
+
+            def _check_defaults(self, values, line):
+                for value in values:
+                    if (isinstance(value, ast.Attribute) and value.attr == "run"
+                            and isinstance(value.value, ast.Name) and value.value.id == "subprocess"):
+                        violations.append(f"{self.source.name}:{line} defaults to subprocess.run")
+
+        for source in guarded:
+            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+            CallGuard(source).visit(tree)
+        self.assertEqual(violations, [])
+
+    def test_invocation_helper_records_case_command_outputs_and_redacts_secrets(self):
+        with tempfile.TemporaryDirectory(prefix="kb-invocation-evidence-") as directory:
+            report_root = Path(directory)
+            env = {"HOME": "/isolated", "KB_JOURNEY_HOME_LABEL": "anonymous",
+                   "KB_JOURNEY_ADMIN_PASSWORD": "never-write-this"}
+
+            def runner(command, **_kwargs):
+                return subprocess.CompletedProcess(command, 7, "failure never-write-this", "stderr detail")
+
+            with invocation_context(step_id="S-041.7", report_root=report_root):
+                result = run_command(["kb", "marketplace", "plugins", "list", "--json"],
+                                     cwd="/isolated/project", env=env, runner=runner)
+
+            record = json.loads((report_root / "invocations" / "calls.jsonl").read_text().splitlines()[0])
+            self.assertEqual(result.returncode, 7)
+            self.assertEqual(record["step_id"], "S-041.7")
+            self.assertEqual(record["home_label"], "anonymous")
+            self.assertEqual(record["cwd"], "/isolated/project")
+            self.assertEqual(record["exit_code"], 7)
+            self.assertEqual(record["stdout"], "failure [REDACTED]")
+            self.assertEqual(record["stderr"], "stderr detail")
+            self.assertGreaterEqual(record["duration_seconds"], 0)
+            self.assertNotIn("never-write-this", json.dumps(record))
+
+    def test_invocation_helper_records_redacted_http_request_and_response(self):
+        class Response:
+            status = 201
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return None
+
+            def read(self):
+                return b'{"ok":true}'
+
+        with tempfile.TemporaryDirectory(prefix="kb-invocation-http-evidence-") as directory:
+            report_root = Path(directory)
+            secret = "studio-member-password"
+            request = urllib.request.Request("https://gateway.test/auth/invites", data=json.dumps({
+                "email": "member@example.test", "password": secret,
+            }).encode(), method="POST")
+            with invocation_context(step_id="S-106.2", report_root=report_root):
+                status, body, _ = open_http(lambda *_args, **_kwargs: Response(), request,
+                                            timeout=3, env={"KB_STUDIO_MEMBER_PASSWORD": secret})
+            record = json.loads((report_root / "invocations" / "calls.jsonl").read_text().splitlines()[0])
+            self.assertEqual(status, 201)
+            self.assertEqual(body, b'{"ok":true}')
+            self.assertEqual(record["argv"], ["POST"])
+            self.assertEqual(record["url"], "https://gateway.test/auth/invites")
+            self.assertEqual(record["request_body"], '{"email": "member@example.test", "password": "[REDACTED]"}')
+            self.assertEqual(record["stdout"], '{"ok":true}')
+            self.assertNotIn(secret, json.dumps(record))
+
+    def test_marketplace_product_health_check_runs_through_invocation_helper(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-health-") as directory:
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
+
+            wait_for_marketplace_ready(Path(directory), {"HOME": directory}, fake_run)
+            self.assertEqual(calls, [["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]])
+
     def test_platform_snapshot_detects_receipt_and_package_version_changes(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-platform-snapshot-") as directory:
             root = Path(directory)
@@ -145,7 +257,9 @@ class MarketplaceStepTests(unittest.TestCase):
 
                 args = command[1:]
                 stdout = "{}"
-                if args[:2] == ["marketplace", "install"]:
+                if args[:3] == ["marketplace", "plugins", "doctor"]:
+                    stdout = json.dumps({"ok": True, "total": 0, "issues": []})
+                elif args[:2] == ["marketplace", "install"]:
                     package_id, version = args[2].rsplit("@", 1)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
                     lock_root = platform_root if platform else cwd_path
