@@ -49,7 +49,7 @@ afterEach(async () => {
 });
 
 describe('kb adapter list', () => {
-  it('shows installed platform defaults and project effective storage options', async () => {
+  it('shows installed platform adapters for the current project', async () => {
     await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
       platform: { adapters: {
         storage: '@kb-labs/adapters-fs@2.120.1',
@@ -156,7 +156,7 @@ describe('kb adapter list', () => {
 });
 
 describe('kb adapter bind', () => {
-  it('binds an installed machine adapter in the current project config', async () => {
+  it('binds an installed adapter in platform config', async () => {
     await writeMarketplaceLock(platformRoot, {
       schema: 'kb.marketplace/3',
       plugins: {},
@@ -173,10 +173,10 @@ describe('kb adapter bind', () => {
 
     expect(code).toBe(0);
     expect(outputs[0]).toMatchObject({ ok: true, slot: 'cache', packageId: '@kb-labs/adapters-memory-cache', changed: true });
-    expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toMatchObject({
+    expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8'))).toMatchObject({
       platform: { adapters: { cache: '@kb-labs/adapters-memory-cache' } },
     });
-    expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({});
+    expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({});
   });
 
   it('accepts the camel-case vectorStore capability slot used by the runtime', async () => {
@@ -233,9 +233,8 @@ describe('kb adapter bind', () => {
 });
 
 describe('kb adapter unbind', () => {
-  it('clears the project binding and its options while preserving platform defaults', async () => {
-    await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapters: { storage: '@kb-labs/adapters-fs' } } }));
-    await writeFile(join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({
+  it('clears the platform binding and its options', async () => {
+    await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
       platform: { adapters: { storage: '@kb-labs/adapters-fs' }, adapterOptions: { storage: { baseDir: '.kb/data' } } },
     }));
     const { ctx, outputs } = context();
@@ -244,21 +243,19 @@ describe('kb adapter unbind', () => {
 
     expect(code).toBe(0);
     expect(outputs[0]).toMatchObject({ ok: true, slot: 'storage', changed: true, dryRun: false });
-    expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({ platform: { adapters: {}, adapterOptions: {} } });
-    expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({
-      platform: { adapters: { storage: '@kb-labs/adapters-fs' } },
-    });
+    expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({ platform: { adapters: {}, adapterOptions: {} } });
+    expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({});
   });
 
   it('validates an unbind without writing in dry-run mode', async () => {
-    await writeFile(join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapters: { storage: '@kb-labs/adapters-fs' } } }));
+    await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapters: { storage: '@kb-labs/adapters-fs' } } }));
     const { ctx, outputs } = context();
 
     const code = await adapterUnbind.run(ctx, ['storage'], { json: true, 'dry-run': true });
 
     expect(code).toBe(0);
     expect(outputs[0]).toMatchObject({ ok: true, dryRun: true, changed: true });
-    expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({
+    expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({
       platform: { adapters: { storage: '@kb-labs/adapters-fs' } },
     });
   });

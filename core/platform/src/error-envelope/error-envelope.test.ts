@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { AdapterCredentialsMissingError, AdapterUnavailableError } from '../errors.js';
+import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError } from '../errors.js';
 import {
   ERROR_STAGES,
   createErrorEnvelope,
@@ -111,6 +111,14 @@ describe('renderTemplate', () => {
 });
 
 describe('toErrorEnvelope (platform errors)', () => {
+  it('maps project adapter configuration to an actionable scope error', () => {
+    const envelope = toErrorEnvelope(new AdapterProjectScopeError());
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+    expect(envelope.code).toBe('KB_ADAPTER_PROJECT_SCOPE');
+    expect(envelope.message).toContain('Project adapter configuration');
+    expect(envelope.hint).toContain('Move `platform.adapters` and `platform.adapterOptions` to the platform config');
+  });
+
   // case: S-054.8
   it('maps a bound adapter missing credentials to an actionable credential envelope', () => {
     const envelope = toErrorEnvelope(new AdapterCredentialsMissingError(
@@ -119,7 +127,7 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(validateErrorEnvelope(envelope)).toEqual([]);
     expect(envelope.code).toBe('KB_ADAPTER_CREDENTIALS_MISSING');
     expect(envelope.message).toContain('OPENAI_API_KEY');
-    expect(envelope.hint).toContain("kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env");
+    expect(envelope.hint).toContain("kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env");
     expect(envelope.hint).toContain('No request was sent');
   });
 

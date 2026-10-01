@@ -8,7 +8,7 @@ is routed through the selected project context.
 
 The system source calls gateway-native endpoints at `/api/health`, `/api/ready`,
 and `/api/observability/health`. Host APIs such as projects, plugins, and
-adapters use `/api/v1`. Observability requests use a project route when a
+adapter analytics use `/api/v1`. Observability requests use a project route when a
 project id is supplied:
 
 ```ts
@@ -25,10 +25,9 @@ await sources.observability.queryLogs({ limit: 50 });
 
 The request is routed through `/api/v1/projects/project-01/logs`; the gateway
 starts the project runtime on demand. Project plugin sources list pins and
-support install, enable/disable, and uninstall through host routes. Project
-adapter sources install packages at machine scope, bind them to project slots,
-and configure project-scoped options. Their TanStack Query hooks invalidate
-the selected project's list after mutations.
+support install, enable/disable, and uninstall through host routes. Adapter
+sources expose platform adapter usage and analytics; adapter settings are
+managed through platform config and CLI commands.
 
 ## Development
 

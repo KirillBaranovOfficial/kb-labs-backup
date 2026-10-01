@@ -23,16 +23,15 @@ kb marketplace link --link .kb/plugins/my-plugin/packages/my-plugin-entry
 
 ## Machine adapters
 
-Adapters are installed in the platform package graph. Bind the installed package to a project slot, then set that project's options:
+Adapters and their options are configured at platform scope:
 
 ```bash
 kb marketplace install @kb-labs/adapters-fs@2.107.0 --scope platform
 kb adapter bind storage @kb-labs/adapters-fs
-kb config set platform.adapterOptions.storage '{"baseDir":".kb/cache"}'
+kb config set --scope platform platform.adapterOptions.storage '{"baseDir":".kb/cache"}'
 kb adapter unbind storage
 ```
 
-The bind command verifies that the platform marketplace lock records the package as an adapter before writing `platform.adapters.<slot>` in the current project's config.
-`kb adapter unbind <slot>` clears that project binding and leaves its adapter options intact. Use `--dry-run --json` to validate without writing.
+The bind command verifies that the platform marketplace lock records the package as an adapter before writing `platform.adapters.<slot>` in platform config. Projects inherit the platform binding and cannot override it.
 
 From the monorepo root, `kb marketplace sync --scope platform` records built workspace plugins under `plugins` and adapters under the machine-only `adapters` section of `.kb/marketplace.lock`.

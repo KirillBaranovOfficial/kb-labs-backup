@@ -54,8 +54,11 @@ export function configErrorEnvelope(error: unknown): ErrorEnvelope {
     case 'KB_CONFIG_SECRET_PLAINTEXT': {
       const path = error.details.path ?? '';
       const variable = suggestVariableName(path);
+      const scope = path.startsWith('platform.adapters.') || path.startsWith('platform.adapterOptions.')
+        ? '--scope platform '
+        : '';
       return createErrorEnvelope('KB_CONFIG_SECRET_PLAINTEXT', {
-        details: { path, example: `kb config set ${path} '\${${variable}}'` },
+        details: { path, example: `kb config set ${scope}${path} '\${${variable}}'` },
         cause:
           error.details.reason === 'secret-shape'
             ? 'The value has the shape of a credential.'

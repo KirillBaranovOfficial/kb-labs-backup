@@ -5,7 +5,7 @@ static bundle and owns browser access to host APIs and project runtimes.
 
 ## What it does
 
-- Lists registered projects and manages each project's plugins and adapters.
+- Lists registered projects and manages each project's plugins.
 - Shows gateway health and project-scoped runtime logs and events.
 - Loads enabled plugin pages through the Studio federation layer.
 - Uses gateway sessions in secured mode and no login in loopback-only local mode.
@@ -14,9 +14,8 @@ static bundle and owns browser access to host APIs and project runtimes.
 
 Select a project from the shared project context, then use the Plugins page to
 install or uninstall plugin package specs and enable or disable project pins.
-The Adapters page installs adapters at machine scope, binds them to slots for
-the selected project, and edits project-scoped adapter options. These actions
-go through host APIs; Studio does not edit marketplace locks or config files.
+Adapter bindings and options are managed from platform settings and apply to
+every registered project. Studio does not edit marketplace locks or config files.
 
 ## Development
 

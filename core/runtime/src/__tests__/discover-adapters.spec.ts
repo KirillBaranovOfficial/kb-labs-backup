@@ -111,7 +111,7 @@ describe('discoverAdapters (lock-based)', () => {
 // Two-root (prod mode): project wins over platform
 // ---------------------------------------------------------------------------
 
-describe('discoverAdapters — project wins over platform', () => {
+describe('discoverAdapters — platform lock is authoritative', () => {
   let platformRoot: string;
   let projectRoot: string;
 
@@ -126,13 +126,13 @@ describe('discoverAdapters — project wins over platform', () => {
   });
 
   it('returns empty when neither root has a lock', async () => {
-    const result = await discoverAdapters(platformRoot, projectRoot);
+    const result = await discoverAdapters(platformRoot);
     expect(result.size).toBe(0);
   });
 
   it('returns platform-only adapters when project lock is absent', async () => {
     await buildAdapter(platformRoot, 'platform-adapter', '@test/platform-adapter', 'platform-v1');
-    const result = await discoverAdapters(platformRoot, projectRoot);
+    const result = await discoverAdapters(platformRoot);
     expect(result.size).toBe(1);
     const adapter = result.get('@test/platform-adapter')!;
     expect(adapter).toBeDefined();
@@ -140,42 +140,38 @@ describe('discoverAdapters — project wins over platform', () => {
     expect(instance['source']).toBe('platform-v1');
   });
 
-  it('returns project-only adapters when platform lock is absent', async () => {
+  it('does not discover adapters from a project lock', async () => {
     await buildAdapter(projectRoot, 'project-adapter', '@test/project-adapter', 'project-v1');
-    const result = await discoverAdapters(platformRoot, projectRoot);
-    expect(result.size).toBe(1);
-    const adapter = result.get('@test/project-adapter')!;
-    expect(adapter).toBeDefined();
-    const instance = adapter.createAdapter({}) as Record<string, unknown>;
-    expect(instance['source']).toBe('project-v1');
+    const result = await discoverAdapters(platformRoot);
+    expect(result.size).toBe(0);
   });
 
-  it('project adapter wins over platform adapter with same id', async () => {
+  it('platform adapter remains selected when a project lock has the same id', async () => {
     await buildAdapter(platformRoot, 'shared-adapter', '@test/shared-adapter', 'platform-version');
     await buildAdapter(projectRoot,  'shared-adapter', '@test/shared-adapter', 'project-version');
 
-    const result = await discoverAdapters(platformRoot, projectRoot);
+    const result = await discoverAdapters(platformRoot);
     expect(result.size).toBe(1);
 
     const adapter = result.get('@test/shared-adapter')!;
     expect(adapter).toBeDefined();
     const instance = adapter.createAdapter({}) as Record<string, unknown>;
-    expect(instance['source']).toBe('project-version');
+    expect(instance['source']).toBe('platform-version');
   });
 
-  it('merges non-overlapping adapters from both roots', async () => {
+  it('loads only adapters from the platform lock', async () => {
     await buildAdapter(platformRoot, 'platform-only', '@test/platform-only', 'from-platform');
     await buildAdapter(projectRoot,  'project-only',  '@test/project-only',  'from-project');
 
-    const result = await discoverAdapters(platformRoot, projectRoot);
-    expect(result.size).toBe(2);
+    const result = await discoverAdapters(platformRoot);
+    expect(result.size).toBe(1);
     expect(result.has('@test/platform-only')).toBe(true);
-    expect(result.has('@test/project-only')).toBe(true);
+    expect(result.has('@test/project-only')).toBe(false);
   });
 
   it('behaves identically when projectRoot === platformRoot (dev mode)', async () => {
     await buildAdapter(platformRoot, 'dev-adapter', '@test/dev-adapter', 'dev');
-    const result = await discoverAdapters(platformRoot, platformRoot);
+    const result = await discoverAdapters(platformRoot);
     // Same root: should not double-load or error
     expect(result.size).toBe(1);
     expect(result.has('@test/dev-adapter')).toBe(true);

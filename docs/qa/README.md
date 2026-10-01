@@ -44,7 +44,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-014](S-014-ai-commit-with-llm.md) | S-014 — Generate and apply an AI commit with a real LLM | solo-developer | P0 | active | false | [local, secured] | [cli] | — |
 | [S-015](S-015-ai-code-review.md) | AI Code Review | solo-developer | P0 | active | false | [local, secured] | [cli] | — |
 | [S-016](S-016-mind-rag-search.md) | Mind — RAG search | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
-| [S-017](S-017-gateway-own-key.md) | S-017 — Configure a project’s own LLM key | solo-developer | P0 | active | false | [local, secured] | [cli, studio] | — |
+| [S-017](S-017-gateway-own-key.md) | Configure the platform LLM adapter with the user's own key | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
 | [S-018](S-018-gateway-switch-provider.md) | S-018 — Switch the configured LLM provider | solo-developer | P1 | active | false | [local, secured] | [cli, studio] | — |
 | [S-019](S-019-gateway-usage-quota.md) | S-019 — Cumulative gateway usage and quota (not shipped) | solo-developer | P1 | historical | false | [local, secured] | [cli] | — |
 | [S-020](S-020-studio-first-login.md) | Studio — First login | solo-developer | P0 | active | true | [secured] | [studio] | — |
@@ -73,9 +73,9 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-043](S-043-project-registry-and-isolation.md) | Projects — register and isolate project extensions | solo-developer | P0 | active | true | [local, secured] | [cli, studio] | — |
 | [S-044](S-044-workflow-run-history-logs-cron.md) | S-044 — Configure and inspect a workflow cron schedule | solo-developer | P1 | active | true | [local, secured] | [cli, studio, api] | — |
 | [S-045](S-045-project-mcp-tools.md) | MCP — call project-scoped tools | solo-developer | P1 | active | true | [local, secured] | [agent, api] | — |
-| [S-046](S-046-studio-projects-extensions-workflows.md) | S-046 — Manage project plugins and adapters in Studio | solo-developer | P1 | active | true | [local, secured] | [studio] | — |
+| [S-046](S-046-studio-projects-extensions-workflows.md) | Studio — Switch project context and inspect its extensions | solo-developer | P1 | active | true | [local, secured] | [studio] | — |
 | [S-047](S-047-marketplace-install-pin-uninstall.md) | S-047 — Uninstall a marketplace plugin | solo-developer | P0 | active | true | [local, secured] | [cli] | — |
-| [S-048](S-048-project-adapter-binding.md) | Adapters — bind a platform adapter with project config | solo-developer | P1 | active | true | [local, secured] | [cli] | — |
+| [S-048](S-048-project-adapter-binding.md) | Adapters — configure platform bindings and reject project overrides | solo-developer | P1 | active | true | [local, secured] | [cli] | — |
 | [S-049](S-049-plugin-author-scaffold-link-loop.md) | S-049 — Plugin author loop superseded by S-003 | plugin-author | P1 | historical | false | [local] | [cli] | S-003 |
 | [S-050](S-050-platform-uninstall.md) | Platform — uninstall a V2 installation safely | solo-developer | P1 | active | true | [local, secured] | [cli, agent] | — |
 | [S-051](S-051-unified-error-envelope.md) | Errors — show the unified actionable error envelope | solo-developer | P1 | active | true | [local, secured] | [cli, api, agent] | — |
@@ -95,7 +95,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-197](scenarios/S-197-commit-and-review-across-projects.md) | Projects — Commit in one repository and review another | solo-developer | P1 | planned | false | [local, secured] | [cli] | — |
 | [S-198](scenarios/S-198-workflows-and-crons-across-projects.md) | Projects — Keep workflow and cron runs within their project | solo-developer | P1 | planned | false | [local, secured] | [cli, studio, api] | — |
 | [S-199](scenarios/S-199-mind-mcp-and-plugins-across-projects.md) | Projects — Isolate Mind, MCP tools, and plugin installs | solo-developer | P1 | planned | false | [local, secured] | [cli, api, agent] | — |
-| [S-200](scenarios/S-200-project-adapter-and-llm-settings.md) | Projects — Apply effective adapter and model settings | solo-developer | P1 | planned | false | [local, secured] | [cli, studio] | — |
+| [S-200](scenarios/S-200-project-adapter-and-llm-settings.md) | Projects — adapter settings are platform-owned | solo-developer | P1 | historical | false | [local, secured] | [cli, studio] | S-048 |
 | [S-201](scenarios/S-201-project-analytics-and-dashboard-isolation.md) | Projects — Filter analytics, logs, and dashboard by project | solo-developer | P1 | planned | false | [local, secured] | [cli, studio, api] | — |
 | [S-202](scenarios/S-202-project-unregister-and-member-access.md) | Projects — Unregister one project and preserve tenant access boundaries | team-member | P1 | planned | false | [secured] | [cli, studio, api] | — |
 ## Manual run records

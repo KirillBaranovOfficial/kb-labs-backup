@@ -46,8 +46,8 @@ to choose adapter providers. In a project, `kb adapter list --json` shows
 cache uses the platform-local StateBroker; and logging, analytics, and local
 databases use Pino, a ring buffer, and SQLite. Event delivery, plugin invoke,
 artifacts, config, and notifications use in-process implementations. No
-external adapter service is needed for these defaults. Projects inherit the
-installed defaults unless they bind an override.
+external adapter service is needed for these defaults. All projects use the
+platform defaults and platform-level overrides.
 
 LLM and vector-store slots remain empty until you configure providers. A
 command needing a missing capability reports a typed unavailable error with
@@ -115,8 +115,8 @@ OpenAI-backed generation, configure the adapter and keep the key in an
 environment variable:
 
 ```bash
-kb config set platform.adapters.llm @kb-labs/adapters-openai
-kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'
+kb config set --scope platform platform.adapters.llm @kb-labs/adapters-openai
+kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'
 export OPENAI_API_KEY=your-openai-api-key
 ```
 

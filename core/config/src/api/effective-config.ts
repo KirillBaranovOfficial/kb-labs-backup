@@ -34,6 +34,7 @@ import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
 import { readJsonWithDiagnostics, mergeDefined } from '../runtime/runtime.js';
+import { AdapterProjectScopeError } from '@kb-labs/core-platform';
 import type { Diagnostic } from '../types/index.js';
 import { loadOverlays } from '../overlay/loader.js';
 import { mergeOverlay } from '../overlay/merge.js';
@@ -196,8 +197,29 @@ export async function loadEffectiveConfig(
     : { paths: [] as string[], data: {} as Record<string, unknown>, files: [] as ConfigLayerFile[] };
   const projectLayer = await readObjectsAtRoot(projectRoot, diagnostics, 'project');
 
+  const projectPlatform = projectLayer.data.platform;
+  if (usePlatform && (
+    projectLayer.data.adapters !== undefined ||
+    projectLayer.data.adapterOptions !== undefined ||
+    (projectPlatform !== null && typeof projectPlatform === 'object' && !Array.isArray(projectPlatform) &&
+      ((projectPlatform as Record<string, unknown>).adapters !== undefined ||
+        (projectPlatform as Record<string, unknown>).adapterOptions !== undefined))
+  )) {
+    throw new AdapterProjectScopeError();
+  }
+
   const overlayResult = await loadOverlays(projectRoot);
   diagnostics.push(...overlayResult.diagnostics);
+  if (usePlatform && overlayResult.overlays.some(overlay => {
+    const platform = overlay.data.platform;
+    const section = platform !== null && typeof platform === 'object' && !Array.isArray(platform)
+      ? platform as Record<string, unknown>
+      : undefined;
+    return overlay.data.adapters !== undefined || overlay.data.adapterOptions !== undefined ||
+      section?.adapters !== undefined || section?.adapterOptions !== undefined;
+  })) {
+    throw new AdapterProjectScopeError();
+  }
 
   const nothingFound =
     generatedLayer.files.length === 0 &&

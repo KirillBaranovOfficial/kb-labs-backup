@@ -16,7 +16,7 @@ A project user can inspect a completed workflow and its logs after the host and 
 
 ## Prerequisites
 
-- [ ] A registered project with its default or another persistent storage adapter bound.
+- [ ] A registered project using the platform's default or another persistent storage adapter.
 - [ ] `kb-create` is installed for the journey environment.
 
 ## Steps

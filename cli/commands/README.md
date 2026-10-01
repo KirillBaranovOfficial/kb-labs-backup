@@ -237,7 +237,7 @@ pnpm build
 
 ### Listing and binding adapters
 
-`kb adapter list` reports the current project's effective adapter package,
+`kb adapter list` reports the platform's effective adapter package,
 mode, and storage directory. For providers with manifest-declared credentials,
 `--json` also reports `credentialsStatus` and missing credential names without
 exposing values. JSON includes every runtime slot and marks provider-backed
@@ -247,13 +247,12 @@ slots that need explicit configuration.
 kb adapter list --json
 ```
 
-`kb adapter bind <slot> <package-id>` writes a project override at
-`platform.adapters.<slot>`. Adapter options are project scoped. Unbinding a
-slot removes its binding and corresponding options so the project returns to
-the platform default:
+`kb adapter bind <slot> <package-id>` writes a platform binding at
+`platform.adapters.<slot>`. Adapter options are also platform scoped. Run these
+commands from the platform root:
 
 ```bash
-kb config set platform.adapterOptions.storage '{"baseDir":".kb/override-data"}'
+kb config set --scope platform platform.adapterOptions.storage '{"baseDir":".kb/override-data"}'
 kb adapter bind storage @kb-labs/adapters-fs
 kb adapter unbind storage
 ```
@@ -261,7 +260,7 @@ kb adapter unbind storage
 The platform includes `@kb-labs/adapters-fs` for storage. Other adapter
 packages must be installed at platform scope before binding.
 
-`--dry-run` validates the binding without writing project config; `--json`
+`--dry-run` validates the binding without writing platform config; `--json`
 returns the same operation result as a machine-readable object.
 
 ## Migration from Legacy Commands

@@ -49,6 +49,15 @@ export class AdapterUnavailableError extends Error {
   }
 }
 
+/** A project config attempted to set adapter bindings or options. */
+export class AdapterProjectScopeError extends Error {
+  constructor() {
+    super('Project adapter configuration is unsupported.');
+    this.name = 'AdapterProjectScopeError';
+    Object.setPrototypeOf(this, AdapterProjectScopeError.prototype);
+  }
+}
+
 /** A bound adapter cannot run because a required credential is absent. */
 export class AdapterCredentialsMissingError extends Error {
   public readonly slot: string;

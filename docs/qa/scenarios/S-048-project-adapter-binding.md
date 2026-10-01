@@ -1,6 +1,6 @@
 ---
 id: S-048
-title: Adapters — override and restore the project storage default
+title: Adapters — configure platform bindings and reject project overrides
 persona: solo-developer
 area: config
 priority: P1
@@ -12,29 +12,27 @@ surfaces: [cli]
 
 ## Goal
 
-The built-in filesystem storage adapter works by default. A project can override
-its base directory, write workflow run records there, then unbind the override
-and return to the platform default without affecting another project.
+Configure adapter bindings, options, and LLM model settings once at platform
+scope. Projects use that platform configuration and can attach plugins
+independently without changing adapter behavior.
 
 ## Prerequisites
 
-- [ ] Platform installed with the built-in filesystem storage adapter.
-- [ ] Projects A and B initialized with no project-level storage adapter config.
-- [ ] The workflow service persists run records through `IStorage` at
-  `<storage-root>/workflows/<runId>.json` (owned by the workflow stream).
+- [ ] Platform installed with the built-in filesystem storage adapter and two registered projects.
+- [ ] An adapter package is installed in the platform package graph.
+- [ ] A plugin is available to attach to a project.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-048.1 | With project A and B both using defaults, run the `e2e-hello` workflow from each project and inspect each completed run record | Each record exists under its project's `.kb/data/workflows/<runId>.json`; each contains its own `runId` and terminal `success` status. Neither project has a project-level storage override. |
-| S-048.2 | In project A, run `kb config set platform.adapterOptions.storage '{"baseDir":".kb/override-data"}' --json`, then `kb adapter bind storage @kb-labs/adapters-fs --json` | Reports successful project-scoped binding; project A config selects the built-in fs adapter with the override base directory. Project B remains unconfigured and keeps the platform default. |
-| S-048.3 | Run the `e2e-hello` workflow in project A and inspect its completed run record | `<project-A>/.kb/override-data/workflows/<runId>.json` exists and contains the matching `runId` and terminal `success` status. The same run ID has no record under `<project-A>/.kb/data/workflows/`. |
-| S-048.4 | Run the `e2e-hello` workflow in project B and inspect its completed run record | The new record is under `<project-B>/.kb/data/workflows/<runId>.json`; project B still uses the default while project A is overridden. |
-| S-048.5 | In project A, run `kb adapter unbind storage --json`, then run a new `e2e-hello` workflow and inspect its record | The new run record is under `<project-A>/.kb/data/workflows/<runId>.json`, with matching `runId` and terminal `success`; no record for that run exists under `.kb/override-data`. Project B still writes to its default. |
-| S-048.6 | Inspect project A and project B configs and run `kb adapter list --json` from each | Project A no longer has a storage binding or storage options and reports the built-in fs default at its `.kb/data`; project B remains on its own `.kb/data` default. |
+| S-048.1 | Run `kb adapter bind storage @kb-labs/adapters-fs --json` from the platform root | The command reports success and stores `platform.adapters.storage` in the platform configuration. Both registered projects resolve the same storage adapter. |
+| S-048.2 | Run `kb config set --scope platform platform.adapterOptions.storage '{"baseDir":".kb/data"}' --json` from the platform root, then run `kb adapter list --json` from Projects A and B | The platform configuration contains the options; both projects report the platform binding and options. Neither project contains adapter configuration. |
+| S-048.3 | Add `platform.adapters.storage` to Project A's `.kb/kb.config.json` and run `kb adapter list --json` from Project A; repeat with legacy top-level `adapters.storage` | Each command fails with typed code `KB_ADAPTER_PROJECT_SCOPE`; the message identifies project adapter configuration as unsupported and the hint directs the user to move `platform.adapters` and `platform.adapterOptions` to the platform config. |
+| S-048.4 | Attach the available plugin to Project A with `kb marketplace install <plugin-package> --scope project --json`, then inspect plugins in Projects A and B | Project A lists the attached plugin; Project B does not. Both projects continue to resolve the same platform adapter binding. |
+| S-048.5 | Inspect Project A and Project B `.kb/kb.config.json[c]` after the plugin attachment | Neither project config contains adapter bindings, adapter options, LLM keys, or model overrides; platform configuration remains the single source for those settings. |
+| S-048.6 | Run `kb adapter unbind storage --json` from the platform root, then run the `e2e-hello` workflow from Project A and inspect its storage row and run record | The platform storage binding and its options are removed. Project A still resolves the built-in filesystem default, and the workflow record is written under `<project-root>/.kb/data/workflows/<runId>.json`. |
 
 ## Dependencies
 
-- S-048.1, S-048.3–S-048.5 depend on the workflow stream persisting run records
-  through the effective project `IStorage` adapter.
+- S-043 covers project-scoped plugin registration and isolation.

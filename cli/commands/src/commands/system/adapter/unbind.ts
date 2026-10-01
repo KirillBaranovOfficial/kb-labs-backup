@@ -1,4 +1,4 @@
-/** Remove an adapter binding from the current project's user config. */
+/** Remove an adapter binding from platform config. */
 
 import { configErrorEnvelope, unsetUserConfigValue } from '@kb-labs/core-config';
 import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
@@ -22,9 +22,9 @@ type UnbindResult = CommandResult & {
 
 export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
   name: 'unbind',
-  description: 'Remove an adapter binding from the current project',
+  description: 'Remove an adapter binding from the platform',
   longDescription:
-    'Removes platform.adapters.<slot> from the current project configuration. Project adapter options are preserved.',
+    'Removes platform.adapters.<slot> and platform.adapterOptions.<slot> from platform configuration.',
   category: 'adapter',
   examples: generateExamples('adapter unbind', 'kb', [
     { flags: {}, description: 'storage' },
@@ -32,7 +32,7 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
   ]),
   flags: {
     json: { type: 'boolean', description: 'Output machine-readable JSON' },
-    'dry-run': { type: 'boolean', description: 'Validate without writing project config' },
+    'dry-run': { type: 'boolean', description: 'Validate without writing platform config' },
   },
   analytics: { command: 'adapter.unbind', startEvent: 'ADAPTER_UNBIND_STARTED', finishEvent: 'ADAPTER_UNBIND_FINISHED' },
   async handler(ctx, argv, flags) {
@@ -43,7 +43,7 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
 
     try {
       const roots = await resolveConfigRoots(getContextCwd(ctx));
-      const filePath = await userConfigFileForScope(roots, 'project');
+      const filePath = await userConfigFileForScope(roots, 'platform');
       const binding = await unsetUserConfigValue({
         filePath,
         path: ['platform', 'adapters', slot],
@@ -75,7 +75,7 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
       ctx.ui?.error(`${result.error ?? 'Adapter unbind failed'}`);
       return;
     }
-    ctx.ui?.success(result.dryRun ? 'Adapter unbind validated; no config written' : 'Adapter unbound from project', {
+    ctx.ui?.success(result.dryRun ? 'Adapter unbind validated; no config written' : 'Adapter unbound from platform', {
       sections: [{ header: 'Adapter', items: [`Slot: ${result.slot}`, `Config: ${result.file}`] }],
     });
   },

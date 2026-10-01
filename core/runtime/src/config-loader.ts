@@ -58,6 +58,7 @@ import {
   type FieldMergePolicy,
 } from "@kb-labs/core-config";
 import { resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
+import { AdapterProjectScopeError } from "@kb-labs/core-platform";
 
 import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
 import { interpolateConfig } from "./config-interpolation.js";
@@ -429,6 +430,15 @@ export async function loadPlatformConfig(
     !!projectConfigPath &&
     path.resolve(platformConfigPath) === path.resolve(projectConfigPath);
 
+  if (!samePath && (
+      projectConfigData?.rawConfig?.adapters !== undefined ||
+      projectConfigData?.rawConfig?.adapterOptions !== undefined ||
+      projectPlatformConfig?.adapters !== undefined ||
+      projectPlatformConfig?.adapterOptions !== undefined
+  )) {
+    throw new AdapterProjectScopeError();
+  }
+
   if (samePath && projectConfigData) {
     // Single file plays both roles (dev mode). Treat its contents as
     // platform defaults so policy-merge doesn't strip platform-only fields
@@ -481,6 +491,10 @@ export async function loadPlatformConfig(
   // Overlay semantics differ from the platform↔project merge: arrays replace
   // by default, with opt-in append via the `kb:merge` directive.
   const overlayResult = await loadOverlays(roots.projectRoot);
+  if (overlayResult.overlays.some(overlay =>
+    overlay.data.adapters !== undefined || overlay.data.adapterOptions !== undefined)) {
+    throw new AdapterProjectScopeError();
+  }
   const appliedOverlays: string[] = [];
   for (const overlay of overlayResult.overlays) {
     merged = mergeOverlay(merged, overlay.data);

@@ -8,7 +8,7 @@
  * `@kb-labs/plugin-contracts`; both delegate here for the rest.
  */
 
-import { AdapterCredentialsMissingError, AdapterUnavailableError } from '../errors.js';
+import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError } from '../errors.js';
 import { createErrorEnvelope, type CreateEnvelopeOptions } from './catalog.js';
 import type { ErrorEnvelope } from './types.js';
 
@@ -16,9 +16,16 @@ export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'a
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+  if (error instanceof AdapterProjectScopeError) {
+    return createErrorEnvelope('KB_ADAPTER_PROJECT_SCOPE', {
+      ...options,
+      details: { path: 'platform.adapters / platform.adapterOptions' },
+      cause: error.message,
+    });
+  }
   if (error instanceof AdapterCredentialsMissingError) {
     const envReference = '${' + error.credential + '}';
-    const command = `kb config set ${error.configurationPath} '${envReference}' --allow-missing-env`;
+    const command = `kb config set --scope platform ${error.configurationPath} '${envReference}' --allow-missing-env`;
     return createErrorEnvelope('KB_ADAPTER_CREDENTIALS_MISSING', {
       ...options,
       cause: error.message,

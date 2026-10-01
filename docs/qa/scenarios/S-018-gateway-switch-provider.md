@@ -1,6 +1,6 @@
 ---
 id: S-018
-title: Switch the configured project LLM provider
+title: Switch the platform LLM provider
 persona: solo-developer
 area: gateway
 priority: P1
@@ -12,17 +12,17 @@ surfaces: [cli]
 
 ## Goal
 
-A developer changes the LLM adapter selected by one project and confirms the change does not rewrite platform or other project configuration.
+A platform operator changes the configured LLM adapter and confirms all projects resolve that platform provider.
 
 ## Prerequisites
 
 - [ ] Two LLM adapter packages are installed at platform scope and have valid provider credentials available to the platform process.
-- [ ] Two disposable projects have project-local configuration files.
+- [ ] Two registered projects use the same platform configuration.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-018.1 | From project A, run `kb config set --scope project platform.adapters.llm @kb-labs/adapters-openai` | Project A config records the OpenAI adapter in `platform.adapters.llm`. |
-| S-018.2 | Run an LLM-backed command from project A | The request uses the OpenAI adapter. |
-| S-018.3 | From project A, run `kb config set --scope project platform.adapters.llm @kb-labs/adapters-vibeproxy` and repeat the command | The request uses the VibeProxy adapter; project B and platform config retain their previous values. |
+| S-018.1 | From the platform root, run `kb config set --scope platform platform.adapters.llm @kb-labs/adapters-openai` | Platform config records the OpenAI adapter; Projects A and B resolve that adapter. |
+| S-018.2 | Run an LLM-backed command from each project | Both requests use the platform OpenAI adapter. |
+| S-018.3 | From the platform root, run `kb config set --scope platform platform.adapters.llm @kb-labs/adapters-vibeproxy` and repeat both commands | Both requests use the VibeProxy adapter; neither project config is changed. |

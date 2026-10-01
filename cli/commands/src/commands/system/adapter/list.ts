@@ -1,11 +1,12 @@
-/** Show effective adapters for the current project and their built-in fallback. */
+/** Show platform adapters and their built-in fallback. */
 
 import path from 'node:path';
-import { ADAPTER_DEFAULTS, type AdapterSlot } from '@kb-labs/core-platform';
+import { ADAPTER_DEFAULTS, toErrorEnvelope, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { discoverAdapters, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
+import { renderErrorEnvelope } from '../config/shared';
 
 type AdapterRow = {
   slot: string;
@@ -18,7 +19,7 @@ type AdapterRow = {
   missingCredentials?: string[];
 };
 
-type ListResult = CommandResult & { adapters?: AdapterRow[]; projectRoot?: string };
+type ListResult = CommandResult & { adapters?: AdapterRow[]; projectRoot?: string; envelope?: ErrorEnvelope };
 
 const LOCAL_PACKAGES = new Set([
   '@kb-labs/adapters-fs', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-pino',
@@ -46,14 +47,20 @@ function packageRoot(spec: string): string {
 
 export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; description?: string } }, ListResult>({
   name: 'list',
-  description: 'List effective adapters for the current project',
-  longDescription: 'Shows project overrides, installed platform defaults, and built-in fallbacks without contacting adapter services.',
+  description: 'List effective platform adapters',
+  longDescription: 'Shows platform bindings, installed defaults, and built-in fallbacks without contacting adapter services.',
   category: 'adapter',
   examples: generateExamples('adapter list', 'kb', [{ flags: { json: true }, description: '' }]),
   flags: { json: { type: 'boolean', description: 'Output machine-readable JSON' } },
   analytics: { command: 'adapter.list' },
   async handler(ctx) {
-    const loaded = await loadPlatformConfig({ startDir: getContextCwd(ctx), loadEnvFile: false });
+    let loaded: Awaited<ReturnType<typeof loadPlatformConfig>>;
+    try {
+      loaded = await loadPlatformConfig({ startDir: getContextCwd(ctx), loadEnvFile: false });
+    } catch (error) {
+      const envelope = toErrorEnvelope(error);
+      return { ok: false, error: envelope.message, envelope };
+    }
     const config = loaded.platformConfig;
     const resolvedDefaults = await resolveInstalledAdapterDefaults({
       adapters: Object.fromEntries(Object.entries(config.adapters ?? {})),
@@ -61,7 +68,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     }, loaded.platformRoot, loaded.projectRoot);
     const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
     const effectiveAdapterOptions = resolvedDefaults.adapterOptions as Record<string, unknown>;
-    const discovered = await discoverAdapters(loaded.platformRoot, loaded.projectRoot);
+    const discovered = await discoverAdapters(loaded.platformRoot);
     const rows = (Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[]).map((slot): AdapterRow => {
       const configKey = CONFIG_KEY_BY_SLOT[slot];
       const configured = configKey ? effectiveAdapters[configKey] : undefined;
@@ -115,6 +122,10 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     return { ok: true, adapters: rows, projectRoot: loaded.projectRoot };
   },
   formatter(result, ctx, flags) {
+    if (!result.ok && result.envelope) {
+      renderErrorEnvelope(ctx, result.envelope, Boolean(flags.json));
+      return;
+    }
     if (flags.json) { ctx.ui?.json?.(result); return; }
     if (!result.ok) {
       const error = result.error;

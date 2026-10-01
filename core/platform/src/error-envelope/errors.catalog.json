@@ -966,13 +966,22 @@
       "hint": "Run `{command}` to bind an installed adapter for this capability."
     },
     {
+      "code": "KB_ADAPTER_PROJECT_SCOPE",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Project adapter configuration at {path} is unsupported.",
+      "hint": "Move `platform.adapters` and `platform.adapterOptions` to the platform config and retry."
+    },
+    {
       "code": "KB_ADAPTER_CREDENTIALS_MISSING",
       "area": "plugin",
       "stage": "run",
       "severity": "error",
       "retryable": false,
       "message": "Adapter {service} is bound but is missing required credential {credential}.",
-      "hint": "Set {credential} or configure it at {path} with `{command}`. No request was sent."
+      "hint": "Set {credential} or configure it at platform scope at {path} with `{command}`. No request was sent."
     },
     {
       "code": "KB_RUNTIME_INPUT_INVALID",

@@ -62,33 +62,31 @@ function exportTarget(entry: unknown): string | undefined {
   return undefined;
 }
 
-/** Absolute path of the module a package specifier resolves to, looked up under the given roots. */
-export function resolveAdapterModule(spec: string, roots: readonly string[]): string | undefined {
+/** Absolute path of the module for a package installed under the platform root. */
+export function resolveAdapterModule(spec: string, platformRoot: string): string | undefined {
   const { name, subpath } = splitPackageSpecifier(spec);
-  for (const root of roots) {
-    const pkgDir = path.join(root, 'node_modules', name);
-    const pkgJsonPath = path.join(pkgDir, 'package.json');
-    if (!existsSync(pkgJsonPath)) {
-      continue;
-    }
-    let pkg: PackageJson;
-    try {
-      pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as PackageJson;
-    } catch {
-      continue;
-    }
-    const exportsField = pkg.exports;
-    let target: string | undefined;
-    if (isRecord(exportsField) && Object.keys(exportsField).some((key) => key.startsWith('.'))) {
-      target = exportTarget(exportsField[subpath]);
-    } else if (subpath === '.') {
-      target = exportTarget(exportsField) ?? pkg.main ?? 'index.js';
-    }
-    if (target) {
-      const full = path.resolve(pkgDir, target);
-      if (existsSync(full)) {
-        return full;
-      }
+  const pkgDir = path.join(platformRoot, 'node_modules', name);
+  const pkgJsonPath = path.join(pkgDir, 'package.json');
+  if (!existsSync(pkgJsonPath)) {
+    return undefined;
+  }
+  let pkg: PackageJson;
+  try {
+    pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as PackageJson;
+  } catch {
+    return undefined;
+  }
+  const exportsField = pkg.exports;
+  let target: string | undefined;
+  if (isRecord(exportsField) && Object.keys(exportsField).some((key) => key.startsWith('.'))) {
+    target = exportTarget(exportsField[subpath]);
+  } else if (subpath === '.') {
+    target = exportTarget(exportsField) ?? pkg.main ?? 'index.js';
+  }
+  if (target) {
+    const full = path.resolve(pkgDir, target);
+    if (existsSync(full)) {
+      return full;
     }
   }
   return undefined;
@@ -97,9 +95,9 @@ export function resolveAdapterModule(spec: string, roots: readonly string[]): st
 /** The manifest `configSchema` of an adapter package, or `undefined` when unavailable. */
 export async function loadAdapterConfigSchema(
   spec: string,
-  roots: readonly string[],
+  platformRoot: string,
 ): Promise<ManifestConfigSchema | undefined> {
-  const modulePath = resolveAdapterModule(spec, roots);
+  const modulePath = resolveAdapterModule(spec, platformRoot);
   if (!modulePath) {
     return undefined;
   }
@@ -185,8 +183,8 @@ function optionsHolder(keyPath: readonly string[]): { name: string; basePath: st
 }
 
 export interface AdapterOptionsValidatorInput {
-  /** Roots searched for `node_modules/<adapter>` (platform first, then project). */
-  roots: readonly string[];
+  /** Platform root containing installed adapter packages. */
+  platformRoot: string;
   /** `platform.adapters` of the effective config, used when the edited file does not bind the adapter itself. */
   effectiveAdapters?: unknown;
 }
@@ -218,7 +216,7 @@ export function createAdapterOptionsValidator(
     if (!spec) {
       return [];
     }
-    cachedSchema ??= loadAdapterConfigSchema(spec, input.roots);
+    cachedSchema ??= loadAdapterConfigSchema(spec, input.platformRoot);
     const schema = await cachedSchema;
     return schema ? validateAdapterOptions(basePath, options, schema) : [];
   };
