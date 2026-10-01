@@ -85,12 +85,14 @@ export default defineCommand({
           body: JSON.stringify({ name, namespaceId, capabilities: ['filesystem', 'git', 'execution', 'search', 'shell'] }),
         });
       } catch (err) {
-        if (err instanceof GatewayApiError) {
-          handleError(ctx, err, flags.json);
-          return { ok: false, error: err.envelope.message };
+        const gatewayError = err;
+        if (gatewayError instanceof GatewayApiError) {
+          const message = gatewayError.envelope.message;
+          handleError(ctx, gatewayError, flags.json);
+          return { ok: false, error: message };
         }
-        handleError(ctx, err instanceof Error ? new Error(`Failed to reach Gateway: ${err.message}`) : err, flags.json);
-        return { ok: false, error: err instanceof Error ? `Failed to reach Gateway: ${err.message}` : String(err) };
+        handleError(ctx, gatewayError instanceof Error ? new Error(`Failed to reach Gateway: ${gatewayError.message}`) : gatewayError, flags.json);
+        return { ok: false, error: gatewayError instanceof Error ? `Failed to reach Gateway: ${gatewayError.message}` : String(gatewayError) };
       }
 
       if (!res.ok) {

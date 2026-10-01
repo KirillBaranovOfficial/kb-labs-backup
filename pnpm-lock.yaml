@@ -3493,6 +3493,9 @@ importers:
 
   plugins/host-agent/entry:
     dependencies:
+      '@kb-labs/cli-runtime':
+        specifier: workspace:*
+        version: link:../../../cli/runtime
       '@kb-labs/host-agent-client':
         specifier: workspace:*
         version: link:../client
@@ -3820,9 +3823,6 @@ importers:
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../../core/platform
-      '@kb-labs/gateway-auth':
-        specifier: workspace:*
-        version: link:../../../services/gateway/auth
       '@kb-labs/gateway-contracts':
         specifier: workspace:*
         version: link:../../../services/gateway/contracts
@@ -3950,6 +3950,9 @@ importers:
 
   plugins/marketplace-registry/entry:
     dependencies:
+      '@kb-labs/cli-runtime':
+        specifier: workspace:*
+        version: link:../../../cli/runtime
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk

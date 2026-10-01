@@ -136,6 +136,7 @@ export async function createServer(
   webhookManifests?: WebhookManifestEntry[],
   projectRouting?: ProjectRouting,
   hostRoutes?: HostRoutes,
+  routeObserver?: (method: string | string[], url: string) => void,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -161,6 +162,11 @@ export async function createServer(
         }
       : {}),
   });
+  if (routeObserver) {
+    app.addHook("onRoute", (route) => {
+      if (route.url) { routeObserver(route.method, route.url); }
+    });
+  }
 
   // Cookie parsing must run before the gate so secured cookie sessions are
   // visible when the global auth hook validates the request.
@@ -170,6 +176,7 @@ export async function createServer(
   // proxy, project, and plugin routes are registered.
   app.addHook("onRequest", createAuthMiddleware(cache, jwtConfig, {
     authEnabled: resolveAccess(config).authEnabled,
+    studioEnabled,
     internalSecret: process.env.GATEWAY_INTERNAL_SECRET,
     webhookManifests,
     ...(userAuth ? { userAuth: {
@@ -194,9 +201,9 @@ export async function createServer(
     ui: !isProduction,
   });
 
-  // CORS disabled at gateway level — browser clients (Studio) connect via same-origin or
-  // have CORS handled at the reverse-proxy / CDN layer. Reflecting arbitrary origins
-  // (origin: true) would allow any attacker site to make credentialed cross-origin requests.
+  // The gateway does not enable credentialed cross-origin requests. The global
+  // auth hook answers protocol preflight without dispatch; deployed reverse proxy
+  // or CDN policy controls CORS on the actual request/response.
   await app.register(fastifyCors, { origin: false });
   const observability = new GatewayObservabilityCollector(config);
   observability.register(app);

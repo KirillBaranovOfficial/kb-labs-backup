@@ -1,16 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { AuthContext } from '@kb-labs/gateway-contracts';
-import { verifyAccessToken, type JwtConfig } from '@kb-labs/gateway-auth';
-
-const PUBLIC_ROUTES = new Set([
-  '/health',
-  '/ready',
-  '/metrics',
-  '/observability/describe',
-  '/observability/health',
-  '/docs',
-  '/docs/json',
-]);
+import { AuthContextSchema, type AuthContext } from '@kb-labs/gateway-contracts';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -18,38 +8,49 @@ declare module 'fastify' {
   }
 }
 
-export function createRegistryAuthMiddleware(jwtConfig: JwtConfig) {
-  return async function registryAuthMiddleware(
+function header(request: FastifyRequest, name: string): string | undefined {
+  const value = request.headers[name];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function isPublicCatalogRead(request: FastifyRequest): boolean {
+  if (request.method !== 'GET') { return false; }
+  const path = new URL(request.url, 'http://registry.local').pathname.replace(/\/+$/, '') || '/';
+  return path === '/api/v1/packages' ||
+    /^\/api\/v1\/packages\/[^/]+\/[^/]+(?:\/stats)?$/.test(path);
+}
+
+export function createRegistryAuthMiddleware(internalSecret?: string) {
+  return async function registryGatewayIdentity(
     request: FastifyRequest,
     reply: FastifyReply,
   ): Promise<void> {
-    const pathname = new URL(request.url, 'http://localhost').pathname;
-    if (PUBLIC_ROUTES.has(pathname) || pathname.startsWith('/docs')) { return; }
-
-    // Public read-only routes — no auth needed
-    if (request.method === 'GET' && (
-      pathname.startsWith('/api/v1/packages') ||
-      pathname.startsWith('/api/v1/my')  // will be caught by requireAuth in route
-    )) {
-      // still attempt auth so authContext is set if token is present
+    const suppliedSecret = header(request, 'x-internal-secret');
+    const permissionsJson = header(request, 'x-kb-auth-permissions');
+    let permissions: string[] | undefined;
+    try {
+      const parsed: unknown = JSON.parse(permissionsJson ?? '[]');
+      if (!Array.isArray(parsed) || !parsed.every((permission) => typeof permission === 'string')) {
+        throw new Error('Invalid forwarded permissions');
+      }
+      permissions = parsed;
+    } catch {
+      permissions = undefined;
     }
 
-    const authHeader = request.headers.authorization;
-    const token = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1] ?? null;
-    if (!token) { return; } // public routes proceed without authContext; protected routes use requireAuth
-
-    const payload = await verifyAccessToken(token, jwtConfig);
-    if (!payload) {
-      // Token present but invalid — reject immediately
-      return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid token' });
+    const type = header(request, 'x-kb-auth-type');
+    const userId = header(request, 'x-kb-auth-user-id');
+    const namespaceId = header(request, 'x-kb-auth-namespace-id');
+    const tier = header(request, 'x-kb-auth-tier');
+    const hasIdentity = [type, userId, namespaceId, tier, permissionsJson].some((value) => value !== undefined);
+    const identity = hasIdentity
+      ? AuthContextSchema.safeParse({ type, userId, namespaceId, tier, permissions })
+      : undefined;
+    if (!internalSecret || suppliedSecret !== internalSecret ||
+      (hasIdentity && !identity?.success) || (!hasIdentity && !isPublicCatalogRead(request))) {
+      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
     }
 
-    request.authContext = {
-      type: payload.type,
-      userId: payload.sub ?? '',
-      namespaceId: payload.namespaceId,
-      tier: payload.tier,
-      permissions: ['host:connect'],
-    };
+    if (identity?.success) { request.authContext = identity.data; }
   };
 }
