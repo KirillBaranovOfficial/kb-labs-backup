@@ -31,6 +31,35 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
 
         journey.step("validate QA cases with the workspace CLI", "workspace-cli", validate_cases, cases=["S-179.2"])
 
+        def list_workspace_adapters() -> str | None:
+            result = run("adapter", "list", "--json")
+            if result.returncode != 0:
+                return f"workspace adapter listing failed (exit {result.returncode}): {result.stderr or result.stdout}"
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                return f"workspace adapter listing did not return JSON: {error}"
+            rows = payload.get("adapters", []) if isinstance(payload, dict) else []
+            implementations = {row.get("slot"): row.get("implementation") for row in rows if isinstance(row, dict)}
+            expected = {
+                "storage": "@kb-labs/adapters-fs",
+                "cache": "@kb-labs/adapters-state-broker",
+                "eventBus": "@kb-labs/adapters-eventbus-cache",
+                "documentDatabase": "@kb-labs/adapters-sqlite",
+                "kvStore": "@kb-labs/adapters-sqlite/kv",
+                "logger": "@kb-labs/adapters-pino",
+                "logRingBuffer": "@kb-labs/adapters-log-ringbuffer",
+                "logPersistence": "@kb-labs/adapters-log-document",
+                "analytics": "@kb-labs/adapters-analytics-sqlite",
+                "serviceTransport": "@kb-labs/adapters-service-transport-http",
+            }
+            missing = [slot for slot, package in expected.items() if implementations.get(slot) != package]
+            if missing:
+                return f"workspace adapter listing did not resolve configured workspace packages for: {', '.join(missing)}"
+            return None
+
+        journey.step("list configured workspace adapters", "workspace-cli", list_workspace_adapters, cases=["S-179.5"])
+
         def list_plugin_commands() -> str | None:
             result = run("--help")
             if result.returncode != 0:

@@ -26,7 +26,8 @@ describe('installed platform adapter defaults', () => {
     ]);
 
     const configPath = path.join(workspaceRoot, '.kb', 'kb.config.jsonc');
-    const releaseConfig = await readFile(configPath, 'utf8');
+    const workspaceConfig = await readFile(configPath, 'utf8');
+    const releaseConfig = workspaceConfig.replace(/"mode":\s*"development",\s*/, '');
     await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), releaseConfig);
     await writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}\n');
 
