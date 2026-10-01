@@ -33,7 +33,10 @@ describe('installed platform adapter defaults', () => {
     const config = JSON.parse(releaseConfig.replace(/,\s*([}\]])/g, '$1')) as {
       platform: { adapters: Record<string, string> };
     };
-    const packages = [...new Set(Object.values(config.platform.adapters).map(value => value.split('/').slice(0, 2).join('/')))];
+    const packages = [...new Set([
+      ...Object.values(config.platform.adapters).map(value => value.split('/').slice(0, 2).join('/')),
+      '@kb-labs/adapters-openai',
+    ])];
     const adapters = Object.fromEntries(packages.map(packageName => {
       const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
       return [packageName, {
@@ -64,6 +67,11 @@ describe('installed platform adapter defaults', () => {
     });
     expect(payload.adapters?.find(row => row.slot === 'storage')).toMatchObject({
       mode: 'real', implementation: '@kb-labs/adapters-fs',
+      baseDir: path.join(projectRoot, '.kb', 'data'),
+    });
+    expect(payload.adapters?.find(row => row.slot === 'llm')).toMatchObject({
+      mode: 'real', implementation: '@kb-labs/adapters-openai',
+      credentialsStatus: 'missing', missingCredentials: ['OPENAI_API_KEY'],
     });
   });
 });

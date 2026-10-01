@@ -144,6 +144,9 @@
           "flows": {
             "platform": {
               "versioningStrategy": "lockstep",
+              "platformRequires": [
+                "llm"
+              ],
               "platformMembers": [
                 "@kb-labs/cli-bin",
                 "@kb-labs/scaffold",

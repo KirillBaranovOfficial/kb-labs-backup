@@ -126,6 +126,18 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             add(root / relative, relative)
         for source in sorted((root / ".kb/v2/snapshots").glob("*.json")):
             add(source, Path(".kb/v2/snapshots") / source.name)
+        home_value = (env or os.environ).get("HOME")
+        launcher_logs = []
+        if home_value:
+            try:
+                launcher_logs = sorted((Path(home_value) / ".kb" / "launcher").glob("*.log"))
+            except OSError:
+                pass
+        for source in launcher_logs:
+            if used >= CONTENT_BUDGET:
+                break
+            relative = Path("launcher-logs") / source.name
+            add(source, relative, tail=True)
         receipt_path = root / ".kb/v2/receipt.json"
         try:
             receipt_value = json.loads(receipt_path.read_text())

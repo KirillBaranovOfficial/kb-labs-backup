@@ -12,9 +12,16 @@ export function readPlatformReleaseConfig(path) {
   if (!adapters || typeof adapters !== 'object' || Array.isArray(adapters)) {
     throw new Error('platform.adapters is required for a platform release index');
   }
+  const additionalRequirements = flow.platformRequires ?? [];
+  if (!Array.isArray(additionalRequirements) || additionalRequirements.some(slot => typeof slot !== 'string' || slot.length === 0)) {
+    throw new Error('release.flows.platform.platformRequires must be an array of adapter capability names');
+  }
   return {
     platformMembers: flow.platformMembers,
-    platformRequires: Object.keys(adapters).filter(slot => Boolean(adapters[slot])),
+    platformRequires: [...new Set([
+      ...Object.keys(adapters).filter(slot => Boolean(adapters[slot])),
+      ...additionalRequirements,
+    ])],
     adapters,
     adapterOptions: config.platform.adapterOptions ?? {},
   };

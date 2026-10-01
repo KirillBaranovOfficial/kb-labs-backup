@@ -131,6 +131,30 @@ func TestBuildKeepsResolvedAdapterBindingsAlongsideManifestDefault(t *testing.T)
 	}
 }
 
+// case: S-054.1
+func TestBuildPreservesResolvedAdapterExportSubpath(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = []contracts.ConfigPatch{
+		{Path: "/platform/adapters/kvStore", Value: "@kb-labs/adapters-sqlite@2.0.0", Owner: "adapter:sqlite-stores"},
+		{Path: "/platform/adapters", JSON: `{"kvStore":"@kb-labs/adapters-sqlite/kv"}`, Owner: "manifest:platform.adapters"},
+	}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Platform struct {
+			Adapters map[string]string `json:"adapters"`
+		} `json:"platform"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config.Platform.Adapters["kvStore"]; got != "@kb-labs/adapters-sqlite/kv" {
+		t.Fatalf("rendered kvStore module specifier = %q, want package export subpath", got)
+	}
+}
+
 func TestWriteProducesTheRuntimeConfigAndNoServiceManagerFile(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Write(testPlan(root)); err != nil {

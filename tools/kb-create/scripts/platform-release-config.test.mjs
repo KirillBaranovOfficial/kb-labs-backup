@@ -6,7 +6,9 @@ import { readPlatformReleaseConfig } from './platform-release-config.mjs';
 test('the platform release config binds every persistent built-in used by a fresh install', () => {
   const configPath = fileURLToPath(new URL('../../../.kb/kb.config.jsonc', import.meta.url));
   const config = readPlatformReleaseConfig(configPath);
-  assert.deepEqual(config.platformRequires, Object.keys(config.adapters));
+  assert.deepEqual(config.platformRequires, [...Object.keys(config.adapters), 'llm']);
+  assert.ok(config.platformRequires.includes('llm'), 'the default install must include the implicit OpenAI provider');
+  assert.equal(config.adapters.llm, undefined, 'llm remains selected by its adapter manifest default');
   for (const slot of [
     'storage', 'cache', 'eventBus', 'documentDatabase', 'kvStore', 'analytics', 'logger',
     'logRingBuffer', 'logPersistence', 'serviceTransport',

@@ -28,6 +28,12 @@ class PlatformStateDumpTests(unittest.TestCase):
     def test_dump_is_bounded_redacted_and_records_command_failures(self):
         with tempfile.TemporaryDirectory(prefix="journey-dump-test-") as temporary:
             root = Path(temporary)
+            home = root / "home"
+            launcher_logs = home / ".kb" / "launcher"
+            launcher_logs.mkdir(parents=True)
+            (launcher_logs / "host.log").write_text(
+                "\n".join(f"host-line-{number}" for number in range(500)) + "\napiKey: launcher-secret\n"
+            )
             platform = root / "platform"
             reports = root / "reports"
             binaries = root / "bin"
@@ -72,7 +78,7 @@ class PlatformStateDumpTests(unittest.TestCase):
             launcher = binaries / "kb-create"
             launcher.write_text("#!/bin/sh\necho '{\"token\":\"launcher-secret\"}'\nexit 9\n")
             launcher.chmod(0o755)
-            env = {**os.environ, "PATH": f"{binaries}:{os.environ.get('PATH', '')}",
+            env = {**os.environ, "HOME": str(home), "PATH": f"{binaries}:{os.environ.get('PATH', '')}",
                    "KB_JOURNEY_GIT_REVISION": "abc123def"}
 
             destination = dump_platform_state(
@@ -108,9 +114,12 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertIn("exit_code: 7", (destination / "kb-marketplace-plugins-project.txt").read_text())
             self.assertIn("exit_code: 8", (destination / "kb-command-diagnostic.txt").read_text())
             self.assertIn("exit_code: 9", (destination / "kb-create-status.txt").read_text())
-            index = (destination / "index.md").read_text()
-            self.assertIn("First failure:", index)
-            self.assertIn("Journey git revision: abc123def", index)
+            launcher_tail = (destination / "launcher-logs/host.log").read_text()
+            self.assertIn("host-line-499", launcher_tail)
+            self.assertNotIn("host-line-99\n", launcher_tail)
+            self.assertNotIn("launcher-secret", launcher_tail)
+            self.assertIn("First failure:", (destination / "index.md").read_text())
+            self.assertIn("Journey git revision: abc123def", (destination / "index.md").read_text())
             size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
             self.assertLessEqual(size, MAX_DUMP_BYTES)
 
