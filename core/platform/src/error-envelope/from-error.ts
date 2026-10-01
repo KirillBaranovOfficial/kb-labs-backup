@@ -48,7 +48,7 @@ function getAdapterConfigurationCommand(slot: string): string {
     : slot === 'embeddings'
       ? '@kb-labs/adapters-openai/embeddings'
       : `@kb-labs/adapters-${slot}`;
-  return `kb config set platform.adapters.${slot} ${adapterPackage}`;
+  return `kb adapter bind ${slot} ${adapterPackage}`;
 }
 
 /** Statuses (HTTP-style) that a caller can reasonably retry. */
