@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 from steps.accounts import run_cli_logout_steps
-from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_status
+from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status
 
 
 class CliAuthJourneyTests(unittest.TestCase):
@@ -43,6 +43,17 @@ class CliAuthJourneyTests(unittest.TestCase):
         self.assertIn(["/isolated/bin/kb", "auth", "login", "--gateway-url", "http://gateway.test",
                        "--email", "member@example.test", "--password", "MemberPass123!"], calls)
         self.assertIn(["/isolated/bin/kb", "auth", "tokens", "--json"], calls)
+
+    # case: S-041.9
+    def test_member_reset_link_requires_admin_permission(self):
+        args = ["/isolated/bin/kb", "auth", "reset-link", "--user-id", "member-1", "--json"]
+        response = {"ok": False, "error": {
+            "code": "KB_AUTH_FORBIDDEN", "details": {"permission": "users:write"},
+        }}
+        with patch("steps.auth.subprocess.run", return_value=subprocess.CompletedProcess(
+                args, 1, json.dumps(response), "")) as invoke:
+            run_cli_auth_forbidden("/isolated/bin/kb", {"HOME": "/isolated"})
+        self.assertEqual(invoke.call_args.args[0], args)
 
     # case: S-100.2, S-100.3, S-100.4
     def test_bootstrap_recovery_uses_stopped_host_command_and_checks_running_guard(self):

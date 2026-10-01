@@ -1,40 +1,49 @@
 import { describe, expect, it, vi } from 'vitest';
-import { dispatchWithPlatformAuthGate, platformAuthFailure } from './platform-auth-gate.js';
+import { dispatchWithPlatformAuthGate } from './platform-auth-gate.js';
+import { isPlatformAuthExemptFlag } from './platform-auth-policy.js';
 
 describe('platform authentication gate', () => {
-  // case: S-041.7, S-041.10
-  it('returns the catalog auth envelope before a declared secured command dispatches', () => {
-    expect(platformAuthFailure({ accessMode: 'secured', requiresPlatformAuth: true, hasAuth: false }))
-      .toMatchObject({ code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' });
+  // case: S-041.7
+  it('blocks an undeclared plugin before its handler is called', async () => {
+    const handler = vi.fn(async () => 0);
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'secured', commandPath: 'fresh-plugin run', commandKind: 'plugin', hasAuth: false,
+    }, handler);
+    expect(result).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' } });
+    expect(handler).not.toHaveBeenCalled();
   });
 
-  // case: S-041.7
-  it('does not call the handler when secured authentication is missing', async () => {
+  // case: S-041.8
+  it('allows only platform-owned system commands without a session', async () => {
+    for (const commandPath of ['auth login', 'auth logout', 'auth status', 'auth register', 'info version', 'info health', 'diag']) {
+      const handler = vi.fn(async () => 0);
+      const result = await dispatchWithPlatformAuthGate({
+        accessMode: 'secured', commandPath, commandKind: 'system', hasAuth: false,
+      }, handler);
+      expect(result).toEqual({ value: 0 });
+      expect(handler).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('does not let a plugin widen the system allowlist by choosing an auth command path', async () => {
     const handler = vi.fn(async () => 0);
-    const result = await dispatchWithPlatformAuthGate(
-      { accessMode: 'secured', requiresPlatformAuth: true, hasAuth: false }, handler,
-    );
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'secured', commandPath: 'auth login', commandKind: 'plugin', hasAuth: false,
+    }, handler);
     expect(result).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
     expect(handler).not.toHaveBeenCalled();
   });
 
-  // case: S-041.10
-  it('allows exempt commands, authenticated commands, and every local command', () => {
-    expect(platformAuthFailure({ accessMode: 'secured', requiresPlatformAuth: false, hasAuth: false })).toBeNull();
-    expect(platformAuthFailure({ accessMode: 'secured', requiresPlatformAuth: true, hasAuth: true })).toBeNull();
-    expect(platformAuthFailure({ accessMode: 'local', requiresPlatformAuth: true, hasAuth: false })).toBeNull();
-  });
-
-  // case: S-041.10
-  it('dispatches exempt, authenticated, and local commands', async () => {
+  it('allows help output and every local-mode command without a session', async () => {
     const handler = vi.fn(async () => 0);
     for (const input of [
-      { accessMode: 'secured', requiresPlatformAuth: false, hasAuth: false },
-      { accessMode: 'secured', requiresPlatformAuth: true, hasAuth: true },
-      { accessMode: 'local', requiresPlatformAuth: true, hasAuth: false },
-    ]) {
+      { accessMode: 'secured', commandPath: 'plugin run', commandKind: 'plugin', hasAuth: false, help: true },
+      { accessMode: 'local', commandPath: 'plugin run', commandKind: 'plugin', hasAuth: false },
+    ] as const) {
       await dispatchWithPlatformAuthGate(input, handler);
     }
-    expect(handler).toHaveBeenCalledTimes(3);
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(isPlatformAuthExemptFlag('help')).toBe(true);
+    expect(isPlatformAuthExemptFlag('version')).toBe(true);
   });
 });

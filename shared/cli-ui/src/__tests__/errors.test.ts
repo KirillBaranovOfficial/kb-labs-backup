@@ -29,4 +29,11 @@ describe('handleError', () => {
       error: { code: 'INTERNAL_ERROR', message: 'request failed' },
     });
   });
+
+  it('shows a permission carried by an authorization envelope in human output', () => {
+    const output = vi.fn();
+    const envelope = { code: 'KB_AUTH_FORBIDDEN', message: 'No permission.', hint: 'Ask an administrator.', details: { permission: 'auth:users:write' } };
+    handleError({ ui: { error: output } }, Object.assign(new Error(envelope.message), { envelope }));
+    expect(output).toHaveBeenCalledWith('KB_AUTH_FORBIDDEN: No permission. (permission: auth:users:write)', { hint: 'Ask an administrator.' });
+  });
 });

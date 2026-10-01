@@ -26,10 +26,16 @@ describe('gatewayApiFetch auth mapping', () => {
   });
 
   // case: S-041.9
-  it('maps a 403 to the catalog forbidden envelope', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 403 })));
+  it('maps the permission reported by a 403 response without inventing a role', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'Forbidden', message: 'Permission denied: users:write', permission: 'users:write',
+    }), { status: 403, headers: { 'Content-Type': 'application/json' } })));
     await expect(gatewayApiFetch('http://127.0.0.1:4000/api')).rejects.toMatchObject({
-      envelope: { code: 'KB_AUTH_FORBIDDEN' },
+      envelope: {
+        code: 'KB_AUTH_FORBIDDEN',
+        details: { permission: 'users:write' },
+        message: 'You do not have permission to perform this operation.',
+      },
     });
   });
 });

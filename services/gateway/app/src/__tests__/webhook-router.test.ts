@@ -185,16 +185,15 @@ describe('registerWebhookRoutes — secret auth', () => {
     });
   });
 
-  it('missing x-kb-namespace header → 400', async () => {
+  it('missing x-kb-namespace header without valid webhook authentication → 401 catalog envelope', async () => {
     const res = await app.inject({
       method: 'POST',
       url: WEBHOOK_URL,
       headers: { 'X-Webhook-Secret': SECRET, 'Content-Type': 'application/json' },
       payload: makeBody({ event: 'alert' }),
     });
-    expect(res.statusCode).toBe(400);
-    const body = res.json() as { error: string };
-    expect(body.error).toContain('x-kb-namespace');
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
   });
 
   it('unknown event → 404', async () => {
@@ -225,6 +224,8 @@ describe('registerWebhookRoutes — secret auth', () => {
       payload: makeBody({ event: 'alert' }),
     });
     expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
+    expect(mockDispatcher.call).not.toHaveBeenCalled();
   });
 
   it('correct secret → 200 with result', async () => {
@@ -396,7 +397,7 @@ describe('registerWebhookRoutes — challenge', () => {
     const res = await app.inject({
       method: 'POST',
       url: WEBHOOK_URL,
-      headers: { 'x-kb-namespace': NS, 'Content-Type': 'application/json' },
+      headers: { 'x-kb-namespace': NS, 'X-Webhook-Secret': SECRET, 'Content-Type': 'application/json' },
       payload: makeBody({ type: 'url_verification', challenge: 'abc123xyz' }),
     });
     expect(res.statusCode).toBe(200);
