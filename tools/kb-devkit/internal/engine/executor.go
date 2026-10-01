@@ -69,15 +69,17 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 
 	// 2. Cache lookup (skip if cache:false or --no-cache).
 	if def.Cache && !noCache {
-		if m, ok := e.manifests.Get(pkg.Name, def.Name, inputHash); ok {
+		// Only successful runs are replayed. A failure can come from state the
+		// input hash does not see (a dependency rebuilt mid-run, a flaky
+		// process), and replaying it reports a stale red result.
+		if m, ok := e.manifests.Get(pkg.Name, def.Name, inputHash); ok && m.ExitCode == 0 {
 			// Restore output files.
 			if err := e.restoreOutputs(m, pkg.Dir); err == nil {
 				return TaskResult{
 					Package:  pkg.Name,
 					Task:     def.Name,
-					OK:       m.ExitCode == 0,
+					OK:       true,
 					Cached:   true,
-					ExitCode: m.ExitCode,
 					Stdout:   m.Stdout,
 					Elapsed:  time.Since(start),
 				}
