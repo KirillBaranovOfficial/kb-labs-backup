@@ -53,7 +53,9 @@ function authenticatedUrl(input: string, gatewayUrl: string): URL {
 
 /** Shared REST path for platform APIs: attach credentials, refresh once, and map auth status codes. */
 export async function gatewayApiFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
-  let auth = await loadAuth();
+  let auth: AuthState | null;
+  try { auth = await loadAuth(); }
+  catch { throw new GatewayApiError(createErrorEnvelope('KB_AUTH_REQUIRED')); }
   const send = (current: AuthState | null): Promise<Response> => {
     const target = current ? authenticatedUrl(String(input), current.gatewayUrl) : new URL(String(input));
     const headers = new Headers(init.headers);
@@ -74,7 +76,14 @@ export async function gatewayApiFetch(input: string | URL, init: RequestInit = {
     throw new GatewayApiError(createErrorEnvelope('KB_AUTH_REQUIRED'));
   }
   if (response.status === 403) {
-    throw new GatewayApiError(createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { role: 'authorized' } }));
+    const body = await response.clone().json().catch(() => null) as { permission?: unknown; error?: { code?: unknown } } | null;
+    const permission = typeof body?.permission === 'string' ? body.permission : undefined;
+    const serverEnvelope = typeof body?.error === 'object' && body.error !== null && body.error.code === 'KB_AUTH_FORBIDDEN'
+      ? body.error as unknown as ErrorEnvelope
+      : undefined;
+    throw new GatewayApiError(serverEnvelope ?? createErrorEnvelope('KB_AUTH_FORBIDDEN', {
+      ...(permission ? { details: { permission } } : {}),
+    }));
   }
   return response;
 }

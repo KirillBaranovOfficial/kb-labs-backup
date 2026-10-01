@@ -2,7 +2,7 @@ import { combinePermissions, kbPlatformPreset } from '@kb-labs/sdk';
 
 const pluginPermissions = combinePermissions()
   .with(kbPlatformPreset)
-  .withEnv(['KB_GATEWAY_URL', 'KB_REGISTRY_URL', 'KB_REGISTRY_TOKEN', 'KB_REGISTRY_AUTHOR_HANDLE'])
+  .withEnv(['KB_GATEWAY_URL', 'KB_REGISTRY_URL', 'KB_REGISTRY_AUTHOR_HANDLE'])
   .build();
 
 export const manifest = {

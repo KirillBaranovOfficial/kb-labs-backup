@@ -31,11 +31,12 @@ export function handleError(ctx: ErrorContext, err: unknown, isJson?: boolean): 
     ? err.envelope
     : null;
   if (envelope !== null && typeof envelope === 'object' && 'code' in envelope && 'message' in envelope) {
-    const typedEnvelope = envelope as { code: string; message: string; hint?: string; [key: string]: unknown };
+    const typedEnvelope = envelope as { code: string; message: string; hint?: string; details?: Record<string, unknown>; [key: string]: unknown };
     if (isJson) {
       ctx.ui?.json?.({ ok: false, error: typedEnvelope });
     } else {
-      ctx.ui?.error?.(`${typedEnvelope.code}: ${typedEnvelope.message}`, typedEnvelope.hint ? { hint: typedEnvelope.hint } : undefined);
+      const permission = typeof typedEnvelope.details?.permission === 'string' ? typedEnvelope.details.permission : undefined;
+      ctx.ui?.error?.(`${typedEnvelope.code}: ${typedEnvelope.message}${permission ? ` (permission: ${permission})` : ''}`, typedEnvelope.hint ? { hint: typedEnvelope.hint } : undefined);
     }
     return;
   }

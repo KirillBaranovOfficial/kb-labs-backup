@@ -1,6 +1,7 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { RegistryService } from '@kb-labs/marketplace-registry-core';
 import type { PublishRequest } from '@kb-labs/marketplace-registry-contracts';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { parseMultipart } from '../multipart.js';
 
 export function registerPackageRoutes(app: FastifyInstance, registry: RegistryService): void {
@@ -23,7 +24,7 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
 
       const token = extractShareToken(req);
       const resolvedToken = token ? await registry.resolveShareToken(token) : null;
-      const callerNs = (req as any).authContext?.namespaceId ?? null;
+      const callerNs = req.authContext?.namespaceId ?? '';
 
       if (!registry.canAccess(entry, callerNs, resolvedToken)) {
         return reply.code(403).send({ error: 'Access denied' });
@@ -43,15 +44,15 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
   );
 
   // ── Auth: list my packages ────────────────────────────────────────────────
-  app.get('/api/v1/my/packages', { preHandler: requireAuth }, async (req, reply) => {
-    const { namespaceId } = (req as any).authContext;
+  app.get('/api/v1/my/packages', async (req, reply) => {
+    const { namespaceId } = req.authContext!;
     const packages = await registry.listByAuthor(namespaceId);
     return reply.send(packages);
   });
 
   // ── Auth: publish (multipart: tarball + meta JSON) ───────────────────────
-  app.post('/api/v1/packages/publish', { preHandler: requireAuth }, async (req, reply) => {
-    const { namespaceId } = (req as any).authContext;
+  app.post('/api/v1/packages/publish', async (req, reply) => {
+    const { namespaceId } = req.authContext!;
     const handle = req.headers['x-author-handle'] as string | undefined;
     if (!handle) {
       return reply.code(400).send({ error: 'Missing X-Author-Handle header' });
@@ -75,7 +76,6 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
   // ── Auth: publish metadata only ───────────────────────────────────────────
   app.patch<{ Params: { handle: string; name: string } }>(
     '/api/v1/packages/:handle/:name/meta',
-    { preHandler: requireAuth },
     async (req, reply) => {
       const { handle, name } = req.params;
       await assertOwner(req, registry, handle, name);
@@ -87,7 +87,6 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
   // ── Auth: yank version ────────────────────────────────────────────────────
   app.post<{ Params: { handle: string; name: string; version: string } }>(
     '/api/v1/packages/:handle/:name/:version/yank',
-    { preHandler: requireAuth },
     async (req, reply) => {
       const { handle, name, version } = req.params;
       await assertOwner(req, registry, handle, name);
@@ -100,7 +99,6 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
   // ── Auth: deprecate package ───────────────────────────────────────────────
   app.post<{ Params: { handle: string; name: string } }>(
     '/api/v1/packages/:handle/:name/deprecate',
-    { preHandler: requireAuth },
     async (req, reply) => {
       const { handle, name } = req.params;
       await assertOwner(req, registry, handle, name);
@@ -113,7 +111,6 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
   // ── Auth: share — add to allowlist ────────────────────────────────────────
   app.post<{ Params: { handle: string; name: string } }>(
     '/api/v1/packages/:handle/:name/share/allowlist',
-    { preHandler: requireAuth },
     async (req, reply) => {
       const { handle, name } = req.params;
       await assertOwner(req, registry, handle, name);
@@ -127,7 +124,6 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
   // ── Auth: share — create link token ──────────────────────────────────────
   app.post<{ Params: { handle: string; name: string } }>(
     '/api/v1/packages/:handle/:name/share/token',
-    { preHandler: requireAuth },
     async (req, reply) => {
       const { handle, name } = req.params;
       await assertOwner(req, registry, handle, name);
@@ -148,7 +144,7 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
 
       const token = extractShareToken(req);
       const resolvedToken = token ? await registry.resolveShareToken(token) : null;
-      const callerNs = (req as any).authContext?.namespaceId ?? null;
+      const callerNs = req.authContext!.namespaceId;
 
       if (!registry.canAccess(entry, callerNs, resolvedToken)) {
         return reply.code(403).send({ error: 'Access denied' });
@@ -168,8 +164,10 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
   // ── Admin: feature/unfeature ──────────────────────────────────────────────
   app.post<{ Params: { handle: string; name: string } }>(
     '/api/v1/admin/packages/:handle/:name/feature',
-    { preHandler: requireAdmin },
     async (req, reply) => {
+      if (!req.authContext!.permissions.includes('admin')) {
+        return reply.code(403).send({ error: createErrorEnvelope('KB_AUTH_FORBIDDEN'), permission: 'admin' });
+      }
       const { handle, name } = req.params;
       const { featured = true } = (req.body as any) ?? {};
       await registry.setFeatured(handle, name, featured);
@@ -178,32 +176,14 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
   );
 }
 
-// ── Auth helpers ──────────────────────────────────────────────────────────────
-
-function requireAuth(req: any, reply: any, done: () => void): void {
-  if (!req.authContext) {
-    reply.code(401).send({ error: 'Unauthorized' });
-    return;
-  }
-  done();
-}
-
-function requireAdmin(req: any, reply: any, done: () => void): void {
-  if (!req.authContext || !req.authContext.permissions?.includes('admin')) {
-    reply.code(403).send({ error: 'Forbidden' });
-    return;
-  }
-  done();
-}
-
-async function assertOwner(req: any, registry: RegistryService, handle: string, name: string): Promise<void> {
+async function assertOwner(req: FastifyRequest, registry: RegistryService, handle: string, name: string): Promise<void> {
   const entry = await registry.getEntry(handle, name);
   if (!entry) { throw Object.assign(new Error('Package not found'), { statusCode: 404 }); }
-  if (entry.authorNamespaceId !== req.authContext.namespaceId) {
+  if (entry.authorNamespaceId !== req.authContext!.namespaceId) {
     throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
   }
 }
 
-function extractShareToken(req: any): string | undefined {
+function extractShareToken(req: FastifyRequest): string | undefined {
   return (req.query as any)?.token ?? req.headers['x-share-token'];
 }

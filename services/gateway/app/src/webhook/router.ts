@@ -8,15 +8,13 @@
  *   POST /webhooks/:pluginId/:event/:instanceId  (multi: true)
  *
  * Per-request pipeline:
- *   1. Lookup declaration → 404 if unknown pluginId/event
- *   2. x-kb-namespace header → 400 if missing
- *   3. Rate limit via IResourceBroker → 429 if denied
- *   4. Challenge response → 200 (before auth, intentional for Slack handshake)
- *   5. Idempotency dedup → 200 early if duplicate delivery
- *   6. Auth (secret / hmac / custom) → 401 on failure
- *   7. Dispatch via globalDispatcher → 200 sync / 202 async
+ *   1. Lookup manifest declaration → 404 if unknown pluginId/event
+ *   2. Verify declared auth (secret / hmac / custom) → catalog 401 on failure
+ *   3. Validate namespace, apply rate limit, then handle challenge/dedup
+ *   4. Dispatch via globalDispatcher → 200 sync / 202 async
  *
- * Security: missing auth on any declaration causes startup rejection.
+ * Security: missing auth on any declaration causes startup rejection; user
+ * session auth is not used for webhooks.
  * Plugin code never runs in-process — always dispatched via globalDispatcher.
  */
 
@@ -30,6 +28,7 @@ import { globalDispatcher } from '../hosts/dispatcher.js';
 import { WebhookSecretStore } from './secret-store.js';
 import { WebhookIdempotencyStore } from './idempotency-store.js';
 import { verifyWebhookAuth, type WebhookAuthRequest } from './auth.js';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -191,39 +190,13 @@ async function handleWebhook({
   const { pluginId, decl, pluginRoot, manifest } = entry;
 
   // Step 1: Resolve namespace
-  const namespaceId = Array.isArray(namespaceHeader) ? namespaceHeader[0] : namespaceHeader;
-  if (!namespaceId) {
-    return reply.code(400).send({ error: 'Missing required header: x-kb-namespace' });
-  }
-
-  // Step 2: Rate limit
-  // Use the unconditional try/finally pattern: release() is a no-op when allowed=false,
-  // so the finally block is safe regardless of whether the request was accepted.
+  const namespaceId = (Array.isArray(namespaceHeader) ? namespaceHeader[0] : namespaceHeader) ?? '';
   const rateResource = `webhook:${pluginId}:${decl.event}`;
-  const acquired = await broker.tryAcquire(rateResource);
+  let acquired: Awaited<ReturnType<IResourceBroker['tryAcquire']>> | undefined;
 
   try {
-    if (!acquired.allowed) {
-      const retryAfterSec = acquired.waitTimeMs ? Math.max(1, Math.ceil(acquired.waitTimeMs / 1000)) : 1;
-      return reply.code(429).header('Retry-After', String(retryAfterSec)).send({
-        error: 'Too Many Requests',
-        retryAfterMs: acquired.waitTimeMs ?? null,
-      });
-    }
-
-    // Step 3: Challenge (before auth — Slack-style handshake)
-    if (decl.challenge && request.body) {
-      const fieldValue = getByDotPath(request.body, decl.challenge.bodyPath);
-      if (fieldValue === decl.challenge.value) {
-        const replyValue = getByDotPath(request.body, decl.challenge.replyPath);
-        // Use the last path segment as the JSON key so dot-paths like
-        // 'data.token' reply with { token: value } not { 'data.token': value }.
-        const replyKey = decl.challenge.replyPath.split('.').pop()!;
-        return reply.code(200).send({ [replyKey]: replyValue });
-      }
-    }
-
-    // Step 4: Auth
+    // Verify the manifest-selected auth strategy before challenge, namespace
+    // checks, rate limiting, deduplication, or plugin handler dispatch.
     // rawBody is set by the preParsing hook for hmac/custom auth types.
     // Fallback: re-serialize from parsed body for secret auth (no raw body needed).
     // Use empty Buffer for null/undefined body to avoid JSON.stringify artifacts
@@ -248,7 +221,30 @@ async function handleWebhook({
 
     const authResult = await verifyWebhookAuth(decl.auth, authReq, secretStore, authBackend, pluginRoot);
     if (!authResult.valid) {
-      return reply.code(401).send({ error: 'Unauthorized', reason: authResult.reason });
+      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
+    }
+
+    if (!namespaceId) {
+      return reply.code(400).send({ error: 'Missing required header: x-kb-namespace' });
+    }
+
+    // Rate limiting is a product policy, so it follows webhook authentication.
+    acquired = await broker.tryAcquire(rateResource);
+    if (!acquired.allowed) {
+      const retryAfterSec = acquired.waitTimeMs ? Math.max(1, Math.ceil(acquired.waitTimeMs / 1000)) : 1;
+      return reply.code(429).header('Retry-After', String(retryAfterSec)).send({
+        error: 'Too Many Requests', retryAfterMs: acquired.waitTimeMs ?? null,
+      });
+    }
+
+    // Challenge response is also behind the manifest's verifier.
+    if (decl.challenge && request.body) {
+      const fieldValue = getByDotPath(request.body, decl.challenge.bodyPath);
+      if (fieldValue === decl.challenge.value) {
+        const replyValue = getByDotPath(request.body, decl.challenge.replyPath);
+        const replyKey = decl.challenge.replyPath.split('.').pop()!;
+        return reply.code(200).send({ [replyKey]: replyValue });
+      }
     }
 
     // Step 5: Idempotency dedup — after auth to prevent unauthenticated callers
@@ -324,7 +320,7 @@ async function handleWebhook({
       return reply.code(500).send({ error: 'Dispatch failed' });
     }
   } finally {
-    await acquired.release();
+    await acquired?.release();
   }
 }
 

@@ -43,7 +43,7 @@ import { type PlatformResolver } from './mcp/tool-router.js';
 import { resolveVisibleTools, executeToolCall } from './mcp/request-handler.js';
 import { McpObservabilityCollector } from './observability/collector.js';
 import type { ToolBuildDiagnostic } from './mcp/tool-builder.js';
-import { rejectsUnauthenticatedRequest, type McpAuthMode } from './mcp/auth-mode.js';
+import { isMcpCorsPreflight, mcpCorsPreflightResponse, mcpUnauthenticatedResponse, rejectsUnauthenticatedRequest, type McpAuthMode } from './mcp/auth-mode.js';
 
 /** Built-in diagnostic tool: always visible to authenticated callers, never
  * derived from a plugin manifest — reports which plugin commands failed to
@@ -179,14 +179,12 @@ export class McpDaemonServer {
     // fastify.all() covers every method including OPTIONS, so no separate
     // fastify.options() is needed — that would cause a duplicate-route error.
     server.all(this.opts.endpointPath ?? '/api/v1/mcp', async (request, reply) => {
-      reply
-        .header('Access-Control-Allow-Origin', '*')
-        .header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        .header('Access-Control-Allow-Headers', 'Authorization, Content-Type, Mcp-Session-Id');
+      const corsHeaders = mcpCorsPreflightResponse().headers;
+      reply.headers(corsHeaders);
 
-      // Short-circuit preflight immediately — no auth or MCP processing needed.
-      if (request.method === 'OPTIONS') {
-        return reply.code(204).send();
+      if (isMcpCorsPreflight(request.method, request.headers)) {
+        const preflight = mcpCorsPreflightResponse();
+        return reply.code(preflight.statusCode).send();
       }
 
       const reqLogger = request.kbLogger ?? logger;
@@ -198,7 +196,13 @@ export class McpDaemonServer {
         () => null,
       );
       if (rejectsUnauthenticatedRequest(this.opts.authMode ?? 'secured', Boolean(authCtx))) {
-        return reply.code(401).send({ error: 'unauthorized' });
+        const unauthenticated = mcpUnauthenticatedResponse();
+        return reply.code(unauthenticated.statusCode).send(unauthenticated.body);
+      }
+
+      // Non-preflight OPTIONS requests still pass through the secured gate.
+      if (request.method === 'OPTIONS') {
+        return reply.code(204).send();
       }
       const tenantId = authCtx?.namespaceId ?? 'anonymous';
 

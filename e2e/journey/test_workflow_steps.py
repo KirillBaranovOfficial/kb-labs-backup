@@ -12,14 +12,16 @@ from service_steps import Journey
 
 
 class WorkflowJourneyTests(unittest.TestCase):
-    def test_secured_workflow_auth_error_is_typed_and_admin_login_recovers(self):
+    def test_secured_plugin_commands_are_gated_and_admin_login_recovers(self):
         authenticated = [False]
         calls = []
 
         def fake_run(args, *, env, cwd, timeout=120):
             args = list(args)
             calls.append(args)
-            if args[:3] == ["workflow", "defs", "list"]:
+            if args in (["auth", "status", "--json"], ["auth", "login", "--help"], ["version"], ["health", "--json"]):
+                return CompletedProcess(args, 0, json.dumps({"ok": True}))
+            if args[:3] in (["workflow", "defs", "list"], ["marketplace", "plugins", "list"], ["qa", "cases", "validate"]):
                 if not authenticated[0]:
                     return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
                         "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
@@ -48,11 +50,17 @@ class WorkflowJourneyTests(unittest.TestCase):
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
-        self.assertEqual(calls[0], ["workflow", "defs", "list", "--json"])
-        self.assertEqual(calls[1][:2], ["auth", "login"])
-        self.assertEqual(calls[2], ["workflow", "defs", "list", "--json"])
+        self.assertEqual(calls[:4], [["auth", "status", "--json"], ["auth", "login", "--help"], ["version"], ["health", "--json"]])
+        self.assertEqual(calls[4:7], [
+            ["workflow", "defs", "list", "--json"],
+            ["marketplace", "plugins", "list", "--json"],
+            ["qa", "cases", "validate", "--json"],
+        ])
+        self.assertEqual(calls[7][:2], ["auth", "login"])
+        self.assertEqual(calls[8:], calls[4:7])
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-007.4", "kind": "journey", "status": "PASS"},
+            {"claimId": "S-041.12", "kind": "journey", "status": "PASS"},
             {"claimId": "S-041.7", "kind": "journey", "status": "PASS"},
             {"claimId": "S-041.8", "kind": "journey", "status": "PASS"},
         ])

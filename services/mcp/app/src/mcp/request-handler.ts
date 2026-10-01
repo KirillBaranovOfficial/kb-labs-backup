@@ -193,7 +193,7 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
   // platform supplies a real policy, a tool that became forbidden after it was
   // cached is rejected here with no server code change.
   if (!permits(tool.operationType, tool.pluginId)) {
-    return toolError('KB_AUTH_FORBIDDEN', { role: 'authorized' });
+    return toolError('KB_AUTH_FORBIDDEN', {});
   }
 
   const validationError = argumentError(tool.inputSchema as JsonSchema, args.args);

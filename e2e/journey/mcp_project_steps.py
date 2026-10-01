@@ -88,6 +88,11 @@ def secured_auth(project_id: str) -> str | None:
         )
         if status != 401:
             return f"secured tools/list with {'missing' if not token else 'invalid'} token returned HTTP {status}, expected 401"
+        envelope = body.get("error") if isinstance(body, dict) else None
+        if (not isinstance(envelope, dict)
+                or envelope.get("code") != "KB_AUTH_REQUIRED"
+                or envelope.get("hint") != 'Run "kb auth login".'):
+            return f"secured tools/list with {'missing' if not token else 'invalid'} token returned no KB_AUTH_REQUIRED envelope"
         if isinstance(body, dict) and isinstance(body.get("result"), dict) and body["result"].get("tools"):
             return "secured tools/list returned a tool catalog without valid authentication"
     return None

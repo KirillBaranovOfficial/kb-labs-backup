@@ -107,8 +107,15 @@ kb-dev and kb-devkit are functionally solid and need cases and tests only. kb-de
 
 ### Platform CLI authentication gate
 
-In secured mode, a CLI command declares whether it needs platform authentication. The CLI checks for a usable saved human session or machine credential before dispatch; auth failures return the catalog `KB_AUTH_REQUIRED` envelope with the login hint. A rejected/expired credential uses the same required-auth code because the user must sign in again. Authenticated-but-forbidden operations return `KB_AUTH_FORBIDDEN`. Local mode skips the gate, and `kb auth` commands and local-only commands remain usable without a session. MCP tool failures use the ADR-0049 envelope in `structuredContent` and the matching text form.
-Cases: S-007.4, S-041.7 to S-041.10, S-104.
+The platform owns one deny-by-default authentication gate at each entry point. CLI wraps every system and plugin command before dispatch; only its platform-owned auth/help/version/bootstrap/diagnostic allowlist bypasses the gate. Plugins and services declare no auth metadata. The Gateway authenticates globally before routing to services, project runtimes, or plugin REST handlers; only explicit public routes pass anonymously. Manifest-declared webhook routes are authenticated by their declared webhook verifier (secret, HMAC, or custom validator), not by a user session; undeclared paths cannot bypass the gateway gate by resembling webhook routes. MCP authenticates at its transport boundary before session or tool dispatch and retains HTTP 401 for unauthenticated clients. In all entry points, authentication precedes permissions and product preconditions. Local mode is a no-op. Authenticated authorization failures use `KB_AUTH_FORBIDDEN` with the permission the Gateway checked, or a catalog message that does not name a role when no permission is available.
+
+A CORS preflight (`OPTIONS` with `Access-Control-Request-Method`) receives only a CORS response and never dispatches to a session, tool, service, or plugin handler; ordinary OPTIONS requests remain authenticated.
+
+`/health/auth` is a self-guarded loopback operator route: the platform gate lets only this exact route reach its own checks for loopback peer, loopback Host, and absent forwarding headers; all other callers receive a plain 404 before readiness is computed. `/health`, `/health/adapters`, and `/ready` remain public because health probes need coarse readiness before login. `/auth/token` remains public because its client-credential body is the proof used to obtain a machine session. Public marketplace-registry package-list, package-metadata, and package-stats GET routes remain available without a user session; package visibility still goes through `canAccess`, using the optional identity forwarded by the Gateway when present.
+
+Owner intent (2026-10-02): “главное сделать платформенно (чтобы все подключенные плагины сразу получали защиту от доступа) без необходимости добавлять что-то в потребитель. по сути для разных точек разная защита — CLI - общая обертка над всеми командами (до вызова команды идет проверка авторизация и только после доступ), gateway - тоже все запросы не публичные перехватывает и отдает ошибку до того как запрос дойдет до сервисов. ну и MCP аналогично”
+
+Cases: S-007.4, S-041.7 to S-041.13, S-045.5, S-104, S-140.6.
 
 ### Bind persistent built-in adapters on every fresh install
 

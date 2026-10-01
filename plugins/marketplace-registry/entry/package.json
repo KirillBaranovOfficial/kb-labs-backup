@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@kb-labs/sdk": "workspace:*",
+    "@kb-labs/cli-runtime": "workspace:*",
     "execa": "^9.5.3"
   },
   "devDependencies": {

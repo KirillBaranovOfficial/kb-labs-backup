@@ -1,140 +1,175 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { ICache } from '@kb-labs/core-platform';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
 import type { JwtConfig } from '@kb-labs/gateway-auth';
+import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import { resolveToken, extractBearerToken } from './tokens.js';
+import { createUserAuthMiddleware, type UserAuthMiddlewareDeps } from './user-auth-middleware.js';
 
-/**
- * Deterministic identity used when auth is disabled (solo/local mode). All
- * requests run as this single local admin so namespaced data and audit logs
- * stay coherent, and enabling auth later does not invalidate existing data.
- */
 export const LOCAL_ADMIN_CONTEXT: AuthContext = {
-  type: 'machine',
-  userId: 'local-admin',
-  namespaceId: 'local',
-  tier: 'enterprise',
+  type: 'machine', userId: 'local-admin', namespaceId: 'local', tier: 'enterprise',
   permissions: Object.values(PERMISSIONS),
 };
 
-// Routes that don't require auth (handle their own auth internally)
-const PUBLIC_ROUTES = new Set([
-  '/health',
-  '/health/adapters',
-  // Self-gated to local, non-proxied requests inside the handler (see health-route.ts).
-  '/health/auth',
-  '/ready',
-  // Studio SPA shell (index.html) — the login page itself. There is no
-  // session yet when a browser first hits this, so it can't be gated.
-  // Exact match only (not a prefix) so it doesn't swallow unrelated routes.
-  '/',
-  // Module Federation manifest — static, non-sensitive metadata describing
-  // available Studio remotes. The Studio SPA shell must be able to fetch
-  // this before a user has logged in (there is no session yet to gate on).
-  '/mf-manifest.json',
-  '/hosts/register',
-  // /hosts/connect and /clients/connect are handled at the HTTP upgrade level
-  // by gateway-ws.ts (raw ws) — they never reach Fastify routing.
-  // NOTE: /auth/register is NOT public — it requires MACHINE_REGISTER permission
-  //       (cookie-auth admin or Bearer machine with that permission).
-  '/auth/token',
-  '/auth/refresh',
-  // User-auth public endpoints (ADR-0020, Phase 1.16).
-  '/auth/login',
-  // CLI-only analogues of /auth/login and the cookie user-refresh path —
-  // return tokens in the body instead of cookies, see user-routes.ts.
-  '/auth/login/cli',
-  '/auth/refresh/cli',
-  '/auth/logout/cli',
-  '/auth/activate',
-  '/auth/password/reset',
-  '/auth/providers',
-  '/internal/dispatch', // has its own x-internal-secret auth
-  '/internal/resolve-host', // has its own x-internal-secret auth
+const PUBLIC_ROUTES = new Map<string, ReadonlySet<string>>([
+  ['/health', new Set(['GET', 'HEAD'])], ['/health/adapters', new Set(['GET', 'HEAD'])],
+  // The route has its own loopback-peer, loopback-Host, and no-forwarding-header guard.
+  ['/health/auth', new Set(['GET', 'HEAD'])],
+  ['/ready', new Set(['GET', 'HEAD'])],
+  ['/', new Set(['GET', 'HEAD'])], ['/login', new Set(['GET', 'HEAD'])],
+  ['/favicon.ico', new Set(['GET', 'HEAD'])], ['/mf-manifest.json', new Set(['GET', 'HEAD'])],
+  ['/studio', new Set(['GET', 'HEAD'])], ['/hosts/register', new Set(['POST'])],
+  ['/auth/token', new Set(['POST'])], ['/auth/refresh', new Set(['POST'])],
+  ['/auth/login', new Set(['POST'])], ['/auth/login/cli', new Set(['POST'])],
+  ['/auth/refresh/cli', new Set(['POST'])], ['/auth/logout/cli', new Set(['POST'])],
+  ['/auth/activate', new Set(['POST'])], ['/auth/password/reset', new Set(['POST'])],
+  ['/auth/providers', new Set(['GET'])],
 ]);
 
-declare module 'fastify' {
-  interface FastifyRequest {
-    authContext?: AuthContext;
+type WebhookManifest = { pluginId: string; manifest: ManifestV3 };
+
+export function isPlatformPublicRoute(method: string, routePath: string): boolean {
+  if (PUBLIC_ROUTES.get(routePath)?.has(method)) { return true; }
+  if (method === 'GET' && isRegistryPublicReadRoute(routePath)) { return true; }
+  const oauthSegments = routePath.split('/').filter(Boolean);
+  if (method === 'GET' && oauthSegments[0] === 'auth' && oauthSegments[1] === 'oauth') {
+    return oauthSegments.length === 4 && ['start', 'callback'].includes(oauthSegments[3] ?? '');
   }
+  if (['GET', 'HEAD'].includes(method)) {
+    if (/^\/(?:assets|static|studio\/assets)\/[^/]+(?:\/[^/]+)*\.[a-z0-9]{1,8}$/i.test(routePath)) { return true; }
+  }
+  return routePath.startsWith('/plugins/') && /\/widgets\/[^/]+\.[a-z0-9]{1,8}$/i.test(routePath);
 }
 
+function isRegistryPublicReadRoute(routePath: string): boolean {
+  const path = routePath.replace(/\/+$/, '') || '/';
+  const reads = '(?:api/v1/packages|api/v1/packages/[^/]+/[^/]+(?:/stats)?)';
+  return new RegExp(`^/api/v1/marketplace-registry/${reads}$`).test(path) ||
+    new RegExp(`^/api/v1/projects/[^/]+/marketplace-registry/${reads}$`).test(path);
+}
+
+function isStudioFallbackRoute(routePath: string): boolean {
+  const segments = routePath.split('/').filter(Boolean);
+  const reserved = new Set(['api', 'auth', 'health', 'ready', 'metrics', 'observability', 'hosts', 'clients', 'internal', 'webhooks', 'telemetry', 'docs', 'docs-all', 'openapi.json', 'openapi-merged.json', 'echo']);
+  return segments.length > 0 && !reserved.has(segments[0] ?? '') && !routePath.slice(1).includes('.');
+}
+
+export function isDeclaredWebhookRoute(method: string, routePath: string, manifests: WebhookManifest[]): boolean {
+  if (method !== 'POST') { return false; }
+  const parts = routePath.split('/').filter(Boolean);
+  if (parts[0] !== 'webhooks' || (parts.length !== 3 && parts.length !== 4)) { return false; }
+  let pluginId: string;
+  try { pluginId = decodeURIComponent(parts[1] ?? ''); } catch { return false; }
+  const event = parts[2];
+  const multi = parts.length === 4;
+  return manifests.some(({ pluginId: declaredId, manifest }) => declaredId === pluginId &&
+    manifest.webhooks?.handlers.some((handler) => handler.event === event && Boolean(handler.multi) === multi && Boolean(handler.auth)));
+}
+
+function isCorsPreflight(request: FastifyRequest): boolean {
+  return request.method === 'OPTIONS' && Boolean(request.headers.origin) &&
+    typeof request.headers['access-control-request-method'] === 'string';
+}
+
+function sendCorsPreflight(request: FastifyRequest, reply: FastifyReply): FastifyReply {
+  const requestedMethod = request.headers['access-control-request-method'];
+  const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+  const method = typeof requestedMethod === 'string' && allowedMethods.has(requestedMethod.toUpperCase())
+    ? requestedMethod.toUpperCase()
+    : '';
+  const requestedHeaders = request.headers['access-control-request-headers'];
+  const allowedHeaders = new Set(['authorization', 'content-type', 'mcp-session-id']);
+  const headers = typeof requestedHeaders === 'string'
+    ? requestedHeaders.split(',').map((header) => header.trim().toLowerCase()).filter((header) => allowedHeaders.has(header))
+    : [];
+  reply.header('Access-Control-Allow-Origin', '*').header('Vary', 'Origin');
+  if (method) { reply.header('Access-Control-Allow-Methods', method); }
+  if (headers.length > 0) { reply.header('Access-Control-Allow-Headers', headers.join(', ')); }
+  return reply.code(204).send();
+}
+
+const FORWARDED_IDENTITY_HEADERS = [
+  'x-kb-auth-type', 'x-kb-auth-user-id', 'x-kb-auth-namespace-id', 'x-kb-auth-tier', 'x-kb-auth-permissions',
+] as const;
+
+function removeClientIdentityHeaders(request: FastifyRequest): void {
+  delete request.headers['x-internal-secret'];
+  for (const name of FORWARDED_IDENTITY_HEADERS) { delete request.headers[name]; }
+}
+
+function attachGatewayIdentity(request: FastifyRequest, internalSecret?: string): void {
+  const auth = request.authContext;
+  if (!internalSecret) { return; }
+  request.headers['x-internal-secret'] = internalSecret;
+  if (!auth) { return; }
+  request.headers['x-kb-auth-type'] = auth.type;
+  request.headers['x-kb-auth-user-id'] = auth.userId;
+  request.headers['x-kb-auth-namespace-id'] = auth.namespaceId;
+  request.headers['x-kb-auth-tier'] = auth.tier;
+  request.headers['x-kb-auth-permissions'] = JSON.stringify(auth.permissions);
+}
+
+declare module 'fastify' {
+  interface FastifyRequest { authContext?: AuthContext; }
+}
+
+/** The single gateway authentication hook. It authenticates users first, then machine tokens. */
 export function createAuthMiddleware(
   cache: ICache,
   jwtConfig: JwtConfig,
-  options: { authEnabled?: boolean } = {},
+  options: { authEnabled?: boolean; internalSecret?: string; userAuth?: UserAuthMiddlewareDeps; webhookManifests?: WebhookManifest[]; studioEnabled?: boolean } = {},
 ) {
-  const authEnabled = options.authEnabled !== false; // default: enabled
-  return async function authMiddleware(
-    request: FastifyRequest,
-    reply: FastifyReply,
-  ): Promise<void> {
-    // Auth disabled (solo/local mode): every request runs as the local admin.
-    // The startup guardrail (bootstrap) guarantees this only happens on a
-    // loopback bind, so it never exposes an open platform on the network.
+  const authEnabled = options.authEnabled !== false;
+  const userAuth = options.userAuth ? createUserAuthMiddleware(options.userAuth) : undefined;
+  return async function authMiddleware(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    if (isCorsPreflight(request)) { sendCorsPreflight(request, reply); return; }
+    if (!request.url.startsWith('/internal/')) { removeClientIdentityHeaders(request); }
     if (!authEnabled) {
       request.authContext = LOCAL_ADMIN_CONTEXT;
+      attachGatewayIdentity(request, options.internalSecret);
       return;
     }
 
     const rawPath = new URL(request.url, 'http://localhost').pathname;
     const routePath = rawPath.replace(/\/+/g, '/').replace(/\/+$/, '') || '/';
-    if (PUBLIC_ROUTES.has(routePath)) {return;}
-    // Redirect/OAuth endpoints (ADR-0020, Step 4) are public — they carry no
-    // Bearer token (the IdP→callback hop is a top-level browser navigation) and
-    // enforce their own state/cookie binding. Prefix match covers /start and
-    // /callback for every provider id.
-    if (routePath.startsWith('/auth/oauth/')) {return;}
+    const registryPublicRead = request.method === 'GET' && isRegistryPublicReadRoute(routePath);
+    if (isPlatformPublicRoute(request.method, routePath) && !registryPublicRead) { return; }
+    if (!registryPublicRead && options.studioEnabled && ['GET', 'HEAD'].includes(request.method) && isStudioFallbackRoute(routePath)) { return; }
+    const optionalRegistryToken = (request.query as Record<string, string | undefined>)['access_token'];
+    if (registryPublicRead && !extractBearerToken(request.headers.authorization) && !optionalRegistryToken && !request.headers.cookie) {
+      attachGatewayIdentity(request, options.internalSecret);
+      return;
+    }
+    if (routePath.startsWith('/internal/')) {
+      if (options.internalSecret && request.headers['x-internal-secret'] === options.internalSecret) { return; }
+      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
+    }
+    // These routes are admitted only from webhook manifest declarations. The
+    // registered platform handler verifies the declaration's auth before dispatch.
+    if (isDeclaredWebhookRoute(request.method, routePath, options.webhookManifests ?? [])) { return; }
 
-    // Webhook delivery routes (/webhooks/:pluginId/:event[/:instanceId]) are
-    // called by external senders (GitHub, Stripe, etc.) that have no Bearer
-    // token for this platform — they authenticate via their own per-webhook
-    // secret/HMAC, checked inside the handler itself. This scope was
-    // originally registered outside `gatewayRoutes` specifically so the old,
-    // more narrowly-scoped auth hook would skip it automatically; now that
-    // the hook runs globally (GHSA-75rf-rhxh-2p52 fix) it needs an explicit
-    // bypass here instead. Distinct from the admin routes under
-    // /api/v1/webhooks/*, which remain fully auth-gated.
-    if (routePath.startsWith('/webhooks/')) {return;}
+    if (userAuth) {
+      await userAuth(request, reply);
+      if (reply.sent) { return; }
+      if (request.userAuthContext?.source === 'cookie' || request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') {
+        attachGatewayIdentity(request, options.internalSecret);
+        return;
+      }
+    }
 
-    // Static Module Federation widget bundles proxied through to rest-api
-    // (/plugins/@scope/name/widgets/*) — plain JS/CSS files the Studio SPA
-    // shell needs to load widgets, with no user data and no side effects.
-    // Same category as /mf-manifest.json above.
-    if (routePath.startsWith('/plugins/')) {return;}
-
-    // Studio's own static bundle (/studio/assets/*.js, etc.) — the SPA shell
-    // itself, needed before a user has logged in. Same category as
-    // /mf-manifest.json and /plugins/*/widgets/* above.
-    if (routePath.startsWith('/studio/')) {return;}
-
-    // Bearer header takes precedence; fall back to ?access_token= for SSE
-    // connections where browsers cannot set custom headers.
     const queryToken = (request.query as Record<string, string | undefined>)['access_token'];
     const token = extractBearerToken(request.headers.authorization) ?? queryToken ?? null;
-
-    // Skip machine Bearer check when the request is already user-authenticated
-    // via cookie AND no explicit Bearer token was provided.
-    // When BOTH cookie and Bearer are present (e.g. a Playwright context that
-    // accumulated session cookies while also sending machine credentials), we
-    // honour the Bearer token so that machine-auth context (namespaceId, etc.)
-    // is populated — critical for per-tenant rate limiting and route permissions.
-    if (!token && request.userAuthContext) {return;}
-
-    // A user Bearer token has already been verified by user-auth middleware.
-    // Machine token resolution deliberately does not accept that JWT type.
-    if (request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') {return;}
-
+    if (!token && request.userAuthContext) { return; }
+    if (request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') { return; }
     if (!token) {
-      return reply.code(401).send({ error: 'Unauthorized', message: 'Missing Authorization header' });
+      if (registryPublicRead) { return; }
+      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
     }
-
-    const authContext = await resolveToken(token, cache, jwtConfig);
-    if (!authContext) {
-      return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid token' });
-    }
-
+    const authContext = await resolveToken(token, cache, jwtConfig).catch(() => null);
+    if (!authContext) { return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') }); }
     request.authContext = authContext;
+    attachGatewayIdentity(request, options.internalSecret);
   };
 }

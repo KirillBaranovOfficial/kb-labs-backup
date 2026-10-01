@@ -494,8 +494,8 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
-      "message": "You do not have permission to perform this operation (required role: {role}).",
-      "hint": "Ask your administrator to grant the required role."
+      "message": "You do not have permission to perform this operation.",
+      "hint": "Ask your administrator for the permission needed to perform this operation."
     },
     {
       "code": "KB_AUTH_LOCKED_OUT",

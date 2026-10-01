@@ -58,14 +58,24 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         def fake_request(path, **kwargs):
             calls.append(kwargs.get("token"))
-            return (401, {"error": "unauthorized"}, {})
+            return (401, {"error": {
+                "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
+                "hint": 'Run "kb auth login".',
+            }}, {})
 
         with patch("service_runner.request", side_effect=fake_request):
             self.assertIsNone(secured_auth("prj_a"))
         self.assertEqual(calls, ["", "not-a-real-token"])
 
+    def test_secured_auth_rejects_http_401_without_the_catalog_envelope(self):
+        with patch("service_runner.request", return_value=(401, {"error": "unauthorized"}, {})):
+            self.assertIn("no KB_AUTH_REQUIRED envelope", secured_auth("prj_a"))
+
     def test_secured_auth_fails_if_either_request_authenticates(self):
-        responses = iter([(401, {}, {}), (200, {"result": {"tools": []}}, {})])
+        responses = iter([
+            (401, {"error": {"code": "KB_AUTH_REQUIRED", "message": "Authentication is required.", "hint": 'Run "kb auth login".'}}, {}),
+            (200, {"result": {"tools": []}}, {}),
+        ])
         with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(responses)):
             self.assertIn("invalid token returned HTTP 200", secured_auth("prj_a"))
 

@@ -39,7 +39,6 @@ import {
   registerAuthRoutes,
   type MachineAuthRoutesUserExt,
 } from "./auth/routes.js";
-import { createUserAuthMiddleware } from "./auth/user-auth-middleware.js";
 import {
   registerUserAuthRoutes,
   createUserRefreshFn,
@@ -137,6 +136,7 @@ export async function createServer(
   webhookManifests?: WebhookManifestEntry[],
   projectRouting?: ProjectRouting,
   hostRoutes?: HostRoutes,
+  routeObserver?: (method: string | string[], url: string) => void,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -162,9 +162,32 @@ export async function createServer(
         }
       : {}),
   });
+  if (routeObserver) {
+    app.addHook("onRoute", (route) => {
+      if (route.url) { routeObserver(route.method, route.url); }
+    });
+  }
 
-  // Cookie parsing — required by user-auth middleware and cookie-based sessions.
+  // Cookie parsing must run before the gate so secured cookie sessions are
+  // visible when the global auth hook validates the request.
   await app.register(fastifyCookie);
+
+  // Install the deny-by-default gate before OpenAPI, observability, Studio,
+  // proxy, project, and plugin routes are registered.
+  app.addHook("onRequest", createAuthMiddleware(cache, jwtConfig, {
+    authEnabled: resolveAccess(config).authEnabled,
+    studioEnabled,
+    internalSecret: process.env.GATEWAY_INTERNAL_SECRET,
+    webhookManifests,
+    ...(userAuth ? { userAuth: {
+      users: userAuth.users,
+      sessions: userAuth.sessions,
+      apiTokens: userAuth.apiTokens,
+      pdp: userAuth.pdp,
+      tenantResolver: userAuth.tenantResolver,
+      jwtConfig,
+    } } : {}),
+  }));
 
   const isProduction = process.env.NODE_ENV === "production";
 
@@ -178,9 +201,9 @@ export async function createServer(
     ui: !isProduction,
   });
 
-  // CORS disabled at gateway level — browser clients (Studio) connect via same-origin or
-  // have CORS handled at the reverse-proxy / CDN layer. Reflecting arbitrary origins
-  // (origin: true) would allow any attacker site to make credentialed cross-origin requests.
+  // The gateway does not enable credentialed cross-origin requests. The global
+  // auth hook answers protocol preflight without dispatch; deployed reverse proxy
+  // or CDN policy controls CORS on the actual request/response.
   await app.register(fastifyCors, { origin: false });
   const observability = new GatewayObservabilityCollector(config);
   observability.register(app);
@@ -240,45 +263,6 @@ export async function createServer(
       "http.status_code": reply.statusCode,
     });
   });
-
-  // ── Auth (B-023 fix) ────────────────────────────────────────────────
-  // Registered globally on `app`, BEFORE the proxy upstreams below, so it
-  // actually covers proxied routes (/api/v1/*, /api/exec/*, etc.) and not
-  // just the gateway's own /auth/* routes. A prior version scoped these
-  // hooks inside the `gatewayRoutes` child plugin registered AFTER the
-  // proxy loop — Fastify hook encapsulation meant they never ran for
-  // proxied requests, and rest-api/workflow/marketplace do not enforce
-  // auth themselves, so every proxied route was reachable with no token
-  // at all (confirmed: garbage Bearer token still got 200 on
-  // /api/v1/studio/registry). Mirrors the pressure-hook precedent above,
-  // which already runs globally ahead of the proxy loop for the same reason.
-  //
-  // User-auth middleware runs FIRST (before machine Bearer check).
-  // Validates kb_access cookie, cross-tenant guard, CD-1 status check.
-  // No-op when no cookie is present — machine auth takes over.
-  if (userAuth) {
-    app.addHook(
-      "onRequest",
-      createUserAuthMiddleware({
-        users: userAuth.users,
-        sessions: userAuth.sessions,
-        apiTokens: userAuth.apiTokens,
-        pdp: userAuth.pdp,
-        tenantResolver: userAuth.tenantResolver,
-        jwtConfig,
-      }),
-    );
-  }
-
-  // Machine Bearer middleware — skips if userAuthContext already set by above.
-  // When auth is disabled (solo/local), the middleware runs every request as
-  // the local admin (B-023).
-  app.addHook(
-    "onRequest",
-    createAuthMiddleware(cache, jwtConfig, {
-      authEnabled: resolveAccess(config).authEnabled,
-    }),
-  );
 
   // ── Proxy upstreams ────────────────────────────────────────────────
   // Connection details (baseUrl, socketPath) come from IServiceTransport.

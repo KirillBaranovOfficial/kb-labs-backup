@@ -171,7 +171,6 @@ export interface CliCommandDecl {
   /** Command-specific permissions (overrides plugin defaults) */
   permissions?: PermissionSpec;
   /** Require an authenticated platform session before this command is dispatched. */
-  requiresPlatformAuth?: boolean;
   /** Display-only category label (does not affect routing) */
   category?: string;
   /** Alternative full paths for this command (e.g., ['cu task search']) */

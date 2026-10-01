@@ -55,12 +55,12 @@ export function registerAuthRoutes(
         PERMISSIONS.MACHINE_REGISTER,
       );
       if (!decision.allow) {
-        return reply.code(403).send({ error: 'Forbidden', message: `Permission denied: ${PERMISSIONS.MACHINE_REGISTER}` });
+        return reply.code(403).send({ error: 'Forbidden', message: 'Permission denied', permission: PERMISSIONS.MACHINE_REGISTER });
       }
     } else if (machineCtx) {
       // Bearer-authenticated machine — check permissions embedded in JWT.
       if (!machineCtx.permissions.includes(PERMISSIONS.MACHINE_REGISTER)) {
-        return reply.code(403).send({ error: 'Forbidden', message: `Permission denied: ${PERMISSIONS.MACHINE_REGISTER}` });
+        return reply.code(403).send({ error: 'Forbidden', message: 'Permission denied', permission: PERMISSIONS.MACHINE_REGISTER });
       }
     } else {
       // No auth context at all (should have been caught by middleware, but guard defensively).

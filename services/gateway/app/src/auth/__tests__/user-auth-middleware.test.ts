@@ -131,7 +131,7 @@ describe('revoked session families', () => {
       headers: { host: 'kblabs-cloud.kblabs.ru', cookie: `${COOKIE_ACCESS}=${token}` },
     });
     expect(response.statusCode).toBe(401);
-    expect(response.json().message).toBe('Session revoked');
+    expect(response.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
   });
 });
 
