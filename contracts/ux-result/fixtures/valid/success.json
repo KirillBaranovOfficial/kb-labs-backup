@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "data": {
+    "status": "healthy",
+    "checks": 3
+  },
+  "meta": {
+    "requestId": "req-203-1"
+  }
+}
