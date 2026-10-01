@@ -1,7 +1,7 @@
 import { defineCommand, handleError, type PluginContextV3, type CLIInput, type CommandResult } from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 
-interface CronEnabledFlags { json?: boolean }
+export interface CronEnabledFlags { json?: boolean }
 
 export function createCronEnabledCommand(enabled: boolean) {
   const action = enabled ? 'enable' : 'disable';
@@ -39,6 +39,3 @@ export function createCronEnabledCommand(enabled: boolean) {
     },
   });
 }
-
-export const enableCommand = createCronEnabledCommand(true);
-export const disableCommand = createCronEnabledCommand(false);

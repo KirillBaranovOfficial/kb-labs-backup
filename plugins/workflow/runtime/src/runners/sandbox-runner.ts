@@ -356,9 +356,16 @@ export class SandboxRunner implements Runner {
         data.ok === false || (typeof data.exitCode === 'number' && data.exitCode !== 0)
       )
       if (commandFailed) {
-        const message = data.stderr
-          ? String(data.stderr).slice(0, 500)
-          : `Step handler reported failure (exitCode: ${data.exitCode ?? 'unknown'})`;
+        const diagnostic = [data.stderr, data.stdout]
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          .map((value) => value.slice(-500))
+          .join('\n')
+        const message = `Step handler reported failure (exitCode: ${data.exitCode ?? 'unknown'})${diagnostic ? `: ${diagnostic}` : ''}`
+        const outputs = Object.fromEntries(
+          ['stdout', 'stderr', 'exitCode']
+            .filter((key) => data[key] !== undefined)
+            .map((key) => [key, data[key]]),
+        )
         const failure = classifyFailure(
           data.error && typeof data.error === 'object'
             ? data.error
@@ -376,6 +383,7 @@ export class SandboxRunner implements Runner {
             message,
             code: 'HANDLER_REPORTED_FAILURE',
           },
+          outputs,
           failure,
         }
       }

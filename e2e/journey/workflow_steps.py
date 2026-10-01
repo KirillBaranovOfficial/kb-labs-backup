@@ -275,6 +275,16 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                          clock: Callable[[], float] = time.monotonic,
                          sleep: Callable[[float], None] = time.sleep) -> None:
     """Run each workflow release case in the registered project."""
+
+    def install_plugin_cron_fixture() -> None:
+        _json_cli(["marketplace", "install", "@kb-labs/steward-entry", "--json"], env=env, cwd=project)
+        restart_host()
+        data = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=project)
+        crons = data.get("crons", []) if isinstance(data, dict) else []
+        if not any(isinstance(item, dict) and item.get("source") == "plugin" for item in crons):
+            raise AssertionError("workflow cron list omitted the cron declared by installed @kb-labs/steward-entry")
+
+    journey.step("install plugin cron fixture", "workflow", install_plugin_cron_fixture)
     prepare_workflow_fixtures(project)
 
     def discover_fixtures() -> None:
@@ -326,7 +336,8 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         jobs = failed_detail.get("jobs", [])
         steps = [step for job in jobs for step in job.get("steps", [])]
         failed = [step for step in steps if step.get("status") == "failed"]
-        if not failed or failed[0].get("id") != "deliberate-failure":
+        if (not failed or failed[0].get("name") != "Deliberate failure"
+                or (failed[0].get("spec") or {}).get("id") != "deliberate-failure"):
             raise AssertionError(f"run detail did not identify the failed step and diagnostic: {failed_detail!r}")
         error = failed[0].get("error")
         error_message = error.get("message", "") if isinstance(error, dict) else str(error or "")

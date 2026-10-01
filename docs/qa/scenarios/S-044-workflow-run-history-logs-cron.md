@@ -19,6 +19,7 @@ A project user creates a schedule for an existing workflow, observes its schedul
 - [ ] Registered project with the workflow daemon available.
 - [ ] The project runtime remains available while an enabled cron exists.
 - [ ] Workflow `journey-cron-target` accepts the required string input `message` and logs it.
+- [ ] An installed plugin manifest contributes at least one plugin cron to the workflow cron list.
 
 ## Steps
 
