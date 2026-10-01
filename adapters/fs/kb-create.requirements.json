@@ -1,0 +1,13 @@
+{
+  "schema": "kb.create.requirements/v1",
+  "requirements": [
+    {
+      "id": "storage.default",
+      "path": "/platform/adapterOptions/storage",
+      "default": {
+        "baseDir": ".kb/data"
+      },
+      "hint": "Store project data under .kb/data"
+    }
+  ]
+}

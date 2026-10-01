@@ -11,6 +11,8 @@ import {
   findRepoRoot,
   displayArtifacts,
   handleError,
+  AdapterUnavailableError,
+  toErrorEnvelope,
   type PluginContextV3,
   type CommandResult,
   type ArtifactInfo,
@@ -110,7 +112,15 @@ export default defineCommand({
         });
       } catch (err) {
         analyzeLoader.fail('Failed to generate commit plan');
-        handleError(ctx, err, input.json);
+        if (err instanceof AdapterUnavailableError && err.reason === 'not-configured') {
+          if (flags.json) {
+            ctx.ui?.json?.({ ok: false, error: toErrorEnvelope(err) });
+          } else {
+            handleError(ctx, err);
+          }
+          return { ok: false, error: 'Command failed' };
+        }
+        handleError(ctx, err, flags.json);
         return { ok: false, error: 'Command failed' };
       }
 
@@ -121,7 +131,7 @@ export default defineCommand({
         await savePlan(cwd, plan, effectiveScope);
       } catch (err) {
         saveLoader.fail('Failed to save plan');
-        handleError(ctx, err, input.json);
+        handleError(ctx, err, flags.json);
         return { ok: false, error: 'Command failed' };
       }
       const planPath = getCurrentPlanPath(cwd, effectiveScope);
@@ -136,7 +146,7 @@ export default defineCommand({
       };
 
       // V3: Flags are auto-merged by bootstrap.ts, just use directly
-      if (input.json) {
+      if (flags.json) {
         ctx.ui?.json?.(output);
       } else {
         // Build commits section

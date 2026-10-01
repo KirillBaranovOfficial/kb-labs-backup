@@ -205,8 +205,13 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
 
     journey.step("missing LLM returns a typed bind hint", "adapter",
                  lambda: _assert_missing_llm(runner, base_env, project_a, cli), cases=["S-054.5"])
+    def assert_missing_vector_store() -> None:
+        install = ["marketplace", "install", "@kb-labs/mind-entry", "--json"]
+        if _json(cli(install), install).get("ok") is not True:
+            raise RuntimeError("could not install the Mind plugin required by the vector-store adapter case")
+        _assert_missing_vector_store(runner, base_env, project_a)
     journey.step("missing vector store returns a typed bind hint", "adapter",
-                 lambda: _assert_missing_vector_store(runner, base_env, project_a), cases=["S-054.6"])
+                 assert_missing_vector_store, cases=["S-054.6"])
 
     try:
         add = ["project", "add", str(project_b), "--init", "--json"]
