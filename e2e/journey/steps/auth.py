@@ -12,6 +12,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from pathlib import Path
 
 
 def _request(base_url: str, path: str, *, method: str = "GET", token: str | None = None,
@@ -99,6 +100,33 @@ def run_cli_auth_forbidden(cli_path: str, env: dict[str, str], *, user_id: str =
 def _combined(result: subprocess.CompletedProcess[str]) -> str:
     """Output of a command whose stderr may already be merged into stdout (stderr is None)."""
     return (result.stdout or "") + (result.stderr or "")
+
+
+def assert_platform_auth_required(result: subprocess.CompletedProcess[str], command: list[str]) -> None:
+    """Require the exact anonymous CLI auth envelope promised by S-041.7."""
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise AssertionError(f"unauthenticated {' '.join(command)} did not return JSON") from error
+    failure = payload.get("error") if isinstance(payload, dict) else None
+    if (result.returncode == 0 or not isinstance(failure, dict)
+            or failure.get("code") != "KB_AUTH_REQUIRED"
+            or failure.get("message") != "Authentication is required."
+            or failure.get("hint") != 'Run "kb auth login".'):
+        raise AssertionError(f"unauthenticated {' '.join(command)} returned an unexpected result: {payload!r}")
+
+
+def assert_cli_session_absent(result: subprocess.CompletedProcess[str]) -> None:
+    """Confirm the CLI product reports no authenticated human session."""
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise AssertionError("kb auth status --json did not return JSON") from error
+    session = payload.get("session") if isinstance(payload, dict) else None
+    if result.returncode != 0 or not isinstance(payload, dict) or payload.get("ok") is not True:
+        raise AssertionError(f"kb auth status --json did not report an unauthenticated session: {payload!r}")
+    if not isinstance(session, dict) or session.get("authenticated") is not False:
+        raise AssertionError("kb auth status --json reported that the CLI session is authenticated")
 
 
 def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,

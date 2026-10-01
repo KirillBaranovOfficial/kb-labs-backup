@@ -9,10 +9,50 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 from steps.accounts import run_cli_logout_steps
-from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status
+from steps.auth import (assert_platform_auth_required, run_bootstrap_recovery_steps, run_cli_auth_forbidden,
+                        run_cli_auth_status, assert_cli_session_absent)
 
 
 class CliAuthJourneyTests(unittest.TestCase):
+    # case: S-041.7
+    def test_cli_gate_requires_the_complete_case_error_envelope(self):
+        result = subprocess.CompletedProcess(
+            ["kb", "config", "show", "--json"], 1,
+            json.dumps({"ok": False, "error": {
+                "code": "KB_AUTH_REQUIRED",
+                "message": "Authentication is required.",
+                "hint": 'Run "kb auth login".',
+            }}), "",
+        )
+        assert_platform_auth_required(result, ["config", "show", "--json"])
+
+        for error in (
+            {"code": "KB_AUTH_REQUIRED", "message": "Different message.", "hint": 'Run "kb auth login".'},
+            {"code": "KB_AUTH_REQUIRED", "message": "Authentication is required.", "hint": "Different hint."},
+            {"code": "OTHER_ERROR", "message": "Authentication is required.", "hint": 'Run "kb auth login".'},
+        ):
+            malformed = subprocess.CompletedProcess(
+                ["kb", "config", "show", "--json"], 1,
+                json.dumps({"ok": False, "error": error}), "",
+            )
+            with self.subTest(error=error), self.assertRaises(AssertionError):
+                assert_platform_auth_required(malformed, ["config", "show", "--json"])
+
+    # case: S-041.7, S-041.8
+    def test_anonymous_auth_status_is_verified_through_the_cli_product(self):
+        result = subprocess.CompletedProcess(
+            ["kb", "auth", "status", "--json"], 0,
+            json.dumps({"ok": True, "authenticated": False, "session": {"authenticated": False}}), "",
+        )
+        assert_cli_session_absent(result)
+
+        authenticated = subprocess.CompletedProcess(
+            ["kb", "auth", "status", "--json"], 0,
+            json.dumps({"ok": True, "authenticated": True, "session": {"authenticated": True}}), "",
+        )
+        with self.assertRaisesRegex(AssertionError, "session is authenticated"):
+            assert_cli_session_absent(authenticated)
+
     # case: S-041.5, S-041.6, S-100.1
     def test_local_status_and_secured_login_status_tokens_commands(self):
         calls: list[list[str]] = []

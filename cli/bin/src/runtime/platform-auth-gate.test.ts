@@ -9,7 +9,25 @@ describe('platform authentication gate', () => {
     const result = await dispatchWithPlatformAuthGate({
       accessMode: 'secured', commandPath: 'fresh-plugin run', commandKind: 'plugin', hasAuth: false,
     }, handler);
-    expect(result).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' } });
+    expect(result).toMatchObject({ error: {
+      code: 'KB_AUTH_REQUIRED',
+      message: 'Authentication is required.',
+      hint: 'Run "kb auth login".',
+    } });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  // case: S-041.7
+  it('blocks protected platform commands with the same envelope before dispatch', async () => {
+    const handler = vi.fn(async () => 0);
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'secured', commandPath: 'config show', commandKind: 'system', hasAuth: false,
+    }, handler);
+    expect(result).toMatchObject({ error: {
+      code: 'KB_AUTH_REQUIRED',
+      message: 'Authentication is required.',
+      hint: 'Run "kb auth login".',
+    } });
     expect(handler).not.toHaveBeenCalled();
   });
 
