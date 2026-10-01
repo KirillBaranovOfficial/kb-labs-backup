@@ -83,7 +83,8 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
 
 def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
                                  old_password: str, new_password: str, env: dict[str, str],
-                                 invoke: Callable[..., tuple[subprocess.CompletedProcess[str], float]]) -> None:
+                                 invoke: Callable[..., tuple[subprocess.CompletedProcess[str], float]],
+                                 *, on_valid_password: Callable[[str], None]) -> None:
     """Exercise stopped-host recovery, recovered login, and the running-host guard."""
     login = _request("http://127.0.0.1:4000", "/auth/login/cli", method="POST",
                      body={"email": email, "password": old_password})
@@ -98,16 +99,42 @@ def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
         raise AssertionError(f"kb-create stop failed: {(stopped.stdout + stopped.stderr)[-400:]}")
     recover_args = [launcher, "doctor", "--platform-root", platform_root, "--recover", "--email", email,
                     "--tenant", tenant, "--password-stdin", "--yes"]
-    recovered, _ = invoke(recover_args, env=env, input_text=new_password + "\n")
-    if recovered.returncode != 0 or new_password in (recovered.stdout + recovered.stderr):
-        raise AssertionError("kb-create doctor --recover failed or echoed the supplied password")
-    started, _ = invoke([launcher, "start", "--platform-root", platform_root], env=env)
+    recovered: subprocess.CompletedProcess[str] | None = None
+    recovery_error: Exception | None = None
+    try:
+        recovered, _ = invoke(recover_args, env=env, input_text=new_password + "\n")
+    except Exception as error:
+        recovery_error = error
+    finally:
+        started, _ = invoke([launcher, "start", "--platform-root", platform_root], env=env)
     if started.returncode != 0:
-        raise AssertionError(f"kb-create start failed: {(started.stdout + started.stderr)[-400:]}")
-    access, _ = _login("http://127.0.0.1:4000", email, new_password)
-    profile = _request("http://127.0.0.1:4000", "/auth/me", token=access)
-    if profile.get("email") != email or profile.get("tenantId") != tenant:
-        raise AssertionError(f"recovered bootstrap credentials returned the wrong profile: {profile!r}")
+        raise AssertionError(f"kb-create start failed after recovery: {(started.stdout + started.stderr)[-400:]}")
+
+    valid_password = ""
+    for password in (new_password, old_password):
+        try:
+            access, _ = _login("http://127.0.0.1:4000", email, password)
+            profile = _request("http://127.0.0.1:4000", "/auth/me", token=access)
+        except Exception:
+            continue
+        if profile.get("email") == email and profile.get("tenantId") == tenant:
+            valid_password = password
+            break
+    if not valid_password:
+        raise AssertionError("neither the recovered nor the original bootstrap password authenticates")
+    on_valid_password(valid_password)
+
+    if recovery_error:
+        raise AssertionError("kb-create doctor --recover could not be run") from recovery_error
+    if recovered is None or recovered.returncode != 0:
+        output = "" if recovered is None else recovered.stdout + recovered.stderr
+        for secret in (old_password, new_password):
+            output = output.replace(secret, "[redacted]")
+        raise AssertionError(f"kb-create doctor --recover failed: {output[-400:]}")
+    if valid_password != new_password:
+        raise AssertionError("kb-create doctor --recover exited successfully but the new password did not authenticate")
+    if new_password in (recovered.stdout + recovered.stderr):
+        raise AssertionError("kb-create doctor --recover echoed the supplied password")
     running_recovery, _ = invoke(recover_args, env=env, input_text=new_password + "\n")
     output = (running_recovery.stdout + running_recovery.stderr).lower()
     if running_recovery.returncode == 0 or "stopped" not in output or "kb-create stop" not in output or "kb-create start" not in output:

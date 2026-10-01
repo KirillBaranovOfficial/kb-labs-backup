@@ -12,9 +12,10 @@
 package marketplace
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -48,7 +49,8 @@ type Item struct {
 // skipped, matching what the pre-cutover scanner reported.
 //
 // The platform lock is machine-local: it records its platform-relative path.
-// SHA256 is converted to standard SRI encoding for the shared TypeScript reader.
+// Integrity matches core-discovery's package.json hash contract, not the
+// artifact tarball digest in the resolved plan.
 func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Time) error {
 	existing, _ := readLock(platformRoot) // best-effort: preserve `enabled` across re-applies
 
@@ -62,6 +64,10 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 		if kind != "plugin" && kind != "adapter" {
 			continue
 		}
+		integrity, err := packageIntegrity(platformRoot, a.Package)
+		if err != nil {
+			return fmt.Errorf("read installed package metadata for %s: %w", a.Package, err)
+		}
 		enabled := true
 		if existing != nil {
 			prior, ok := existing.Plugins[a.ID]
@@ -74,7 +80,7 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 		}
 		item := Item{
 			Version:      a.Version,
-			Integrity:    integrityFor(a.SHA256),
+			Integrity:    integrity,
 			ResolvedPath: "node_modules/" + a.Package,
 			Source:       "platform",
 			Enabled:      enabled,
@@ -110,15 +116,16 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 	return os.Rename(tmp, target)
 }
 
-func integrityFor(sha256 string) string {
-	if sha256 == "" {
-		return ""
+func packageIntegrity(platformRoot, packageName string) (string, error) {
+	if packageName == "" {
+		return "", fmt.Errorf("package name is required")
 	}
-	digest, err := hex.DecodeString(sha256)
+	packageJSON, err := os.ReadFile(filepath.Join(platformRoot, "node_modules", filepath.FromSlash(packageName), "package.json"))
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return "sha256-" + base64.StdEncoding.EncodeToString(digest)
+	digest := sha256.Sum256(packageJSON)
+	return "sha256-" + base64.StdEncoding.EncodeToString(digest[:]), nil
 }
 
 func readLock(platformRoot string) (*Lock, error) {

@@ -48,6 +48,7 @@ class CliAuthJourneyTests(unittest.TestCase):
     def test_bootstrap_recovery_uses_stopped_host_command_and_checks_running_guard(self):
         commands = []
         doctor_calls = 0
+        recovered_passwords = []
 
         def invoke(args, *, env, input_text=None):
             nonlocal doctor_calls
@@ -63,7 +64,8 @@ class CliAuthJourneyTests(unittest.TestCase):
              patch("steps.auth._request", side_effect=[{"accessToken": "old"}, {"tenantId": "tenant-1"},
                  {"email": "admin@example.test", "tenantId": "tenant-1"}]):
             run_bootstrap_recovery_steps("/bin/kb-create", "/isolated/platform", "admin@example.test",
-                                         "OldPass123!", "NewPass123!", {"HOME": "/isolated"}, invoke)
+                                         "OldPass123!", "NewPass123!", {"HOME": "/isolated"}, invoke,
+                                         on_valid_password=recovered_passwords.append)
 
         recover = [args for args, _ in commands if "--recover" in args]
         self.assertEqual(len(recover), 2)
@@ -71,6 +73,51 @@ class CliAuthJourneyTests(unittest.TestCase):
         self.assertIn("--password-stdin", recover[0])
         self.assertIn("--yes", recover[0])
         self.assertIn((recover[0], "NewPass123!\n"), commands)
+        self.assertEqual(recovered_passwords, ["NewPass123!"])
+
+    # case: S-100.2, S-100.3
+    def test_failed_bootstrap_recovery_restarts_host_without_adopting_password(self):
+        commands = []
+        recovered_passwords = []
+
+        def invoke(args, *, env, input_text=None):
+            commands.append(args)
+            if args[1] == "doctor":
+                return subprocess.CompletedProcess(args, 1, "recovery failed", ""), 0.0
+            return subprocess.CompletedProcess(args, 0, "done", ""), 0.0
+
+        with patch("steps.auth._login", side_effect=[AssertionError("invalid credentials"),
+                                                      ("old-access", "old-refresh")]), \
+             patch("steps.auth._request", side_effect=[{"accessToken": "old"}, {"tenantId": "tenant-1"},
+                                                        {"email": "admin@example.test", "tenantId": "tenant-1"}]), \
+             self.assertRaisesRegex(AssertionError, "recovery failed"):
+            run_bootstrap_recovery_steps("/bin/kb-create", "/isolated/platform", "admin@example.test",
+                                         "OldPass123!", "NewPass123!", {"HOME": "/isolated"}, invoke,
+                                         on_valid_password=recovered_passwords.append)
+
+        self.assertIn(["/bin/kb-create", "start", "--platform-root", "/isolated/platform"], commands)
+        self.assertEqual(recovered_passwords, ["OldPass123!"])
+
+    # case: S-100.2, S-100.3
+    def test_echoed_recovery_password_fails_step_but_keeps_verified_credentials(self):
+        commands = []
+        recovered_passwords = []
+
+        def invoke(args, *, env, input_text=None):
+            commands.append(args)
+            output = "NewPass123!" if args[1] == "doctor" else "done"
+            return subprocess.CompletedProcess(args, 0, output, ""), 0.0
+
+        with patch("steps.auth._login", return_value=("new-access", "new-refresh")), \
+             patch("steps.auth._request", side_effect=[{"accessToken": "old"}, {"tenantId": "tenant-1"},
+                                                        {"email": "admin@example.test", "tenantId": "tenant-1"}]), \
+             self.assertRaisesRegex(AssertionError, "echoed the supplied password"):
+            run_bootstrap_recovery_steps("/bin/kb-create", "/isolated/platform", "admin@example.test",
+                                         "OldPass123!", "NewPass123!", {"HOME": "/isolated"}, invoke,
+                                         on_valid_password=recovered_passwords.append)
+
+        self.assertEqual(recovered_passwords, ["NewPass123!"])
+        self.assertIn(["/bin/kb-create", "start", "--platform-root", "/isolated/platform"], commands)
 
     # case: S-102.3
     def test_cli_logout_removes_session_and_status_reports_unauthenticated(self):
