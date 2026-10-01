@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const gatewayApiFetch = vi.hoisted(() => vi.fn());
-vi.mock('@kb-labs/sdk', () => ({ useEnv: (name: string) => name === 'KB_GATEWAY_URL' ? 'http://gateway.test' : undefined }));
+vi.mock('@kb-labs/sdk', () => ({
+  useEnv: (name: string) => name === 'KB_GATEWAY_URL' ? 'http://gateway.test' : undefined,
+  getHostServiceAddress: (_service: string, environment: Record<string, string | undefined>) => {
+    if (!environment.KB_GATEWAY_URL) { throw new Error('gateway address missing'); }
+    return environment.KB_GATEWAY_URL.replace(/\/+$/, '');
+  },
+}));
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({ gatewayApiFetch }));
 
 import { get } from '../http.js';

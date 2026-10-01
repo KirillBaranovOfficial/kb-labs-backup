@@ -1,8 +1,14 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const gatewayApiFetch = vi.hoisted(() => vi.fn());
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({ gatewayApiFetch }));
-vi.mock('@kb-labs/sdk', () => ({ useEnv: (key: string) => process.env[key] }));
+vi.mock('@kb-labs/sdk', () => ({
+  useEnv: (key: string) => process.env[key],
+  getHostServiceAddress: (_service: string, environment: Record<string, string | undefined>) => {
+    if (!environment.KB_GATEWAY_URL) { throw new Error('gateway address missing'); }
+    return environment.KB_GATEWAY_URL.replace(/\/+$/, '');
+  },
+}));
 
 import { registryPatch, registryPost, registryPostMultipart, resolveRegistryHandle } from '../registry-http.js';
 
@@ -13,6 +19,10 @@ afterEach(() => {
   delete process.env.KB_REGISTRY_URL;
   delete process.env.KB_GATEWAY_URL;
   delete process.env.KB_REGISTRY_AUTHOR_HANDLE;
+});
+
+beforeEach(() => {
+  process.env.KB_GATEWAY_URL = 'http://127.0.0.1:4000';
 });
 
 describe('registry HTTP uses the shared gateway client', () => {

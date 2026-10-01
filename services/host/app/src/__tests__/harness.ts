@@ -88,6 +88,7 @@ function isolateEnvironment(home: string): () => void {
     "KB_SOCKET_HASH",
     "KB_PROJECT_ROOT",
     "KB_PLATFORM_ROOT",
+    "KB_STATE_DAEMON_URL",
   ] as const;
   const saved = new Map(keys.map((key) => [key, process.env[key]]));
   process.env.HOME = home;

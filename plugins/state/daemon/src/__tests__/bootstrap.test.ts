@@ -21,6 +21,10 @@ describe('StateDaemonServer construction', () => {
     expect(server).toBeDefined();
   });
 
+  it('requires an assigned port before starting', async () => {
+    await expect(new StateDaemonServer().start()).rejects.toThrow('KB_STATE_DAEMON_PORT');
+  });
+
   it('creates server with custom logger', () => {
     const logger = {
       info: () => {},
@@ -81,8 +85,9 @@ describe('manifest', () => {
     expect(manifest.id).toBe('state-daemon');
   });
 
-  it('specifies correct default port 7777', () => {
-    expect(manifest.runtime.port).toBe(7777);
+  it('does not declare a default host service port', () => {
+    expect(manifest.runtime.port).toBeUndefined();
+    expect(manifest.env?.KB_STATE_DAEMON_PORT?.default).toBeUndefined();
   });
 
   it('specifies health check endpoint', () => {

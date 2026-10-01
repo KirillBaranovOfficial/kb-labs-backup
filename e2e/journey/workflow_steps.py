@@ -381,7 +381,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
             raise AssertionError(f"run did not complete with the submitted input: {success_detail!r}")
 
     journey.step("verify terminal status and submitted input", "workflow", inspect_success,
-                 cases=["S-007.2", "S-056.1"])
+                 cases=["S-007.2", "S-056.1", "PC-002.5"])
     journey.step("verify input appears in workflow log", "workflow",
                  lambda: None if "hello" in _logs(successful_id, env=env, cwd=project)
                  else "workflow logs did not contain the submitted value hello", cases=["S-007.3"])

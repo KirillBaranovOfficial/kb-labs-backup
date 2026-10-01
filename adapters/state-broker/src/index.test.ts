@@ -1,35 +1,32 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createAdapter } from "./index.js";
+import { HostServiceAddressError } from "@kb-labs/core-platform";
+import { manifest } from "./manifest.js";
 
-describe("StateBrokerCacheAdapter", () => {
-  it("implements the ICache key-value and atomic operations", async () => {
-    const cache = createAdapter();
+describe("state broker host address", () => {
+  const previous = process.env.KB_STATE_DAEMON_URL;
 
-    await cache.set("commit:plan", { id: "plan-1" });
-    await expect(cache.get<{ id: string }>("commit:plan")).resolves.toEqual({
-      id: "plan-1",
-    });
-    await expect(
-      cache.setIfNotExists("commit:plan", { id: "plan-2" }),
-    ).resolves.toBe(false);
-    await expect(
-      cache.setIfNotExists("commit:other", { id: "plan-3" }),
-    ).resolves.toBe(true);
-    await cache.delete("commit:other");
-    await expect(cache.get("commit:other")).resolves.toBeNull();
+  afterEach(() => {
+    if (previous === undefined) { delete process.env.KB_STATE_DAEMON_URL; }
+    else { process.env.KB_STATE_DAEMON_URL = previous; }
   });
 
-  it("supports sorted-set operations required by cache consumers", async () => {
-    const cache = createAdapter();
+  it("returns a typed actionable error when used without a host address", async () => {
+    delete process.env.KB_STATE_DAEMON_URL;
+    const adapter = createAdapter();
+    try {
+      await adapter.get("key");
+      throw new Error("expected the host address to be required");
+    } catch (error) {
+      expect(error).toBeInstanceOf(HostServiceAddressError);
+      expect(error).toMatchObject({
+        code: "KB_HOST_SERVICE_ADDRESS_MISSING",
+        hint: expect.stringContaining("kb-create start"),
+      });
+    }
+  });
 
-    await cache.zadd("queue", 20, "second");
-    await cache.zadd("queue", 10, "first");
-    await expect(cache.zrangebyscore("queue", 0, 15)).resolves.toEqual([
-      "first",
-    ]);
-    await cache.zrem("queue", "first");
-    await expect(cache.zrangebyscore("queue", 0, 100)).resolves.toEqual([
-      "second",
-    ]);
+  it("does not expose host service addresses as adapter config", () => {
+    expect(manifest.configSchema).not.toHaveProperty("url");
   });
 });

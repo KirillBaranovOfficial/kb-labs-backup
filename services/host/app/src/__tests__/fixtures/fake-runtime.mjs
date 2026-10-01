@@ -52,8 +52,18 @@ const server = createServer((req, res) => {
   }
   const chunks = [];
   req.on("data", (chunk) => chunks.push(chunk));
-  req.on("end", () => {
+  req.on("end", async () => {
     const body = Buffer.concat(chunks).toString("utf8");
+    if (url.pathname === "/rest/__host-services") {
+      const stateDaemonUrl = process.env.KB_STATE_DAEMON_URL;
+      const gatewayUrl = process.env.KB_GATEWAY_URL;
+      const firstLeaseStatus = stateDaemonUrl
+        ? (await fetch(`${stateDaemonUrl}/state/${encodeURIComponent("kb:integration-lease-probe")}`)).status
+        : null;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ stateDaemonUrl: stateDaemonUrl ?? null, gatewayUrl: gatewayUrl ?? null, firstLeaseStatus }));
+      return;
+    }
     if (url.pathname === "/rest/__crash") {
       process.exit(1);
     }
