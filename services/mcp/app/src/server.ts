@@ -216,6 +216,7 @@ export class McpDaemonServer {
       const visibleTools = await resolveVisibleTools({
         permits,
         authHeader,
+        cacheScope: this.opts.projectRoot,
         registry: this.registry!,
         cache,
         analytics: this.opts.platform.analytics,

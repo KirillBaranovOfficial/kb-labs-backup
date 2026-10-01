@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.cookiejar
 import json
 import os
 from pathlib import Path
+import subprocess
 import urllib.error
 import urllib.request
 import uuid
+from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import Journey
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
+from marketplace_steps import _registry_version, _output
 from adapter_defaults_steps import run_adapter_default_steps
 from mcp_project_steps import (
     apply_commit_plan,
@@ -205,7 +209,7 @@ def mcp_probe(project_id: str, token: str) -> str | None:
     if not isinstance(tools, list) or not tools:
         return "project-scoped MCP tools/list returned no project tools"
     names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
-    expected = {"kb-labs-commit__commit", "workflow__workflow_run", "kb-labs__mcp_diagnostics"}
+    expected = {"kb-labs-commit__commit", "kb-labs-workflow__workflow_run", "kb-labs__mcp_diagnostics"}
     if not expected <= names:
         return f"project-scoped MCP tools/list omitted expected tools: {sorted(expected - names)}"
     if any(not isinstance(tool, dict) or not isinstance(tool.get("name"), str)
@@ -270,14 +274,112 @@ def configure_installed_cli_path() -> None:
 
 def _run_installed_flows(journey: Journey, project_root: str, registry: str) -> None:
     env = os.environ.copy()
-    journey.step("marketplace flow", "marketplace",
-                 lambda: run_marketplace_steps(journey, project_root, registry, env))
     journey.step("adapter defaults flow", "adapter",
                  lambda: run_adapter_default_steps(journey, project_root, env))
     journey.step("plugin author flow", "plugin-author",
                  lambda: run_plugin_author_flow(journey, Path(project_root),
                                                 Path.home() / ".local/bin/kb", registry,
                                                 base_env=env))
+
+
+def _find_project_id(payload: object) -> str:
+    if isinstance(payload, dict):
+        for key in ("projectId", "project_id", "id"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.startswith("prj_"):
+                return value
+        for value in payload.values():
+            found = _find_project_id(value)
+            if found:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = _find_project_id(value)
+            if found:
+                return found
+    return ""
+
+
+def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
+    """Prepare the staged note commit required by S-140.2 in the isolated KB state."""
+    subprocess.run(["git", "-C", str(project_root), "config", "user.name", "KB Labs Journey"],
+                   check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(project_root), "config", "user.email", "journey@example.com"],
+                   check=True, capture_output=True, text=True)
+
+    def git_files(*args: str) -> list[str]:
+        result = subprocess.run(["git", "-C", str(project_root), *args], capture_output=True,
+                               check=True, text=True)
+        return [line for line in result.stdout.splitlines() if line]
+
+    status = {
+        "staged": git_files("diff", "--cached", "--name-only"),
+        "unstaged": git_files("diff", "--name-only"),
+        "untracked": git_files("ls-files", "--others", "--exclude-standard"),
+    }
+    files = [*status["staged"], *status["unstaged"], *status["untracked"]]
+    if not status["staged"]:
+        raise RuntimeError("S-140.2 requires a staged project A change before preparing the Commit plan")
+
+    project_id = "prj_" + hashlib.sha256(str(project_root.resolve()).encode("utf-8")).hexdigest()[:16]
+    kb_home_override = env.get("KB_HOME", "").strip()
+    kb_home = Path(kb_home_override) if kb_home_override else Path(env["HOME"]) / ".kb"
+    kb_home = kb_home.expanduser().resolve()
+    plan_path = (kb_home / "state" / project_id / "commit" / "plans" / "root" /
+                 "current" / "plan.json")
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan = {
+        "schemaVersion": "1.0",
+        "createdAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "repoRoot": str(project_root.resolve()),
+        "gitStatus": status,
+        "commits": [{
+            "id": "journey-commit",
+            "type": "chore",
+            "message": "Add journey fixture",
+            "files": files,
+            "releaseHint": "none",
+            "breaking": False,
+        }],
+        "metadata": {"totalFiles": len(files), "totalCommits": 1, "llmUsed": False},
+    }
+    plan_path.write_text(json.dumps(plan, indent=2) + "\n")
+    return plan_path
+
+
+def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
+                         runner=subprocess.run) -> str:
+    """Install Commit into project A and register a clean project B for isolation."""
+    project_a = Path(project_root).resolve()
+    package = "@kb-labs/commit-entry"
+    version = _registry_version(package, registry, env, runner)
+    install = ["kb", "marketplace", "install", f"{package}@{version}", "--json"]
+    installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
+                       text=True, timeout=300)
+    _output(installed, install)
+    _write_mcp_commit_plan(project_a, env)
+
+    home = Path(env["HOME"])
+    project_b = home / "project-b-mcp"
+    project_b.mkdir(parents=True, exist_ok=False)
+    subprocess.run(["git", "init", "-q", str(project_b)], check=True)
+    register = ["kb", "project", "add", str(project_b), "--init", "--json"]
+    result = runner(register, cwd=str(project_b), env=env, capture_output=True,
+                    text=True, timeout=120)
+    raw = _output(result, register)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("registering MCP isolation project B returned invalid JSON") from error
+    project_b_id = _find_project_id(payload)
+    if not project_b_id:
+        raise RuntimeError("registering MCP isolation project B returned no project ID")
+    lock_path = project_b / ".kb" / "marketplace.lock"
+    if lock_path.exists():
+        lock = json.loads(lock_path.read_text())
+        if package in lock.get("plugins", {}):
+            raise RuntimeError("MCP isolation project B unexpectedly has the Commit plugin installed")
+    return project_b_id
 
 
 def main() -> int:
@@ -289,9 +391,16 @@ def main() -> int:
     journey = Journey(args.mode, args.run_id or str(uuid.uuid4()))
     try:
         configure_installed_cli_path()
-        run_service_steps(journey, checks(args.mode))
         project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")
         registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
+        if project_root:
+            env = os.environ.copy()
+            journey.step("marketplace flow", "marketplace",
+                         lambda: run_marketplace_steps(journey, project_root, registry, env))
+            def prepare_projects() -> None:
+                os.environ["KB_JOURNEY_PROJECT_B_ID"] = prepare_mcp_projects(project_root, registry, env)
+            journey.step("prepare MCP project fixtures", "mcp", prepare_projects)
+        run_service_steps(journey, checks(args.mode))
         if project_root:
             _run_installed_flows(journey, project_root, registry)
         else:

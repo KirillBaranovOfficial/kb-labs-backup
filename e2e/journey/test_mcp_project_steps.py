@@ -70,9 +70,22 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             self.assertIn("invalid token returned HTTP 200", secured_auth("prj_a"))
 
     def test_local_auth_lists_tools_without_a_token(self):
-        with patch("service_runner.request", return_value=(200, {"result": {"tools": [{"name": "kb-labs-commit__commit"}]}}, {})) as request:
+        tools = [
+            {"name": name}
+            for name in (
+                "kb-labs-commit__commit",
+                "kb-labs-workflow__workflow_run",
+                "kb-labs__mcp_diagnostics",
+            )
+        ]
+        with patch("service_runner.request", return_value=(200, {"result": {"tools": tools}}, {})) as request:
             self.assertIsNone(local_auth("prj_a"))
         self.assertEqual(request.call_args.kwargs["token"], "")
+
+    def test_local_auth_rejects_a_catalog_from_another_project(self):
+        tools = [{"name": "kb-labs__mcp_diagnostics"}]
+        with patch("service_runner.request", return_value=(200, {"result": {"tools": tools}}, {})):
+            self.assertIn("omitted selected project tools", local_auth("prj_a"))
 
     def test_commit_tool_schema_checks_the_manifest_argument_type(self):
         tools = [{"name": "kb-labs-commit__commit_apply", "inputSchema": {
