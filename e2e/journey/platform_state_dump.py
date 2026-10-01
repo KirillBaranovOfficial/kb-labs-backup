@@ -130,6 +130,42 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             for source in files[:3]:
                 add(source, Path(".kb") / directory / source.name, tail=directory == "logs")
 
+        # Workflow state belongs to the registered project, which is a sibling
+        # of the installed platform in the journey container. Keep the search
+        # shallow and targeted so diagnostics never copy unrelated user files.
+        evidence_roots = [root]
+        try:
+            evidence_roots.extend(
+                candidate for candidate in root.parent.iterdir()
+                if candidate.is_dir() and candidate != root
+            )
+        except OSError:
+            pass
+        for evidence_root in evidence_roots:
+            evidence_prefix = Path("workflow-evidence") / evidence_root.name
+            workflow_records = evidence_root / ".kb" / "data" / "workflows"
+            try:
+                records = sorted(workflow_records.glob("*.json"),
+                                 key=lambda path: path.stat().st_mtime, reverse=True)
+            except OSError:
+                records = []
+            for source in records[:20]:
+                add(source, evidence_prefix / ".kb" / "data" / "workflows" / source.name)
+
+            for directory in ("logs", "diagnostics"):
+                log_root = evidence_root / ".kb" / directory
+                try:
+                    logs = sorted(
+                        (path for path in log_root.glob("*")
+                         if path.is_file() and re.search(r"workflow|daemon", path.name, re.I)),
+                        key=lambda path: path.stat().st_mtime,
+                        reverse=True,
+                    )
+                except OSError:
+                    logs = []
+                for source in logs[:3]:
+                    add(source, evidence_prefix / ".kb" / directory / source.name, tail=True)
+
         packages = []
         scope = root / "node_modules" / "@kb-labs"
         try:

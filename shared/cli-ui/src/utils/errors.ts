@@ -28,10 +28,24 @@ export function validationError(
  */
 export function handleError(ctx: ErrorContext, err: unknown, isJson?: boolean): void {
   const message = err instanceof Error ? err.message : String(err);
+  const typed = err !== null && typeof err === 'object' && 'code' in err
+    && typeof err.code === 'string'
+    ? {
+        code: err.code,
+        hint: 'hint' in err && typeof err.hint === 'string' ? err.hint : undefined,
+      }
+    : undefined;
   if (isJson) {
-    ctx.ui?.json?.({ ok: false, error: { code: 'INTERNAL_ERROR', message } });
+    ctx.ui?.json?.({
+      ok: false,
+      error: {
+        code: typed?.code ?? 'INTERNAL_ERROR',
+        message,
+        ...(typed?.hint ? { hint: typed.hint } : {}),
+      },
+    });
   } else {
-    ctx.ui?.error?.(message);
+    ctx.ui?.error?.(message, typed?.hint ? { hint: typed.hint } : undefined);
   }
 }
 

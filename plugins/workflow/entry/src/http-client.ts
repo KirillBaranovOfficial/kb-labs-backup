@@ -140,6 +140,16 @@ interface WorkflowAuth {
   refresh: () => Promise<WorkflowAuth>;
 }
 
+export class WorkflowAuthRequiredError extends Error {
+  readonly code = 'KB_AUTH_REQUIRED';
+  readonly hint = 'Run "kb auth login".';
+
+  constructor() {
+    super('Workflow access requires a login.');
+    this.name = 'WorkflowAuthRequiredError';
+  }
+}
+
 async function loadWorkflowAuth(): Promise<WorkflowAuth | null> {
   const sessions = new SessionManager();
   const session = await sessions.load();
@@ -208,7 +218,7 @@ export class WorkflowDaemonClient {
       response = await send(this.authState);
     }
     if (response.status === 401) {
-      throw new Error('Workflow access requires a login. Run `kb auth login` and retry.');
+      throw new WorkflowAuthRequiredError();
     }
     return response;
   }

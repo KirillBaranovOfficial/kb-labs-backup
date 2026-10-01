@@ -49,6 +49,34 @@ def _terminal_run(run_id: str, *, env: dict[str, str], cwd: Path,
     raise AssertionError(f"workflow run {run_id} did not reach a terminal status within {timeout_seconds}s")
 
 
+def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
+    """Check the unauthenticated error, then restore an authorized CLI session."""
+    def verify_auth() -> None:
+        result = run_cli(["workflow", "defs", "list", "--json"], env=env, cwd=project)
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise AssertionError("unauthenticated workflow discovery did not return JSON") from error
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if (result.returncode == 0 or not isinstance(error, dict)
+                or error.get("code") != "KB_AUTH_REQUIRED"
+                or error.get("hint") != 'Run "kb auth login".'):
+            raise AssertionError(f"unauthenticated workflow discovery returned an unexpected result: {payload!r}")
+
+        email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
+        password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+        if not email or not password:
+            raise AssertionError("secured workflow journey requires KB_JOURNEY_ADMIN_EMAIL and KB_JOURNEY_ADMIN_PASSWORD")
+        gateway = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
+        login = run_cli(["auth", "login", "--gateway-url", gateway,
+                         "--email", email, "--password", password], env=env, cwd=project)
+        if login.returncode != 0:
+            raise AssertionError(f"admin CLI login failed: {' '.join(login.stdout.split())[-400:]}")
+        _json_cli(["workflow", "defs", "list", "--json"], env=env, cwd=project)
+
+    journey.step("secured workflow authentication", "workflow", verify_auth, cases=["S-007.4"])
+
+
 def _logs(run_id: str, *, env: dict[str, str], cwd: Path) -> str:
     result = _json_cli(["workflow", "runs", "logs", run_id, "--json"], env=env, cwd=cwd)
     logs = result.get("logs") if isinstance(result, dict) else None
@@ -284,6 +312,8 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         if not any(isinstance(item, dict) and item.get("source") == "plugin" for item in crons):
             raise AssertionError("workflow cron list omitted the cron declared by installed @kb-labs/steward-entry")
 
+    if journey.mode == "secured":
+        run_secured_cli_auth_step(journey, env=env, project=project)
     journey.step("install plugin cron fixture", "workflow", install_plugin_cron_fixture)
     prepare_workflow_fixtures(project)
 
