@@ -36,6 +36,8 @@ overrides:
   zod: ^3.25.76
   '@fastify/reply-from': '>=12.6.2'
   '@fastify/static': '>=10.1.1'
+  # Request body replacement via async validation result collision (fixed in 5.12.2).
+  fastify: '>=5.12.2'
   follow-redirects: '>=1.16.0'
   # GHSA-gqvv-2mrq-wpjv, GHSA-g6gw-c38x-mqfc, GHSA-crvj-82cr-hjcx (MCP SDK transitives).
   hono: '>=4.13.5'
