@@ -1,10 +1,12 @@
 import ast
 import io
+import json
+import os
 import shlex
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +14,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
-from service_runner import checks, declared_capabilities, discover_workflow, expect_json, mcp_diagnostics, mcp_initialize, mcp_probe
+from service_runner import (checks, configure_installed_cli_path, declared_capabilities,
+                            discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
+                            main as service_main, mcp_probe, run_service_steps)
 from service_steps import Journey, record_runner_failure
 from steps.auth import run_secured_auth_steps
 
@@ -51,6 +55,56 @@ class ServiceJourneyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             saved = journey.write_json(Path(directory) / "journey.json")
             self.assertEqual(saved.schema, "kb.service-journey/v1")
+
+    def test_service_step_exception_is_saved_and_later_steps_continue(self):
+        journey = Journey("local", "raised-step")
+
+        def broken_check():
+            raise RuntimeError("marketplace CLI is unavailable")
+
+        run_service_steps(journey, [
+            ("marketplace registry", "marketplace", broken_check),
+            ("gateway readiness", "gateway", lambda: None),
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "service-local.json"
+            result = journey.write_json(path)
+            saved = json.loads(path.read_text())
+
+        self.assertEqual(result.status, "FAIL")
+        self.assertEqual(saved["steps"][0]["status"], "FAIL")
+        self.assertEqual(saved["steps"][0]["message"], "marketplace CLI is unavailable")
+        self.assertEqual(saved["steps"][1]["status"], "PASS")
+
+    def test_service_step_preserves_blocked_result_without_case_claim(self):
+        journey = Journey("local", "blocked-step")
+        run_service_steps(journey, [
+            ("gateway readiness", "gateway", lambda: "BLOCKED: gateway fixture is missing"),
+        ])
+        self.assertEqual(journey.steps[0].status, "BLOCKED")
+        self.assertEqual(journey.result().case_run["claims"], [])
+
+    def test_installed_cli_bin_is_added_to_service_path(self):
+        with tempfile.TemporaryDirectory() as directory, patch("pathlib.Path.home", return_value=Path(directory)), \
+                patch.dict("os.environ", {"PATH": "/usr/bin"}):
+            configure_installed_cli_path()
+            self.assertEqual(os.environ["PATH"].split(os.pathsep)[0], str(Path(directory) / ".local" / "bin"))
+
+    def test_runner_writes_result_json_when_orchestration_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "service-local.json"
+            stdout = io.StringIO()
+            with patch("service_runner.checks", side_effect=RuntimeError("simulated orchestration error")), \
+                    patch("sys.argv", ["service_runner.py", "--mode", "local", "--output", str(output)]), \
+                    redirect_stdout(stdout):
+                status = service_main()
+            result = json.loads(output.read_text())
+
+        self.assertEqual(status, 1)
+        self.assertEqual(result["steps"][0]["name"], "service runner")
+        self.assertEqual(result["steps"][0]["status"], "FAIL")
+        self.assertEqual(result["steps"][0]["message"], "simulated orchestration error")
+        self.assertNotIn("Traceback", stdout.getvalue())
 
     def test_pre_service_failure_is_saved_with_step_and_message(self):
         with tempfile.TemporaryDirectory() as directory:
