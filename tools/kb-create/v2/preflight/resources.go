@@ -29,9 +29,12 @@ func CheckInstallResources(platformRoot string) error {
 func validateResources(availableMemory, freeDisk uint64) error {
 	if availableMemory < MinimumAvailableMemory {
 		failure := contracts.NewLauncherError(contracts.CodeMemoryInsufficient,
-			fmt.Sprintf("The platform install needs at least %s of available memory; %s is available.", formatBytes(MinimumAvailableMemory), formatBytes(availableMemory)),
+			fmt.Sprintf("The platform install needs at least %s of available memory; %s is available.", formatMemoryBytes(MinimumAvailableMemory), formatMemoryBytes(availableMemory)),
 			"Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.", nil)
-		failure.Details = map[string]string{"minimum": formatBytes(MinimumAvailableMemory), "available": formatBytes(availableMemory)}
+		failure.Details = map[string]string{
+			"minimum": formatMemoryBytes(MinimumAvailableMemory), "available": formatMemoryBytes(availableMemory),
+			"minimumBytes": fmt.Sprintf("%d", MinimumAvailableMemory), "availableBytes": fmt.Sprintf("%d", availableMemory),
+		}
 		return failure
 	}
 	if freeDisk < MinimumFreeDisk {
@@ -46,4 +49,8 @@ func validateResources(availableMemory, freeDisk uint64) error {
 
 func formatBytes(bytes uint64) string {
 	return fmt.Sprintf("%.2f GiB", float64(bytes)/(1<<30))
+}
+
+func formatMemoryBytes(bytes uint64) string {
+	return fmt.Sprintf("%.2f MiB (%d bytes)", float64(bytes)/(1<<20), bytes)
 }
