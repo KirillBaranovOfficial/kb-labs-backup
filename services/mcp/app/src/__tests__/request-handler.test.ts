@@ -215,8 +215,8 @@ describe('executeToolCall', () => {
       resolvePlatform,
     });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ code: 'KB_RUNTIME_MCP_TOOL_FORBIDDEN' });
-    expect(textOf(result)).toContain('KB_RUNTIME_MCP_TOOL_FORBIDDEN:');
+    expect(result.structuredContent).toMatchObject({ code: 'KB_AUTH_FORBIDDEN' });
+    expect(textOf(result)).toContain('KB_AUTH_FORBIDDEN:');
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
 
@@ -230,7 +230,7 @@ describe('executeToolCall', () => {
       resolvePlatform,
     });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ code: 'KB_RUNTIME_MCP_TOOL_FORBIDDEN' });
+    expect(result.structuredContent).toMatchObject({ code: 'KB_AUTH_REQUIRED' });
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
 
@@ -274,6 +274,27 @@ describe('executeToolCall', () => {
     expect(executeCommandV3).toHaveBeenCalledWith(
       expect.objectContaining({ pluginId: 'mind', flags: { q: 'x' }, tenantId: 't1' }),
     );
+  });
+
+  // case: S-041.7, S-041.9
+  it('returns catalog auth envelopes for unauthenticated and forbidden tool calls', async () => {
+    const unauthenticated = await executeToolCall({
+      name: 'plugin__command', args: {}, visibleTools: [], permits: null, tenantId: 'tenant',
+      resolvePlatform,
+    });
+    expect(unauthenticated).toMatchObject({
+      isError: true,
+      structuredContent: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' },
+    });
+
+    const forbidden = await executeToolCall({
+      name: tool.name, args: {}, visibleTools: [tool], permits: () => false, tenantId: 't1',
+      resolvePlatform,
+    });
+    expect(forbidden).toMatchObject({
+      isError: true,
+      structuredContent: { code: 'KB_AUTH_FORBIDDEN' },
+    });
   });
 
   it('emits analytics events for tool calls', async () => {

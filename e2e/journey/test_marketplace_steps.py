@@ -58,6 +58,8 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "session": {"authenticated": logged_in},
                     }), "")
+                if args[:3] == ["marketplace", "plugins", "list"] and logged_in:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"entries": []}), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command[1:3]}")
 
             journey = Journey("secured", "marketplace-auth-fixture")
@@ -65,7 +67,7 @@ class MarketplaceStepTests(unittest.TestCase):
 
             self.assertEqual(journey.result().status, "PASS")
             self.assertEqual(journey.result().case_run["claims"], [
-                {"claimId": "S-010.6", "kind": "journey", "status": "PASS"},
+                {"claimId": "S-041.7", "kind": "journey", "status": "PASS"},
             ])
             self.assertIn(("kb", "auth", "login", "--gateway-url", "http://gateway.test",
                            "--email", "admin@example.test", "--password", "fixture-password", "--json"), calls)

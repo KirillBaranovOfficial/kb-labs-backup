@@ -8,8 +8,7 @@ vi.mock('@kb-labs/sdk', () => ({
 // Saved sessions/credentials live in the developer's real HOME; a stale login
 // would refresh through the stubbed fetch. These client tests run logged out.
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  SessionManager: class { async load() { return null; } },
-  CredentialsManager: class { async load() { return null; } },
+  gatewayApiFetch: (input: string | URL, init?: RequestInit) => fetch(input, init),
 }));
 
 import { getWorkflowDaemonUrl, WorkflowDaemonClient } from '../http-client.js';
@@ -48,7 +47,7 @@ describe('workflow project gateway address', () => {
       await expect(client.getCronJobs()).resolves.toMatchObject({
         crons: [{ id: 'user:journey-cron', schedule: '* * * * *', enabled: true }],
       });
-      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4312/workflow/api/v1/crons', expect.any(Object));
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4312/workflow/api/v1/crons', undefined);
     } finally {
       vi.unstubAllGlobals();
     }

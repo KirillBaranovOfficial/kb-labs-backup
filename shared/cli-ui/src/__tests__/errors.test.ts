@@ -1,29 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 import { handleError } from '../utils/errors.js';
 
-class TypedAuthenticationError extends Error {
-  readonly code = 'KB_AUTH_REQUIRED';
-  readonly hint = 'Run "kb auth login".';
-}
-
 describe('handleError', () => {
-  it('preserves typed error codes and hints in JSON and human output', () => {
+  it('preserves the catalog error envelope in JSON and human output', () => {
     const json = vi.fn();
     const output = vi.fn();
+    const envelope = {
+      code: 'KB_AUTH_REQUIRED', area: 'auth', stage: 'run', severity: 'error', retryable: false,
+      message: 'Authentication is required.', hint: 'Run "kb auth login".',
+    };
+    const error = Object.assign(new Error(envelope.message), { envelope });
 
-    handleError({ ui: { json, error: output } }, new TypedAuthenticationError('Workflow access requires a login.'), true);
+    handleError({ ui: { json, error: output } }, error, true);
 
-    expect(json).toHaveBeenCalledWith({
-      ok: false,
-      error: {
-        code: 'KB_AUTH_REQUIRED',
-        message: 'Workflow access requires a login.',
-        hint: 'Run "kb auth login".',
-      },
-    });
+    expect(json).toHaveBeenCalledWith({ ok: false, error: envelope });
 
-    handleError({ ui: { json, error: output } }, new TypedAuthenticationError('Workflow access requires a login.'));
-    expect(output).toHaveBeenCalledWith('Workflow access requires a login.', {
+    handleError({ ui: { json, error: output } }, error);
+    expect(output).toHaveBeenCalledWith('KB_AUTH_REQUIRED: Authentication is required.', {
       hint: 'Run "kb auth login".',
     });
   });

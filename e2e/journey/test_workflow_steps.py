@@ -22,7 +22,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             if args[:3] == ["workflow", "defs", "list"]:
                 if not authenticated[0]:
                     return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
-                        "code": "KB_AUTH_REQUIRED", "message": "Workflow access requires a login.",
+                        "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                         "hint": 'Run "kb auth login".',
                     }}))
                 return CompletedProcess(args, 0, json.dumps({"ok": True, "data": [{"id": "hello"}]}))
@@ -51,7 +51,11 @@ class WorkflowJourneyTests(unittest.TestCase):
         self.assertEqual(calls[0], ["workflow", "defs", "list", "--json"])
         self.assertEqual(calls[1][:2], ["auth", "login"])
         self.assertEqual(calls[2], ["workflow", "defs", "list", "--json"])
-        self.assertEqual(result.case_run["claims"], [{"claimId": "S-007.4", "kind": "journey", "status": "PASS"}])
+        self.assertEqual(result.case_run["claims"], [
+            {"claimId": "S-007.4", "kind": "journey", "status": "PASS"},
+            {"claimId": "S-041.7", "kind": "journey", "status": "PASS"},
+            {"claimId": "S-041.8", "kind": "journey", "status": "PASS"},
+        ])
 
     def test_workflow_and_cron_cases_assert_outcomes_and_claim_steps(self):
         with tempfile.TemporaryDirectory() as directory:
