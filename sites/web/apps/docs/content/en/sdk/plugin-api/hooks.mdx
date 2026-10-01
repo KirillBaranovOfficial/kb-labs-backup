@@ -1,7 +1,7 @@
 ---
 title: "Hooks"
 description: "Platform composables: usePlatform, useLLM, useCache, useStorage, and friends."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-01"
 order: 5
 ---
 
@@ -487,7 +487,7 @@ const prodConfig = await useConfig<WorkflowConfig>('workflow', 'production');
 
 `useConfig` returns **only** the product-specific slice, never the entire `kb.config.json`. This is a security boundary: one plugin can't read another plugin's config.
 
-Both the v2 profile-based structure and the legacy flat structure are supported:
+The profile-based structure is the recommended format:
 
 ```json
 // Profiles v2
@@ -503,11 +503,6 @@ Both the v2 profile-based structure and the legacy flat structure are supported:
   ]
 }
 
-// Legacy
-{
-  "knowledge": { "scopes": [...] },  // reads as `mind` product
-  "workflow": { "maxConcurrency": 10 }
-}
 ```
 
 ## Availability quick reference

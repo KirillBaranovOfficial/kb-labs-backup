@@ -28,6 +28,7 @@ values without losing the prior setting.
 | S-186.1 | Run `kb config set platform.execution.mode worker-pool --scope platform` and inspect `kb config get platform.execution.mode --json` | The platform config records `worker-pool`; plugin commands execute through the worker-pool backend after the runtime reloads the effective config. |
 | S-186.2 | Run `kb config set platform.core.workflows.maxConcurrent 4 --scope platform`, then run five long enough fixture workflows concurrently | At most four workflow runs execute at once; the remaining run waits until a slot is free. |
 | S-186.3 | Save the prior value, then run `kb config set platform.execution.mode turbo --scope platform --json` | The command exits nonzero with `KB_CONFIG_INVALID` naming `platform.execution.mode`; the invalid value is not written and the prior effective value remains. |
+| S-186.4 | Set a legacy top-level `knowledge` config value and a profile `products.mind` value, then invoke a fixture plugin that reads Mind config with `useConfig('mind')` | The plugin receives only the value in `profiles[active].products.mind`; a top-level `knowledge` key is ignored. |
 
 ## Pass criteria
 
@@ -38,3 +39,5 @@ is planned because the two runtime effects and reload boundary do not yet have
 a user-level journey. Gateway, auth/session, projects, logging and other
 workflow keys remain uncased until a source-backed setting inventory chooses
 their release-critical observable outcomes.
+Product configuration is read from the active profile's `products` map; flat
+top-level product keys are not a supported fallback.

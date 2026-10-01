@@ -65,14 +65,8 @@ export class ConfigAdapter implements IConfig {
     }
 
     // Fallback to legacy structure
-    // Map productId to legacy key (e.g., 'mind' → 'knowledge')
-    const legacyKeyMap: Record<string, string> = {
-      'mind': 'knowledge',
-    };
-
-    const legacyKey = legacyKeyMap[productId] ?? productId;
-    if (rawConfig[legacyKey]) {
-      return rawConfig[legacyKey];
+    if (rawConfig[productId]) {
+      return rawConfig[productId];
     }
 
     return undefined;

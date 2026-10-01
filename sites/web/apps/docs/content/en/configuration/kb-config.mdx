@@ -1,7 +1,7 @@
 ---
 title: "kb.config.json"
 description: "The main KB Labs configuration file — adapters, execution, profiles, and per-product config."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-01"
 order: 1
 ---
 
@@ -338,7 +338,7 @@ The profile ID defaults to `'default'` or the `KB_PROFILE` env var.
 
 ### Legacy flat structure
 
-Older installs put product config directly under the top level (`kb.config.json` → `{ "mind": { ... } }`). The loader still reads it for backward compatibility — `knowledge` is the legacy alias for `mind`. New installs should use Profiles v2 exclusively.
+Older installs may put product config directly under the top level (`kb.config.json` → `{ "mind": { ... } }`). The loader reads a top-level key only when it exactly matches the product ID; `knowledge` is not an alias for `mind`. New installs should use Profiles v2.
 
 ## Other top-level sections
 
