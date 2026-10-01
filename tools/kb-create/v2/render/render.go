@@ -204,35 +204,13 @@ func Write(plan contracts.ResolvedInstallPlan) (Output, error) {
 	if err := os.MkdirAll(filepath.Join(root, ".kb"), 0o750); err != nil {
 		return Output{}, fmt.Errorf("create config root: %w", err)
 	}
-	// The platform owns the generated full configuration. Projects retain their
-	// own minimal platform pointer through the existing scaffold contract.
+	// The platform owns generated configuration. Selecting a project is only a
+	// registry operation; the installer never writes into the repository.
 	path := filepath.Join(root, ".kb", ConfigFilename)
 	if err := writeAtomic(path, output.Config, 0o600); err != nil {
 		return Output{}, fmt.Errorf("replace runtime config: %w", err)
 	}
-	if plan.Request.ProjectRoot != "" && plan.Request.ProjectRoot != root {
-		if err := writeProjectPointer(plan.Request.ProjectRoot, root); err != nil {
-			return Output{}, fmt.Errorf("write project config pointer: %w", err)
-		}
-	}
 	return output, nil
-}
-
-func writeProjectPointer(projectRoot, platformRoot string) error {
-	if err := os.MkdirAll(filepath.Join(projectRoot, ".kb"), 0o750); err != nil {
-		return err
-	}
-	path := filepath.Join(projectRoot, ".kb", ConfigFilename)
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	data, err := json.MarshalIndent(map[string]any{"platform": map[string]string{"dir": platformRoot}}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeAtomic(path, append(data, '\n'), 0o600)
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

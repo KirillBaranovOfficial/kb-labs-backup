@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -80,7 +81,7 @@ func Request(source catalog.Catalog, platformRoot string, terminal IO) (contract
 // RequestScenario is the human-facing compiler for a declarative V2 scenario.
 // It owns prompts and navigation only; scenario.Compile and the shared V2
 // resolver remain the authority for request meaning and compatibility.
-func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, terminal IO) (contracts.InstallRequest, error) {
+func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRoot string, terminal IO) (contracts.InstallRequest, error) {
 	if err := catalog.Verify(source); err != nil {
 		return contracts.InstallRequest{}, err
 	}
@@ -91,6 +92,25 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 		return contracts.InstallRequest{}, fmt.Errorf("wizard input and output are required")
 	}
 	reader := bufio.NewReader(terminal.In)
+	if strings.TrimSpace(projectRoot) == "" {
+		fmt.Fprint(terminal.Out, "Project directory (press Enter to install without a project): ")
+		value, readErr := reader.ReadString('\n')
+		if readErr != nil && readErr != io.EOF {
+			return contracts.InstallRequest{}, readErr
+		}
+		projectRoot = strings.TrimSpace(value)
+	}
+	if projectRoot != "" {
+		canonical, pathErr := filepath.Abs(projectRoot)
+		if pathErr != nil {
+			return contracts.InstallRequest{}, fmt.Errorf("resolve project directory: %w", pathErr)
+		}
+		canonical, pathErr = filepath.EvalSymlinks(canonical)
+		if pathErr != nil {
+			return contracts.InstallRequest{}, fmt.Errorf("project directory %q must exist: %w", projectRoot, pathErr)
+		}
+		projectRoot = canonical
+	}
 	if scenarioID == "" {
 		ids, err := scenario.IDs()
 		if err != nil {
@@ -124,7 +144,7 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID string, te
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
-	base := contracts.InstallRequest{PlatformRoot: platformRoot, Platform: contracts.VersionSelector{Channel: contracts.Channel(channel)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceRegistry}
+	base := contracts.InstallRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot, Platform: contracts.VersionSelector{Channel: contracts.Channel(channel)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceRegistry}
 	session, err := flow.New(definition, nil, nil)
 	if err != nil {
 		return contracts.InstallRequest{}, err

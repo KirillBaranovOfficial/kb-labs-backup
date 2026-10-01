@@ -138,7 +138,7 @@ export function getWorkflowDaemonUrl(
   projectId = useEnv('KB_PROJECT_ID') ?? deriveProjectId(process.cwd()),
 ): string {
   if (!projectId) {
-    throw new Error('Workflow needs a registered project. Run `kb project add --init` from the project directory, then retry.');
+    throw new Error('Workflow needs a registered project. Run `kb project add` from the project directory, then retry.');
   }
   const gatewayUrl = useEnv('KB_GATEWAY_URL') ?? DEFAULT_GATEWAY_URL;
   return `${gatewayUrl.replace(/\/$/, '')}${projectWorkflowRoute(projectId)}`;

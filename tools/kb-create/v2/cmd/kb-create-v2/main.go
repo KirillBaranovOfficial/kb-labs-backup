@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -74,7 +75,7 @@ func Execute() int {
 	index := flag.String("index", "", "path to immutable V2 release index JSON")
 	input := flag.String("input", "", "path to V2 InstallRequest JSON")
 	requestRoot := flag.String("request-platform-root", "", "platform root for direct CI/agent request")
-	projectRoot := flag.String("project-root", "", "project root for the user-owned V2 config pointer")
+	projectRoot := flag.String("project-root", "", "project directory to register after installation")
 	platformVersion := flag.String("platform-version", "", "exact platform version for direct request")
 	platformChannel := flag.String("platform-channel", "", "platform channel: stable, canary, experimental")
 	sdkVersion := flag.String("sdk-version", "", "exact SDK version for direct request")
@@ -137,7 +138,7 @@ func printHelp(output *os.File) {
 
 func printCommandHelp(output *os.File, command string) {
 	options := map[string][]string{
-		"install": {"--index PATH (defaults to ~/.local/share/kb-create/release-index.json)", "--platform-root PATH (defaults to ~/kb-platform)", "--request-platform-root PATH", "--registry URL"},
+		"install": {"--index PATH (defaults to ~/.local/share/kb-create/release-index.json)", "--platform-root PATH (defaults to ~/kb-platform)", "--project-root PATH", "--registry URL"},
 		"plan":    {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--project-root PATH", "--platform-version VERSION", "--platform-channel CHANNEL", "--sdk-version VERSION", "--service-profile PROFILE", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--policy POLICY", "--offline", "--scenario ID", "--scenario-answers JSON", "--scenario-resume", "--json"},
 		"apply":   {"--index PATH", "--input REQUEST.json", "--request-platform-root PATH", "--project-root PATH", "--platform-version VERSION", "--platform-channel CHANNEL", "--sdk-version VERSION", "--service-profile PROFILE", "--plugins LIST", "--adapters LIST", "--provider CAPABILITY=ADAPTER", "--policy POLICY", "--offline", "--scenario ID", "--scenario-answers JSON", "--scenario-resume", "--registry URL", "--secret-env REQUIREMENT=ENV_VAR", "--json"},
 		"status":  {"--platform-root PATH", "--json"},
@@ -183,13 +184,14 @@ type invocation struct {
 	ScenarioResume                                                                    bool
 	Direct                                                                            directRequest
 	// Executable is the launcher binary re-executed to supervise the host.
-	Executable    string
-	JSON          bool
-	Yes           bool
-	InstallInput  io.Reader
-	InstallOutput io.Writer
-	RuntimeDeps   *runtime.Dependencies
-	NodePreflight func() error
+	Executable       string
+	JSON             bool
+	Yes              bool
+	InstallInput     io.Reader
+	InstallOutput    io.Writer
+	RuntimeDeps      *runtime.Dependencies
+	NodePreflight    func() error
+	ProjectRegistrar func(string) (string, error)
 }
 
 func (i invocation) hostCommand(output *os.File) hostCommand {
@@ -468,7 +470,7 @@ func (i invocation) runInstall(output *os.File) int {
 	if input == nil {
 		input = os.Stdin
 	}
-	request, err := wizard.RequestScenario(source, root, "explore", wizard.IO{In: input, Out: humanOut})
+	request, err := wizard.RequestScenario(source, root, "explore", i.Direct.ProjectRoot, wizard.IO{In: input, Out: humanOut})
 	if err != nil {
 		writeHumanFailure(humanOut, contracts.NewLauncherError("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the answers and rerun `kb-create install`.", err))
 		return 2
@@ -484,7 +486,11 @@ func (i invocation) runInstall(output *os.File) int {
 		return 2
 	}
 	fmt.Fprintf(humanOut, "  ✓ Resolve (%s)\n", time.Since(phaseStart).Round(time.Millisecond))
-	fmt.Fprintf(humanOut, "\nPlan: platform %s, %d artifacts\n", planned.Plan.ServiceGraph.PlatformVersion, len(planned.Plan.Artifacts))
+	fmt.Fprintf(humanOut, "\nPlan: platform %s at %s, %d artifacts", planned.Plan.ServiceGraph.PlatformVersion, root, len(planned.Plan.Artifacts))
+	if planned.Plan.Request.ProjectRoot != "" {
+		fmt.Fprintf(humanOut, "; project %s", planned.Plan.Request.ProjectRoot)
+	}
+	fmt.Fprintln(humanOut)
 	for _, artifact := range planned.Plan.Artifacts {
 		fmt.Fprintf(humanOut, "  - %s %s (%s)\n", artifact.ID, artifact.Version, artifact.Kind)
 	}
@@ -538,8 +544,56 @@ func (i invocation) runInstall(output *os.File) int {
 		}
 		return code
 	}
-	fmt.Fprintf(humanOut, "\nKB Labs is installed at %s.\nNext: run `cd ~/any-project && kb commit`.\n", root)
+	if planned.Plan.Request.ProjectRoot == "" {
+		fmt.Fprintf(humanOut, "\nKB Labs is installed at %s.\nNext: register a project with `kb project add <path>`.\n", root)
+		return 0
+	}
+	projectID, registerErr := i.registerProject(planned.Plan.Request.ProjectRoot)
+	if registerErr != nil {
+		fmt.Fprintf(humanOut, "\nKB Labs is installed at %s, but the selected project could not be registered: %s.\nNext: run `kb project add %q`.\n", root, registerErr, planned.Plan.Request.ProjectRoot)
+		return 1
+	}
+	fmt.Fprintf(humanOut, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `kb-create status --platform-root %q` and `kb project show %s`.\n", root, projectID, planned.Plan.Request.ProjectRoot, root, projectID)
 	return 0
+}
+
+func (i invocation) registerProject(projectRoot string) (string, error) {
+	if i.ProjectRegistrar != nil {
+		return i.ProjectRegistrar(projectRoot)
+	}
+	kbPath := "kb"
+	if i.Executable != "" {
+		kbPath = filepath.Join(filepath.Dir(i.Executable), "kb")
+	}
+	command := exec.Command(kbPath, "project", "add", projectRoot, "--json")
+	output, err := command.Output()
+	if err != nil {
+		var failure struct {
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+				Hint    string `json:"hint"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(output, &failure) == nil && failure.Error != nil {
+			return "", fmt.Errorf("%s [%s]. %s", failure.Error.Message, failure.Error.Code, failure.Error.Hint)
+		}
+		return "", fmt.Errorf("the project registry command failed (%s)", err)
+	}
+	var result struct {
+		OK      bool `json:"ok"`
+		Project struct {
+			ID   string `json:"id"`
+			Path string `json:"path"`
+		} `json:"project"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return "", fmt.Errorf("decode project registration result: %w", err)
+	}
+	if !result.OK || result.Project.ID == "" || result.Project.Path != projectRoot {
+		return "", fmt.Errorf("project registration returned an unexpected result")
+	}
+	return result.Project.ID, nil
 }
 
 type humanProgress struct {
