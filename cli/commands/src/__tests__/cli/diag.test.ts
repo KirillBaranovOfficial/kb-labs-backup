@@ -182,7 +182,7 @@ describe('diag — base (no --command)', () => {
     ]);
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} });
+    lockMock.mockResolvedValue({ plugins: {} });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -276,7 +276,7 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: {
+      plugins: {
         '@kb-labs/marketplace-entry': { enabled: true, resolvedPath: '/test/node_modules/@kb-labs/marketplace-entry' },
       },
     });
@@ -360,7 +360,7 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['nonexistent', 'foo'], suggestions: [] });
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} });
+    lockMock.mockResolvedValue({ plugins: {} });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -379,7 +379,7 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: {
+      plugins: {
         '@kb-labs/workflow-entry': { enabled: false, resolvedPath: '/test/node_modules/@kb-labs/workflow-entry' },
       },
     });
@@ -424,7 +424,7 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: {
+      plugins: {
         '@kb-labs/quality-entry': { enabled: true, resolvedPath: '/test/workspace/plugins/quality/entry' },
       },
     });
@@ -466,7 +466,7 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: { '@kb-labs/workflow-entry': { enabled: true, resolvedPath: '/test' } },
+      plugins: { '@kb-labs/workflow-entry': { enabled: true, resolvedPath: '/test' } },
     });
 
     const jsonSpy = vi.fn();
@@ -507,7 +507,7 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: { '@kb-labs/myplug-entry': { enabled: true, resolvedPath: '/test' } },
+      plugins: { '@kb-labs/myplug-entry': { enabled: true, resolvedPath: '/test' } },
     });
 
     const jsonSpy = vi.fn();
@@ -538,7 +538,7 @@ describe('diag --command', () => {
     }];
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} });
+    lockMock.mockResolvedValue({ plugins: {} });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -572,7 +572,7 @@ describe('diag --command', () => {
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
-      installed: { '@kb-labs/state-entry': { enabled: true, resolvedPath: '/missing/node_modules/@kb-labs/state-entry' } },
+      plugins: { '@kb-labs/state-entry': { enabled: true, resolvedPath: '/missing/node_modules/@kb-labs/state-entry' } },
     });
 
     // resolvedPath does not exist
@@ -678,7 +678,7 @@ describe('diag --command (review-fix scenarios)', () => {
     });
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} }); // no entry for myplug
+    lockMock.mockResolvedValue({ plugins: {} }); // no entry for myplug
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -738,7 +738,7 @@ describe('diag --command (review-fix scenarios)', () => {
     }]);
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: { '@kb-labs/bigplug-entry': { enabled: true, resolvedPath: '/test' } } });
+    lockMock.mockResolvedValue({ plugins: { '@kb-labs/bigplug-entry': { enabled: true, resolvedPath: '/test' } } });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -761,7 +761,7 @@ describe('diag --command (review-fix scenarios)', () => {
     });
 
     const lockMock = await getLockMock();
-    lockMock.mockResolvedValue({ installed: {} });
+    lockMock.mockResolvedValue({ plugins: {} });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -789,7 +789,7 @@ describe('diag --command (review-fix scenarios)', () => {
 
     const lockMock = await getLockMock();
     // Entry exists but resolvedPath is empty string
-    lockMock.mockResolvedValue({ installed: { '@kb-labs/nopathplug-entry': { enabled: true, resolvedPath: '' } } });
+    lockMock.mockResolvedValue({ plugins: { '@kb-labs/nopathplug-entry': { enabled: true, resolvedPath: '' } } });
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
