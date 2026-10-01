@@ -85,6 +85,11 @@ Cases: S-023, S-024, S-053.
 Error hints on an installed platform point to `kb-create status` and `kb-create doctor --platform-root <path>`. They don't point to `kb-dev`, which is a development tool.
 Cases: S-125, S-100.
 
+### Installed artifact manifests come from the sealed plan
+
+`kb-create` materializes each selected package's `kb-create.manifest.json` from that artifact's config requirements in the sealed release index after every pnpm operation that can replace package directories, including install, update, and snapshot restore. The release tarball stays unchanged, so its published bytes and sealed checksum remain the same; doctor reads the exact metadata the installer resolved and recorded in its receipt. pnpm links `node_modules/<package>` into its virtual store, so a later `pnpm install` can replace that directory and remove launcher-written files.
+Cases: S-054.2, S-024.5.
+
 ### Studio first tier
 
 The first-tier Studio pages are the current dashboard (described as it is), analytics, observability, user administration, projects, workflows, the marketplace, and the Commit plugin page as proof that marketplace plugins load.
@@ -109,4 +114,3 @@ Cases: S-006, S-008, S-010, S-160.
 
 `@kb-labs/adapters-fs` is the only adapter that declares itself the default for `storage`. `@kb-labs/data-store` stays installable and bindable, but two defaults made install resolution ambiguous.
 Cases: S-047, S-048.
-
