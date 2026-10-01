@@ -39,17 +39,22 @@ describe('NpmPackageSource', () => {
       .rejects.toMatchObject({ name: 'PackageMetadataError', code: 'UNKNOWN_ENTITY_KIND' });
   });
 
-  it('fails with a typed error when kb-create has not pinned every sealed artifact', async () => {
+  it('validates every sealed artifact from the receipt when root dependencies contain no file specs', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-pnpm-overrides-'));
     try {
       await fs.mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
-      await fs.writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), '{"id":"sealed-platform"}');
+      await fs.writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+        id: 'sealed-platform',
+        plan: { artifacts: [
+          { id: 'workflow', package: '@kb-labs/workflow-daemon', sha256: 'abc123', tarball: 'registry/workflow.tgz' },
+          { id: 'gateway', package: '@kb-labs/gateway-app', sha256: 'def456', tarball: 'registry/gateway.tgz' },
+          { id: 'binary-tool', kind: 'binary', package: 'tool', sha256: 'xyz', tarball: 'registry/tool.tgz' },
+        ] },
+      }));
       const packageFile = path.join(root, 'package.json');
       await fs.writeFile(packageFile, JSON.stringify({
         name: 'kb-platform',
-        dependencies: {
-          '@kb-labs/workflow-daemon': 'file:.kb/v2/cache/packages/workflow.tgz',
-        },
+        dependencies: {},
       }));
       const workspaceFile = path.join(root, 'pnpm-workspace.yaml');
       const original = 'allowBuilds:\n  esbuild: true\noverrides:\n  lodash: 4.17.21\n';
@@ -65,8 +70,30 @@ describe('NpmPackageSource', () => {
         hint: `Run "kb-create update --platform-root ${JSON.stringify(root)}" and retry "kb marketplace install @kb-labs/adapters-analytics-file@2.120.1 --scope platform".`,
       });
       expect(await fs.readFile(workspaceFile, 'utf8')).toBe(original);
-      expect(JSON.parse(await fs.readFile(packageFile, 'utf8')).dependencies['@kb-labs/workflow-daemon'])
-        .toBe('file:.kb/v2/cache/packages/workflow.tgz');
+      expect(JSON.parse(await fs.readFile(packageFile, 'utf8')).dependencies).toEqual({});
+      await fs.writeFile(workspaceFile, [
+        'overrides:',
+        '  "@kb-labs/workflow-daemon": file:.kb/v2/cache/packages/abc123.tgz',
+        '  "@kb-labs/gateway-app": file:.kb/v2/cache/packages/def456.tgz',
+        '',
+      ].join('\n'));
+      await expect(assertSealedPlatformOverrides(root, '@kb-labs/adapters-analytics-file', '2.120.1'))
+        .resolves.toBeUndefined();
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not pass pin validation when the installed receipt has no sealed artifact set', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-empty-receipt-'));
+    try {
+      await fs.mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      await fs.writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({ plan: { artifacts: [] } }));
+      await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'kb-platform', dependencies: {} }));
+      await fs.writeFile(path.join(root, 'pnpm-workspace.yaml'), 'overrides:\n  lodash: 4.17.21\n');
+
+      await expect(assertSealedPlatformOverrides(root, '@kb-labs/adapters-analytics-file', '2.120.1'))
+        .rejects.toMatchObject({ code: 'MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING' });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

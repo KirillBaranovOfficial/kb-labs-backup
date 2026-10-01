@@ -42,6 +42,13 @@ class MarketplaceStepTests(unittest.TestCase):
 
         self.assertIn("final context", str(raised.exception))
 
+    def test_marketplace_failure_detail_uses_stderr_when_stdout_is_empty(self):
+        command = ["kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--json"]
+        result = subprocess.CompletedProcess(command, 1, "", '{"error":{"code":"MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"}}')
+
+        with self.assertRaisesRegex(RuntimeError, "MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"):
+            _output(result, command)
+
     def test_secured_marketplace_claims_typed_missing_login_then_persists_admin_session(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-auth-journey-") as directory:
             root = Path(directory)
@@ -141,15 +148,20 @@ class MarketplaceStepTests(unittest.TestCase):
                 if args[:2] == ["marketplace", "install"]:
                     package_id, version = args[2].rsplit("@", 1)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
-                    value = lock(cwd_path, platform=platform)
+                    lock_root = platform_root if platform else cwd_path
+                    value = lock(lock_root, platform=platform)
                     value.setdefault("adapters", {})
-                    collection = value["adapters"] if platform else value["plugins"]
+                    collection = value["plugins"]
                     collection[package_id] = {
-                        "version": version, "integrity": "sha512-fixture", "source": "platform" if platform else "marketplace",
-                        "enabled": True,
+                        "version": version, "integrity": "sha512-fixture", "source": "marketplace",
+                        "enabled": True, "resolvedPath": f"store:{package_id}@{version}",
                     }
-                    save_lock(cwd_path, value)
-                    stdout = json.dumps({"ok": True})
+                    save_lock(lock_root, value)
+                    stdout = json.dumps({
+                        "installed": [{"id": package_id, "version": version}],
+                        "warnings": [],
+                        "scope": "platform" if platform else "project",
+                    })
                 elif args[:3] == ["marketplace", "plugins", "list"]:
                     value = lock(cwd_path)
                     entries = [{"id": package_id, **entry} for package_id, entry in value["plugins"].items()]
@@ -210,6 +222,8 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(actual, expected)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1",
+                           "--scope", "platform", "--json"), calls)
             self.assertNotIn(("npm", "view", "@kb-labs/adapters-fs", "version", "--json", "--registry=http://registry.test"), calls)
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs@2.107.0", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "qa", "cases", "list", "--json"), calls)
