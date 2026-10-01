@@ -4,7 +4,7 @@ title: Studio — accept an invitation and activate an account
 persona: team-member
 area: studio
 priority: P1
-status: planned
+status: active
 release: true
 modes: [secured]
 surfaces: [studio]
