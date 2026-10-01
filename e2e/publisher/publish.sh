@@ -118,6 +118,10 @@ WORKER='
   tag_args=""
   case "$version" in
     *-*) prerelease="${version#*-}"; tag_args="--tag ${prerelease%%.*}" ;;
+    *)
+      latest_version=$(printf "%s\n" "$LATEST_STABLE_VERSIONS" | awk -v package="$name" "\$1 == package { print \$2 }")
+      if [ "$version" != "$latest_version" ]; then tag_args="--tag journey-${version}"; fi
+      ;;
   esac
   OUTPUT=$(npm publish "$tarball" --registry "$REGISTRY" $tag_args 2>&1) && {
     echo "  ✓ $pkg"
@@ -170,14 +174,45 @@ publish_tarballs() {
   fi
 }
 
+latest_stable_versions() {
+  python3 - "$@" <<'PY'
+import json
+import sys
+import tarfile
+
+versions = {}
+for tarball in sys.argv[1:]:
+    with tarfile.open(tarball, "r:gz") as archive:
+        package = json.load(archive.extractfile("package/package.json"))
+    version = package["version"]
+    if "-" in version:
+        continue
+    name = package["name"]
+    precedence = tuple(int(part) for part in version.split("+", 1)[0].split("."))
+    current = versions.get(name)
+    if current is None or precedence > current[0]:
+        versions[name] = (precedence, version)
+
+for name, (_, version) in sorted(versions.items()):
+    print(f"{name} {version}")
+PY
+}
+
 # In the PR fast lane publish the PR overlay first, then omit base tarballs
 # whose name@version is already in the local PR set. Digest checks still apply
 # to every registry conflict in either phase.
 PACKAGES_DIR="${PUBLISH_PACKAGES_DIR:-/packages}"
 if [ -d "$PACKAGES_DIR/pr" ]; then
+  PR_TARBALLS="$(publish_set "$PACKAGES_DIR/pr")"
+  BASE_TARBALLS="$(filter_superseded_tarballs "$PACKAGES_DIR/base" "$PACKAGES_DIR/pr")"
+  LATEST_STABLE_VERSIONS="$(latest_stable_versions $(printf '%s\n%s\n' "$PR_TARBALLS" "$BASE_TARBALLS" | sed '/^$/d'))"
+  export LATEST_STABLE_VERSIONS
   publish_tarballs "$PACKAGES_DIR/pr"
   publish_tarballs "$PACKAGES_DIR/base" "$PACKAGES_DIR/pr"
 else
+  ALL_TARBALLS="$(publish_set "$PACKAGES_DIR")"
+  LATEST_STABLE_VERSIONS="$(latest_stable_versions $ALL_TARBALLS)"
+  export LATEST_STABLE_VERSIONS
   publish_tarballs "$PACKAGES_DIR"
 fi
 

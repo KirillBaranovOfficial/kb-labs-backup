@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 PUBLISHER = ROOT / "e2e" / "publisher" / "publish.sh"
+STORAGE_CHECKER = ROOT / "e2e" / "journey" / "storage_has_packages.sh"
 
 
 class PublisherConflictTest(unittest.TestCase):
@@ -28,6 +29,7 @@ class PublisherConflictTest(unittest.TestCase):
         self.local_integrity = self.integrity(self.tarball)
         self.local_shasum = hashlib.sha1(self.tarball.read_bytes()).hexdigest()
         self.publish_log = self.root / "published-digests.txt"
+        self.tag_log = self.root / "published-tags.txt"
         self._write_executable(
             "curl",
             "#!/bin/sh\n"
@@ -39,6 +41,10 @@ class PublisherConflictTest(unittest.TestCase):
             "case \"$1\" in\n"
             "  config) exit 0 ;;\n"
             "  publish) printf 'sha512-%s\\n' \"$(python3 -c 'import hashlib,sys; print(hashlib.sha512(open(sys.argv[1],\"rb\").read()).hexdigest())' \"$2\")\" >> \"$PUBLISH_LOG\"; "
+            "metadata=$(tar -xOzf \"$2\" package/package.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[\"name\"]+\"@\"+d[\"version\"])'); "
+            "tag=latest; while [ \"$#\" -gt 0 ]; do if [ \"$1\" = --tag ]; then tag=$2; shift 2; else shift; fi; done; "
+            "printf '%s %s\\n' \"$metadata\" \"$tag\" >> \"$PUBLISH_TAG_LOG\"; "
+            "if [ \"$PUBLISH_REJECT_OLD_LATEST\" = 1 ] && [ \"$metadata\" = '@kb-labs/sample@2.120.1' ] && [ \"$tag\" = latest ]; then echo 'npm ERR! Cannot implicitly apply latest because 2.120.2 is higher'; exit 1; fi; "
             "if [ \"$PUBLISH_CONFLICT\" = 1 ]; then echo 'npm ERR! code EPUBLISHCONFLICT: 409 already exists'; exit 1; fi; "
             "echo published; exit 0 ;;\n"
             "  view) case \"$*\" in *dist.integrity*) printf '%s\\n' \"$REGISTRY_INTEGRITY\" ;; "
@@ -69,7 +75,7 @@ class PublisherConflictTest(unittest.TestCase):
     def integrity(self, path):
         return "sha512-" + base64.b64encode(hashlib.sha512(path.read_bytes()).digest()).decode()
 
-    def publish(self, registry_integrity="", registry_shasum="", conflict=True, packages_dir=None):
+    def publish(self, registry_integrity="", registry_shasum="", conflict=True, packages_dir=None, reject_old_latest=False):
         env = os.environ.copy()
         env.update(
             {
@@ -77,7 +83,10 @@ class PublisherConflictTest(unittest.TestCase):
                 "VERDACCIO_URL": "http://registry.invalid",
                 "PUBLISH_PACKAGES_DIR": str(packages_dir or self.packages),
                 "PUBLISH_LOG": str(self.publish_log),
+                "PUBLISH_TAG_LOG": str(self.tag_log),
                 "PUBLISH_CONFLICT": "1" if conflict else "0",
+                "PUBLISH_REJECT_OLD_LATEST": "1" if reject_old_latest else "0",
+                "PUBLISH_PARALLELISM": "1",
                 "REGISTRY_INTEGRITY": registry_integrity,
                 "REGISTRY_SHASUM": registry_shasum,
             }
@@ -89,6 +98,25 @@ class PublisherConflictTest(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=False,
+        )
+
+    # case: S-195.5
+    def test_higher_stable_publishes_before_lower_stable_with_valid_tags(self):
+        packages_dir = self.root / "versions"
+        self.write_tarball(packages_dir / "01-higher.tgz", "2.120.2", "higher")
+        self.write_tarball(packages_dir / "02-lower.tgz", "2.120.1", "lower")
+        self.write_tarball(packages_dir / "03-canary.tgz", "2.120.3-canary.1", "canary")
+
+        result = self.publish(conflict=False, packages_dir=packages_dir, reject_old_latest=True)
+
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(
+            self.tag_log.read_text().splitlines(),
+            [
+                "@kb-labs/sample@2.120.2 latest",
+                "@kb-labs/sample@2.120.1 journey-2.120.1",
+                "@kb-labs/sample@2.120.3-canary.1 canary",
+            ],
         )
 
     # case: S-195.1
@@ -129,6 +157,43 @@ class PublisherConflictTest(unittest.TestCase):
         self.assertIn(self.local_integrity, result.stdout)
         self.assertIn("docker volume rm e2e_verdaccio-storage", result.stdout)
         self.assertIn("bump the package version", result.stdout)
+
+
+class VerdaccioStorageWarningTest(unittest.TestCase):
+    # case: S-195.3
+    def test_verdaccio_created_files_do_not_count_as_published_packages(self):
+        with tempfile.TemporaryDirectory(prefix="kb-verdaccio-storage-") as temp:
+            storage = Path(temp)
+            (storage / ".verdaccio-db.json").write_text("{}")
+            (storage / "config.yaml").write_text("storage: ./storage\n")
+
+            result = subprocess.run(
+                ["sh", str(STORAGE_CHECKER), str(storage)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1, result.stdout)
+
+    # case: S-195.3
+    def test_published_package_metadata_counts_as_non_empty_storage(self):
+        with tempfile.TemporaryDirectory(prefix="kb-verdaccio-storage-") as temp:
+            storage = Path(temp)
+            package_metadata = storage / "@kb-labs%2fsample" / "package.json"
+            package_metadata.parent.mkdir()
+            package_metadata.write_text('{"name":"@kb-labs/sample","versions":{}}')
+
+            result = subprocess.run(
+                ["sh", str(STORAGE_CHECKER), str(storage)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stdout)
 
 
 if __name__ == "__main__":
