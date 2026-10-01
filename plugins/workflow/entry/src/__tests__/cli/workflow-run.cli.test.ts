@@ -85,24 +85,6 @@ describe('workflow:run', () => {
     expect((capturedRequest as { input?: unknown })?.input).toEqual(payload);
   });
 
-  it('CR-08: --inputs (deprecated alias) passes payload identically to --input', async () => {
-    let capturedRequest: unknown;
-    mockRunWorkflow.mockImplementation(async (_id: string, req: unknown) => {
-      capturedRequest = req;
-      return { runId: 'r-123', status: 'queued' };
-    });
-
-    const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui });
-    await workflowRunCommand.execute(
-      ctx,
-      mockCLIInput({ flags: { 'workflow-id': 'e2e-hello', inputs: '{"key":"val"}' } }),
-    );
-
-    expect((capturedRequest as { input?: unknown })?.input).toEqual({ key: 'val' });
-    expect(captured.warnings.length).toBeGreaterThan(0);
-  });
-
   it('CR-05: missing --workflow-id returns exitCode 1 with error', async () => {
     mockRunWorkflow.mockResolvedValue({ runId: 'r-x', status: 'queued' });
 

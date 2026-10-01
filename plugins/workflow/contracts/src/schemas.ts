@@ -194,22 +194,11 @@ export const JobSpecSchema = z.object({
 export const WorkflowTriggerSchema = z
   .object({
     manual: z.boolean().optional(),
-    push: z.boolean().optional(),
-    webhook: z
-      .union([
-        z.boolean(),
-        z.object({
-          secret: z.string().min(1).optional(),
-          path: z.string().min(1).optional(),
-          headers: z.record(z.string(), z.string()).optional(),
-        }),
-      ])
-      .optional(),
   })
   .strict()
   .refine(
     (value) =>
-      value.manual || value.push || !!value.webhook,
+      value.manual,
     {
       message: 'At least one trigger must be defined',
       path: ['manual'],

@@ -17,7 +17,7 @@ Classic fan-out. `build` runs first, then `test` and `lint` run in parallel, the
 {
   "name": "ci",
   "version": "1",
-  "on": { "push": true, "manual": true },
+  "on": { "manual": true },
   "env": { "CI": "true" },
   "jobs": {
     "build": {
@@ -65,7 +65,7 @@ Adds a human gate before production deploy. Only runs on manual trigger by autho
 {
   "name": "ci-cd",
   "version": "1",
-  "on": { "push": true, "manual": true },
+  "on": { "manual": true },
   "jobs": {
     "build":  { "runsOn": "sandbox", "steps": [...], "artifacts": { "produce": ["dist"] } },
     "test":   { "runsOn": "sandbox", "needs": ["build"], "artifacts": { "consume": ["dist"] }, "steps": [...] },
@@ -270,45 +270,12 @@ workflow: multi-repo-audit
 enabled: true
 ```
 
-## Webhook-driven release
+## External events
 
-GitHub webhook triggers a release flow. Uses the webhook payload to pick the version.
-
-```json
-{
-  "name": "gh-release",
-  "version": "1",
-  "on": {
-    "webhook": {
-      "secret": "${{ secrets.GITHUB_WEBHOOK_SECRET }}",
-      "path": "/v1/webhooks/github/release",
-      "headers": { "X-GitHub-Event": "release" }
-    },
-    "manual": true
-  },
-  "jobs": {
-    "publish": {
-      "if": "${{ trigger.payload.action == 'published' }}",
-      "runsOn": "sandbox",
-      "secrets": ["NPM_TOKEN"],
-      "steps": [
-        {
-          "name": "Checkout tag",
-          "uses": "builtin:shell",
-          "with": { "command": "git checkout ${{ trigger.payload.release.tag_name }}" }
-        },
-        { "name": "Build",   "uses": "builtin:shell", "with": { "command": "pnpm install && pnpm build" } },
-        { "name": "Publish", "uses": "builtin:shell", "with": { "command": "pnpm publish" } }
-      ]
-    }
-  }
-}
-```
-
-**Notes:**
-
-- The `headers` filter makes GitHub the only valid sender (combined with the signature check from `secret`).
-- The `if` on the job filters to `action: 'published'` — GitHub fires the `release` webhook for other actions (created, edited, deleted), and we only want publishes.
+Workflow specs do not declare Git push or webhook delivery triggers. A plugin
+may provide its own webhook endpoint; that plugin surface has its own delivery
+contract and does not create a workflow trigger automatically. Start workflows
+with `kb workflow run` or configure a project cron.
 
 ## Aggregation across runs
 

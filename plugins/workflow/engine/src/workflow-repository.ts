@@ -402,15 +402,6 @@ export class WorkflowRepository {
     if (spec.on.manual) {
       triggers.push({ type: 'manual' });
     }
-    if (spec.on.push) {
-      triggers.push({ type: 'push' });
-    }
-    if (spec.on.webhook) {
-      triggers.push({
-        type: 'webhook',
-        config: typeof spec.on.webhook === 'object' ? spec.on.webhook : undefined,
-      });
-    }
 
     // Extract tags from spec (we can use env vars or description as source)
     const tags: string[] = ['standalone'];

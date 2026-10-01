@@ -1,27 +1,25 @@
 /**
- * workflow:status command - Get job status
+ * workflow job status command - Get raw job status
  */
 
 import { defineCommand, validationError, handleError, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
-import { type StatusFlags } from '@kb-labs/workflow-contracts';
 import { WorkflowDaemonClient } from '../http-client.js';
 
-type StatusInput = StatusFlags & { argv?: string[] };
+type StatusInput = { json?: boolean; argv?: string[]; flags?: { json?: boolean } };
 
 export default defineCommand<unknown, StatusInput, unknown>({
-  id: 'workflow:status',
+  id: 'workflow:job-status',
   description: 'Get status of a workflow job',
 
   handler: {
     // eslint-disable-next-line sonarjs/cognitive-complexity -- Job status display with deep run/job/step traversal, multiple output formats (JSON/human), timing calculations, status color coding, and error aggregation
     async execute(ctx: PluginContextV3, input: StatusInput): Promise<CommandResult> {
-      ctx.ui?.warn?.('workflow status is deprecated; use: kb workflow runs status <runId>');
-      const flags = (input as { flags?: StatusFlags }).flags ?? input;
+      const flags = input.flags ?? input;
       const outputJson = flags.json ?? false;
-      const jobId = flags['job-id'];
+      const jobId = input.argv?.[0];
 
       if (!jobId) {
-        validationError(ctx, 'Missing required flag: --job-id', 'Usage: kb workflow status --job-id=<job-id>', outputJson);
+        validationError(ctx, 'Missing job ID', 'Usage: kb workflow job status <jobId>', outputJson);
         return { ok: false, error: 'Command failed' };
       }
 

@@ -36,10 +36,18 @@ export function PlatformCommand({ commands, className }: Props) {
   const isWindows = os === 'windows';
   const cmd = isWindows && commands.windows ? commands.windows : commands.unix;
   const label = os ? LABELS[os] : 'macOS / Linux';
-
   const handleCopy = useCallback(() => {
     analytics.trackInstallCopy(cmd);
   }, [analytics, cmd]);
+
+  if (isWindows && !commands.windows) {
+    return (
+      <div className={[s.wrap, className].filter(Boolean).join(' ')}>
+        <span className={s.label}>Unsupported operating system</span>
+        <p className="text-sm text-muted/60">The KB Labs installer supports macOS and Linux.</p>
+      </div>
+    );
+  }
 
   return (
     <div className={[s.wrap, className].filter(Boolean).join(' ')}>

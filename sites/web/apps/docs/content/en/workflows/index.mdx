@@ -61,7 +61,7 @@ Both run plugin code. The difference is what they're optimized for:
 | **Concurrency** | One at a time | Concurrency groups, priorities |
 | **Artifacts** | Out-of-band | First-class, with merge strategies |
 | **Approval gates** | Not supported | `builtin:approval` step |
-| **Triggers** | Manual | Manual, push, webhook |
+| **Triggers** | Manual | Manual |
 
 Rule of thumb: if the work takes one call and you just want to surface it in the CLI, write a plugin command. If it has multiple phases, needs retry semantics, or a human has to approve something in the middle, write a workflow.
 
@@ -72,12 +72,6 @@ A workflow declares when it starts via the `on` field:
 ```ts
 on: {
   manual?: boolean;                      // triggered by CLI / API
-  push?: boolean;                        // triggered by git push
-  webhook?: boolean | {
-    secret?: string;
-    path?: string;
-    headers?: Record<string, string>;
-  };
   // schedules are separate project cron files in .kb/crons/
 }
 ```
@@ -104,7 +98,7 @@ inputs: {
 }
 ```
 
-Types are `'string' | 'number' | 'boolean'` — that's the entire type system. Complex payloads go through `webhook` triggers with custom handlers instead.
+Types are `'string' | 'number' | 'boolean'` — that's the entire type system. For structured run payloads, pass JSON with `kb workflow run --input` and read its fields through `trigger.payload`.
 
 Inputs are passed when creating a run:
 
@@ -277,7 +271,7 @@ This creates a run, schedules the `greet` job, executes the shell step, prints `
 {
   "name": "ci",
   "version": "1",
-  "on": { "push": true, "manual": true },
+  "on": { "manual": true },
   "env": {
     "NODE_ENV": "test"
   },

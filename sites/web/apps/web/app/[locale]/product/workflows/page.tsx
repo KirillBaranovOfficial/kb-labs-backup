@@ -43,8 +43,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 const YAML_REVIEW = `\
 name: pr-review-gate
 on:
-  github:
-    event: pull_request.opened
+  manual: true
 
 jobs:
   validate:
@@ -68,7 +67,7 @@ jobs:
 const YAML_DEPLOY = `\
 name: production-deploy
 on:
-  push: { branch: main }
+  manual: true
 
 jobs:
   build-frontend:
@@ -149,8 +148,7 @@ jobs:
 const YAML_INVOICE = `\
 name: invoice-approval
 on:
-  webhook:
-    path: /hooks/invoice-received
+  manual: true
 
 jobs:
   parse:

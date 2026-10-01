@@ -433,7 +433,7 @@ const WORKFLOW_CODE = `name: code-review
 version: "1.0"
 
 on:
-  push: true
+  manual: true
 
 inputs:
   pr:

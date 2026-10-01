@@ -27,7 +27,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
       const wait = input.flags.wait ?? false;
 
       if (!handler) {
-        validationError(ctx, 'Missing required flag: --handler', 'Usage: kb workflow job-run --handler=<handler> [--input=<json>]', outputJson);
+        validationError(ctx, 'Missing required flag: --handler', 'Usage: kb workflow job run --handler=<handler> [--input=<json>]', outputJson);
         return { ok: false, error: 'Command failed' };
       }
 

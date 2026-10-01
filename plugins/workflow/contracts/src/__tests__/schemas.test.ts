@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { StepSpecSchema, WorkflowSpecSchema } from '../schemas'
+import { StepSpecSchema, WorkflowSpecSchema, WorkflowTriggerSchema } from '../schemas'
+
+describe('WorkflowTriggerSchema', () => {
+  it('accepts manual workflows and rejects unreachable ingress triggers', () => {
+    expect(WorkflowTriggerSchema.safeParse({ manual: true }).success).toBe(true)
+    expect(WorkflowTriggerSchema.safeParse({ push: true }).success).toBe(false)
+    expect(WorkflowTriggerSchema.safeParse({ webhook: true }).success).toBe(false)
+    expect(WorkflowTriggerSchema.safeParse({ webhook: { path: '/incoming' } }).success).toBe(false)
+  })
+})
 
 describe('StepSpecSchema', () => {
   describe('run: shorthand', () => {

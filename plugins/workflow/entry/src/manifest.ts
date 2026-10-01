@@ -8,9 +8,6 @@ import { defineCommandFlags, combinePermissions, kbPlatformPreset } from '@kb-la
 import {
   healthFlags,
   metricsFlags,
-  statusFlags,
-  logsFlags,
-  listFlags,
   runFlags,
   workflowRunFlags,
   runsListFlags,
@@ -127,33 +124,43 @@ export const manifest = {
         ],
       },
       {
-        path: 'workflow status',
+        path: 'workflow job status',
         category: 'Jobs',
         operationType: 'read' as const,
-        describe: '(Deprecated) Get job status. Use: kb workflow runs status <runId>',
+        describe: 'Get raw job status.',
         longDescription:
-          'Retrieves detailed status information for a specific job by ID, including current state, ' +
-          'start time, and completion time if finished. ' +
-          'DEPRECATED: use "kb workflow runs status <runId>" for run-level status.',
+          'Retrieves detailed status information for a raw job by ID, including current state, ' +
+          'start time, and completion time if finished.',
         handler: './commands/status.js#default',
-        flags: defineCommandFlags(statusFlags),
-        examples: ['kb workflow status --job-id=abc123', 'kb workflow status --job-id=abc123 --json'],
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
+        examples: ['kb workflow job status abc123', 'kb workflow job status abc123 --json'],
       },
       {
-        path: 'workflow logs',
+        path: 'workflow job logs',
         category: 'Jobs',
         operationType: 'read' as const,
-        describe: '(Deprecated) Get job/run logs. Use: kb workflow runs logs <runId>',
+        describe: 'Get raw job logs.',
         longDescription:
-          'Fetches execution logs for a specific job or run by ID. ' +
-          'DEPRECATED: use "kb workflow runs logs <runId>" for run-level logs.',
+          'Fetches execution logs for a specific raw job by ID.',
         handler: './commands/logs.js#default',
-        flags: defineCommandFlags(logsFlags),
+        flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
         examples: [
-          'kb workflow logs --job-id=abc123',
-          'kb workflow logs --job-id=abc123 --json',
-          'kb workflow logs --job-id=abc123 --follow',
+          'kb workflow job logs abc123',
+          'kb workflow job logs abc123 --json',
         ],
+      },
+      {
+        path: 'workflow job list',
+        category: 'Jobs',
+        operationType: 'read' as const,
+        describe: 'List active raw jobs.',
+        longDescription: 'Lists active raw jobs and can filter them by status.',
+        handler: './commands/job-list.js#default',
+        flags: defineCommandFlags({
+          json: { type: 'boolean', description: 'Output result as JSON' },
+          status: { type: 'string', description: 'Filter by status' },
+        }),
+        examples: ['kb workflow job list', 'kb workflow job list --status=running', 'kb workflow job list --json'],
       },
       {
         path: 'workflow crons list',
@@ -181,23 +188,6 @@ export const manifest = {
         handler: './commands/crons-set-enabled.js#disableCommand',
         flags: defineCommandFlags({ json: { type: 'boolean', description: 'Output result as JSON' } }),
         examples: ['kb workflow crons disable nightly-release'],
-      },
-      {
-        path: 'workflow list',
-        category: 'Jobs',
-        operationType: 'read' as const,
-        describe: '(Deprecated) List active executions. Use: kb workflow runs list',
-        longDescription:
-          'Lists all currently active workflow executions. Can be filtered by status (running, queued, ' +
-          'completed, failed, cancelled). ' +
-          'DEPRECATED: use "kb workflow runs list" for run listing.',
-        handler: './commands/list.js#default',
-        flags: defineCommandFlags(listFlags),
-        examples: [
-          'kb workflow list',
-          'kb workflow list --status=running',
-          'kb workflow list --json',
-        ],
       },
       {
         path: 'workflow job run',
