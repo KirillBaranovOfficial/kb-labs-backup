@@ -5,6 +5,13 @@ vi.mock('@kb-labs/sdk', () => ({
   useEnv: (name: string) => process.env[name],
 }));
 
+// Saved sessions/credentials live in the developer's real HOME; a stale login
+// would refresh through the stubbed fetch. These client tests run logged out.
+vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+  SessionManager: class { async load() { return null; } },
+  CredentialsManager: class { async load() { return null; } },
+}));
+
 import { getWorkflowDaemonUrl, WorkflowDaemonClient } from '../http-client.js';
 
 describe('workflow project gateway address', () => {
