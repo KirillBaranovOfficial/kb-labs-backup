@@ -43,7 +43,7 @@ rm -f .journey/reports/journey-summary.md
 find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
 "${COMPOSE[@]}" build publisher runner
 "${COMPOSE[@]}" up -d --wait verdaccio
-if "${COMPOSE[@]}" exec -T verdaccio sh -c 'find /verdaccio/storage -type f -name "*.json" -print -quit | grep -q .' >/dev/null 2>&1; then
+if "${COMPOSE[@]}" exec -T verdaccio sh -s -- /verdaccio/storage < e2e/journey/storage_has_packages.sh >/dev/null 2>&1; then
   echo "WARNING: reusing non-empty Verdaccio storage; existing package versions must match the local tarballs."
 fi
 "${COMPOSE[@]}" run --rm publisher
