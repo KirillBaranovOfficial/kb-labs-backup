@@ -3,6 +3,7 @@
 package contracts
 
 var launcherCodes = map[string]CodeInfo{
+	"KB_ADAPTER_CREDENTIALS_MISSING":         {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_ADAPTER_NOT_CONFIGURED":              {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_AUTH_CLOCK_SKEW":                     {Area: ErrorArea("auth"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_AUTH_FORBIDDEN":                      {Area: ErrorArea("auth"), Stage: ErrorStage("run"), Retryable: false},

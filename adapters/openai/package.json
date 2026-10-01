@@ -21,6 +21,7 @@
   },
   "files": [
     "dist",
+    "kb-create.requirements.json",
     "README.md"
   ],
   "scripts": {

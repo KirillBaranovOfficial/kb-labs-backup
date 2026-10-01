@@ -4,6 +4,7 @@
  */
 
 import OpenAI from "openai";
+import { AdapterCredentialsMissingError } from "@kb-labs/sdk";
 import type {
   ILLM,
   LLMOptions,
@@ -44,15 +45,28 @@ export class OpenAILLM implements ILLM {
   private client: OpenAI;
   private defaultModel: string;
   private defaultMaxTokens: number;
+  private hasApiKey: boolean;
 
   constructor(config: OpenAILLMConfig = {}) {
+    const apiKey = config.apiKey ?? process.env.OPENAI_API_KEY;
+    this.hasApiKey = typeof apiKey === "string" && apiKey.length > 0;
     this.client = new OpenAI({
-      apiKey: config.apiKey ?? process.env.OPENAI_API_KEY,
+      apiKey: apiKey ?? "missing-openai-api-key",
       baseURL: config.baseURL,
       organization: config.organization,
     });
     this.defaultModel = config.model ?? config.defaultModel ?? "gpt-4o-mini";
     this.defaultMaxTokens = config.defaultMaxTokens ?? DEFAULT_MAX_TOKENS;
+  }
+
+  private assertCredentials(): void {
+    if (!this.hasApiKey) {
+      throw new AdapterCredentialsMissingError(
+        "llm",
+        "OPENAI_API_KEY",
+        "platform.adapterOptions.llm.apiKey",
+      );
+    }
   }
 
   getProtocolCapabilities(): LLMProtocolCapabilities {
@@ -97,6 +111,7 @@ export class OpenAILLM implements ILLM {
   }
 
   async complete(prompt: string, options?: LLMOptions): Promise<LLMResponse> {
+    this.assertCredentials();
     const model = options?.model ?? this.defaultModel;
     const messages: OpenAI.ChatCompletionMessageParam[] = [];
 
@@ -135,6 +150,7 @@ export class OpenAILLM implements ILLM {
   }
 
   async *stream(prompt: string, options?: LLMOptions): AsyncIterable<string> {
+    this.assertCredentials();
     const model = options?.model ?? this.defaultModel;
     const messages: OpenAI.ChatCompletionMessageParam[] = [];
 
@@ -173,6 +189,7 @@ export class OpenAILLM implements ILLM {
     messages: LLMMessage[],
     options: LLMToolCallOptions,
   ): Promise<LLMToolCallResponse> {
+    this.assertCredentials();
     const model = options?.model ?? this.defaultModel;
 
     // Convert LLMMessage[] to OpenAI format

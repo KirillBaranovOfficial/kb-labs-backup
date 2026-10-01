@@ -46,3 +46,19 @@ export class AdapterUnavailableError extends Error {
     Object.setPrototypeOf(this, AdapterUnavailableError.prototype);
   }
 }
+
+/** A bound adapter cannot run because a required credential is absent. */
+export class AdapterCredentialsMissingError extends Error {
+  public readonly slot: string;
+  public readonly credential: string;
+  public readonly configurationPath: string;
+
+  constructor(slot: string, credential: string, configurationPath: string) {
+    super(`Adapter "${slot}" is missing ${credential}. No request was sent.`);
+    this.name = 'AdapterCredentialsMissingError';
+    this.slot = slot;
+    this.credential = credential;
+    this.configurationPath = configurationPath;
+    Object.setPrototypeOf(this, AdapterCredentialsMissingError.prototype);
+  }
+}

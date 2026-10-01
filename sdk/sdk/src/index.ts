@@ -258,6 +258,7 @@ export {
 // gracefully when an optional capability is absent.
 export {
   AdapterUnavailableError,
+  AdapterCredentialsMissingError,
   toErrorEnvelope,
 } from "@kb-labs/core-platform";
 

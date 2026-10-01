@@ -966,6 +966,15 @@
       "hint": "Run `{command}` to bind an installed adapter for this capability."
     },
     {
+      "code": "KB_ADAPTER_CREDENTIALS_MISSING",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Adapter {service} is bound but is missing required credential {credential}.",
+      "hint": "Set {credential} or configure it at {path} with `{command}`. No request was sent."
+    },
+    {
       "code": "KB_RUNTIME_INPUT_INVALID",
       "area": "runtime",
       "stage": "run",

@@ -1,0 +1,14 @@
+{
+  "schema": "kb.create.requirements/v1",
+  "requirements": [
+    {
+      "id": "openai.apiKey",
+      "path": "/platform/adapterOptions/llm/apiKey",
+      "secret": true,
+      "required": true,
+      "env": "OPENAI_API_KEY",
+      "services": ["gateway"],
+      "hint": "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"
+    }
+  ]
+}
