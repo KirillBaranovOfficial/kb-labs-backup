@@ -144,6 +144,7 @@ async function buildApp(opts: BuildOpts = {}): Promise<TestCtx> {
   registerUserAuthRoutes(app, {
     userAuthService,
     users,
+    memberships,
     sessions,
     apiTokens,
     invites,

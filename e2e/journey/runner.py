@@ -20,7 +20,8 @@ from pathlib import Path
 from studio_steps import create_studio_member, run_studio_browser_step
 from platform_update_steps import run_platform_update_steps
 from service_steps import Journey, record_runner_failure
-from steps.auth import run_local_auth_steps, run_secured_auth_steps
+from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_status, run_local_auth_steps, run_secured_auth_steps
+from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = os.getenv("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -831,9 +832,62 @@ def main():
         auth_capability = "auth.local" if mode == "local" else "auth.invite-reset"
         if mode == "local":
             auth_journey.step("local identity", auth_capability, run_auth_flow, cases=["S-041.1"])
+            auth_journey.step("local CLI status", "auth.local",
+                              lambda: run_cli_auth_status(str(BIN / "kb"), env, authenticated=False),
+                              cases=["S-041.5"])
         else:
             auth_journey.step("admin invite, reset, and restart persistence", auth_capability, run_auth_flow,
                               cases=["S-041.2", "S-041.3", "S-041.4"])
+            auth_journey.step(
+                "bootstrap administrator CLI status", "auth.accounts",
+                lambda: run_cli_auth_status(str(BIN / "kb"), service_env, authenticated=True,
+                                            email=service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                                            password=service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                                            base_url="http://127.0.0.1:4000"),
+                cases=["S-100.1"],
+            )
+            recovered_password = "JourneyRecovered123!"
+            auth_journey.step(
+                "bootstrap administrator recovery", "auth.accounts",
+                lambda: run_bootstrap_recovery_steps(
+                    launcher, str(PLATFORM), service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"], recovered_password, env, run,
+                ),
+                cases=["S-100.2", "S-100.3", "S-100.4"],
+            )
+            service_env["KB_JOURNEY_ADMIN_PASSWORD"] = recovered_password
+            auth_journey.step(
+                "tenant roles, API token lifecycle, last-admin guard, and invite revocation",
+                "auth.accounts",
+                lambda: run_secured_account_steps(
+                    "http://127.0.0.1:4000",
+                    service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                    "auth-reset-member@example.test",
+                    "JourneyReplacement123!",
+                ),
+                cases=["S-103.1", "S-103.2", "S-103.3", "S-103.4", "S-103.5",
+                       "S-104.7", "S-105.1", "S-105.2", "S-105.3", "S-105.4"],
+            )
+            auth_journey.step(
+                "member CLI login and token listing", "auth.accounts",
+                lambda: run_cli_auth_status(str(BIN / "kb"), service_env, authenticated=True,
+                                            email="auth-reset-member@example.test",
+                                            password="JourneyReplacement123!",
+                                            base_url="http://127.0.0.1:4000"),
+                cases=["S-041.6"],
+            )
+            auth_journey.step(
+                "change password and manage browser sessions", "auth.accounts",
+                lambda: run_password_and_session_steps(
+                    "http://127.0.0.1:4000", "auth-reset-member@example.test", "JourneyReplacement123!"),
+                cases=["S-101.1", "S-101.2", "S-101.3", "S-102.1", "S-102.2"],
+            )
+            auth_journey.step(
+                "CLI logout clears saved session", "auth.accounts",
+                lambda: run_cli_logout_steps(str(BIN / "kb"), service_env),
+                cases=["S-102.3"],
+            )
         auth_result = auth_journey.write_json(auth_report)
         if auth_result.status != "PASS":
             fail(f"{mode} auth journey: {auth_result.first_failure}")

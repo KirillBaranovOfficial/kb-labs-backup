@@ -9,6 +9,7 @@ import subprocess
 SERVICE_SOURCES = {
     "e2e/journey/service_runner.py",
     "e2e/journey/steps/auth.py",
+    "e2e/journey/steps/accounts.py",
     "e2e/journey/studio_steps.py",
 }
 

@@ -24,11 +24,11 @@ import type { AuthHttpClient } from '../../auth/http-client.js';
 afterEach(() => _setAuthClientForTesting(null));
 
 const USERS = [
-  { userId: 'u1', email: 'alice@test.com', tenantId: 'kb-cloud', status: 'active' },
-  { userId: 'u2', email: 'bob@test.com', tenantId: 'kb-cloud', status: 'disabled' },
+  { userId: 'u1', email: 'alice@test.com', tenantId: 'kb-cloud', status: 'active', role: 'member' },
+  { userId: 'u2', email: 'bob@test.com', tenantId: 'kb-cloud', status: 'disabled', role: 'admin' },
 ];
 
-function makeAuth(permissions: string[] = ['users:read', 'users:write']): AuthState {
+function makeAuth(permissions: string[] = ['users:read', 'users:write', 'invites:read', 'invites:write']): AuthState {
   return {
     status: 'authenticated',
     user: { userId: 'admin', email: 'admin@test.com', tenantId: 'kb-cloud' },
@@ -64,23 +64,37 @@ describe('AdminUsersPage', () => {
   });
 
   it('renders user list with email and status', async () => {
-    vi.stubGlobal('fetch', mockFetch({ '/api/auth/users': { status: 200, body: { users: USERS } } }));
+    vi.stubGlobal('fetch', mockFetch({ '/api/auth/users': { status: 200, body: { users: USERS } }, '/api/auth/invites': { status: 200, body: { invites: [] } } }));
     renderPage();
 
-    await waitFor(() => expect(screen.getByText(/alice@test\.com/i)).toBeDefined());
-    expect(screen.getByText(/alice@test\.com/i)).toBeDefined();
-    expect(screen.getByText(/bob@test\.com/i)).toBeDefined();
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'alice@test.com' })).toBeDefined());
+    expect(screen.getByRole('cell', { name: 'alice@test.com' })).toBeDefined();
+    expect(screen.getByRole('cell', { name: 'bob@test.com' })).toBeDefined();
+  });
+
+  it('saves a role change through the role endpoint', async () => {
+    const mockF = mockFetch({
+      '/api/auth/users': { status: 200, body: { users: USERS } },
+      '/api/auth/invites': { status: 200, body: { invites: [] } },
+      '/api/auth/users/u1/role': { status: 200, body: { ok: true } },
+    });
+    vi.stubGlobal('fetch', mockF);
+    renderPage();
+    await waitFor(() => expect(screen.getByLabelText('Role for alice@test.com')).toBeDefined());
+    await act(async () => { fireEvent.change(screen.getByLabelText('Role for alice@test.com'), { target: { value: 'admin' } }); });
+    expect(mockF.mock.calls.some(([url]) => String(url).includes('/api/auth/users/u1/role'))).toBe(true);
   });
 
   it('calls POST /api/auth/users/:id/disable for active user', async () => {
     const mockF = mockFetch({
       '/api/auth/users': { status: 200, body: { users: USERS } },
+      '/api/auth/invites': { status: 200, body: { invites: [] } },
       '/api/auth/users/u1/disable': { status: 200, body: { ok: true } },
     });
     vi.stubGlobal('fetch', mockF);
     renderPage();
 
-    await waitFor(() => expect(screen.getByText(/alice@test\.com/i)).toBeDefined());
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'alice@test.com' })).toBeDefined());
 
     const disableBtn = screen.getAllByRole('button', { name: /disable/i })[0]!;
     await act(async () => { fireEvent.click(disableBtn); });
@@ -94,12 +108,13 @@ describe('AdminUsersPage', () => {
   it('calls POST /api/auth/users/:id/enable for disabled user', async () => {
     const mockF = mockFetch({
       '/api/auth/users': { status: 200, body: { users: USERS } },
+      '/api/auth/invites': { status: 200, body: { invites: [] } },
       '/api/auth/users/u2/enable': { status: 200, body: { ok: true } },
     });
     vi.stubGlobal('fetch', mockF);
     renderPage();
 
-    await waitFor(() => expect(screen.getByText(/bob@test\.com/i)).toBeDefined());
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'bob@test.com' })).toBeDefined());
 
     const enableBtn = screen.getAllByRole('button', { name: /enable/i })[0]!;
     await act(async () => { fireEvent.click(enableBtn); });
@@ -113,12 +128,14 @@ describe('AdminUsersPage', () => {
   it('copies an admin-generated reset link', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
-    const fetch = vi.fn()
-      .mockResolvedValueOnce({ users: USERS })
-      .mockResolvedValueOnce({ resetUrl: 'https://gateway.test/reset-password/secret' });
+    const fetch = vi.fn(async (path: string) => {
+      if (path.includes('/password-reset-link')) return { resetUrl: 'https://gateway.test/reset-password/secret', expiresAt: Date.now() + 86400000 };
+      if (path.includes('/auth/users')) return { users: USERS };
+      return { invites: [] };
+    });
     _setAuthClientForTesting({ fetch } as unknown as AuthHttpClient);
     renderPage();
-    await waitFor(() => expect(screen.getByText(/alice@test\.com/i)).toBeDefined());
+    await waitFor(() => expect(screen.getByRole('cell', { name: 'alice@test.com' })).toBeDefined());
     await act(async () => { fireEvent.click(screen.getAllByRole('button', { name: /copy reset link/i })[0]!); });
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('https://gateway.test/reset-password/secret'));
   });
