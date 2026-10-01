@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -150,6 +151,33 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	idle, code, _ := inst.run("stop", "--json")
 	if code != 0 || idle["stopped"].(map[string]any)["wasRunning"] != false {
 		t.Fatalf("stopping an idle host must succeed: %v", idle)
+	}
+}
+
+func TestStatusAndDoctorReportReceiptChannelAndExactVersion(t *testing.T) {
+	inst := newInstallation(t)
+	active := contracts.InstallReceipt{ID: "receipt-canary", Plan: contracts.ResolvedInstallPlan{
+		Schema: contracts.ResolvedPlanSchema, PlatformChannel: "canary",
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "3.2.0-canary.4"},
+		Host:         &contracts.HostSpec{Command: inst.launcher, HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", inst.port)},
+	}}
+	if err := receipt.Write(inst.root, active); err != nil {
+		t.Fatal(err)
+	}
+
+	status, _, statusOutput := inst.run("status", "--json")
+	installation, ok := status["installation"].(map[string]any)
+	if !ok || installation["platformChannel"] != "canary" || installation["platformVersion"] != "3.2.0-canary.4" {
+		t.Fatalf("status installation = %v; output %s", status["installation"], statusOutput)
+	}
+	_, _, statusText := inst.run("status")
+	if !strings.Contains(statusText, "Platform channel: canary") || !strings.Contains(statusText, "Platform version: 3.2.0-canary.4") {
+		t.Fatalf("status text omitted release identity: %s", statusText)
+	}
+
+	doctor, _, doctorOutput := inst.run("doctor", "--json")
+	if doctor["platformChannel"] != "canary" || doctor["platformVersion"] != "3.2.0-canary.4" {
+		t.Fatalf("doctor omitted release identity: %v; output %s", doctor, doctorOutput)
 	}
 }
 
