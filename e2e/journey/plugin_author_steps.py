@@ -26,7 +26,7 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             check=False)
     if result.returncode != 0:
-        detail = " ".join((result.stdout or "").split())[-600:]
+        detail = " ".join((result.stdout or "").split())
         raise RuntimeError(f"{' '.join(command)} exited {result.returncode}; {detail or 'no output'}")
     return result.stdout or ""
 
@@ -170,7 +170,7 @@ def run_plugin_author_flow(
         if linked:
             _record_unlink()
         else:
-            journey.blocked("unlink plugin", "plugin was not linked")
+            journey.blocked("unlink plugin", "plugin-author", "plugin was not linked")
         shutil.rmtree(plugin_root, ignore_errors=True)
         return
 

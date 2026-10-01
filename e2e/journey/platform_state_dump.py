@@ -182,11 +182,13 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         if not kb_executable and (root.parent / ".local" / "bin" / "kb").is_file():
             kb_executable = str(root.parent / ".local" / "bin" / "kb")
         kb_executable = kb_executable or "kb"
-        target = destination / "kb-plugins-list.txt"
-        used += _command(target, "$ kb plugins list --json", [kb_executable, "plugins", "list", "--json"],
-                         env=command_env, cwd=command_cwd, admin_password=admin_password,
-                         budget=CONTENT_BUDGET - used)
-        entries.append(f"- `kb-plugins-list.txt` ({target.stat().st_size} bytes)")
+        for scope in ("platform", "project"):
+            target = destination / f"kb-marketplace-plugins-{scope}.txt"
+            args = [kb_executable, "marketplace", "plugins", "list", "--scope", scope, "--json"]
+            used += _command(target, "$ " + " ".join(args[1:]), args,
+                             env=command_env, cwd=command_cwd, admin_password=admin_password,
+                             budget=CONTENT_BUDGET - used)
+            entries.append(f"- `{target.name}` ({target.stat().st_size} bytes)")
         unknown = UNKNOWN_COMMAND.search(first_failure)
         if unknown and used < CONTENT_BUDGET:
             command = unknown.group(1).strip().strip("'\"` ")
