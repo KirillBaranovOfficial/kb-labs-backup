@@ -71,6 +71,8 @@ export interface StepExecutionFailure {
     stack?: string
     details?: Record<string, unknown>
   }
+  /** Output captured before a command failed, retained for run detail and logs. */
+  outputs?: Record<string, unknown>
   /** Normalized failure used by workflow retry policy. */
   failure?: ClassifiedFailure
 }
