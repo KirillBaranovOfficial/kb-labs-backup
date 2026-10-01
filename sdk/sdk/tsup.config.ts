@@ -18,10 +18,9 @@ export default defineConfig({
     'studio-build/index': 'src/studio-build/index.ts',
     'platform/index': 'src/platform/index.ts',
   },
-  // Bundle shared-command-kit into SDK so its types are self-contained.
-  // Consumers get CommandHandler, CLIInput etc. directly from @kb-labs/sdk
-  // without needing a reference to the internal shared-command-kit package.
-  noExternal: ['@kb-labs/shared-command-kit'],
+  // Bundle internal runtime helpers into SDK so installed consumers do not
+  // need to provide undeclared transitive packages alongside the SDK.
+  noExternal: ['@kb-labs/shared-command-kit', '@kb-labs/shared-tool-kit'],
   dts: { resolve: true },
   treeshake: false,
 });
