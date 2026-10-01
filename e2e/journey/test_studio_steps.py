@@ -67,6 +67,20 @@ class StudioJourneyTests(unittest.TestCase):
         self.assertEqual(studio_env["PLAYWRIGHT_BROWSERS_PATH"], "/ms-playwright")
         self.assertEqual(studio_env["KB_ACCESS_MODE"], "local")
 
+    # case: S-020.3
+    def test_secured_studio_environment_exports_admin_before_member_provisioning(self):
+        studio_env = create_studio_environment({
+            "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+            "KB_JOURNEY_ADMIN_PASSWORD": "isolated-password",
+        }, mode="secured", project_id="project-1", project_name="Journey",
+           project_root="/tmp/project", kb_bin="/tmp/bin/kb")
+
+        self.assertEqual(studio_env["KB_STUDIO_ADMIN_EMAIL"], "admin@example.test")
+        self.assertEqual(studio_env["KB_STUDIO_ADMIN_PASSWORD"], "isolated-password")
+        self.assertEqual(studio_env["KB_ACCESS_MODE"], "secured")
+        self.assertNotIn("KB_STUDIO_MEMBER_EMAIL", studio_env)
+        self.assertNotIn("KB_STUDIO_MEMBER_PASSWORD", studio_env)
+
     def test_missing_playwright_browser_fails_preflight_without_launch(self):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "service-local.json"

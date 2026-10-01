@@ -31,6 +31,11 @@ def create_studio_environment(service_env: dict[str, str], *, mode: str, project
         "KB_STUDIO_PROJECT_ROOT": project_root,
         "KB_STUDIO_KB_BIN": kb_bin,
     })
+    if mode == "secured":
+        if admin_email := service_env.get("KB_JOURNEY_ADMIN_EMAIL"):
+            studio_env["KB_STUDIO_ADMIN_EMAIL"] = admin_email
+        if admin_password := service_env.get("KB_JOURNEY_ADMIN_PASSWORD"):
+            studio_env["KB_STUDIO_ADMIN_PASSWORD"] = admin_password
     return studio_env
 
 

@@ -1065,8 +1065,6 @@ def main():
                 member_email, member_password = create_studio_member(
                     "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
                     service_env["KB_JOURNEY_ADMIN_PASSWORD"])
-                studio_env["KB_STUDIO_ADMIN_EMAIL"] = service_env["KB_JOURNEY_ADMIN_EMAIL"]
-                studio_env["KB_STUDIO_ADMIN_PASSWORD"] = service_env["KB_JOURNEY_ADMIN_PASSWORD"]
                 studio_env["KB_STUDIO_MEMBER_EMAIL"] = member_email
                 studio_env["KB_STUDIO_MEMBER_PASSWORD"] = member_password
             except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:

@@ -126,9 +126,19 @@ describe('AuthProvider initial load', () => {
     expect(screen.queryByTestId('role')).toBeNull(); // No role field
   });
 
-  it('sets status=anonymous when /api/auth/me returns 401', async () => {
+  // case: S-020.2
+  it('sets status=anonymous for the gateway KB_AUTH_REQUIRED response from /api/auth/me', async () => {
     vi.stubGlobal('fetch', mockFetch({
-      '/api/auth/me': { status: 401, body: { error: 'Unauthorized' } },
+      '/api/auth/me': {
+        status: 401,
+        body: {
+          error: {
+            code: 'KB_AUTH_REQUIRED',
+            message: 'Authentication is required.',
+            hint: 'Run "kb auth login".',
+          },
+        },
+      },
       '/api/auth/permissions': { status: 401, body: {} },
     }));
 
