@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -53,9 +54,25 @@ func TestConfirmRecoveryTTYYesAndNo(t *testing.T) {
 }
 
 func TestRecoveryRequiresYesWithoutTTY(t *testing.T) {
-	payload, code, raw := invoke(t, invocation{Operation: "uninstall", PlatformRoot: t.TempDir(), JSON: true})
-	if code != 2 || errorCode(payload) != "KB_INSTALL_CONFIRMATION_REQUIRED" || !strings.Contains(raw, "kb-create uninstall --platform-root") || !strings.Contains(raw, "--yes") {
+	root := t.TempDir()
+	receiptPath := receipt.Path(root)
+	if err := os.MkdirAll(filepath.Dir(receiptPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	wantReceipt := []byte("active receipt must survive refused uninstall\n")
+	if err := os.WriteFile(receiptPath, wantReceipt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := "https://registry.example.test"
+	payload, code, raw := invoke(t, invocation{Operation: "uninstall", PlatformRoot: root, Registry: registry, JSON: true})
+	wantHint := "rerun `kb-create uninstall --platform-root " + strconv.Quote(root) + " --registry " + registry + " --json --yes`"
+	errorPayload, _ := payload["error"].(map[string]any)
+	if code != 2 || errorCode(payload) != "KB_INSTALL_CONFIRMATION_REQUIRED" || errorPayload["hint"] != wantHint {
 		t.Fatalf("unexpected confirmation envelope: %d %s", code, raw)
+	}
+	if gotReceipt, err := os.ReadFile(receiptPath); err != nil || string(gotReceipt) != string(wantReceipt) {
+		t.Fatalf("receipt changed after refused uninstall: got %q, err %v", gotReceipt, err)
 	}
 }
 
