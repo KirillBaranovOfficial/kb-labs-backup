@@ -19,13 +19,14 @@
 
 import { ConsoleLogger } from '../inmemory/adapters/logger.js';
 import { InMemoryCache } from '../inmemory/adapters/cache.js';
-import { InMemoryVectorStore } from '../inmemory/adapters/vector-store.js';
+import { InMemoryNotifier } from '../inmemory/adapters/notifier.js';
 import { InMemoryStorage } from '../inmemory/adapters/storage.js';
 import { InMemoryEventBus } from '../inmemory/adapters/event-bus.js';
 import { InMemoryAnalyticsBuffer } from '../inmemory/adapters/analytics-buffer.js';
 import { NoOpLLM } from './adapters/llm.js';
 import { NoOpEmbeddings } from './adapters/embeddings.js';
-import { NoOpLogReader } from './adapters/log-reader.js';
+import { UnavailableLogReader } from './adapters/log-reader.js';
+import { UnavailableVectorStore } from './adapters/vector-store.js';
 
 export function createNoOpPlatform() {
   return {
@@ -33,10 +34,11 @@ export function createNoOpPlatform() {
     llm:         new NoOpLLM(),
     cache:       new InMemoryCache(),
     embeddings:  new NoOpEmbeddings(),
-    vectorStore: new InMemoryVectorStore(),
+    vectorStore: new UnavailableVectorStore(),
     storage:     new InMemoryStorage(),
     analytics:   new InMemoryAnalyticsBuffer(),
     eventBus:    new InMemoryEventBus(),
-    logs:        new NoOpLogReader(),
+    logs:        new UnavailableLogReader(),
+    notifier:    new InMemoryNotifier(),
   };
 }

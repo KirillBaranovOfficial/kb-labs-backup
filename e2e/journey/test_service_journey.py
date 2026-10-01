@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from nightly_report import aggregate, fingerprint, load_results, sync_issues
+from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
 from service_runner import checks, declared_capabilities, discover_workflow, mcp_probe
 from service_steps import Journey, record_runner_failure
@@ -39,14 +39,14 @@ class FakeGitHub:
 class ServiceJourneyTests(unittest.TestCase):
     def test_first_failure_and_json_result(self):
         journey = Journey("local", "fixture")
-        journey.step("health", "gateway", lambda: None, cases=["S-010.1"])
+        journey.step("health", "gateway", lambda: None)
         journey.step("workflow", "workflow", lambda: "workflow route returned 404")
         result = journey.result()
         self.assertEqual(result.status, "FAIL")
         self.assertEqual(result.first_failure["name"], "workflow")
         self.assertEqual(len(result.steps), 2)
-        self.assertEqual(result.steps[0]["cases"], ["S-010.1"])
-        self.assertEqual(result.case_run["claims"], [{"claimId": "S-010.1", "kind": "journey", "status": "PASS"}])
+        self.assertEqual(result.steps[0]["cases"], [])
+        self.assertEqual(result.case_run["claims"], [])
         with tempfile.TemporaryDirectory() as directory:
             saved = journey.write_json(Path(directory) / "journey.json")
             self.assertEqual(saved.schema, "kb.service-journey/v1")
@@ -90,7 +90,7 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertIn("simulated run crash", result["steps"][0]["message"])
 
     def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
-        event = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"tools":[]}}\n\n'
+        event = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"diagnostics","inputSchema":{"type":"object"}}]}}\n\n'
         with patch("service_runner.request", return_value=(200, event, {})) as request:
             failure = mcp_probe("prj_test", "token")
         self.assertIsNone(failure)
@@ -156,6 +156,16 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(report["status"], "FAIL")
         self.assertEqual(report["capabilities"][0]["first_failure"]["name"], "result files")
 
+    def test_release_case_coverage_is_included_in_nightly_status(self):
+        capability_result = {"steps": [{"capability": "gateway", "mode": "local", "name": "ready",
+                                        "status": "PASS", "duration_seconds": 0, "message": "passed"}]}
+        coverage = {"schema": "kb.qa-case-coverage/v1", "mode": "local", "releasePassed": False,
+                    "cases": [{"id": "S-045", "release": True, "status": "active", "statusResult": "NOT COVERED"}]}
+        report = aggregate([capability_result], case_coverage=[coverage])
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(report["case_coverage"], [coverage])
+        self.assertIn("Case coverage (local): **FAIL**", render_summary(report))
+
     def test_result_with_no_capability_steps_cannot_pass(self):
         report = aggregate([{"steps": []}])
         self.assertEqual(report["status"], "FAIL")
@@ -196,6 +206,15 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(failure["first_failure"]["name"], "result file parse")
         self.assertIn("service-local.json", failure["first_failure"]["message"])
 
+    def test_result_loader_skips_case_coverage_documents(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "service-local.json").write_text('{"steps":[]}')
+            Path(directory, "case-coverage-local.json").write_text('{"schema":"kb.qa-case-coverage/v1"}')
+            Path(directory, "report.json").write_text('{"schema":"kb.nightly-report/v1"}')
+            results = load_results(directory)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0], {"steps": []})
+
     def test_invalid_step_status_cannot_be_treated_as_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "service-local.json").write_text(
@@ -210,7 +229,8 @@ class ServiceJourneyTests(unittest.TestCase):
     def test_declared_profile_capabilities_match_service_checks(self):
         for mode, auth_capability in (("local", "auth.local"), ("secured", "auth.invite-reset")):
             self.assertEqual(declared_capabilities(mode),
-                             {capability for _, capability, _ in checks(mode)} | {auth_capability})
+                             {capability for _, capability, _ in checks(mode)}
+                             | {auth_capability, "plugin-author"})
 
     def test_issue_sync_is_idempotent_updates_existing_and_closes_fixed(self):
         client = FakeGitHub()

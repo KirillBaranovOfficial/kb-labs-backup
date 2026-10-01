@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from studio_steps import create_studio_member, run_studio_browser_step
+from platform_update_steps import run_platform_update_steps
 from service_steps import Journey, record_runner_failure
 from steps.auth import run_local_auth_steps, run_secured_auth_steps
 
@@ -587,6 +588,63 @@ def main():
     if FRONT == "agent" and SCENARIO == "commit":
         verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local")
 
+    update_journey = (SCENARIO == "commit" and VARIANT in {"default", "input"}) or VARIANT.endswith("secured")
+    if update_journey:
+        try:
+            receipt_path = PLATFORM / ".kb" / "v2" / "receipt.json"
+            active = json.loads(receipt_path.read_text())
+            request = active["plan"]["request"]
+            base_version = active["plan"]["serviceGraph"]["platformVersion"]
+            request_file = HOME / "platform-update-request.json"
+            request_file.write_text(json.dumps(request) + "\n")
+            update_index = HOME / "release-index-update.json"
+            update_url = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/release-index-update.json"
+            with urllib.request.urlopen(update_url, timeout=30) as response:
+                update_index.write_bytes(response.read())
+            updated_version = json.loads(update_index.read_text())["profiles"]["default"]["platformVersion"]
+            request.setdefault("platform", {})["version"] = updated_version
+            request["platform"].pop("channel", None)
+            request["sdk"] = {"version": updated_version}
+            request_file.write_text(json.dumps(request) + "\n")
+        except (KeyError, OSError, ValueError, urllib.error.URLError) as error:
+            fail(f"platform update candidate: could not load installed V2 request and second sealed index: {error}")
+        else:
+            access_mode = "secured" if VARIANT.endswith("secured") else "local"
+
+            def update_command(args):
+                result, _ = run(args, env=env, cwd=PROJECT, timeout=1200)
+                return result
+
+            verify_admin = None
+            if access_mode == "secured":
+                admin_email = env.get("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
+                admin_password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyPassw0rd!")
+
+                def verify_admin():
+                    result, _ = run(["bash", "-c", '. "$HOME/.profile"; kb auth login --gateway-url http://127.0.0.1:4000 --email "$1" --password "$2"',
+                                     "journey", admin_email, admin_password],
+                                    env=env, cwd=PROJECT, timeout=90)
+                    return result
+
+            platform_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
+                f"platform-update-{access_mode}.json")
+            platform_journey = run_platform_update_steps(
+                mode=access_mode,
+                launcher=launcher,
+                kb_binary=str(BIN / "kb"),
+                platform_root=PLATFORM,
+                update_index=update_index,
+                request_file=request_file,
+                base_version=str(base_version),
+                updated_version=str(updated_version),
+                run_command=update_command,
+                verify_user=verify_admin,
+            )
+            update_result = platform_journey.write_json(platform_report)
+            if update_result.status != "PASS":
+                first = update_result.first_failure or {}
+                fail(f"platform update journey: {first.get('name', 'step')}: {first.get('message', '')}")
+
     for command, key in (("status", r"Installed:\s+yes.*Running:\s+yes"), ("doctor", "")):
         result, _ = run([launcher, command, "--platform-root", str(PLATFORM)], env=env, timeout=120)
         if not require(result, step=f"kb-create {command}"):
@@ -617,6 +675,7 @@ def main():
     if BASE_ENV.get("KB_JOURNEY_SERVICE_PROFILE") == "nightly" and (local_service_journey or secured_service_journey):
         mode = "secured" if secured_service_journey else "local"
         service_env = env.copy()
+        service_env["KB_JOURNEY_PROJECT_ROOT"] = str(PROJECT)
         if mode == "secured":
             service_env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
             service_env["KB_JOURNEY_ADMIN_PASSWORD"] = "JourneyPassw0rd!"

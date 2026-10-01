@@ -8,7 +8,13 @@ TAG="journey-candidate"
 TARGET="$OUT/release/$TAG"
 
 mkdir -p "$PACKAGES" "$TARGET"
-rm -f "$TARGET"/*
+if [[ -f "$TARGET/update-packages/generated-packages.txt" ]]; then
+  while IFS= read -r filename; do
+    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
+  done < "$TARGET/update-packages/generated-packages.txt"
+fi
+rm -rf "$TARGET"
+mkdir -p "$TARGET"
 if [[ "${KB_JOURNEY_PACKAGES_READY:-0}" != "1" ]]; then
   rm -f "$PACKAGES"/*.tgz
   "$ROOT/e2e/scripts/pack-all.sh" "$PACKAGES"
@@ -36,9 +42,9 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
 (
   cd "$TARGET"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum kb-create-linux-amd64 kb-create-linux-arm64 release-index.json > checksums.txt
+    sha256sum kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json > checksums.txt
   else
-    shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 release-index.json > checksums.txt
+    shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json > checksums.txt
   fi
 )
 echo "Prepared $TARGET"

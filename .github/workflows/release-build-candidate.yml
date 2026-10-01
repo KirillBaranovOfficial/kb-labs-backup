@@ -43,7 +43,6 @@ jobs:
     uses: ./.github/workflows/reusable-installer-journey.yml
     with:
       ref: ${{ inputs.commit_sha }}
-      scenario-level: release
     permissions:
       contents: read
 
@@ -329,11 +328,13 @@ jobs:
             if (!c.platform?.adapters) throw new Error("platform.adapters is required for a platform release index");
             process.stdout.write(JSON.stringify({
               platformMembers: m,
+              platformRequires: Object.keys(c.platform.adapters).filter((slot) => Boolean(c.platform.adapters[slot])),
               adapters: c.platform.adapters,
               adapterOptions: c.platform.adapterOptions ?? {},
             }));
           ')"
           platform_members="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(d.platformMembers.join(","));' <<< "$config_json")"
+          platform_requires="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(d.platformRequires.join(","));' <<< "$config_json")"
           platform_adapters="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(JSON.stringify(d.adapters));' <<< "$config_json")"
           platform_adapter_options="$(node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(JSON.stringify(d.adapterOptions));' <<< "$config_json")"
           node tools/kb-create/scripts/prepare-release-index.mjs \
@@ -342,6 +343,7 @@ jobs:
             --artifacts-dir .kb/release/artifacts \
             --binary-manifest .kb/release/binary-manifest.json \
             --platform-member-packages "$platform_members" \
+            --platform-requires "$platform_requires" \
             --platform-adapter-config "$platform_adapters" \
             --platform-adapter-options "$platform_adapter_options" \
             --output .kb/release/release-index.json

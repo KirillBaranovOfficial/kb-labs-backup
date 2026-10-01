@@ -40,6 +40,21 @@ packages, writes configuration, starts the host, verifies the installation,
 and configures the `kb` shim. Its success output gives the next command, for
 example `cd ~/any-project && kb commit`.
 
+The default install includes a built-in local adapter pack and does not ask you
+to choose adapter providers. In a project, `kb adapter list --json` shows
+`storage` as `@kb-labs/adapters-fs` with its effective `.kb/data` directory;
+cache uses the platform-local StateBroker; and logging, analytics, and local
+databases use Pino, a ring buffer, and SQLite. Event delivery, plugin invoke,
+artifacts, config, and notifications use in-process implementations. No
+external adapter service is needed for these defaults. Projects inherit the
+installed defaults unless they bind an override.
+
+LLM and vector-store slots remain empty until you configure providers. A
+command needing a missing capability reports a typed unavailable error with
+the next `kb adapter bind <slot> ...` action. Embeddings also require a chosen
+model provider; the installed filesystem snapshot provider is not used as the
+runtime's optional `snapshotManager`.
+
 ## Check or diagnose an installation
 
 ```bash

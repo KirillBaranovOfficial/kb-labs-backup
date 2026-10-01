@@ -4,7 +4,8 @@ import type { QACase, QACaseMode, QACasePriority, QACaseStatus, QACaseSurface } 
 
 const CASE_ID = /^(?:S|PC)-\d{3}$/;
 const STEP_ID = /^((?:S|PC)-\d{3})\.(\d+)$/;
-const FIELDS = ['id', 'title', 'persona', 'area', 'priority', 'status', 'release', 'modes', 'surfaces'];
+const FIELDS = ['id', 'title', 'persona', 'area', 'priority', 'status', 'release', 'modes', 'surfaces', 'superseded_by'];
+const REQUIRED_FIELDS = ['id', 'title', 'persona', 'area', 'priority', 'status', 'release', 'modes', 'surfaces'];
 
 export interface QACatalogDiagnostic { file: string; line: number; message: string }
 export interface QACatalogResult { cases: QACase[]; diagnostics: QACatalogDiagnostic[] }
@@ -68,7 +69,7 @@ function parseCase(file: string, source: string, errors: QACatalogDiagnostic[]):
       invalid = true;
     }
   }
-  for (const key of FIELDS) {
+  for (const key of REQUIRED_FIELDS) {
     if (!values.has(key)) {
       errors.push(diagnostic(file, 2, `missing required frontmatter field ${key}`));
       invalid = true;
@@ -85,11 +86,14 @@ function parseCase(file: string, source: string, errors: QACatalogDiagnostic[]):
   if (!['true', 'false'].includes(release)) { errors.push(diagnostic(file, values.get('release')?.line ?? 1, 'release must be true or false')); invalid = true; }
   const modes = list(values.get('modes')?.value, lines, (values.get('modes')?.line ?? 0));
   const surfaces = list(values.get('surfaces')?.value, lines, (values.get('surfaces')?.line ?? 0));
+  const supersededBy = value('superseded_by');
   for (const key of ['title', 'persona', 'area']) {
     if (!value(key)) { errors.push(diagnostic(file, values.get(key)?.line ?? 1, `${key} must not be empty`)); invalid = true; }
   }
   if (!modes.length || modes.some(mode => !['local', 'secured'].includes(mode))) { errors.push(diagnostic(file, values.get('modes')?.line ?? 1, 'modes must contain local and/or secured')); invalid = true; }
   if (!surfaces.length || surfaces.some(surface => !['cli', 'studio', 'api', 'agent'].includes(surface))) { errors.push(diagnostic(file, values.get('surfaces')?.line ?? 1, 'surfaces must contain cli, studio, api, and/or agent')); invalid = true; }
+  if (supersededBy && status !== 'historical') { errors.push(diagnostic(file, values.get('superseded_by')?.line ?? 1, 'superseded_by is only valid for historical cases')); invalid = true; }
+  if (supersededBy && !CASE_ID.test(supersededBy)) { errors.push(diagnostic(file, values.get('superseded_by')?.line ?? 1, `invalid superseded_by case id ${supersededBy}`)); invalid = true; }
 
   const steps: QACase['steps'] = [];
   let inSteps = false;
@@ -111,12 +115,12 @@ function parseCase(file: string, source: string, errors: QACatalogDiagnostic[]):
     if (steps.some(step => step.id === stepId)) { errors.push(diagnostic(file, i + 1, `duplicate step id ${stepId}`)); invalid = true; continue; }
     steps.push({ id: stepId, action, expected, line: i + 1 });
   }
-  if (!steps.length) { errors.push(diagnostic(file, close + 1, 'Steps section has no step rows')); invalid = true; }
+  if (!steps.length && status !== 'historical') { errors.push(diagnostic(file, close + 1, 'Steps section has no step rows')); invalid = true; }
   if (invalid) return undefined;
   return {
     id, title: value('title'), persona: value('persona'), area: value('area'),
     priority: priority as QACasePriority, status: status as QACaseStatus, release: release === 'true',
-    modes: modes as QACaseMode[], surfaces: surfaces as QACaseSurface[], file, steps,
+    modes: modes as QACaseMode[], surfaces: surfaces as QACaseSurface[], ...(supersededBy ? { supersededBy } : {}), file, steps,
   };
 }
 
@@ -137,6 +141,12 @@ export function parseQACatalog(directory: string): QACatalogResult {
     if (!result) continue;
     if (ids.has(result.id)) diagnostics.push(diagnostic(file, 1, `duplicate case id ${result.id}`));
     else { ids.add(result.id); cases.push(result); }
+  }
+  for (const testCase of cases) {
+    if (testCase.supersededBy && !ids.has(testCase.supersededBy)) {
+      const line = readFileSync(join(directory, testCase.file.split('/').pop() ?? ''), 'utf8').split(/\r?\n/).findIndex(line => /^superseded_by:/.test(line)) + 1;
+      diagnostics.push(diagnostic(testCase.file, line || 1, `superseded_by references unknown case ${testCase.supersededBy}`));
+    }
   }
   return { cases, diagnostics };
 }

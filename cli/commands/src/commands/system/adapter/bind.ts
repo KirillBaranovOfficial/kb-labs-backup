@@ -44,8 +44,8 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
   },
   async handler(ctx, argv, flags) {
     const [slot, packageId] = argv;
-    if (!slot || !/^[a-z][a-z0-9-]*$/.test(slot) || !packageId) {
-      return { ok: false, error: 'Provide a lowercase slot and an installed adapter package ID.' };
+    if (!slot || !/^[a-z][a-zA-Z0-9-]*$/.test(slot) || !packageId) {
+      return { ok: false, error: 'Provide a valid adapter slot and an installed package ID.' };
     }
 
     try {

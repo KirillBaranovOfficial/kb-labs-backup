@@ -118,13 +118,22 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(envelope.details).toEqual({
       service: 'llm',
       adapter: 'platform.adapters.llm',
-      command: 'kb config set platform.adapters.llm @kb-labs/adapters-openai',
+      command: 'kb adapter bind llm @kb-labs/adapters-openai',
     });
     expect(envelope.correlationId).toBe('c1');
-    expect(envelope.hint).toContain('kb config set platform.adapters.llm');
+    expect(envelope.hint).toContain('kb adapter bind llm');
     expect(envelope.actions?.[0]?.command).toBe(
-      'kb config set platform.adapters.llm @kb-labs/adapters-openai',
+      'kb adapter bind llm @kb-labs/adapters-openai',
     );
+  });
+
+  it('maps a missing vector store to a bind action for that capability', () => {
+    const envelope = toErrorEnvelope(new AdapterUnavailableError('vectorStore'));
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+    expect(envelope.code).toBe('KB_ADAPTER_NOT_CONFIGURED');
+    expect(envelope.details?.service).toBe('vectorStore');
+    expect(envelope.actions?.[0]?.command).toMatch(/^kb adapter bind vectorStore /);
+    expect(envelope.hint).toContain('kb adapter bind vectorStore');
   });
 
   it('maps a load-failed adapter to KB_HOST_ADAPTER_UNAVAILABLE', () => {

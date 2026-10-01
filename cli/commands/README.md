@@ -235,17 +235,29 @@ pnpm build
 3. Update manifest permissions and metadata as needed.
 4. Build your package and test with `kb marketplace plugins list`.
 
-### Binding an installed adapter
+### Listing and binding adapters
 
-`kb adapter bind <slot> <package-id>` writes the adapter package into the
-current project's `platform.adapters.<slot>` config. The command reads the
-platform `.kb/marketplace.lock` first and refuses packages that are missing or
-not recorded as adapters. Install the package at machine scope before binding:
+`kb adapter list` reports the current project's effective adapter package,
+mode, and storage directory. `--json` includes every runtime slot and marks
+provider-backed slots that need explicit configuration.
 
 ```bash
-kb marketplace install @kb-labs/adapters-fs@1.2.3 --scope platform
-kb adapter bind storage @kb-labs/adapters-fs
+kb adapter list --json
 ```
+
+`kb adapter bind <slot> <package-id>` writes a project override at
+`platform.adapters.<slot>`. Adapter options are project scoped. Unbinding a
+slot removes its binding and corresponding options so the project returns to
+the platform default:
+
+```bash
+kb config set platform.adapterOptions.storage '{"baseDir":".kb/override-data"}'
+kb adapter bind storage @kb-labs/adapters-fs
+kb adapter unbind storage
+```
+
+The platform includes `@kb-labs/adapters-fs` for storage. Other adapter
+packages must be installed at platform scope before binding.
 
 `--dry-run` validates the binding without writing project config; `--json`
 returns the same operation result as a machine-readable object.

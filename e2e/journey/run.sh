@@ -29,7 +29,7 @@ if [[ "${1:-}" == "--prepare-only" ]]; then
 fi
 
 if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
-  python3 e2e/journey/scenarios.py validate --level release
+  pnpm -s kb qa cases validate
 fi
 
 if [[ "${1:-}" != "--no-build" ]]; then
@@ -71,7 +71,9 @@ if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
     *) echo "Unknown KB_JOURNEY_ONLY value: $KB_JOURNEY_ONLY" >&2; exit 2 ;;
   esac
 else
-  while IFS= read -r selector; do
+  selectors_json="$(python3 e2e/journey/select_from_cases.py)"
+  selectors="$(python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))' <<< "$selectors_json")"
+  if [[ -n "$selectors" ]]; then while IFS= read -r selector; do
     case "$selector" in
       agent:*) run_journey agent "${selector#agent:}" default ;;
       agent-input:*) run_journey agent commit input ;;
@@ -80,9 +82,9 @@ else
       negative:*) run_journey agent commit "${selector#negative:}" ;;
       service-local:*) KB_JOURNEY_SERVICE_PROFILE=nightly run_journey agent "${selector#service-local:}" default ;;
       service-secured:*) KB_JOURNEY_SERVICE_PROFILE=nightly run_journey human "${selector#service-secured:}" secured ;;
-      *) echo "Unknown scenario manifest selector: $selector" >&2; status=1 ;;
+      *) echo "Unknown case-derived journey selector: $selector" >&2; status=1 ;;
     esac
-  done < <(python3 -c 'import json,subprocess; print("\n".join(json.loads(subprocess.check_output(["python3","e2e/journey/scenarios.py","list","--level","release"],text=True))))')
+  done <<< "$selectors"; fi
 fi
 
 echo "Journey matrix complete (exit $status)"

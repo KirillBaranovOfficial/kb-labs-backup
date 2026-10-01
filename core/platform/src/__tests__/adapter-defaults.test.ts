@@ -37,15 +37,17 @@ describe('ADAPTER_DEFAULTS', () => {
     for (const slot of expectedSlots) {
       expect(ADAPTER_DEFAULTS[slot]).toBeDefined();
       expect(['inmemory', 'noop']).toContain(ADAPTER_DEFAULTS[slot].defaultFallback);
+      expect(ADAPTER_DEFAULTS[slot].implementation).toBeTruthy();
     }
   });
 
-  it('uses "noop" for slots where no honest fallback is possible', () => {
-    // LLM/embeddings have no fake that doesn't lie to the caller.
+  it('leaves model and vector providers unavailable instead of fabricating results', () => {
     expect(ADAPTER_DEFAULTS.llm.defaultFallback).toBe('noop');
     expect(ADAPTER_DEFAULTS.embeddings.defaultFallback).toBe('noop');
-    // Notifier is silent NoOp by user decision (no console spam).
-    expect(ADAPTER_DEFAULTS.notifier.defaultFallback).toBe('noop');
+    expect(ADAPTER_DEFAULTS.vectorStore.defaultFallback).toBe('noop');
+    expect(ADAPTER_DEFAULTS.vectorStore.implementation).toBe('unavailable');
+    expect(ADAPTER_DEFAULTS.notifier.defaultFallback).toBe('inmemory');
+    expect(ADAPTER_DEFAULTS.logs.defaultFallback).toBe('noop');
   });
 
   it('uses "inmemory" for slots that can be honestly served in-process', () => {

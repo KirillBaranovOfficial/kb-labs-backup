@@ -22,6 +22,7 @@ export interface QACase {
   release: boolean;
   modes: QACaseMode[];
   surfaces: QACaseSurface[];
+  supersededBy?: string;
   file: string;
   steps: QACaseStep[];
 }
@@ -45,6 +46,7 @@ export interface QACaseRunResult {
 export interface QACaseStepCoverage {
   stepId: string;
   status: QACaseStepResult;
+  reason?: string;
   claims: QACaseClaim[];
 }
 
@@ -57,6 +59,7 @@ export interface QACaseCoverage {
     status: QACaseStatus;
     release: boolean;
     statusResult: 'PASS' | 'FAIL' | 'NOT RUN' | 'NOT COVERED' | 'NOT REQUIRED';
+    reason?: string;
     steps: QACaseStepCoverage[];
   }>;
   releasePassed: boolean;
@@ -84,6 +87,7 @@ export const QA_CASE_COVERAGE_JSON_SCHEMA = {
           status: { enum: ['active', 'planned', 'historical'] },
           release: { type: 'boolean' },
           statusResult: { enum: ['PASS', 'FAIL', 'NOT RUN', 'NOT COVERED', 'NOT REQUIRED'] },
+          reason: { type: 'string' },
           steps: {
             type: 'array',
             items: {
@@ -92,6 +96,7 @@ export const QA_CASE_COVERAGE_JSON_SCHEMA = {
               properties: {
                 stepId: { type: 'string', pattern: '^(S|PC)-[0-9]{3}\\.[0-9]+$' },
                 status: { enum: ['PASS', 'FAIL', 'NOT RUN', 'NOT COVERED'] },
+                reason: { type: 'string' },
                 claims: {
                   type: 'array',
                   items: {

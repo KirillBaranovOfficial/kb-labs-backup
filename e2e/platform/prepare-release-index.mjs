@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -57,11 +58,25 @@ const binaryManifest = join(stage, 'binary-manifest.json');
 writeFileSync(binaryManifest, '{"binaries":[]}\n');
 
 const adapterConfig = JSON.stringify({
+  cache: '@kb-labs/adapters-state-broker',
+  logger: '@kb-labs/adapters-pino',
+  logRingBuffer: '@kb-labs/adapters-log-ringbuffer',
+  logPersistence: '@kb-labs/adapters-log-document',
+  analytics: '@kb-labs/adapters-analytics-sqlite',
   documentDatabase: '@kb-labs/adapters-sqlite',
   kvStore: '@kb-labs/adapters-sqlite/kv',
   serviceTransport: '@kb-labs/adapters-service-transport-http',
+  storage: '@kb-labs/adapters-fs',
 });
 const adapterOptions = JSON.stringify({
+  cache: { url: 'http://127.0.0.1:7777', namespace: 'kb:' },
+  logger: { level: 'info', streaming: { enabled: true, bufferSize: 1000, bufferMaxAge: 3600000 } },
+  logRingBuffer: { maxSize: 100 },
+  logPersistence: { collection: 'logs', batchSize: 100, flushInterval: 5000 },
+  analytics: { filename: '.kb/analytics/analytics.sqlite' },
+  documentDatabase: { filename: '.kb/database/kb.sqlite' },
+  kvStore: { filename: '.kb/database/kb.sqlite' },
+  storage: { baseDir: '.kb/data' },
   serviceTransport: {
     services: Object.fromEntries((registryManifest.services ?? [])
       .filter(({ id, port }) => id && port)
@@ -95,7 +110,7 @@ const result = spawnSync(process.execPath, [
   // how the V2 resolver binds a capability (installed-but-unrequired
   // adapters are deliberately left unbound); .kb/overlays cannot rebind
   // platform adapters.
-  '--platform-requires', 'serviceTransport,logger,logRingBuffer',
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache',
   '--platform-adapter-config', adapterConfig,
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
@@ -105,6 +120,34 @@ const result = spawnSync(process.execPath, [
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (result.status !== 0) process.exit(result.status ?? 1);
+
+// The update journey needs a second sealed release. Give core-runtime and the
+// SDK a journey-only patch package version while retaining their code, so the
+// stable channel and package verification resolve one coherent N+1 release.
+const baseVersion = JSON.parse(readFileSync(output, 'utf8')).profiles?.default?.platformVersion;
+const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(baseVersion ?? '');
+if (!match) throw new Error(`platform release version is not a stable semantic version: ${baseVersion}`);
+const updateVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
+const updateOutput = join(resolve(output, '..'), 'release-index-update.json');
+const updatePackagesDir = join(resolve(output, '..'), 'update-packages');
+prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion);
+const update = spawnSync(process.execPath, [
+  prepareScript,
+  '--flow', 'platform',
+  '--channel', 'stable',
+  '--artifacts-dir', updatePackagesDir,
+  '--binary-manifest', binaryManifest,
+  '--platform-version', updateVersion,
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache',
+  '--platform-adapter-config', adapterConfig,
+  '--platform-adapter-options', adapterOptions,
+  '--platform-member-packages', platformMembers,
+  '--adapter-overrides', adapterOverrides,
+  '--registry', 'http://verdaccio:4873',
+  '--output', updateOutput,
+  '--sealer-bin', sealer,
+], { stdio: 'inherit' });
+if (update.status !== 0) process.exit(update.status ?? 1);
 
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');

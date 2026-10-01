@@ -188,7 +188,7 @@ async function loadAdapter<T>(adapterPath: string, cwd: string, options?: unknow
  * Throws on the configured-but-failed branch only; never throws for
  * legitimately unconfigured slots.
  */
-function fillAdapterFallbacksAndRecord(
+export function fillAdapterFallbacksAndRecord(
   container: PlatformContainer,
   adapters: Record<string, AdapterValue | undefined>,
 ): void {
@@ -256,6 +256,24 @@ function fillAdapterFallbacksAndRecord(
         mode,
         implementation: implName,
         reason: 'not-configured',
+        recordedAt: now(),
+      });
+      continue;
+    }
+
+    // `platform.logs` is composed by PlatformContainer from local logger
+    // backends rather than loaded as a package for the `logs` slot. Report
+    // the effective reader instead of the unavailable slot fallback.
+    const hasLocalLogs = slot === 'logs' && (
+      Boolean(container.logger.getLogBuffer?.()) ||
+      container.hasAdapter('logRingBuffer') ||
+      container.hasAdapter('logPersistence')
+    );
+    if (hasLocalLogs) {
+      status.record({
+        slot,
+        mode: 'real',
+        implementation: 'HybridLogReader',
         recordedAt: now(),
       });
       continue;

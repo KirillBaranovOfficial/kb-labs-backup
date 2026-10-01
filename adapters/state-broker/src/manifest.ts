@@ -24,8 +24,7 @@ export const manifest: AdapterManifest = {
     url: {
       type: "string",
       default: "http://localhost:7777",
-      description:
-        "State daemon URL; falls back to in-memory mode when unavailable",
+      description: "URL of the platform-local StateBroker daemon",
     },
     namespace: {
       type: "string",

@@ -918,7 +918,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Service {service} is not configured.",
-      "hint": "Run `{command}` to configure this adapter."
+      "hint": "Run `{command}` to bind an installed adapter for this capability."
     },
     {
       "code": "KB_RUNTIME_INPUT_INVALID",

@@ -123,10 +123,10 @@ class LocalGateExecutionTests(unittest.TestCase):
         actual_names = [stage["name"] for stage in report["stages"]]
         self.assertEqual(dry_names, actual_names)
 
-    def test_full_dry_run_names_the_manifest_journey_matrix(self):
+    def test_full_dry_run_names_the_release_case_journey_matrix(self):
         dry, _, _ = self.run_gate("--full", "--dry-run")
         self.assertEqual(dry.returncode, 0, dry.stderr)
-        self.assertIn("full scenario manifest journey matrix", dry.stdout)
+        self.assertIn("full release case journey matrix", dry.stdout)
 
     def test_quick_mode_rejects_full_matrix_flag(self):
         result = subprocess.run(

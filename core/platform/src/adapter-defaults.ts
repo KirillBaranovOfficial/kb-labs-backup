@@ -46,6 +46,8 @@ export type DefaultFallbackMode = 'inmemory' | 'noop';
 
 export interface AdapterDefault {
   defaultFallback: DefaultFallbackMode;
+  /** Identifier shown by `kb adapter list` when no package overrides this slot. */
+  implementation: string;
 }
 
 /**
@@ -56,22 +58,22 @@ export interface AdapterDefault {
  */
 export const ADAPTER_DEFAULTS = {
   // ── Honest in-memory implementations (work in single-process) ────────────
-  logger:           { defaultFallback: 'inmemory' },
-  cache:            { defaultFallback: 'inmemory' },
-  storage:          { defaultFallback: 'inmemory' },
-  eventBus:         { defaultFallback: 'inmemory' },
-  vectorStore:      { defaultFallback: 'inmemory' },
-  documentDatabase: { defaultFallback: 'inmemory' },
-  kvStore:          { defaultFallback: 'inmemory' },
-  invoke:           { defaultFallback: 'inmemory' },
-  artifacts:        { defaultFallback: 'inmemory' },
-  config:           { defaultFallback: 'inmemory' },
-  analytics:        { defaultFallback: 'inmemory' },
+  logger:           { defaultFallback: 'inmemory', implementation: 'ConsoleLogger' },
+  cache:            { defaultFallback: 'inmemory', implementation: 'InMemoryCache' },
+  storage:          { defaultFallback: 'inmemory', implementation: 'InMemoryStorage' },
+  eventBus:         { defaultFallback: 'inmemory', implementation: 'InMemoryEventBus' },
+  documentDatabase: { defaultFallback: 'inmemory', implementation: 'InMemoryDocumentDatabase' },
+  kvStore:          { defaultFallback: 'inmemory', implementation: 'InMemoryKVStore' },
+  invoke:           { defaultFallback: 'inmemory', implementation: 'InMemoryInvoke' },
+  artifacts:        { defaultFallback: 'inmemory', implementation: 'InMemoryArtifacts' },
+  config:           { defaultFallback: 'inmemory', implementation: 'InMemoryConfig' },
+  analytics:        { defaultFallback: 'inmemory', implementation: 'InMemoryAnalyticsBuffer' },
+  notifier:         { defaultFallback: 'inmemory', implementation: 'InMemoryNotifier' },
 
   // ── No honest fallback possible — throw on use ───────────────────────────
-  llm:              { defaultFallback: 'noop' },
-  embeddings:       { defaultFallback: 'noop' },
-  notifier:         { defaultFallback: 'noop' },
-  logs:             { defaultFallback: 'noop' },
-  snapshotManager:  { defaultFallback: 'noop' },
+  llm:              { defaultFallback: 'noop', implementation: 'NoOpLLM' },
+  embeddings:       { defaultFallback: 'noop', implementation: 'NoOpEmbeddings' },
+  vectorStore:      { defaultFallback: 'noop', implementation: 'unavailable' },
+  logs:             { defaultFallback: 'noop', implementation: 'unavailable' },
+  snapshotManager:  { defaultFallback: 'noop', implementation: 'unavailable' },
 } as const satisfies Record<AdapterSlot, AdapterDefault>;

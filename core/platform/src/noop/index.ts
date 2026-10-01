@@ -6,7 +6,7 @@
  * Use these for:
  * - Loader fallback when a slot is not configured AND its
  *   `ADAPTER_DEFAULTS[slot].defaultFallback === 'noop'` (LLM, embeddings,
- *   notifier, logs, snapshot manager).
+ *   vector store, logs, and snapshot manager).
  * - Strict tests that want every call to throw if a real adapter is
  *   missing.
  *
@@ -20,8 +20,8 @@ import type { IPlatformAdapters } from '../platform-adapters.js';
 
 import { NoOpLLM } from './adapters/llm.js';
 import { NoOpEmbeddings } from './adapters/embeddings.js';
-import { NoOpNotifier } from './adapters/notifier.js';
-import { NoOpLogReader } from './adapters/log-reader.js';
+import { UnavailableLogReader } from './adapters/log-reader.js';
+import { UnavailableVectorStore } from './adapters/vector-store.js';
 
 // ── Adapter implementations ──────────────────────────────────────────────────
 export {
@@ -32,10 +32,12 @@ export {
   NoOpKVStore,
   NoOpLLM,
   NoOpEmbeddings,
-  NoOpNotifier,
-  NoOpLogReader,
+  UnavailableLogReader,
+  UnavailableVectorStore,
   NoOpLogger,
 } from './adapters/index.js';
+
+export { UnavailableNotifier } from './adapters/notifier.js';
 
 // ── Platform factory ─────────────────────────────────────────────────────────
 export { createNoOpPlatform } from './noop-platform.js';
@@ -61,8 +63,8 @@ export {
 export const noopFactories = {
   llm:             () => new NoOpLLM(),
   embeddings:      () => new NoOpEmbeddings(),
-  notifier:        () => new NoOpNotifier(),
-  logs:            () => new NoOpLogReader(),
+  vectorStore:     () => new UnavailableVectorStore(),
+  logs:            () => new UnavailableLogReader(),
   // snapshotManager intentionally omitted — type-shape of ISnapshotManager
   // makes a generic NoOp unsafe; loader treats it as `undefined` (absent).
 } satisfies Partial<{ [K in AdapterSlot]: () => IPlatformAdapters[K] }>;

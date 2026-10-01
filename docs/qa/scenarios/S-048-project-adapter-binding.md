@@ -1,6 +1,6 @@
 ---
 id: S-048
-title: Adapters — bind a platform adapter with project config
+title: Adapters — override and restore the project storage default
 persona: solo-developer
 area: config
 priority: P1
@@ -12,20 +12,29 @@ surfaces: [cli]
 
 ## Goal
 
-An installed platform adapter is bound to one project slot and its options are saved in that project’s user config.
+The built-in filesystem storage adapter works by default. A project can override
+its base directory, write workflow run records there, then unbind the override
+and return to the platform default without affecting another project.
 
 ## Prerequisites
 
-- [ ] Platform installed with access to the package registry.
-- [ ] Project A and project B initialized; project B has no storage adapter config.
+- [ ] Platform installed with the built-in filesystem storage adapter.
+- [ ] Projects A and B initialized with no project-level storage adapter config.
+- [ ] The workflow service persists run records through `IStorage` at
+  `<storage-root>/workflows/<runId>.json` (owned by the workflow stream).
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-048.1 | In project A, run `kb marketplace install @kb-labs/adapters-fs@<version> --scope platform`, then `kb adapter bind storage @kb-labs/adapters-fs --dry-run --json` | The adapter is installed in the machine store; bind returns `ok: true` and `dryRun: true` without changing project A config. |
-| S-048.2 | Run `kb adapter bind storage @kb-labs/adapters-fs --json` | Reports the project A config file and successful binding. |
-| S-048.3 | Run `kb config set platform.adapterOptions.storage '{"baseDir":".kb/data"}' --json` | Reports the project-scoped value was saved. |
-| S-048.4 | Inspect project A and project B configs | Project A has the storage binding and options; project B remains unchanged. |
-| S-048.5 | Run the project's documented `e2e-hello` workflow and inspect its completed run | The workflow succeeds while project A's storage adapter is bound, exercising the configured storage capability. |
-| S-048.6 | Run `kb adapter unbind storage --json` and inspect project A config | The binding is removed from project A; its adapter options remain available and project B is unchanged. |
+| S-048.1 | With project A and B both using defaults, run the `e2e-hello` workflow from each project and inspect each completed run record | Each record exists under its project's `.kb/data/workflows/<runId>.json`; each contains its own `runId` and terminal `success` status. Neither project has a project-level storage override. |
+| S-048.2 | In project A, run `kb config set platform.adapterOptions.storage '{"baseDir":".kb/override-data"}' --json`, then `kb adapter bind storage @kb-labs/adapters-fs --json` | Reports successful project-scoped binding; project A config selects the built-in fs adapter with the override base directory. Project B remains unconfigured and keeps the platform default. |
+| S-048.3 | Run the `e2e-hello` workflow in project A and inspect its completed run record | `<project-A>/.kb/override-data/workflows/<runId>.json` exists and contains the matching `runId` and terminal `success` status. The same run ID has no record under `<project-A>/.kb/data/workflows/`. |
+| S-048.4 | Run the `e2e-hello` workflow in project B and inspect its completed run record | The new record is under `<project-B>/.kb/data/workflows/<runId>.json`; project B still uses the default while project A is overridden. |
+| S-048.5 | In project A, run `kb adapter unbind storage --json`, then run a new `e2e-hello` workflow and inspect its record | The new run record is under `<project-A>/.kb/data/workflows/<runId>.json`, with matching `runId` and terminal `success`; no record for that run exists under `.kb/override-data`. Project B still writes to its default. |
+| S-048.6 | Inspect project A and project B configs and run `kb adapter list --json` from each | Project A no longer has a storage binding or storage options and reports the built-in fs default at its `.kb/data`; project B remains on its own `.kb/data` default. |
+
+## Dependencies
+
+- S-048.1, S-048.3–S-048.5 depend on the workflow stream persisting run records
+  through the effective project `IStorage` adapter.

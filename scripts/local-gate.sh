@@ -109,7 +109,7 @@ STAGE_NAMES=()
 STAGE_NAMES+=( 'frozen install' 'affected build' 'QA case catalog validation' 'affected lint type-check tests' )
 while IFS= read -r package; do STAGE_NAMES+=("kb-create Go tests $package"); done <<< "$go_packages"
 STAGE_NAMES+=( 'dependency audit' 'secret scan' 'prepare service journey candidate' 'Colima start' )
-if ((FULL)); then STAGE_NAMES+=( 'full scenario manifest journey matrix' ); else STAGE_NAMES+=( 'local install and service journey' 'secured install and service journey' ); fi
+if ((FULL)); then STAGE_NAMES+=( 'full release case journey matrix' ); else STAGE_NAMES+=( 'local install and service journey' 'secured install and service journey' ); fi
 STAGE_NAMES+=( 'nightly journey aggregation' )
 GO_STAGE_START=4
 AUDIT_STAGE=$((GO_STAGE_START + $(wc -l <<< "$go_packages" | tr -d ' ')))
