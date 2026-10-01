@@ -1,7 +1,7 @@
 ---
 title: "Environment Variables"
 description: "Every env var the platform reads, grouped by purpose, with defaults and effects."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-01"
 order: 4
 ---
 
@@ -67,7 +67,7 @@ Used by the REST API rate-limit middleware and metrics collector ([`rest-api/src
 | Variable | Purpose | Default |
 |---|---|---|
 | `GATEWAY_JWT_SECRET` | HMAC signing key for all gateway-issued JWTs. **Required in production.** When unset, the gateway logs a warning and falls back to an insecure default. | (insecure dev default) |
-| `GATEWAY_INTERNAL_SECRET` | Shared secret for the gateway's `/internal/dispatch` endpoint. Required when `platform.execution.mode === 'container'`. | — |
+| `GATEWAY_INTERNAL_SECRET` | Required shared secret for gateway-to-service authentication. kb-create generates and preserves it for local and secured installs; container and team deployments must provide it through their secret manager. | No default |
 | `PORT` | HTTP port the gateway listens on. | `4000` |
 
 See [`gateway-app/src/bootstrap.ts`](plugins/gateway/app/src/bootstrap.ts) and [Gateway → Authentication](/gateway/authentication).

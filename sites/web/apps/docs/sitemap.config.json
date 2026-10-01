@@ -103,7 +103,7 @@
         { "slug": "guides/add-studio-page",      "type": "manual", "owners": ["studio/**", "sdk/**"] },
         { "slug": "guides/llm-setup",            "type": "manual", "owners": ["tools/kb-create/**", "cli/commands/src/commands/system/config/**", "adapters/openai/**"] },
         { "slug": "guides/testing",              "type": "manual", "owners": ["shared/testing/**", "shared/testing-e2e/**", "infra/devkit/vitest/**", "infra/devkit/vitest.config.ts", "infra/devkit/fixtures/web/tests/**", "infra/devkit/templates/package-json/**", "devkit.yaml"] },
-        { "slug": "guides/production-readiness", "type": "manual", "owners": ["tools/kb-deploy/**"] },
+        { "slug": "guides/production-readiness", "type": "manual", "owners": ["tools/kb-deploy/**", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "plugins/marketplace-registry/app/src/bootstrap.ts"] },
         { "slug": "guides/troubleshooting",      "type": "manual", "owners": ["tools/kb-dev/**", "tools/kb-devkit/**"] },
         { "slug": "guides/ci-install",            "type": "manual", "owners": ["tools/kb-create/**", ".github/actions/kb-create-install/**", "e2e/journey/scenarios.json", "e2e/journey/run.sh", ".github/workflows/reusable-installer-journey.yml"] },
         { "slug": "guides/release-journey-coverage", "type": "manual", "owners": ["docs/qa/scenarios/**", "plugins/qa/contracts/src/types/cases.ts", "plugins/qa/contracts/src/types/config.ts", "plugins/qa/core/src/cases/**", "plugins/qa/entry/src/cli/commands/qa-cases-*.ts", "plugins/qa/entry/src/manifest.ts", "e2e/journey/service_steps.py", "e2e/journey/run.sh", "scripts/local-gate.sh", ".github/workflows/reusable-installer-journey.yml", ".github/workflows/release-build-candidate.yml", ".github/workflows/nightly-user-journey.yml"] }
@@ -174,7 +174,7 @@
         { "slug": "configuration/kb-config",             "type": "hybrid", "owners": ["core/config/**", "core/runtime/src/adapters/config-adapter.ts"] },
         { "slug": "configuration/dev-config",            "type": "hybrid", "owners": ["infra/devkit/**", "tools/kb-devkit/**"] },
         { "slug": "configuration/profiles",              "type": "manual", "owners": ["core/config/**", "core/runtime/src/adapters/config-adapter.ts"] },
-        { "slug": "configuration/environment-variables", "type": "manual", "owners": ["core/config/**"] }
+        { "slug": "configuration/environment-variables", "type": "manual", "owners": ["core/config/**", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "plugins/marketplace-registry/app/src/bootstrap.ts"] }
       ]
     },
 
@@ -206,8 +206,8 @@
         { "slug": "gateway/authentication", "type": "hybrid", "owners": ["services/gateway/app/src/auth/**", "services/gateway/auth/src/**", "cli/commands/src/commands/system/auth/**", "studio/app/src/pages/admin-users-page.tsx", "studio/app/src/pages/admin-invites-page.tsx", "studio/app/src/pages/api-tokens-page.tsx", "studio/app/src/pages/activate-page.tsx", "studio/app/src/pages/reset-password-page.tsx"] },
         { "slug": "gateway/routing",        "type": "hybrid", "owners": ["plugins/gateway/core/**"] },
         { "slug": "gateway/webhooks",       "type": "manual", "owners": ["plugins/gateway/**"], "status": "missing" },
-        { "slug": "gateway/self-hosted",    "type": "manual", "owners": ["tools/kb-deploy/**"] },
-        { "slug": "gateway/architecture",   "type": "manual", "owners": ["plugins/gateway/**"] }
+        { "slug": "gateway/self-hosted",    "type": "manual", "owners": ["tools/kb-deploy/**", "infra/docker-compose.backend.yml", "deploy/helm/kb-labs-platform/**", "services/gateway/app/kb-create.requirements.json"] },
+        { "slug": "gateway/architecture",   "type": "manual", "owners": ["plugins/gateway/**", "services/gateway/app/src/server.ts", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/routes/adapter-call.ts", "plugins/marketplace-registry/api/src/auth-middleware.ts"] }
       ]
     },
 
@@ -242,7 +242,7 @@
         { "slug": "operations/index",             "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "operations/deployment",        "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "operations/observability",     "type": "manual", "owners": ["adapters/analytics-duckdb/**", "adapters/analytics-sqlite/**", "adapters/pino/**"] },
-        { "slug": "operations/security",          "type": "manual", "owners": ["plugins/gateway/auth/**", "core/policy/**"] },
+        { "slug": "operations/security",          "type": "manual", "owners": ["plugins/gateway/auth/**", "core/policy/**", "services/gateway/app/src/auth/**", "services/rest-api/app/src/routes/adapter-call.ts", "plugins/marketplace-registry/api/src/auth-middleware.ts"] },
         { "slug": "operations/incident-response", "type": "manual", "static": true },
         { "slug": "operations/runbooks",          "type": "manual", "static": true }
       ]
