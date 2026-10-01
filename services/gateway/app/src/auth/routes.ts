@@ -130,8 +130,12 @@ export function registerAuthRoutes(
     if (typeof refreshToken !== 'string' || !refreshToken) {
       return reply.code(400).send({ error: 'Bad Request', message: 'refreshToken is required' });
     }
-    await authService.revokeRefreshToken(refreshToken);
-    await userExt?.userLogoutFn(refreshToken);
+    const tokenKind = await authService.classifyRefreshToken(refreshToken);
+    if (tokenKind?.kind === 'machine') {
+      await authService.revokeRefreshToken(refreshToken);
+    } else if (tokenKind?.kind === 'user') {
+      await userExt?.userLogoutFn(refreshToken);
+    }
     return reply.send({ ok: true });
   });
 }

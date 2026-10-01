@@ -26,6 +26,8 @@ import {
   signRefreshToken,
   verifyAccessToken,
   verifyRefreshToken,
+  verifyRefreshTokenKind,
+  type RefreshTokenKind,
   type JwtConfig,
 } from './jwt.js';
 
@@ -34,6 +36,10 @@ export class AuthService {
     private readonly cache: ICache,
     private readonly jwtConfig: JwtConfig,
   ) {}
+
+  async classifyRefreshToken(refreshToken: string): Promise<RefreshTokenKind | null> {
+    return verifyRefreshTokenKind(refreshToken, this.jwtConfig);
+  }
 
   // ── Register ──────────────────────────────────────────────────────────────
 

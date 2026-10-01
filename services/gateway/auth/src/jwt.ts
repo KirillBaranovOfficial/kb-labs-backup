@@ -10,6 +10,17 @@ import type { JwtPayload, TokenType } from '@kb-labs/gateway-contracts';
 const ACCESS_TOKEN_TTL = 15 * 60;       // 15 minutes in seconds
 const REFRESH_TOKEN_TTL = 30 * 24 * 3600; // 30 days in seconds
 
+// Persisted refresh-token contract: machine tokens have exactly {sub, iat,
+// exp, type: 'refresh', jti}; user tokens have exactly those claims plus
+// {tenantId, fam}. Keep type='refresh' for both so tokens issued by an older
+// release remain valid; classify only after one exact schema verifies.
+const MACHINE_REFRESH_CLAIMS = ['sub', 'iat', 'exp', 'type', 'jti'] as const;
+const USER_REFRESH_CLAIMS = ['sub', 'iat', 'exp', 'tenantId', 'fam', 'type', 'jti'] as const;
+
+export type RefreshTokenKind =
+  | { kind: 'machine'; hostId: string }
+  | { kind: 'user'; userId: string; tenantId: string; familyId: string; jti: string; iat: number; exp: number };
+
 export interface JwtConfig {
   /** Raw secret string — converted to TextEncoder internally */
   secret: string;
@@ -83,17 +94,8 @@ export async function verifyRefreshToken(
   token: string,
   config: JwtConfig,
 ): Promise<{ hostId: string } | null> {
-  try {
-    const key = getSecretKey(config.secret);
-    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
-    if ((payload as JWTPayload & { type?: string }).type !== 'refresh') {
-      return null;
-    }
-    if (!payload.sub) {return null;}
-    return { hostId: payload.sub };
-  } catch {
-    return null;
-  }
+  const verified = await verifyRefreshTokenKind(token, config);
+  return verified?.kind === 'machine' ? { hostId: verified.hostId } : null;
 }
 
 // ─── User-flavoured tokens (ADR-0020, Phase 1.13) ────────────────────────
@@ -201,6 +203,11 @@ interface RawUserClaims extends JWTPayload {
   jti?: string;
 }
 
+const hasExactClaims = (payload: JWTPayload, claimNames: readonly string[]): boolean => {
+  const actual = Object.keys(payload);
+  return actual.length === claimNames.length && claimNames.every((claim) => actual.includes(claim));
+};
+
 const normaliseAccess = (raw: RawUserClaims): UserAccessPayload | null => {
   if (raw.type !== 'user') {return null;}
   if (!raw.sub || !raw.tenantId || !raw.fam || !raw.jti) {return null;}
@@ -217,9 +224,11 @@ const normaliseAccess = (raw: RawUserClaims): UserAccessPayload | null => {
 };
 
 const normaliseRefresh = (raw: RawUserClaims): UserRefreshPayload | null => {
+  if (!hasExactClaims(raw, USER_REFRESH_CLAIMS)) {return null;}
   if (raw.type !== 'refresh') {return null;}
   if (!raw.sub || !raw.tenantId || !raw.fam || !raw.jti) {return null;}
-  if (typeof raw.iat !== 'number' || typeof raw.exp !== 'number') {return null;}
+  if (typeof raw.iat !== 'number' || typeof raw.exp !== 'number' || !Number.isInteger(raw.iat)
+    || !Number.isInteger(raw.exp) || raw.exp <= raw.iat) {return null;}
   return {
     userId: raw.sub,
     tenantId: raw.tenantId,
@@ -230,6 +239,39 @@ const normaliseRefresh = (raw: RawUserClaims): UserRefreshPayload | null => {
     exp: raw.exp,
   };
 };
+
+const normaliseMachineRefresh = (raw: JWTPayload): RefreshTokenKind | null => {
+  if (!hasExactClaims(raw, MACHINE_REFRESH_CLAIMS)) {return null;}
+  if (raw.type !== 'refresh' || typeof raw.sub !== 'string' || !raw.sub || typeof raw.jti !== 'string' || !raw.jti) {return null;}
+  if (typeof raw.iat !== 'number' || typeof raw.exp !== 'number' || !Number.isInteger(raw.iat)
+    || !Number.isInteger(raw.exp) || raw.exp <= raw.iat) {return null;}
+  return { kind: 'machine', hostId: raw.sub };
+};
+
+export async function verifyRefreshTokenKind(
+  token: string,
+  config: JwtConfig,
+): Promise<RefreshTokenKind | null> {
+  try {
+    const key = getSecretKey(config.secret);
+    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
+    const machine = normaliseMachineRefresh(payload);
+    if (machine) {return machine;}
+    const user = normaliseRefresh(payload as RawUserClaims);
+    if (!user) {return null;}
+    return {
+      kind: 'user',
+      userId: user.userId,
+      tenantId: user.tenantId,
+      familyId: user.familyId,
+      jti: user.jti,
+      iat: user.iat,
+      exp: user.exp,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export async function verifyUserAccessToken(
   token: string,
@@ -248,11 +290,15 @@ export async function verifyUserRefreshToken(
   token: string,
   config: JwtConfig,
 ): Promise<UserRefreshPayload | null> {
-  try {
-    const key = getSecretKey(config.secret);
-    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
-    return normaliseRefresh(payload as RawUserClaims);
-  } catch {
-    return null;
-  }
+  const verified = await verifyRefreshTokenKind(token, config);
+  if (verified?.kind !== 'user') {return null;}
+  return {
+    userId: verified.userId,
+    tenantId: verified.tenantId,
+    familyId: verified.familyId,
+    jti: verified.jti,
+    type: 'refresh',
+    iat: verified.iat,
+    exp: verified.exp,
+  };
 }
