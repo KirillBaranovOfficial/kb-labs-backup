@@ -113,7 +113,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         response = {"result": {"isError": False, "content": [{"text": "Created commit a1b2c3d4"}]}}
         history = subprocess.CompletedProcess(args=[], returncode=0, stdout="a1b2c3d4\n", stderr="")
         with patch("service_runner.request", return_value=(200, response, {})) as request, \
-             patch("mcp_project_steps.subprocess.run", return_value=history) as git_log:
+             patch("mcp_project_steps.run_command", return_value=history) as git_log:
             self.assertIsNone(apply_commit_plan("prj_a", "token", "/tmp/project-a"))
         payload = request.call_args.kwargs["payload"]
         self.assertEqual(payload["params"]["name"], "kb-labs-commit__commit_apply")
