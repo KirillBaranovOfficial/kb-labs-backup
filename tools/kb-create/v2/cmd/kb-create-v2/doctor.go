@@ -95,6 +95,10 @@ func (i invocation) runDoctor(output *os.File) int {
 	findings := doctor.Diagnose(input.Manifests, input.Configured)
 	response := doctor.Response{Findings: findings, Repair: doctor.PlanRepair(findings)}
 	if i.PlatformRoot != "" {
+		if active, readErr := receipt.Read(i.PlatformRoot); readErr == nil {
+			response.PlatformChannel = active.Plan.PlatformChannel
+			response.PlatformVersion = active.Plan.ServiceGraph.PlatformVersion
+		}
 		state, stateErr := host.StateHome()
 		if stateErr != nil {
 			write(output, map[string]any{"ok": false, "error": asLauncherError(stateErr)})
@@ -145,6 +149,12 @@ func (i invocation) runDoctor(output *os.File) int {
 			reachable = "yes"
 		}
 		next := "run `" + response.Next + "`"
+		if response.PlatformChannel != "" {
+			fmt.Fprintf(output, "Platform channel: %s\n", response.PlatformChannel)
+		}
+		if response.PlatformVersion != "" {
+			fmt.Fprintf(output, "Platform version: %s\n", response.PlatformVersion)
+		}
 		fmt.Fprintf(output, "Installed: %s\nRunning: %s\nReachable: %s\nNext: %s\n", installed, running, reachable, next)
 	}
 	if !response.OK {

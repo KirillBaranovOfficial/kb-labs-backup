@@ -13,6 +13,11 @@ if [[ -f "$TARGET/update-packages/generated-packages.txt" ]]; then
     [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
   done < "$TARGET/update-packages/generated-packages.txt"
 fi
+if [[ -f "$TARGET/canary-packages/generated-packages.txt" ]]; then
+  while IFS= read -r filename; do
+    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
+  done < "$TARGET/canary-packages/generated-packages.txt"
+fi
 rm -rf "$TARGET"
 mkdir -p "$TARGET"
 if [[ "${KB_JOURNEY_PACKAGES_READY:-0}" != "1" ]]; then
@@ -42,9 +47,9 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
 (
   cd "$TARGET"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json > checksums.txt
+    sha256sum kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-canary.json > checksums.txt
   else
-    shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json > checksums.txt
+    shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-canary.json > checksums.txt
   fi
 )
 echo "Prepared $TARGET"

@@ -100,7 +100,7 @@ func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state h
 		payload["kbShimCorrect"] = shim.Correct(c.Executable, c.PlatformRoot)
 	}
 	if active, readErr := receipt.Read(c.PlatformRoot); readErr == nil {
-		payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion}
+		payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion, "platformChannel": active.Plan.PlatformChannel}
 	}
 	if pid, ok := supervisor.LivePID(state); ok {
 		info := map[string]any{"pid": pid}
@@ -129,7 +129,16 @@ func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state h
 		if next == "kb-create install" {
 			humanNext = "rerun `kb-create install` to repair the kb command shim"
 		}
-		return c.succeed(payload, fmt.Sprintf("Installed: yes\nRunning: %s\nReachable: %s\nNext: %s", running, reachable, humanNext))
+		channel, version := "unknown", "unknown"
+		if installation, ok := payload["installation"].(map[string]any); ok {
+			if value, ok := installation["platformChannel"].(string); ok && value != "" {
+				channel = value
+			}
+			if value, ok := installation["platformVersion"].(string); ok && value != "" {
+				version = value
+			}
+		}
+		return c.succeed(payload, fmt.Sprintf("Installed: yes\nPlatform channel: %s\nPlatform version: %s\nRunning: %s\nReachable: %s\nNext: %s", channel, version, running, reachable, humanNext))
 	}
 	return c.succeed(payload, fmt.Sprintf("host %s (pid %d)", status.State, status.PID))
 }

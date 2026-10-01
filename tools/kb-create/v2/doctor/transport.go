@@ -17,15 +17,17 @@ type Input struct {
 // questions (see sections.go) and are present when a platform root was given;
 // Findings and Repair are the manifest-requirement gaps of the installation.
 type Response struct {
-	OK           bool       `json:"ok"`
-	Installed    bool       `json:"installed"`
-	Running      bool       `json:"running"`
-	Reachable    bool       `json:"reachable"`
-	Next         string     `json:"next"`
-	Installation *Section   `json:"installation,omitempty"`
-	Platform     *Section   `json:"platform,omitempty"`
-	Findings     []Finding  `json:"findings"`
-	Repair       RepairPlan `json:"repair"`
+	OK              bool       `json:"ok"`
+	Installed       bool       `json:"installed"`
+	Running         bool       `json:"running"`
+	Reachable       bool       `json:"reachable"`
+	Next            string     `json:"next"`
+	PlatformChannel string     `json:"platformChannel,omitempty"`
+	PlatformVersion string     `json:"platformVersion,omitempty"`
+	Installation    *Section   `json:"installation,omitempty"`
+	Platform        *Section   `json:"platform,omitempty"`
+	Findings        []Finding  `json:"findings"`
+	Repair          RepairPlan `json:"repair"`
 }
 
 func Decode(data []byte) (Input, error) {

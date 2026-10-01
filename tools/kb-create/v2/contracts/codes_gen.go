@@ -102,6 +102,7 @@ var launcherCodes = map[string]CodeInfo{
 	"KB_RUNTIME_TIMEOUT":                     {Area: ErrorArea("runtime"), Stage: ErrorStage("run"), Retryable: true},
 	"KB_RUNTIME_UNEXPECTED":                  {Area: ErrorArea("runtime"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_UPDATE_APPLY_FAILED":                 {Area: ErrorArea("update"), Stage: ErrorStage("update"), Retryable: true},
+	"KB_UPDATE_DOWNGRADE_REFUSED":            {Area: ErrorArea("update"), Stage: ErrorStage("update"), Retryable: false},
 	"KB_UPDATE_DOWNLOAD_FAILED":              {Area: ErrorArea("update"), Stage: ErrorStage("update"), Retryable: true},
 	"KB_UPDATE_HOST_NOT_HEALTHY":             {Area: ErrorArea("update"), Stage: ErrorStage("update"), Retryable: false},
 	"KB_UPDATE_INCOMPATIBLE":                 {Area: ErrorArea("update"), Stage: ErrorStage("update"), Retryable: false},

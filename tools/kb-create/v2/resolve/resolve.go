@@ -14,6 +14,7 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/semrange"
 )
 
 // Options describe the launcher doing the resolving. Zero values mean the
@@ -61,8 +62,22 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if sdkVersion == "" {
 		sdkVersion = source.Channels[request.SDK.Channel]
 	}
+	if request.Policy == contracts.PolicyCompatible && platform.SDKRange != "" {
+		if err := compatible(platform.SDKRange, sdkVersion, "platform SDK", request.Policy); err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
+	}
 	if source.Compatibility != nil {
-		if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, "", "", ""); err != nil {
+		if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, "", "", "", request.Policy); err != nil {
+			if request.Policy == contracts.PolicyStrict && sdkVersion != "" {
+				failure := &contracts.LauncherError{
+					Code: contracts.CodeIncompatibleComponents, Stage: contracts.StageResolve,
+					Message: fmt.Sprintf("strict policy requires an exact compatibility-matrix relation for platform %s and SDK %s; declared SDK range is %s", platform.Version, sdkVersion, platform.SDKRange),
+					Hint:    "Use an exact platform/SDK pair from the release matrix or choose --policy compatible.",
+					Details: map[string]string{"component": "SDK", "version": sdkVersion, "range": platform.SDKRange, "policy": string(request.Policy)},
+				}
+				return contracts.ResolvedInstallPlan{}, failure
+			}
 			return contracts.ResolvedInstallPlan{}, incompatible("release set", platform.Version, err.Error())
 		}
 	}
@@ -90,7 +105,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if binary.OS == goos && binary.Arch == goarch {
 			binaryForTarget = true
 			if source.Compatibility != nil {
-				if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, binary.ID, binary.OS, binary.Arch); err != nil {
+				if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, binary.ID, binary.OS, binary.Arch, request.Policy); err != nil {
 					return contracts.ResolvedInstallPlan{}, incompatible("binary", binary.ID, err.Error())
 				}
 			}
@@ -105,9 +120,6 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("SDK", sdkVersion, "is not present in the release index")
 		}
-		if err := compatible(platform.SDKRange, sdk.Version, "platform SDK"); err != nil {
-			return contracts.ResolvedInstallPlan{}, err
-		}
 		artifacts = append(artifacts, artifact(sdk, "sdk"))
 	}
 	requirements := append([]catalog.Requirement(nil), platform.Requires...)
@@ -121,11 +133,11 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("plugin", item.ID, "requested version is not present in the release index")
 		}
-		if err := compatible(component.PlatformRange, platform.Version, "plugin "+component.ID+" platform"); err != nil {
+		if err := compatible(component.PlatformRange, platform.Version, "plugin "+component.ID+" platform", request.Policy); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 		if request.SDK.Version != "" {
-			if err := compatible(component.SDKRange, request.SDK.Version, "plugin "+component.ID+" SDK"); err != nil {
+			if err := compatible(component.SDKRange, request.SDK.Version, "plugin "+component.ID+" SDK", request.Policy); err != nil {
 				return contracts.ResolvedInstallPlan{}, err
 			}
 		}
@@ -141,11 +153,11 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, launcherError(contracts.CodeProviderUnresolved, "no adapter provides required capability "+need.Capability, map[string]string{"capability": need.Capability, "requiredBy": need.RequiredBy})
 		}
-		if err := compatible(adapter.PlatformRange, platform.Version, "adapter "+adapter.ID+" platform"); err != nil {
+		if err := compatible(adapter.PlatformRange, platform.Version, "adapter "+adapter.ID+" platform", request.Policy); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 		if request.SDK.Version != "" {
-			if err := compatible(adapter.SDKRange, request.SDK.Version, "adapter "+adapter.ID+" SDK"); err != nil {
+			if err := compatible(adapter.SDKRange, request.SDK.Version, "adapter "+adapter.ID+" SDK", request.Policy); err != nil {
 				return contracts.ResolvedInstallPlan{}, err
 			}
 		}
@@ -171,7 +183,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		return contracts.ResolvedInstallPlan{}, incompatible("platform", platform.Version, "declares no host to run")
 	}
 	host := cloneHost(*platform.Host)
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, ProviderBindings: bindings, Host: &host, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version), ProviderBindings: bindings, Host: &host, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
 	plan.PlanHash = hash(plan)
 	return plan, nil
 }
@@ -223,7 +235,7 @@ func registryKind(source catalog.Catalog, pkg string) string {
 }
 
 func artifact(c catalog.Component, kind string) contracts.Artifact {
-	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, Tarball: c.Tarball, Config: c.Config}
+	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, Tarball: c.Tarball, Config: c.Config, PlatformRange: c.PlatformRange, SDKRange: c.SDKRange}
 }
 func findPlatform(items []catalog.PlatformBundle, version string) (catalog.PlatformBundle, bool) {
 	for _, v := range items {
@@ -426,19 +438,31 @@ func contains(values []string, wanted string) bool {
 	}
 	return false
 }
-func compatible(rangeValue, version, name string) error {
-	if rangeValue == "" || rangeValue == "*" {
+func compatible(rangeValue, version, name string, policy contracts.CompatibilityPolicy) error {
+	if rangeValue == "" {
 		return nil
 	}
-	if strings.TrimSpace(rangeValue) == version {
+	if policy == contracts.PolicyStrict && (strings.TrimSpace(rangeValue) == version || strings.TrimSpace(rangeValue) == "="+version) {
 		return nil
 	}
-	if strings.HasPrefix(rangeValue, "^") {
-		if strings.Split(strings.TrimPrefix(rangeValue, "^"), ".")[0] == strings.Split(version, ".")[0] {
+	if policy == contracts.PolicyCompatible {
+		if matched, err := semrange.Satisfies(version, rangeValue); err == nil && matched {
 			return nil
 		}
 	}
-	return incompatible(name, version, "does not satisfy declared range "+rangeValue)
+	return incompatibleRange(name, version, rangeValue)
+}
+
+func resolvedChannel(source catalog.Catalog, selector contracts.VersionSelector, version string) string {
+	if selector.Channel != "" {
+		return string(selector.Channel)
+	}
+	for _, channel := range []contracts.Channel{contracts.ChannelStable, contracts.ChannelCanary, contracts.ChannelExperimental} {
+		if source.Channels[channel] == version {
+			return string(channel)
+		}
+	}
+	return ""
 }
 func incompatible(subject, value, reason string) error {
 	label := subject
@@ -446,6 +470,13 @@ func incompatible(subject, value, reason string) error {
 		label = subject + " " + value
 	}
 	return launcherError(contracts.CodeIncompatibleComponents, label+" is incompatible: "+reason, map[string]string{"subject": subject, "value": value})
+}
+func incompatibleRange(component, version, rangeValue string) error {
+	message := component + " " + version + " is incompatible: it does not satisfy declared range " + rangeValue
+	return launcherError(contracts.CodeIncompatibleComponents, message, map[string]string{
+		"subject": component, "value": version, "component": component,
+		"version": version, "range": rangeValue,
+	})
 }
 func launcherError(code, message string, details map[string]string) error {
 	return &contracts.LauncherError{Code: code, Stage: contracts.StageResolve, Message: message, Hint: "Choose compatible versions or pass an explicit supported provider.", Details: details}

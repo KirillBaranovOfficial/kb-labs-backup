@@ -19,7 +19,8 @@ from pathlib import Path
 
 from studio_steps import create_studio_member, run_studio_browser_step
 from platform_update_steps import run_platform_update_steps
-from release_index import stable_platform_version
+from platform_channel_steps import run_platform_channel_steps
+from release_index import channel_platform_version, stable_platform_version
 from service_steps import Journey, record_runner_failure
 from steps.auth import run_local_auth_steps, run_secured_auth_steps
 
@@ -662,6 +663,7 @@ def main():
             receipt_path = PLATFORM / ".kb" / "v2" / "receipt.json"
             active = json.loads(receipt_path.read_text())
             request = active["plan"]["request"]
+            stable_request = json.loads(json.dumps(request))
             base_version = active["plan"]["serviceGraph"]["platformVersion"]
             request_file = HOME / "platform-update-request.json"
             request_file.write_text(json.dumps(request) + "\n")
@@ -712,6 +714,31 @@ def main():
             if update_result.status != "PASS":
                 first = update_result.first_failure or {}
                 fail(f"platform update journey: {first.get('name', 'step')}: {first.get('message', '')}")
+            else:
+                canary_index = HOME / "release-index-canary.json"
+                canary_url = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/release-index-canary.json"
+                try:
+                    with urllib.request.urlopen(canary_url, timeout=30) as response:
+                        canary_index.write_bytes(response.read())
+                    canary_version = channel_platform_version(json.loads(canary_index.read_text()), "canary")
+                    channel_request = HOME / "platform-channel-request.json"
+                    channel_request.write_text(json.dumps(stable_request) + "\n")
+                    channel_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
+                        f"platform-channels-{access_mode}.json")
+                    channel_journey = run_platform_channel_steps(
+                        mode=access_mode, launcher=launcher, platform_root=PLATFORM,
+                        stable_index=HOME / ".local/share/kb-create/release-index.json",
+                        canary_index=canary_index, request_file=channel_request,
+                        stable_version=str(base_version), canary_version=str(canary_version),
+                        fresh_root=HOME / "canary-fresh", project_root=PROJECT,
+                        run_command=update_command,
+                    )
+                    channel_result = channel_journey.write_json(channel_report)
+                    if channel_result.status != "PASS":
+                        first = channel_result.first_failure or {}
+                        fail(f"platform channel journey: {first.get('name', 'step')}: {first.get('message', '')}")
+                except (KeyError, OSError, ValueError, urllib.error.URLError) as error:
+                    fail(f"platform channel candidate: could not load sealed canary index: {error}")
 
     for command, key in (("status", ""), ("doctor", "")):
         result, _ = run([launcher, command, "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)

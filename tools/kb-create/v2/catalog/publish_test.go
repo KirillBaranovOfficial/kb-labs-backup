@@ -44,10 +44,10 @@ func TestCheckCompatibilityRequiresExplicitPlatformSDKRelation(t *testing.T) {
 		{ID: "sdk@2.1.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.1.0", Status: "prepared", ValidatedBy: []string{"stage"}},
 		{ID: "binary:kb-dev@2.0.0:linux/amd64", Kind: "binary", ArtifactID: "kb-dev", Version: "2.0.0", Requires: []CompatibilityRelation{{Label: "platform@2.0.0"}, {Label: "sdk@2.1.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}},
 	}}}
-	if err := CheckCompatibility(source, "2.0.0", "2.1.0", "kb-dev", "linux", "amd64"); err != nil {
+	if err := CheckCompatibility(source, "2.0.0", "2.1.0", "kb-dev", "linux", "amd64", contracts.PolicyStrict); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckCompatibility(source, "2.0.0", "2.2.0", "", "", ""); err == nil {
+	if err := CheckCompatibility(source, "2.0.0", "2.2.0", "", "", "", contracts.PolicyStrict); err == nil {
 		t.Fatal("expected unrelated SDK to be rejected")
 	}
 }

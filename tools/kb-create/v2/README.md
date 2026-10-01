@@ -211,18 +211,40 @@ adapter version, but it never silently changes an explicit pin:
 
 | Policy | Behaviour |
 |---|---|
-| `strict` (default for CI/agents) | Exact pins must be compatible or resolution fails. |
-| `compatible` (interactive install default) | Resolver may choose only unpinned compatible versions and displays the resolved set before apply. |
-| `upgrade-safe` (explicit update only) | Resolver may advance unpinned artifacts within the defined compatibility policy; a snapshot is mandatory. |
+| `strict` (default for CI/agents) | The selected platform, SDK and binary pair must have an exact relation in the sealed release matrix. Declared plugin/adapter ranges must exactly name the selected versions. |
+| `compatible` (interactive install default) | The exact relation or a declared semantic-version range in the sealed matrix/manifest must admit the selected version. Pins are never changed silently. |
+
+Compatibility ranges support exact `major.minor.patch` versions, `*`, `^` and
+`~` ranges, comparison operators (`>`, `>=`, `<`, `<=`, `=`), whitespace-AND
+comparators, and `||` alternatives. Versions follow SemVer precedence,
+including prereleases. This is the complete supported grammar; npm range
+features such as partial versions, wildcards inside a version, hyphen ranges,
+and comma-separated comparators are rejected when the release index is sealed.
+Numeric version and prerelease identifiers must fit an unsigned 64-bit integer.
+Prereleases participate in SemVer precedence. The release-index sealer rejects
+malformed or out-of-subset ranges and versions.
 
 No intersecting range produces `KB_INSTALL_INCOMPATIBLE_COMPONENTS` before
 download or config writes. A missing capability produces
 `KB_INSTALL_PROVIDER_UNRESOLVED`; a competing explicit binding produces
 `KB_INSTALL_PROVIDER_AMBIGUOUS`. Each error names the selected versions or
 providers, the manifest constraint that rejected them and safe alternatives.
-A plugin or adapter without a range is `unknown compatibility`, never silently
-universal: it needs explicit user policy during migration and becomes a
-publish-time failure for official artifacts after the migration window.
+A plugin or adapter without a range supplies no component-specific constraint;
+the resolver cannot infer compatibility from the absent field. Release authors
+must publish explicit ranges before claiming cross-version compatibility.
+
+Updates recheck every plugin and adapter in the active receipt against its
+declared platform and SDK ranges before creating a snapshot or changing files.
+An incompatible update returns `KB_UPDATE_INCOMPATIBLE` and names the blocking
+component and range. `kb-create update` refuses semantic-version downgrades with
+`KB_UPDATE_DOWNGRADE_REFUSED`; use `kb-create rollback` to restore a saved
+snapshot.
+
+For example, select the canary channel with
+`kb-create plan --platform-channel canary --policy compatible --index release-index.json --input request.json --json`.
+The receipt records the resolved channel and exact platform version. To return
+to the prior installed version, use `kb-create rollback --yes --json`; an
+`update` request for a lower version is refused.
 
 The resolver also validates graph completeness before `apply`: required
 providers, ports, dependency targets, offline artifacts and mandatory service

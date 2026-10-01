@@ -43,6 +43,30 @@ kb-create apply \
 
 Use `--platform-version` or `--sdk-version` for an exact pin. Valid platform channels are `stable`, `canary` and `experimental`. `--offline` chooses the pre-provisioned artifact source; it does not silently fall back to the network.
 
+The wizard defaults to `compatible`; agents and CI can choose `strict`. Strict
+requires an exact platform/SDK relationship in the sealed release matrix.
+Compatible also accepts declared semantic-version ranges. The supported range
+grammar is exact full versions, `*`, `^`, `~`, comparison operators, whitespace
+AND comparators, and `||` alternatives. It follows SemVer precedence for
+prereleases; partial versions, embedded wildcards, hyphen ranges and
+comma-separated comparators are rejected when the index is sealed. Numeric
+version and prerelease identifiers must fit an unsigned 64-bit integer.
+
+Select a non-stable channel with the same resolver used by the wizard:
+
+```bash
+kb-create apply \
+  --index release-index.json \
+  --request-platform-root /srv/kb-platform \
+  --platform-channel canary \
+  --policy compatible \
+  --json
+```
+
+The receipt, `kb-create status --platform-root /srv/kb-platform --json`, and
+`kb-create doctor --platform-root /srv/kb-platform --json` report the resolved
+channel and exact platform version.
+
 `--platform-root` is retained for recovery operations. `--request-platform-root` is the root for plan/apply/update requests. `--secret-env requirement.id=ENV` passes only an environment-variable reference: the value is never written to the request, receipt, output, diagnostic bundle or telemetry.
 
 ## What apply guarantees
@@ -58,7 +82,8 @@ An incompatible version, missing provider, missing required configuration, or in
 ## Update, recovery and diagnostics
 
 ```bash
-# Resolve and apply a new desired request; a snapshot precedes mutation.
+# Resolve and apply a new desired request; installed plugin and adapter ranges
+# are checked before a snapshot or mutation.
 kb-create update --index release-index.json --input request.json
 
 # Inspect configuration gaps from the selected package manifests.
@@ -67,10 +92,18 @@ kb-create doctor --platform-root /srv/kb-platform
 # Apply only manifest-declared safe defaults; missing secrets remain input.
 kb-create doctor --fix --platform-root /srv/kb-platform
 
-# Recover a named immutable snapshot, or remove launcher-owned state.
-kb-create rollback --platform-root /srv/kb-platform --snapshot SNAPSHOT_ID
+# Restore the snapshot from the last update in a non-interactive shell.
+kb-create rollback --platform-root /srv/kb-platform --yes --json
+
+# Remove launcher-owned state.
 kb-create uninstall --platform-root /srv/kb-platform --yes
 ```
+
+An update to a lower semantic version returns `KB_UPDATE_DOWNGRADE_REFUSED`
+with the hint `use \`kb-create rollback\``. Rollback is the supported way to
+return to an earlier release. If an update would break an installed plugin or
+adapter range, it returns `KB_UPDATE_INCOMPATIBLE` with the component and range;
+update or remove that component before retrying.
 
 `doctor --fix` never invents a secret or chooses between ambiguous providers. It records missing user input with the manifest owner and hint. Each mutating operation writes the private package-manager transcript to `.kb/logs/`; on failure it also writes a redacted dossier in `.kb/diagnostics/` and prints both paths. Opt-in telemetry carries only outcome metadata, never paths, secrets or logs.
 

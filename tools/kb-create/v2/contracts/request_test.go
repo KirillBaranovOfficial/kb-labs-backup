@@ -45,6 +45,13 @@ func TestInstallRequestRejectsAmbiguousOrDuplicatePins(t *testing.T) {
 	}
 }
 
+func TestInstallRequestRejectsRemovedUpgradeSafePolicy(t *testing.T) {
+	_, err := (InstallRequest{PlatformRoot: t.TempDir(), Policy: CompatibilityPolicy("upgrade-safe")}).Normalize()
+	if err == nil {
+		t.Fatal("upgrade-safe must not be accepted as an alias")
+	}
+}
+
 func TestInstallRequestSortsComponentsAndRedactsSecretValues(t *testing.T) {
 	request, err := (InstallRequest{
 		PlatformRoot: t.TempDir(),

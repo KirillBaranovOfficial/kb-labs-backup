@@ -4,7 +4,7 @@ title: Platform — refuse incompatible release selections before mutation
 persona: solo-developer
 area: platform-core
 priority: P1
-status: planned
+status: active
 release: true
 modes: [local, secured]
 surfaces: [cli]
@@ -17,26 +17,24 @@ installation or update can change the active receipt or installed files.
 
 ## Prerequisites
 
-- [ ] A sealed compatibility matrix with SDK and binary relations, and fixture plugin/adapter artifacts whose declared ranges exclude the candidate.
-- [ ] An installed platform receipt with a selected plugin for the update compatibility check.
+- [ ] Sealed release entries for the stable platform, canary prerelease, an incompatible SDK, and a platform without the runner's OS/architecture binary.
+- [ ] An installed plugin fixture whose declared platform range accepts version N and excludes N+1.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-053.1 | Run `kb-create plan --platform-version VERSION --sdk-version VERSION --policy strict --json` with an SDK outside the platform's `SDKRange` or release-index compatibility relation | Planning fails with `KB_INSTALL_INCOMPATIBLE_COMPONENTS`, identifies the rejected release set or SDK, includes a recovery hint, and leaves the active receipt unchanged. |
-| S-053.2 | Run `kb-create plan --plugins fixture-plugin@VERSION --policy strict --json` and `kb-create plan --adapters fixture-adapter@VERSION --policy strict --json` where each manifest range excludes the candidate | Each plan fails with the typed incompatibility code and hint, names the plugin or adapter and rejected range, and leaves the active receipt unchanged. |
-| S-053.3 | Resolve a platform bundle that lacks a binary for the runner's OS/architecture | Planning fails with `KB_INSTALL_INCOMPATIBLE_COMPONENTS`, names the missing target and leaves the active receipt unchanged. |
-| S-053.4 | Update an installation containing the fixture plugin to a platform outside that plugin's declared range | Update is refused during resolution, names the plugin and range, and preserves the active receipt and host. |
+| S-053.1 | Plan with `--policy strict` for a platform/SDK pair present as an exact relation in the sealed matrix | The exact selected pair resolves and appears in the immutable plan. |
+| S-053.2 | Plan the same platform against an indexed SDK admitted by the matrix range but without an exact relation, once with `--policy strict` and once with `--policy compatible` | Strict returns `KB_INSTALL_INCOMPATIBLE_COMPONENTS` with `details.component=SDK`, `details.version`, `details.range`, and `details.policy=strict`; the hint is `Use an exact platform/SDK pair from the release matrix or choose --policy compatible.` Compatible resolves only if the matrix range admits that exact SDK version. |
+| S-053.3 | Install plugin `fixture-compat@N`, then run `kb-create update --platform-version N+1 --policy compatible --json` where the installed manifest range excludes N+1 | Update refuses before mutation with `KB_UPDATE_INCOMPATIBLE`; details contain `component=fixture-compat`, `kind=plugin`, `version=N+1`, and the declared `range`; the hint is `Update or remove plugin fixture-compat first, then rerun \`kb-create update\`.` The active receipt and host remain unchanged. |
+| S-053.4 | Request an adapter whose declared platform or SDK range excludes the selected release | Planning fails with `KB_INSTALL_INCOMPATIBLE_COMPONENTS`; details contain the adapter in `component`, the rejected `version`, and declared `range`; the hint is `Choose compatible versions or pass an explicit supported provider.` No installation files change. |
+| S-053.5 | Request an SDK outside the platform SDK range or a platform without a binary for the runner OS/architecture | Planning fails with `KB_INSTALL_INCOMPATIBLE_COMPONENTS`; an SDK rejection names `component=platform SDK`, its `version`, and `range`, while a missing binary identifies `details.subject=binary` and the OS/architecture in `details.value`. The error includes a hint and leaves the active receipt unchanged. |
+| S-053.6 | Attempt an update that violates an installed plugin or adapter range | `KB_UPDATE_INCOMPATIBLE` identifies the installed component, kind, target version and range, and says to update or remove that component first. The receipt and running host are preserved. |
 
 ## Pass criteria
 
-The resolver returns a structured incompatibility error with a generic safe
-hint before apply/update side effects. `--policy` is normalized and serialized,
-but the resolver currently does not change behavior for `strict` versus
-`compatible`; the range checker also accepts only `*`, exact versions, or a
-major-matching caret range. This case stays planned until the canary candidate
-includes the requested incompatible fixture artifacts and policy behavior is
-specified and implemented. Update checks an explicitly supplied plugin request;
-it does not independently reconstruct compatibility from plugins omitted by
-the update request.
+Strict compatibility means an exact relationship in the sealed matrix;
+compatible compatibility may use a valid semantic-version range declared by
+that matrix. Update evaluates every plugin and adapter in the active receipt,
+even when the new update request omits them. Incompatible updates fail before
+the snapshot or any package/config/receipt mutation.
