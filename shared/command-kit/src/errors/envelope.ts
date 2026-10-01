@@ -47,7 +47,7 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
   }
   if (error instanceof ServiceNotConfiguredError) {
     const adapter = error.requiredAdapter;
-    const command = `kb config set platform.adapters.${error.service} ${adapter}`;
+    const command = `kb adapter bind ${error.service} ${adapter}`;
     return createErrorEnvelope('KB_ADAPTER_NOT_CONFIGURED', {
       ...options,
       cause: error.message,

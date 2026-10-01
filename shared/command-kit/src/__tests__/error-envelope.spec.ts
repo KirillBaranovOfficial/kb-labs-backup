@@ -48,12 +48,12 @@ describe('toErrorEnvelope (command-kit adapter)', () => {
     expect(validateErrorEnvelope(envelope)).toEqual([]);
     expect(envelope.code).toBe('KB_ADAPTER_NOT_CONFIGURED');
     expect(envelope.hint).toBe(
-      'Run `kb config set platform.adapters.llm @kb-labs/adapters-openai` to configure this adapter.',
+      'Run `kb adapter bind llm @kb-labs/adapters-openai` to bind an installed adapter for this capability.',
     );
 
     const cacheAdapter = toErrorEnvelope(new ServiceNotConfiguredError('cache', '@kb-labs/adapters-redis'));
     expect(cacheAdapter.hint).toBe(
-      'Run `kb config set platform.adapters.cache @kb-labs/adapters-redis` to configure this adapter.',
+      'Run `kb adapter bind cache @kb-labs/adapters-redis` to bind an installed adapter for this capability.',
     );
   });
 
