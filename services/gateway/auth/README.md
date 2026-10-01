@@ -144,30 +144,41 @@ Rotates the token pair using a valid refresh token. The old refresh token is **i
 
 ## JWT Payload Schema
 
-### Access Token (HS256, TTL: 15 minutes)
+### Access Tokens (HS256, TTL: 15 minutes)
 
 ```typescript
 {
   sub: string;          // hostId
   namespaceId: string;  // tenant isolation key
   tier: 'free' | 'pro' | 'enterprise';
-  type: 'machine' | 'user';
+  type: 'machine_access';
+  permissions: string[];
   iat: number;
   exp: number;
 }
 ```
+
+User access tokens use `type: 'user_access'` with `sub`, `tenantId`, `fam`,
+`jti`, `iat`, and `exp` claims. Each verifier accepts only its own explicit
+kind.
 
 ### Refresh Token (HS256, TTL: 30 days)
 
 ```typescript
 {
   sub: string;    // hostId
-  type: 'refresh';
+  type: 'machine_refresh';
   jti: string;    // UUID — used as store key for rotation
   iat: number;
   exp: number;
 }
 ```
+
+User refresh tokens use `type: 'user_refresh'` and include `tenantId` and `fam`
+alongside `sub`, `jti`, `iat`, and `exp`. Tokens from before the explicit-kind
+contract are rejected. Secured CLI users sign in again when an update or
+rollback crosses this change. The host agent obtains a fresh machine token pair
+from its stored registration credentials whenever it starts.
 
 ---
 
@@ -177,7 +188,7 @@ Every authenticated request gets an `AuthContext` injected into the Fastify requ
 
 ```typescript
 interface AuthContext {
-  type: 'machine' | 'user';
+  type: 'machine' | 'user' | 'cli';
   userId: string;       // hostId from JWT sub
   namespaceId: string;  // tenant isolation key
   tier: 'free' | 'pro' | 'enterprise';

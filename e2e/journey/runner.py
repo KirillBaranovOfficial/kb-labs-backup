@@ -728,6 +728,20 @@ def main():
                                     env=env, cwd=PROJECT, timeout=90)
                     return result
 
+                def verify_contract_transition():
+                    result, _ = run(["bash", "-c", '. "$HOME/.profile"; kb config show --json'],
+                                    env=env, cwd=PROJECT, timeout=90)
+                    try:
+                        payload = json.loads(result.stdout)
+                    except json.JSONDecodeError as error:
+                        raise RuntimeError("saved CLI session check did not return JSON") from error
+                    failure = payload.get("error") if isinstance(payload, dict) else None
+                    if (result.returncode == 0 or not isinstance(failure, dict)
+                            or failure.get("code") != "KB_AUTH_REQUIRED"
+                            or failure.get("message") != "Authentication is required."
+                            or failure.get("hint") != 'Run "kb auth login".'):
+                        raise RuntimeError("saved CLI session did not return KB_AUTH_REQUIRED with the login hint")
+
             platform_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 f"platform-update-{access_mode}.json")
             platform_journey = run_platform_update_steps(
@@ -741,6 +755,7 @@ def main():
                 updated_version=str(updated_version),
                 run_command=update_command,
                 verify_user=verify_admin,
+                verify_contract_transition=verify_contract_transition if access_mode == "secured" else None,
             )
             update_result = platform_journey.write_json(platform_report)
             if update_result.status != "PASS":
@@ -898,7 +913,7 @@ def main():
                               cases=["S-041.5"])
         else:
             auth_journey.step("admin invite, reset, and restart persistence", auth_capability, run_auth_flow,
-                              cases=["S-041.2", "S-041.3", "S-041.4"])
+                              cases=["S-041.2", "S-041.3"])
             auth_journey.step(
                 "bootstrap administrator CLI status", "auth.accounts",
                 lambda: run_cli_auth_status(str(BIN / "kb"), service_env, authenticated=True,

@@ -116,7 +116,7 @@ The auth middleware runs on every non-whitelisted route. On success it writes `A
 
 ```typescript
 interface AuthContext {
-  type: 'machine' | 'user';
+  type: 'machine' | 'user' | 'cli';
   userId: string;       // hostId (JWT sub)
   namespaceId: string;
   tier: 'free' | 'pro' | 'enterprise';

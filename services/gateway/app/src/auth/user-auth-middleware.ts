@@ -9,7 +9,7 @@
  * present — this is how the CLI (which has nowhere to hold a cookie) carries
  * a human session obtained from `POST /auth/login/cli`. User and machine
  * access tokens are disambiguated by an explicit `type` claim (`'user'` vs.
- * a machine `TokenType`), so a machine Bearer token presented here simply
+ * a machine token kind), so a machine Bearer token presented here simply
  * fails `verifyUserAccessToken` and falls through to the machine middleware
  * — see the Bearer branch below.
  *

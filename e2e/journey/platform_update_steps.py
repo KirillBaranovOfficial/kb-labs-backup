@@ -72,6 +72,7 @@ def run_platform_update_steps(
     updated_version: str,
     run_command: CommandRunner = _run,
     verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
+    verify_contract_transition: Callable[[], None] | None = None,
 ) -> Journey:
     """Update the running installation, exercise a project command, and roll back."""
     journey = Journey(mode, f"platform-update-{mode}")
@@ -156,12 +157,14 @@ def run_platform_update_steps(
         if not config_hash or config_hash != verified_hash:
             raise RuntimeError("generated config is missing or does not match the updated receipt verification hash")
         if verify_user is not None:
+            if verify_contract_transition is not None:
+                verify_contract_transition()
             login = verify_user()
             if login.returncode != 0:
                 raise RuntimeError(f"admin login failed after update: {' '.join(login.stdout.split())[-400:]}")
 
     journey.step("verify updated receipt, config, and host status", "platform.update", verify_updated_install,
-                 cases=["S-023.4"])
+                 cases=["S-023.4", "S-041.4"] if verify_contract_transition else ["S-023.4"])
 
     def project_command() -> None:
         result = run_command([kb_binary, "project", "list", "--json"])
@@ -275,6 +278,8 @@ def run_platform_update_steps(
                 f"afterRollbackHostRestart={after_rollback}, afterMissingSnapshotRecovery={after_recovery}"
             )
         if verify_user is not None:
+            if verify_contract_transition is not None:
+                verify_contract_transition()
             login = verify_user()
             if login.returncode != 0:
                 raise RuntimeError(f"admin login failed after rollback: {' '.join(login.stdout.split())[-400:]}")
@@ -289,7 +294,7 @@ def run_platform_update_steps(
             raise RuntimeError("project list after rollback did not return ok=true and a projects array")
 
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
-                 cases=["S-024.3"], details=checkpoint_details)
+                 cases=["S-024.3", "S-041.4"] if verify_contract_transition else ["S-024.3"], details=checkpoint_details)
 
     def doctor() -> None:
         result = _json_command(run_command, [launcher, "doctor", "--platform-root", root, "--json"], "doctor")

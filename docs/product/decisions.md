@@ -147,9 +147,9 @@ doctor report the missing credential as a warning; an LLM request returns the
 typed credentials error.
 Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11.
 
-### Secured sessions survive host lifecycle operations
+### 2026-10-01: Explicit token kinds and lifecycle contract changes
 
-Secured browser and CLI sessions remain valid across host restart, update, and rollback until their access tokens expire or an explicit revocation occurs; logout, administrator revocation, and password reset remain the mechanisms that invalidate sessions. This follows the product principle “persistent local defaults, no headache, nothing to redo from scratch.” A host lifecycle operation must not make users sign in again. Cases: S-041.4, S-023, S-024.
+Every JWT carries an explicit token kind. User access, user refresh, machine access, and machine refresh tokens use distinct `type` values, and each verifier accepts only its own kind. There is no compatibility for tokens issued before this contract. When an update crosses this contract change, saved user sessions become invalid and the CLI reports `KB_AUTH_REQUIRED` with the `kb auth login` hint so users can sign in again. Machine credentials are re-established automatically: hosts register and obtain fresh machine tokens on start, including after rollback to a release that does not recognize the new token contract. Cases: S-041.4, S-023, S-024.
 
 ### Platform members: core plugins only
 

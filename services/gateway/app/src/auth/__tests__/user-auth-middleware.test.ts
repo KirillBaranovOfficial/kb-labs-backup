@@ -250,7 +250,7 @@ describe('Bearer user token (CLI session — no cookie involved)', () => {
 
   it('a machine-shaped Bearer token (type !== "user") falls through instead of being misidentified as a user token', async () => {
     const { token: machineToken } = await signAccessToken(
-      { hostId: 'host_1', namespaceId: 'ns_1', tier: 'free', type: 'machine', permissions: ['host:connect'] },
+      { hostId: 'host_1', namespaceId: 'ns_1', tier: 'free', type: 'machine_access', permissions: ['host:connect'] },
       jwtConfig,
     );
     const r = await app.inject({
