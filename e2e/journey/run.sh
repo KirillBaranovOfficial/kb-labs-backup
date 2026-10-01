@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+export KB_JOURNEY_GIT_REVISION="$(git rev-parse HEAD)"
 docker() {
   if [[ "${1:-}" == "compose" ]]; then
     shift

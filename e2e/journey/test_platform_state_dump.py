@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from platform_state_dump import MAX_DUMP_BYTES, PlatformStateDumpOnce, dump_platform_state
+from platform_state_dump import MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDumpOnce, dump_platform_state
 
 
 class PlatformStateDumpTests(unittest.TestCase):
@@ -45,6 +45,11 @@ class PlatformStateDumpTests(unittest.TestCase):
                     {"id": "missing", "package": "@kb-labs/missing", "version": "4.5.6"},
                 ]},
             }))
+            (platform / ".kb/v2/snapshots").mkdir()
+            (platform / ".kb/v2/snapshots/snapshot-good.json").write_text(
+                '{"id":"snapshot-good","token":"snapshot-secret"}'
+            )
+            (platform / ".kb/v2/snapshots/snapshot-too-large.json").write_text("x" * (MAX_FILE_BYTES + 1))
             (platform / "node_modules/@kb-labs/sample/package.json").write_text(
                 '{"name":"@kb-labs/sample","version":"1.2.3"}'
             )
@@ -67,7 +72,8 @@ class PlatformStateDumpTests(unittest.TestCase):
             launcher = binaries / "kb-create"
             launcher.write_text("#!/bin/sh\necho '{\"token\":\"launcher-secret\"}'\nexit 9\n")
             launcher.chmod(0o755)
-            env = {**os.environ, "PATH": f"{binaries}:{os.environ.get('PATH', '')}"}
+            env = {**os.environ, "PATH": f"{binaries}:{os.environ.get('PATH', '')}",
+                   "KB_JOURNEY_GIT_REVISION": "abc123def"}
 
             destination = dump_platform_state(
                 platform, reports, mode="secured", front="agent", scenario="commit", variant="default",
@@ -77,6 +83,10 @@ class PlatformStateDumpTests(unittest.TestCase):
 
             self.assertTrue((destination / ".kb/marketplace.lock").is_file())
             self.assertTrue((destination / ".kb/v2/receipt.json").is_file())
+            snapshot = destination / ".kb/v2/snapshots/snapshot-good.json"
+            self.assertTrue(snapshot.is_file())
+            self.assertNotIn("snapshot-secret", snapshot.read_text())
+            self.assertFalse((destination / ".kb/v2/snapshots/snapshot-too-large.json").exists())
             manifests = json.loads((destination / "receipt-artifact-manifests.json").read_text())
             self.assertEqual(manifests, [
                 {"id": "sample", "package": "@kb-labs/sample", "version": "1.2.3", "manifestExists": True},
@@ -98,7 +108,9 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertIn("exit_code: 7", (destination / "kb-marketplace-plugins-project.txt").read_text())
             self.assertIn("exit_code: 8", (destination / "kb-command-diagnostic.txt").read_text())
             self.assertIn("exit_code: 9", (destination / "kb-create-status.txt").read_text())
-            self.assertIn("First failure:", (destination / "index.md").read_text())
+            index = (destination / "index.md").read_text()
+            self.assertIn("First failure:", index)
+            self.assertIn("Journey git revision: abc123def", index)
             size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
             self.assertLessEqual(size, MAX_DUMP_BYTES)
 

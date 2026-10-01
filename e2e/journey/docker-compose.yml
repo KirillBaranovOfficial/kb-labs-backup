@@ -18,6 +18,8 @@ services:
     build:
       context: ..
       dockerfile: e2e/journey/Dockerfile.runner
+      args:
+        KB_JOURNEY_GIT_REVISION: ${KB_JOURNEY_GIT_REVISION:-unknown}
     image: ${KB_JOURNEY_RUNNER_IMAGE:-kb-installer-journey:local}
     depends_on:
       origin:

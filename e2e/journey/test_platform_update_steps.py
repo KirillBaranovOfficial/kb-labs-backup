@@ -79,6 +79,19 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         )
         report = result.result()
         self.assertEqual(report.status, "PASS")
+        steps = {step["name"]: step for step in report.steps}
+        self.assertEqual(
+            steps["save installed receipt, config, and host status"]["details"]["configSha256"]["beforeUpdate"],
+            hashlib.sha256(b'{"stable":true}\n').hexdigest(),
+        )
+        self.assertEqual(
+            set(steps["verify restored receipt, config, host, and project command"]["details"]["configSha256"]),
+            {"beforeUpdate", "afterUpdateHostRestart", "afterRollbackHostRestart", "afterMissingSnapshotRecovery"},
+        )
+        checkpoints = steps["verify restored receipt, config, host, and project command"]["details"]["configSha256"]
+        self.assertNotEqual(checkpoints["beforeUpdate"], checkpoints["afterUpdateHostRestart"])
+        self.assertEqual(checkpoints["beforeUpdate"], checkpoints["afterRollbackHostRestart"])
+        self.assertEqual(checkpoints["afterRollbackHostRestart"], checkpoints["afterMissingSnapshotRecovery"])
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
         self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} | {f"S-024.{step}" for step in (1, 2, 3, 4, 5)})
         self.assertEqual([command[1] for command in self.commands], [
@@ -91,6 +104,87 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertIn("--yes", rollback)
         self.assertIn("snapshot-1", rollback)
         self.assertEqual(self.user_checks, 3)
+
+    def test_login_failure_keeps_the_valid_before_update_hash_and_does_not_fake_a_config_change(self):
+        login_attempts = 0
+
+        def failed_login():
+            nonlocal login_attempts
+            login_attempts += 1
+            code = 1 if login_attempts == 1 else 0
+            return subprocess.CompletedProcess(["kb", "auth", "login"], code,
+                                               "authentication failed" if code else "logged in", "")
+
+        result = run_platform_update_steps(
+            mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            base_version="3.0.0", updated_version="3.0.1", run_command=self.fake_kb, verify_user=failed_login,
+        )
+        steps = {step["name"]: step for step in result.result().steps}
+        self.assertEqual(steps["save installed receipt, config, and host status"]["status"], "FAIL")
+        self.assertEqual(steps["verify restored receipt, config, host, and project command"]["status"], "PASS")
+        self.assertEqual(
+            steps["save installed receipt, config, and host status"]["details"]["configSha256"]["beforeUpdate"],
+            hashlib.sha256(b'{"stable":true}\n').hexdigest(),
+        )
+
+    def test_missing_baseline_blocks_s024_3_with_reason(self):
+        status_calls = 0
+
+        def missing_initial_status(args: list[str]) -> subprocess.CompletedProcess:
+            nonlocal status_calls
+            if args[1] == "status":
+                status_calls += 1
+                if status_calls == 1:
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": False, "running": False}), "")
+            return self.fake_kb(args)
+
+        result = run_platform_update_steps(
+            mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            base_version="3.0.0", updated_version="3.0.1", run_command=missing_initial_status,
+        )
+        steps = {step["name"]: step for step in result.result().steps}
+        verification = steps["verify restored receipt, config, host, and project command"]
+        self.assertEqual(verification["status"], "BLOCKED")
+        self.assertIn("before-update config SHA-256 is unavailable", verification["message"])
+        self.assertNotIn("beforeUpdate", verification["details"]["configSha256"])
+
+    def test_s024_3_names_first_unexpected_checkpoint_change_and_both_hashes(self):
+        def mutate_after_rollback(args: list[str]) -> subprocess.CompletedProcess:
+            result = self.fake_kb(args)
+            if args[1] == "rollback" and "missing-journey-snapshot" not in args and result.returncode == 0:
+                self.config.write_text('{"stable":true,"rewritten":true}\n')
+            return result
+
+        result = run_platform_update_steps(
+            mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            base_version="3.0.0", updated_version="3.0.1", run_command=mutate_after_rollback,
+        )
+        verification = next(step for step in result.result().steps if step["cases"] == ["S-024.3"])
+        self.assertEqual(verification["status"], "FAIL")
+        self.assertIn("after successful rollback plus host restart", verification["message"])
+        self.assertIn("beforeUpdate=", verification["message"])
+        self.assertIn("afterRollbackHostRestart=", verification["message"])
+
+    def test_s024_3_names_change_during_missing_snapshot_recovery(self):
+        def mutate_during_recovery(args: list[str]) -> subprocess.CompletedProcess:
+            result = self.fake_kb(args)
+            if args[1] == "rollback" and "missing-journey-snapshot" in args:
+                self.config.write_text('{"stable":true,"recoveryRewrite":true}\n')
+            return result
+
+        result = run_platform_update_steps(
+            mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_recovery,
+        )
+        verification = next(step for step in result.result().steps if step["cases"] == ["S-024.3"])
+        self.assertEqual(verification["status"], "FAIL")
+        self.assertIn("after missing-snapshot recovery", verification["message"])
+        self.assertIn("afterRollbackHostRestart=", verification["message"])
+        self.assertIn("afterMissingSnapshotRecovery=", verification["message"])
 
     def test_failed_update_reports_the_first_failed_case_step(self):
         def broken(args: list[str]) -> subprocess.CompletedProcess:

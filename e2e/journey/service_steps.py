@@ -7,7 +7,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 
 @dataclass
@@ -19,6 +19,7 @@ class StepResult:
     duration_seconds: float
     message: str
     cases: list[str]
+    details: dict[str, Any] | None = None
 
 
 @dataclass
@@ -43,7 +44,8 @@ class Journey:
         self.started = time.monotonic()
         self.steps: list[StepResult] = []
 
-    def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = ()) -> StepResult:
+    def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
+             details: Callable[[], dict[str, Any]] | None = None) -> StepResult:
         started = time.monotonic()
         try:
             message = check()
@@ -56,7 +58,8 @@ class Journey:
             status = "FAIL"
             message = str(error) or error.__class__.__name__
         result = StepResult(name, capability, self.mode, status,
-                            round(time.monotonic() - started, 3), message or "passed", list(cases))
+                            round(time.monotonic() - started, 3), message or "passed", list(cases),
+                            details() if details is not None else None)
         self.steps.append(result)
         return result
 
@@ -66,7 +69,7 @@ class Journey:
         return result
 
     def result(self) -> JourneyResult:
-        first = next((asdict(step) for step in self.steps if step.status == "FAIL"), None)
+        first = next((_step_dict(step) for step in self.steps if step.status == "FAIL"), None)
         failed = any(step.status == "FAIL" for step in self.steps)
         blocked = any(step.status == "BLOCKED" for step in self.steps)
         status = "FAIL" if failed else "BLOCKED" if blocked else "PASS"
@@ -86,7 +89,7 @@ class Journey:
         }
         return JourneyResult("kb.service-journey/v1", self.run_id, self.started_at,
                              round(time.monotonic() - self.started, 3), status, first,
-                             [asdict(step) for step in self.steps], case_run)
+                             [_step_dict(step) for step in self.steps], case_run)
 
     def write_json(self, path: str | Path) -> JourneyResult:
         result = self.result()
@@ -100,6 +103,13 @@ def run_steps(journey: Journey, steps: Iterable[tuple[str, str, Callable[[], str
     for name, capability, check in steps:
         journey.step(name, capability, check)
     return journey.result()
+
+
+def _step_dict(step: StepResult) -> dict[str, Any]:
+    result = asdict(step)
+    if step.details is None:
+        result.pop("details")
+    return result
 
 
 def record_runner_failure(path: str | Path, mode: str, failure: str) -> JourneyResult:
