@@ -143,6 +143,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     error = {"code": "KB_ADAPTER_NOT_CONFIGURED", "details": {"service": "vectorStore"},
                              "actions": [{"command": "kb adapter bind vectorStore @kb-labs/adapters-qdrant"}]}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
+                if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/mind-entry":
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:2] == ["project", "remove"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command}")
@@ -158,6 +160,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)
             self.assertIn(("kb", "commit", "generate", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind-entry", "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root), "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root)), calls)
             self.assertFalse(any(call[0] == "kb-dev" and "doctor" in call for call in calls))
