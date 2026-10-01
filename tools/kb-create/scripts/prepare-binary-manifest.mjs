@@ -33,7 +33,7 @@ for (const line of entries) {
   if (!match) continue;
   const [, sha256, rawFilename] = match;
   const filename = rawFilename.replace(/^\*+/, '');
-  const target = filename.match(/^(kb-[a-z0-9-]+)-(darwin|linux|windows)-(amd64|arm64)(\.exe)?$/);
+  const target = filename.match(/^(kb-[a-z0-9-]+)-(darwin|linux)-(amd64|arm64)$/);
   if (!target) continue;
   const [, id, os, arch] = target;
   if (AUTHOR_AND_OPS_TOOLS.has(id)) continue;

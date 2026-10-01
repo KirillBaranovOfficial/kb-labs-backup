@@ -19,6 +19,7 @@ installation or update can change the active receipt or installed files.
 
 - [ ] Sealed release entries for the stable platform, canary prerelease, an incompatible SDK, and a platform without the runner's OS/architecture binary.
 - [ ] An installed plugin fixture whose declared platform range accepts version N and excludes N+1.
+- [ ] The installer runs on a Linux or macOS host, or on a host OS that is unsupported by the selected release.
 
 ## Steps
 
@@ -30,6 +31,7 @@ installation or update can change the active receipt or installed files.
 | S-053.4 | Request an adapter whose declared platform or SDK range excludes the selected release | Planning fails with `KB_INSTALL_INCOMPATIBLE_COMPONENTS`; details contain the adapter in `component`, the rejected `version`, and declared `range`; the hint is `Choose compatible versions or pass an explicit supported provider.` No installation files change. |
 | S-053.5 | Request an SDK outside the platform SDK range or a platform without a binary for the runner OS/architecture | Planning fails with `KB_INSTALL_INCOMPATIBLE_COMPONENTS`; an SDK rejection names `component=platform SDK`, its `version`, and `range`, while a missing binary identifies `details.subject=binary` and the OS/architecture in `details.value`. The error includes a hint and leaves the active receipt unchanged. |
 | S-053.6 | Attempt an update that violates an installed plugin or adapter range | `KB_UPDATE_INCOMPATIBLE` identifies the installed component, kind, target version and range, and says to update or remove that component first. The receipt and running host are preserved. |
+| S-053.7 | Run `kb-create install` on Linux or macOS, then attempt installation on Windows | Linux and macOS are supported installer hosts. On Windows, planning returns `KB_INSTALL_INCOMPATIBLE_COMPONENTS` identifying the missing Windows binary and leaves installation files unchanged. |
 
 ## Pass criteria
 

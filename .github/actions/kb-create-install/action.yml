@@ -65,23 +65,15 @@ runs:
         case "$os" in
           Linux)  goos=linux ;;
           Darwin) goos=darwin ;;
-          MINGW*|MSYS*|CYGWIN*) goos=windows ;;
-          *) echo "::error::Unsupported OS: $os"; exit 1 ;;
+          *) echo "::error::kb-create installer supports Linux and macOS; unsupported OS: $os"; exit 1 ;;
         esac
         case "$arch" in
           x86_64|amd64) goarch=amd64 ;;
           aarch64|arm64) goarch=arm64 ;;
           *) echo "::error::Unsupported architecture: $arch"; exit 1 ;;
         esac
-        if [ "$goos" = "windows" ] && [ "$goarch" = "arm64" ]; then
-          echo "::error::windows/arm64 is not published (see .goreleaser.yaml ignore list)"
-          exit 1
-        fi
         echo "goos=$goos" >> "$GITHUB_OUTPUT"
         echo "goarch=$goarch" >> "$GITHUB_OUTPUT"
-        ext=""
-        [ "$goos" = "windows" ] && ext=".exe"
-        echo "ext=$ext" >> "$GITHUB_OUTPUT"
 
     - name: Download kb-create
       shell: bash
@@ -90,17 +82,16 @@ runs:
         VERSION: ${{ inputs.version }}
         GOOS: ${{ steps.platform.outputs.goos }}
         GOARCH: ${{ steps.platform.outputs.goarch }}
-        EXT: ${{ steps.platform.outputs.ext }}
       run: |
         set -euo pipefail
-        asset="kb-create-${GOOS}-${GOARCH}${EXT}"
+        asset="kb-create-${GOOS}-${GOARCH}"
         if [ "$VERSION" = "latest" ]; then
           url="https://github.com/${REPO}/releases/latest/download/${asset}"
         else
           url="https://github.com/${REPO}/releases/download/${VERSION}/${asset}"
         fi
         echo "Downloading kb-create from $url"
-        dest="${RUNNER_TEMP}/kb-create${EXT}"
+        dest="${RUNNER_TEMP}/kb-create"
         curl -fsSL "$url" -o "$dest"
         chmod +x "$dest"
 
@@ -114,10 +105,9 @@ runs:
         PROJECT_DIR: ${{ inputs.project-dir }}
         RELEASE_INDEX: ${{ inputs.release-index }}
         REGISTRY: ${{ inputs.registry }}
-        EXT: ${{ steps.platform.outputs.ext }}
       run: |
         set -euo pipefail
-        bin="${RUNNER_TEMP}/kb-create${EXT}"
+        bin="${RUNNER_TEMP}/kb-create"
         args=(apply --index "$RELEASE_INDEX" --request-platform-root "$PLATFORM_DIR" --project-root "$PROJECT_DIR")
         [ -n "$PLUGINS" ] && args+=(--plugins "$PLUGINS")
         [ -n "$ADAPTERS" ] && args+=(--adapters "$ADAPTERS")
