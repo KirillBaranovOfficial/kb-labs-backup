@@ -81,10 +81,16 @@ def run_platform_update_steps(
     snapshot_id = ""
     updated_plan_hash = ""
     updated_plan: dict = {}
-    config_hashes: dict[str, str | None] = {}
+    config_checkpoints: dict[str, str | None] = {}
+
+    def checkpoint_details() -> dict[str, dict[str, str | None]]:
+        return {"configSha256": dict(config_checkpoints)}
+
+    def record_config_checkpoint(name: str) -> None:
+        digest = _hash(config_paths[0])
+        config_checkpoints[name] = digest
 
     def save_known_good_state() -> None:
-        nonlocal config_hashes
         receipt = json.loads(receipt_path.read_text())
         actual = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
         if actual != base_version:
@@ -92,17 +98,17 @@ def run_platform_update_steps(
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"], "initial status")
         if status.get("ok") is not True or status.get("running") is not True or status.get("reachable") is not True:
             raise RuntimeError("initial kb-create status did not confirm a running, reachable host")
+        before_update = _hash(config_paths[0])
+        config_checkpoints["beforeUpdate"] = before_update
+        if before_update is None:
+            raise RuntimeError(f"generated platform config is missing: {config_paths[0]}")
         if verify_user is not None:
             login = verify_user()
             if login.returncode != 0:
                 raise RuntimeError(f"initial admin login failed: {' '.join(login.stdout.split())[-400:]}")
-        config_hashes = {str(path): _hash(path) for path in config_paths}
-        missing = [path for path, digest in config_hashes.items() if digest is None]
-        if missing:
-            raise RuntimeError(f"generated platform config is missing: {', '.join(missing)}")
 
     journey.step("save installed receipt, config, and host status", "platform.update", save_known_good_state,
-                 cases=["S-023.1"])
+                 cases=["S-023.1"], details=checkpoint_details)
 
     def plan_new_release() -> None:
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(update_index),
@@ -132,9 +138,10 @@ def run_platform_update_steps(
         if not result.get("logPath"):
             raise RuntimeError("update result did not include its operation log path")
         snapshot_id = str(snapshot["id"])
+        record_config_checkpoint("afterUpdateHostRestart")
 
     journey.step("update the running host and save its recovery snapshot", "platform.update", update,
-                 cases=["S-023.3", "S-023.7", "S-024.1"])
+                 cases=["S-023.3", "S-023.7", "S-024.1"], details=checkpoint_details)
 
     def verify_updated_install() -> None:
         receipt = json.loads(receipt_path.read_text())
@@ -215,9 +222,10 @@ def run_platform_update_steps(
             raise RuntimeError("rollback did not return ok=true and the restored snapshot")
         if result.get("hostRestarted") is not True or not result.get("logPath"):
             raise RuntimeError("rollback did not report host restart and an operation log")
+        record_config_checkpoint("afterRollbackHostRestart")
 
     journey.step("roll back to version N with explicit non-TTY confirmation", "platform.rollback", rollback,
-                 cases=["S-024.2"])
+                 cases=["S-024.2"], details=checkpoint_details)
 
     def reject_unknown_snapshot() -> None:
         before = receipt_path.read_bytes()
@@ -234,11 +242,12 @@ def run_platform_update_steps(
             raise RuntimeError("unknown-snapshot rollback omitted its structured recovery error or hint")
         if receipt_path.read_bytes() != before:
             raise RuntimeError("unknown-snapshot rollback changed the active receipt")
+        record_config_checkpoint("afterMissingSnapshotRecovery")
 
     journey.step("reject a missing snapshot without changing the active install", "platform.rollback",
-                 reject_unknown_snapshot, cases=["S-024.4"])
+                 reject_unknown_snapshot, cases=["S-024.4"], details=checkpoint_details)
 
-    def verify_rollback() -> None:
+    def verify_rollback() -> str | None:
         receipt = json.loads(receipt_path.read_text())
         version = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
         if version != base_version:
@@ -246,9 +255,25 @@ def run_platform_update_steps(
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"], "restored status")
         if status.get("ok") is not True or status.get("running") is not True or status.get("reachable") is not True:
             raise RuntimeError("kb-create status did not confirm the restored host")
-        changed = [str(path) for path in config_paths if config_hashes.get(str(path)) != _hash(path)]
-        if changed:
-            raise RuntimeError(f"generated config changed during rollback: {', '.join(changed)}")
+        before_update = config_checkpoints.get("beforeUpdate")
+        after_rollback = config_checkpoints.get("afterRollbackHostRestart")
+        after_recovery = config_checkpoints.get("afterMissingSnapshotRecovery")
+        if before_update is None:
+            return "BLOCKED: before-update config SHA-256 is unavailable because the initial config/status checkpoint failed"
+        if after_rollback is None:
+            return "BLOCKED: post-rollback config SHA-256 is unavailable because rollback or its host restart did not complete"
+        if after_rollback != before_update:
+            raise RuntimeError(
+                "generated config first differed at after successful rollback plus host restart: "
+                f"beforeUpdate={before_update}, afterRollbackHostRestart={after_rollback}"
+            )
+        if after_recovery is None:
+            return "BLOCKED: post-recovery config SHA-256 is unavailable because missing-snapshot recovery did not complete"
+        if after_recovery != after_rollback:
+            raise RuntimeError(
+                "generated config first differed at after missing-snapshot recovery: "
+                f"afterRollbackHostRestart={after_rollback}, afterMissingSnapshotRecovery={after_recovery}"
+            )
         if verify_user is not None:
             login = verify_user()
             if login.returncode != 0:
@@ -264,7 +289,7 @@ def run_platform_update_steps(
             raise RuntimeError("project list after rollback did not return ok=true and a projects array")
 
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
-                 cases=["S-024.3"])
+                 cases=["S-024.3"], details=checkpoint_details)
 
     def doctor() -> None:
         result = _json_command(run_command, [launcher, "doctor", "--platform-root", root, "--json"], "doctor")

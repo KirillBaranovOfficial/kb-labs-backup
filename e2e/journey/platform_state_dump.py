@@ -124,6 +124,8 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         for relative in (Path(".kb/marketplace.lock"), Path(".kb/kb.config.jsonc"),
                          Path(".kb/v2/receipt.json")):
             add(root / relative, relative)
+        for source in sorted((root / ".kb/v2/snapshots").glob("*.json")):
+            add(source, Path(".kb/v2/snapshots") / source.name)
         receipt_path = root / ".kb/v2/receipt.json"
         try:
             receipt_value = json.loads(receipt_path.read_text())
@@ -261,7 +263,9 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         if used > CONTENT_BUDGET:
             raise AssertionError("platform state dump exceeded its size cap")
         failure_excerpt = _redact_text(first_failure, admin_password)[:20_000]
-        index = "# Platform state dump\n\nFirst failure: " + failure_excerpt
+        revision = command_env.get("KB_JOURNEY_GIT_REVISION", "unknown")
+        index = "# Platform state dump\n\nJourney git revision: " + _redact_text(revision, admin_password)
+        index += "\n\nFirst failure: " + failure_excerpt
         index += "\n\nFiles:\n" + ("\n".join(entries) if entries else "- No platform files or commands were available.") + "\n"
         (destination / "index.md").write_text(index)
     except Exception as error:  # diagnostics must never mask the journey failure
