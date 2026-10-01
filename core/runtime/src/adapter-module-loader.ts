@@ -5,14 +5,39 @@ import type { DiscoveredAdapter } from './discover-adapters.js';
 import type { LoadedAdapterModule } from './adapter-loader.js';
 import { AdapterUnavailableError } from '@kb-labs/core-platform';
 
-/** Create a typed startup error with the supported command for a missing binding. */
-export function configuredAdapterLoadError(slot: string, modulePath: string): AdapterUnavailableError {
+/** Create a typed startup error without misdiagnosing adapter load failures as missing installs. */
+export function configuredAdapterLoadError(
+  slot: string,
+  modulePath: string,
+  cause?: unknown,
+  platformRoot?: string,
+): AdapterUnavailableError {
   const packageName = modulePath.split('/').slice(0, 2).join('/');
+  const causeCode = typeof cause === 'object' && cause !== null && 'code' in cause
+    ? String(cause.code)
+    : undefined;
+  const causeMessage = cause instanceof Error ? cause.message : cause === undefined ? undefined : String(cause);
+  const packageMissing = causeCode === 'ERR_MODULE_NOT_FOUND' && causeMessage !== undefined && (
+    causeMessage.includes(`Cannot find package '${modulePath}'`) ||
+    causeMessage.includes(`Cannot find package '${packageName}'`) ||
+    causeMessage.includes(`Cannot find module '${modulePath}'`) ||
+    causeMessage.includes(`Cannot find module '${packageName}'`)
+  );
+  const diagnosis = causeMessage
+    ? ` Cause: ${causeCode ? `${causeCode}: ` : ''}${causeMessage}`
+    : '';
+  const nextStep = !packageMissing && platformRoot
+    ? ` Run \`kb-create doctor --platform-root ${JSON.stringify(platformRoot)}\` to inspect the installed platform.`
+    : '';
   return new AdapterUnavailableError(
     slot,
     'load-failed',
-    `Configured adapter package "${modulePath}" could not be loaded. ` +
-      `Install it with \`kb marketplace install ${packageName} --scope platform\`.`,
+    `Configured adapter package "${modulePath}" could not be loaded.${
+      packageMissing
+        ? ` Install it with \`kb marketplace install ${packageName} --scope platform\`.`
+        : nextStep
+    }${diagnosis}`,
+    cause,
   );
 }
 
