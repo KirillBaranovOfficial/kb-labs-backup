@@ -9,6 +9,26 @@ const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:4000';
 const MARKETPLACE_PREFIX = '/api/v1/marketplace';
 const FETCH_TIMEOUT_MS = 30_000;
 
+class MarketplaceHttpError extends Error {
+  readonly envelope: Record<string, unknown>;
+
+  constructor(status: number, error: Record<string, unknown>) {
+    const message = typeof error.message === 'string'
+      ? error.message
+      : `Marketplace request failed with HTTP ${status}`;
+    super(message);
+    this.name = 'MarketplaceHttpError';
+    this.envelope = {
+      ...error,
+      code: typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR',
+      message,
+      hint: typeof error.hint === 'string'
+        ? error.hint
+        : 'Check the installed platform with "kb-create status" and retry the command.',
+    };
+  }
+}
+
 function getBaseUrl(): string {
   const marketplaceUrl = useEnv('KB_MARKETPLACE_URL');
   if (marketplaceUrl) {
@@ -36,7 +56,7 @@ async function request<T>(method: string, path: string, body?: Record<string, un
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new Error(await formatMarketplaceFailure(response));
+        throw new MarketplaceHttpError(response.status, await readMarketplaceError(response));
       }
       if (response.status === 204) { return undefined as T; }
       return await response.json() as T;
@@ -56,7 +76,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-async function formatMarketplaceFailure(response: Response): Promise<string> {
+async function readMarketplaceError(response: Response): Promise<Record<string, unknown>> {
   let body: unknown;
   try {
     body = JSON.parse(await response.text()) as unknown;
@@ -64,11 +84,12 @@ async function formatMarketplaceFailure(response: Response): Promise<string> {
     body = undefined;
   }
   const error = isRecord(body) && isRecord(body.error) ? body.error : body;
-  if (isRecord(error) && typeof error.message === 'string') {
-    const hint = typeof error.hint === 'string' ? ` Next: ${error.hint}` : '';
-    return `Marketplace request failed (${response.status}): ${error.message}.${hint}`;
-  }
-  return `Marketplace request failed (${response.status}). Check the installed platform with \`kb-create status\`; start it with \`kb-create start\` if it is stopped.`;
+  if (isRecord(error)) { return error; }
+  return {
+    code: 'INTERNAL_ERROR',
+    message: `Marketplace request failed with HTTP ${response.status}`,
+    hint: 'Check the installed platform with "kb-create status" and retry the command.',
+  };
 }
 
 export async function post<T = unknown>(path: string, body: Record<string, unknown>): Promise<T> {
