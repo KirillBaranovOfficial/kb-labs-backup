@@ -9,7 +9,6 @@ import { defineSystemCommandGroup } from '@kb-labs/shared-command-kit';
 import { hello } from './hello';
 import { version } from './version';
 import { health } from './health';
-import { diag } from './diag';
 import { registryDiagnostics } from './registry-diagnostics';
 import { docsGenerateCliReference } from './docs-generate-cli-reference';
 import { logsDiagnose, logsContext, logsSummarize, logsQuery, logsSearch, logsGet, logsStats } from './logs';
