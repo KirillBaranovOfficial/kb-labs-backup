@@ -98,6 +98,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-200](scenarios/S-200-project-adapter-and-llm-settings.md) | Projects — adapter settings are platform-owned | solo-developer | P1 | historical | false | [local, secured] | [cli, studio] | S-048 |
 | [S-201](scenarios/S-201-project-analytics-and-dashboard-isolation.md) | Projects — Filter analytics, logs, and dashboard by project | solo-developer | P1 | planned | false | [local, secured] | [cli, studio, api] | — |
 | [S-202](scenarios/S-202-project-unregister-and-member-access.md) | Projects — Unregister one project and preserve tenant access boundaries | team-member | P1 | planned | false | [secured] | [cli, studio, api] | — |
+| [S-204](scenarios/S-204-project-plugin-settings.md) | Projects — Configure plugin settings independently | solo-developer | P1 | planned | false | [local, secured] | [cli, studio] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.

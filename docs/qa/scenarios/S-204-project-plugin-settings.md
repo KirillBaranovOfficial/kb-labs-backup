@@ -1,0 +1,44 @@
+---
+id: S-204
+title: Projects — Configure plugin settings independently
+persona: solo-developer
+area: config
+priority: P1
+status: planned
+release: false
+modes: [local, secured]
+surfaces: [cli, studio]
+---
+
+## Goal
+
+Configure a plugin once for the platform, override its settings for one
+registered project, and edit project settings from either CLI or Studio without
+adding KB Labs files to a repository.
+
+## Prerequisites
+
+- [ ] One platform with Commit attached to both projects, a second plugin
+  available to attach, and two registered Git repositories, Project A and
+  Project B.
+- [ ] Project A and Project B have distinct IDs and clean working trees.
+
+## Steps
+
+| # | Action | Expected |
+|---|---|---|
+| S-204.1 | Set the platform Commit settings with `kb config set --scope platform plugins.commit.scope.scopes '[{"id":"shared","label":"Shared","path":"."}]' --json`, then inspect `kb config get plugins.commit.scope.scopes --json` from both project roots | The platform value is visible from both projects as the inherited Commit scope configuration. Neither repository is changed. |
+| S-204.2 | From Project A, run `kb config set plugins.commit.scope.scopes '[{"id":"a","label":"Project A","path":"."}]' --json`, then request `GET /api/v1/projects/<project-a-id>/rest/api/v1/plugins/commit/scopes` and the matching Project B route | Project A's Commit scope selector contains `a`; Project B still contains the inherited `shared` scope. The change affects only Project A. Both repository working trees remain clean. |
+| S-204.3 | Attach the second plugin to Project A only, then inspect the project plugin lists for A and B | The second plugin is available in Project A and absent from Project B; its attachment does not change B. |
+| S-204.4 | In Studio select Project A, edit a Commit setting, then select Project B and inspect the same setting | Studio saves the value for the selected project. Project B shows its own effective value and does not inherit Project A's override. |
+| S-204.5 | Set an invalid Commit setting through `kb config set` and submit the same invalid value in Studio | Both surfaces reject the write with `KB_PLUGIN_SETTINGS_INVALID`, identify the invalid setting, and give a hint to provide a value matching the Commit plugin's declared settings schema. The previous value and both repositories remain unchanged. |
+| S-204.6 | Remove Project A with `kb project remove <project-a-id> --yes --json`, then register the same path again | The active registration is removed and its project configuration is archived. Registering the same canonical path restores that archived configuration for the deterministic project ID; the repository remains untouched. |
+
+## Dependencies
+
+- [S-043](S-043-project-registry-and-isolation.md) covers project plugin
+  attachment and extension isolation.
+- [S-124](S-124-project-management-studio-and-cli.md) covers registration and
+  removal without changing repository or runtime-state files.
+- [S-196](S-196-multiple-projects-current-context.md) covers current-project
+  resolution by CLI cwd and the Studio project selector.
