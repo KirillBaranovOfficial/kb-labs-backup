@@ -23,12 +23,15 @@ test('S-020.1-.7 and S-125.1-.3: fresh host Studio dashboard, navigation, sessio
   expect(projectName, 'KB_STUDIO_PROJECT_NAME must identify the project registered by the fresh-install journey').toBeTruthy()
 
   await test.step('open Studio in the configured access mode', async () => {
-    await page.goto(`${GATEWAY}/`)
     if (mode === 'secured') {
       const email = process.env.KB_STUDIO_ADMIN_EMAIL
       const password = process.env.KB_STUDIO_ADMIN_PASSWORD
       expect(email, 'KB_STUDIO_ADMIN_EMAIL is required in secured mode').toBeTruthy()
       expect(password, 'KB_STUDIO_ADMIN_PASSWORD is required in secured mode').toBeTruthy()
+      expect(await page.context().cookies(GATEWAY)).toEqual([])
+      const anonymousMe = page.waitForResponse(response => response.url() === `${GATEWAY}/api/auth/me`)
+      await page.goto(`${GATEWAY}/`)
+      expect((await anonymousMe).status()).toBe(401)
       await expect(page).toHaveURL(/\/login$/)
       await page.getByLabel('Email').fill(email!)
       await page.getByLabel('Password').fill('incorrect-journey-password')
@@ -36,6 +39,7 @@ test('S-020.1-.7 and S-125.1-.3: fresh host Studio dashboard, navigation, sessio
       await expect(page.getByText('Invalid credentials', { exact: true })).toBeVisible()
       await signIn(page, email!, password!)
     } else {
+      await page.goto(`${GATEWAY}/`)
       await expect(page).not.toHaveURL(/\/login$/)
     }
     await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
