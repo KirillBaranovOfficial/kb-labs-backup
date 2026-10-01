@@ -66,7 +66,7 @@ async function resolveContext(ctx: PluginContextV3, flags: CommitFlags) {
         }
       : undefined;
 
-  return { cwd, config, effectiveScope, scopeCwd, llmComplete, llmConfigured };
+  return { cwd, config, effectiveScope, scopeCwd, llmComplete };
 }
 
 function hasConfiguredLLM(config: unknown): boolean {
@@ -85,12 +85,6 @@ function hasConfiguredLLM(config: unknown): boolean {
   return typeof llm === 'string' ? llm.trim().length > 0 : Array.isArray(llm) && llm.length > 0;
 }
 
-function reportMissingLLM(ctx: PluginContextV3, config: CommitPluginConfig, llmConfigured: boolean): void {
-  if (config.llm.enabled && !llmConfigured) {
-    ctx.ui.write('No LLM configured — using heuristics. To enable AI messages: kb config set platform.adapters.llm @kb-labs/adapters-openai');
-  }
-}
-
 export default defineCommand({
   id: 'commit:commit',
   description: 'Generate and apply commits (default flow)',
@@ -98,7 +92,7 @@ export default defineCommand({
   handler: {
     async intent(ctx: PluginContextV3, input: CLIInput<CommitFlags>) {
       const flags = input.flags;
-      const { effectiveScope, scopeCwd, llmComplete, config, llmConfigured } = await resolveContext(ctx, flags);
+      const { effectiveScope, scopeCwd, llmComplete, config } = await resolveContext(ctx, flags);
 
       const status = await getGitStatus(scopeCwd);
       if (!hasChanges(status)) {
@@ -107,7 +101,6 @@ export default defineCommand({
           operations: [],
         };
       }
-      reportMissingLLM(ctx, config, llmConfigured);
 
       const plan = await generateCommitPlan({
         cwd: scopeCwd,
@@ -133,7 +126,7 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<CommitFlags>): Promise<RunResult> {
       const startTime = Date.now();
       const flags = input.flags;
-      const { cwd, effectiveScope, scopeCwd, llmComplete, config, llmConfigured } = await resolveContext(ctx, flags);
+      const { cwd, effectiveScope, scopeCwd, llmComplete, config } = await resolveContext(ctx, flags);
       const withPush = flags['with-push'] ?? false;
       const outputJson = flags.json ?? false;
 
@@ -154,7 +147,6 @@ export default defineCommand({
         ctx.ui?.warn?.('No changes to commit');
         return { ok: false, error: 'Command failed' };
       }
-      reportMissingLLM(ctx, config, llmConfigured);
       statusLoader.succeed('Git status analyzed');
 
       // 2. Generate plan
