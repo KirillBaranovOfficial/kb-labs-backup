@@ -76,9 +76,9 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     });
     const knownSlots = new Set(rows.map((row) => row.slot));
     for (const [slot, configured] of Object.entries(config.adapters ?? {})) {
-      if (knownSlots.has(slot)) continue;
+      if (knownSlots.has(slot)) {continue;}
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
-      if (!configuredPackage) continue;
+      if (!configuredPackage) {continue;}
       const implementation = packageName(configuredPackage);
       rows.push({ slot, implementation, mode: 'real', networkRequired: !LOCAL_PACKAGES.has(packageRoot(implementation)) });
     }
