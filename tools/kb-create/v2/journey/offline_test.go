@@ -35,6 +35,9 @@ type offlineArtifacts struct {
 	installed, removed []contracts.Artifact
 	restores           int
 	installErr         error
+	// root receives each package's package.json, as a real install does; the
+	// platform lock hashes it for discovery's integrity check.
+	root string
 }
 
 func (a *offlineArtifacts) Install(items []contracts.Artifact) error {
@@ -42,6 +45,19 @@ func (a *offlineArtifacts) Install(items []contracts.Artifact) error {
 		return a.installErr
 	}
 	a.installed = append(a.installed, items...)
+	for _, item := range items {
+		if a.root == "" || item.Package == "" {
+			continue
+		}
+		dir := filepath.Join(a.root, "node_modules", filepath.FromSlash(item.Package))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		manifest := `{"name":"` + item.Package + `","version":"` + item.Version + `"}`
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(manifest), 0o644); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 func (a *offlineArtifacts) Restore() error { a.restores++; return nil }
@@ -94,7 +110,7 @@ func TestOfflineJourneyUsesResolvedGraphAsSingleTruth(t *testing.T) {
 func TestOfflineLifecycleUsesReceiptSnapshotsForUpdateRollbackAndUninstall(t *testing.T) {
 	root := t.TempDir()
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: testHost(), PlanHash: "first-plan", Request: contracts.InstallRequest{PlatformRoot: root}, Artifacts: []contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "1.0.0"}}, ServiceGraph: contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Command: "gateway", Required: true}}}}
-	artifacts := &offlineArtifacts{}
+	artifacts := &offlineArtifacts{root: root}
 	deps := runtime.Dependencies{Artifacts: artifacts, Clock: journeyClock{time.Unix(10, 0)}}
 	first, err := runtime.Apply(context.Background(), plan, deps)
 	if err != nil {
@@ -134,7 +150,7 @@ func TestOfflineUpdateFailureRestoresPreviousReceiptAndPackageState(t *testing.T
 		Artifacts:    []contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "1.0.0"}},
 		ServiceGraph: contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Command: "gateway", Required: true}}},
 	}
-	artifacts := &offlineArtifacts{}
+	artifacts := &offlineArtifacts{root: root}
 	deps := runtime.Dependencies{Artifacts: artifacts, Clock: journeyClock{time.Unix(10, 0)}}
 	first, err := runtime.Apply(context.Background(), plan, deps)
 	if err != nil {
@@ -175,7 +191,7 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifacts := &offlineArtifacts{}
+	artifacts := &offlineArtifacts{root: root}
 	receipt, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts})
 	if err != nil {
 		t.Fatal(err)
@@ -254,7 +270,7 @@ func TestTransportMatrixUsesOneResolvedPluginWorkflowPath(t *testing.T) {
 		t.Fatalf("transport artifact sets differ: human=%v agent=%v ci=%v", artifactIDs(humanPlan.Artifacts), artifactIDs(agentResponse.Plan.Artifacts), artifactIDs(ciPlan.Artifacts))
 	}
 	for _, plan := range []contracts.ResolvedInstallPlan{humanPlan, *agentResponse.Plan, ciPlan} {
-		artifacts := &offlineArtifacts{}
+		artifacts := &offlineArtifacts{root: plan.Request.PlatformRoot}
 		if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts}); err != nil {
 			t.Fatalf("%s apply: %v", plan.Request.PlatformRoot, err)
 		}

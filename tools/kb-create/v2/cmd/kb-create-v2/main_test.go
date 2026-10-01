@@ -54,6 +54,17 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 		return err
 	}
 	err := os.WriteFile(filepath.Join(bin, "bin.js"), []byte("export {};\n"), 0o644)
+	// Like a real install, every artifact package lands with its package.json;
+	// the platform lock hashes it for discovery's integrity check.
+	for _, item := range items {
+		if err != nil || item.Package == "" {
+			continue
+		}
+		dir := filepath.Join(a.root, "node_modules", filepath.FromSlash(item.Package))
+		if err = os.MkdirAll(dir, 0o755); err == nil {
+			err = os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"`+item.Package+`","version":"`+item.Version+`"}`), 0o644)
+		}
+	}
 	if progress != nil {
 		progress("Install packages", false)
 	}

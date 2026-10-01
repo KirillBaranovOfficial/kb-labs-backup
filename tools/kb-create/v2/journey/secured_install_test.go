@@ -126,7 +126,7 @@ func install(t *testing.T, answers string) journeyResult {
 		t.Fatalf("plan: %v", err)
 	}
 	store := secrets.Store{PlatformRoot: root}
-	artifacts := &offlineArtifacts{}
+	artifacts := &offlineArtifacts{root: root}
 	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts, Secrets: &store, Clock: journeyClock{time.Unix(1, 0)}}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestMachineRequestSecuredInstallDeliversSecretsThroughTheSameStore(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: &offlineArtifacts{}, Secrets: &store}); err != nil {
+	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: &offlineArtifacts{root: root}, Secrets: &store}); err != nil {
 		t.Fatal(err)
 	}
 	result := readInstall(t, root, plan)
@@ -353,7 +353,7 @@ func TestSecretInputWithNoStoredValueFailsBeforeAnythingIsInstalled(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifacts := &offlineArtifacts{}
+	artifacts := &offlineArtifacts{root: root}
 	store := secrets.Store{PlatformRoot: root}
 	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts, Secrets: &store}); err == nil || !strings.Contains(err.Error(), "gateway.jwtSecret is not set") {
 		t.Fatalf("apply must refuse a declared secret with no value, got %v", err)
