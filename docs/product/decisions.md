@@ -6,6 +6,18 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ## 2026-10-01
 
+### Adapters and LLM settings are platform-only
+
+Adapter bindings, adapter options, LLM credentials, and model selection are
+configured once in platform config and apply to every registered project.
+Projects may attach plugins at project scope, but cannot configure or override
+adapters. A project config containing `platform.adapters` or
+`platform.adapterOptions` fails with typed code `KB_ADAPTER_PROJECT_SCOPE` and
+an actionable hint to move those fields to the platform config. This removes
+project-level adapter configuration from the config schema/loader, CLI, REST,
+Studio, health, doctor, and user documentation.
+Cases: S-017, S-018, S-048; S-200 is historical and superseded by S-048.
+
 ### Cases are the product specification
 
 The case catalog is the product truth for code, tests and docs. Work is case-first TDD: case → e2e claim (red) → integration and unit tests → implementation. See [ADR-0050](../adr/0050-product-cases-are-the-specification.md).

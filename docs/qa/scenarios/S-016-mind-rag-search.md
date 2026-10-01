@@ -17,7 +17,7 @@ A developer uses the marketplace-installed Mind plugin to index a project and re
 ## Prerequisites
 
 - [ ] The Mind plugin is available from the marketplace and installed in the project.
-- [ ] The project has a configured vector-store adapter.
+- [ ] The platform has a configured vector-store adapter.
 
 ## Steps
 

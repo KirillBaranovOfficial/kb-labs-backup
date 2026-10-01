@@ -1,9 +1,15 @@
 # ADR-0012: Platform / Project Scope for Config, Marketplace, and Discovery
 
 **Date:** 2026-04-14
-**Status:** Accepted (updated 2026-04-28 — collision policy reversed to project wins)
+**Status:** Accepted (amended 2026-10-01 — adapters are platform-only)
 **Deciders:** KB Labs Team
 **Tags:** [architecture, marketplace, discovery]
+
+> **Amendment (2026-10-01):** Adapter bindings, adapter options, LLM credentials,
+> and model selection are platform-only. Project adapter config is rejected
+> with `KB_ADAPTER_PROJECT_SCOPE`; projects may attach plugins independently.
+> This supersedes the adapter merge policy described below. See the current
+> rationale and case mapping in [the product decisions log](../product/decisions.md#2026-10-01).
 
 ## Context
 
@@ -66,8 +72,8 @@ declares `CONFIG_FIELD_SCOPE`:
 
 ```
 platform         → project-only   (project declares the platform dir)
-adapters         → mergeable      (deep-merge, project wins)
-adapterOptions   → mergeable      (deep-merge, project wins)
+adapters         → platform-only  (project configuration is rejected)
+adapterOptions   → platform-only  (project configuration is rejected)
 core             → platform-only  (project cannot override)
 execution        → platform-only  (project cannot override)
 ```
@@ -80,7 +86,7 @@ returns provenance:
 ```ts
 {
   value: T,
-  ignoredProjectFields: string[],   // e.g. ['adapters'] when project tried
+  ignoredProjectFields: string[],   // e.g. ['execution'] when project tried
   sources: Record<string, 'platform' | 'project' | 'both'>,
 }
 ```
@@ -220,10 +226,12 @@ Split only when concurrent writers in both scopes are a real concern.
 
 ### Negative (accepted)
 
-- **Breaking config behavior (original):** projects that used to override
-  `adapters` got `ignoredProjectFields: ['adapters']`. Resolved in
-  2026-04-28 update: `adapters` and `adapterOptions` changed to
-  `mergeable`, so project adapters config now deep-merges and wins.
+- **Historical amendment (2026-10-01; supersedes the 2026-04-28 adapter update):**
+  adapters and `adapterOptions` are platform-only. Project adapter configuration
+  is rejected with `KB_ADAPTER_PROJECT_SCOPE`; bindings, options, LLM credentials,
+  and model selection are configured once for all registered projects. Projects
+  may attach plugins at project scope. See the current rationale and case mapping
+  in [the product decisions log](../product/decisions.md#2026-10-01).
 - **Breaking API surface:** `MarketplaceService.*` signatures changed
   (explicit `ctx`). All in-tree callers updated. External callers must
   migrate — this is on purpose (see "no silent default" above).

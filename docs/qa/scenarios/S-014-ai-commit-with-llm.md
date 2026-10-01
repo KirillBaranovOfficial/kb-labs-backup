@@ -17,7 +17,7 @@ A developer uses an explicitly configured real LLM provider to draft and apply a
 ## Prerequisites
 
 - [ ] The `@kb-labs/commit` plugin is installed and enabled in the project.
-- [ ] A real LLM adapter is installed, bound to the project's LLM slot, and configured with valid credentials.
+- [ ] A real LLM adapter is installed, bound at platform scope, and configured with valid platform credentials.
 - [ ] A Git repository contains staged changes.
 
 ## Steps

@@ -19,17 +19,17 @@ Project B without crossing repository, configuration, or result boundaries.
 
 - [ ] Project A and Project B are registered, initialized Git repositories.
 - [ ] Commit is installed and configured for Project A; Review is installed and configured for Project B.
-- [ ] Each project has its own staged or changed fixture and the required LLM settings.
+- [ ] Each project has its own staged or changed fixture; the shared platform has the required LLM settings.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
-| S-197.1 | From Project A, run `kb commit commit --dry-run --json` | The generated plan describes only Project A's staged change and uses Project A's effective LLM configuration; no commit is created in either repository. |
+| S-197.1 | From Project A, run `kb commit commit --dry-run --json` | The generated plan describes only Project A's staged change and uses the platform LLM configuration; no commit is created in either repository. |
 | S-197.2 | From Project A, run `kb commit commit`, then inspect `git -C "$PROJECT_A" log -1` and Project A's Commit history | The new commit exists only in Project A, and the plan/result is recorded in Project A's history and analytics. |
-| S-197.3 | From Project B, run `kb review run --mode=heuristic --json` | The review contains only Project B's changed files and uses Project B as its repository root; no Project A file or configuration appears. |
+| S-197.3 | From Project B, run `kb review run --mode=heuristic --json` | The review contains only Project B's changed files and uses Project B as its repository root; no Project A file or project plugin configuration appears. |
 | S-197.4 | Inspect Project B's Review history and analytics, then inspect Project A's history and analytics | The Review result appears under Project B; Project A retains its Commit result and has no record of Project B's Review. |
-| S-197.5 | From Project A, run the Review command and from Project B, run the Commit command | Each command reports a project-scoped unavailable-plugin or configuration error with the next install/configuration command; neither command silently uses the other project's plugin or credentials. |
+| S-197.5 | From Project A, run the Review command and from Project B, run the Commit command | Each command reports a project-scoped unavailable-plugin error with the next install command; neither command silently uses the other project's plugin. LLM credentials remain platform-scoped for both projects. |
 
 ## Dependencies
 

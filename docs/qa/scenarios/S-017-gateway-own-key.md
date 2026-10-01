@@ -1,6 +1,6 @@
 ---
 id: S-017
-title: Configure an LLM adapter with the user's own key
+title: Configure the platform LLM adapter with the user's own key
 persona: solo-developer
 area: gateway
 priority: P1
