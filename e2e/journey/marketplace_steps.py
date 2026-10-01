@@ -81,17 +81,17 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         return _run(["kb", *args], cwd=cwd, env=base_env, runner=runner)
 
     commit_package = "@kb-labs/commit-entry"
-    workflow_package = "@kb-labs/workflow-entry"
+    unrelated_package = "@kb-labs/qa-entry"
     commit_version = _registry_version(commit_package, registry, base_env, runner)
-    workflow_version = _registry_version(workflow_package, registry, base_env, runner)
+    unrelated_version = _registry_version(unrelated_package, registry, base_env, runner)
     platform_list = ["marketplace", "plugins", "list", "--scope", "platform", "--json"]
     platform_plugins = _entries(_json(cli(platform_list), platform_list))
     if any(item.get("id") == commit_package for item in platform_plugins):
         raise RuntimeError(f"{commit_package} is preinstalled at platform scope; choose a registry plugin absent from the fresh platform store")
 
     # S-047 requires a second project plugin to survive target uninstall.
-    install_workflow = ["marketplace", "install", f"{workflow_package}@{workflow_version}", "--json"]
-    _output(cli(install_workflow), install_workflow)
+    install_unrelated = ["marketplace", "install", f"{unrelated_package}@{unrelated_version}", "--json"]
+    _output(cli(install_unrelated), install_unrelated)
 
     lock_file = project / ".kb" / "marketplace.lock"
     before = json.loads(lock_file.read_text()) if lock_file.exists() else {"plugins": {}}
@@ -165,15 +165,15 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         entries = _entries(payload)
         if any(item.get("id") == commit_package for item in entries):
             raise RuntimeError(f"uninstalled target {commit_package} remains in the project plugin list")
-        unrelated = next((item for item in entries if item.get("id") == workflow_package), None)
-        if not unrelated or unrelated.get("version") != workflow_version or unrelated.get("enabled") is not True:
-            raise RuntimeError(f"unrelated workflow plugin did not remain installed and enabled: {unrelated!r}")
+        unrelated = next((item for item in entries if item.get("id") == unrelated_package), None)
+        if not unrelated or unrelated.get("version") != unrelated_version or unrelated.get("enabled") is not True:
+            raise RuntimeError(f"unrelated project plugin did not remain installed and enabled: {unrelated!r}")
     journey.step("list confirms target absent and unrelated plugin remains", "marketplace", assert_unrelated_remains,
                  cases=["S-047.2"])
     if journey.steps[-1].status != "PASS":
         return
 
-    def assert_lock_and_workflow() -> None:
+    def assert_lock_and_unrelated_plugin() -> None:
         lock = json.loads(lock_file.read_text())
         if commit_package in lock.get("plugins", {}):
             raise RuntimeError("project lock still pins the uninstalled target plugin")
@@ -183,11 +183,13 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         unavailable_detail = " ".join((unavailable.stdout + " " + unavailable.stderr).split()).lower()
         if "not found" not in unavailable_detail and "no plugin" not in unavailable_detail:
             raise RuntimeError(f"removed commit command failed without a command-not-found result: {unavailable_detail[-400:]}")
-        health = ["workflow", "health", "--json"]
-        payload = _json(cli(health), health)
-        if payload.get("ok") is not True:
-            raise RuntimeError(f"unrelated `kb workflow health --json` command failed: {payload!r}")
-    journey.step("verify lock removal and invoke unrelated workflow plugin", "marketplace", assert_lock_and_workflow,
+        qa_list = ["qa", "cases", "list", "--json"]
+        payload = _json(cli(qa_list), qa_list)
+        if (payload.get("schema") != "kb.qa-case-list/v1"
+                or not isinstance(payload.get("cases"), list)
+                or not isinstance(payload.get("diagnostics"), list)):
+            raise RuntimeError(f"unrelated `kb qa cases list --json` command returned an invalid case-list result: {payload!r}")
+    journey.step("verify lock removal and invoke unrelated project plugin", "marketplace", assert_lock_and_unrelated_plugin,
              cases=["S-047.3"])
     if journey.steps[-1].status != "PASS":
         return

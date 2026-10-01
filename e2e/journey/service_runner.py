@@ -231,6 +231,55 @@ def mcp_diagnostics(project_id: str, token: str) -> str | None:
     return None
 
 
+def _case_claims(name: str) -> list[str]:
+    if name in {"gateway readiness", "workflow health"}:
+        return ["PC-002.3"]
+    case_by_name = {
+        "project-scoped MCP initialize": "S-045.1",
+        "project-scoped MCP tools/list": "S-045.2",
+        "project-scoped MCP diagnostics": "S-045.3",
+        "project MCP tokenless local access": "S-045.4",
+        "project MCP secured missing and invalid token rejection": "S-045.5",
+        "project MCP commit schema": "S-140.1",
+        "project MCP commit mutation": "S-140.2",
+        "project MCP unknown tool error": "S-140.3",
+        "project MCP invalid argument error": "S-140.4",
+        "project MCP cross-project isolation": "S-140.5",
+    }
+    case_id = case_by_name.get(name)
+    if name == "project MCP secured missing and invalid token rejection":
+        return ["S-045.5", "S-140.6"]
+    if not case_id:
+        return []
+    return [case_id]
+
+
+def run_service_steps(journey: Journey, steps) -> None:
+    """Run capability checks through Journey so raised checks are recorded."""
+    for name, capability, check in steps:
+        journey.step(name, capability, check, cases=_case_claims(name))
+
+
+def configure_installed_cli_path() -> None:
+    """Expose the isolated installed platform binaries to subprocess flows."""
+    bin_dir = str(Path.home() / ".local" / "bin")
+    current = os.environ.get("PATH", "").split(os.pathsep)
+    if bin_dir not in current:
+        os.environ["PATH"] = os.pathsep.join([bin_dir, *current])
+
+
+def _run_installed_flows(journey: Journey, project_root: str, registry: str) -> None:
+    env = os.environ.copy()
+    journey.step("marketplace flow", "marketplace",
+                 lambda: run_marketplace_steps(journey, project_root, registry, env))
+    journey.step("adapter defaults flow", "adapter",
+                 lambda: run_adapter_default_steps(journey, project_root, env))
+    journey.step("plugin author flow", "plugin-author",
+                 lambda: run_plugin_author_flow(journey, Path(project_root),
+                                                Path.home() / ".local/bin/kb", registry,
+                                                base_env=env))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["local", "secured"], required=True)
@@ -238,48 +287,21 @@ def main() -> int:
     parser.add_argument("--run-id")
     args = parser.parse_args()
     journey = Journey(args.mode, args.run_id or str(uuid.uuid4()))
-    for name, capability, check in checks(args.mode):
-        output = check()
-        if output and output.startswith("BLOCKED:"):
-            journey.blocked(name, capability, output.removeprefix("BLOCKED: "))
-        elif name in {"gateway readiness", "workflow health"}:
-            journey.step(name, capability, lambda value=output: value, cases=["PC-002.3"])
-        elif name == "project-scoped MCP initialize":
-            journey.step(name, capability, lambda value=output: value, cases=["S-045.1"])
-        elif name == "project-scoped MCP tools/list":
-            journey.step(name, capability, lambda value=output: value, cases=["S-045.2"])
-        elif name == "project-scoped MCP diagnostics":
-            journey.step(name, capability, lambda value=output: value, cases=["S-045.3"])
-        elif name == "project MCP tokenless local access":
-            journey.step(name, capability, lambda value=output: value, cases=["S-045.4"])
-        elif name == "project MCP secured missing and invalid token rejection":
-            journey.step(name, capability, lambda value=output: value, cases=["S-045.5", "S-140.6"])
-        elif name == "project MCP commit schema":
-            journey.step(name, capability, lambda value=output: value, cases=["S-140.1"])
-        elif name == "project MCP commit mutation":
-            journey.step(name, capability, lambda value=output: value, cases=["S-140.2"])
-        elif name == "project MCP unknown tool error":
-            journey.step(name, capability, lambda value=output: value, cases=["S-140.3"])
-        elif name == "project MCP invalid argument error":
-            journey.step(name, capability, lambda value=output: value, cases=["S-140.4"])
-        elif name == "project MCP cross-project isolation":
-            if output and output.startswith("BLOCKED:"):
-                journey.blocked(name, capability, output.removeprefix("BLOCKED: "), cases=["S-140.5"])
-            else:
-                journey.step(name, capability, lambda value=output: value, cases=["S-140.5"])
+    try:
+        configure_installed_cli_path()
+        run_service_steps(journey, checks(args.mode))
+        project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")
+        registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
+        if project_root:
+            _run_installed_flows(journey, project_root, registry)
         else:
-            journey.step(name, capability, lambda value=output: value)
-    project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")
-    registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
-    if project_root:
-        run_marketplace_steps(journey, project_root, registry, os.environ.copy())
-        run_adapter_default_steps(journey, project_root, os.environ.copy())
-        run_plugin_author_flow(journey, Path(project_root), Path.home() / ".local/bin/kb", registry)
-    else:
-        reason = "journey runner did not receive KB_JOURNEY_PROJECT_ROOT from the installed project setup"
-        journey.blocked("marketplace and adapter user flows", "marketplace", reason)
-        journey.blocked("plugin author flow", "plugin-author", reason)
-    result = journey.write_json(args.output)
+            reason = "journey runner did not receive KB_JOURNEY_PROJECT_ROOT from the installed project setup"
+            journey.blocked("marketplace and adapter user flows", "marketplace", reason)
+            journey.blocked("plugin author flow", "plugin-author", reason)
+    except Exception as error:
+        journey.step("service runner", "journey.runner", lambda: str(error) or error.__class__.__name__)
+    finally:
+        result = journey.write_json(args.output)
     print(json.dumps(result.__dict__, indent=2))
     return 0 if result.status == "PASS" else 1
 

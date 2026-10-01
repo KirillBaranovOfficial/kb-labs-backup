@@ -42,7 +42,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     package_id = command[2]
                     versions = {
                         "@kb-labs/commit-entry": "2.120.1",
-                        "@kb-labs/workflow-entry": "2.120.1",
+                        "@kb-labs/qa-entry": "2.120.1",
                         "@kb-labs/adapters-fs": "2.107.0",
                     }
                     return subprocess.CompletedProcess(command, 0, json.dumps(versions[package_id]), "")
@@ -77,6 +77,8 @@ class MarketplaceStepTests(unittest.TestCase):
                     stdout = json.dumps({"ok": True})
                 elif args[:2] == ["workflow", "health"]:
                     stdout = json.dumps({"ok": True, "data": {"status": "healthy"}})
+                elif args[:3] == ["qa", "cases", "list"]:
+                    stdout = json.dumps({"schema": "kb.qa-case-list/v1", "cases": [], "diagnostics": []})
                 elif args[:2] == ["project", "add"]:
                     root = Path(args[2])
                     (root / ".kb").mkdir(parents=True, exist_ok=True)
@@ -121,6 +123,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
             self.assertNotIn(("npm", "view", "@kb-labs/adapters-fs", "version", "--json", "--registry=http://registry.test"), calls)
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs@2.107.0", "--scope", "platform", "--json"), calls)
+            self.assertIn(("kb", "qa", "cases", "list", "--json"), calls)
             self.assertFalse(any(item.name.startswith("kb-marketplace-project-b-") for item in home.iterdir()))
 
 
