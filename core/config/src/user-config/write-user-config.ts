@@ -431,7 +431,7 @@ export async function unsetUserConfigValue(options: UnsetUserConfigOptions): Pro
     return { ...base, revisionAfter: revisionOf(nextText) };
   };
 
-  if (options.dryRun) return run();
+  if (options.dryRun) {return run();}
   try {
     return await withFileLock(filePath, run, options.lock);
   } catch (error) {

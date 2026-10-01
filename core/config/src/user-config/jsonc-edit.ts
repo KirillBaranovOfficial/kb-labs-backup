@@ -537,18 +537,18 @@ export function deleteJsoncValue(text: string, path: readonly string[]): string 
       throw new JsoncPathError(`Cannot descend through a ${node.kind} value`, [...path.slice(0, -1)]);
     }
     const property = node.properties.find((item) => item.key === segment);
-    if (!property) return base;
+    if (!property) {return base;}
     node = property.value;
   }
   if (node.kind !== 'object') {
     throw new JsoncPathError(`Cannot delete a property from a ${node.kind} value`, [...path.slice(0, -1)]);
   }
   const index = node.properties.findIndex((property) => property.key === path[path.length - 1]);
-  if (index < 0) return base;
+  if (index < 0) {return base;}
   const property = node.properties[index]!;
   const propertyTail = afterValueTail(base, property.value.end);
   let start = property.keyStart;
-  let end = propertyTail.insertAt;
+  const end = propertyTail.insertAt;
   if (!propertyTail.hadComma && index > 0) {
     const previous = node.properties[index - 1]!;
     const previousTail = afterValueTail(base, previous.value.end);

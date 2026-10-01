@@ -13,8 +13,8 @@ function filesUnder(root: string): string[] {
     let entries;
     try { entries = readdirSync(directory, { withFileTypes: true }); } catch { return; }
     for (const entry of entries) {
-      if (entry.isDirectory() && !SKIP.has(entry.name)) visit(join(directory, entry.name));
-      else if (entry.isFile() && SOURCE_EXTENSIONS.has(entry.name.slice(entry.name.lastIndexOf('.')))) result.push(join(directory, entry.name));
+      if (entry.isDirectory() && !SKIP.has(entry.name)) {visit(join(directory, entry.name));}
+      else if (entry.isFile() && SOURCE_EXTENSIONS.has(entry.name.slice(entry.name.lastIndexOf('.')))) {result.push(join(directory, entry.name));}
     }
   };
   visit(root);
@@ -25,7 +25,7 @@ function validateClaim(claim: QACaseClaim, cases: QACase[], file: string, line: 
   const [caseId] = claim.id.split('.');
   const testCase = cases.find(item => item.id === caseId);
   if (!testCase) { diagnostics.push({ file, line, message: `claim references unknown case ${caseId}` }); return; }
-  if (!testCase.steps.some(step => step.id === claim.id)) diagnostics.push({ file, line, message: `claim references unknown step ${claim.id}` });
+  if (!testCase.steps.some(step => step.id === claim.id)) {diagnostics.push({ file, line, message: `claim references unknown step ${claim.id}` });}
 }
 
 export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACaseClaim[]; diagnostics: QACatalogDiagnostic[] } {
@@ -46,25 +46,25 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
       // Python journey and TypeScript journey helpers both serialize this declaration.
       const casesMatch = line.match(/\bcases\s*=\s*\[([^\]]*)\]/);
       if (casesMatch) {
-        for (const match of (casesMatch[1] ?? '').matchAll(/["']((?:S|PC)-\d{3}\.\d+)["']/g)) add(match[1]!, 'journey');
+        for (const match of (casesMatch[1] ?? '').matchAll(/["']((?:S|PC)-\d{3}\.\d+)["']/g)) {add(match[1]!, 'journey');}
       }
       // Playwright titles carry tags at the title or describe block boundary.
       if (/\b(?:test|it)\s*\(/.test(line)) {
         const name = line.match(/\b(?:test|it)\s*\(\s*["'`]([^"'`]+)/)?.[1];
-        for (const match of line.matchAll(/@((?:S|PC)-\d{3}\.\d+)/g)) add(match[1]!, 'e2e', index + 1, name);
+        for (const match of line.matchAll(/@((?:S|PC)-\d{3}\.\d+)/g)) {add(match[1]!, 'e2e', index + 1, name);}
       }
       // A unit test claim must sit immediately above a test declaration.
       const caseComment = line.match(/^\s*\/\/\s*case:\s*((?:S|PC)-\d{3}\.\d+)\s*$/);
       if (caseComment && filePath.endsWith('.go')) {
         const next = lines[index + 1] ?? '';
         const testLine = next.match(/^\s*func\s+(Test\w+)/);
-        if (!testLine) diagnostics.push({ file, line: index + 1, message: '// case: must be directly above a Go test function' });
-        else add(caseComment[1]!, 'unit', index + 1, testLine[1]!);
+        if (!testLine) {diagnostics.push({ file, line: index + 1, message: '// case: must be directly above a Go test function' });}
+        else {add(caseComment[1]!, 'unit', index + 1, testLine[1]!);}
       } else if (caseComment) {
         const next = lines[index + 1] ?? '';
         const testLine = next.match(/\b(?:test|it)\s*\(\s*["'`]([^"'`]+)/);
-        if (!testLine) diagnostics.push({ file, line: index + 1, message: '// case: must be directly above a test declaration' });
-        else add(caseComment[1]!, 'unit', index + 1, testLine[1]!);
+        if (!testLine) {diagnostics.push({ file, line: index + 1, message: '// case: must be directly above a test declaration' });}
+        else {add(caseComment[1]!, 'unit', index + 1, testLine[1]!);}
       }
     }
   }
