@@ -23,7 +23,30 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
                 capture_output=True, text=True, check=False, timeout=120,
             )
 
+        def register_checkout() -> str | None:
+            result = subprocess.run(
+                [
+                    "node", "--input-type=module", "-e",
+                    "const { createProjectRegistry } = await import(process.argv[1]); "
+                    "await createProjectRegistry({ env: process.env }).add(process.argv[2]);",
+                    str(repo_root / "core/project-registry/dist/index.js"),
+                    str(repo_root),
+                ],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                return f"could not register workspace checkout in isolated KB_HOME: {result.stderr or result.stdout}"
+            return None
+
         def validate_cases() -> str | None:
+            registration_error = register_checkout()
+            if registration_error:
+                return registration_error
             result = run("qa", "cases", "validate", "--json")
             if result.returncode != 0:
                 return f"workspace QA case validation failed (exit {result.returncode}): {result.stderr or result.stdout}"

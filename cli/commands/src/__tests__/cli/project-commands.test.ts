@@ -221,6 +221,20 @@ describe('project show', () => {
     expect(res.json[0]?.error?.code).toBe('KB_PROJECT_UNKNOWN');
     expect(res.json[0]?.error?.hint).toContain('kb project add');
   });
+
+  // case: S-204.7
+  it('does not infer the current project from an unregistered repository', async () => {
+    const unregistered = makeProject('unregistered', true);
+    writeFileSync(join(unregistered, '.kb', 'kb.config.json'), '{}');
+    cwd = unregistered;
+
+    const res = await run(projectShow, []);
+
+    expect(res.code).toBe(1);
+    expect(res.json[0]?.error?.code).toBe('KB_PROJECT_UNKNOWN');
+    expect(res.json[0]?.error?.hint).toContain('kb project add');
+    expect(readdirSync(unregistered).sort()).toEqual(['.kb']);
+  });
 });
 
 describe('project remove', () => {
