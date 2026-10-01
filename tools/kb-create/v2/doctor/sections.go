@@ -35,10 +35,13 @@ import (
 
 // Check is one named observation.
 type Check struct {
-	ID     string `json:"id"`
-	OK     bool   `json:"ok"`
-	Detail string `json:"detail,omitempty"`
-	Hint   string `json:"hint,omitempty"`
+	ID             string `json:"id"`
+	OK             bool   `json:"ok"`
+	Detail         string `json:"detail,omitempty"`
+	Hint           string `json:"hint,omitempty"`
+	Slot           string `json:"slot,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	Implementation string `json:"implementation,omitempty"`
 }
 
 // Section groups the checks of one question.
@@ -108,14 +111,49 @@ func InspectPlatform(ctx context.Context, status host.Status, client *http.Clien
 	}
 	switch status.State {
 	case host.StateStopped:
-		return NewSection([]Check{{ID: "host-process", Detail: "The host is not running.", Hint: "Run \"kb-create start\"."}})
+		return NewSection([]Check{
+			{ID: "host-process", Detail: "The host is not running.", Hint: "Run \"kb-create start\"."},
+			{ID: "adapters", Detail: "Adapter status cannot be checked while the host is stopped.", Hint: "Run \"kb-create start\"."},
+		})
 	case host.StateUnhealthy:
 		return NewSection([]Check{{ID: "host-process", Detail: fmt.Sprintf("The host process %d is running but does not answer its health check.", status.PID), Hint: "Run \"kb-create restart\"; read the host log if it persists."}})
 	}
 	checks := []Check{{ID: "host-process", OK: true, Detail: fmt.Sprintf("pid %d", status.PID)}}
 	checks = append(checks, healthChecks(ctx, client, status.HealthURL)...)
+	checks = append(checks, adapterChecks(ctx, client, status.HealthURL)...)
 	checks = append(checks, authChecks(ctx, client, status.HealthURL)...)
 	return NewSection(checks)
+}
+
+// adapterChecks reads the gateway's runtime registry rather than inferring
+// providers from the install manifest. This reports what the host loaded.
+func adapterChecks(ctx context.Context, client *http.Client, healthURL string) []Check {
+	parsed, err := url.Parse(healthURL)
+	if err != nil {
+		return []Check{{ID: "adapters", Detail: "Adapter status cannot be checked because the host health URL is invalid."}}
+	}
+	parsed.Path = "/health/adapters"
+	var statuses []struct {
+		Slot           string `json:"slot"`
+		Mode           string `json:"mode"`
+		Implementation string `json:"implementation"`
+	}
+	status, err := getJSON(ctx, client, parsed.String(), &statuses)
+	if err != nil || status != http.StatusOK {
+		return []Check{{ID: "adapters", Detail: "Adapter status cannot be read from the running host.", Hint: "Run \"kb-create restart\"; read the host log if it persists."}}
+	}
+	if len(statuses) == 0 {
+		return []Check{{ID: "adapters", Detail: "The running host has not reported any adapter slots."}}
+	}
+	checks := make([]Check, 0, len(statuses))
+	for _, adapter := range statuses {
+		checks = append(checks, Check{
+			ID: "adapter:" + adapter.Slot, OK: true,
+			Slot: adapter.Slot, Mode: adapter.Mode, Implementation: adapter.Implementation,
+			Detail: fmt.Sprintf("%s is loaded in %s mode using %s.", adapter.Slot, adapter.Mode, adapter.Implementation),
+		})
+	}
+	return checks
 }
 
 // errNotJSON marks a 2xx answer whose body is not the JSON document asked for.

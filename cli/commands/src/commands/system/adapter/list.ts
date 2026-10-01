@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 import { ADAPTER_DEFAULTS, type AdapterSlot } from '@kb-labs/core-platform';
-import { loadPlatformConfig } from '@kb-labs/core-runtime';
+import { loadPlatformConfig, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
@@ -24,6 +24,12 @@ const LOCAL_PACKAGES = new Set([
   '@kb-labs/adapters-analytics-sqlite', '@kb-labs/adapters-service-transport-http',
   '@kb-labs/adapters-state-broker',
 ]);
+
+const CONFIG_KEY_BY_SLOT: Partial<Record<AdapterSlot, keyof AdaptersConfig>> = {
+  storage: 'storage', cache: 'cache', logger: 'logger', analytics: 'analytics',
+  vectorStore: 'vectorStore', llm: 'llm', embeddings: 'embeddings',
+  eventBus: 'eventBus', notifier: 'notifier', documentDatabase: 'documentDatabase', kvStore: 'kvStore',
+};
 
 function packageName(spec: string): string {
   const separator = spec.lastIndexOf('@');
@@ -48,10 +54,11 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     const loaded = await loadPlatformConfig({ startDir: getContextCwd(ctx), loadEnvFile: false });
     const config = loaded.platformConfig;
     const rows = (Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[]).map((slot): AdapterRow => {
-      const configured = config.adapters?.[slot];
+      const configKey = CONFIG_KEY_BY_SLOT[slot];
+      const configured = configKey ? config.adapters?.[configKey] : undefined;
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
       const packageId = configuredPackage ? packageName(configuredPackage) : undefined;
-      const option = config.adapterOptions?.[slot];
+      const option = configKey ? config.adapterOptions?.[configKey] : undefined;
       const baseDir = slot === 'storage' && option && typeof option === 'object' &&
         'baseDir' in option && typeof option.baseDir === 'string'
         ? path.resolve(loaded.projectRoot, option.baseDir)
@@ -79,7 +86,11 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
   },
   formatter(result, ctx, flags) {
     if (flags.json) { ctx.ui?.json?.(result); return; }
-    if (!result.ok) { ctx.ui?.error(result.error ?? 'Could not list adapters'); return; }
+    if (!result.ok) {
+      const error = result.error;
+      ctx.ui?.error(typeof error === 'string' ? error : error?.message ?? 'Could not list adapters');
+      return;
+    }
     ctx.ui?.table?.(result.adapters ?? []);
   },
 });

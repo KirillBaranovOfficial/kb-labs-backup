@@ -8,7 +8,8 @@
  * The loader writes to this registry once per slot during startup;
  * `getAdapterStatus()` is the read API. Plugins consume the same data via
  * the `useAdapterStatus()` SDK hook; the gateway publishes it at
- * `/health/adapters`; `kb-dev doctor` polls that endpoint.
+ * `/health/adapters`; `kb-create doctor` polls that endpoint for the
+ * installed-platform operator report.
  *
  * Storage: global singleton on `globalThis` via `Symbol.for(...)`, the same
  * cross-realm pattern used by the platform container singleton in

@@ -244,6 +244,24 @@ export function fillAdapterFallbacksAndRecord(
       continue;
     }
 
+    // `platform.logs` is composed by PlatformContainer from local logger
+    // backends rather than loaded as a package for the `logs` slot. Check
+    // this before the seeded NoOp reader is mistaken for the active reader.
+    const hasLocalLogs = slot === 'logs' && (
+      Boolean(container.logger.getLogBuffer?.()) ||
+      container.hasAdapter('logRingBuffer') ||
+      container.hasAdapter('logPersistence')
+    );
+    if (hasLocalLogs) {
+      status.record({
+        slot,
+        mode: 'real',
+        implementation: 'HybridLogReader',
+        recordedAt: now(),
+      });
+      continue;
+    }
+
     // Branch 1b: adapter present but not in config — bootstrap fallback
     // (e.g. ConsoleLogger seeded in the container constructor).
     // Re-classify by fallback policy: do NOT record as 'real'.
@@ -256,24 +274,6 @@ export function fillAdapterFallbacksAndRecord(
         mode,
         implementation: implName,
         reason: 'not-configured',
-        recordedAt: now(),
-      });
-      continue;
-    }
-
-    // `platform.logs` is composed by PlatformContainer from local logger
-    // backends rather than loaded as a package for the `logs` slot. Report
-    // the effective reader instead of the unavailable slot fallback.
-    const hasLocalLogs = slot === 'logs' && (
-      Boolean(container.logger.getLogBuffer?.()) ||
-      container.hasAdapter('logRingBuffer') ||
-      container.hasAdapter('logPersistence')
-    );
-    if (hasLocalLogs) {
-      status.record({
-        slot,
-        mode: 'real',
-        implementation: 'HybridLogReader',
         recordedAt: now(),
       });
       continue;
