@@ -5,7 +5,7 @@
  * Every mutating service method is explicitly scope-bound — there is no
  * implicit default. The helpers below compute the absolute root directory
  * for a given ScopeContext and enforce the invariants that the rest of the
- * service relies on (distinct platform/project roots, project has a `.kb/`).
+ * service relies on (distinct platform/project roots).
  */
 
 import * as path from 'node:path';
@@ -15,8 +15,6 @@ import type {
   ScopeContext,
   QueryScopeContext,
 } from '@kb-labs/marketplace-contracts';
-
-const CONFIG_FILE_CANDIDATES = ['kb.config.jsonc', 'kb.config.json'] as const;
 
 /**
  * Roots known to the MarketplaceService at construction time.
@@ -36,7 +34,7 @@ export interface ServiceRoots {
  *   the context is ignored.
  * - `scope: 'project'`  — prefers `ctx.projectRoot`, falls back to
  *   `roots.projectRoot` from construction. Throws if neither is set,
- *   if the path isn't absolute, doesn't exist, lacks a `.kb/kb.config.*`,
+ *   if the path isn't absolute, doesn't exist,
  *   or equals `roots.platformRoot`.
  */
 export function resolveScopeRoot(roots: ServiceRoots, ctx: ScopeContext): string {
@@ -65,21 +63,6 @@ export function resolveScopeRoot(roots: ServiceRoots, ctx: ScopeContext): string
     throw new ScopeResolutionError(
       'SCOPE_PROJECT_ROOT_NOT_FOUND',
       `projectRoot does not exist: "${candidate}".`,
-    );
-  }
-
-  const hasConfig = CONFIG_FILE_CANDIDATES.some((name) => {
-    try {
-      accessSync(path.join(candidate, '.kb', name), constants.F_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  if (!hasConfig) {
-    throw new ScopeResolutionError(
-      'SCOPE_PROJECT_ROOT_NO_KB_DIR',
-      `projectRoot "${candidate}" does not contain .kb/kb.config.{json,jsonc} — refusing to treat it as a project.`,
     );
   }
 

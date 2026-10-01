@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
 import { configGet } from '../../commands/system/config/get.js';
 import { configSet } from '../../commands/system/config/set.js';
@@ -60,6 +61,7 @@ function makeCtx(cwd: string): { ctx: PluginContextV3; out: Captured } {
 }
 
 let tmp: string;
+let kbHome: string;
 let platformRoot: string;
 let projectRoot: string;
 
@@ -96,14 +98,17 @@ async function run(
 
 beforeEach(async () => {
   tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'kb-config-cmd-'));
+  kbHome = path.join(tmp, 'kb-home');
   platformRoot = path.join(tmp, 'platform');
   projectRoot = path.join(tmp, 'project');
   await fsp.mkdir(path.join(platformRoot, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true });
   await fsp.mkdir(projectRoot, { recursive: true });
+  projectRoot = await fsp.realpath(projectRoot);
   await write(platformRoot, '.kb/kb.config.jsonc', PLATFORM_CONFIG);
   await write(projectRoot, '.kb/kb.config.jsonc', PROJECT_CONFIG);
   vi.stubEnv('KB_PLATFORM_ROOT', platformRoot);
-  vi.stubEnv('KB_PROJECT_ROOT', projectRoot);
+  vi.stubEnv('KB_HOME', kbHome);
+  await createProjectRegistry({ env: process.env }).add(projectRoot);
 });
 
 afterEach(async () => {

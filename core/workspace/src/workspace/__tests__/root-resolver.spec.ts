@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
+import { createProjectRegistry } from '@kb-labs/core-project-registry'
 
 import {
   resolvePlatformRoot,
@@ -29,117 +30,50 @@ describe('resolveProjectRoot', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('returns explicit cwd when provided', async () => {
-    const explicit = path.join(tmpDir, 'explicit-root')
-    const result = await resolveProjectRoot({ cwd: explicit })
-
-    expect(result).toEqual({
-      rootDir: path.resolve(explicit),
-      source: 'explicit',
-    })
+  // case: S-204.7
+  it('reports an unknown project outside the platform registry', async () => {
+    const unregistered = path.join(tmpDir, 'unregistered-project')
+    const registryHome = path.join(tmpDir, 'registry-home')
+    mkdirSync(unregistered, { recursive: true })
+    await expect(resolveProjectRoot({
+      startDir: unregistered,
+      env: { KB_HOME: registryHome },
+    })).rejects.toMatchObject({ code: 'KB_PROJECT_UNKNOWN' })
   })
 
-  it('prefers KB_PROJECT_ROOT when set', async () => {
-    const envRoot = path.join(tmpDir, 'env-root-primary')
-    const result = await resolveProjectRoot({
-      env: { KB_PROJECT_ROOT: envRoot },
-    })
-
-    expect(result).toEqual({
-      rootDir: path.resolve(envRoot),
-      source: 'env',
-    })
-  })
-
-  it('accepts legacy KB_LABS_WORKSPACE_ROOT for backwards compatibility', async () => {
-    const envRoot = path.join(tmpDir, 'env-root-legacy-ws')
-    const result = await resolveProjectRoot({
-      env: { KB_LABS_WORKSPACE_ROOT: envRoot },
-    })
-
-    expect(result).toEqual({
-      rootDir: path.resolve(envRoot),
-      source: 'env',
-    })
-  })
-
-  it('accepts legacy KB_LABS_REPO_ROOT for backwards compatibility', async () => {
-    const envRoot = path.join(tmpDir, 'env-root-legacy-repo')
-    const result = await resolveProjectRoot({
-      env: { KB_LABS_REPO_ROOT: envRoot },
-    })
-
-    expect(result).toEqual({
-      rootDir: path.resolve(envRoot),
-      source: 'env',
-    })
-  })
-
-  it('finds nearest kb-labs config ancestor', async () => {
-    const umbrella = path.join(tmpDir, 'umbrella')
-    const child = path.join(umbrella, 'packages', 'foo')
-    const configDir = path.join(umbrella, '.kb')
-
-    mkdirSync(child, { recursive: true })
-    mkdirSync(configDir, { recursive: true })
-    writeFileSync(
-      path.join(configDir, 'kb.config.json'),
-      JSON.stringify({ name: 'umbrella' }),
-    )
-
-    process.chdir(child)
-
-    const result = await resolveProjectRoot({
-      startDir: child,
-      env: {},
-    })
-
-    expect(result.rootDir).toEqual(path.resolve(umbrella))
-    expect(result.source).toBe('config')
-  })
-
-  it('falls back to repo root when config missing', async () => {
-    const repoRoot = path.join(tmpDir, 'repo-fallback')
-    const nested = path.join(repoRoot, 'nested', 'dir')
-
+  it('resolves the registered project containing cwd without reading repository config', async () => {
+    const project = path.join(tmpDir, 'registered-project')
+    const nested = path.join(project, 'packages', 'foo')
+    const home = path.join(tmpDir, 'registered-home')
     mkdirSync(nested, { recursive: true })
-    writeFileSync(path.join(repoRoot, 'package.json'), '{"name":"workspace"}')
+    await createProjectRegistry({ root: home }).add(project)
 
-    process.chdir(nested)
-
-    const result = await resolveProjectRoot({
-      startDir: nested,
-      env: {},
-    })
-
-    expect(result.rootDir).toEqual(path.resolve(repoRoot))
-    expect(result.source).toBe('repo')
+    const result = await resolveProjectRoot({ startDir: nested, env: { KB_HOME: home } })
+    expect(result).toEqual({ rootDir: realpathSync(project), source: 'registry' })
   })
 
-  it('returns fallback when no markers found', async () => {
-    const lonely = path.join(tmpDir, 'lonely')
-    mkdirSync(lonely, { recursive: true })
-    process.chdir(lonely)
+  it('ignores .kb and repository markers for project identity', async () => {
+    const project = path.join(tmpDir, 'unregistered-marked-project')
+    mkdirSync(path.join(project, '.kb'), { recursive: true })
+    writeFileSync(path.join(project, '.kb', 'kb.config.json'), '{}')
+    writeFileSync(path.join(project, 'package.json'), '{"name":"unregistered"}')
 
-    const result = await resolveProjectRoot({
-      startDir: lonely,
-      env: {},
-    })
-
-    // On most systems findRepoRoot will walk up to a real repo root; we accept
-    // either 'repo' or 'fallback' here since it depends on whether there is
-    // anything above tmpDir.
-    expect([lonely, path.resolve(lonely)]).toContainEqual(result.rootDir)
-    expect(['fallback', 'repo']).toContain(result.source)
+    await expect(resolveProjectRoot({ startDir: project, env: { KB_HOME: path.join(tmpDir, 'empty-home') } }))
+      .rejects.toMatchObject({ code: 'KB_PROJECT_UNKNOWN' })
   })
 })
 
 describe('resolveWorkspaceRoot (deprecated alias)', () => {
   it('behaves identically to resolveProjectRoot', async () => {
-    const explicit = path.join(os.tmpdir(), 'alias-test')
-    const legacy = await resolveWorkspaceRoot({ cwd: explicit })
-    const current = await resolveProjectRoot({ cwd: explicit })
+    const home = mkdtempSync(path.join(os.tmpdir(), 'kb-alias-home-'))
+    const project = mkdtempSync(path.join(os.tmpdir(), 'kb-alias-project-'))
+    await createProjectRegistry({ root: home }).add(project)
+    const options = { cwd: project, env: { KB_HOME: home } }
+    const legacy = await resolveWorkspaceRoot(options)
+    const current = await resolveProjectRoot(options)
     expect(legacy).toEqual(current)
+    rmSync(home, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
   })
 })
 
@@ -417,16 +351,18 @@ describe('resolveRoots', () => {
       'packages:\n  - packages/*\n',
     )
 
+    const home = path.join(tmpDir, 'dev-registry-home')
+    await createProjectRegistry({ root: home }).add(workspaceRoot)
     const result = await resolveRoots({
       startDir: nested,
-      env: {},
+      env: { KB_HOME: home },
     })
 
     expect(result.platformRoot).toEqual(path.resolve(workspaceRoot))
-    expect(result.projectRoot).toEqual(path.resolve(workspaceRoot))
+    expect(result.projectRoot).toEqual(realpathSync(workspaceRoot))
     expect(result.sameLocation).toBe(true)
     expect(result.sources.platform).toBe('marker')
-    expect(result.sources.project).toBe('config')
+    expect(result.sources.project).toBe('registry')
   })
 
   it('returns sameLocation: false in installed mode', async () => {
@@ -445,41 +381,42 @@ describe('resolveRoots', () => {
 
     // User project
     const projectRoot = path.join(tmpDir, 'user-project')
-    const configDir = path.join(projectRoot, '.kb')
-    mkdirSync(configDir, { recursive: true })
-    writeFileSync(
-      path.join(configDir, 'kb.config.json'),
-      JSON.stringify({ platform: {} }),
-    )
+    mkdirSync(projectRoot, { recursive: true })
+    const home = path.join(tmpDir, 'installed-registry-home')
+    await createProjectRegistry({ root: home }).add(projectRoot)
 
     const result = await resolveRoots({
       moduleUrl: pathToFileURL(fakeBin).href,
       startDir: projectRoot,
-      env: {},
+      env: { KB_HOME: home },
     })
 
     expect(result.platformRoot).toEqual(path.resolve(platformRoot))
-    expect(result.projectRoot).toEqual(path.resolve(projectRoot))
+    expect(result.projectRoot).toEqual(realpathSync(projectRoot))
     expect(result.sameLocation).toBe(false)
     expect(result.sources.platform).toBe('module')
-    expect(result.sources.project).toBe('config')
+    expect(result.sources.project).toBe('registry')
   })
 
-  it('env vars override discovery for both roots independently', async () => {
+  it('platform env override does not replace registry project identity', async () => {
     const platformRoot = path.join(tmpDir, 'env-platform-root')
     const projectRoot = path.join(tmpDir, 'env-project-root')
+    mkdirSync(projectRoot, { recursive: true })
 
+    const home = path.join(tmpDir, 'roots-registry-home')
+    await createProjectRegistry({ root: home }).add(projectRoot)
     const result = await resolveRoots({
+      startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
+        KB_HOME: home,
       },
     })
 
     expect(result.platformRoot).toEqual(path.resolve(platformRoot))
-    expect(result.projectRoot).toEqual(path.resolve(projectRoot))
+    expect(result.projectRoot).toEqual(realpathSync(projectRoot))
     expect(result.sameLocation).toBe(false)
     expect(result.sources.platform).toBe('env')
-    expect(result.sources.project).toBe('env')
+    expect(result.sources.project).toBe('registry')
   })
 })
