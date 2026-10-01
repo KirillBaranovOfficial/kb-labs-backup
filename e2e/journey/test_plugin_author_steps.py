@@ -32,6 +32,8 @@ if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and
     (entry / "package.json").write_text('{"name":"demo-entry","version":"0.1.0"}')
     core.write_text('return { greeting: `Hello, ${who} from demo!` };\n')
 elif args[:3] == ["marketplace", "link", "--link"]:
+    if os.environ.get("FAIL_MARKETPLACE_LINK"):
+        raise SystemExit("simulated marketplace link failure")
     if not (root / args[3] / "package.json").is_file():
         raise SystemExit("entry package is missing")
     lock_path.write_text(json.dumps({"plugins": {"demo": {
@@ -165,6 +167,16 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             {"claimId": "S-003.2", "kind": "journey", "status": "FAIL"},
         ])
         self.assertFalse((self.project / ".kb/plugins/demo").exists())
+
+    def test_link_failure_records_unlink_as_blocked(self):
+        self.env["FAIL_MARKETPLACE_LINK"] = "1"
+        result = self.run_flow()
+
+        self.assertEqual(result.status, "FAIL")
+        self.assertEqual(result.first_failure["name"], "link plugin to project")
+        self.assertEqual(result.steps[-1]["status"], "BLOCKED")
+        self.assertEqual(result.steps[-1]["name"], "unlink plugin")
+        self.assertIn("plugin was not linked", result.steps[-1]["message"])
 
 
 if __name__ == "__main__":
