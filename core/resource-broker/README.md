@@ -43,12 +43,12 @@ Drop-in wrappers that add queuing and rate limiting to existing adapters:
 | `StateBrokerRateLimitBackend` | Distributed — multi-instance REST API deployments |
 
 ```typescript
-// Distributed mode (requires core-state-daemon running)
+// Distributed mode (the host supplies the live StateBroker address)
+import { createStateBroker } from '@kb-labs/core-state-broker';
 import { StateBrokerRateLimitBackend } from '@kb-labs/core-resource-broker';
 
-const backend = new StateBrokerRateLimitBackend({
-  url: 'http://localhost:7777',
-});
+const broker = createStateBroker({ backend: 'http' });
+const backend = new StateBrokerRateLimitBackend(broker);
 ```
 
 ## Rate Limit Presets

@@ -163,7 +163,7 @@ pnpm dev:status          # check what's running
 pnpm dev:logs workflow   # tail logs
 ```
 
-Services: Gateway (:4000), REST API (:5050), Workflow (:7778), Marketplace (:5070), State (:7777).
+Standalone dev services may use configured ports; under `kb-create`, internal Marketplace and StateBroker ports are allocated by the host.
 
 ## Architecture Decisions
 

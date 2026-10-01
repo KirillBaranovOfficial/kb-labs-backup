@@ -4845,11 +4845,13 @@
 
 - **ContainerExecutionConfig validation**
   - accepts a valid container config
-  - rejects invalid gatewayDispatchUrl
+  - rejects a configured Gateway address because the host supplies it at runtime
   - rejects empty gatewayInternalSecret
   - accepts optional fields
   - rejects invalid pullPolicy
 - **ExecutionConfig mode**
+  - rejects a workspace-agent Gateway URL in config
+  - accepts workspace-agent routing without a configured Gateway URL
   - accepts mode: in-process
   - accepts mode: worker-pool with workerPool config
   - accepts mode: auto (no extra required fields)

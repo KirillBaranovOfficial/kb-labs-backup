@@ -1,11 +1,11 @@
 ---
 title: "Self-Hosted Deployments"
 description: "Running the gateway in your own network — TLS, secrets, reverse proxies, scaling."
-updatedAt: "2026-10-01"
+updatedAt: "2026-10-02"
 order: 5
 ---
 
-KB Labs is designed to be self-hosted. Every service — gateway, REST API, workflow daemon, marketplace, state daemon — is a plain Node process with a known port and a `ServiceManifest`. This page walks through what you actually need to wire up when running the gateway in your own infrastructure, including the bits that the dev-mode defaults hide from you.
+KB Labs is designed to be self-hosted. Every service — gateway, REST API, workflow daemon, marketplace, state daemon — is a plain Node process with a `ServiceManifest`. Public and standalone service ports are deployment choices; when `kb-create` runs the host, it owns internal service addresses and assigns them at startup.
 
 ## What you're deploying
 
@@ -15,7 +15,7 @@ A minimum production deployment is one process per service:
 - **REST API** on 5050 — internal only.
 - **Workflow daemon** on 7778 — internal only.
 - **Marketplace** on 5070 — internal only.
-- **State daemon** on 7777 — internal only, optional (required when `resourceBroker.distributed: true`).
+- **State daemon** — internal only, optional (required when `resourceBroker.distributed: true`); the host assigns its loopback address at startup.
 - **Qdrant** (or whichever vector store) on 6333 — internal.
 - **Redis** (optional) — used by the cache adapter when configured.
 
