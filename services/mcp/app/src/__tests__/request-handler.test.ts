@@ -77,20 +77,20 @@ const resolvePlatform = () => container;
 // ── toolsCacheKey ─────────────────────────────────────────────────────────
 
 describe('toolsCacheKey', () => {
-  it('returns the shared anonymous bucket for no header', () => {
-    expect(toolsCacheKey(null)).toBe('mcp:tools:anonymous');
-    expect(toolsCacheKey(undefined)).toBe('mcp:tools:anonymous');
+  it('isolates catalogs by project scope, including anonymous requests', () => {
+    expect(toolsCacheKey(null, '/projects/a')).not.toBe(toolsCacheKey(null, '/projects/b'));
+    expect(toolsCacheKey(undefined, '/projects/a')).toBe(toolsCacheKey(null, '/projects/a'));
   });
 
   it('derives a stable hashed key per token', () => {
-    const k1 = toolsCacheKey('Bearer abc');
-    const k2 = toolsCacheKey('Bearer abc');
+    const k1 = toolsCacheKey('Bearer abc', '/projects/a');
+    const k2 = toolsCacheKey('Bearer abc', '/projects/a');
     expect(k1).toBe(k2);
-    expect(k1).toMatch(/^mcp:tools:[0-9a-f]{16}$/);
+    expect(k1).toMatch(/^mcp:tools:[0-9a-f]{16}:[0-9a-f]{16}$/);
   });
 
   it('gives different tokens different keys (no cross-token leakage)', () => {
-    expect(toolsCacheKey('Bearer abc')).not.toBe(toolsCacheKey('Bearer xyz'));
+    expect(toolsCacheKey('Bearer abc', '/projects/a')).not.toBe(toolsCacheKey('Bearer xyz', '/projects/a'));
   });
 });
 
@@ -109,10 +109,25 @@ describe('resolveVisibleTools', () => {
     expect(registry.snapshot).not.toHaveBeenCalled();
   });
 
+  // case: S-045.4
+  it('does not reuse a tokenless catalog from another project runtime', async () => {
+    const projectA = makeRegistry([cmd('workflow run', 'execute')]);
+    const projectB = makeRegistry([cmd('commit apply', 'execute')]);
+    const toolsA = await resolveVisibleTools({
+      permits: allow, authHeader: null, cacheScope: '/projects/a', registry: projectA, cache,
+    });
+    const toolsB = await resolveVisibleTools({
+      permits: allow, authHeader: null, cacheScope: '/projects/b', registry: projectB, cache,
+    });
+    expect(toolsA.map((item) => item.name)).toEqual(['mind__workflow_run']);
+    expect(toolsB.map((item) => item.name)).toEqual(['mind__commit_apply']);
+    expect(projectB.snapshot).toHaveBeenCalledOnce();
+  });
+
   it('anonymous uses the anonymous bucket even when an (invalid) header is present', async () => {
     const registry = makeRegistry([cmd('mind search', 'read')]);
     await resolveVisibleTools({ permits: null, authHeader: 'Bearer junk', registry, cache });
-    expect(cache.set).toHaveBeenCalledWith('mcp:tools:anonymous', [], TOOLS_CACHE_TTL_MS);
+    expect(cache.set).toHaveBeenCalledWith(toolsCacheKey(null), [], TOOLS_CACHE_TTL_MS);
   });
 
   it('filters from the registry snapshot on a cache miss and caches the result with TTL', async () => {
