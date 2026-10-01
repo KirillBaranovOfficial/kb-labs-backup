@@ -42,6 +42,7 @@ COPY e2e/packages /src/packages
 COPY e2e/platform/registry-manifest.json /src/registry-manifest.json
 COPY e2e/platform/prepare-release-index.mjs /src/prepare-release-index.mjs
 COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
+COPY e2e/platform/release-index-version.mjs /src/release-index-version.mjs
 COPY tools/kb-create/scripts/prepare-release-index.mjs /src/kb-create/scripts/prepare-release-index.mjs
 COPY --from=go-builder /out/kb-create-release-index /usr/local/bin/kb-create-release-index
 RUN node /src/prepare-release-index.mjs \

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from studio_steps import create_studio_member, run_studio_browser_step
 from platform_update_steps import run_platform_update_steps
+from release_index import stable_platform_version
 from service_steps import Journey, record_runner_failure
 from steps.auth import run_local_auth_steps, run_secured_auth_steps
 
@@ -668,7 +669,7 @@ def main():
             update_url = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/release-index-update.json"
             with urllib.request.urlopen(update_url, timeout=30) as response:
                 update_index.write_bytes(response.read())
-            updated_version = json.loads(update_index.read_text())["profiles"]["default"]["platformVersion"]
+            updated_version = stable_platform_version(json.loads(update_index.read_text()))
             request.setdefault("platform", {})["version"] = updated_version
             request["platform"].pop("channel", None)
             request["sdk"] = {"version": updated_version}
