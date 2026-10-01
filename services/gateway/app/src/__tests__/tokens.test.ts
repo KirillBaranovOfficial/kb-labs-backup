@@ -51,7 +51,7 @@ describe('resolveToken', () => {
         hostId: 'host-1',
         namespaceId: 'ns-1',
         tier: 'free',
-        type: 'machine',
+        type: 'machine_access',
         permissions: ['host:connect'],
       },
       stubJwtConfig,
@@ -90,7 +90,7 @@ describe('resolveToken', () => {
 
   it('returns null for a JWT signed with a different secret', async () => {
     const { token } = await signAccessToken(
-      { hostId: 'h', namespaceId: 'ns', tier: 'free', type: 'machine', permissions: [] },
+      { hostId: 'h', namespaceId: 'ns', tier: 'free', type: 'machine_access', permissions: [] },
       { secret: 'other-secret' },
     );
 
@@ -105,7 +105,7 @@ describe('resolveToken', () => {
         hostId: 'h',
         namespaceId: 'ns',
         tier: 'free',
-        type: 'machine',
+        type: 'machine_access',
         permissions: ['machine:register', 'host:connect'],
       },
       stubJwtConfig,

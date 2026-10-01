@@ -5,6 +5,7 @@ import {
   HostRegistrationSchema,
   HostDescriptorSchema,
   AuthContextSchema,
+  JwtPayloadSchema,
   HelloMessageSchema,
   CallMessageSchema,
   ErrorMessageSchema,
@@ -180,6 +181,18 @@ describe('AuthContextSchema', () => {
       expect(() =>
         AuthContextSchema.parse({ type, userId: 'u', namespaceId: 'ns', tier: 'free', permissions: [] }),
       ).not.toThrow();
+    }
+  });
+});
+
+describe('JwtPayloadSchema token kinds', () => {
+  const common = { sub: 'subject-1', namespaceId: 'ns-1', tier: 'free', permissions: [], iat: 1, exp: 2 };
+  it('accepts only explicit access and refresh token kinds', () => {
+    for (const type of ['user_access', 'user_refresh', 'machine_access', 'machine_refresh'] as const) {
+      expect(JwtPayloadSchema.safeParse({ ...common, type }).success).toBe(true);
+    }
+    for (const type of ['user', 'machine', 'refresh'] as const) {
+      expect(JwtPayloadSchema.safeParse({ ...common, type }).success).toBe(false);
     }
   });
 });

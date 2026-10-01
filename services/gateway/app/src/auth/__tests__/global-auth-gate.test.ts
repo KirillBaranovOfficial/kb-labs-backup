@@ -111,7 +111,7 @@ describe('Gateway global auth gate', () => {
 
     const jwtConfig = { secret: 'test-secret-at-least-32-chars-long!' };
     const { token } = await signAccessToken({
-      hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'user', permissions: ['packages:read'],
+      hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access', permissions: ['packages:read'],
     }, jwtConfig);
     const authenticated = await app.inject({
       method: 'GET',
@@ -197,7 +197,7 @@ describe('Gateway global auth gate', () => {
     }));
     await app.ready();
     const { token } = await signAccessToken({
-      hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'user', permissions: ['packages:read'],
+      hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access', permissions: ['packages:read'],
     }, jwtConfig);
 
     const response = await app.inject({
@@ -237,7 +237,7 @@ describe('Gateway global auth gate', () => {
     expect(anonymous.json()).toEqual({ secret: 'gateway-internal-secret' });
 
     const { token } = await signAccessToken({
-      hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'user', permissions: ['packages:read'],
+      hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access', permissions: ['packages:read'],
     }, jwtConfig);
     const authenticated = await app.inject({
       method: 'GET',

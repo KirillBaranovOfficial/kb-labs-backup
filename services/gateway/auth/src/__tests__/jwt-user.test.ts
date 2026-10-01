@@ -9,7 +9,7 @@
  * - **`fam` is mandatory in BOTH access and refresh** (CD-2). Sign
  *   helpers require it as an argument; verify helpers reject tokens
  *   without `fam` even if the signature is otherwise valid.
- * - Access payload type is `user`, refresh is `refresh`. A machine
+ * - Access payload type is `user_access`, refresh is `user_refresh`. A machine
  *   token MUST NOT verify as a user access token (`type` differs).
  * - No `role` / `scopes` / `permissions` ever land in the payload
  *   (ADR-0020, principle #3).
@@ -22,6 +22,7 @@ import {
   signUserRefreshToken,
   verifyUserAccessToken,
   verifyUserRefreshToken,
+  signAccessToken,
 } from '../jwt.js';
 
 const config = { secret: 'test-secret-at-least-32-chars-long!!' };
@@ -39,6 +40,7 @@ describe('signUserAccessToken / verifyUserAccessToken', () => {
     expect(payload!.tenantId).toBe('t1');
     expect(payload!.familyId).toBe('fam-1');
     expect(payload!.jti).toBeTypeOf('string');
+    expect(payload!.type).toBe('user_access');
   });
 
   it('payload contains NO role / scopes / permissions fields (principle #3)', async () => {
@@ -58,6 +60,21 @@ describe('signUserAccessToken / verifyUserAccessToken', () => {
   it('returns null for wrong secret', async () => {
     const { token } = await signUserAccessToken({ ...claims, ttlSec: 900 }, config);
     expect(await verifyUserAccessToken(token, { secret: 'other-secret-at-least-32-chars-now' })).toBeNull();
+  });
+
+  it('rejects a machine access token by its explicit kind', async () => {
+    const { token } = await signAccessToken({
+      hostId: 'host-1', namespaceId: 'tenant-1', tier: 'free', type: 'machine_access',
+    }, config);
+    expect(await verifyUserAccessToken(token, config)).toBeNull();
+  });
+
+  it('rejects a pre-contract user access token kind', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({ tenantId: 't1', fam: 'fam-1', type: 'user', jti: 'old-jti' })
+      .setProtectedHeader({ alg: 'HS256' }).setSubject('u1').setIssuedAt(now)
+      .setExpirationTime(now + 900).sign(new TextEncoder().encode(config.secret));
+    expect(await verifyUserAccessToken(token, config)).toBeNull();
   });
 
   it('rejects expired tokens', async () => {
@@ -83,7 +100,7 @@ describe('signUserAccessToken / verifyUserAccessToken', () => {
     const forged = await new SignJWT({
       tenantId: 't1',
       fam: 'fam-1',
-      type: 'user',
+      type: 'user_access',
       jti: 'forged-jti',
     })
       .setProtectedHeader({ alg: 'HS384' })
@@ -105,6 +122,7 @@ describe('signUserRefreshToken / verifyUserRefreshToken', () => {
     expect(payload!.tenantId).toBe('t1');
     expect(payload!.familyId).toBe('fam-1');
     expect(payload!.jti).toBeTypeOf('string');
+    expect(payload!.type).toBe('user_refresh');
   });
 
   it('refresh and access tokens are not interchangeable', async () => {
@@ -116,6 +134,14 @@ describe('signUserRefreshToken / verifyUserRefreshToken', () => {
     // Re-route through the access helper to produce a non-refresh token shape.
     const access = (await signUserAccessToken({ ...claims, ttlSec: 900 }, config)).token;
     expect(await verifyUserRefreshToken(access, config)).toBeNull();
+  });
+
+  it('rejects pre-contract user refresh token kinds', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({ tenantId: 't1', fam: 'fam-1', type: 'refresh', jti: 'old-jti' })
+      .setProtectedHeader({ alg: 'HS256' }).setSubject('u1').setIssuedAt(now)
+      .setExpirationTime(now + 900).sign(new TextEncoder().encode(config.secret));
+    expect(await verifyUserRefreshToken(token, config)).toBeNull();
   });
 });
 

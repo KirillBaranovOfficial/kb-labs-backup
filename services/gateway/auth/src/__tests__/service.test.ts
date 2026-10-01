@@ -193,7 +193,7 @@ describe('AuthService', () => {
     await expect(machineAuth.revokeRefreshToken(userRefreshToken)).resolves.toBe(false);
   });
 
-  it('classifies previous-release machine and user refresh tokens by verified kind', async () => {
+  it('classifies machine and user refresh tokens by explicit kind', async () => {
     const machineRefreshToken = await signRefreshToken('host-1', jwtConfig);
     const userRefreshToken = await signUserRefreshToken({
       userId: 'user-1', tenantId: 'tenant-1', familyId: 'family-1', ttlSec: 3600,

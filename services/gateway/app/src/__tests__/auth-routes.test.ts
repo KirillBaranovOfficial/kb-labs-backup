@@ -34,7 +34,7 @@ const testJwtConfig: JwtConfig = { secret: 'test-secret' };
 /** Signs a machine JWT with the given permissions using the test JWT secret. */
 async function makeMachineJwt(permissions: string[]): Promise<string> {
   const { token } = await signAccessToken(
-    { hostId: 'test-admin-host', namespaceId: 'test-ns', tier: 'free', type: 'machine', permissions },
+    { hostId: 'test-admin-host', namespaceId: 'test-ns', tier: 'free', type: 'machine_access', permissions },
     testJwtConfig,
   );
   return token;
@@ -357,6 +357,26 @@ describe('POST /auth/logout/cli token-kind routing', () => {
     expect(routeAuthService.classifyRefreshToken).toHaveBeenCalledWith('verified-refresh-token');
     expect(routeAuthService.revokeRefreshToken).toHaveBeenCalledTimes(revokeMachine ? 1 : 0);
     expect(userLogoutFn).toHaveBeenCalledTimes(revokeUser ? 1 : 0);
+    await routeApp.close();
+  });
+
+  it('does not route an unrecognized refresh token to either revoker', async () => {
+    const routeApp = Fastify({ logger: false });
+    const routeAuthService = {
+      classifyRefreshToken: vi.fn().mockResolvedValue(null),
+      revokeRefreshToken: vi.fn(),
+    };
+    const userLogoutFn = vi.fn();
+    registerAuthRoutes(routeApp, routeAuthService as never, {
+      userRefreshFn: vi.fn().mockResolvedValue(false), userLogoutFn, pdp: {} as never,
+    });
+    await routeApp.ready();
+    const response = await routeApp.inject({
+      method: 'POST', url: '/auth/logout/cli', payload: { refreshToken: 'unrecognized-token' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(routeAuthService.revokeRefreshToken).not.toHaveBeenCalled();
+    expect(userLogoutFn).not.toHaveBeenCalled();
     await routeApp.close();
   });
 });

@@ -67,15 +67,22 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         return subprocess.CompletedProcess(args, code, stdout, "")
 
     def test_update_rollback_claims_all_steps_and_confirms_non_tty_rollback(self):
+        contract_transition_checks = 0
+
         def verify_user():
             self.user_checks += 1
             return subprocess.CompletedProcess(["kb", "auth", "login"], 0, "logged in", "")
 
+        def verify_contract_transition():
+            nonlocal contract_transition_checks
+            contract_transition_checks += 1
+
         result = run_platform_update_steps(
-            mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
             update_index=self.root / "update-index.json",
             request_file=self.root / "request.json", base_version="3.0.0", updated_version="3.0.1",
             run_command=self.fake_kb, verify_user=verify_user,
+            verify_contract_transition=verify_contract_transition,
         )
         report = result.result()
         self.assertEqual(report.status, "PASS")
@@ -93,7 +100,8 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(checkpoints["beforeUpdate"], checkpoints["afterRollbackHostRestart"])
         self.assertEqual(checkpoints["afterRollbackHostRestart"], checkpoints["afterMissingSnapshotRecovery"])
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
-        self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} | {f"S-024.{step}" for step in (1, 2, 3, 4, 5)})
+        self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} |
+                         {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4"})
         self.assertEqual([command[1] for command in self.commands], [
             "status", "plan", "update", "status", "project", "plan", "update", "rollback", "rollback", "status", "project", "doctor",
         ])
@@ -104,6 +112,9 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertIn("--yes", rollback)
         self.assertIn("snapshot-1", rollback)
         self.assertEqual(self.user_checks, 3)
+        self.assertEqual(contract_transition_checks, 2)
+        self.assertIn("S-041.4", steps["verify updated receipt, config, and host status"]["cases"])
+        self.assertIn("S-041.4", steps["verify restored receipt, config, host, and project command"]["cases"])
 
     def test_login_failure_keeps_the_valid_before_update_hash_and_does_not_fake_a_config_change(self):
         login_attempts = 0
