@@ -89,6 +89,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-107](scenarios/S-107-studio-invite-acceptance.md) | Studio — accept an invitation and activate an account | team-member | P1 | planned | true | [secured] | [studio] | — |
 | [S-108](scenarios/S-108-members-cannot-open-user-administration.md) | Studio — members cannot open user administration | team-member | P1 | planned | true | [secured] | [studio] | — |
 | [S-109](scenarios/S-109-configured-oauth-login.md) | Authentication — sign in through a configured identity provider | team-member | P2 | active | false | [secured] | [studio, api] | — |
+| [S-194](scenarios/S-194-platform-service-lifecycle.md) | Platform — Select and manage services across install, update, and rollback | solo-developer | P1 | planned | true | [local, secured] | [cli] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.

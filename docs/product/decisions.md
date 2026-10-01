@@ -114,3 +114,23 @@ Cases: S-006, S-008, S-010, S-160.
 
 `@kb-labs/adapters-fs` is the only adapter that declares itself the default for `storage`. `@kb-labs/data-store` stays installable and bindable, but two defaults made install resolution ambiguous.
 Cases: S-047, S-048.
+
+### Proposed: sealed service lifecycle after installation — needs owner confirmation
+
+Recommend selective service installation from the platform's sealed release
+index, with `kb-create service add|enable|disable` operating on the installed
+receipt. Adding a service should resolve only artifacts in a verified index,
+preserve the existing service set on failure, and record a snapshot before
+changing the installation. Enabling or disabling a service should update the
+host's managed service state and make its associated CLI plugin available or
+unavailable with it where a service has an associated CLI plugin. Updates
+preserve the installed service set and enabled states; rollback restores both
+from the snapshot. Platform-root operators
+manage local installs; secured-mode service changes require a platform
+administrator. This avoids paying the package, install, and operational cost
+of every official service on every install while retaining a convenient path to
+add services later. Marketplace installation remains the plugin mechanism and
+does not own service artifacts.
+
+Cases: S-194. This is a proposal only; confirm the command and secured-mode
+authorization surface before implementation.

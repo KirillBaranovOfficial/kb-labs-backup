@@ -56,9 +56,8 @@ describe('createExtensionStore (real pnpm, temp-dir store, no real HOME)', () =>
     INSTALL_TIMEOUT,
   );
 
-  it(
-    // case: S-010.1
-    'resolves local platform package artifacts while installing into the store',
+  // case: S-010.1
+  it('resolves local platform package artifacts while installing into the store',
     async () => {
       const platformRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-extension-platform-'));
       const artifactRoot = path.join(platformRoot, '.kb/v2/cache/packages/shared-tool-kit');
