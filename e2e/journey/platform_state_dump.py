@@ -124,6 +124,31 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         for relative in (Path(".kb/marketplace.lock"), Path(".kb/kb.config.jsonc"),
                          Path(".kb/v2/receipt.json")):
             add(root / relative, relative)
+        receipt_path = root / ".kb/v2/receipt.json"
+        try:
+            receipt_value = json.loads(receipt_path.read_text())
+            artifacts = receipt_value.get("plan", {}).get("artifacts", [])
+            artifact_manifests = []
+            for artifact in artifacts:
+                package = artifact.get("package")
+                if not isinstance(package, str) or not package:
+                    continue
+                manifest_path = root / "node_modules" / Path(*package.split("/")) / "kb-create.manifest.json"
+                artifact_manifests.append({
+                    "id": artifact.get("id"),
+                    "package": package,
+                    "version": artifact.get("version"),
+                    "manifestExists": manifest_path.is_file(),
+                })
+            if artifact_manifests:
+                target = destination / "receipt-artifact-manifests.json"
+                encoded = json.dumps(artifact_manifests, indent=2) + "\n"
+                if used + len(encoded.encode()) <= CONTENT_BUDGET:
+                    target.write_text(encoded)
+                    used += target.stat().st_size
+                    entries.append(f"- `receipt-artifact-manifests.json` ({target.stat().st_size} bytes)")
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+            pass
         for directory in ("logs", "diagnostics"):
             files = sorted((root / ".kb" / directory).glob("*"),
                            key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
@@ -185,6 +210,13 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                              env=command_env, cwd=command_cwd, admin_password=admin_password,
                              budget=CONTENT_BUDGET - used)
             entries.append(f"- `{target.name}` ({target.stat().st_size} bytes)")
+
+        if used < CONTENT_BUDGET:
+            target = destination / "kb-adapter-list.txt"
+            used += _command(target, "$ kb adapter list --json", [kb_executable, "adapter", "list", "--json"],
+                             env=command_env, cwd=command_cwd, admin_password=admin_password,
+                             budget=CONTENT_BUDGET - used)
+            entries.append(f"- `kb-adapter-list.txt` ({target.stat().st_size} bytes)")
 
         if not root.exists():
             entries.append("- Platform root was already removed; only remaining runner evidence was captured.")

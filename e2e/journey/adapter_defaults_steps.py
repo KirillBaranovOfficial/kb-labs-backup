@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import urllib.request
 from pathlib import Path
 from typing import Callable
 
@@ -130,6 +131,16 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("list fresh-install built-in adapter defaults", "adapter", assert_default_list, cases=["S-054.1"])
 
     def assert_doctor() -> None:
+        status_command = ["kb-create", "status", "--platform-root", str(platform_root), "--json"]
+        host_status = _json(_run(runner, status_command, project_a, base_env), status_command)
+        health_url = host_status.get("host", {}).get("healthUrl")
+        if not isinstance(health_url, str) or not health_url:
+            raise RuntimeError("`kb-create status --json` returned no host health URL")
+        with urllib.request.urlopen(health_url.rsplit("/", 1)[0] + "/health/adapters", timeout=10) as response:
+            runtime_adapters = json.loads(response.read())
+        if not isinstance(runtime_adapters, list):
+            raise RuntimeError("GET /health/adapters returned no adapter list")
+        expected_adapters = {row.get("slot"): row for row in runtime_adapters if isinstance(row, dict)}
         command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--json"]
         payload = _json(_run(runner, command, project_a, base_env), command)
         if payload.get("ok") is not True:
@@ -139,15 +150,11 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         if not isinstance(statuses, list):
             raise RuntimeError("`kb-create doctor --platform-root <platform-root> --json` returned no platform checks")
         adapter_statuses = {row.get("slot"): row for row in statuses if isinstance(row, dict) and isinstance(row.get("slot"), str)}
-        expected_slots = {
-            "storage", "cache", "logger", "analytics", "vectorStore", "llm", "embeddings",
-            "eventBus", "config", "invoke", "documentDatabase", "kvStore", "logs", "artifacts",
-            "snapshotManager", "notifier",
-        }
-        if set(adapter_statuses) != expected_slots:
+        if set(adapter_statuses) != set(expected_adapters):
             raise RuntimeError("doctor does not report every runtime adapter slot from /health/adapters")
-        for slot, row in adapter_statuses.items():
-            if not isinstance(row.get("mode"), str) or not row["mode"] or not isinstance(row.get("implementation"), str) or not row["implementation"]:
+        for slot, expected in expected_adapters.items():
+            row = adapter_statuses[slot]
+            if row.get("mode") != expected.get("mode") or row.get("implementation") != expected.get("implementation"):
                 raise RuntimeError(f"doctor does not report mode and implementation for adapter slot {slot}")
         storage = next((row for row in statuses if isinstance(row, dict) and row.get("slot") == "storage"), None)
         if not storage or storage.get("implementation") != "@kb-labs/adapters-fs" or storage.get("mode") != "real":
