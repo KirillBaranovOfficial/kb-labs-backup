@@ -94,7 +94,6 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
         },
         adapterOptions: {
           storage: { baseDir: '.kb/data' },
-          cache: { url: 'http://127.0.0.1:7777' },
         },
       },
     })
@@ -105,7 +104,7 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     expect(result.platformConfig.adapters?.storage).toBe('@kb-labs/adapters-fs@2.120.1')
     expect(result.platformConfig.adapters?.cache).toBe('@kb-labs/adapters-state-broker@2.120.1')
     expect(result.platformConfig.adapterOptions?.storage).toEqual({ baseDir: '.kb/data' })
-    expect(result.platformConfig.adapterOptions?.cache).toEqual({ url: 'http://127.0.0.1:7777' })
+    expect(result.platformConfig.adapterOptions?.cache).toBeUndefined()
   })
 
   it('a malformed generated file is skipped instead of breaking the load', async () => {

@@ -182,12 +182,14 @@ export async function initializePlatform(
         projectRoot,
         uiProvider,
         platformRoot !== projectRoot ? platformRoot : undefined,
-        makeAssemblyHook(() =>
-          process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-        ),
-        hasExplicitDevelopmentMode(
-          loadResult.sameLocation ? rawConfig : loadResult.rawPlatformConfig,
-        ),
+        {
+          assemblyHook: makeAssemblyHook(() =>
+            process.env.KB_DEBUG === "true" ? platform.logger : undefined,
+          ),
+          workspaceDevelopment: hasExplicitDevelopmentMode(
+            loadResult.sameLocation ? rawConfig : loadResult.rawPlatformConfig,
+          ),
+        },
       );
 
       platformInstance.logger.info("Platform adapters initialized", {
@@ -233,9 +235,11 @@ export async function initializePlatform(
         projectRoot,
         uiProvider,
         platformRoot,
-        makeAssemblyHook(() =>
-          process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-        ),
+        {
+          assemblyHook: makeAssemblyHook(() =>
+            process.env.KB_DEBUG === "true" ? platform.logger : undefined,
+          ),
+        },
       );
       platformInstance.logger.warn(
         "Platform adapters failed; retried with installed local defaults",
@@ -271,9 +275,11 @@ export async function initializePlatform(
     cwd,
     uiProvider,
     undefined,
-    makeAssemblyHook(() =>
-      process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-    ),
+    {
+      assemblyHook: makeAssemblyHook(() =>
+        process.env.KB_DEBUG === "true" ? platform.logger : undefined,
+      ),
+    },
   );
   platformInstance.logger.warn(
     "Platform initialization failed, using NoOp adapters",

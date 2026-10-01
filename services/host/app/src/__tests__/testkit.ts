@@ -99,6 +99,9 @@ export interface FakeRuntimeReply {
   path: string;
   search: string;
   body: string;
+  stateDaemonUrl?: string | null;
+  gatewayUrl?: string | null;
+  firstLeaseStatus?: number | null;
   received: {
     tokenHeader: string | null;
     projectHeader: string | null;

@@ -3,6 +3,10 @@ import { deriveProjectId } from '@kb-labs/core-project-registry';
 
 vi.mock('@kb-labs/sdk', () => ({
   useEnv: (name: string) => process.env[name],
+  getHostServiceAddress: (_service: string, environment: Record<string, string | undefined>) => {
+    if (!environment.KB_GATEWAY_URL) { throw new Error('gateway address missing'); }
+    return environment.KB_GATEWAY_URL.replace(/\/+$/, '');
+  },
 }));
 
 // Saved sessions/credentials live in the developer's real HOME; a stale login
@@ -28,12 +32,9 @@ describe('workflow project gateway address', () => {
     );
   });
 
-  it('derives the current project route from cwd when no project id is injected', () => {
+  it('does not fall back to a default gateway address when none is injected', () => {
     delete process.env.KB_PROJECT_ID;
-
-    expect(getWorkflowDaemonUrl()).toBe(
-      `http://127.0.0.1:4000/api/v1/projects/${deriveProjectId(process.cwd())}/workflow`,
-    );
+    expect(() => getWorkflowDaemonUrl()).toThrow('gateway address missing');
   });
 
   it('lists cron schedules through the daemon plural route', async () => {

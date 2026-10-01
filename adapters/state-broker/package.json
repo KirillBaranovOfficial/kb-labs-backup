@@ -15,6 +15,9 @@
     "dist",
     "README.md"
   ],
+  "dependencies": {
+    "@kb-labs/core-platform": "workspace:*"
+  },
   "scripts": {
     "build": "tsup",
     "clean": "rimraf dist",

@@ -8,15 +8,13 @@ export const manifest: ServiceManifest = {
   description: 'Distributed state management (State Broker HTTP server)',
   runtime: {
     entry: 'dist/bin.cjs',
-    port: 7777,
     healthCheck: '/health',
-    // No socket: state-daemon stays on TCP. Its consumers (core/state-broker
-    // HTTP backend, rest-api observability) connect via http://localhost:7777
+    // No socket: state-daemon stays on TCP. Its consumers use the host-provided live address
     // directly — not through the gateway/serviceTransport — so a socket-only
     // bind would break them.
   },
   env: {
-    PORT: { description: 'HTTP port', default: '7777' },
+    KB_STATE_DAEMON_PORT: { description: 'HTTP port for standalone daemon runs' },
     NODE_ENV: { description: 'Environment mode', default: 'development' },
   },
 };

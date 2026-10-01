@@ -147,6 +147,21 @@ describe("kb-host project routing", () => {
     expect(JSON.stringify(runtime)).not.toContain("port");
   });
 
+  it("passes live host service addresses into the child runtime", async () => {
+    const a = await registered();
+    const subject = await host();
+    expect(process.env.KB_STATE_DAEMON_URL).toBeUndefined();
+    const { stateDaemonUrl: stateUrl, gatewayUrl, firstLeaseStatus } = await reply(subject, a.id, "/rest/__host-services");
+
+    if (typeof stateUrl !== "string" || typeof gatewayUrl !== "string" || typeof firstLeaseStatus !== "number") {
+      throw new Error("project runtime did not receive usable host service addresses");
+    }
+    expect(stateUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(stateUrl).not.toBe("http://127.0.0.1:7777");
+    expect(gatewayUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(firstLeaseStatus).toBe(404);
+  });
+
   it("answers KB_PROJECT_UNKNOWN for an id that is not in the registry, without starting anything", async () => {
     const subject = await host();
 

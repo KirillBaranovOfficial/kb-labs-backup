@@ -77,9 +77,9 @@ await broker.clear('user:*');
 ### HTTP Client (Daemon Mode)
 
 ```typescript
-import { HTTPStateBroker } from '@kb-labs/state-broker';
+import { createStateBroker } from '@kb-labs/core-state-broker';
 
-const broker = new HTTPStateBroker('http://localhost:7777');
+const broker = createStateBroker({ backend: 'http' });
 
 // Gracefully falls back to null if daemon unavailable
 const cached = await broker.get('query-result');
@@ -234,9 +234,10 @@ const broker = new InMemoryStateBroker(
 **Configuration:**
 
 ```typescript
-const broker = new HTTPStateBroker(
-  baseURL: 'http://localhost:7777' // Daemon URL (default)
-);
+// Host-managed runtimes resolve the StateBroker address from their launch environment.
+import { createStateBroker } from '@kb-labs/core-state-broker';
+
+const broker = createStateBroker({ backend: 'http' });
 ```
 
 ## Error Handling
@@ -246,7 +247,7 @@ const broker = new HTTPStateBroker(
 HTTP client silently returns `null` on connection errors:
 
 ```typescript
-const broker = new HTTPStateBroker();
+const broker = createStateBroker({ backend: 'http' });
 
 // Daemon down - returns null instead of throwing
 const value = await broker.get('key'); // null

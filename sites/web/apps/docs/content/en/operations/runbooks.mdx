@@ -1,7 +1,7 @@
 ---
 title: "Runbooks"
 description: "Copy-paste procedures for common operational tasks."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-02"
 order: 4
 ---
 
@@ -343,7 +343,9 @@ curl -f http://localhost:4000/health       # gateway
 curl -f http://localhost:5050/api/v1/health # rest
 curl -f http://localhost:7778/health       # workflow
 curl -f http://localhost:5070/health       # marketplace
-curl -f http://localhost:7777/health       # state daemon
+# The host keeps StateBroker on a dynamically assigned loopback address.
+# Check it through the host-managed service status rather than a fixed URL.
+kb-dev status
 ```
 
 200 means alive; anything else (or connection refused) means broken.

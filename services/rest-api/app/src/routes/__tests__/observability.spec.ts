@@ -23,9 +23,12 @@ global.fetch = mockFetch as any;
 
 describe('registerObservabilityRoutes', () => {
   let app: ReturnType<typeof Fastify>;
+  let previousStateDaemonUrl: string | undefined;
   const repoRoot = '/mock/repo';
 
   beforeEach(async () => {
+    previousStateDaemonUrl = process.env.KB_STATE_DAEMON_URL;
+    process.env.KB_STATE_DAEMON_URL = 'http://127.0.0.1:43127';
     vi.clearAllMocks();
     app = Fastify({ logger: false });
     await registerObservabilityRoutes(app, BASE_CONFIG, repoRoot);
@@ -33,9 +36,27 @@ describe('registerObservabilityRoutes', () => {
 
   afterEach(async () => {
     await app.close();
+    if (previousStateDaemonUrl === undefined) { delete process.env.KB_STATE_DAEMON_URL; }
+    else { process.env.KB_STATE_DAEMON_URL = previousStateDaemonUrl; }
   });
 
   describe('GET /api/v1/observability/state-broker', () => {
+    it('returns the typed missing-address failure without fetching a default URL', async () => {
+      delete process.env.KB_STATE_DAEMON_URL;
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/observability/state-broker',
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.json().error).toMatchObject({
+        code: 'KB_HOST_SERVICE_ADDRESS_MISSING',
+        hint: expect.stringContaining('kb-create start'),
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
     it('returns State Broker statistics', async () => {
       const mockStats = {
         totalEntries: 42,
@@ -96,25 +117,17 @@ describe('registerObservabilityRoutes', () => {
       delete process.env.KB_STATE_DAEMON_URL;
     });
 
-    it('falls back to default URL when env var not set', async () => {
+    it('does not fall back to a default URL when the host address is missing', async () => {
       delete process.env.KB_STATE_DAEMON_URL;
-
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: vi.fn().mockResolvedValue({}),
-      });
 
       const response = await app.inject({
         method: 'GET',
         url: '/api/v1/observability/state-broker',
       });
 
-      expect(response.statusCode).toBe(200);
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:7777/stats',
-        expect.anything()
-      );
+      expect(response.statusCode).toBe(503);
+      expect(response.json().error.code).toBe('KB_HOST_SERVICE_ADDRESS_MISSING');
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('returns 503 when State Broker responds with error status', async () => {
@@ -192,4 +205,3 @@ describe('registerObservabilityRoutes', () => {
     });
   });
 });
-

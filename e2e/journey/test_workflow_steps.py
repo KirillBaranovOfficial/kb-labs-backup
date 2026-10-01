@@ -215,7 +215,7 @@ class WorkflowJourneyTests(unittest.TestCase):
         ])
         claims = {claim["claimId"] for claim in result.case_run["claims"]}
         self.assertEqual(claims, {
-            "S-006.3", "S-007.1", "S-007.2", "S-007.3", "S-009.1", "S-009.2", "S-009.3", "S-009.4",
+            "S-006.3", "S-007.1", "S-007.2", "S-007.3", "S-009.1", "S-009.2", "S-009.3", "S-009.4", "PC-002.5",
             "S-029.1", "S-029.2", "S-029.3", "S-044.1", "S-044.2", "S-044.3", "S-044.4",
             "S-044.5", "S-044.6", "S-044.7", "S-044.8",
             "S-056.1", "S-056.2", "S-056.3",

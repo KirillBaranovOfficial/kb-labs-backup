@@ -5,7 +5,6 @@ import { validateExecutionConfig } from '../config-schemas.js';
 // gatewayWsUrl + gatewayJwtSecret moved to adapterOptions.environment.gateway
 // (DockerEnvironmentAdapter owns JWT minting)
 const validContainer = {
-  gatewayDispatchUrl: 'http://localhost:4000/internal/dispatch',
   gatewayInternalSecret: 'super-secret',
 };
 
@@ -17,13 +16,13 @@ describe('ContainerExecutionConfig validation', () => {
     expect(result.container).toMatchObject(validContainer);
   });
 
-  it('rejects invalid gatewayDispatchUrl', () => {
+  it('rejects a configured Gateway address because the host supplies it at runtime', () => {
     expect(() =>
       validateExecutionConfig({
         mode: 'container',
-        container: { ...validContainer, gatewayDispatchUrl: 'not-a-url' },
+        container: { ...validContainer, gatewayDispatchUrl: 'http://localhost:4000/internal/dispatch' },
       }),
-    ).toThrow(/gatewayDispatchUrl/);
+    ).toThrow(/Unrecognized key/);
   });
 
   it('rejects empty gatewayInternalSecret', () => {
@@ -43,7 +42,6 @@ describe('ContainerExecutionConfig validation', () => {
         image: 'my-image:latest',
         pullPolicy: 'Always',
         dockerFlags: ['--memory=2g'],
-        runtimeCommand: ['node', 'server.js'],
       },
     });
     expect(result.container?.image).toBe('my-image:latest');
@@ -64,6 +62,27 @@ describe('ContainerExecutionConfig validation', () => {
 // ── ExecutionConfig mode validation ──────────────────────────────────────────
 
 describe('ExecutionConfig mode', () => {
+  it('rejects a workspace-agent Gateway URL in config', () => {
+    expect(() => validateExecutionConfig({
+      workspaceAgent: {
+        enabled: true,
+        gatewayUrl: 'http://localhost:4000',
+        internalSecret: 'secret',
+      },
+    })).toThrow(/gatewayUrl/);
+  });
+
+  it('accepts workspace-agent routing without a configured Gateway URL', () => {
+    const result = validateExecutionConfig({
+      workspaceAgent: { enabled: true, internalSecret: 'secret', fallback: 'error' },
+    });
+    expect(result.workspaceAgent).toEqual({
+      enabled: true,
+      internalSecret: 'secret',
+      fallback: 'error',
+    });
+  });
+
   it('accepts mode: in-process', () => {
     const result = validateExecutionConfig({ mode: 'in-process' });
     expect(result.mode).toBe('in-process');
@@ -133,7 +152,6 @@ describe('validateExecutionConfig error message', () => {
       validateExecutionConfig({
         mode: 'container',
         container: {
-          gatewayDispatchUrl: 'bad-url',
           gatewayInternalSecret: '',
         },
       });
@@ -143,7 +161,7 @@ describe('validateExecutionConfig error message', () => {
     expect(err).toBeDefined();
     expect(err!.message).toContain('Invalid execution config');
     // Both issues should appear
-    expect(err!.message).toMatch(/gatewayDispatchUrl|gatewayInternalSecret/);
+    expect(err!.message).toMatch(/gatewayInternalSecret/);
   });
 
   it('lists multiple issues when there are multiple errors', () => {

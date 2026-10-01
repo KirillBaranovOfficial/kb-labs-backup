@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StateBrokerRateLimitBackend } from '../state-broker-backend.js';
 import type { StateBroker } from '@kb-labs/core-state-broker';
+import { createStateBroker } from '@kb-labs/core-state-broker';
+import { HostServiceAddressError } from '@kb-labs/core-platform';
 import type { RateLimitConfig } from '../../types.js';
 
 // ── Mock StateBroker ──────────────────────────────────────────────────────────
@@ -47,6 +49,17 @@ describe('StateBrokerRateLimitBackend', () => {
     const result = makeBroker();
     broker = result.broker;
     backend = new StateBrokerRateLimitBackend(broker);
+  });
+
+  it('uses the host address contract for distributed state instead of a default port', () => {
+    const previousAddress = process.env.KB_STATE_DAEMON_URL;
+    delete process.env.KB_STATE_DAEMON_URL;
+    try {
+      expect(() => createStateBroker({ backend: 'http' })).toThrow(HostServiceAddressError);
+    } finally {
+      if (previousAddress === undefined) { delete process.env.KB_STATE_DAEMON_URL; }
+      else { process.env.KB_STATE_DAEMON_URL = previousAddress; }
+    }
   });
 
   describe('acquire() — allowed path', () => {

@@ -27,8 +27,8 @@ pnpm add @kb-labs/state-daemon
 ### Start Daemon
 
 ```bash
-# Default (localhost:7777)
-kb-state-daemon
+# Standalone daemon: choose a port explicitly
+KB_STATE_DAEMON_PORT=7777 kb-state-daemon
 
 # Custom port
 KB_STATE_DAEMON_PORT=8888 kb-state-daemon
@@ -41,7 +41,7 @@ KB_STATE_DAEMON_HOST=0.0.0.0 KB_STATE_DAEMON_PORT=7777 kb-state-daemon
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KB_STATE_DAEMON_PORT` | `7777` | HTTP server port |
+| `KB_STATE_DAEMON_PORT` | Required for standalone runs; assigned by the host in host-managed runs | HTTP server port |
 | `KB_STATE_DAEMON_HOST` | `localhost` | HTTP server host (use `0.0.0.0` for network access) |
 
 ### Programmatic Usage
@@ -482,9 +482,9 @@ Daemon performance should be ~1ms per operation on localhost. If slower:
 ### JavaScript/TypeScript
 
 ```typescript
-import { HTTPStateBroker } from '@kb-labs/state-broker';
+import { createStateBroker } from '@kb-labs/core-state-broker';
 
-const client = new HTTPStateBroker('http://localhost:7777');
+const client = createStateBroker({ backend: 'http' });
 await client.set('key', 'value', 60000);
 const value = await client.get('key');
 ```
@@ -515,7 +515,7 @@ kb_state_delete "my-key"
 
 ## Related Packages
 
-- **@kb-labs/state-broker** - Client library for state daemon
+- **@kb-labs/core-state-broker** - State Broker client library
 - **@kb-labs/plugin-runtime** - Runtime integration with permissions
 - **@kb-labs/plugin-manifest** - Permission type definitions
 

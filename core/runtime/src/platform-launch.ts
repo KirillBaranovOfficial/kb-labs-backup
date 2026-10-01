@@ -16,6 +16,7 @@
 import { hostname } from "node:os";
 import {
   createContextLogger,
+  type HostServiceEnvironment,
   type IContextLogger,
   type ILogReader,
 } from "@kb-labs/core-platform";
@@ -38,7 +39,7 @@ export type PlatformApplicationKind = "service" | "cli" | "worker" | "test";
 export type PlatformFailurePolicy = "strict" | "degraded";
 
 export type PlatformAssemblyHook = NonNullable<
-  Parameters<typeof initPlatform>[4]
+  NonNullable<Parameters<typeof initPlatform>[4]>['assemblyHook']
 >;
 export type PlatformUiProvider = NonNullable<
   Parameters<typeof initPlatform>[2]
@@ -63,6 +64,8 @@ export interface PlatformLaunchOptions {
   failurePolicy?: PlatformFailurePolicy;
   /** Host-specific UI provider used by execution backends. */
   uiProvider?: PlatformUiProvider;
+  /** Host addresses needed by this process's own adapters, passed without global env mutation. */
+  hostServiceEnvironment?: HostServiceEnvironment;
   /** Required platform assembly pipeline. */
   assemblyHook: PlatformAssemblyHook;
 }
@@ -199,6 +202,7 @@ async function launch(
     storeRawConfig = true,
     failurePolicy = "strict",
     uiProvider,
+    hostServiceEnvironment,
     assemblyHook,
   } = options;
 
@@ -233,7 +237,7 @@ async function launch(
       projectRoot,
       uiProvider,
       sameLocation ? undefined : platformRoot,
-      assemblyHook,
+      { assemblyHook, hostServiceEnvironment },
     );
   } catch (error) {
     if (failurePolicy === "strict") {
@@ -248,7 +252,7 @@ async function launch(
       projectRoot,
       uiProvider,
       undefined,
-      assemblyHook,
+      { assemblyHook, hostServiceEnvironment },
     );
   }
 

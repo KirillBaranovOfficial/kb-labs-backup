@@ -1,7 +1,7 @@
 ---
 title: "Services"
 description: "The platform services: what runs, what ports they bind, how they compose."
-updatedAt: "2026-09-30"
+updatedAt: "2026-10-02"
 ---
 
 KB Labs is not a monolith. It's a small collection of focused services that talk to each other over HTTP (and one WebSocket tunnel for the host agent). Each service is independently deployable, has its own manifest, and can be started via [`kb-dev`](https://github.com/kb-labs-team/kb-labs/tree/main/tools/kb-dev).
@@ -32,7 +32,7 @@ KB Labs is not a monolith. It's a small collection of focused services that talk
                    ▼                                        │
            ┌───────────────┐                                │
            │ State Daemon  │                                │
-           │    :7777      │                                │
+           │ host-assigned │                                │
            └───────────────┘                                │
                                                             │
                           ◀───  WSS tunnel  ────────────────┘
@@ -49,7 +49,7 @@ KB Labs is not a monolith. It's a small collection of focused services that talk
 | [**Workflow Daemon**](/services/workflow-daemon) | 7778 | `plugins/workflow/daemon` | Workflow engine, job broker, cron scheduler, approvals API |
 | [**Marketplace**](/services/marketplace) | 5070 | `plugins/marketplace` | Install, uninstall, discover entities; manages `.kb/marketplace.lock` |
 | **Project MCP** | Project runtime | `services/mcp` | Exposes the registered project's plugin commands through its host-scoped Streamable HTTP endpoint |
-| **State Daemon** | 7777 | `core/state-broker` | State Broker HTTP server for distributed rate limiting and quotas |
+| **State Daemon** | Host-assigned loopback port | `core/state-broker` | State Broker HTTP server for distributed rate limiting and quotas |
 
 The Workflow Daemon's command surface is supplied by the companion package
 `@kb-labs/workflow-entry`. When `kb-create` installs a Platform release, it

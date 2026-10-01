@@ -11,7 +11,6 @@
  *     },
  *     "adapterOptions": {
  *       "workspace": {
- *         "gatewayUrl": "http://localhost:4000",
  *         "namespaceId": "default",
  *         "cacheDir": ".kb/runtime/workspaces"
  *       }
@@ -28,6 +27,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
+import { getHostServiceAddress } from '@kb-labs/sdk';
 import { randomUUID } from 'node:crypto';
 import type {
   IWorkspaceProvider,
@@ -43,8 +43,6 @@ import type {
 export { manifest } from './manifest.js';
 
 export interface AgentWorkspaceAdapterConfig {
-  /** Gateway base URL. Default: 'http://localhost:4000' */
-  gatewayUrl?: string;
   /** Shared secret for /internal/dispatch. Read from GATEWAY_INTERNAL_SECRET env if omitted. */
   internalSecret?: string;
   /** Gateway namespace to find the host agent in. Default: 'default' */
@@ -71,7 +69,7 @@ export class AgentWorkspaceAdapter implements IWorkspaceProvider {
   private readonly records = new Map<string, WorkspaceRecord>();
 
   constructor(config: AgentWorkspaceAdapterConfig = {}) {
-    this.gatewayUrl = (config.gatewayUrl ?? 'http://localhost:4000').replace(/\/$/, '');
+    this.gatewayUrl = getHostServiceAddress('gateway');
     this.internalSecret = config.internalSecret ?? process.env['GATEWAY_INTERNAL_SECRET'] ?? '';
     this.namespaceId = config.namespaceId ?? 'default';
     // No explicit dir: per-project runtime state lives outside the repository (ADR-0044).

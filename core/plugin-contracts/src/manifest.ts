@@ -941,8 +941,8 @@ export interface ServiceRuntime {
   /** Entrypoint relative to package root (e.g. "dist/index.js") */
   entry: string;
 
-  /** TCP port the service listens on */
-  port: number;
+  /** Optional standalone TCP port; host-managed services receive an allocated address. */
+  port?: number;
 
   /** Health check path (appended to http://localhost:<port>) */
   healthCheck: string;
