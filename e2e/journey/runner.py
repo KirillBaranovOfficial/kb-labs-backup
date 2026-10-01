@@ -683,7 +683,10 @@ def main():
                     stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n")
                 fail("kb commit first value: output did not include the supplied scope")
         status, _ = run(["git", "status", "--porcelain"], env=env, cwd=PROJECT)
-        if status.stdout.strip() != "?? note.txt" and status.stdout.strip() != "A  note.txt":
+        clean_repo = not (PROJECT / ".kb").exists() and status.stdout.strip() in {"?? note.txt", "A  note.txt"}
+        record_case("first CLI commands leave fresh repository untouched", clean_repo,
+                    f"project gained KB Labs files: {status.stdout.strip()}", cases=["S-054.17"])
+        if not clean_repo:
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":

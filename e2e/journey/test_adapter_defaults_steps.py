@@ -1,9 +1,11 @@
 import json
+import hashlib
 import io
 import subprocess
 import sys
 import tempfile
 import unittest
+import unicodedata
 from unittest.mock import patch
 from pathlib import Path
 
@@ -21,6 +23,14 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             (project_a / ".kb").mkdir(parents=True)
             (project_a / ".kb" / "kb.config.json").write_text("{}\n")
             (project_a / "README.md").write_text("adapter defaults fixture\n")
+            project_id = "prj_" + hashlib.sha256(unicodedata.normalize("NFC", str(project_a.resolve())).encode()).hexdigest()[:16]
+            registry_home = (home / ".kb").resolve()
+            registry_home.mkdir()
+            (registry_home / "projects.json").write_text(json.dumps({"schemaVersion": 1, "projects": [
+                {"id": project_id, "path": str(project_a.resolve()), "name": "project-a", "status": "active",
+                 "addedAt": "2026-10-01T00:00:00.000Z", "lastUsedAt": None}
+            ]}))
+            storage_default = registry_home / "state" / project_id / "storage"
             env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project_a)}
             calls: list[tuple[str, ...]] = []
             run_counter = 0
@@ -152,9 +162,12 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     options = platform_config.get("adapterOptions", {}).get("storage", {})
                     analytics_provider = platform_config.get("adapters", {}).get(
                         "analytics", "@kb-labs/adapters-analytics-sqlite")
+                    storage_base = Path(options.get("baseDir", storage_default))
+                    if not storage_base.is_absolute():
+                        storage_base = root / storage_base
                     rows = [
                         {"slot": "storage", "implementation": "@kb-labs/adapters-fs", "mode": "real",
-                        "baseDir": str(root / options.get("baseDir", ".kb/data")), "networkRequired": False},
+                        "baseDir": str(storage_base), "networkRequired": False},
                         {"slot": "cache", "implementation": "@kb-labs/adapters-state-broker", "mode": "real", "networkRequired": False},
                         {"slot": "logger", "implementation": "@kb-labs/adapters-pino", "mode": "real", "networkRequired": False},
                         {"slot": "analytics", "implementation": analytics_provider, "mode": "real", "networkRequired": False},
@@ -209,8 +222,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     run_id = f"run-{run_counter}"
                     value = config(platform_root)
                     options = value.get("platform", {}).get("adapterOptions", {}).get("storage", {})
-                    base_dir = options.get("baseDir", ".kb/data")
-                    record = root / base_dir / "workflows" / f"{run_id}.json"
+                    base_dir = Path(options.get("baseDir", storage_default))
+                    if not base_dir.is_absolute():
+                        base_dir = root / base_dir
+                    record = base_dir / "workflows" / f"{run_id}.json"
                     record.parent.mkdir(parents=True, exist_ok=True)
                     record.write_text(json.dumps({"runId": run_id, "status": "success"}))
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"runId": run_id}}), "")
