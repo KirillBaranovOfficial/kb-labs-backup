@@ -52,8 +52,8 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             stdout = json.dumps({"ok": True, "running": True, "reachable": True})
         elif args[1] == "doctor":
             stdout = json.dumps({"ok": True, "platform": {"ok": True}})
-        elif args[1] == "commit":
-            stdout = 'dry-run completed for scope "root"\n'
+        elif args[1] == "project":
+            stdout = json.dumps({"ok": True, "projects": [], "total": 0})
         else:
             code = 2
             stdout = "unexpected fake command"
@@ -73,9 +73,9 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         report = result.result()
         self.assertEqual(report.status, "PASS")
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
-        self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 7)} | {f"S-024.{step}" for step in (1, 2, 3, 4, 5)})
+        self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} | {f"S-024.{step}" for step in (1, 2, 3, 4, 5)})
         self.assertEqual([command[1] for command in self.commands], [
-            "status", "plan", "update", "status", "commit", "update", "rollback", "rollback", "status", "commit", "doctor",
+            "status", "plan", "update", "status", "project", "update", "rollback", "rollback", "status", "project", "doctor",
         ])
         for operation in ("plan", "update"):
             command = next(args for args in self.commands if args[1] == operation)

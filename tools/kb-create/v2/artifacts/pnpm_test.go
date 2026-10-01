@@ -14,11 +14,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
+	"gopkg.in/yaml.v3"
 )
 
 type call struct {
@@ -213,10 +215,10 @@ func TestPnpmUninstallUsesRegistryConfigWithoutUnsupportedFlag(t *testing.T) {
 	}
 }
 
-func TestPnpmDoesNotOverwriteExistingWorkspaceYAML(t *testing.T) {
+func TestPnpmMergesExactPlanVersionIntoExistingWorkspaceYAML(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "pnpm-workspace.yaml")
-	custom := "allowBuilds:\n  \"esbuild\": true\nminimumReleaseAgeExclude:\n  - \"@kb/a\"\n"
+	custom := "allowBuilds:\n  \"esbuild\": true\nminimumReleaseAgeExclude:\n  - \"@kb/a@0.9.0\"\n"
 	if err := os.WriteFile(path, []byte(custom), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -231,8 +233,86 @@ func TestPnpmDoesNotOverwriteExistingWorkspaceYAML(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != custom {
-		t.Fatalf("pnpm-workspace.yaml was overwritten: got %q, want unchanged %q", data, custom)
+	var config struct {
+		MinimumReleaseAgeExclude []string `yaml:"minimumReleaseAgeExclude"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(config.MinimumReleaseAgeExclude, []string{"@kb/a@0.9.0", "@kb/a@1.0.0"}) {
+		t.Fatalf("minimumReleaseAgeExclude = %#v, want existing and exact plan entries; yaml: %s", config.MinimumReleaseAgeExclude, data)
+	}
+}
+
+// case: S-023.7
+func TestPnpmExcludesExactPlanVersionsAndPreservesWorkspaceEntries(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "pnpm-workspace.yaml")
+	if err := os.WriteFile(workspace, []byte("minimumReleaseAgeExclude:\n  - '@user/tool@4.2.0'\n  - '@pnpm/tool@3.1.0'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installedDir := filepath.Join(root, "node_modules", "@kb", "runtime")
+	if err := os.MkdirAll(installedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(installedDir, "package.json"), []byte(`{"name":"@kb/runtime","version":"2.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("verified-file-artifact")
+	sum := fmt.Sprintf("%x", sha256.Sum256(payload))
+	cache := filepath.Join(root, ".kb", "v2", "cache", "packages")
+	if err := os.MkdirAll(cache, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, sum+".tgz"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := []contracts.Artifact{
+		{ID: "runtime", Package: "@kb/runtime", Version: "2.0.0"},
+		{ID: "new-file", Package: "@kb/new-file", Version: "1.5.0", SHA256: sum, Tarball: "https://registry.test/new-file.tgz"},
+	}
+	runner := &fakeRunner{}
+	if err := (Pnpm{Root: root, Runner: runner}).Install(plan); err != nil {
+		t.Fatal(err)
+	}
+	assertReleaseAgeExclusions(t, workspace, []string{
+		"@user/tool@4.2.0", "@pnpm/tool@3.1.0", "@kb/runtime@2.0.0", "@kb/new-file@1.5.0",
+	})
+
+	// A rollback to plan N must merge N's exact versions after the snapshot is restored.
+	if err := (Pnpm{Root: root, Runner: &fakeRunner{}}).Restore(plan); err != nil {
+		t.Fatal(err)
+	}
+	assertReleaseAgeExclusions(t, workspace, []string{
+		"@user/tool@4.2.0", "@pnpm/tool@3.1.0", "@kb/runtime@2.0.0", "@kb/new-file@1.5.0",
+	})
+}
+
+func assertReleaseAgeExclusions(t *testing.T, path string, want []string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		MinimumReleaseAgeExclude []string `yaml:"minimumReleaseAgeExclude"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatalf("parse pnpm-workspace.yaml: %v", err)
+	}
+	got := append([]string(nil), config.MinimumReleaseAgeExclude...)
+	sort.Strings(got)
+	wantSorted := append([]string(nil), want...)
+	sort.Strings(wantSorted)
+	if !reflect.DeepEqual(got, wantSorted) {
+		t.Fatalf("minimumReleaseAgeExclude = %#v, want %#v; yaml: %s", got, wantSorted, data)
+	}
+	for _, bare := range []string{"@kb/runtime", "@kb/new-file"} {
+		for _, exclusion := range config.MinimumReleaseAgeExclude {
+			if exclusion == bare {
+				t.Fatalf("minimumReleaseAgeExclude widened to bare package %q", bare)
+			}
+		}
 	}
 }
 
@@ -286,7 +366,7 @@ func TestPnpmDoesNotRunForInvalidArtifact(t *testing.T) {
 func TestPnpmPreservesPackageManagerFailure(t *testing.T) {
 	root := t.TempDir()
 	runner := &fakeRunner{err: errors.New("exit status 1")}
-	err := (Pnpm{Root: root, Runner: runner}).Restore()
+	err := (Pnpm{Root: root, Runner: runner}).Restore(nil)
 	if err == nil || !errors.Is(err, runner.err) {
 		t.Fatalf("err = %v", err)
 	}
