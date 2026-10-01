@@ -10,12 +10,8 @@
 import type {
   WorkflowHandlerDecl,
   JobHandlerDecl,
-  CronDecl,
 } from '@kb-labs/plugin-contracts';
-import type {
-  WorkflowRuntime,
-  WorkflowSchedule,
-} from './manifest-scanner.js';
+import type { WorkflowRuntime } from './manifest-scanner.js';
 
 export class ManifestConverter {
   convertWorkflowHandler(
@@ -68,37 +64,4 @@ export class ManifestConverter {
     };
   }
 
-  convertCronSchedule(
-    pluginId: string,
-    cronDecl: CronDecl,
-    pluginRoot: string,
-  ): WorkflowRuntime {
-    const id = `${pluginId}:cron:${cronDecl.id}`;
-
-    const schedule: WorkflowSchedule = {
-      cron: cronDecl.schedule,
-      enabled: cronDecl.enabled ?? true,
-    };
-
-    return {
-      kind: 'cron',
-      id,
-      source: 'manifest',
-      pluginId,
-      manifestPath: pluginRoot,
-      name: cronDecl.describe ?? cronDecl.id,
-      description: cronDecl.describe,
-      tags: ['plugin', 'cron', pluginId],
-      triggers: [
-        {
-          type: 'schedule',
-          config: { cron: cronDecl.schedule, timezone: cronDecl.timezone },
-        },
-      ],
-      handler: undefined,
-      schedule,
-      status: (cronDecl.enabled ?? true) ? 'active' : 'disabled',
-      permissions: cronDecl.permissions,
-    };
-  }
 }

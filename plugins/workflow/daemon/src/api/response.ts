@@ -8,6 +8,7 @@ export interface ApiSuccessResponse<T> {
 export interface ApiErrorResponse {
   ok: false;
   error: string;
+  code?: string;
 }
 
 export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
@@ -20,7 +21,8 @@ export function fail(
   reply: FastifyReply,
   statusCode: number,
   message: string,
+  code?: string,
 ): ApiErrorResponse {
   reply.code(statusCode);
-  return { ok: false, error: message };
+  return { ok: false, error: message, ...(code ? { code } : {}) };
 }

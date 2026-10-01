@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { StateStore } from '../state-store.js';
 import type { WorkflowRun, JobRun } from '@kb-labs/workflow-contracts';
 import type { ICache } from '@kb-labs/core-platform';
+import { InMemoryStorage } from '@kb-labs/core-platform/inmemory';
 import { mockLogger } from '@kb-labs/shared-testing';
 
 class MockCache implements ICache {
@@ -64,11 +65,13 @@ function makeRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
 
 describe('StateStore', () => {
   let cache: MockCache;
+  let storage: InMemoryStorage;
   let store: StateStore;
 
   beforeEach(() => {
     cache = new MockCache();
-    store = new StateStore(cache, mockLogger());
+    storage = new InMemoryStorage();
+    store = new StateStore(cache, storage, mockLogger());
   });
 
   // ── saveRun / getRun ─────────────────────────────────────────────────
@@ -85,26 +88,61 @@ describe('StateStore', () => {
     expect(loaded!.jobs[0]!.steps).toHaveLength(2);
   });
 
+  it('restores run history from storage after the process cache is replaced', async () => {
+    const storage = new InMemoryStorage();
+    const firstProcess = new StateStore(cache, storage, mockLogger());
+    const run = makeRun({
+      status: 'success',
+      metadata: { cronId: 'round-three' },
+      jobs: [{
+        id: 'run-1:build', jobName: 'build', status: 'success', runId: 'run-1', runsOn: 'local',
+        queuedAt: '2026-01-01T00:00:00.000Z', attempt: 0, artifacts: { produce: ['dist/app.tgz'] },
+        steps: [{ id: 'run-1:build:0', runId: 'run-1', jobId: 'run-1:build', name: 'compile', index: 0,
+          status: 'success', queuedAt: '2026-01-01T00:00:00.000Z', attempt: 0,
+          spec: { name: 'compile', uses: 'builtin:shell' },
+          outputs: { stdout: 'persisted-workflow-output\n' } }],
+      } as JobRun],
+    });
+    await firstProcess.saveRun(run);
+
+    const record = await storage.read('workflows/run-1.json');
+    expect(record).not.toBeNull();
+    expect(JSON.parse(record!.toString('utf8'))).toMatchObject({
+      id: 'run-1', name: 'test-workflow', status: 'success',
+      metadata: { cronId: 'round-three' },
+      jobs: [{ artifacts: { produce: ['dist/app.tgz'] }, steps: [{ outputs: { stdout: 'persisted-workflow-output\n' } }] }],
+    });
+    await storage.write('workflows/core-runtime-run.json', Buffer.from(JSON.stringify({
+      id: 'core-runtime-run', workflowId: 'separate-engine', steps: [],
+    }), 'utf8'));
+
+    const restartedProcess = new StateStore(new MockCache(), storage, mockLogger());
+    await expect(restartedProcess.getRun('run-1')).resolves.toMatchObject({
+      id: 'run-1', status: 'success',
+      jobs: [{ artifacts: { produce: ['dist/app.tgz'] }, steps: [{ outputs: { stdout: 'persisted-workflow-output\n' } }] }],
+    });
+    await expect(restartedProcess.getAllRunIds()).resolves.toEqual(['run-1']);
+  });
+
   it('returns null for non-existent run', async () => {
     const result = await store.getRun('nonexistent');
     expect(result).toBeNull();
   });
 
-  it('regression: saveRun always passes an explicit, long TTL to cache.set — ' +
-    'omitting it (as the code used to) falls back to the cache backend\'s own ' +
-    'ephemeral-cache default (e.g. InMemoryStateBroker: 300_000ms / 5min), so a ' +
-    'run in the middle of a long-running step (release checks can run 20-35min) ' +
-    'silently expires mid-flight and its real result never gets persisted', async () => {
-    const setSpy = vi.spyOn(cache, 'set');
+  it('stores the complete run record outside the expiring cache', async () => {
     await store.saveRun(makeRun());
+    await expect(storage.read('workflows/run-1.json')).resolves.not.toBeNull();
+  });
 
-    expect(setSpy).toHaveBeenCalledOnce();
-    const ttl = setSpy.mock.calls[0]?.[2];
-    expect(ttl).toBeDefined();
-    // Must comfortably outlive the slowest known workflow step (~35min for
-    // release checks); assert it's at least an hour so this doesn't become
-    // a brittle exact-value check.
-    expect(ttl as number).toBeGreaterThanOrEqual(60 * 60 * 1000);
+  it('keeps storage as the source of truth when the cache index is unavailable', async () => {
+    const brokenCache = new MockCache();
+    vi.spyOn(brokenCache, 'zadd').mockRejectedValue(new Error('cache unavailable'));
+    vi.spyOn(brokenCache, 'zrangebyscore').mockRejectedValue(new Error('cache unavailable'));
+    const storageOnlyRead = new StateStore(brokenCache, storage, mockLogger());
+
+    await expect(storageOnlyRead.saveRun(makeRun())).resolves.toBeUndefined();
+    await expect(storageOnlyRead.getAllRunIds()).resolves.toEqual(['run-1']);
+    await expect(storageOnlyRead.getRun('run-1')).resolves.toMatchObject({ id: 'run-1' });
   });
 
   // ── deleteRun ────────────────────────────────────────────────────────
@@ -124,9 +162,7 @@ describe('StateStore', () => {
     await store.saveRun(makeRun({ id: 'run-b', createdAt: '2026-01-02T00:00:00Z' }));
 
     const ids = await store.getAllRunIds();
-    expect(ids).toHaveLength(2);
-    expect(ids).toContain('run-a');
-    expect(ids).toContain('run-b');
+    expect(ids).toEqual(['run-a', 'run-b']);
   });
 
   // ── updateRun ────────────────────────────────────────────────────────

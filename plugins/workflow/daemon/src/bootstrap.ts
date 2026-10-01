@@ -129,6 +129,7 @@ export async function setup({
   bootstrapLogger.info("Creating WorkflowEngine");
   const engine = new WorkflowEngine({
     cache: platform.cache,
+    storage: platform.storage,
     events: platform.eventBus,
     logger: createWorkflowLogger("engine", "workflow.engine"),
     snapshotManager: platform.snapshotManager,
@@ -181,6 +182,13 @@ export async function setup({
     timezone: process.env.WORKFLOW_CRON_TIMEZONE,
   });
 
+  bootstrapLogger.info("Creating WorkflowService");
+  const workflowService = new WorkflowService({
+    cliApi,
+    platform,
+    workspaceRoot,
+  });
+
   bootstrapLogger.info("Discovering cron jobs");
   const cronDiscovery = new CronDiscovery({
     cliApi,
@@ -190,16 +198,11 @@ export async function setup({
       "workflow.cron-discovery",
     ),
     workspaceRoot,
+    workflowService,
   });
   const discovered = await cronDiscovery.discoverAll();
   bootstrapLogger.info("Cron job discovery complete", discovered);
 
-  bootstrapLogger.info("Creating WorkflowService");
-  const workflowService = new WorkflowService({
-    cliApi,
-    platform,
-    workspaceRoot,
-  });
   workflowService
     .listAll()
     .catch((err: unknown) =>
@@ -210,7 +213,7 @@ export async function setup({
   const fileWatcher = new WorkflowFileWatcher({
     watchDirs: [
       join(workspaceRoot, ".kb", "workflows"),
-      join(workspaceRoot, ".kb", "jobs"),
+      join(workspaceRoot, ".kb", "crons"),
     ],
     workflowService,
     cronDiscovery,

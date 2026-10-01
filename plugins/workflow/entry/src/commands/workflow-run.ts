@@ -41,10 +41,10 @@ function parseTriggerType(value: string | undefined): WorkflowRunRequest['trigge
   if (!value) {
     return undefined;
   }
-  if (value === 'manual' || value === 'api' || value === 'cron') {
+  if (value === 'manual') {
     return { type: value };
   }
-  throw new Error(`Invalid trigger type: ${value}. Expected manual|api|cron`);
+  throw new Error(`Invalid trigger type: ${value}. Expected manual`);
 }
 
 export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>({

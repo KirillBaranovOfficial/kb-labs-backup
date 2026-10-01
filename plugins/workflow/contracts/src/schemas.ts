@@ -205,16 +205,11 @@ export const WorkflowTriggerSchema = z
         }),
       ])
       .optional(),
-    schedule: z
-      .object({
-        cron: z.string().min(1),
-        timezone: z.string().min(1).optional(),
-      })
-      .optional(),
   })
+  .strict()
   .refine(
     (value) =>
-      value.manual || value.push || !!value.webhook || !!value.schedule,
+      value.manual || value.push || !!value.webhook,
     {
       message: 'At least one trigger must be defined',
       path: ['manual'],
@@ -346,6 +341,7 @@ export const RunMetadataSchema = z.object({
   target: ExecutionTargetSchema.optional(),
   isolation: IsolationProfileSchema.optional(),
   workflowId: z.string().optional(),
+  cronId: z.string().optional(),
   workflowDepth: z.number().int().nonnegative().optional(),
   parentRunId: z.string().optional(),
   parentJobId: z.string().optional(),

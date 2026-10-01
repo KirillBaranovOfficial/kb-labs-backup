@@ -1,7 +1,7 @@
 ---
 title: "Overview"
 description: "Workflows, jobs, and steps — the declarative orchestration layer."
-updatedAt: "2026-08-09"
+updatedAt: "2026-10-01"
 order: 1
 ---
 
@@ -61,7 +61,7 @@ Both run plugin code. The difference is what they're optimized for:
 | **Concurrency** | One at a time | Concurrency groups, priorities |
 | **Artifacts** | Out-of-band | First-class, with merge strategies |
 | **Approval gates** | Not supported | `builtin:approval` step |
-| **Triggers** | Manual | Manual, push, schedule, webhook |
+| **Triggers** | Manual | Manual, push, webhook |
 
 Rule of thumb: if the work takes one call and you just want to surface it in the CLI, write a plugin command. If it has multiple phases, needs retry semantics, or a human has to approve something in the middle, write a workflow.
 
@@ -78,14 +78,11 @@ on: {
     path?: string;
     headers?: Record<string, string>;
   };
-  schedule?: {
-    cron: string;                        // cron expression
-    timezone?: string;
-  };
+  // schedules are separate project cron files in .kb/crons/
 }
 ```
 
-At least one trigger must be set (`refine` on the Zod schema enforces this). A single workflow can combine multiple triggers — `manual: true` plus `schedule: { cron: '0 3 * * *' }` gives you "run nightly at 3am, or whenever I ask".
+At least one workflow trigger must be set (`refine` on the Zod schema enforces this). A schedule is a separate cron file in `.kb/crons/` and can target this workflow with its own inputs. See [Triggers](/workflows/triggers) for the cron file example.
 
 See [Triggers](/workflows/triggers) for the full details.
 

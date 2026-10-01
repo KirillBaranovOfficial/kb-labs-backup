@@ -1,6 +1,6 @@
 /**
  * @module @kb-labs/workflow-daemon/file-watcher
- * WorkflowFileWatcher - watches .kb/workflows/ and .kb/jobs/ for YAML changes
+ * WorkflowFileWatcher - watches .kb/workflows/ and .kb/crons/ for YAML changes
  * and triggers manifest cache invalidation + cron re-discovery on each change.
  */
 
@@ -14,7 +14,7 @@ import type { CronDiscovery } from './cron-discovery.js';
 import type { CronScheduler } from './cron-scheduler.js';
 
 export interface WorkflowFileWatcherOptions {
-  /** Absolute paths to watch (e.g. ['.kb/workflows', '.kb/jobs']). */
+  /** Absolute paths to watch (e.g. ['.kb/workflows', '.kb/crons']). */
   watchDirs: string[];
   workflowService: WorkflowService;
   cronDiscovery: CronDiscovery;

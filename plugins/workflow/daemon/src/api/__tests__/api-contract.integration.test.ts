@@ -5,6 +5,7 @@ import { registerCronAPI } from '../cron-api.js';
 import { registerJobsAPI } from '../jobs-api.js';
 import { registerWorkflowsAPI } from '../workflows-api.js';
 import { registerApprovalsAPI } from '../approvals-api.js';
+import { CronMutationRefusedError } from '../../cron-discovery.js';
 
 function createHostServiceMock() {
   return {
@@ -14,12 +15,8 @@ function createHostServiceMock() {
     listJobs: vi.fn(async () => ({ jobs: [{ id: 'job-1', type: 'test', status: 'running' }] })),
     getJobSteps: vi.fn(async () => [{ id: 's1', status: 'success' }]),
     getJobLogs: vi.fn(async () => [{ message: 'log' }]),
-    registerCron: vi.fn(() => ({ ok: true })),
-    unregisterCron: vi.fn(() => ({ ok: true })),
-    listCron: vi.fn(() => ({ crons: [{ id: 'c1', schedule: '* * * * *', jobType: 'test', enabled: true }] })),
-    triggerCron: vi.fn(async () => ({ ok: true })),
-    pauseCron: vi.fn(() => ({ ok: true })),
-    resumeCron: vi.fn(() => ({ ok: true })),
+    listCron: vi.fn(() => ({ crons: [{ id: 'c1', source: 'user', schedule: '* * * * *', target: { workflow: 'wf' }, enabled: true }], errors: [] })),
+    setCronEnabled: vi.fn(async (_id: string, enabled: boolean) => ({ enabled })),
     listWorkflows: vi.fn(async () => ({ workflows: [{ id: 'w1', name: 'wf', source: 'standalone' }] })),
     getWorkflow: vi.fn(async () => ({ id: 'w1', name: 'wf', source: 'standalone' })),
     runWorkflow: vi.fn(async () => ({ runId: 'r1', status: 'queued' })),
@@ -150,41 +147,27 @@ describe('Workflow API Contract Integration', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({
         ok: true,
-        data: { crons: [{ id: 'c1', schedule: '* * * * *', jobType: 'test', enabled: true }] },
+        data: { crons: [{ id: 'c1', source: 'user', schedule: '* * * * *', target: { workflow: 'wf' }, enabled: true }], errors: [] },
       });
     });
 
-    it('POST /api/v1/crons — registers cron', async () => {
-      const res = await app.inject({
-        method: 'POST', url: '/api/v1/crons',
-        payload: { id: 'c2', schedule: '0 * * * *', jobType: 'test' },
-      });
+    it('POST /api/v1/crons/:id/disable — persists disabled state', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/c1/disable' });
       expect(res.statusCode).toBe(200);
-      expect(res.json().ok).toBe(true);
+      expect(hostService.setCronEnabled).toHaveBeenCalledWith('c1', false);
+      expect(res.json()).toMatchObject({ ok: true, data: { enabled: false } });
     });
 
-    it('DELETE /api/v1/crons/:id — unregisters cron', async () => {
-      const res = await app.inject({ method: 'DELETE', url: '/api/v1/crons/c1' });
-      expect(res.statusCode).toBe(200);
-      expect(res.json().ok).toBe(true);
+    it('POST /api/v1/crons/:id/enable — refuses plugin cron with typed error', async () => {
+      hostService.setCronEnabled.mockRejectedValueOnce(new CronMutationRefusedError('plugin:qa:cleanup'));
+      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/plugin:qa:cleanup/enable' });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ ok: false, code: 'CRON_PLUGIN_READ_ONLY' });
     });
 
-    it('POST /api/v1/crons/:id/trigger — triggers cron', async () => {
-      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/c1/trigger' });
-      expect(res.statusCode).toBe(200);
-      expect(res.json().ok).toBe(true);
-    });
-
-    it('POST /api/v1/crons/:id/pause — pauses cron', async () => {
-      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/c1/pause' });
-      expect(res.statusCode).toBe(200);
-      expect(res.json()).toEqual({ ok: true, data: { ok: true } });
-    });
-
-    it('POST /api/v1/crons/:id/resume — resumes cron', async () => {
-      const res = await app.inject({ method: 'POST', url: '/api/v1/crons/c1/resume' });
-      expect(res.statusCode).toBe(200);
-      expect(res.json().ok).toBe(true);
+    it('POST /api/v1/crons — rejects non-file registration surfaces', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/v1/crons', payload: {} });
+      expect(res.statusCode).toBe(404);
     });
 
     it('old /api/v1/cron path returns 404', async () => {

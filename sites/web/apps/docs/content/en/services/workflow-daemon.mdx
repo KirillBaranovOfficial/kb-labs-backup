@@ -1,7 +1,7 @@
 ---
 title: "Workflow Daemon"
 description: "The service that runs workflows — engine, job broker, cron scheduler, HTTP API."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-01"
 order: 5
 ---
 
@@ -87,7 +87,7 @@ Routes are registered in [`server.ts`](plugins/workflow/daemon/src/server.ts). F
 |---|---|---|
 | `/workflows/*` | `api/workflows-api.ts` | Create, get, list, cancel runs |
 | `/jobs/*` | `api/jobs-api.ts` | Job lifecycle, queue inspection |
-| `/cron/*` | `api/cron-api.ts` | Register, list, pause, trigger cron schedules |
+| `/api/v1/crons` | `api/cron-api.ts` | List plugin and project crons, enable or disable project crons |
 | `/approvals/*` | `api/approvals-api.ts` | Resolve `builtin:approval` steps |
 | `/stats/*` | `api/stats-api.ts` | Run/job statistics for dashboards |
 | `/health` | built-in | Liveness probe |
@@ -130,12 +130,26 @@ The `WorkflowWorker` is the consumer loop. It pulls eligible jobs from the broke
 
 ## Cron
 
-Two pieces:
+**`CronDiscovery`** reads plugin manifest crons and project files in `.kb/crons/<id>.yml`. A project cron targets exactly one existing workflow or registered job handler and may pass inputs. Invalid project cron files include their file path and validation reason in `GET /api/v1/crons` diagnostics. **`CronScheduler`** fires enabled workflow schedules with `trigger.type: 'schedule'` and `metadata.cronId`; handler schedules submit the registered job with that cron id in metadata.
 
-- **`CronDiscovery`** walks installed plugins and registered workflows, collects every `cron` declaration (`manifest.cron.schedules[]` for plugins, `on.schedule` for workflows), and registers each one with the scheduler.
-- **`CronScheduler`** holds the set of registered schedules and fires them when their cron expression matches. Each firing creates a new run via the engine with `trigger.type: 'schedule'`.
+Project cron files use five-field cron expressions:
 
-Cron expressions are standard 5-field format. Timezones come from the declaration (`schedule.timezone`) or default to the daemon's own timezone when unspecified.
+```yaml
+schedule: "0 2 * * *"
+timezone: "UTC"
+workflow: nightly-release
+input:
+  channel: stable
+enabled: true
+```
+
+Use `kb workflow crons list`, `kb workflow crons disable nightly`, or `kb workflow crons enable nightly` to inspect and manage `nightly.yml`. Plugin manifest crons are listed as read-only. The host keeps a project runtime warm while any project cron is enabled.
+
+## Run history storage
+
+The workflow daemon writes each complete run record through the project's `IStorage` adapter at the logical key `workflows/<runId>.json`. The JSON contains the history fields (`id`, `name`, `status`, `createdAt`, `trigger`, and `metadata`), jobs, steps, artifact references, and step outputs. The built-in adapter pack binds filesystem storage by default; another storage adapter can use the same logical key. The cache coordinates active work but is not the source of run history.
+
+Shell stdout and stderr are included in each completed step's outputs. The run logs endpoint reads structured platform logs and supplements missing lines from those stored outputs, so completed run history and command output remain inspectable after a host restart. To verify this in a registered project, run `kb workflow runs list`, restart the host with `kb-create restart --platform-root <platform-root>`, then run `kb workflow runs view <runId>` and `kb workflow runs logs <runId>`.
 
 ## Approvals
 

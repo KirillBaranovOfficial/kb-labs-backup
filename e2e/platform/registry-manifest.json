@@ -147,6 +147,12 @@
       "pkg": "@kb-labs/quality-entry",
       "description": "Code quality, architecture analysis",
       "default": true
+    },
+    {
+      "id": "steward",
+      "pkg": "@kb-labs/steward-entry",
+      "description": "Project memory and daily review",
+      "default": true
     }
   ],
   "binaries": [

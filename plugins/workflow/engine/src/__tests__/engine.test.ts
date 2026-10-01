@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { WorkflowEngine } from '../engine.js';
 import type { WorkflowSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
 import type { ICache, IEventBus } from '@kb-labs/core-platform';
+import { InMemoryStorage } from '@kb-labs/core-platform/inmemory';
 import { mockLogger, type MockLoggerInstance } from '@kb-labs/shared-testing';
 
 // Mock Cache
@@ -116,16 +117,19 @@ class MockEventBus implements IEventBus {
 describe('WorkflowEngine', () => {
   let cache: MockCache;
   let events: MockEventBus;
+  let storage: InMemoryStorage;
   let logger: MockLoggerInstance;
   let engine: WorkflowEngine;
 
   beforeEach(() => {
     cache = new MockCache();
     events = new MockEventBus();
+    storage = new InMemoryStorage();
     logger = mockLogger();
 
     engine = new WorkflowEngine({
       cache,
+      storage,
       events,
       logger,
       maxWorkflowDepth: 2,
@@ -140,7 +144,7 @@ describe('WorkflowEngine', () => {
     });
 
     it('should use default maxWorkflowDepth if not provided', () => {
-      const engine2 = new WorkflowEngine({ cache, events, logger });
+      const engine2 = new WorkflowEngine({ cache, events, logger, storage });
       expect(engine2.maxWorkflowDepth).toBe(2);
     });
   });
@@ -169,6 +173,36 @@ describe('WorkflowEngine', () => {
       const storedRun = await engine.getRun(run.id);
       expect(storedRun).toBeDefined();
       expect(storedRun?.id).toBe(run.id);
+    });
+
+    it('reopens workflow history and step output from storage with a fresh engine cache', async () => {
+      const run = await engine.createRun({ spec: simpleSpec, trigger: { type: 'manual' } });
+      await engine.getStateStore().updateRun(run.id, (draft) => {
+        draft.status = 'success';
+        const step = draft.jobs[0]?.steps[0];
+        if (step) {
+          step.status = 'success';
+          step.outputs = { message: 'persisted-after-restart' };
+        }
+      });
+
+      const stored = await storage.read(`workflows/${run.id}.json`);
+      expect(stored).not.toBeNull();
+      expect(JSON.parse(stored!.toString('utf8'))).toMatchObject({
+        id: run.id, status: 'success',
+        jobs: [{ steps: [{ outputs: { message: 'persisted-after-restart' } }] }],
+      });
+
+      const restarted = new WorkflowEngine({
+        cache: new MockCache(), storage, events: new MockEventBus(), logger: mockLogger(),
+      });
+      await expect(restarted.getRun(run.id)).resolves.toMatchObject({
+        id: run.id, status: 'success',
+        jobs: [{ steps: [{ outputs: { message: 'persisted-after-restart' } }] }],
+      });
+      await expect(restarted.getAllRuns()).resolves.toEqual([
+        expect.objectContaining({ id: run.id, status: 'success' }),
+      ]);
     });
   });
 
@@ -340,7 +374,7 @@ describe('WorkflowEngine', () => {
         return { parent, parentJob };
       }));
 
-      const restarted = new WorkflowEngine({ cache, events, logger, maxWorkflowDepth: 2 });
+      const restarted = new WorkflowEngine({ cache, events, logger, storage, maxWorkflowDepth: 2 });
       await expect(restarted.reconcileChildInvocations()).resolves.toBe(4);
 
       await Promise.all(pairs.map(async ({ parent, parentJob }) => {
@@ -1001,6 +1035,7 @@ describe('WorkflowEngine', () => {
       'happens to run its own startup sweep.', async () => {
       const liveDaemon = new WorkflowEngine({
         cache,
+        storage,
         events,
         logger,
         instanceId: 'daemon-live',
@@ -1019,6 +1054,7 @@ describe('WorkflowEngine', () => {
       const strayLogger = mockLogger();
       const strayDaemon = new WorkflowEngine({
         cache,
+        storage,
         events,
         logger: strayLogger,
         instanceId: 'daemon-stray',
@@ -1043,6 +1079,7 @@ describe('WorkflowEngine', () => {
       'must keep cleaning up orphaned runs exactly as before.', async () => {
       const crashedDaemon = new WorkflowEngine({
         cache,
+        storage,
         events,
         logger,
         instanceId: 'daemon-crashed',
@@ -1061,6 +1098,7 @@ describe('WorkflowEngine', () => {
 
       const restartedDaemon = new WorkflowEngine({
         cache,
+        storage,
         events,
         logger,
         instanceId: 'daemon-restarted',

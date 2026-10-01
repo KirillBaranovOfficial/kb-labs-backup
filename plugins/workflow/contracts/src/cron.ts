@@ -36,23 +36,23 @@ export const PluginCronJobSchema = z.object({
 
 export type PluginCronJob = z.infer<typeof PluginCronJobSchema>
 
-/**
- * User-defined cron job from .kb/jobs/*.yml
- * Full workflow spec with cron trigger
- */
-export const UserCronJobSchema = z.object({
-  name: z.string().min(1).describe('Human-readable job name'),
+/** A project-owned schedule targeting exactly one workflow or registered job handler. */
+export const UserCronSchema = z.object({
+  id: z.string().min(1).max(64).regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
   schedule: CronScheduleSchema,
-  autoStart: z.boolean().default(true).describe('Auto-start on daemon boot'),
-  priority: z.enum(JOB_PRIORITY_VALUES).default('normal'),
+  workflow: z.string().min(1).optional(),
+  handler: z.string().min(1).optional(),
+  input: z.record(z.string(), z.unknown()).optional(),
   enabled: z.boolean().default(true).describe('Whether cron job is enabled'),
   timezone: z.string().optional().describe('Timezone for schedule (default: UTC)'),
-  env: z.record(z.string(), z.string()).optional().describe('Environment variables'),
-  jobs: z.record(z.string(), z.any()).describe('Workflow jobs specification'),
-  metadata: z.record(z.string(), z.unknown()).optional().describe('Additional metadata'),
+  name: z.string().min(1).optional(),
+  description: z.string().optional(),
+}).strict().refine((cron) => Boolean(cron.workflow) !== Boolean(cron.handler), {
+  message: 'A project cron must target exactly one workflow or handler',
+  path: ['workflow'],
 })
 
-export type UserCronJob = z.infer<typeof UserCronJobSchema>
+export type UserCron = z.infer<typeof UserCronSchema>
 
 /**
  * Registered cron job (internal representation)
@@ -65,14 +65,19 @@ export interface RegisteredCronJob {
   timezone?: string
   priority: 'high' | 'normal' | 'low'
   enabled: boolean
+  lastRun?: { id: string; status: string; time: string }
 
   // For plugin cron jobs
   handler?: string
   input?: Record<string, unknown>
 
-  // For user cron jobs
+  // For user cron schedules
+  workflowId?: string
+  workflowInput?: Record<string, unknown>
   workflowSpec?: {
     name: string
+    version: string
+    on: { manual: true }
     jobs: Record<string, any>
     env?: Record<string, string>
   }
