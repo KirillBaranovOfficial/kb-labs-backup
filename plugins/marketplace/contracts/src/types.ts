@@ -28,6 +28,8 @@ export interface ResolvedPackage {
   signature?: EntitySignature;
   /** How this package was sourced */
   source: 'marketplace' | 'local';
+  /** Primary KB Labs entity kind, when the source publishes it. */
+  primaryKind?: EntityKind;
   /** Download URL (for registry-based sources) */
   downloadUrl?: string;
 }

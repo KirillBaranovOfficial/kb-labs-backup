@@ -14,6 +14,37 @@ import type {
   InstalledPackage,
 } from '@kb-labs/marketplace-contracts';
 
+export class PackageMetadataError extends Error {
+  readonly code: 'PACKAGE_NOT_FOUND' | 'VERSION_NOT_FOUND' | 'UNKNOWN_ENTITY_KIND' | 'METADATA_FETCH_FAILED';
+  readonly packageId: string;
+  readonly version: string;
+  readonly hint: string;
+
+  constructor(code: PackageMetadataError['code'], packageId: string, version: string, message: string) {
+    super(message);
+    this.name = 'PackageMetadataError';
+    this.code = code;
+    this.packageId = packageId;
+    this.version = version;
+    this.hint = `Publish ${packageId}@${version} with a kb.manifest or kb.adapter field, then run "kb marketplace install ${packageId}@${version}".`;
+  }
+}
+
+export class PlatformArtifactPinsError extends Error {
+  readonly code = 'MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING';
+  readonly hint: string;
+
+  constructor(root: string, packageId: string, version: string) {
+    super("The installed platform is missing kb-create's sealed artifact overrides. No package was installed.");
+    this.name = 'PlatformArtifactPinsError';
+    this.hint = `Run "kb-create update --platform-root ${JSON.stringify(root)}" and retry "kb marketplace install ${packageId}@${version} --scope platform".`;
+  }
+}
+
+export interface NpmPackageSourceOptions {
+  registryUrl?: string;
+}
+
 export class PackageInstallError extends Error {
   readonly code: 'NOT_FOUND' | 'INSTALL_FAILED';
   readonly spec: string;
@@ -26,17 +57,55 @@ export class PackageInstallError extends Error {
 }
 
 export class NpmPackageSource implements PackageSource {
+  private readonly registryUrl: string;
+
+  constructor(options: NpmPackageSourceOptions = {}) {
+    this.registryUrl = (options.registryUrl ?? process.env.npm_config_registry ?? process.env.NPM_CONFIG_REGISTRY ?? 'https://registry.npmjs.org').replace(/\/$/, '');
+  }
+
   async resolve(spec: string): Promise<ResolvedPackage> {
     const id = extractPackageName(spec);
     if (!id) {
       throw new Error(`Invalid package spec: ${spec}`);
     }
 
+    const requestedVersion = extractVersion(spec);
+    const packageURL = `${this.registryUrl}/${encodeURIComponent(id).replace('%40', '@')}`;
+    let response: Response;
+    try {
+      response = await globalThis.fetch(packageURL);
+    } catch (error) {
+      throw new PackageMetadataError('METADATA_FETCH_FAILED', id, requestedVersion ?? 'latest',
+        `Could not read package metadata for ${id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (response.status === 404) {
+      throw new PackageMetadataError('PACKAGE_NOT_FOUND', id, requestedVersion ?? 'latest', `Package ${id} was not found in ${this.registryUrl}`);
+    }
+    if (!response.ok) {
+      throw new PackageMetadataError('METADATA_FETCH_FAILED', id, requestedVersion ?? 'latest', `Registry returned HTTP ${response.status} while reading ${id}`);
+    }
+    const packument = await response.json() as {
+      'dist-tags'?: { latest?: string };
+      versions?: Record<string, { kb?: { manifest?: string; adapter?: unknown } }>;
+    };
+    const version = requestedVersion ?? packument['dist-tags']?.latest;
+    const manifest = version ? packument.versions?.[version]?.kb : undefined;
+    if (!version || !manifest) {
+      throw new PackageMetadataError('VERSION_NOT_FOUND', id, requestedVersion ?? 'latest',
+        `Package ${id} has no published metadata for ${requestedVersion ?? 'latest'}`);
+    }
+    const primaryKind = manifest.adapter ? 'adapter' : manifest.manifest ? 'plugin' : undefined;
+    if (!primaryKind) {
+      throw new PackageMetadataError('UNKNOWN_ENTITY_KIND', id, version,
+        `Package ${id}@${version} does not declare kb.manifest or kb.adapter metadata`);
+    }
+
     return {
       id,
-      version: extractVersion(spec) ?? 'latest',
+      version,
       integrity: '', // computed after install
       source: 'marketplace',
+      primaryKind,
     };
   }
 
@@ -45,6 +114,7 @@ export class NpmPackageSource implements PackageSource {
     root: string,
     opts?: { dev?: boolean },
   ): Promise<InstalledPackage> {
+    await assertSealedPlatformOverrides(root, pkg.id, pkg.version);
     const spec = pkg.version === 'latest' ? pkg.id : `${pkg.id}@${pkg.version}`;
     const args = ['add', spec];
     if (opts?.dev) {args.push('--save-dev');}
@@ -86,6 +156,61 @@ export class NpmPackageSource implements PackageSource {
   async remove(packageId: string, root: string): Promise<void> {
     await execa('pnpm', ['remove', packageId], { cwd: root, timeout: 2 * 60 * 1000 });
   }
+}
+
+/** Check that kb-create owns and has written every sealed archive override. */
+export async function assertSealedPlatformOverrides(root: string, packageId: string, version: string): Promise<void> {
+  const receiptPath = path.join(root, '.kb', 'v2', 'receipt.json');
+  const packageJsonPath = path.join(root, 'package.json');
+  const workspacePath = path.join(root, 'pnpm-workspace.yaml');
+  try {
+    await fs.access(receiptPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return; }
+    throw error;
+  }
+  let packageJson: {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    optionalDependencies?: Record<string, string>;
+  };
+  try {
+    packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new PlatformArtifactPinsError(root, packageId, version);
+    }
+    throw error;
+  }
+  const sealed = new Map<string, string>();
+  for (const dependencies of [packageJson.dependencies, packageJson.devDependencies, packageJson.optionalDependencies]) {
+    for (const [name, spec] of Object.entries(dependencies ?? {})) {
+      if (spec.startsWith('file:.kb/v2/cache/packages/')) {
+        sealed.set(name, spec);
+      }
+    }
+  }
+  if (sealed.size === 0) { return; }
+  let workspace;
+  try {
+    workspace = await fs.readFile(workspacePath, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new PlatformArtifactPinsError(root, packageId, version);
+    }
+    throw error;
+  }
+  for (const [name, spec] of sealed) {
+    const key = `(?:${escapeRegExp(JSON.stringify(name))}|'${escapeRegExp(name)}'|${escapeRegExp(name)})`;
+    const value = `(?:${escapeRegExp(JSON.stringify(spec))}|'${escapeRegExp(spec)}'|${escapeRegExp(spec)})`;
+    if (!new RegExp(`^  ${key}:\\s*${value}\\s*(?:#.*)?$`, 'm').test(workspace)) {
+      throw new PlatformArtifactPinsError(root, packageId, version);
+    }
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // ---------------------------------------------------------------------------

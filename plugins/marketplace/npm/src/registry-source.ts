@@ -91,7 +91,10 @@ export class RegistryPackageSource implements PackageSource {
     if (!resp.ok) {
       throw new RegistryPackageError('PACKAGE_NOT_FOUND', `Package ${handle}/${name} not found in registry`);
     }
-    const entry = await resp.json() as { versions?: Array<{ version: string; integrity: string; yanked?: boolean; signature?: EntitySignature }> };
+    const entry = await resp.json() as {
+      primaryKind?: ResolvedPackage['primaryKind'];
+      versions?: Array<{ version: string; integrity: string; yanked?: boolean; signature?: EntitySignature }>;
+    };
 
     const versions = entry.versions ?? [];
     const resolved = version === 'latest'
@@ -111,6 +114,7 @@ export class RegistryPackageSource implements PackageSource {
       integrity: resolved.integrity,
       signature: resolved.signature,
       source: 'marketplace',
+      ...(entry.primaryKind ? { primaryKind: entry.primaryKind } : {}),
       downloadUrl: `${this.baseUrl}/api/v1/packages/${handle}/${encodeURIComponent(name)}/${resolved.version}/tarball`,
     };
   }

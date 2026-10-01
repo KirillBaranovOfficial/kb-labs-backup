@@ -152,10 +152,19 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
 
       const resolved = await source.resolve(spec);
-      // ADR-0048 keeps the shared version store for project plugin pins. A
-      // platform install (including every adapter) belongs in the platform
-      // package graph so adapters can be resolved by the platform runtime.
-      const result = this.extensionStore && ctx.scope === 'project'
+      if (!resolved.primaryKind) {
+        throw new PackageClassificationError(
+          resolved.id,
+          resolved.version,
+        );
+      }
+      // Project plugin pins use the shared version store (ADR-0048). Marketplace
+      // plugin entry packages also use it at platform scope: adding them to the
+      // installed platform root would make pnpm re-resolve the sealed graph.
+      // Platform adapters remain in the platform graph for runtime resolution.
+      const usesExtensionStore = this.extensionStore !== undefined &&
+        (ctx.scope === 'project' || resolved.primaryKind === 'plugin');
+      const result = usesExtensionStore
         ? await this.installInStore(resolved)
         : await source.install(resolved, scopeRoot, opts);
 
@@ -170,8 +179,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         }
         throw new InvalidEntityError(
           `Package "${result.id}" (resolved from "${spec}") is not a valid KB Labs entity — ` +
-          `no plugin/adapter/workflow manifest found. Nothing was installed. ` +
-          `Did you mean a scoped package such as "@kb-labs/${spec}-entry"?`,
+          `no plugin/adapter/workflow manifest found. Nothing was installed.`,
         );
       }
       this.assertScopeAllowsKind(ctx.scope, primaryKind);
@@ -188,10 +196,11 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       const entry = createMarketplaceEntry({
         version: result.version,
         integrity: result.integrity,
-        resolvedPath: this.extensionStore
+        resolvedPath: usesExtensionStore
           ? `store:${encodeURIComponent(result.id)}@${encodeURIComponent(result.version)}`
           : relativeToRoot(scopeRoot, result.packageRoot),
-        source: ctx.scope === 'platform' && resolved.source === 'marketplace' ? 'platform' : resolved.source,
+        source: usesExtensionStore ? resolved.source
+          : ctx.scope === 'platform' && resolved.source === 'marketplace' ? 'platform' : resolved.source,
         primaryKind,
         provides,
         trust,
@@ -783,6 +792,17 @@ export class InvalidEntityError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'InvalidEntityError';
+  }
+}
+
+/** Package metadata must classify an entity before marketplace install mutates a scope. */
+export class PackageClassificationError extends Error {
+  readonly code = 'MARKETPLACE_PACKAGE_KIND_UNKNOWN';
+  readonly hint: string;
+  constructor(packageId: string, version: string) {
+    super(`Package "${packageId}@${version}" has no declared KB Labs entity kind. Registry metadata must declare kb.manifest (plugin) or kb.adapter (adapter). Nothing was installed.`);
+    this.name = 'PackageClassificationError';
+    this.hint = `Publish ${packageId}@${version} with kb.manifest or kb.adapter metadata, then run "kb marketplace install ${packageId}@${version}".`;
   }
 }
 
