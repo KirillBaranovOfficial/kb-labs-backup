@@ -135,6 +135,43 @@ const update = spawnSync(process.execPath, [
 ], { stdio: 'inherit' });
 if (update.status !== 0) process.exit(update.status ?? 1);
 
+// Re-seal the same runtime and SDK tarballs under a canary prerelease version.
+// This is an immutable channel entry with a visible version marker, not a
+// rewrite of the installed platform or a resolver shortcut.
+const canaryVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 2}-canary.1`;
+const canaryPackagesDir = join(resolve(output, '..'), 'canary-packages');
+const canarySourceDir = join(resolve(output, '..'), 'canary-source-packages');
+mkdirSync(canarySourceDir, { recursive: true });
+for (const filename of readdirSync(packagesDir).filter(name => name.endsWith('.tgz'))) {
+  const isRuntime = filename.startsWith('core-runtime-');
+  const isSDK = filename.startsWith('sdk-');
+  if ((isRuntime && filename !== `core-runtime-${baseVersion}.tgz`) ||
+      (isSDK && filename !== `sdk-${baseVersion}.tgz`)) continue;
+  copyFileSync(join(packagesDir, filename), join(canarySourceDir, filename));
+}
+prepareJourneyUpdatePackages(canarySourceDir, canaryPackagesDir, canaryVersion);
+for (const filename of readFileSync(join(canaryPackagesDir, 'generated-packages.txt'), 'utf8').split('\n').filter(Boolean)) {
+  copyFileSync(join(canaryPackagesDir, filename), join(packagesDir, filename));
+}
+const canaryOutput = join(resolve(output, '..'), 'release-index-canary.json');
+const canary = spawnSync(process.execPath, [
+  prepareScript,
+  '--flow', 'platform',
+  '--channel', 'canary',
+  '--artifacts-dir', canaryPackagesDir,
+  '--binary-manifest', binaryManifest,
+  '--platform-version', canaryVersion,
+  '--platform-requires', 'serviceTransport,logger,logRingBuffer',
+  '--platform-adapter-config', adapterConfig,
+  '--platform-adapter-options', adapterOptions,
+  '--platform-member-packages', platformMembers,
+  '--adapter-overrides', adapterOverrides,
+  '--registry', 'http://verdaccio:4873',
+  '--output', canaryOutput,
+  '--sealer-bin', sealer,
+], { stdio: 'inherit' });
+if (canary.status !== 0) process.exit(canary.status ?? 1);
+
 function sha256(path) {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }

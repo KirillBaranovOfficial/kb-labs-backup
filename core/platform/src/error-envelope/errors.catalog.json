@@ -135,7 +135,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Selected components are incompatible: {reason}.",
-      "hint": "Choose compatible versions or a different release channel."
+      "hint": "Choose compatible versions or pass an explicit supported provider."
     },
     {
       "code": "KB_INSTALL_PROVIDER_UNRESOLVED",
@@ -818,8 +818,17 @@
       "stage": "update",
       "severity": "error",
       "retryable": false,
-      "message": "The update is incompatible with the installed components: {reason}.",
-      "hint": "Resolve the blocking component first, then update."
+      "message": "The update is incompatible with installed {kind} {component} at {version}; its declared compatibility range is {range}.",
+      "hint": "Update or remove {kind} {component} first, then rerun `kb-create update`."
+    },
+    {
+      "code": "KB_UPDATE_DOWNGRADE_REFUSED",
+      "area": "update",
+      "stage": "update",
+      "severity": "error",
+      "retryable": false,
+      "message": "The requested platform version {target} is older than the installed version {installed}.",
+      "hint": "use `kb-create rollback`"
     },
     {
       "code": "KB_UPDATE_VERIFY_FAILED",

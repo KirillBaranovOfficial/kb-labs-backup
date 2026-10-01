@@ -9,15 +9,17 @@ const (
 )
 
 type Artifact struct {
-	ID      string              `json:"id"`
-	Kind    string              `json:"kind"`
-	Package string              `json:"package"`
-	Version string              `json:"version"`
-	SHA256  string              `json:"sha256"`
-	URL     string              `json:"url,omitempty"`
-	Tarball string              `json:"tarball,omitempty"`
-	Target  string              `json:"target,omitempty"`
-	Config  []ConfigRequirement `json:"config,omitempty"`
+	ID            string              `json:"id"`
+	Kind          string              `json:"kind"`
+	Package       string              `json:"package"`
+	Version       string              `json:"version"`
+	SHA256        string              `json:"sha256"`
+	URL           string              `json:"url,omitempty"`
+	Tarball       string              `json:"tarball,omitempty"`
+	Target        string              `json:"target,omitempty"`
+	PlatformRange string              `json:"platformRange,omitempty"`
+	SDKRange      string              `json:"sdkRange,omitempty"`
+	Config        []ConfigRequirement `json:"config,omitempty"`
 	// Registry names the discovery kind ("plugin" or "adapter") of an artifact
 	// that is installed under another Kind, e.g. a platform member that is also
 	// a catalog plugin/adapter. Empty for artifacts that are not registry entities.
@@ -54,6 +56,7 @@ type ResolvedInstallPlan struct {
 	Request          InstallRequest    `json:"request"`
 	Artifacts        []Artifact        `json:"artifacts"`
 	ServiceGraph     ServiceGraph      `json:"serviceGraph"`
+	PlatformChannel  string            `json:"platformChannel"`
 	ProviderBindings []ProviderBinding `json:"providerBindings,omitempty"`
 	// Host is how the launcher runs this platform: one supervised process. The
 	// resolver copies it from the platform bundle; a plan without it is invalid.

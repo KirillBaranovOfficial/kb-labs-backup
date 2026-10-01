@@ -684,6 +684,12 @@ export interface ManifestV3 {
   /** Plugin version (semver) */
   version: string;
 
+  /** Release compatibility constraints copied into the sealed platform index. */
+  compatibility?: {
+    platformRange?: string;
+    sdkRange?: string;
+  };
+
   /**
    * Config section identifier in kb.config.json
    * Used by runtime to load plugin-specific config

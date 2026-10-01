@@ -91,6 +91,8 @@ const (
 	CodeRecoveryHostRunning    = "KB_INSTALL_RECOVERY_HOST_RUNNING"
 	CodeRecoveryUnavailable    = "KB_INSTALL_RECOVERY_UNAVAILABLE"
 	CodeUpdateApplyFailed      = "KB_UPDATE_APPLY_FAILED"
+	CodeUpdateIncompatible     = "KB_UPDATE_INCOMPATIBLE"
+	CodeUpdateDowngradeRefused = "KB_UPDATE_DOWNGRADE_REFUSED"
 	CodeUpdateHostNotHealthy   = "KB_UPDATE_HOST_NOT_HEALTHY"
 	CodeUpdateNoSnapshot       = "KB_UPDATE_NO_SNAPSHOT"
 	CodeHostSpecInvalid        = "KB_HOST_SPEC_INVALID"
