@@ -49,4 +49,32 @@ describe('resolveDiscoveredAdapterDefaults', () => {
 
     expect(resolved.adapters.analytics).toBe('@kb-labs/adapters-analytics-custom');
   });
+
+  it('does not implicitly select a provider whose manifest requires configuration', () => {
+    const configuredProvider = discovered('@kb-labs/adapters-service-transport-http', {
+      defaultFor: ['serviceTransport'],
+      implements: 'IServiceTransport',
+      configSchema: { services: { type: 'object', required: true } },
+    });
+    const resolved = resolveDiscoveredAdapterDefaults({ adapters: {}, adapterOptions: {} },
+      new Map([[configuredProvider.packageName, configuredProvider]]), '/project');
+
+    expect(resolved.adapters).not.toHaveProperty('serviceTransport');
+    expect(resolved.adapterOptions).not.toHaveProperty('serviceTransport');
+  });
+
+  it('allows a required secret credential with an environment source as an implicit default', () => {
+    const openai = discovered('@kb-labs/adapters-openai', {
+      defaultFor: ['llm'],
+      implements: 'ILLM',
+      configSchema: {
+        apiKey: { type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY' },
+        model: { type: 'string', default: 'gpt-4o' },
+      },
+    });
+    const resolved = resolveDiscoveredAdapterDefaults({ adapters: {}, adapterOptions: {} },
+      new Map([[openai.packageName, openai]]), '/project');
+
+    expect(resolved.adapters.llm).toBe('@kb-labs/adapters-openai');
+  });
 });

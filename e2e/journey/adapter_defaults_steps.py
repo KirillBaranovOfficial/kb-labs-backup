@@ -105,8 +105,9 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             "logger": "@kb-labs/adapters-pino",
             "analytics": "@kb-labs/adapters-analytics-sqlite",
             "documentDatabase": "@kb-labs/adapters-sqlite",
-            "kvStore": "@kb-labs/adapters-sqlite",
+            "kvStore": "@kb-labs/adapters-sqlite/kv",
             "eventBus": "@kb-labs/adapters-eventbus-cache",
+            "llm": "@kb-labs/adapters-openai",
             "invoke": "InMemoryInvoke",
             "artifacts": "InMemoryArtifacts",
             "config": "InMemoryConfig",
@@ -124,15 +125,23 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("logs are not backed by the installed local buffer and persistence adapters")
         if rows["notifier"].get("implementation") != "InMemoryNotifier":
             raise RuntimeError("notifier does not use the local in-process default")
-        if rows["llm"].get("mode") != "unconfigured" or rows["llm"].get("requiresConfiguration") is not True:
-            raise RuntimeError("provider-backed LLM slot is not identified as requiring configuration")
+        if rows["llm"].get("mode") != "real" or rows["llm"].get("credentialsStatus") != "missing" or rows["llm"].get("missingCredentials") != ["OPENAI_API_KEY"]:
+            raise RuntimeError("implicit OpenAI LLM default does not report its missing credential")
         if rows["vectorStore"].get("mode") != "unconfigured" or rows["vectorStore"].get("implementation") is not None:
             raise RuntimeError("vector store is not left unconfigured by the default pack")
-        for slot in ("llm", "embeddings", "snapshotManager"):
+        for slot in ("embeddings", "snapshotManager"):
             if rows[slot].get("mode") != "unconfigured":
                 raise RuntimeError(f"{slot} is not reported unconfigured without an adequate local implementation")
 
     journey.step("list fresh-install built-in adapter defaults", "adapter", assert_default_list, cases=["S-054.1"])
+
+    def assert_installed_layout_cli_loads_defaults() -> None:
+        rows = rows_for(project_a)
+        if rows["storage"].get("implementation") != "@kb-labs/adapters-fs" or rows["storage"].get("mode") != "real":
+            raise RuntimeError("installed-layout CLI did not load the sealed filesystem storage default")
+
+    journey.step("installed-layout CLI loads sealed adapter defaults", "adapter",
+                 assert_installed_layout_cli_loads_defaults, cases=["S-054.12"])
 
     def assert_doctor() -> None:
         status_command = ["kb-create", "status", "--platform-root", str(platform_root), "--json"]
@@ -146,9 +155,18 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("GET /health/adapters returned no adapter list")
         expected_adapters = {row.get("slot"): row for row in runtime_adapters if isinstance(row, dict)}
         command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--json"]
-        payload = _json(_run(runner, command, project_a, base_env), command)
-        if payload.get("ok") is not True:
+        # Missing OpenAI credentials are a doctor finding, so the command's
+        # nonzero status is expected even while the installed host is healthy.
+        result = runner(command, cwd=str(project_a), env=base_env, capture_output=True, text=True, timeout=300)
+        payload = _json(result, command)
+        if result.returncode != 0 or payload.get("ok") is not True:
+            raise RuntimeError("doctor treated the optional OpenAI credential warning as an install failure")
+        if not isinstance(payload.get("platform"), dict) or payload["platform"].get("ok") is not True:
             raise RuntimeError("`kb-create doctor --platform-root <platform-root> --json` reports a platform health failure")
+        credential_warning = next((row for row in payload.get("findings", [])
+                                   if isinstance(row, dict) and row.get("code") == "KB_ADAPTER_CREDENTIALS_MISSING"), None)
+        if not credential_warning or credential_warning.get("severity") != "warning" or "OPENAI_API_KEY" not in json.dumps(credential_warning) or credential_warning.get("action") != "set OPENAI_API_KEY to enable LLM features":
+            raise RuntimeError("doctor does not report the missing OpenAI credential as an actionable warning")
         platform = payload.get("platform")
         statuses = platform.get("checks") if isinstance(platform, dict) else None
         if not isinstance(statuses, list):
@@ -175,11 +193,36 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         if not logs or logs.get("mode") != "real" or logs.get("implementation") != "HybridLogReader":
             raise RuntimeError("doctor does not report the local HybridLogReader as loaded")
         text_command = ["kb-create", "doctor", "--platform-root", str(platform_root)]
-        text_result = _run(runner, text_command, project_a, base_env)
-        if "Adapter storage: mode=real implementation=@kb-labs/adapters-fs" not in text_result.stdout:
-            raise RuntimeError("`kb-create doctor --platform-root <platform-root>` text output omits loaded storage status")
+        text_result = runner(text_command, cwd=str(project_a), env=base_env, capture_output=True, text=True, timeout=300)
+        if text_result.returncode != 0 or "Adapter storage: mode=real implementation=@kb-labs/adapters-fs" not in text_result.stdout or "Warnings:" not in text_result.stdout or "set OPENAI_API_KEY to enable LLM features" not in text_result.stdout:
+            raise RuntimeError("`kb-create doctor --platform-root <platform-root>` text output omits healthy storage or the optional credential warning")
 
     journey.step("doctor verifies filesystem default is loaded", "adapter", assert_doctor, cases=["S-054.2"])
+
+    def assert_doctor_manifest_repair_is_explicit() -> None:
+        manifest = platform_root / "node_modules" / "@kb-labs" / "gateway-app" / "kb-create.manifest.json"
+        if not manifest.is_file():
+            raise RuntimeError(f"the installed gateway artifact has no manifest projection to diagnose: {manifest}")
+        manifest.unlink()
+        doctor_command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--json"]
+        result = runner(doctor_command, cwd=str(project_a), env=base_env, capture_output=True, text=True, timeout=300)
+        payload = _json(result, doctor_command)
+        findings = payload.get("findings")
+        if result.returncode == 0 or not isinstance(findings, list) or not any(
+            isinstance(row, dict) and row.get("code") == "KB_INSTALL_MANIFEST_PROJECTION_INVALID" and
+            row.get("component") == "@kb-labs/gateway-app" and "kb-create doctor --fix" in row.get("hint", "")
+            for row in findings
+        ):
+            raise RuntimeError("read-only doctor did not report the missing gateway manifest projection")
+        if manifest.exists():
+            raise RuntimeError("plain doctor recreated the missing manifest projection")
+        fix_command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--fix", "--json"]
+        _run(runner, fix_command, project_a, base_env)
+        if not manifest.is_file():
+            raise RuntimeError("kb-create doctor --fix did not restore the missing manifest projection")
+
+    journey.step("doctor reports missing manifests read-only and repairs only with fix", "installer",
+                 assert_doctor_manifest_repair_is_explicit, cases=["S-054.13"])
 
     def assert_unbound_analytics_uses_manifest_default() -> None:
         config_file = platform_root / ".kb" / "kb.config.jsonc"
@@ -205,7 +248,11 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             payload = _json(result, command)
             checks = payload.get("platform", {}).get("checks", [])
             finding = next((row for row in checks if isinstance(row, dict) and row.get("slot") == "analytics"), None)
-            if result.returncode != 0 or payload.get("ok") is not True or not finding:
+            credentials_finding = any(
+                isinstance(row, dict) and row.get("code") == "KB_ADAPTER_CREDENTIALS_MISSING"
+                for row in payload.get("findings", [])
+            )
+            if result.returncode != 0 or payload.get("ok") is not True or payload.get("platform", {}).get("ok") is not True or not credentials_finding or not finding:
                 raise RuntimeError("doctor did not accept the discovered SQLite analytics default")
             if finding.get("mode") != "real" or finding.get("implementation") != provider:
                 raise RuntimeError("doctor did not report the manifest-discovered analytics provider")
@@ -225,6 +272,9 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         analytics_db = platform_root / ".kb" / "analytics" / "analytics.sqlite"
         previous_data = analytics_db.read_bytes()
         replacement = "@kb-labs/adapters-analytics-file"
+        install = ["marketplace", "install", replacement, "--scope", "platform", "--json"]
+        if _json(_run(runner, ["kb", *install], project_a, base_env), install).get("ok") is not True:
+            raise RuntimeError("could not install the replacement analytics adapter through the platform marketplace")
         command = ["kb", "adapter", "bind", "analytics", replacement, "--json"]
         payload = _json(_run(runner, command, project_a, base_env), command)
         if payload.get("ok") is not True:
@@ -275,9 +325,9 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("confirm defaults have no network requirement", "adapter",
                  lambda: _assert_no_network_defaults(rows_for(project_a), assert_doctor), cases=["S-054.4"])
 
-    journey.step("missing LLM returns a typed bind hint", "adapter",
+    journey.step("implicit OpenAI reports missing credentials on use", "adapter",
                  lambda: _assert_missing_llm(runner, base_env, project_a, cli), cases=["S-054.5"])
-    journey.step("bound OpenAI LLM reports its missing key", "adapter",
+    journey.step("implicit OpenAI list and doctor report its missing key", "adapter",
                  lambda: _assert_missing_openai_key(runner, base_env, project_a, platform_root, cli), cases=["S-054.8"])
     def assert_missing_vector_store() -> None:
         install = ["marketplace", "install", "@kb-labs/mind-entry", "--json"]
@@ -389,8 +439,10 @@ def _save_run(run_workflow, project):
 
 
 def _assert_no_network_defaults(rows: dict[str, dict], assert_doctor) -> None:
-    if any(row.get("networkRequired") is not False for row in rows.values()):
+    if any(row.get("networkRequired") is not False for slot, row in rows.items() if slot != "llm"):
         raise RuntimeError("a built-in default reports a network dependency")
+    if rows.get("llm", {}).get("networkRequired") is not True:
+        raise RuntimeError("the OpenAI LLM default does not report its external network requirement")
     assert_doctor()
 
 
@@ -412,7 +464,10 @@ def _assert_missing_llm(runner: CommandRunner, env: dict[str, str], project: Pat
         target.write_bytes(original_file + b"\n<!-- adapter-default-case -->\n")
         config_command = ["config", "set", "commit.llm.enabled", "true", "--json"]
         _json(cli(config_command), config_command)
-        _assert_adapter_error(runner, env, project, ["commit", "generate", "--json"], "llm")
+        command = ["commit", "generate", "--json"]
+        result = runner(["kb", *command], cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
+        if result.returncode == 0 or _json(result, command).get("error", {}).get("code") != "KB_ADAPTER_CREDENTIALS_MISSING":
+            raise RuntimeError("implicit OpenAI LLM did not return KB_ADAPTER_CREDENTIALS_MISSING without a key")
     finally:
         target.write_bytes(original_file)
         if original_config is None:
@@ -422,8 +477,11 @@ def _assert_missing_llm(runner: CommandRunner, env: dict[str, str], project: Pat
 
 
 def _assert_missing_openai_key(runner: CommandRunner, env: dict[str, str], project: Path, platform_root: Path, cli) -> None:
-    bind = ["config", "set", "--scope", "platform", "platform.adapters.llm", "@kb-labs/adapters-openai", "--json"]
-    _json(cli(bind), bind)
+    rows_command = ["adapter", "list", "--json"]
+    rows = _json(cli(rows_command), rows_command).get("adapters", [])
+    llm = next((row for row in rows if isinstance(row, dict) and row.get("slot") == "llm"), None)
+    if not isinstance(llm, dict) or llm.get("implementation") != "@kb-labs/adapters-openai" or llm.get("credentialsStatus") != "missing":
+        raise RuntimeError("adapter list does not report the implicit OpenAI provider's missing credentials")
     enable = ["config", "set", "commit.llm.enabled", "true", "--json"]
     _json(cli(enable), enable)
     command = ["commit", "generate", "--json"]
@@ -444,7 +502,7 @@ def _assert_missing_openai_key(runner: CommandRunner, env: dict[str, str], proje
     doctor = _json(doctor_result, doctor_command)
     findings = doctor.get("findings")
     if not isinstance(findings, list) or not any(
-        isinstance(row, dict) and row.get("path") == "/platform/adapterOptions/llm/apiKey"
+        isinstance(row, dict) and row.get("code") == "KB_ADAPTER_CREDENTIALS_MISSING" and row.get("path") == "/platform/adapterOptions/llm/apiKey"
         for row in findings
     ):
         raise RuntimeError("kb-create doctor does not report the missing OpenAI API key")

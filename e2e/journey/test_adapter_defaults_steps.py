@@ -35,6 +35,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 },
                 "adapterOptions": {"analytics": {"filename": ".kb/analytics/analytics.sqlite"}},
             }}))
+            gateway_manifest = platform_root / "node_modules" / "@kb-labs" / "gateway-app" / "kb-create.manifest.json"
+            gateway_manifest.parent.mkdir(parents=True)
+            gateway_manifest.write_text(json.dumps({"schema": "kb.create.artifact-manifest/v2", "id": "gateway-app",
+                "package": "@kb-labs/gateway-app", "version": "1.0.0"}))
 
             def config(root: Path) -> dict:
                 jsonc_file = root / ".kb" / "kb.config.jsonc"
@@ -57,37 +61,50 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 if command[0] == "git" and args == ["ls-files", "-z"]:
                     return subprocess.CompletedProcess(command, 0, b"README.md\0", b"")
                 if command[0] == "kb-create" and args[:3] == ["doctor", "--platform-root", str(platform_root)]:
+                    if "--fix" in args:
+                        gateway_manifest.parent.mkdir(parents=True, exist_ok=True)
+                        gateway_manifest.write_text(json.dumps({"schema": "kb.create.artifact-manifest/v2", "id": "gateway-app",
+                            "package": "@kb-labs/gateway-app", "version": "1.0.0"}))
+                        return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "operation": "doctor-fix"}), "")
+                    if not gateway_manifest.exists():
+                        result = {"ok": False, "findings": [{"code": "KB_INSTALL_MANIFEST_PROJECTION_INVALID",
+                            "component": "@kb-labs/gateway-app", "path": "node_modules/@kb-labs/gateway-app/kb-create.manifest.json",
+                            "hint": "Run `kb-create doctor --fix`."}], "platform": {"ok": True, "checks": []}}
+                        return subprocess.CompletedProcess(command, 1, json.dumps(result), "")
                     if not host_running:
                         result = {"ok": False, "platform": {"checks": [
                             {"id": "adapters", "detail": "Adapter status cannot be checked while the host is stopped.",
                              "hint": f'Run `kb-create start --platform-root "{platform_root}"`.'}
                         ]}}
                         if args[-1] == "--json":
+                            result["findings"] = [{"code": "KB_ADAPTER_CREDENTIALS_MISSING", "component": "openai",
+                                "path": "/platform/adapterOptions/llm/apiKey", "hint": "set OPENAI_API_KEY"}]
                             return subprocess.CompletedProcess(command, 1, json.dumps(result), "")
                         return subprocess.CompletedProcess(command, 1,
-                            f'Adapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `kb-create start --platform-root "{platform_root}"`.\n', "")
+                            f'Finding KB_ADAPTER_CREDENTIALS_MISSING: package=openai path=/platform/adapterOptions/llm/apiKey\nAdapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `kb-create start --platform-root "{platform_root}"`.\n', "")
                     analytics_provider = config(root).get("platform", {}).get("adapters", {}).get(
                         "analytics", "@kb-labs/adapters-analytics-sqlite")
                     statuses = [
                         {"slot": "storage", "mode": "real", "implementation": "@kb-labs/adapters-fs"},
                         {"slot": "cache", "mode": "real", "implementation": "@kb-labs/adapters-state-broker"},
                         *[{"slot": slot, "mode": "real", "implementation": slot}
-                          for slot in ("logger", "documentDatabase", "kvStore")],
+                          for slot in ("logger", "documentDatabase")],
+                        {"slot": "kvStore", "mode": "real", "implementation": "@kb-labs/adapters-sqlite/kv"},
                         {"slot": "analytics", "mode": "real", "implementation": analytics_provider},
                         {"slot": "eventBus", "mode": "real", "implementation": "@kb-labs/adapters-eventbus-cache"},
                         {"slot": "logs", "mode": "real", "implementation": "HybridLogReader"},
                         *[{"slot": slot, "mode": "inmemory", "implementation": slot}
                           for slot in ("config", "invoke", "artifacts", "notifier")],
                         *[{"slot": slot, "mode": "noop", "implementation": slot}
-                          for slot in ("vectorStore", "llm", "embeddings")],
+                          for slot in ("vectorStore", "embeddings")],
+                        {"slot": "llm", "mode": "real", "implementation": "@kb-labs/adapters-openai"},
                     ]
                     if args[-1] == "--json":
-                        bound = config(project_a).get("platform", {}).get("adapters", {}).get("llm") == "@kb-labs/adapters-openai"
-                        findings = ([{"code": "KB_INSTALL_INPUT_REQUIRED", "component": "openai", "path": "/platform/adapterOptions/llm/apiKey", "hint": "set OPENAI_API_KEY"}] if bound else [])
-                        result = {"ok": not findings, "findings": findings, "platform": {"ok": True, "checks": statuses}}
-                        return subprocess.CompletedProcess(command, int(bool(findings)), json.dumps(result), "")
+                        findings = [{"code": "KB_ADAPTER_CREDENTIALS_MISSING", "severity": "warning", "component": "openai", "path": "/platform/adapterOptions/llm/apiKey", "action": "set OPENAI_API_KEY to enable LLM features", "hint": "set OPENAI_API_KEY"}]
+                        result = {"ok": True, "findings": findings, "platform": {"ok": True, "checks": statuses}}
+                        return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
                     return subprocess.CompletedProcess(command, 0,
-                        "Adapter storage: mode=real implementation=@kb-labs/adapters-fs\n", "")
+                        "Warnings:\nKB_ADAPTER_CREDENTIALS_MISSING: set OPENAI_API_KEY to enable LLM features\nAdapter storage: mode=real implementation=@kb-labs/adapters-fs\n", "")
                 if command[0] == "kb-create" and args[:2] in (["stop", "--platform-root"], ["start", "--platform-root"]):
                     host_running = args[0] == "start"
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
@@ -106,15 +123,15 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         {"slot": "logger", "implementation": "@kb-labs/adapters-pino", "mode": "real", "networkRequired": False},
                         {"slot": "analytics", "implementation": analytics_provider, "mode": "real", "networkRequired": False},
                         {"slot": "documentDatabase", "implementation": "@kb-labs/adapters-sqlite", "mode": "real", "networkRequired": False},
-                        {"slot": "kvStore", "implementation": "@kb-labs/adapters-sqlite", "mode": "real", "networkRequired": False},
+                        {"slot": "kvStore", "implementation": "@kb-labs/adapters-sqlite/kv", "mode": "real", "networkRequired": False},
                         {"slot": "eventBus", "implementation": "@kb-labs/adapters-eventbus-cache", "mode": "real", "networkRequired": False},
                         {"slot": "invoke", "implementation": "InMemoryInvoke", "mode": "inmemory", "networkRequired": False},
                         {"slot": "artifacts", "implementation": "InMemoryArtifacts", "mode": "inmemory", "networkRequired": False},
                         {"slot": "config", "implementation": "InMemoryConfig", "mode": "inmemory", "networkRequired": False},
                         {"slot": "logs", "implementation": "HybridLogReader", "mode": "real", "networkRequired": False},
                         {"slot": "notifier", "implementation": "InMemoryNotifier", "mode": "inmemory", "networkRequired": False},
-                        {"slot": "llm", "implementation": None, "mode": "unconfigured", "networkRequired": False,
-                         "requiresConfiguration": True},
+                        {"slot": "llm", "implementation": "@kb-labs/adapters-openai", "mode": "real", "networkRequired": True,
+                         "credentialsStatus": "missing", "missingCredentials": ["OPENAI_API_KEY"]},
                         {"slot": "embeddings", "implementation": "NoOpEmbeddings", "mode": "unconfigured", "networkRequired": False,
                          "requiresConfiguration": True},
                         {"slot": "vectorStore", "implementation": None, "mode": "unconfigured", "networkRequired": False,
@@ -129,11 +146,6 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:2] == ["config", "set"]:
                     if args[2:4] == ["commit.llm.enabled", "true"]:
-                        return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
-                    if args[2:4] == ["--scope", "platform"] and args[4] == "platform.adapters.llm":
-                        value = config(root)
-                        value.setdefault("platform", {}).setdefault("adapters", {})["llm"] = args[5]
-                        write_config(root, value)
                         return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                     value = config(root)
                     value.setdefault("platform", {}).setdefault("adapterOptions", {})["storage"] = json.loads(args[3])
@@ -166,18 +178,14 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     run_id = args[3]
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"id": run_id, "status": "success"}}), "")
                 if args[:2] == ["commit", "generate"]:
-                    if config(root).get("platform", {}).get("adapters", {}).get("llm") == "@kb-labs/adapters-openai":
-                        error = {"code": "KB_ADAPTER_CREDENTIALS_MISSING", "message": "Adapter llm is missing OPENAI_API_KEY.",
-                                 "hint": "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env. No request was sent."}
-                        return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
-                    error = {"code": "KB_ADAPTER_NOT_CONFIGURED", "details": {"service": "llm"},
-                             "actions": [{"command": "kb adapter bind llm @kb-labs/adapters-openai"}]}
+                    error = {"code": "KB_ADAPTER_CREDENTIALS_MISSING", "message": "Adapter llm is missing OPENAI_API_KEY.",
+                             "hint": "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env. No request was sent."}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["mind", "search"]:
                     error = {"code": "KB_ADAPTER_NOT_CONFIGURED", "details": {"service": "vectorStore"},
                              "actions": [{"command": "kb adapter bind vectorStore @kb-labs/adapters-qdrant"}]}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
-                if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/mind-entry":
+                if args[:2] == ["marketplace", "install"] and args[2] in ("@kb-labs/mind-entry", "@kb-labs/adapters-analytics-file"):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:2] == ["project", "remove"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
@@ -188,14 +196,16 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 {"slot": "storage", "mode": "real", "implementation": "@kb-labs/adapters-fs"},
                 {"slot": "cache", "mode": "real", "implementation": "@kb-labs/adapters-state-broker"},
                 *[{"slot": slot, "mode": "real", "implementation": slot}
-                  for slot in ("logger", "documentDatabase", "kvStore")],
+                  for slot in ("logger", "documentDatabase")],
+                {"slot": "kvStore", "mode": "real", "implementation": "@kb-labs/adapters-sqlite/kv"},
                 {"slot": "analytics", "mode": "real", "implementation": None},
                 {"slot": "eventBus", "mode": "real", "implementation": "@kb-labs/adapters-eventbus-cache"},
                 {"slot": "logs", "mode": "real", "implementation": "HybridLogReader"},
                 *[{"slot": slot, "mode": "inmemory", "implementation": slot}
                   for slot in ("config", "invoke", "artifacts", "notifier")],
                 *[{"slot": slot, "mode": "noop", "implementation": slot}
-                  for slot in ("vectorStore", "llm", "embeddings")],
+                  for slot in ("vectorStore", "embeddings")],
+                {"slot": "llm", "mode": "real", "implementation": "@kb-labs/adapters-openai"},
             ]
 
             def health_adapters() -> list[dict]:
@@ -210,7 +220,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                        side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(health_adapters()).encode())):
                 run_adapter_default_steps(journey, project_a, env, fake_run)
 
-            expected = {f"S-054.{number}" for number in range(1, 9)} | {"S-054.10", "S-054.11"} | {f"S-048.{number}" for number in range(1, 7)}
+            expected = {f"S-054.{number}" for number in range(1, 9)} | {"S-054.10", "S-054.11", "S-054.12", "S-054.13"} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(claims, expected)
@@ -219,8 +229,10 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn(("kb", "commit", "generate", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind-entry", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root), "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root)), calls)
+            self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root), "--fix", "--json"), calls)
             self.assertIn(("kb-create", "status", "--platform-root", str(platform_root), "--json"), calls)
             self.assertFalse(any(call[0] == "kb-dev" and "doctor" in call for call in calls))
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs", "--scope", "platform"), calls)

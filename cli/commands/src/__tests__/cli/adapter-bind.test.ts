@@ -121,6 +121,38 @@ describe('kb adapter list', () => {
       implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: join(projectRoot, '.kb', 'data'), networkRequired: false,
     });
   });
+
+  it('marks a default OpenAI binding as missing credentials without exposing values', async () => {
+    const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-openai');
+    await mkdir(join(packageRoot, 'dist'), { recursive: true });
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-openai', main: 'dist/index.js' }));
+    await writeFile(join(packageRoot, 'dist', 'index.js'), [
+      'export const manifest = { id: "openai", defaultFor: ["llm"], configSchema: { apiKey: { type: "string", required: true, secret: true, env: "OPENAI_API_KEY" } } };',
+      'export function createAdapter() { return {}; }',
+    ].join('\n'));
+    await writeMarketplaceLock(platformRoot, {
+      schema: 'kb.marketplace/3',
+      plugins: {},
+      adapters: {
+        openai: {
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-openai',
+          enabled: true, source: 'platform',
+        },
+      },
+    });
+    vi.stubEnv('OPENAI_API_KEY', '');
+    const { ctx, outputs } = context();
+
+    const code = await adapterList.run(ctx, [], { json: true });
+
+    expect(code).toBe(0);
+    const adapters = (outputs[0] as { adapters: Array<Record<string, unknown>> }).adapters;
+    expect(adapters.find(({ slot }) => slot === 'llm')).toMatchObject({
+      implementation: '@kb-labs/adapters-openai', mode: 'real',
+      credentialsStatus: 'missing', missingCredentials: ['OPENAI_API_KEY'],
+    });
+    expect(JSON.stringify(outputs[0])).not.toContain('configured-secret-value');
+  });
 });
 
 describe('kb adapter bind', () => {

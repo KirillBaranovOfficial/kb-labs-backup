@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/lifecycle"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/swap"
@@ -347,6 +349,139 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	payload, code, raw = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	if code != 1 || payload["installation"].(map[string]any)["ok"] != false || payload["platform"].(map[string]any)["ok"] != true {
 		t.Fatalf("doctor on a broken installation: %d %s", code, raw)
+	}
+}
+
+func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
+	inst := newInstallation(t)
+	if err := os.MkdirAll(filepath.Join(inst.root, ".kb"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inst.root, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	active, err := receipt.Read(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := contracts.Artifact{ID: "@kb/plugin", Package: "@kb/plugin", Version: "1.2.3"}
+	active.Plan.Artifacts = []contracts.Artifact{artifact}
+	active.Plan.Request.PlatformRoot = inst.root
+	if err := receipt.Write(inst.root, active); err != nil {
+		t.Fatal(err)
+	}
+	packageRoot := filepath.Join(inst.root, "node_modules", "@kb", "plugin")
+	if err := os.MkdirAll(packageRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), []byte(`{"name":"@kb/plugin","version":"1.2.3"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(packageRoot, "kb-create.manifest.json")
+
+	payload, _, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
+	findings, ok := payload["findings"].([]any)
+	if !ok || len(findings) != 1 {
+		t.Fatalf("doctor did not report the missing manifest projection: %s", raw)
+	}
+	finding := findings[0].(map[string]any)
+	if finding["code"] != "KB_INSTALL_MANIFEST_PROJECTION_INVALID" || finding["component"] != "@kb/plugin" ||
+		!strings.Contains(finding["hint"].(string), "kb-create doctor --fix") {
+		t.Fatalf("unexpected projection finding: %#v", finding)
+	}
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("plain doctor changed the installed platform: %v", err)
+	}
+
+	_, fixCode, fixOutput := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, DoctorFix: true, JSON: true})
+	if fixCode != 0 {
+		t.Fatalf("doctor --fix failed: %s", fixOutput)
+	}
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("doctor --fix did not restore the projection: %v", err)
+	}
+}
+
+func TestDoctorOptionalCredentialWarningKeepsFreshInstallHealthy(t *testing.T) {
+	inst := newInstallation(t)
+	t.Setenv("OPENAI_API_KEY", "")
+	if err := os.MkdirAll(filepath.Join(inst.root, ".kb"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inst.root, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	active, err := receipt.Read(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := contracts.Artifact{ID: "openai", Package: "@kb-labs/adapters-openai", Version: "1.0.0", Config: []contracts.ConfigRequirement{{
+		ID: "openai.apiKey", Path: "/platform/adapterOptions/llm/apiKey", Required: true, Optional: true,
+		Secret: true, Env: "OPENAI_API_KEY", Services: []string{"gateway"},
+		Action: "set OPENAI_API_KEY to enable LLM features", Hint: "set OPENAI_API_KEY",
+	}}}
+	active.Plan.Artifacts = []contracts.Artifact{artifact}
+	if err := receipt.Write(inst.root, active); err != nil {
+		t.Fatal(err)
+	}
+	packageRoot := filepath.Join(inst.root, "node_modules", filepath.FromSlash(artifact.Package))
+	if err := os.MkdirAll(packageRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), []byte(`{"name":"@kb-labs/adapters-openai","version":"1.0.0"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := installed.Write(inst.root, artifact); err != nil {
+		t.Fatal(err)
+	}
+	if _, code, output := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start: %s", output)
+	}
+	payload, code, output := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
+	findings, ok := payload["findings"].([]any)
+	if code != 0 || payload["ok"] != true || !ok || len(findings) != 1 {
+		t.Fatalf("optional credential warning made the fresh install unhealthy: exit=%d %s", code, output)
+	}
+	warning := findings[0].(map[string]any)
+	if warning["code"] != doctor.CodeAdapterCredentialsMissing || warning["severity"] != doctor.SeverityWarning || warning["action"] != "set OPENAI_API_KEY to enable LLM features" || warning["path"] != "/platform/adapterOptions/llm/apiKey" {
+		t.Fatalf("unexpected optional credential warning: %#v", warning)
+	}
+	if strings.Contains(output, "secret-value") {
+		t.Fatalf("doctor exposed secret material: %s", output)
+	}
+	textFile, err := os.CreateTemp(t.TempDir(), "doctor-warning")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if textCode := (invocation{Operation: "doctor", PlatformRoot: inst.root}).run(textFile); textCode != 0 {
+		t.Fatalf("text doctor rejected the optional credential warning: exit=%d", textCode)
+	}
+	if err := textFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	textBytes, err := os.ReadFile(textFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(textBytes), "Warnings:") || !strings.Contains(string(textBytes), "set OPENAI_API_KEY to enable LLM features") {
+		t.Fatalf("text doctor omits the optional credential warning: %s", textBytes)
+	}
+
+	artifact.Config = append(artifact.Config, contracts.ConfigRequirement{ID: "gateway.mode", Path: "/platform/mode", Required: true, Hint: "configure platform mode"})
+	active.Plan.Artifacts = []contracts.Artifact{artifact}
+	if err := receipt.Write(inst.root, active); err != nil {
+		t.Fatal(err)
+	}
+	if err := installed.Write(inst.root, artifact); err != nil {
+		t.Fatal(err)
+	}
+	payload, code, output = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
+	findings, ok = payload["findings"].([]any)
+	if code == 0 || payload["ok"] != false || !ok || len(findings) != 2 {
+		t.Fatalf("required platform configuration did not fail doctor: exit=%d %s", code, output)
+	}
+	if findings[1].(map[string]any)["severity"] != doctor.SeverityError {
+		t.Fatalf("required platform finding is not an error: %#v", findings)
 	}
 }
 
