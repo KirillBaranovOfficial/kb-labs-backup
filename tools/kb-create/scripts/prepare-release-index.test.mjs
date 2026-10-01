@@ -83,6 +83,38 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'sqlite-stores')?.provides, ['documentDatabase', 'kvStore']);
 });
 
+test('filesystem adapter contributes the project storage directory default to the release index', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kb-release-index-fs-storage-'));
+  const stage = join(root, 'stage');
+  const packageRoot = join(root, 'packages');
+  mkdirSync(stage, { recursive: true });
+  const requirement = {
+    id: 'storage.default',
+    path: '/platform/adapterOptions/storage',
+    default: { baseDir: '.kb/data' },
+    hint: 'Store project data under .kb/data',
+  };
+  const artifacts = [
+    packageArtifact(root, packageRoot, stage, '@kb-labs/core-runtime', '2.0.0', ''),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/sdk', '2.0.0', '', { peerDependencies: { '@kb-labs/core-runtime': '>=2.0.0 <3.0.0' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/host-app', '2.0.0', '', { bin: { 'kb-host': './dist/bin.js', 'kb-recover': './dist/recover.js' } }),
+    packageArtifact(root, packageRoot, stage, '@kb-labs/adapters-fs', '2.0.0', 'const manifest={id:"fs-storage",implements:"IStorage",defaultFor:["storage"]}; export {manifest};', {}, {
+      'kb-create.requirements.json': JSON.stringify({ schema: 'kb.create.requirements/v1', requirements: [requirement] }),
+    }),
+  ];
+  writeStageManifest(root, packageRoot, stage, artifacts);
+  const binaryManifest = join(root, 'binary-manifest.json');
+  writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
+  const output = join(root, 'release-index.json');
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--platform-requires', 'storage', '--platform-adapter-config', '{"storage":"@kb-labs/adapters-fs"}', '--output', output], { stdio: 'pipe' });
+
+  const index = JSON.parse(readFileSync(output, 'utf8'));
+  const storage = index.adapters.find(adapter => adapter.package === '@kb-labs/adapters-fs');
+  assert.deepEqual(storage.defaultFor, ['storage']);
+  assert.deepEqual(storage.config, [{ ...requirement, default: JSON.stringify(requirement.default) }]);
+  assert.ok(index.platforms[0].members.some(member => member.package === '@kb-labs/adapters-fs'));
+});
+
 test('fails closed when a configured platform adapter is not staged', () => {
   const root = mkdtempSync(join(tmpdir(), 'kb-release-index-adapter-'));
   const stage = join(root, 'stage');
