@@ -85,7 +85,7 @@ export class AuthService {
           hostId: record.hostId,
           namespaceId: record.namespaceId,
           tier: record.tier,
-          type: 'machine',
+          type: 'machine_access',
           permissions: record.permissions ?? ['host:connect'],
         },
         this.jwtConfig,
@@ -121,7 +121,7 @@ export class AuthService {
           hostId,
           namespaceId: stored.namespaceId,
           tier: record?.tier ?? 'free',
-          type: 'machine',
+          type: 'machine_access',
           permissions: record?.permissions ?? ['host:connect'],
         },
         this.jwtConfig,
@@ -154,7 +154,7 @@ export class AuthService {
     if (!payload) {return null;}
 
     return {
-      type: payload.type,
+      type: 'machine',
       userId: payload.sub,
       namespaceId: payload.namespaceId,
       tier: payload.tier,
