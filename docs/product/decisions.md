@@ -105,6 +105,10 @@ kb-dev and kb-devkit are functionally solid and need cases and tests only. kb-de
 
 ## 2026-10-02
 
+### Secured sessions survive host lifecycle operations
+
+Secured browser and CLI sessions remain valid across host restart, update, and rollback until their access tokens expire or an explicit revocation occurs; logout, administrator revocation, and password reset remain the mechanisms that invalidate sessions. This follows the product principle “persistent local defaults, no headache, nothing to redo from scratch.” A host lifecycle operation must not make users sign in again. Cases: S-041.4, S-023, S-024.
+
 ### Platform members: core plugins only
 
 The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.
