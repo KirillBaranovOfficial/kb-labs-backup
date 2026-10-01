@@ -110,12 +110,14 @@ class SecuredAccountsJourneyTests(unittest.TestCase):
     # case: S-101.1, S-101.2, S-101.3, S-102.1, S-102.2
     def test_password_change_revokes_other_family_and_session_revoke_is_owner_scoped(self):
         calls: list[tuple[str, str, int]] = []
+        passwords = []
         login_count = 0
         revoked = {"other": False}
 
-        def login(_base, _email, _password):
+        def login(_base, _email, password):
             nonlocal login_count
             login_count += 1
+            passwords.append(password)
             return login_count
 
         def browser_call(_base, jar, path, *, method="GET", body=None, csrf=False, expected=200):
@@ -140,7 +142,9 @@ class SecuredAccountsJourneyTests(unittest.TestCase):
              patch("steps.accounts._browser_call", side_effect=browser_call):
             changed = run_password_and_session_steps("https://gateway.test", "member@example.test", "MemberPass123!")
 
-        self.assertEqual(changed, "JourneyChanged123!")
+        self.assertIsNone(changed)
+        self.assertEqual(passwords, ["MemberPass123!", "MemberPass123!",
+                                     "JourneyChanged123!", "JourneyChanged123!"])
         self.assertIn(("POST", "/auth/password/change", 200), calls)
         self.assertIn(("GET", "/auth/me", 401), calls)
         self.assertIn(("POST", "/auth/sessions/other/revoke", 200), calls)

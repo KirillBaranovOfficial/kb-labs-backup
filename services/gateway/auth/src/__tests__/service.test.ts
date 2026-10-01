@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import type { ICache } from '@kb-labs/core-platform';
 import { AuthService } from '../service.js';
+import { signRefreshToken, signUserRefreshToken } from '../jwt.js';
 
 const jwtConfig = { secret: 'test-secret-at-least-32-chars-long!!' };
 
@@ -171,5 +173,37 @@ describe('AuthService', () => {
     expect(tokens).not.toBeNull();
     expect(await service.revokeRefreshToken(tokens!.refreshToken)).toBe(true);
     expect(await service.refreshTokens(tokens!.refreshToken)).toBeNull();
+  });
+
+  it('does not look up a user refresh token in the machine refresh-token cache', async () => {
+    const userRefreshToken = await signUserRefreshToken({
+      userId: 'user-1',
+      tenantId: 'tenant-1',
+      familyId: 'family-1',
+      ttlSec: 3600,
+    }, jwtConfig);
+    const machineCache = {
+      get: async () => { throw new Error('machine refresh-token cache unavailable'); },
+      set: async () => {},
+      delete: async () => {},
+      clear: async () => {},
+    } as unknown as ICache;
+    const machineAuth = new AuthService(machineCache, jwtConfig);
+
+    await expect(machineAuth.revokeRefreshToken(userRefreshToken)).resolves.toBe(false);
+  });
+
+  it('classifies previous-release machine and user refresh tokens by verified kind', async () => {
+    const machineRefreshToken = await signRefreshToken('host-1', jwtConfig);
+    const userRefreshToken = await signUserRefreshToken({
+      userId: 'user-1', tenantId: 'tenant-1', familyId: 'family-1', ttlSec: 3600,
+    }, jwtConfig);
+
+    await expect(service.classifyRefreshToken(machineRefreshToken)).resolves.toEqual({
+      kind: 'machine', hostId: 'host-1',
+    });
+    await expect(service.classifyRefreshToken(userRefreshToken)).resolves.toMatchObject({
+      kind: 'user', userId: 'user-1', tenantId: 'tenant-1', familyId: 'family-1',
+    });
   });
 });

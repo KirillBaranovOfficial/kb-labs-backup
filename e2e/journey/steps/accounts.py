@@ -48,8 +48,8 @@ def _browser_login(base_url: str, email: str, password: str) -> http.cookiejar.C
     return jar
 
 
-def run_password_and_session_steps(base_url: str, email: str, password: str) -> str:
-    """Exercise browser-cookie password and session routes; return the changed password."""
+def run_password_and_session_steps(base_url: str, email: str, password: str) -> None:
+    """Exercise browser-cookie password and session routes, including the new password."""
     first = _browser_login(base_url, email, password)
     other = _browser_login(base_url, email, password)
     change = "JourneyChanged123!"
@@ -77,7 +77,6 @@ def run_password_and_session_steps(base_url: str, email: str, password: str) -> 
     _browser_call(base_url, updated_first, f"/auth/sessions/{other_family['familyId']}/revoke",
                   method="POST", csrf=True)
     _browser_call(base_url, updated_other, "/auth/me", expected=401)
-    return change
 
 
 def run_cli_logout_steps(cli_path: str, env: dict[str, str]) -> None:

@@ -5,6 +5,7 @@ export {
   signRefreshToken,
   verifyAccessToken,
   verifyRefreshToken,
+  verifyRefreshTokenKind,
   // User-token flow (ADR-0020, Phase 1.13).
   signUserAccessToken,
   signUserRefreshToken,
@@ -16,6 +17,7 @@ export type {
   UserAccessPayload,
   UserRefreshPayload,
   SignUserTokenOptions,
+  RefreshTokenKind,
 } from './jwt.js';
 export {
   saveClient,

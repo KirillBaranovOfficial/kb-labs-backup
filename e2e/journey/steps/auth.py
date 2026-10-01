@@ -206,7 +206,9 @@ def run_secured_auth_steps(base_url: str, admin_email: str, admin_password: str,
         raise AssertionError(f"admin session did not survive host restart: {restarted_admin!r}")
     _request(restarted_url, "/auth/login/cli", method="POST",
              body={"email": member_email, "password": "JourneyReplacement123!"})
-    _request(restarted_url, "/auth/logout/cli", method="POST", body={"refreshToken": admin_refresh})
+    logout = _request(restarted_url, "/auth/logout/cli", method="POST", body={"refreshToken": admin_refresh})
+    if logout.get("ok") is not True:
+        raise AssertionError(f"CLI logout did not confirm session revocation: {logout!r}")
     _request(restarted_url, "/auth/me", token=admin_access, expected=401)
     _request(restarted_url, "/auth/refresh/cli", method="POST",
              body={"refreshToken": admin_refresh}, expected=401)
