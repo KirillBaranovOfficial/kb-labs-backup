@@ -201,7 +201,7 @@ func recoveryConfirmationHint(i invocation, operation, root string) string {
 		command += " --snapshot " + strconv.Quote(i.Snapshot)
 	}
 	if operation == "uninstall" && i.Registry != "" {
-		command += " --registry " + strconv.Quote(i.Registry)
+		command += " --registry " + i.Registry
 	}
 	if i.JSON {
 		command += " --json"
