@@ -959,6 +959,8 @@ def main():
             "KB_ACCESS_MODE": mode,
             "KB_STUDIO_FRESH_HOST_JOURNEY": "1",
             "KB_STUDIO_FIRST_TIER_JOURNEY": "1",
+            "KB_STUDIO_PROJECT_ROOT": str(PROJECT),
+            "KB_STUDIO_KB_BIN": str(BIN / "kb"),
         })
         cron_id = "studio-a"
         (PROJECT / ".kb" / "crons").mkdir(parents=True, exist_ok=True)

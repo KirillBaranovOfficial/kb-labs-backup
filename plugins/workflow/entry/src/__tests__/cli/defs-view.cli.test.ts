@@ -48,7 +48,8 @@ describe('workflow:defs view', () => {
     expect(result.ok).toBe(true);
     expect(getWorkflow).toHaveBeenCalledWith('release-manager/create-release');
     const allText = sideBoxSpy.mock.calls
-      .flatMap(([opts]) => (opts.sections ?? []).flatMap((sec: { items: string[] }) => sec.items))
+      .flatMap(([opts]) => (opts.sections ?? []).flatMap((section) => section.items))
+      .map((item) => typeof item === 'string' ? item : item.text)
       .join('\n');
     expect(allText).toContain('Source:  manifest');
     expect(allText).toContain('Status:  active');
