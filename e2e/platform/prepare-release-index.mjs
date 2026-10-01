@@ -117,7 +117,9 @@ if (!match) throw new Error(`platform release version is not a stable semantic v
 const updateVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
 const updateOutput = join(resolve(output, '..'), 'release-index-update.json');
 const updatePackagesDir = join(resolve(output, '..'), 'update-packages');
-prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion);
+// Derive from the sealed base stage (exactly the wanted packages, one version
+// each); the registry publisher reads packagesDir.
+prepareJourneyUpdatePackages(stage, updatePackagesDir, updateVersion, { publishDir: packagesDir });
 const update = spawnSync(process.execPath, [
   prepareScript,
   '--flow', 'platform',
@@ -141,19 +143,7 @@ if (update.status !== 0) process.exit(update.status ?? 1);
 // rewrite of the installed platform or a resolver shortcut.
 const canaryVersion = `${match[1]}.${match[2]}.${Number(match[3]) + 2}-canary.1`;
 const canaryPackagesDir = join(resolve(output, '..'), 'canary-packages');
-const canarySourceDir = join(resolve(output, '..'), 'canary-source-packages');
-mkdirSync(canarySourceDir, { recursive: true });
-for (const filename of readdirSync(packagesDir).filter(name => name.endsWith('.tgz'))) {
-  const isRuntime = filename.startsWith('core-runtime-');
-  const isSDK = filename.startsWith('sdk-');
-  if ((isRuntime && filename !== `core-runtime-${baseVersion}.tgz`) ||
-      (isSDK && filename !== `sdk-${baseVersion}.tgz`)) continue;
-  copyFileSync(join(packagesDir, filename), join(canarySourceDir, filename));
-}
-prepareJourneyUpdatePackages(canarySourceDir, canaryPackagesDir, canaryVersion);
-for (const filename of readFileSync(join(canaryPackagesDir, 'generated-packages.txt'), 'utf8').split('\n').filter(Boolean)) {
-  copyFileSync(join(canaryPackagesDir, filename), join(packagesDir, filename));
-}
+prepareJourneyUpdatePackages(stage, canaryPackagesDir, canaryVersion, { publishDir: packagesDir });
 const canaryOutput = join(resolve(output, '..'), 'release-index-canary.json');
 const canary = spawnSync(process.execPath, [
   prepareScript,

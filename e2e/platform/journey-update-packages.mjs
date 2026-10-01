@@ -1,12 +1,20 @@
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
 const VERSIONED_PACKAGES = ['@kb-labs/core-runtime', '@kb-labs/sdk'];
 
-export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion) {
+// Build a release stage for a journey-only platform version from an existing
+// stage: every package is reused unchanged except core-runtime and the SDK,
+// which get the new version. The target holds the same manifest.json the
+// release-index preparer reads; generated tarballs are also written to
+// publishDir so the local registry can serve them.
+export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, updateVersion, { publishDir } = {}) {
   const sourceDir = resolve(packagesDir);
   const targetDir = resolve(updatePackagesDir);
+  const registryDir = resolve(publishDir ?? packagesDir);
+  const manifest = [];
   rmSync(targetDir, { recursive: true, force: true });
   mkdirSync(targetDir, { recursive: true });
   const originals = new Map();
@@ -18,6 +26,7 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
       originals.set(packageJSON.name, { source, filename, packageJSON });
     } else {
       copyFileSync(source, join(targetDir, filename));
+      manifest.push({ name: packageJSON.name, version: packageJSON.version, tarball: filename, sha256: sha256(source) });
     }
   }
 
@@ -34,14 +43,18 @@ export function prepareJourneyUpdatePackages(packagesDir, updatePackagesDir, upd
       const filename = basename(original.filename).replace(`-${original.packageJSON.version}.tgz`, `-${updateVersion}.tgz`);
       const updateTarball = join(targetDir, filename);
       execFileSync('tar', ['-czf', updateTarball, '-C', unpacked, 'package']);
-      // The publisher reads e2e/packages; keep these fixture packages available
-      // to the local registry that will serve the sealed update index.
-      copyFileSync(updateTarball, join(sourceDir, filename));
+      copyFileSync(updateTarball, join(registryDir, filename));
+      manifest.push({ name: packageName, version: updateVersion, tarball: filename, sha256: sha256(updateTarball) });
       generatedFiles.push(filename);
     } finally {
       rmSync(unpacked, { recursive: true, force: true });
     }
   }
+  writeFileSync(join(targetDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   writeFileSync(join(targetDir, 'generated-packages.txt'), `${generatedFiles.join('\n')}\n`);
   return targetDir;
+}
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
 }

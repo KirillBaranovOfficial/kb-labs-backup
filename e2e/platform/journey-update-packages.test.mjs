@@ -28,6 +28,14 @@ test('creates real N+1 runtime and SDK package identities with unchanged code', 
 
     prepareJourneyUpdatePackages(packages, update, '3.0.1');
 
+    const manifest = JSON.parse(readFileSync(join(update, 'manifest.json'), 'utf8'));
+    assert.deepEqual(manifest.map(entry => [entry.name, entry.version, entry.tarball]).sort(), [
+      ['@kb-labs/core-runtime', '3.0.1', 'core-runtime-3.0.1.tgz'],
+      ['@kb-labs/host-app', '3.0.0', 'host-app-3.0.0.tgz'],
+      ['@kb-labs/sdk', '3.0.1', 'sdk-3.0.1.tgz'],
+    ]);
+    assert.ok(manifest.every(entry => /^[0-9a-f]{64}$/.test(entry.sha256)));
+
     for (const name of ['core-runtime', 'sdk']) {
       const original = join(packages, `${name}-3.0.0.tgz`);
       const upgraded = join(update, `${name}-3.0.1.tgz`);
