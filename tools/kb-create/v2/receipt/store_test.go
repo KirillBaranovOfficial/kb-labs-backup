@@ -18,6 +18,10 @@ func TestSnapshotRestoresManagedFilesWithoutTouchingProjectFiles(t *testing.T) {
 	if err := os.WriteFile(config, []byte("before"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	workspace := filepath.Join(root, "pnpm-workspace.yaml")
+	if err := os.WriteFile(workspace, []byte("overrides:\n  '@kb/platform': file:.kb/v2/cache/packages/old.tgz\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	userFile := filepath.Join(root, "user.txt")
 	if err := os.WriteFile(userFile, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
@@ -29,6 +33,9 @@ func TestSnapshotRestoresManagedFilesWithoutTouchingProjectFiles(t *testing.T) {
 	if err := os.WriteFile(config, []byte("after"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(workspace, []byte("overrides:\n  '@kb/platform': file:.kb/v2/cache/packages/new.tgz\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "receipt-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -37,6 +44,9 @@ func TestSnapshotRestoresManagedFilesWithoutTouchingProjectFiles(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(config); string(data) != "before" {
 		t.Fatalf("config = %q", data)
+	}
+	if data, _ := os.ReadFile(workspace); string(data) != "overrides:\n  '@kb/platform': file:.kb/v2/cache/packages/old.tgz\n" {
+		t.Fatalf("pnpm workspace config = %q", data)
 	}
 	if data, _ := os.ReadFile(userFile); string(data) != "keep" {
 		t.Fatalf("user file = %q", data)

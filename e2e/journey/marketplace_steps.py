@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -72,6 +73,23 @@ def _entries(payload: dict) -> list[dict]:
     return entries
 
 
+def _platform_snapshot(platform_root: Path) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """Capture the sealed receipt and every installed package version."""
+    receipt = platform_root / ".kb" / "v2" / "receipt.json"
+    receipt_hash = hashlib.sha256(receipt.read_bytes()).hexdigest()
+    packages = []
+    for package_file in sorted((platform_root / "node_modules").rglob("package.json")):
+        try:
+            package = json.loads(package_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        name = package.get("name")
+        version = package.get("version")
+        if isinstance(name, str) and isinstance(version, str):
+            packages.append((str(package_file.relative_to(platform_root / "node_modules")), f"{name}@{version}"))
+    return receipt_hash, tuple(packages)
+
+
 def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[str, str],
                                      runner: CommandRunner) -> None:
     """Prove the missing-session error, then save the admin CLI session."""
@@ -132,6 +150,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     project = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
     base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project)
+    platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
     def cli(args: list[str], cwd: Path = project) -> subprocess.CompletedProcess[str]:
         return _run(["kb", *args], cwd=cwd, env=base_env, runner=runner)
 
@@ -149,15 +168,21 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
 
     # S-047 requires a second project plugin to survive target uninstall.
     install_unrelated = ["marketplace", "install", f"{unrelated_package}@{unrelated_version}", "--json"]
+    sealed_platform_before_unrelated = _platform_snapshot(platform_root)
     _output(cli(install_unrelated), install_unrelated)
+    if _platform_snapshot(platform_root) != sealed_platform_before_unrelated:
+        raise RuntimeError("marketplace install changed the platform receipt or installed package versions")
 
     lock_file = project / ".kb" / "marketplace.lock"
     before = json.loads(lock_file.read_text()) if lock_file.exists() else {"plugins": {}}
     if commit_package in before.get("plugins", {}):
         raise RuntimeError(f"{commit_package} is already pinned in the fresh project before the install case")
     install_commit = ["marketplace", "install", f"{commit_package}@{commit_version}", "--json"]
+    sealed_platform_before = _platform_snapshot(platform_root)
     def install_exact_commit() -> None:
         _output(cli(install_commit), install_commit)
+        if _platform_snapshot(platform_root) != sealed_platform_before:
+            raise RuntimeError("marketplace install changed the platform receipt or installed package versions")
     journey.step(
         "install exact marketplace plugin into the project store", "marketplace",
         install_exact_commit,

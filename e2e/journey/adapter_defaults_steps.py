@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
+from marketplace_steps import _platform_snapshot
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -225,7 +227,12 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         analytics_db = platform_root / ".kb" / "analytics" / "analytics.sqlite"
         previous_data = analytics_db.read_bytes()
         replacement = "@kb-labs/adapters-analytics-file"
+        install = ["kb", "marketplace", "install", replacement, "--scope", "platform", "--json"]
         command = ["kb", "adapter", "bind", "analytics", replacement, "--json"]
+        sealed_platform_before = _platform_snapshot(platform_root)
+        install_payload = _json(_run(runner, install, project_a, base_env), install)
+        if install_payload.get("ok") is not True:
+            raise RuntimeError("could not install the replacement analytics adapter")
         payload = _json(_run(runner, command, project_a, base_env), command)
         if payload.get("ok") is not True:
             raise RuntimeError("could not bind the replacement analytics adapter")
@@ -234,9 +241,62 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("adapter bind did not override the discovered analytics default")
         if analytics_db.read_bytes() != previous_data:
             raise RuntimeError("replacing analytics migrated or deleted the old SQLite database")
+        if _platform_snapshot(platform_root) != sealed_platform_before:
+            raise RuntimeError("adapter install changed the platform receipt or installed package versions")
 
     journey.step("replacing a default leaves the old adapter data on disk", "adapter",
                  assert_adapter_replacement_keeps_old_data, cases=["S-054.11"])
+
+    def assert_marketplace_requires_kb_create_pins() -> None:
+        workspace_file = platform_root / "pnpm-workspace.yaml"
+        package_file = platform_root / "package.json"
+        original_workspace = workspace_file.read_bytes()
+        package = json.loads(package_file.read_text())
+        sealed_dependencies = {
+            **package.get("dependencies", {}),
+            **package.get("devDependencies", {}),
+            **package.get("optionalDependencies", {}),
+        }
+        sealed = next(((name, spec) for name, spec in sealed_dependencies.items()
+                       if isinstance(spec, str) and spec.startswith("file:.kb/v2/cache/packages/")), None)
+        if sealed is None:
+            raise RuntimeError("the installed platform has no sealed package dependency to check")
+        name, _ = sealed
+        text = original_workspace.decode("utf-8")
+        override_line = re.compile(rf"(?m)^  (?:{re.escape(json.dumps(name))}|'{re.escape(name)}'|{re.escape(name)}):.*(?:\n|$)")
+        without_pin, count = override_line.subn("", text, count=1)
+        if count != 1:
+            raise RuntimeError(f"kb-create did not write an override for sealed artifact {name}")
+        before = _platform_snapshot(platform_root)
+        workspace_file.write_text(without_pin)
+        before_missing_pins = workspace_file.read_bytes()
+        before_package_manifest = package_file.read_bytes()
+        command = ["kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--scope", "platform", "--json"]
+        try:
+            result = runner(command, cwd=str(project_a), env=base_env,
+                            capture_output=True, text=True, timeout=300)
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                raise RuntimeError("marketplace did not return JSON for a platform missing sealed artifact pins") from error
+            failure = payload.get("error") if isinstance(payload, dict) else None
+            hint = failure.get("hint", "") if isinstance(failure, dict) else ""
+            expected_hint_prefix = f'Run "kb-create update --platform-root {platform_root}" and retry "kb marketplace install @kb-labs/adapters-analytics-file@'
+            if (result.returncode == 0 or not isinstance(failure, dict)
+                    or failure.get("code") != "MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"
+                    or failure.get("message") != "The installed platform is missing kb-create's sealed artifact overrides. No package was installed."
+                    or not hint.startswith(expected_hint_prefix)
+                    or not hint.endswith(' --scope platform".')):
+                raise RuntimeError("marketplace did not return the typed kb-create update hint for missing sealed artifact pins")
+            if _platform_snapshot(platform_root) != before:
+                raise RuntimeError("rejected adapter install changed the platform receipt or package versions")
+            if workspace_file.read_bytes() != before_missing_pins or package_file.read_bytes() != before_package_manifest:
+                raise RuntimeError("rejected adapter install changed the platform package manifest or pnpm config")
+        finally:
+            workspace_file.write_bytes(original_workspace)
+
+    journey.step("marketplace install refuses a platform missing kb-create artifact pins", "adapter",
+                 assert_marketplace_requires_kb_create_pins, cases=["S-054.12"])
 
     def assert_stopped_host_doctor() -> None:
         stop = ["kb-create", "stop", "--platform-root", str(platform_root), "--json"]

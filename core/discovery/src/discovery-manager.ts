@@ -187,7 +187,7 @@ export class DiscoveryManager {
           packageRoot = path.resolve(root, entry.link);
         } else if (entry.resolvedPath) {
           packageRoot = path.resolve(root, entry.resolvedPath);
-        } else if (scope === 'project' && entry.source === 'marketplace' && entry.version && entry.integrity) {
+        } else if (entry.source === 'marketplace' && entry.version && entry.integrity) {
           try {
             packageRoot = (await this.extensionStore.lookup({ name: id, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
           } catch (error) {

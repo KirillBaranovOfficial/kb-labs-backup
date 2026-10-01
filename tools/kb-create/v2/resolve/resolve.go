@@ -323,7 +323,7 @@ func uniqueArtifacts(values []contracts.Artifact) []contracts.Artifact {
 	// Keying on Kind+ID+Version alone silently collapses two genuinely
 	// different npm packages whenever they happen to compute the same
 	// catalog ID (for example a service package like @kb-labs/marketplace-app,
-	// whose id is its declared service id "marketplace", and an unrelated CLI
+	// whose id is its declared service id "marketplace", and its paired CLI
 	// plugin entry like @kb-labs/marketplace-entry, whose id falls back to
 	// "marketplace" once idFor strips the "-entry" suffix in
 	// prepare-release-index.mjs). Package is the actual installation unit, so
@@ -337,7 +337,19 @@ func uniqueArtifacts(values []contracts.Artifact) []contracts.Artifact {
 	for _, v := range seen {
 		result = append(result, v)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Kind+result[i].ID < result[j].Kind+result[j].ID })
+	sort.Slice(result, func(i, j int) bool {
+		left, right := result[i], result[j]
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.ID != right.ID {
+			return left.ID < right.ID
+		}
+		if left.Version != right.Version {
+			return left.Version < right.Version
+		}
+		return left.Package < right.Package
+	})
 	return result
 }
 func uniqueBindings(values []contracts.ProviderBinding) []contracts.ProviderBinding {

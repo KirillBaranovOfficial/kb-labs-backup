@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,6 +33,59 @@ func TestReadConfirmation(t *testing.T) {
 		if err != nil || got != test.want {
 			t.Fatalf("answer %q: got %v, %v", test.answer, got, err)
 		}
+	}
+}
+
+type snapshotRestoreRecorder struct {
+	artifacts []contracts.Artifact
+	calls     int
+}
+
+func (r *snapshotRestoreRecorder) Restore(artifacts []contracts.Artifact) error {
+	r.artifacts = append(r.artifacts, artifacts...)
+	r.calls++
+	return nil
+}
+
+// case: S-024.3
+func TestRollbackRestoresSnapshotFilesAfterCommandPackageRestore(t *testing.T) {
+	root := t.TempDir()
+	previousArtifact := contracts.Artifact{ID: "host", Kind: "package", Package: "@kb-labs/host", Version: "1.0.0"}
+	previous := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", Plan: contracts.ResolvedInstallPlan{PlanHash: "old", Artifacts: []contracts.Artifact{previousArtifact}}}
+	if err := receipt.Write(root, previous); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, ".kb", "kb.config.jsonc")
+	if err := os.WriteFile(config, []byte("original config bytes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := receipt.CreateSnapshot(root, time.Unix(4, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "after"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("updated config bytes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installer := &snapshotRestoreRecorder{}
+	if _, err := lifecycle.Rollback(root, snapshot.ID, restoreReceiptArtifacts(installer)); err != nil {
+		t.Fatal(err)
+	}
+	if installer.calls != 1 || !reflect.DeepEqual(installer.artifacts, []contracts.Artifact{previousArtifact}) {
+		t.Fatalf("restored packages = %#v, calls = %d", installer.artifacts, installer.calls)
+	}
+	got, err := os.ReadFile(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original config bytes\n" {
+		t.Fatalf("config after rollback = %q, want original snapshot bytes", got)
+	}
+	restored, err := receipt.Read(root)
+	if err != nil || restored.ID != "before" {
+		t.Fatalf("receipt after rollback = %#v, %v", restored, err)
 	}
 }
 

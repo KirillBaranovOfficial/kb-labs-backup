@@ -59,7 +59,7 @@ describe('Marketplace → Discovery Integration', () => {
     // Step 1: Install via MarketplaceService
     const source: PackageSource = {
       async resolve(spec: string): Promise<ResolvedPackage> {
-        return { id: spec, version: '2.0.0', integrity, source: 'marketplace' };
+        return { id: spec, version: '2.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
       },
       async install(pkg: ResolvedPackage): Promise<InstalledPackage> {
         return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity: pkg.integrity };
@@ -108,7 +108,7 @@ describe('Marketplace → Discovery Integration', () => {
     };
     const source: PackageSource = {
       async resolve(spec: string): Promise<ResolvedPackage> {
-        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', downloadUrl: `file:${dir}` };
+        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin', downloadUrl: `file:${dir}` };
       },
       async install(): Promise<InstalledPackage> { throw new Error('store install should be used'); },
       async remove() {},
@@ -135,12 +135,50 @@ describe('Marketplace → Discovery Integration', () => {
     expect(first.plugins[0]?.packageRoot).not.toBe(second.plugins[0]?.packageRoot);
   }, 60_000);
 
+  it('installs platform plugin entries into the shared store and discovers them without a platform graph install', async () => {
+    const { dir, integrity } = await createPluginOnDisk('platform-entry', '@kb-labs/platform-entry', '1.0.0');
+    const installer = {
+      async install(options: { name: string; projectDir: string }): Promise<{ packageRoot: string; integrity: string }> {
+        const packageRoot = path.join(options.projectDir, 'node_modules', ...options.name.split('/'));
+        await fs.mkdir(path.dirname(packageRoot), { recursive: true });
+        await fs.cp(dir, packageRoot, { recursive: true });
+        return { packageRoot, integrity };
+      },
+    };
+    const source: PackageSource = {
+      async resolve(spec: string): Promise<ResolvedPackage> {
+        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
+      },
+      async install(): Promise<InstalledPackage> { throw new Error('platform plugin must use the extension store'); },
+      async remove() {},
+    };
+    const store = createExtensionStore({ root: path.join(tmpDir, 'machine-store'), installer });
+    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+
+    await marketplace.install({ scope: 'platform' }, ['@kb-labs/platform-entry']);
+
+    const lock = JSON.parse(await fs.readFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'utf8'));
+    expect(lock.plugins['@kb-labs/platform-entry']).toMatchObject({
+      source: 'marketplace',
+      version: '1.0.0',
+      enabled: true,
+    });
+    await expect(fs.access(path.join(tmpDir, 'node_modules', '@kb-labs', 'platform-entry'))).rejects.toThrow();
+    const discovered = await new DiscoveryManager({
+      root: tmpDir,
+      extensionStore: store,
+      workspace: false,
+      verifyIntegrity: false,
+    }).discover();
+    expect(discovered.plugins.map((plugin) => plugin.id)).toEqual(['@kb-labs/platform-entry']);
+  });
+
   it('install → uninstall → discover: plugin is gone after uninstall', async () => {
     const { dir, integrity } = await createPluginOnDisk('temp', '@kb-labs/temp', '1.0.0');
 
     const source: PackageSource = {
       async resolve(spec: string): Promise<ResolvedPackage> {
-        return { id: spec, version: '1.0.0', integrity, source: 'marketplace' };
+        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
       },
       async install(pkg: ResolvedPackage): Promise<InstalledPackage> {
         return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity: pkg.integrity };
@@ -170,7 +208,7 @@ describe('Marketplace → Discovery Integration', () => {
 
     const source: PackageSource = {
       async resolve(spec: string): Promise<ResolvedPackage> {
-        return { id: spec, version: '1.0.0', integrity, source: 'marketplace' };
+        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
       },
       async install(pkg: ResolvedPackage): Promise<InstalledPackage> {
         return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity: pkg.integrity };

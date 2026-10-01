@@ -180,8 +180,8 @@ func TestPlanInstallsPlatformMembersAtomically(t *testing.T) {
 // derives a member's catalog ID either from its declared service id (e.g.
 // @kb-labs/marketplace-app -> "marketplace") or, for non-service packages,
 // from its npm package name with a trailing "-entry" stripped (e.g.
-// @kb-labs/marketplace-entry -> "marketplace"). Two unrelated packages can
-// therefore legitimately share one catalog ID. uniqueArtifacts used to key
+// @kb-labs/marketplace-entry -> "marketplace"). A service and its paired CLI
+// package therefore share one logical catalog ID. uniqueArtifacts used to key
 // solely on Kind+ID+Version, so the second package silently vanished from
 // the resolved plan and its service never got installed — reproduced locally
 // against the real published release-index.json, where @kb-labs/marketplace-app
@@ -208,6 +208,42 @@ func TestPlanKeepsPlatformMembersThatShareACatalogID(t *testing.T) {
 	}
 	if !packages["@kb-labs/marketplace-app"] || !packages["@kb-labs/marketplace-entry"] {
 		t.Fatalf("expected both same-ID members to survive dedup, got artifacts = %#v", plan.Artifacts)
+	}
+}
+
+// case: S-023.6
+func TestPlanHashIsStableForPlatformMembersThatShareCatalogIDs(t *testing.T) {
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+			Members: []catalog.Component{
+				{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-app", Tarball: "https://example.test/marketplace-app.tgz", SHA256: "app"},
+				{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-entry", Tarball: "https://example.test/marketplace-entry.tgz", SHA256: "entry"},
+				{ID: "workflow", Version: "2.0.0", Package: "@kb-labs/workflow-daemon", Tarball: "https://example.test/workflow-daemon.tgz", SHA256: "daemon"},
+				{ID: "workflow", Version: "2.0.0", Package: "@kb-labs/workflow-entry", Tarball: "https://example.test/workflow-entry.tgz", SHA256: "entry"},
+			},
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+		}},
+		Plugins: []catalog.Component{
+			{ID: "marketplace", Version: "2.0.0", Package: "@kb-labs/marketplace-entry", Tarball: "https://example.test/marketplace-entry.tgz", SHA256: "entry"},
+			{ID: "workflow", Version: "2.0.0", Package: "@kb-labs/workflow-entry", Tarball: "https://example.test/workflow-entry.tgz", SHA256: "entry"},
+		},
+	}
+	request := contracts.InstallRequest{PlatformRoot: "/tmp/x"}
+	first, err := Plan(request, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 64; attempt++ {
+		repeated, planErr := Plan(request, source)
+		if planErr != nil {
+			t.Fatal(planErr)
+		}
+		if repeated.PlanHash != first.PlanHash {
+			t.Fatalf("plan hash changed across identical resolutions: first %s, repeated %s", first.PlanHash, repeated.PlanHash)
+		}
 	}
 }
 
