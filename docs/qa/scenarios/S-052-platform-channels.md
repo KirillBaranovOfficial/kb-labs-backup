@@ -4,7 +4,7 @@ title: Platform — install and update across release channels
 persona: solo-developer
 area: platform-core
 priority: P1
-status: planned
+status: active
 release: true
 modes: [local, secured]
 surfaces: [cli]
@@ -23,15 +23,15 @@ while being able to identify the selected channel and immutable artifact.
 
 | # | Action | Expected |
 |---|---|---|
-| S-052.1 | Run `kb-create apply --platform-channel canary --policy strict --json` against a fresh platform root and sealed canary index | Resolution uses the index's canary channel pointer and returns the exact prerelease version and SHA-256 in the plan and receipt. |
-| S-052.2 | Inspect the receipt, then run `kb-create status --json` and `kb-create doctor --json` | The receipt, status and doctor identify both the selected channel (`canary`) and exact installed version. |
-| S-052.3 | Run `kb-create update --platform-channel canary --json` on a stable installation, then update with `--platform-channel stable` | Each update resolves the selected index pointer and restarts on that exact version; switching back to stable is allowed even when it selects an older version. |
-| S-052.4 | Request an older stable version using `kb-create update --platform-version VERSION --json` | The current update path accepts a resolvable older version; rollback remains the snapshot-based recovery operation. |
+| S-052.1 | Run `kb-create apply --platform-channel canary --policy compatible --json` against a fresh platform root and sealed canary index | The plan and receipt identify the exact canary version, channel and artifact hashes resolved from the sealed index. |
+| S-052.2 | Inspect the receipt, then run `kb-create status --platform-root ROOT --json` and `kb-create doctor --platform-root ROOT --json` | Receipt, status and doctor report channel `canary` and the exact installed platform version in JSON; their text forms report the same values. |
+| S-052.3 | On an installed stable platform, run `kb-create update --platform-channel canary --policy compatible --json` | The host restarts on the canary version and status/doctor report `canary` plus its exact version. |
+| S-052.4 | While on the newer canary release, try `kb-create update --platform-channel stable --json` | Update exits nonzero with `KB_UPDATE_DOWNGRADE_REFUSED`, the hint is `use \`kb-create rollback\``, details include `installedVersion` and `targetVersion`, and the active receipt is unchanged. |
+| S-052.5 | Run `kb-create rollback --platform-root ROOT --yes --json` to return from canary to the stable snapshot | Rollback restores and restarts the exact stable receipt and reports stable channel plus its exact version. |
 
 ## Pass criteria
 
-The release index is authoritative for channel resolution. The current CLI can
-resolve channel pointers and receipts preserve the request, but `status` reports
-only the exact platform version and doctor has no channel field. This case stays
-planned until status and doctor expose the channel, and candidate preparation
-supplies a sealed canary prerelease index for the journey.
+The release index is authoritative for channel resolution. A channel switch to
+a lower semantic version is a downgrade and must use snapshot rollback. The
+canary fixture is a re-sealed prerelease release with the same package code and
+an observable version marker.
