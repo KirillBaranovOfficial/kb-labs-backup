@@ -25,6 +25,13 @@ type Manifest struct {
 	Requirements []doctor.Requirement `json:"requirements,omitempty"`
 }
 
+type ProjectionIssue struct {
+	ArtifactID string
+	Package    string
+	Reason     string
+	Repairable bool
+}
+
 // DoctorInput loads requirements only from the exact packages recorded in the
 // active receipt. Missing or mismatched metadata is a release integrity error,
 // not a reason to silently diagnose an incomplete system.
@@ -77,7 +84,8 @@ func Write(platformRoot string, artifact contracts.Artifact) error {
 	for _, requirement := range artifact.Config {
 		manifest.Requirements = append(manifest.Requirements, doctor.Requirement{
 			ID: requirement.ID, Path: requirement.Path, Required: requirement.Required,
-			Secret: requirement.Secret, Generate: requirement.Generate, Hint: requirement.Hint, Env: requirement.Env,
+			Secret: requirement.Secret, Generate: requirement.Generate, Optional: requirement.Optional,
+			Hint: requirement.Hint, Action: requirement.Action, Env: requirement.Env,
 			Services: append([]string(nil), requirement.Services...), Default: []byte(requirement.Default),
 		})
 	}
@@ -93,6 +101,79 @@ func Write(platformRoot string, artifact contracts.Artifact) error {
 		return fmt.Errorf("write installed manifest for %s: %w", artifact.Package, err)
 	}
 	return nil
+}
+
+// InspectProjections reports absent or receipt-mismatched metadata without
+// changing the installed platform. A package identity mismatch is not safe to
+// repair because the receipt may no longer describe the installed artifact.
+func InspectProjections(platformRoot string, artifacts []contracts.Artifact) ([]ProjectionIssue, error) {
+	issues := make([]ProjectionIssue, 0)
+	for _, artifact := range artifacts {
+		if artifact.Kind == "binary" {
+			continue
+		}
+		if artifact.Package == "" || artifact.Version == "" {
+			return nil, fmt.Errorf("artifact %q lacks exact package/version for manifest verification", artifact.ID)
+		}
+		base := filepath.Join(platformRoot, "node_modules", filepath.FromSlash(artifact.Package))
+		packageJSON, err := os.ReadFile(filepath.Join(base, "package.json"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				issues = append(issues, ProjectionIssue{ArtifactID: artifact.ID, Package: artifact.Package, Reason: "installed package identity is missing from the receipt-selected path"})
+				continue
+			}
+			return nil, fmt.Errorf("read installed package identity for %s: %w", artifact.Package, err)
+		}
+		var identity struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		}
+		if err := json.Unmarshal(packageJSON, &identity); err != nil {
+			return nil, fmt.Errorf("decode installed package identity for %s: %w", artifact.Package, err)
+		}
+		if identity.Name != artifact.Package || identity.Version != artifact.Version {
+			issues = append(issues, ProjectionIssue{ArtifactID: artifact.ID, Package: artifact.Package, Reason: fmt.Sprintf("installed package identity %s@%s does not match receipt version %s", identity.Name, identity.Version, artifact.Version)})
+			continue
+		}
+		if _, err := Load(platformRoot, artifact); err == nil {
+			continue
+		}
+		issues = append(issues, ProjectionIssue{ArtifactID: artifact.ID, Package: artifact.Package, Reason: "installed manifest projection is missing or does not match the receipt", Repairable: true})
+	}
+	return issues, nil
+}
+
+// EnsureProjections repairs only metadata gaps and only after validating every
+// package identity. It is called by the explicit doctor --fix path.
+func EnsureProjections(platformRoot string, artifacts []contracts.Artifact) error {
+	issues, err := InspectProjections(platformRoot, artifacts)
+	if err != nil {
+		return err
+	}
+	for _, issue := range issues {
+		if !issue.Repairable {
+			return fmt.Errorf("cannot repair installed metadata for %s: %s", issue.Package, issue.Reason)
+		}
+	}
+	for _, issue := range issues {
+		artifact, ok := findArtifact(artifacts, issue.ArtifactID)
+		if !ok {
+			return fmt.Errorf("active receipt artifact %s disappeared during doctor repair", issue.ArtifactID)
+		}
+		if err := Write(platformRoot, artifact); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func findArtifact(artifacts []contracts.Artifact, id string) (contracts.Artifact, bool) {
+	for _, artifact := range artifacts {
+		if artifact.ID == id {
+			return artifact, true
+		}
+	}
+	return contracts.Artifact{}, false
 }
 
 func Load(platformRoot string, artifact contracts.Artifact) (Manifest, error) {

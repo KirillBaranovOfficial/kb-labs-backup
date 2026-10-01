@@ -13,10 +13,12 @@ type ConfigRequirement struct {
 	ID       string   `json:"id"`
 	Path     string   `json:"path,omitempty"`
 	Required bool     `json:"required,omitempty"`
+	Optional bool     `json:"optional,omitempty"`
 	Secret   bool     `json:"secret,omitempty"`
 	Generate bool     `json:"generate,omitempty"`
 	Default  string   `json:"default,omitempty"`
 	Env      string   `json:"env,omitempty"`
 	Services []string `json:"services,omitempty"`
 	Hint     string   `json:"hint,omitempty"`
+	Action   string   `json:"action,omitempty"`
 }

@@ -57,5 +57,5 @@ func DiagnoseJSON(data []byte) (Response, error) {
 		return Response{}, err
 	}
 	findings := Diagnose(input.Manifests, input.Configured)
-	return Response{OK: len(findings) == 0, Findings: findings, Repair: PlanRepair(findings)}, nil
+	return Response{OK: !HasErrors(findings), Findings: findings, Repair: PlanRepair(findings)}, nil
 }
