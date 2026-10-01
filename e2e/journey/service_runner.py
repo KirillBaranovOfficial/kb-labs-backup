@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import hashlib
 import http.cookiejar
 import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 import uuid
@@ -36,6 +38,117 @@ PROJECT_ID = os.getenv("KB_JOURNEY_PROJECT_ID", "")
 ADMIN_EMAIL = os.getenv("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
 ADMIN_PASSWORD = os.getenv("KB_JOURNEY_ADMIN_PASSWORD", "")
 HTTP = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+
+def project_plugin_settings_isolation() -> str | None:
+    """Prove a CLI project override changes only its registered project."""
+    cli = os.getenv("KB_JOURNEY_CLI_PATH", "")
+    if not cli or not Path(cli).is_file():
+        return "BLOCKED: provide KB_JOURNEY_CLI_PATH for project settings checks"
+
+    def run_cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [cli, *args], cwd=cwd, env=os.environ.copy(), capture_output=True,
+            text=True, check=False, timeout=90,
+        )
+
+    def project_id(result: subprocess.CompletedProcess[str]) -> str:
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return ""
+        queue = [payload]
+        while queue:
+            item = queue.pop(0)
+            if isinstance(item, dict):
+                project = item.get("project")
+                if isinstance(project, dict) and isinstance(project.get("id"), str):
+                    return project["id"]
+                queue.extend(item.values())
+            elif isinstance(item, list):
+                queue.extend(item)
+        return ""
+
+    def remove_project(project: Path, identifier: str) -> None:
+        run_cli(project, "project", "remove", identifier, "--yes", "--json")
+
+    with tempfile.TemporaryDirectory(prefix="kb-project-plugin-settings-") as temp, ExitStack() as cleanup:
+        root = Path(temp)
+        projects = [root / "project-a", root / "project-b"]
+        ids: list[str] = []
+        for project in projects:
+            project.mkdir()
+            initialized = subprocess.run(
+                ["git", "init", "--quiet", str(project)], capture_output=True,
+                text=True, check=False, timeout=30,
+            )
+            if initialized.returncode != 0:
+                return f"could not initialize disposable settings fixture: {initialized.stderr.strip()}"
+            registered = run_cli(project, "project", "add", str(project), "--json")
+            if registered.returncode != 0:
+                return f"kb project add failed for {project.name}: {(registered.stderr or registered.stdout).strip()}"
+            identifier = project_id(registered)
+            if not identifier:
+                return f"kb project add returned no project ID for {project.name}"
+            ids.append(identifier)
+            cleanup.callback(remove_project, project, identifier)
+
+        scopes = '[{"id":"journey-shared","label":"Shared","path":"."}]'
+        platform_default = run_cli(projects[0], "config", "set", "--scope", "platform",
+                                   "plugins.commit.scope.scopes", scopes, "--json")
+        if platform_default.returncode != 0:
+            return f"could not set the platform Commit default: {(platform_default.stderr or platform_default.stdout).strip()}"
+        project_override = '[{"id":"journey-a","label":"Project A","path":"."}]'
+        configured = run_cli(projects[0], "config", "set", "plugins.commit.scope.scopes",
+                             project_override, "--json")
+        if configured.returncode != 0:
+            return f"could not set Project A's Commit override: {(configured.stderr or configured.stdout).strip()}"
+
+        for project in projects:
+            files = sorted(path.name for path in project.iterdir() if path.name != ".git")
+            if files:
+                return f"configuring Commit settings created repository files in {project.name}: {', '.join(files)}"
+
+        a_status, a_body, _ = request(
+            f"/api/v1/projects/{ids[0]}/rest/api/v1/plugins/commit/scopes",
+            token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
+        )
+        b_status, b_body, _ = request(
+            f"/api/v1/projects/{ids[1]}/rest/api/v1/plugins/commit/scopes",
+            token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
+        )
+
+        def scope_ids(status: int, body: object, project_name: str) -> tuple[set[str], str | None]:
+            if status != 200:
+                return set(), f"Commit settings for {project_name} returned HTTP {status}"
+            value = body.get("data", body) if isinstance(body, dict) else body
+            options = value.get("options") if isinstance(value, dict) else None
+            if not isinstance(options, list):
+                return set(), f"Commit settings for {project_name} returned no scope options"
+            return {str(option.get("value")) for option in options if isinstance(option, dict)}, None
+
+        a_scopes, error = scope_ids(a_status, a_body, "Project A")
+        if error:
+            return error
+        b_scopes, error = scope_ids(b_status, b_body, "Project B")
+        if error:
+            return error
+        if "journey-a" not in a_scopes:
+            return "Project A's Commit scope selector did not use the project override"
+        if "journey-shared" not in b_scopes or "journey-a" in b_scopes:
+            return "Project B's Commit scope selector did not retain only the platform default"
+
+        for project in projects:
+            status = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"], cwd=project,
+                capture_output=True, text=True, check=False, timeout=30,
+            )
+            if status.returncode != 0:
+                return f"could not inspect {project.name} working tree: {status.stderr.strip()}"
+            if status.stdout.strip():
+                return f"configuring Commit settings changed {project.name}: {status.stdout.strip()}"
+
+    return None
 
 
 def request(path: str, *, method="GET", payload=None, token="", accept="application/json") -> tuple[int, object, dict[str, str]]:
@@ -113,6 +226,8 @@ def checks(mode: str):
     else:
         project = lambda: expect(f"/api/v1/projects/{PROJECT_ID}", {200}, "project registry lookup", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
     yield ("project registration", "projects", project)
+    yield ("project plugin settings isolation and clean repositories", "projects",
+           project_plugin_settings_isolation)
     pid = PROJECT_ID or "{projectId}"
     auth_token = lambda: os.getenv("KB_JOURNEY_SERVICE_TOKEN", token)
     yield ("workflow health", "workflow", lambda: expect_json(
