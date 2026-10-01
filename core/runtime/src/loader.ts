@@ -491,6 +491,7 @@ export async function initPlatform(
     broker: IResourceBroker,
     adapterConfig: Partial<Record<string, unknown>>,
   ) => Partial<Record<string, unknown>>,
+  workspaceDevelopment = false,
 ): Promise<PlatformContainer> {
 
   // ✅ Idempotent: If already initialized, return existing singleton
@@ -650,11 +651,18 @@ export async function initPlatform(
     const loadModule = async (modulePath: string): Promise<LoadedAdapterModule> => {
       try {
         const { discoverAdapters } = await import('./discover-adapters.js');
-        // Project wins: pass both roots so workspace adapters override platform's.
-        // projectRoot is only distinct from platformRoot in installed (prod) mode.
         const discovered = await discoverAdapters(
           platformRoot ?? cwd,
           platformRoot && platformRoot !== cwd ? cwd : undefined,
+          {
+            development: workspaceDevelopment,
+            configuredPackages: Object.entries(adapters).flatMap(([slot, value]) =>
+              normalizeAdapterValue(value as AdapterValue).map(modulePath => ({
+                packageName: modulePath.split('/').slice(0, 2).join('/'),
+                slot,
+              })),
+            ),
+          },
         );
 
         // Parse module path into base package and subpath (same logic as resolveAdapter)

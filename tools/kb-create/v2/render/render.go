@@ -67,6 +67,11 @@ func Build(plan contracts.ResolvedInstallPlan) (Output, error) {
 	// was dropped whenever a manifest declared a /platform/adapters default.
 	config := map[string]any{"platform": map[string]any{"version": plan.ServiceGraph.PlatformVersion, "adapters": stringMapAsAny(adapters)}, "plugins": stringMapAsAny(plugins)}
 	merge(config, extra)
+	// Development workspace resolution is enabled only by the checkout's
+	// explicit marker. The installer must never activate that source.
+	if platformConfig, ok := config["platform"].(map[string]any); ok {
+		delete(platformConfig, "mode")
+	}
 	applyHostSection(config)
 	// A manifest default is only a baseline; a binding the resolver actually
 	// chose for this plan must win over it on the same key.

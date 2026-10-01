@@ -29,12 +29,19 @@ export class AdapterUnavailableError extends Error {
   public readonly slot: string;
   /** Why the adapter is unavailable. */
   public readonly reason: 'not-configured' | 'load-failed';
+  /** Optional corrective hint for a known adapter load failure. */
+  public readonly hint?: string;
+  /** Optional user-facing explanation for a known adapter load failure. */
+  public readonly userMessage?: string;
+  /** Optional copy-ready corrective command. */
+  public readonly action?: { id: string; label: string; command: string };
 
   constructor(
     slot: string,
     reason: 'not-configured' | 'load-failed' = 'not-configured',
     message?: string,
     cause?: unknown,
+    options?: { hint?: string; userMessage?: string; action?: { id: string; label: string; command: string } },
   ) {
     super(
       message ??
@@ -45,6 +52,9 @@ export class AdapterUnavailableError extends Error {
     this.name = 'AdapterUnavailableError';
     this.slot = slot;
     this.reason = reason;
+    this.hint = options?.hint;
+    this.userMessage = options?.userMessage;
+    this.action = options?.action;
     Object.setPrototypeOf(this, AdapterUnavailableError.prototype);
   }
 }
