@@ -33,6 +33,7 @@ vi.mock('../../src/rest/handlers/scope-resolver.js', () => ({
 }));
 
 import { generateCommitPlan, applyCommitPlan, hasChanges, getGitStatus, savePlan, saveToHistory, clearPlan } from '@kb-labs/commit-core';
+import { AdapterUnavailableError } from '@kb-labs/sdk';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import runCommand from '../../src/cli/commands/run.js';
 
@@ -82,32 +83,40 @@ beforeEach(() => {
   vi.mocked(clearPlan).mockResolvedValue(undefined);
 });
 
+function createRunContext(ui: ReturnType<typeof createCapturedUI>['ui']) {
+  return createMockContext({
+    ui,
+    cwd: '/project',
+    platformConfig: { platform: { adapters: { llm: '@kb-labs/adapter-fixture' } } },
+  });
+}
+
 describe('commit:commit (run)', () => {
-  it('CR-01: applies commits — exitCode 0, success message', async () => {
+  it('CR-01: applies commits — successful result and success message', async () => {
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
     expect(vi.mocked(applyCommitPlan)).toHaveBeenCalledOnce();
   });
 
-  it('CR-02: no changes — exitCode 1, warns user', async () => {
+  it('CR-02: no changes — failed result and warning', async () => {
     vi.mocked(hasChanges).mockReturnValue(false);
 
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.exitCode).toBe(1);
+    expect(result.ok).toBe(false);
     expect(captured.warnings.length).toBeGreaterThan(0);
     expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
   });
 
-  it('CR-03: apply fails — exitCode 1, error shown', async () => {
+  it('CR-03: apply fails — failed result and error shown', async () => {
     vi.mocked(applyCommitPlan).mockResolvedValue({
       success: false,
       errors: ['Merge conflict'],
@@ -115,21 +124,21 @@ describe('commit:commit (run)', () => {
     } as never);
 
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.exitCode).toBe(1);
+    expect(result.ok).toBe(false);
     expect(captured.errors.length).toBeGreaterThan(0);
   });
 
   it('CR-04: --json outputs CommitRunOutput', async () => {
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result.ok).toBe(true);
     const out = captured.json[0] as Record<string, unknown>;
     expect(out.applied).toBe(true);
     expect(Array.isArray(out.commits)).toBe(true);
@@ -137,11 +146,11 @@ describe('commit:commit (run)', () => {
 
   it('CR-05: --dry-run shows intent, applyCommitPlan is NOT called', async () => {
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true } }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result.ok).toBe(true);
     expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('2 commit');
@@ -151,13 +160,24 @@ describe('commit:commit (run)', () => {
     vi.mocked(hasChanges).mockReturnValue(false);
 
     const { ui, captured } = createCapturedUI();
-    const ctx = createMockContext({ ui, cwd: '/project' });
+    const ctx = createRunContext(ui);
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true } }));
 
-    expect(result.exitCode).toBe(0);
+    expect(result.ok).toBe(true);
     expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('No changes');
+  });
+
+  // case: S-160.2
+  it('missing LLM adapter fails with the typed adapter error', async () => {
+    const { ui } = createCapturedUI();
+    const ctx = createMockContext({ ui, cwd: '/project' });
+
+    await expect(runCommand.execute(ctx, mockCLIInput({ flags: { 'dry-run': true } })))
+      .rejects.toBeInstanceOf(AdapterUnavailableError);
+    expect(generateCommitPlan).not.toHaveBeenCalled();
+    expect(applyCommitPlan).not.toHaveBeenCalled();
   });
 });

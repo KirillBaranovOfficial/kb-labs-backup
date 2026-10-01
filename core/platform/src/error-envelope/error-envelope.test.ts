@@ -118,12 +118,12 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(envelope.details).toEqual({
       service: 'llm',
       adapter: 'platform.adapters.llm',
-      command: 'kb config set platform.adapters.llm @kb-labs/adapters-openai',
+      command: 'kb adapter bind llm @kb-labs/adapters-openai',
     });
     expect(envelope.correlationId).toBe('c1');
-    expect(envelope.hint).toContain('kb config set platform.adapters.llm');
+    expect(envelope.hint).toContain('kb adapter bind llm @kb-labs/adapters-openai');
     expect(envelope.actions?.[0]?.command).toBe(
-      'kb config set platform.adapters.llm @kb-labs/adapters-openai',
+      'kb adapter bind llm @kb-labs/adapters-openai',
     );
   });
 
