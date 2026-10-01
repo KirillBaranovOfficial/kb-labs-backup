@@ -91,6 +91,13 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-109](scenarios/S-109-configured-oauth-login.md) | Authentication — sign in through a configured identity provider | team-member | P2 | active | false | [secured] | [studio, api] | — |
 | [S-194](scenarios/S-194-platform-service-lifecycle.md) | Platform — Select and manage services across install, update, and rollback | solo-developer | P1 | planned | true | [local, secured] | [cli] | — |
 | [S-195](scenarios/S-195-journey-registry-package-integrity.md) | Journey publisher — Detect stale registry tarballs | developer | P1 | planned | false | [local] | [cli] | — |
+| [S-196](scenarios/S-196-multiple-projects-current-context.md) | Projects — Register repositories and select the current project | solo-developer | P0 | planned | false | [local, secured] | [cli, studio] | — |
+| [S-197](scenarios/S-197-commit-and-review-across-projects.md) | Projects — Commit in one repository and review another | solo-developer | P1 | planned | false | [local, secured] | [cli] | — |
+| [S-198](scenarios/S-198-workflows-and-crons-across-projects.md) | Projects — Keep workflow and cron runs within their project | solo-developer | P1 | planned | false | [local, secured] | [cli, studio, api] | — |
+| [S-199](scenarios/S-199-mind-mcp-and-plugins-across-projects.md) | Projects — Isolate Mind, MCP tools, and plugin installs | solo-developer | P1 | planned | false | [local, secured] | [cli, api, agent] | — |
+| [S-200](scenarios/S-200-project-adapter-and-llm-settings.md) | Projects — Apply effective adapter and model settings | solo-developer | P1 | planned | false | [local, secured] | [cli, studio] | — |
+| [S-201](scenarios/S-201-project-analytics-and-dashboard-isolation.md) | Projects — Filter analytics, logs, and dashboard by project | solo-developer | P1 | planned | false | [local, secured] | [cli, studio, api] | — |
+| [S-202](scenarios/S-202-project-unregister-and-member-access.md) | Projects — Unregister one project and preserve tenant access boundaries | team-member | P1 | planned | false | [secured] | [cli, studio, api] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.
