@@ -86,4 +86,14 @@ describe('WorkflowDaemonClient gateway authentication', () => {
     expect(url).toBe('http://gateway.test/api/v1/projects/prj_0123456789abcdef/workflow/health');
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer fresh-token');
   });
+
+  it('reports a typed login-required error after an unauthenticated 401', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('unauthorized', { status: 401 }));
+
+    await expect(new WorkflowDaemonClient({ projectId: 'prj_0123456789abcdef' }).health())
+      .rejects.toMatchObject({
+        code: 'KB_AUTH_REQUIRED',
+        hint: 'Run "kb auth login".',
+      });
+  });
 });

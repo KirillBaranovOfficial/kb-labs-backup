@@ -101,6 +101,37 @@ class PlatformStateDumpTests(unittest.TestCase):
             size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
             self.assertLessEqual(size, MAX_DUMP_BYTES)
 
+    def test_dump_includes_project_workflow_records_and_daemon_logs(self):
+        with tempfile.TemporaryDirectory(prefix="journey-workflow-dump-test-") as temporary:
+            home = Path(temporary)
+            platform = home / "kb-platform"
+            project = home / "fresh-project"
+            reports = home / "reports"
+            workflow_dir = project / ".kb/data/workflows"
+            log_dir = project / ".kb/logs"
+            workflow_dir.mkdir(parents=True)
+            log_dir.mkdir(parents=True)
+            (workflow_dir / "run-success.json").write_text(
+                '{"id":"run-success","status":"success","input":{"message":"hello"},"token":"hidden"}'
+            )
+            (log_dir / "workflow-daemon.log").write_text("run-success completed successfully\n")
+
+            destination = dump_platform_state(
+                platform, reports, mode="local", front="agent", scenario="explore", variant="default",
+                first_failure="workflow did not reach a terminal status",
+                env={**os.environ, "PATH": ""}, cwd=home,
+            )
+
+            evidence = destination / "workflow-evidence/fresh-project/.kb/data/workflows/run-success.json"
+            daemon_log = destination / "workflow-evidence/fresh-project/.kb/logs/workflow-daemon.log"
+            self.assertTrue(evidence.is_file())
+            self.assertIn('"status": "success"', evidence.read_text())
+            self.assertIn('"token": "[REDACTED]"', evidence.read_text())
+            self.assertTrue(daemon_log.is_file())
+            self.assertIn("run-success completed successfully", daemon_log.read_text())
+            size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
+            self.assertLessEqual(size, MAX_DUMP_BYTES)
+
 
 if __name__ == "__main__":
     unittest.main()

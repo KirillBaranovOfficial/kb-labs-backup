@@ -12,6 +12,47 @@ from service_steps import Journey
 
 
 class WorkflowJourneyTests(unittest.TestCase):
+    def test_secured_workflow_auth_error_is_typed_and_admin_login_recovers(self):
+        authenticated = [False]
+        calls = []
+
+        def fake_run(args, *, env, cwd, timeout=120):
+            args = list(args)
+            calls.append(args)
+            if args[:3] == ["workflow", "defs", "list"]:
+                if not authenticated[0]:
+                    return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
+                        "code": "KB_AUTH_REQUIRED", "message": "Workflow access requires a login.",
+                        "hint": 'Run "kb auth login".',
+                    }}))
+                return CompletedProcess(args, 0, json.dumps({"ok": True, "data": [{"id": "hello"}]}))
+            if args[:2] == ["auth", "login"]:
+                self.assertIn("admin@example.test", args)
+                self.assertIn("admin-password", args)
+                authenticated[0] = True
+                return CompletedProcess(args, 0, "Logged in")
+            self.fail(f"unexpected CLI command: {args!r}")
+
+        old_run_cli = workflow_steps.run_cli
+        workflow_steps.run_cli = fake_run
+        try:
+            journey = Journey("secured", "workflow-auth")
+            workflow_steps.run_secured_cli_auth_step(
+                journey,
+                env={"KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+                     "KB_JOURNEY_ADMIN_PASSWORD": "admin-password"},
+                project=Path("/tmp/project"),
+            )
+        finally:
+            workflow_steps.run_cli = old_run_cli
+
+        result = journey.result()
+        self.assertEqual(result.status, "PASS", result.first_failure)
+        self.assertEqual(calls[0], ["workflow", "defs", "list", "--json"])
+        self.assertEqual(calls[1][:2], ["auth", "login"])
+        self.assertEqual(calls[2], ["workflow", "defs", "list", "--json"])
+        self.assertEqual(result.case_run["claims"], [{"claimId": "S-007.4", "kind": "journey", "status": "PASS"}])
+
     def test_workflow_and_cron_cases_assert_outcomes_and_claim_steps(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
