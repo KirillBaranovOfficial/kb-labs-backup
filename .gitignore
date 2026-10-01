@@ -180,3 +180,5 @@ tools/kb-env/kb-env
 
 # Journey gate outputs (candidate binaries, release index, reports)
 .journey/
+__pycache__/
+*.pyc
