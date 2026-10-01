@@ -82,7 +82,8 @@ def run_plugin_author_flow(
                             cases=cases).status == "PASS"
 
     def _scaffold() -> None:
-        _run([str(kb_path), "scaffold", "run", "plugin", PLUGIN_NAME, "--yes"],
+        _run([str(kb_path), "scaffold", "run", "plugin", PLUGIN_NAME,
+              "--mode", "standalone", "--yes"],
              cwd=project, env=child_env, command_runner=command_runner)
         if not entry.is_dir() or not (entry / "package.json").is_file() or not core_source.is_file():
             raise RuntimeError("kb scaffold run did not create .kb/plugins/demo with entry and core packages")

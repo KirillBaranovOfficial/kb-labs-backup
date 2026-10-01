@@ -30,6 +30,8 @@ import {
 const USED_MARKER_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export interface ExtensionStoreOptions extends StoreRootOptions {
+  /** Installed platform root whose cached package artifacts may back local file dependencies. */
+  platformRoot?: string;
   /** Package installer. Defaults to a real `pnpm install`. Tests may substitute a fake. */
   installer?: PackageInstaller;
   now?: () => Date;
@@ -110,7 +112,14 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
     const { name, version, kind, spec, expectedIntegrity } = request;
     const staging = join(tmpDir, randomUUID());
     try {
-      const result = await installer.install({ name, version, spec, projectDir: staging, casDir });
+      const result = await installer.install({
+        name,
+        version,
+        spec,
+        projectDir: staging,
+        casDir,
+        ...(options.platformRoot ? { platformRoot: options.platformRoot } : {}),
+      });
       if (expectedIntegrity && result.integrity !== expectedIntegrity) {
         throw new IntegrityMismatchError({ plugin: name, expected: expectedIntegrity, actual: result.integrity });
       }

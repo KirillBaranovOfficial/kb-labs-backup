@@ -25,16 +25,20 @@ export interface PnpmInstallerOptions {
   /** Overrides the `pnpm` executable, mainly for tests. Defaults to `'pnpm'`. */
   pnpmPath?: string;
   timeoutMs?: number;
+  /** Installed platform root that owns `.kb/v2/cache/packages` artifacts. */
+  platformRoot?: string;
 }
 
 /** Default `PackageInstaller`: a real `pnpm install` into a fresh synthetic project. */
 export class PnpmInstaller implements PackageInstaller {
   private readonly pnpmPath: string;
   private readonly timeoutMs: number;
+  private readonly platformRoot?: string;
 
   constructor(options: PnpmInstallerOptions = {}) {
     this.pnpmPath = options.pnpmPath ?? 'pnpm';
     this.timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS;
+    this.platformRoot = options.platformRoot;
   }
 
   async install(options: PackageInstallOptions): Promise<PackageInstallResult> {
@@ -44,6 +48,19 @@ export class PnpmInstaller implements PackageInstaller {
     await fs.mkdir(projectDir, { recursive: true });
     await fs.mkdir(casDir, { recursive: true });
     await writeSyntheticProject(projectDir, name, spec);
+    const platformRoot = options.platformRoot ?? this.platformRoot;
+    const platformKbDir = platformRoot ? path.join(platformRoot, '.kb') : undefined;
+    const syntheticKbDir = path.join(projectDir, '.kb');
+    let linkedPlatformCache = false;
+    if (platformKbDir) {
+      try {
+        await fs.access(platformKbDir);
+        await fs.symlink(platformKbDir, syntheticKbDir, process.platform === 'win32' ? 'junction' : 'dir');
+        linkedPlatformCache = true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {throw err;}
+      }
+    }
 
     try {
       await execa(this.pnpmPath, ['install', '--store-dir', casDir], {
@@ -53,6 +70,10 @@ export class PnpmInstaller implements PackageInstaller {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new StoreInstallError({ plugin: `${name}@${version}` }, `pnpm install failed: ${message}`);
+    }
+
+    if (linkedPlatformCache) {
+      await fs.unlink(syntheticKbDir);
     }
 
     const packageRoot = await resolveInstalledPackageRoot(projectDir, name, version);
