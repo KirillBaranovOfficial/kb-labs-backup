@@ -35,6 +35,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/impact-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "zod": "^3.25.76"

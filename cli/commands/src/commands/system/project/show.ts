@@ -4,7 +4,12 @@ import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
 import type { ProjectSummary } from '@kb-labs/core-contracts';
-import { projectErrorEnvelope, showProject } from '@kb-labs/core-project-registry';
+import {
+  findProjectContainingPath,
+  projectErrorEnvelope,
+  ProjectRegistryError,
+  showProject,
+} from '@kb-labs/core-project-registry';
 import { failWithEnvelope, openRegistry, projectRef } from './project-support';
 
 type ShowFlags = {
@@ -34,7 +39,21 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
   async handler(ctx, argv, flags) {
     const json = Boolean(flags.json);
     try {
-      const project = await showProject(openRegistry(), projectRef(argv[0], getContextCwd(ctx)));
+      const registry = openRegistry();
+      const cwd = getContextCwd(ctx);
+      let ref = argv[0] === undefined ? undefined : projectRef(argv[0], cwd);
+      if (ref === undefined) {
+        const match = await findProjectContainingPath(registry, cwd);
+        if (!match) {
+          throw new ProjectRegistryError(
+            'KB_PROJECT_UNKNOWN',
+            `No registered project contains "${cwd}".`,
+            { path: cwd },
+          );
+        }
+        ref = match.project.id;
+      }
+      const project = await showProject(registry, ref);
       if (json) {
         ctx.ui?.json({ ok: true, project });
       } else {

@@ -21,6 +21,8 @@ export {
   PROJECT_REGISTRY_FILE,
   PROJECT_REGISTRY_SCHEMA_VERSION,
   createProjectRegistry,
+  findProjectContainingPath,
+  findRegisteredProjectContainingPathSync,
   parseRegistryFile,
   projectStateDir,
   resolveKbHome,

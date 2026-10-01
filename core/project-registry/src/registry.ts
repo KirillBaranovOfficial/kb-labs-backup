@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type {
   AddProjectOptions,
   AddProjectResult,
@@ -323,4 +323,54 @@ export function createProjectRegistry(options: ProjectRegistryOptions = {}): IPr
       return projectStateDir(root, id);
     },
   };
+}
+
+/** Find the most specific registered project containing a working directory. */
+export async function findProjectContainingPath(
+  registry: IProjectRegistry,
+  cwd: string,
+): Promise<ProjectView | undefined> {
+  let canonicalCwd: string;
+  try {
+    canonicalCwd = await fs.realpath(cwd);
+  } catch {
+    canonicalCwd = resolve(cwd);
+  }
+  const projects = await registry.list();
+  return projects
+    .filter(({ project }) => {
+      const rel = relative(project.path, canonicalCwd);
+      return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+    })
+    .sort((left, right) => right.project.path.length - left.project.path.length)[0];
+}
+
+/** Synchronous registry lookup for legacy synchronous plugin entry points. */
+export function findRegisteredProjectContainingPathSync(
+  cwd: string,
+  options: ProjectRegistryOptions = {},
+): ProjectRecord | undefined {
+  const root = options.root ? resolve(options.root) : resolveKbHome(options.env);
+  const filePath = join(root, PROJECT_REGISTRY_FILE);
+  let registryFile: ProjectRegistryFile;
+  try {
+    registryFile = parseRegistryFile(readFileSync(filePath, 'utf8'), filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
+  let canonicalCwd: string;
+  try {
+    canonicalCwd = realpathSync(cwd);
+  } catch {
+    canonicalCwd = resolve(cwd);
+  }
+  return registryFile.projects
+    .filter(({ path: projectPath }) => {
+      const rel = relative(projectPath, canonicalCwd);
+      return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+    })
+    .sort((left, right) => right.path.length - left.path.length)[0];
 }

@@ -2138,6 +2138,9 @@ importers:
 
   core/workspace:
     dependencies:
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../project-registry
       '@kb-labs/core-sys':
         specifier: workspace:*
         version: link:../sys
@@ -3610,6 +3613,9 @@ importers:
 
   plugins/impact/core:
     dependencies:
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../../core/project-registry
       '@kb-labs/impact-contracts':
         specifier: workspace:*
         version: link:../contracts
