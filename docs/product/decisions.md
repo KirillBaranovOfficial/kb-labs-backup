@@ -97,3 +97,16 @@ There is no retention policy for run history yet.
 ### Developer tooling comes last
 
 kb-dev and kb-devkit are functionally solid and need cases and tests only. kb-deploy and kb-monitor need stabilization. Deployment and container cases (S-004, S-034 to S-038) stay planned and outside the release until that phase.
+
+## 2026-10-02
+
+### Platform members: core plugins only
+
+The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.
+Cases: S-006, S-008, S-010, S-160.
+
+### One storage default
+
+`@kb-labs/adapters-fs` is the only adapter that declares itself the default for `storage`. `@kb-labs/data-store` stays installable and bindable, but two defaults made install resolution ambiguous.
+Cases: S-047, S-048.
+

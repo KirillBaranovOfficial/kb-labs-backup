@@ -127,13 +127,13 @@
       "id": "review",
       "pkg": "@kb-labs/review-entry",
       "description": "AI code review",
-      "default": true
+      "default": false
     },
     {
       "id": "commit",
       "pkg": "@kb-labs/commit-entry",
       "description": "AI commit generation",
-      "default": true
+      "default": false
     },
     {
       "id": "scaffold",
@@ -145,19 +145,19 @@
       "id": "release",
       "pkg": "@kb-labs/release-manager-cli",
       "description": "Release manager — plan, publish, workflow templates",
-      "default": true
+      "default": false
     },
     {
       "id": "quality",
       "pkg": "@kb-labs/quality-entry",
       "description": "Code quality, architecture analysis",
-      "default": true
+      "default": false
     },
     {
       "id": "steward",
       "pkg": "@kb-labs/steward-entry",
       "description": "Project memory and daily review",
-      "default": true
+      "default": false
     }
   ],
   "binaries": [

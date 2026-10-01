@@ -84,8 +84,13 @@ const adapterOptions = JSON.stringify({
       .map(({ id, port }) => [id, { url: `http://127.0.0.1:${port}` }])),
   },
 });
-const platformMembers = (registryManifest.core ?? [])
-  .map(item => item.name)
+// Core plugins (`default: true`: workflow, marketplace, scaffold) ship as
+// platform members, as release.flows.platform.platformMembers does for the
+// real release. Every other plugin comes from the marketplace.
+const platformMembers = [
+  ...(registryManifest.core ?? []).map(item => item.name),
+  ...(registryManifest.plugins ?? []).filter(item => item.default === true).map(item => item.pkg),
+]
   .filter(name => name && name !== '@kb-labs/core-runtime' && name !== '@kb-labs/sdk')
   .filter(name => !adapterPackageNames.has(name) && !name.startsWith('@kb-labs/adapters-') && name !== '@kb-labs/data-store')
   .join(',');
