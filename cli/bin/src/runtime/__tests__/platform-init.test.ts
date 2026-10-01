@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { initializePlatform } from '../platform-init';
+import { initializePlatform, hasExplicitDevelopmentMode } from '../platform-init';
 import { platform } from '@kb-labs/core-runtime';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -233,5 +233,14 @@ describe('Platform Initialization (Real)', () => {
 
       expect(result.platformConfig).toBeDefined();
     });
+  });
+});
+
+describe('platform development mode marker', () => {
+  it('activates only for the explicit platform.mode development marker', () => {
+    expect(hasExplicitDevelopmentMode({ platform: { mode: 'development' } })).toBe(true);
+    expect(hasExplicitDevelopmentMode({ platform: { mode: 'production' } })).toBe(false);
+    expect(hasExplicitDevelopmentMode({ profile: { products: { release: { workspace: { type: 'pnpm', root: '.' } } } } })).toBe(false);
+    expect(hasExplicitDevelopmentMode(undefined)).toBe(false);
   });
 });

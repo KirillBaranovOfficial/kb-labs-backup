@@ -138,6 +138,11 @@ kb-dev and kb-devkit are functionally solid and need cases and tests only. kb-de
 All TypeScript and Go CLIs and HTTP/MCP machine results use `{ok:true,data,meta?}` for success and `{ok:false,error}` for failure. Failures use the existing platform `ErrorEnvelope` and `KB_*` catalog; unknown failures use `KB_RUNTIME_UNEXPECTED` with a correlation ID and a stack only in structured logs. CLI exit codes are shared: 0 for a normally completed command call, 2 for invalid usage/input, and 1 for other operation failures. A normal return, including void, verifies completion of the command call only; any product postcondition is owned by its case. Human errors use one renderer for code, message, known cause, and next step. Registry-driven coverage is required across commands, HTTP routes, MCP tools, and Studio error boundaries.
 Cases: S-203.
 
+### Workspace CLI resolves configured adapters from the workspace
+
+In a monorepo development checkout, configured adapter packages resolve directly from pnpm workspace package roots only when the platform-owned config contains `"platform": { "mode": "development" }`. This explicit marker is absent from kb-create's rendered installed-platform config; a retained `pnpm-workspace.yaml` does not enable workspace resolution. The root package does not mirror every adapter binding as a dependency, because that duplicates `.kb/kb.config.jsonc` and can drift. Adapter classification follows the KB manifest, and only configured platform adapters resolve from the platform workspace. A bound invalid package returns typed `KB_HOST_ADAPTER_UNAVAILABLE`; if the package is absent from both workspace and lock, the error directs the operator to `kb marketplace install <package> --scope platform`. An unbuilt workspace adapter returns the build command `pnpm build`.
+Cases: S-179.5, S-179.6, S-179.7, S-179.8, S-179.9, S-179.10, S-179.11, S-179.12.
+
 ## 2026-10-02
 
 ### Platform CLI authentication gate

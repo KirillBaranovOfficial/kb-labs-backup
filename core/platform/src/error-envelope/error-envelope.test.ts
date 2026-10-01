@@ -163,6 +163,30 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(envelope.details).toEqual({ slot: 'cache', reason: 'load-failed' });
   });
 
+  // case: S-179.6
+  it('preserves the workspace adapter build hint and command on a typed startup error', () => {
+    const envelope = toErrorEnvelope(new AdapterUnavailableError(
+      'storage',
+      'load-failed',
+      'The configured workspace adapter is not built.',
+      undefined,
+      {
+        userMessage: 'Workspace adapter package "@kb-labs/adapters-fs" has not been built.',
+        hint: 'Build the workspace adapter packages, then retry the command.',
+        action: {
+          id: 'build-workspace-adapters',
+          label: 'Build workspace adapters',
+          command: 'pnpm build',
+        },
+      },
+    ));
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+    expect(envelope.code).toBe('KB_HOST_ADAPTER_UNAVAILABLE');
+    expect(envelope.message).toBe('Workspace adapter package "@kb-labs/adapters-fs" has not been built.');
+    expect(envelope.hint).toBe('Build the workspace adapter packages, then retry the command.');
+    expect(envelope.actions?.[0]?.command).toBe('pnpm build');
+  });
+
   it('wraps unknown values as KB_RUNTIME_UNEXPECTED', () => {
     const envelope = toErrorEnvelope('boom');
     expect(envelope.code).toBe('KB_RUNTIME_UNEXPECTED');

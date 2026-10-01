@@ -311,6 +311,8 @@ export interface CoreFeaturesConfig {
 export interface PlatformDirConfig {
   /** Absolute or `~`-relative path to the platform workspace. */
   dir?: string;
+  /** Explicitly enables development workspace package resolution. */
+  mode?: "development" | "production";
 }
 
 /**

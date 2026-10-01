@@ -37,6 +37,10 @@ export interface CreateEnvelopeOptions {
   correlationId?: string;
   actions?: ErrorAction[];
   docs?: string;
+  /** Override a catalog hint when a typed error carries a more specific next step. */
+  hint?: string;
+  /** Override a catalog message when a typed error carries a more specific explanation. */
+  message?: string;
 }
 
 /** Builds an envelope from a catalog code. Throws for a code that is not in the catalog. */
@@ -52,8 +56,8 @@ export function createErrorEnvelope(code: string, options: CreateEnvelopeOptions
     stage: entry.stage,
     severity: entry.severity,
     retryable: entry.retryable,
-    message: renderTemplate(entry.message, details),
-    hint: renderTemplate(entry.hint, details),
+    message: options.message ?? renderTemplate(entry.message, details),
+    hint: options.hint ?? renderTemplate(entry.hint, details),
   };
   if (options.cause) {
     envelope.cause = options.cause;

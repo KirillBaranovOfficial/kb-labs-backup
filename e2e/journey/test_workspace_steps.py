@@ -19,7 +19,7 @@ class WorkspaceCliStepsTest(unittest.TestCase):
         result = journey.result()
         claims = {claim["claimId"] for claim in result.case_run["claims"]}
         self.assertEqual(result.status, "PASS", result.first_failure)
-        self.assertEqual(claims, {"S-179.2", "S-179.3", "S-179.4"})
+        self.assertEqual(claims, {"S-179.2", "S-179.3", "S-179.4", "S-179.5"})
 
 
 if __name__ == "__main__":

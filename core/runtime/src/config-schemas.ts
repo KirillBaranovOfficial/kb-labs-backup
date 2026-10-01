@@ -189,6 +189,7 @@ export const PlatformSectionSchema = z.union([
   z
     .object({
       dir: z.string().min(1).optional(),
+      mode: z.enum(["development", "production"]).optional(),
       adapters: PlatformAdaptersSchema.optional(),
       adapterOptions: PlatformAdapterOptionsSchema.optional(),
       core: CoreFeaturesConfigSchema.optional(),

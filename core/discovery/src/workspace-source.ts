@@ -11,12 +11,40 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { glob } from 'glob';
 import { parse as parseYaml } from 'yaml';
+import { pathToFileURL } from 'node:url';
 
 export interface WorkspaceCandidate {
   /** `name` from package.json */
   packageName: string;
   /** Absolute package directory */
   packageRoot: string;
+}
+
+/** Load the adapter manifest using the same `implements` discriminator as marketplace. */
+export async function loadAdapterManifest(packageRoot: string): Promise<{
+  implements?: string;
+  requires?: { adapters?: Array<string | { id: string; alias?: string }> };
+} | null> {
+  try {
+    const rawPackage = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf-8')) as {
+      kb?: { manifest?: unknown };
+      kbLabs?: { manifest?: unknown };
+    };
+    const manifestField = rawPackage.kb?.manifest ?? rawPackage.kbLabs?.manifest;
+    const distPath = typeof manifestField === 'string'
+      ? path.resolve(packageRoot, manifestField)
+      : path.join(packageRoot, 'dist', 'index.js');
+    const relativePath = path.relative(path.resolve(packageRoot), distPath);
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {return null;}
+    await fs.access(distPath);
+    const mod = await import(pathToFileURL(distPath).href);
+    if (mod.manifest && typeof mod.manifest === 'object' && mod.manifest.implements) {
+      return mod.manifest as { implements: string };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 const IGNORED_DIRS = ['.kb/**', '**/node_modules/**'];
@@ -64,17 +92,7 @@ async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | nu
   return built ? { packageName: pkg.name, packageRoot } : null;
 }
 
-/**
- * Enumerate the workspace packages under `root` that declare a plugin manifest.
- *
- * - `pnpm-workspace.yaml` present: every package matched by its `packages` globs
- *   (negated `!` patterns are honoured).
- * - absent: the root package itself, so a single plugin repository is also a
- *   development source.
- *
- * Results are sorted by package root for a deterministic order.
- */
-export async function findWorkspaceCandidates(root: string): Promise<WorkspaceCandidate[]> {
+async function workspacePackageRoots(root: string): Promise<string[]> {
   const absRoot = path.resolve(root);
 
   let patterns: string[] | null = null;
@@ -90,13 +108,11 @@ export async function findWorkspaceCandidates(root: string): Promise<WorkspaceCa
   }
 
   if (!patterns) {
-    const single = await toCandidate(absRoot);
-    return single ? [single] : [];
+    return [absRoot];
   }
 
   const include = patterns.filter(p => !p.startsWith('!'));
   const exclude = patterns.filter(p => p.startsWith('!')).map(p => `${p.slice(1).replace(/\/$/, '')}/**`);
-
   const roots = new Set<string>();
   for (const pattern of include) {
     const files = await glob(path.posix.join(pattern.replace(/\/$/, ''), 'package.json'), {
@@ -107,7 +123,29 @@ export async function findWorkspaceCandidates(root: string): Promise<WorkspaceCa
       roots.add(path.dirname(path.join(absRoot, file)));
     }
   }
+  return [...roots].sort();
+}
 
-  const candidates = await Promise.all([...roots].sort().map(toCandidate));
+/** Enumerate every package matched by a workspace, whether built or not. */
+export async function findWorkspacePackages(root: string): Promise<WorkspaceCandidate[]> {
+  const packages = await Promise.all((await workspacePackageRoots(root)).map(async packageRoot => {
+    const pkg = await readPackageJson(path.join(packageRoot, 'package.json'));
+    return pkg && typeof pkg.name === 'string' ? { packageName: pkg.name, packageRoot } : null;
+  }));
+  return packages.filter((candidate): candidate is WorkspaceCandidate => candidate !== null);
+}
+
+/**
+ * Enumerate the workspace packages under `root` that declare a plugin manifest.
+ *
+ * - `pnpm-workspace.yaml` present: every package matched by its `packages` globs
+ *   (negated `!` patterns are honoured).
+ * - absent: the root package itself, so a single plugin repository is also a
+ *   development source.
+ *
+ * Results are sorted by package root for a deterministic order.
+ */
+export async function findWorkspaceCandidates(root: string): Promise<WorkspaceCandidate[]> {
+  const candidates = await Promise.all((await workspacePackageRoots(root)).map(toCandidate));
   return candidates.filter((c): c is WorkspaceCandidate => c !== null);
 }

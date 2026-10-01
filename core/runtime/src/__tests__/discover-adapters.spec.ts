@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { discoverAdapters } from '../discover-adapters.js';
+import { AdapterUnavailableError } from '@kb-labs/core-platform';
 
 describe('discoverAdapters (lock-based)', () => {
   let tmpDir: string;
@@ -104,6 +105,146 @@ describe('discoverAdapters (lock-based)', () => {
     const instance = adapter.createAdapter({ key: 'value' }) as Record<string, unknown>;
     expect((instance as Record<string, unknown>).type).toBe('test');
     expect((instance.config as Record<string, unknown>).key).toBe('value');
+  });
+
+  // case: S-179.5
+  it('loads a built adapter directly from its workspace package without a marketplace lock', async () => {
+    const packageRoot = path.join(tmpDir, 'adapters', 'sqlite');
+    const distDir = path.join(packageRoot, 'dist');
+    await fs.mkdir(distDir, { recursive: true });
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
+    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-sqlite' }));
+    await fs.writeFile(path.join(distDir, 'index.js'), 'export const manifest = { implements: "IDocumentDatabase" }; export function createAdapter() { return {}; }');
+
+    const result = await discoverAdapters(tmpDir, undefined, {
+      development: true,
+      configuredPackages: [{ packageName: '@kb-labs/adapters-sqlite', slot: 'documentDatabase' }],
+    });
+
+    expect(result.get('@kb-labs/adapters-sqlite')).toMatchObject({ packageName: '@kb-labs/adapters-sqlite', pkgRoot: packageRoot });
+  });
+
+  it('classifies configured workspace adapters from their declared manifest, not package names', async () => {
+    const adapterRoot = path.join(tmpDir, 'packages', 'storage');
+    await writeWorkspacePackage(tmpDir, adapterRoot, '@example/storage', 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
+
+    const result = await discoverAdapters(tmpDir, undefined, {
+      development: true,
+      configuredPackages: [{ packageName: '@example/storage', slot: 'storage' }],
+    });
+
+    expect(result.has('@example/storage')).toBe(true);
+  });
+
+  // case: S-179.11
+  it('rejects a configured package with an adapter-like name when its manifest does not classify it as an adapter', async () => {
+    const impostorRoot = path.join(tmpDir, 'packages', 'impostor');
+    await writeWorkspacePackage(tmpDir, impostorRoot, '@kb-labs/adapters-not-an-adapter', 'export const manifest = { name: "not an adapter" }; export function createAdapter() { return {}; }');
+
+    await expect(discoverAdapters(tmpDir, undefined, {
+      development: true,
+      configuredPackages: [{ packageName: '@kb-labs/adapters-not-an-adapter', slot: 'logger' }],
+    })).rejects.toMatchObject({
+      name: 'AdapterUnavailableError',
+      slot: 'logger',
+      hint: expect.stringContaining('platform.adapters.logger'),
+    });
+  });
+
+  it('loads only configured workspace packages', async () => {
+    const configuredRoot = path.join(tmpDir, 'packages', 'configured');
+    const unrelatedRoot = path.join(tmpDir, 'packages', 'unrelated');
+    await writeWorkspacePackage(tmpDir, configuredRoot, '@example/configured', 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
+    await writeWorkspacePackage(tmpDir, unrelatedRoot, '@kb-labs/adapters-unrelated', 'export const manifest = { implements: "ICache" }; export function createAdapter() { throw new Error("must not import unconfigured adapter"); }');
+
+    const result = await discoverAdapters(tmpDir, undefined, {
+      development: true,
+      configuredPackages: [{ packageName: '@example/configured', slot: 'storage' }],
+    });
+
+    expect([...new Set([...result.values()].map(adapter => adapter.packageName))]).toEqual(['@example/configured']);
+  });
+
+  // case: S-179.11
+  it('fails when a configured workspace package manifest has no implements value', async () => {
+    const packageRoot = path.join(tmpDir, 'packages', 'invalid');
+    await writeWorkspacePackage(tmpDir, packageRoot, '@example/invalid', 'export const manifest = { name: "not an adapter" }; export function createAdapter() { return {}; }');
+
+    await expect(discoverAdapters(tmpDir, undefined, {
+      development: true,
+      configuredPackages: [{ packageName: '@example/invalid', slot: 'storage' }],
+    })).rejects.toMatchObject({
+      name: 'AdapterUnavailableError',
+      slot: 'storage',
+      reason: 'load-failed',
+      message: expect.stringContaining('@example/invalid'),
+      hint: expect.stringContaining('platform.adapters'),
+      action: { command: 'node ./cli/bin/dist/bin.js qa cases validate --json' },
+    });
+  });
+
+  // case: S-179.11
+  it('fails when a configured workspace adapter does not export createAdapter', async () => {
+    const packageRoot = path.join(tmpDir, 'packages', 'invalid');
+    await writeWorkspacePackage(tmpDir, packageRoot, '@example/invalid', 'export const manifest = { implements: "IStorage" };');
+
+    await expect(discoverAdapters(tmpDir, undefined, {
+      development: true,
+      configuredPackages: [{ packageName: '@example/invalid', slot: 'storage' }],
+    })).rejects.toMatchObject({
+      name: 'AdapterUnavailableError',
+      slot: 'storage',
+      reason: 'load-failed',
+      hint: expect.stringContaining('platform.adapters.storage'),
+      action: { command: 'node ./cli/bin/dist/bin.js qa cases validate --json' },
+    });
+  });
+
+  it('does not activate workspace packages in an installed platform with pnpm-workspace.yaml', async () => {
+    const adapterRoot = path.join(tmpDir, 'packages', 'built');
+    const packageName = '@kb-labs/adapters-installed-workspace';
+    await writeWorkspacePackage(tmpDir, adapterRoot, packageName, 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
+
+    const result = await discoverAdapters(tmpDir, undefined, {
+      development: false,
+      configuredPackages: [{ packageName, slot: 'storage' }],
+    });
+
+    expect(result.has(packageName)).toBe(false);
+  });
+
+  it('never resolves a workspace adapter from the project root', async () => {
+    const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-workspace-'));
+    try {
+      const projectPackage = '@kb-labs/adapters-project';
+      await writeWorkspacePackage(projectRoot, path.join(projectRoot, 'packages', 'project'), projectPackage, 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
+      const result = await discoverAdapters(tmpDir, projectRoot, {
+        development: true,
+        configuredPackages: [{ packageName: projectPackage, slot: 'storage' }],
+      });
+      expect(result.has(projectPackage)).toBe(false);
+    } finally {
+      await fs.rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a configured unbuilt workspace adapter with a typed build hint', async () => {
+    const packageRoot = path.join(tmpDir, 'packages', 'unbuilt');
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@example/unbuilt', kb: { manifest: './dist/manifest.js' }, adapter: './dist/manifest.js' }));
+
+    const failure = discoverAdapters(tmpDir, undefined, {
+      development: true,
+      configuredPackages: [{ packageName: '@example/unbuilt', slot: 'storage' }],
+    });
+    await expect(failure).rejects.toBeInstanceOf(AdapterUnavailableError);
+    await expect(failure).rejects.toMatchObject({
+      slot: 'storage',
+      reason: 'load-failed',
+      hint: expect.stringContaining('Build'),
+      action: { command: 'pnpm build' },
+    });
   });
 });
 
@@ -232,4 +373,16 @@ async function buildAdapter(
       provides: ['adapter'],
     },
   });
+}
+
+async function writeWorkspacePackage(workspaceRoot: string, packageRoot: string, packageName: string, indexSource: string): Promise<void> {
+  const distDir = path.join(packageRoot, 'dist');
+  await fs.mkdir(distDir, { recursive: true });
+  await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+    name: packageName,
+    kb: { manifest: './dist/manifest.js' },
+  }));
+  await fs.writeFile(path.join(distDir, 'manifest.js'), indexSource.replace('createAdapter', 'unusedFactory'));
+  await fs.writeFile(path.join(distDir, 'index.js'), indexSource);
+  await fs.writeFile(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
 }

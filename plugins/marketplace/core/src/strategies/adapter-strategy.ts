@@ -3,10 +3,7 @@
  * Strategy for adapters — detects AdapterManifest, validates dependencies.
  */
 
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import type { EntityKind } from '@kb-labs/core-discovery';
+import { loadAdapterManifest, type EntityKind } from '@kb-labs/core-discovery';
 import type {
   EntityKindStrategy,
   MarketplaceServiceAPI,
@@ -64,47 +61,5 @@ export class AdapterStrategy implements EntityKindStrategy {
         `[marketplace] Removing adapter "${packageId}" — verify no other adapters depend on it`,
       );
     }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-interface AdapterManifestLike {
-  id?: string;
-  type?: 'core' | 'extension' | 'proxy';
-  implements?: string;
-  requires?: {
-    adapters?: Array<string | { id: string; alias?: string }>;
-  };
-}
-
-async function loadAdapterManifest(packageRoot: string): Promise<AdapterManifestLike | null> {
-  try {
-    let distPath = path.join(packageRoot, 'dist', 'index.js');
-    try {
-      const rawPackage = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf-8')) as {
-        kb?: { manifest?: unknown };
-        kbLabs?: { manifest?: unknown };
-      };
-      const manifestField = rawPackage.kb?.manifest ?? rawPackage.kbLabs?.manifest;
-      if (typeof manifestField === 'string') {
-        distPath = path.resolve(packageRoot, manifestField);
-      }
-    } catch {
-      // Packages without a manifest field expose the adapter manifest from dist/index.js.
-    }
-
-    const relativePath = path.relative(path.resolve(packageRoot), distPath);
-    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) { return null; }
-    await fs.access(distPath);
-    const mod = await import(pathToFileURL(distPath).href);
-    if (mod.manifest && typeof mod.manifest === 'object' && mod.manifest.implements) {
-      return mod.manifest as AdapterManifestLike;
-    }
-    return null;
-  } catch {
-    return null;
   }
 }

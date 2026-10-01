@@ -15,7 +15,10 @@ import path from 'node:path';
 import {
   readMarketplaceLock,
   DiagnosticCollector,
+  findWorkspacePackages,
+  loadAdapterManifest,
 } from '@kb-labs/core-discovery';
+import { configuredWorkspaceAdapterInvalidError, configuredWorkspaceAdapterNotBuiltError } from './adapter-module-loader.js';
 
 /**
  * Discovered adapter info
@@ -99,6 +102,47 @@ async function loadAdaptersFromLock(
   }
 }
 
+/** Load built adapter packages from the pnpm workspace development source. */
+async function loadWorkspaceAdapters(
+  root: string,
+  discovered: Map<string, DiscoveredAdapter>,
+  configuredPackages: readonly { packageName: string; slot: string }[],
+): Promise<void> {
+  const packages = await findWorkspacePackages(root);
+  const requested = new Map(configuredPackages.map(adapter => [adapter.packageName, adapter.slot]));
+  for (const [packageName, slot] of requested) {
+    const candidate = packages.find(pkg => pkg.packageName === packageName);
+    if (!candidate) {continue;}
+    const distPath = path.join(candidate.packageRoot, 'dist', 'index.js');
+    try {
+      await fs.access(distPath);
+    } catch {
+      throw configuredWorkspaceAdapterNotBuiltError(slot, packageName);
+    }
+    const manifest = await loadAdapterManifest(candidate.packageRoot);
+    if (!manifest?.implements) {
+      throw configuredWorkspaceAdapterInvalidError(slot, packageName, 'its KB adapter manifest is missing the implements value');
+    }
+    const module = await loadAdapterModule(distPath);
+    if (typeof module.createAdapter !== 'function') {
+      throw configuredWorkspaceAdapterInvalidError(slot, packageName, 'its module does not export createAdapter');
+    }
+    discovered.set(packageName, {
+      packageName,
+      pkgRoot: candidate.packageRoot,
+      createAdapter: module.createAdapter as (config?: unknown) => unknown,
+      module,
+    });
+  }
+}
+
+export interface WorkspaceAdapterDiscoveryOptions {
+  /** True only when the platform config identifies this checkout as development mode. */
+  development: boolean;
+  /** Adapter package paths configured by the platform, including subpath entries. */
+  configuredPackages: readonly { packageName: string; slot: string }[];
+}
+
 /**
  * Discover adapters from marketplace.lock(s).
  * Reads entries with `primaryKind === 'adapter'` and loads their modules.
@@ -108,9 +152,13 @@ async function loadAdaptersFromLock(
  */
 export async function discoverAdapters(
   platformRoot: string,
+  workspaceOptions?: WorkspaceAdapterDiscoveryOptions,
 ): Promise<Map<string, DiscoveredAdapter>> {
   const discovered = new Map<string, DiscoveredAdapter>();
   await loadAdaptersFromLock(platformRoot, discovered);
+  if (workspaceOptions?.development) {
+    await loadWorkspaceAdapters(platformRoot, discovered, workspaceOptions.configuredPackages);
+  }
 
   return discovered;
 }

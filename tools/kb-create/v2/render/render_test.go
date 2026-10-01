@@ -155,6 +155,24 @@ func TestBuildPreservesResolvedAdapterExportSubpath(t *testing.T) {
 	}
 }
 
+// case: S-179.10
+func TestBuildNeverRendersTheWorkspaceDevelopmentModeMarker(t *testing.T) {
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = []contracts.ConfigPatch{{Path: "/platform/mode", JSON: `"development"`, Owner: "manifest:platform.mode"}}
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	platformConfig, _ := config["platform"].(map[string]any)
+	if mode, ok := platformConfig["mode"]; ok {
+		t.Fatalf("installed platform config must not contain workspace development mode, got %v", mode)
+	}
+}
+
 func TestWriteProducesTheRuntimeConfigAndNoServiceManagerFile(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Write(testPlan(root)); err != nil {

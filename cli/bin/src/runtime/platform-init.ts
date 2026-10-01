@@ -31,6 +31,13 @@ const CLI_LIFECYCLE_HOOK_ID = "cli-runtime";
 const LOG_SERVICE = "platform-init";
 let lifecycleHooksRegistered = false;
 
+export function hasExplicitDevelopmentMode(config: Record<string, unknown> | undefined): boolean {
+  if (!config) { return false; }
+  const platformConfig = config.platform;
+  return Boolean(platformConfig && typeof platformConfig === "object" &&
+    (platformConfig as Record<string, unknown>).mode === "development");
+}
+
 function lifecycleLogger() {
   return createContextLogger(platform.logger, {
     applicationId: "kb",
@@ -177,6 +184,9 @@ export async function initializePlatform(
         platformRoot !== projectRoot ? platformRoot : undefined,
         makeAssemblyHook(() =>
           process.env.KB_DEBUG === "true" ? platform.logger : undefined,
+        ),
+        hasExplicitDevelopmentMode(
+          loadResult.sameLocation ? rawConfig : loadResult.rawPlatformConfig,
         ),
       );
 
