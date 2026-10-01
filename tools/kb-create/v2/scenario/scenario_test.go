@@ -372,3 +372,21 @@ func TestValidateCatalogChecksTheCurrentBuiltinScenarioSet(t *testing.T) {
 		t.Fatal("a scenario referencing an absent plugin must fail validation")
 	}
 }
+
+// case: S-054.15
+func TestValidateCatalogAllowsMissingOptionalSecretRequirement(t *testing.T) {
+	source := source()
+	source.Platforms[0].Config = append(source.Platforms[0].Config, catalog.ConfigRequirement{
+		ID: "openai.apiKey", Path: "/platform/adapterOptions/llm/apiKey", Secret: true, Required: true,
+		Optional: true, Severity: "warning", Env: "OPENAI_API_KEY", Services: []string{"gateway"},
+		Action: "set OPENAI_API_KEY to enable LLM features",
+	})
+	if err := ValidateCatalog(source); err != nil {
+		t.Fatalf("built-in scenarios should resolve without optional OpenAI credentials: %v", err)
+	}
+	source.Platforms[0].Config[len(source.Platforms[0].Config)-1].Optional = false
+	source.Platforms[0].Config[len(source.Platforms[0].Config)-1].Severity = "error"
+	if err := ValidateCatalog(source); err == nil || !strings.Contains(err.Error(), "required secret input openai.apiKey is missing") {
+		t.Fatalf("missing required secret should fail built-in scenario validation, got %v", err)
+	}
+}

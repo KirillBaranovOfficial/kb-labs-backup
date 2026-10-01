@@ -140,6 +140,22 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
 
     journey.step("list fresh-install built-in adapter defaults", "adapter", assert_default_list, cases=["S-054.1"])
 
+    def assert_optional_openai_requirement_in_install_plan() -> None:
+        receipt_path = platform_root / ".kb" / "v2" / "receipt.json"
+        if not receipt_path.is_file():
+            raise RuntimeError("fresh install did not write its V2 receipt")
+        receipt = json.loads(receipt_path.read_text())
+        artifacts = receipt.get("plan", {}).get("artifacts", [])
+        openai = next((artifact for artifact in artifacts if artifact.get("package") == "@kb-labs/adapters-openai"), None)
+        requirement = next((item for item in openai.get("config", []) if item.get("id") == "openai.apiKey"), None) if openai else None
+        if not requirement or requirement.get("optional") is not True or requirement.get("severity") != "warning" or requirement.get("action") != "set OPENAI_API_KEY to enable LLM features":
+            raise RuntimeError("fresh install plan did not retain the optional OpenAI credential warning metadata")
+        if any(patch.get("environment") == "OPENAI_API_KEY" for patch in receipt.get("plan", {}).get("configPatches", [])):
+            raise RuntimeError("fresh install plan unexpectedly requires an OpenAI secret input")
+
+    journey.step("fresh install retains optional OpenAI warning metadata", "adapter",
+                 assert_optional_openai_requirement_in_install_plan, cases=["S-054.15"])
+
     def assert_installed_layout_cli_loads_defaults() -> None:
         rows = rows_for(project_a)
         if rows["storage"].get("implementation") != "@kb-labs/adapters-fs" or rows["storage"].get("mode") != "real":

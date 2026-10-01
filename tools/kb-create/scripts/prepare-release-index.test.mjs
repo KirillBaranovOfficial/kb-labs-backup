@@ -385,6 +385,19 @@ test('the requirements file is also honoured when shipped under dist/', () => {
   assert.deepEqual(member.config.map(item => item.id), ['gateway.access.mode']);
 });
 
+test('seals optional secret severity and action metadata for doctor warnings', () => {
+  const requirement = {
+    id: 'openai.apiKey', path: '/platform/adapterOptions/llm/apiKey', secret: true,
+    required: true, optional: true, severity: 'warning', env: 'OPENAI_API_KEY',
+    services: ['gateway'], action: 'set OPENAI_API_KEY to enable LLM features',
+  };
+  const { result, output } = prepareWithGateway({ 'kb-create.requirements.json': requirementsFile([...GATEWAY_REQUIREMENTS, requirement]) });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const index = JSON.parse(readFileSync(output, 'utf8'));
+  const member = index.platforms[0].members.find(item => item.package === '@kb-labs/gateway-app');
+  assert.deepEqual(member.config.find(item => item.id === requirement.id), requirement);
+});
+
 test('the candidate release declares the config required by the built-in install scenario', () => {
   const { result, output } = prepareWithGateway({});
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
