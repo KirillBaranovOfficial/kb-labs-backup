@@ -28,7 +28,6 @@ export const infoGroup = defineSystemCommandGroup('info', 'System information co
   hello,
   version,
   health,
-  diag,
 ]);
 
 /**
