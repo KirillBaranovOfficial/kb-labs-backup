@@ -27,6 +27,18 @@ export function validationError(
  * Call in catch blocks, right before `return { exitCode: 1 }`.
  */
 export function handleError(ctx: ErrorContext, err: unknown, isJson?: boolean): void {
+  const envelope = err !== null && typeof err === 'object' && 'envelope' in err
+    ? err.envelope
+    : null;
+  if (envelope !== null && typeof envelope === 'object' && 'code' in envelope && 'message' in envelope) {
+    const typedEnvelope = envelope as { code: string; message: string; hint?: string; [key: string]: unknown };
+    if (isJson) {
+      ctx.ui?.json?.({ ok: false, error: typedEnvelope });
+    } else {
+      ctx.ui?.error?.(`${typedEnvelope.code}: ${typedEnvelope.message}`, typedEnvelope.hint ? { hint: typedEnvelope.hint } : undefined);
+    }
+    return;
+  }
   const message = err instanceof Error ? err.message : String(err);
   const typed = err !== null && typeof err === 'object' && 'code' in err
     && typeof err.code === 'string'

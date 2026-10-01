@@ -180,6 +180,10 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
   const { name, visibleTools, permits, tenantId, resolvePlatform, analytics, collector } = args;
   const t0 = Date.now();
 
+  if (!permits) {
+    return toolError('KB_AUTH_REQUIRED', {});
+  }
+
   const tool = visibleTools.find((t) => t.name === name);
   if (!tool) {
     return toolError('KB_RUNTIME_MCP_UNKNOWN_TOOL', { tool: name });
@@ -188,8 +192,8 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
   // Authoritative gate — independent of the cached visibility list. When the
   // platform supplies a real policy, a tool that became forbidden after it was
   // cached is rejected here with no server code change.
-  if (!permits || !permits(tool.operationType, tool.pluginId)) {
-    return toolError('KB_RUNTIME_MCP_TOOL_FORBIDDEN', { tool: name });
+  if (!permits(tool.operationType, tool.pluginId)) {
+    return toolError('KB_AUTH_FORBIDDEN', { role: 'authorized' });
   }
 
   const validationError = argumentError(tool.inputSchema as JsonSchema, args.args);

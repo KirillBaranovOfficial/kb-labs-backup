@@ -36,6 +36,8 @@ import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
 import { createContextLogger } from "@kb-labs/core-platform";
+import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
+import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
 
 declare global {
   var __KB_PLATFORM_CONFIG__: PlatformConfig | undefined;
@@ -469,34 +471,58 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
     rawConfig?.execution as Record<string, unknown> | undefined
   )?.mode;
 
-  if (executionMode !== "in-process") {
-    const gatewayClient = await tryResolveGateway();
-    if (gatewayClient) {
-      return executeViaGateway(gatewayClient, {
-        commandId,
-        argv: p.actualRest,
-        flags: { ...p.global, ...p.flagsObj },
-        manifestCmd: p.manifestCmd,
-      });
-    }
-  }
-
-  const pluginExitCode = await executePlugin({
-    context: p.cliContext,
-    commandId,
-    argv: p.actualRest,
-    flags: { ...p.global, ...p.flagsObj },
-    manifestCmd: p.manifestCmd,
-    platform: p.platform,
-  });
-
-  if (pluginExitCode !== undefined) {
-    return pluginExitCode;
-  }
-
-  throw new Error(
-    `Plugin command "${commandPath}" is not available for execution. Ensure the command has a handler in its manifest.`,
+  const gatewayConfig = rawConfig?.gateway as Record<string, unknown> | undefined;
+  const accessConfig = gatewayConfig?.access as Record<string, unknown> | undefined;
+  const accessMode = accessConfig?.mode;
+  const pluginManifest = p.manifestCmd.v3Manifest ?? p.manifestCmd.manifest.manifestV2;
+  const declaration = pluginManifest?.cli?.commands.find(
+    (command) => command.path === commandPath,
   );
+  const gated = await dispatchWithPlatformAuthGate({
+    accessMode,
+    requiresPlatformAuth: declaration?.requiresPlatformAuth === true,
+    hasAuth: accessMode === 'secured' && declaration?.requiresPlatformAuth === true
+      ? await hasUsablePlatformAuth()
+      : true,
+  }, async () => {
+    if (executionMode !== "in-process") {
+      const gatewayClient = await tryResolveGateway();
+      if (gatewayClient) {
+        return executeViaGateway(gatewayClient, {
+          commandId,
+          argv: p.actualRest,
+          flags: { ...p.global, ...p.flagsObj },
+          manifestCmd: p.manifestCmd,
+        });
+      }
+    }
+
+    const pluginExitCode = await executePlugin({
+      context: p.cliContext,
+      commandId,
+      argv: p.actualRest,
+      flags: { ...p.global, ...p.flagsObj },
+      manifestCmd: p.manifestCmd,
+      platform: p.platform,
+    });
+
+    if (pluginExitCode !== undefined) {
+      return pluginExitCode;
+    }
+
+    throw new Error(
+      `Plugin command "${commandPath}" is not available for execution. Ensure the command has a handler in its manifest.`,
+    );
+  });
+  if ('error' in gated) {
+    if (p.global.json && typeof p.presenter.json === 'function') {
+      p.presenter.json({ ok: false, error: gated.error });
+    } else {
+      p.presenter.error(`${gated.error.code}: ${gated.error.message} ${gated.error.hint}`);
+    }
+    return 1;
+  }
+  return gated.value;
 }
 
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";

@@ -74,7 +74,7 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
             raise AssertionError(f"admin CLI login failed: {' '.join(login.stdout.split())[-400:]}")
         _json_cli(["workflow", "defs", "list", "--json"], env=env, cwd=project)
 
-    journey.step("secured workflow authentication", "workflow", verify_auth, cases=["S-007.4"])
+    journey.step("secured workflow authentication", "workflow", verify_auth, cases=["S-007.4", "S-041.7", "S-041.8"])
 
 
 def _logs(run_id: str, *, env: dict[str, str], cwd: Path) -> str:

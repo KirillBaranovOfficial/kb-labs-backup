@@ -93,7 +93,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
             raise RuntimeError("unauthenticated marketplace list did not return KB_AUTH_REQUIRED with the login hint")
 
     journey.step("secured marketplace requires a saved CLI session", "marketplace",
-                 assert_auth_required, cases=["S-010.6"])
+                 assert_auth_required, cases=["S-041.7"])
     if journey.steps[-1].status != "PASS":
         return
 
@@ -113,6 +113,16 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     session = auth_status.get("session")
     if not isinstance(session, dict) or session.get("authenticated") is not True:
         raise RuntimeError("secured marketplace CLI login did not save a user session")
+
+    command = ["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"]
+    resumed = _run(command, cwd=project, env=env, runner=runner)
+    try:
+        payload = json.loads(resumed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("authenticated marketplace list did not return JSON") from error
+    failure = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(failure, dict) and failure.get("code") == "KB_AUTH_REQUIRED":
+        raise RuntimeError("authenticated marketplace list still returned KB_AUTH_REQUIRED")
 
 
 def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: str,

@@ -16,8 +16,7 @@ import type {
 import { useEnv } from '@kb-labs/sdk';
 import { deriveProjectId } from '@kb-labs/core-project-registry';
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
-import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
-import type { GatewayCredentials, SessionCredentials } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 
 /** Workflow run summary returned by GET /api/v1/runs */
 export interface WorkflowRunSummary {
@@ -134,47 +133,6 @@ export interface DaemonClientOptions {
   projectId?: string;
 }
 
-interface WorkflowAuth {
-  gatewayUrl: string;
-  accessToken: string;
-  refresh: () => Promise<WorkflowAuth>;
-}
-
-export class WorkflowAuthRequiredError extends Error {
-  readonly code = 'KB_AUTH_REQUIRED';
-  readonly hint = 'Run "kb auth login".';
-
-  constructor() {
-    super('Workflow access requires a login.');
-    this.name = 'WorkflowAuthRequiredError';
-  }
-}
-
-async function loadWorkflowAuth(): Promise<WorkflowAuth | null> {
-  const sessions = new SessionManager();
-  const session = await sessions.load();
-  if (session) {
-    const current = sessions.isExpired(session) ? await sessions.refresh(session) : session;
-    return toWorkflowAuth(current, () => sessions.refresh(current));
-  }
-  const credentials = new CredentialsManager();
-  const machine = await credentials.load();
-  if (!machine) { return null; }
-  const current = credentials.isExpired(machine) ? await credentials.refresh(machine) : machine;
-  return toWorkflowAuth(current, () => credentials.refresh(current));
-}
-
-function toWorkflowAuth(
-  credentials: GatewayCredentials | SessionCredentials,
-  refresh: () => Promise<GatewayCredentials | SessionCredentials>,
-): WorkflowAuth {
-  return {
-    gatewayUrl: credentials.gatewayUrl,
-    accessToken: credentials.accessToken,
-    refresh: async () => toWorkflowAuth(await refresh(), refresh),
-  };
-}
-
 /** Build the only installed workflow API address: through the project gateway route. */
 export function getWorkflowDaemonUrl(
   projectId = useEnv('KB_PROJECT_ID') ?? deriveProjectId(process.cwd()),
@@ -188,7 +146,6 @@ export function getWorkflowDaemonUrl(
 
 export class WorkflowDaemonClient {
   private readonly baseUrl: string;
-  private authState: WorkflowAuth | null | undefined;
 
   constructor(options: DaemonClientOptions = {}) {
     const projectId = options.projectId ?? useEnv('KB_PROJECT_ID') ?? deriveProjectId(process.cwd());
@@ -196,31 +153,7 @@ export class WorkflowDaemonClient {
   }
 
   private async authorizedFetch(url: string, init?: RequestInit): Promise<Response> {
-    if (this.authState === undefined) {
-      this.authState = await loadWorkflowAuth();
-    }
-    const send = (auth: WorkflowAuth | null): Promise<Response> => {
-      const target = new URL(url);
-      const headers = new Headers(init?.headers);
-      if (auth) {
-        const gateway = new URL(auth.gatewayUrl);
-        target.protocol = gateway.protocol;
-        target.host = gateway.host;
-        target.port = gateway.port;
-        headers.set('Authorization', `Bearer ${auth.accessToken}`);
-      }
-      return fetch(target.toString(), { ...init, headers });
-    };
-
-    let response = await send(this.authState);
-    if (response.status === 401 && this.authState) {
-      this.authState = await this.authState.refresh();
-      response = await send(this.authState);
-    }
-    if (response.status === 401) {
-      throw new WorkflowAuthRequiredError();
-    }
-    return response;
+    return gatewayApiFetch(url, init);
   }
 
   /** Send an API request through this client's project route and gateway auth. */

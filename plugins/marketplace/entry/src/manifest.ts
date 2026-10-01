@@ -27,13 +27,13 @@ export const manifest = {
     ],
     commands: [
       // Top-level: kb marketplace <cmd>
-      { path: 'marketplace install',   operationType: 'mutate' as const, describe: 'Install package(s)',                           handler: './commands/install.js#default' },
-      { path: 'marketplace uninstall', operationType: 'mutate' as const, describe: 'Uninstall package(s)',                         handler: './commands/uninstall.js#default' },
-      { path: 'marketplace update',    operationType: 'mutate' as const, describe: 'Update package(s)',                            handler: './commands/update.js#default' },
+      { path: 'marketplace install',   requiresPlatformAuth: true, operationType: 'mutate' as const, describe: 'Install package(s)',                           handler: './commands/install.js#default' },
+      { path: 'marketplace uninstall', requiresPlatformAuth: true, operationType: 'mutate' as const, describe: 'Uninstall package(s)',                         handler: './commands/uninstall.js#default' },
+      { path: 'marketplace update',    requiresPlatformAuth: true, operationType: 'mutate' as const, describe: 'Update package(s)',                            handler: './commands/update.js#default' },
       { path: 'marketplace sync',      operationType: 'mutate' as const, describe: 'Sync workspace to lock',                       handler: './commands/sync.js#default' },
       { path: 'marketplace link',      operationType: 'mutate' as const, describe: 'Link a local project plugin',                  handler: './commands/plugins/link.js#default' },
       // Subgroup: kb marketplace plugins <cmd>
-      { path: 'marketplace plugins list',    operationType: 'read' as const,    describe: 'List installed plugins',    handler: './commands/plugins/list.js#default' },
+      { path: 'marketplace plugins list',    requiresPlatformAuth: true, operationType: 'read' as const,    describe: 'List installed plugins',    handler: './commands/plugins/list.js#default' },
       { path: 'marketplace plugins enable',  operationType: 'mutate' as const,  describe: 'Enable a plugin',          handler: './commands/plugins/enable.js#default' },
       { path: 'marketplace plugins disable', operationType: 'mutate' as const,  describe: 'Disable a plugin',         handler: './commands/plugins/disable.js#default' },
       { path: 'marketplace plugins unlink',  operationType: 'mutate' as const,  describe: 'Unlink a plugin',          handler: './commands/plugins/unlink.js#default' },

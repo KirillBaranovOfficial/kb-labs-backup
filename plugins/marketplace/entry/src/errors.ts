@@ -5,25 +5,16 @@ interface MarketplaceErrorContext {
   };
 }
 
-export class MarketplaceAuthRequiredError extends Error {
-  readonly code = 'KB_AUTH_REQUIRED';
-  readonly hint = 'Run "kb auth login".';
-
-  constructor() {
-    super('Authentication is required.');
-    this.name = 'MarketplaceAuthRequiredError';
-  }
-}
-
 export function handleMarketplaceError(ctx: MarketplaceErrorContext, error: unknown, isJson?: boolean): void {
-  if (error instanceof MarketplaceAuthRequiredError) {
+  const envelope = error !== null && typeof error === 'object' && 'envelope' in error
+    ? error.envelope
+    : null;
+  if (envelope !== null && typeof envelope === 'object' && 'code' in envelope && 'message' in envelope) {
+    const typed = envelope as { code: string; message: string; hint?: string; [key: string]: unknown };
     if (isJson) {
-      ctx.ui?.json?.({
-        ok: false,
-        error: { code: error.code, message: error.message, hint: error.hint },
-      });
+      ctx.ui?.json?.({ ok: false, error: typed });
     } else {
-      ctx.ui?.error?.(error.message, { hint: error.hint });
+      ctx.ui?.error?.(`${typed.code}: ${typed.message}`, { hint: typed.hint });
     }
     return;
   }
