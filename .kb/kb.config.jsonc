@@ -697,6 +697,7 @@
       "include": [
         "plugins/*/entry",
         "plugins/*/core",
+        "plugins/release/manager-cli",
         "adapters/*"
       ]
     },

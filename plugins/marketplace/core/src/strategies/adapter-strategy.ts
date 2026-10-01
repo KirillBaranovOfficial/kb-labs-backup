@@ -82,7 +82,22 @@ interface AdapterManifestLike {
 
 async function loadAdapterManifest(packageRoot: string): Promise<AdapterManifestLike | null> {
   try {
-    const distPath = path.join(packageRoot, 'dist', 'index.js');
+    let distPath = path.join(packageRoot, 'dist', 'index.js');
+    try {
+      const rawPackage = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf-8')) as {
+        kb?: { manifest?: unknown };
+        kbLabs?: { manifest?: unknown };
+      };
+      const manifestField = rawPackage.kb?.manifest ?? rawPackage.kbLabs?.manifest;
+      if (typeof manifestField === 'string') {
+        distPath = path.resolve(packageRoot, manifestField);
+      }
+    } catch {
+      // Packages without a manifest field expose the adapter manifest from dist/index.js.
+    }
+
+    const relativePath = path.relative(path.resolve(packageRoot), distPath);
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) { return null; }
     await fs.access(distPath);
     const mod = await import(pathToFileURL(distPath).href);
     if (mod.manifest && typeof mod.manifest === 'object' && mod.manifest.implements) {
