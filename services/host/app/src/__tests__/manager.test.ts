@@ -354,7 +354,10 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
   });
 
   it("reports a start failure when the runtime is not healthy in time, and leaves no process", async () => {
-    const a = await project({ startDelayMs: 5000 });
+    const a = await project({
+      unhealthyAfterMs: 0,
+      healthModules: { rest: "up", workflow: "down", mcp: "up" },
+    });
     const subject = manager({ startTimeoutMs: 400 });
 
     const error = await expectRuntimeError(
@@ -363,6 +366,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     );
 
     expect(error.envelope.cause).toContain("not healthy within 400 ms");
+    expect(error.envelope.cause).toContain('"workflow":"down"');
     expect(subject.status().active).toBe(0);
   });
 

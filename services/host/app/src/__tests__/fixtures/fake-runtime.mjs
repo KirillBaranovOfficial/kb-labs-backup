@@ -43,7 +43,7 @@ const server = createServer((req, res) => {
   if (url.pathname === "/__runtime/health") {
     if (behavior.unhealthyAfterMs !== undefined && Date.now() - startedAt > behavior.unhealthyAfterMs) {
       res.writeHead(503, { "content-type": "application/json" });
-      res.end(JSON.stringify({ status: "degraded" }));
+      res.end(JSON.stringify({ status: "degraded", modules: behavior.healthModules ?? {} }));
       return;
     }
     res.writeHead(200, { "content-type": "application/json" });

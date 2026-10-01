@@ -32,7 +32,9 @@ class PlatformStateDumpTests(unittest.TestCase):
             launcher_logs = home / ".kb" / "launcher"
             launcher_logs.mkdir(parents=True)
             (launcher_logs / "host.log").write_text(
-                "\n".join(f"host-line-{number}" for number in range(500)) + "\napiKey: launcher-secret\n"
+                "\n".join(f"host-line-{number}" for number in range(500))
+                + '\n{"traceId":"trace-project-start","startupOutput":"module initialization detail"}\n'
+                + "apiKey: launcher-secret\n"
             )
             probe_logs = launcher_logs / "probe"
             probe_logs.mkdir()
@@ -122,6 +124,8 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertIn("exit_code: 9", (destination / "kb-create-status.txt").read_text())
             launcher_tail = (destination / "launcher-logs/host.log").read_text()
             self.assertIn("host-line-499", launcher_tail)
+            self.assertIn('"traceId":"trace-project-start"', launcher_tail)
+            self.assertIn('"startupOutput":"module initialization detail"', launcher_tail)
             self.assertNotIn("host-line-99\n", launcher_tail)
             self.assertNotIn("launcher-secret", launcher_tail)
             probe_tail_path = destination / "launcher-logs/probe/host.log"

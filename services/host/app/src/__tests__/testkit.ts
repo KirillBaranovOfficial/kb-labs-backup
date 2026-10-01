@@ -36,6 +36,7 @@ export interface FakeBehavior {
   exitBeforeReady?: number;
   startDelayMs?: number;
   unhealthyAfterMs?: number;
+  healthModules?: Record<string, "up" | "down">;
   ignoreSigterm?: boolean;
 }
 
