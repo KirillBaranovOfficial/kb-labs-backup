@@ -755,9 +755,8 @@ export async function initPlatform(
           return { createAdapter: factory, manifest, pkgRoot };
         }
       } catch (error) {
-        throw new Error(
-          `Failed to load adapter module ${modulePath}: ${error instanceof Error ? error.message : String(error)}`
-        );
+        // Keep Node's resolution code and error cause for the typed startup error.
+        throw error;
       }
     };
 
@@ -825,7 +824,7 @@ export async function initPlatform(
           });
           continue;
         }
-        throw configuredAdapterLoadError(name, primaryAdapter);
+        throw configuredAdapterLoadError(name, primaryAdapter, error, platformRoot ?? cwd);
       }
     }
 

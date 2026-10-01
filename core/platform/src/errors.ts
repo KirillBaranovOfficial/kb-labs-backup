@@ -34,11 +34,13 @@ export class AdapterUnavailableError extends Error {
     slot: string,
     reason: 'not-configured' | 'load-failed' = 'not-configured',
     message?: string,
+    cause?: unknown,
   ) {
     super(
       message ??
         `Adapter "${slot}" is not available (reason: ${reason}). ` +
           `Configure a real adapter in kb.config.json under \`adapters.${slot}\`.`,
+      cause === undefined ? undefined : { cause },
     );
     this.name = 'AdapterUnavailableError';
     this.slot = slot;
