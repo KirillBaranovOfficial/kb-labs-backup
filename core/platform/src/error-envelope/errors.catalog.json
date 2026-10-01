@@ -903,6 +903,42 @@
       "hint": "Wait and retry, or reduce the request rate."
     },
     {
+      "code": "KB_RUNTIME_MCP_UNKNOWN_TOOL",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "MCP tool {tool} is not available in this project.",
+      "hint": "Call tools/list to discover the available project tools."
+    },
+    {
+      "code": "KB_RUNTIME_MCP_TOOL_FORBIDDEN",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The API token cannot call MCP tool {tool}.",
+      "hint": "Use an API token with a role allowed to run this tool, then call it again."
+    },
+    {
+      "code": "KB_RUNTIME_MCP_INVALID_ARGUMENTS",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Argument {argument} must match expected {expected}.",
+      "hint": "Call tools/list to inspect the tool inputSchema, correct {argument}, and retry."
+    },
+    {
+      "code": "KB_RUNTIME_MCP_TOOL_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "MCP tool {tool} failed during execution.",
+      "hint": "Run \"kb logs query\" to inspect project runtime logs, fix the reported issue, then retry the tool."
+    },
+    {
       "code": "KB_CONFIG_INVALID",
       "area": "config",
       "stage": "run",
