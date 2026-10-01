@@ -33,6 +33,7 @@ adding KB Labs files to a repository.
 | S-204.4 | In Studio select Project A, edit a Commit setting, then select Project B and inspect the same setting | Studio saves the value for the selected project. Project B shows its own effective value and does not inherit Project A's override. |
 | S-204.5 | Set an invalid Commit setting through `kb config set` and submit the same invalid value in Studio | Both surfaces reject the write with `KB_PLUGIN_SETTINGS_INVALID`, identify the invalid setting, and give a hint to provide a value matching the Commit plugin's declared settings schema. The previous value and both repositories remain unchanged. |
 | S-204.6 | Remove Project A with `kb project remove <project-a-id> --yes --json`, then register the same path again | The active registration is removed and its project configuration is archived. Registering the same canonical path restores that archived configuration for the deterministic project ID; the repository remains untouched. |
+| S-204.7 | From a directory outside every registered project, run `kb project show --json` | The command fails with the typed `KB_PROJECT_UNKNOWN` error and the hint `kb project add`; it does not infer project identity from repository files or create files in the directory. |
 
 ## Dependencies
 
