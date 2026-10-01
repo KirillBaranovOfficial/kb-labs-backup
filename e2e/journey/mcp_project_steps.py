@@ -104,8 +104,17 @@ def local_auth(project_id: str) -> str | None:
     if status != 200:
         return f"local tokenless tools/list returned HTTP {status}, expected 200"
     result = body.get("result") if isinstance(body, dict) else None
-    if not isinstance(result, dict) or not result.get("tools"):
+    tools = result.get("tools") if isinstance(result, dict) else None
+    if not isinstance(tools, list) or not tools:
         return "local tokenless tools/list did not return the selected project catalog"
+    names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
+    expected = {
+        "kb-labs-commit__commit",
+        "kb-labs-workflow__workflow_run",
+        "kb-labs__mcp_diagnostics",
+    }
+    if not expected <= names:
+        return f"local tokenless tools/list omitted selected project tools: {sorted(expected - names)}"
     return None
 
 

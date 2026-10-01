@@ -82,14 +82,18 @@ function argumentError(schema: JsonSchema, value: unknown, path = ''): { path: s
 
 /**
  * Cache key for an identity's visible tool list. Authenticated identities are
- * keyed by a hash of their Authorization header (per-token, per-tenant
- * isolation); everything else shares the single anonymous bucket.
+ * keyed by project scope and a hash of their Authorization header; anonymous
+ * callers share a bucket only within the same project scope.
  */
-export function toolsCacheKey(authHeader: string | null | undefined): string {
+export function toolsCacheKey(
+  authHeader: string | null | undefined,
+  cacheScope = 'default',
+): string {
+  const scope = createHash('sha256').update(cacheScope).digest('hex').slice(0, 16);
   if (!authHeader) {
-    return 'mcp:tools:anonymous';
+    return `mcp:tools:${scope}:anonymous`;
   }
-  return `mcp:tools:${createHash('sha256').update(authHeader).digest('hex').slice(0, 16)}`;
+  return `mcp:tools:${scope}:${createHash('sha256').update(authHeader).digest('hex').slice(0, 16)}`;
 }
 
 export interface ResolveVisibleToolsArgs {
@@ -97,6 +101,8 @@ export interface ResolveVisibleToolsArgs {
   permits: Permits | null;
   /** Raw Authorization header — only used to derive the per-token cache key. */
   authHeader: string | null | undefined;
+  /** Unique project scope for cache isolation across project runtimes. */
+  cacheScope?: string;
   registry: IEntityRegistry;
   cache: ICache;
   /** Platform analytics — emits mcp.tools.list event. Optional for tests. */
@@ -119,7 +125,7 @@ export async function resolveVisibleTools(args: ResolveVisibleToolsArgs): Promis
   const t0 = Date.now();
 
   // Anonymous identities share one bucket regardless of any (invalid) header.
-  const cacheKey = toolsCacheKey(permits ? authHeader : null);
+  const cacheKey = toolsCacheKey(permits ? authHeader : null, args.cacheScope ?? 'default');
 
   const cached = await cache.get<McpTool[]>(cacheKey).catch(() => null);
   if (cached) {
