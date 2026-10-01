@@ -46,7 +46,7 @@ export async function setup({
 
   const service = new MarketplaceService({
     platformRoot,
-    extensionStore: createExtensionStore(),
+    extensionStore: createExtensionStore({ platformRoot }),
     source: new NpmPackageSource(),
     registrySource,
   });

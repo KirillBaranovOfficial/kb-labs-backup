@@ -93,6 +93,8 @@ export interface PackageInstallOptions {
   projectDir: string;
   /** Dedicated pnpm content-addressed store directory (never the user's default store). */
   casDir: string;
+  /** Installed platform root used to resolve release artifacts under `.kb/`. */
+  platformRoot?: string;
 }
 
 /**
