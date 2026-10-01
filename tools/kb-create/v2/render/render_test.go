@@ -173,27 +173,15 @@ func TestWriteProducesTheRuntimeConfigAndNoServiceManagerFile(t *testing.T) {
 	}
 }
 
-func TestWriteCreatesProjectPointerWithoutOverwritingUserConfig(t *testing.T) {
+func TestWriteNeverCreatesFilesInSelectedProject(t *testing.T) {
 	platformRoot, projectRoot := t.TempDir(), t.TempDir()
 	plan := testPlan(platformRoot)
 	plan.Request.ProjectRoot = projectRoot
 	if _, err := Write(plan); err != nil {
 		t.Fatal(err)
 	}
-	pointer := filepath.Join(projectRoot, ".kb", ConfigFilename)
-	data, err := os.ReadFile(pointer)
-	if err != nil || !strings.Contains(string(data), platformRoot) {
-		t.Fatalf("project pointer = %s, error = %v", data, err)
-	}
-	if err := os.WriteFile(pointer, []byte(`{"platform":{"dir":"user-owned"}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Write(plan); err != nil {
-		t.Fatal(err)
-	}
-	data, err = os.ReadFile(pointer)
-	if err != nil || !strings.Contains(string(data), "user-owned") {
-		t.Fatalf("user config was overwritten: %s / %v", data, err)
+	if _, err := os.Stat(filepath.Join(projectRoot, ".kb")); !os.IsNotExist(err) {
+		t.Fatalf("installer created project files: %v", err)
 	}
 }
 

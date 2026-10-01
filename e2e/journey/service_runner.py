@@ -109,7 +109,7 @@ def checks(mode: str):
 
     token = os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")
     if not PROJECT_ID:
-        project = lambda: "BLOCKED: no project is registered; run `kb project add <path> --init --json` and set KB_JOURNEY_PROJECT_ID"
+        project = lambda: "BLOCKED: no project is registered; run `kb project add <path> --json` and set KB_JOURNEY_PROJECT_ID"
     else:
         project = lambda: expect(f"/api/v1/projects/{PROJECT_ID}", {200}, "project registry lookup", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
     yield ("project registration", "projects", project)
@@ -380,7 +380,7 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     project_b = home / "project-b-mcp"
     project_b.mkdir(parents=True, exist_ok=False)
     subprocess.run(["git", "init", "-q", str(project_b)], check=True)
-    register = ["kb", "project", "add", str(project_b), "--init", "--json"]
+    register = ["kb", "project", "add", str(project_b), "--json"]
     result = runner(register, cwd=str(project_b), env=env, capture_output=True,
                     text=True, timeout=120)
     raw = _output(result, register)

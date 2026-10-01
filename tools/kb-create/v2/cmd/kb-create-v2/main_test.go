@@ -133,7 +133,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code %d, screen:\n%s", code, screen.String())
 	}
-	for _, expected := range []string{"Resolve (", "Download and verify artifacts (", "Install packages (", "Render config (", "Start host (", "Verify installation (", "Create kb shim (", "KB Labs is installed", "cd ~/any-project && kb commit"} {
+	for _, expected := range []string{"Resolve (", "Download and verify artifacts (", "Install packages (", "Render config (", "Start host (", "Verify installation (", "Create kb shim (", "KB Labs is installed", "kb project add <path>"} {
 		if !strings.Contains(screen.String(), expected) {
 			t.Errorf("screen missing %q:\n%s", expected, screen.String())
 		}
@@ -146,6 +146,102 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 	if target, err := os.Readlink(filepath.Join(home, "bin", "kb")); err != nil || target != filepath.Join(root, ".kb", "v2", "bin", "kb") {
 		t.Fatalf("kb shim target/error = %q / %v", target, err)
+	}
+}
+
+func TestRegisterProjectInvokesPlainProjectAdd(t *testing.T) {
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kb := filepath.Join(bin, "kb")
+	argsFile := filepath.Join(home, "args")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\nprintf '{\"ok\":true,\"project\":{\"id\":\"prj_test123\",\"path\":\"%s\"}}' \"$PROJECT_PATH\"\n"
+	if err := os.WriteFile(kb, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CAPTURE_ARGS", argsFile)
+	projectPath := filepath.Join(home, "project")
+	t.Setenv("PROJECT_PATH", projectPath)
+	if err := os.Mkdir(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	projectID, err := (invocation{Executable: filepath.Join(bin, "kb-create")}).registerProject(projectPath)
+	if err != nil || projectID != "prj_test123" {
+		t.Fatalf("projectID/error = %q / %v", projectID, err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "project\nadd\n" + projectPath + "\n--json\n"
+	if string(args) != want {
+		t.Fatalf("kb args = %q, want %q", args, want)
+	}
+}
+
+func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	platformRoot := filepath.Join(home, "kb-platform")
+	projectRoot := filepath.Join(home, "work", "project")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	canonicalProjectRoot, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectRoot = canonicalProjectRoot
+	index := filepath.Join(home, "release-index.json")
+	release, err := catalog.Seal(catalog.Catalog{
+		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: testCompatibility("2.0.0"),
+		Platforms:     []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}}},
+		Plugins:       []catalog.Component{{ID: "commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(home, "bin", "kb-create")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("launcher"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var registered string
+	var screen bytes.Buffer
+	output, _ := installOutput(t)
+	code := (invocation{
+		Operation: "install", Index: index, Direct: directRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot},
+		Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen,
+		RuntimeDeps:      &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}},
+		NodePreflight:    func() error { return nil },
+		ProjectRegistrar: func(path string) (string, error) { registered = path; return "prj_test123", nil },
+	}).run(output)
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || registered != projectRoot {
+		t.Fatalf("code=%d registered=%q screen:\n%s", code, registered, screen.String())
+	}
+	for _, expected := range []string{projectRoot, "prj_test123", "Verification: platform installed", "kb project show prj_test123"} {
+		if !strings.Contains(screen.String(), expected) {
+			t.Errorf("screen missing %q:\n%s", expected, screen.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(projectRoot, ".kb")); !os.IsNotExist(err) {
+		t.Fatalf("installer created project files: %v", err)
 	}
 }
 

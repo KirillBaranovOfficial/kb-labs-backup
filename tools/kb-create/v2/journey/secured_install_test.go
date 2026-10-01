@@ -122,7 +122,7 @@ func install(t *testing.T, answers string) journeyResult {
 	root := t.TempDir()
 	source := sealedGatewayCatalog(t)
 	var terminal bytes.Buffer
-	request, err := wizard.RequestScenario(source, root, "custom", wizard.IO{In: bytes.NewBufferString(answers), Out: &terminal})
+	request, err := wizard.RequestScenario(source, root, "custom", "", wizard.IO{In: bytes.NewBufferString("\n" + answers), Out: &terminal})
 	if err != nil {
 		t.Fatalf("wizard: %v\n%s", err, terminal.String())
 	}

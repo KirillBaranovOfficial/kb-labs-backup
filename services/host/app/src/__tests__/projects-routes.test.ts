@@ -4,7 +4,7 @@
  * manager (only `status()` is exercised by this module).
  */
 
-import { mkdtemp, mkdir, rm, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -128,7 +128,7 @@ describe("createProjectsRoutes", () => {
     expect(await registry.list()).toHaveLength(1);
   });
 
-  it("POST without init reports KB_PROJECT_INIT_REQUIRED and registers nothing", async () => {
+  it("POST registers a folder without .kb/ and leaves it unchanged", async () => {
     const dir = await mkdtemp(join(tmpdir(), "kb-proj-"));
     const instance = await setup();
 
@@ -138,22 +138,8 @@ describe("createProjectsRoutes", () => {
       payload: { path: dir },
     });
 
-    expect(res.statusCode).toBe(409);
-    expect((res.json() as ErrorBody).error.code).toBe("KB_PROJECT_INIT_REQUIRED");
-    expect(await registry.list()).toHaveLength(0);
-  });
-
-  it("POST with init creates .kb/ and registers", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "kb-proj-"));
-    const instance = await setup();
-
-    const res = await instance.inject({
-      method: "POST",
-      url: "/api/v1/projects",
-      payload: { path: dir, init: true },
-    });
-
     expect(res.statusCode).toBe(201);
+    expect(await readdir(dir)).toEqual([]);
     expect(await registry.list()).toHaveLength(1);
   });
 

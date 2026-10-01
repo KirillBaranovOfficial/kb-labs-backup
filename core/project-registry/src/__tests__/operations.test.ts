@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -31,54 +31,44 @@ describe('addProject', () => {
   it('registers a folder that already has .kb/', async () => {
     const registry = createProjectRegistry({ root });
     const dir = makeProject('with-kb', true);
+    const filesBefore = readdirSync(dir);
 
     const outcome = await addProject(registry, { path: dir });
 
     expect(outcome.status).toBe('added');
     if (outcome.status === 'added') {
       expect(outcome.project.path).toBe(dir);
-      expect(outcome.initialized).toBe(false);
-      expect(outcome.created).toEqual([]);
     }
+    expect(existsSync(join(dir, '.kb'))).toBe(true);
+    expect(readdirSync(dir)).toEqual(filesBefore);
     const listed = await listProjects(registry);
     expect(listed).toHaveLength(1);
     expect(listed[0]!.path).toBe(dir);
   });
 
-  it('reports initialization-required for a folder without .kb/ and registers nothing', async () => {
+  it('registers a folder without .kb/ and does not modify it', async () => {
     const registry = createProjectRegistry({ root });
     const dir = makeProject('no-kb');
+    const filesBefore = readdirSync(dir);
 
     const outcome = await addProject(registry, { path: dir });
 
-    expect(outcome).toEqual({ status: 'initialization-required', path: dir });
-    expect(await listProjects(registry)).toHaveLength(0);
-  });
-
-  it('creates the minimal .kb/ and registers when init is set', async () => {
-    const registry = createProjectRegistry({ root });
-    const dir = makeProject('needs-init');
-
-    const outcome = await addProject(registry, { path: dir, init: true });
-
     expect(outcome.status).toBe('added');
     if (outcome.status === 'added') {
-      expect(outcome.initialized).toBe(true);
-      expect(outcome.created.length).toBeGreaterThan(0);
+      expect(outcome.project.path).toBe(dir);
     }
-    expect(existsSync(join(dir, '.kb'))).toBe(true);
+    expect(existsSync(join(dir, '.kb'))).toBe(false);
+    expect(readdirSync(dir)).toEqual(filesBefore);
+    expect(await listProjects(registry)).toHaveLength(1);
   });
 
-  it('dry-run plans without registering or writing files', async () => {
+  it('dry-run plans registration without writing files', async () => {
     const registry = createProjectRegistry({ root });
-    const dir = makeProject('dry-run-init');
+    const dir = makeProject('dry-run');
 
-    const outcome = await addProject(registry, { path: dir, init: true, dryRun: true });
+    const outcome = await addProject(registry, { path: dir, dryRun: true });
 
     expect(outcome.status).toBe('planned');
-    if (outcome.status === 'planned') {
-      expect(outcome.wouldInitialize).toBe(true);
-    }
     expect(existsSync(join(dir, '.kb'))).toBe(false);
     expect(await listProjects(registry)).toHaveLength(0);
   });
