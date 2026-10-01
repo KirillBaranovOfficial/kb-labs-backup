@@ -384,8 +384,8 @@ export const CONFIG_FIELD_SCOPE: Record<
   ConfigFieldScope
 > = {
   platform: "project-only",
-  adapters: "mergeable",
-  adapterOptions: "mergeable",
+  adapters: "platform-only",
+  adapterOptions: "platform-only",
   core: "platform-only",
   execution: "platform-only",
 };

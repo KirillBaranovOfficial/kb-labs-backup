@@ -34,7 +34,6 @@ import { dashboardRoutes, dashboardNavigation } from './modules/dashboard/routes
 import { projectsRoutes, projectsNavigation } from './modules/projects/routes';
 import { pluginsRoutes, pluginsNavigation } from './modules/plugins/routes';
 import { projectPluginsRoutes, projectPluginsNavigation } from './modules/project-plugins/routes';
-import { projectAdaptersRoutes, projectAdaptersNavigation } from './modules/project-adapters/routes';
 import { analyticsRoutes, analyticsNavigation } from './modules/analytics/routes';
 import { observabilityRoutes, observabilityNavigation } from './modules/observability/routes';
 import { settingsRoutes, settingsNavigation } from './modules/settings/routes';
@@ -74,7 +73,6 @@ const systemNavigation: NavigationItem[] = [
   dashboardNavigation,
   projectsNavigation,
   projectPluginsNavigation,
-  projectAdaptersNavigation,
   pluginsNavigation,
   analyticsNavigation,
   observabilityNavigation,
@@ -275,7 +273,6 @@ export const router = createBrowserRouter([
       ...dashboardRoutes,
       ...projectsRoutes,
       ...projectPluginsRoutes,
-      ...projectAdaptersRoutes,
       ...pluginsRoutes,
       ...analyticsRoutes,
       ...observabilityRoutes,

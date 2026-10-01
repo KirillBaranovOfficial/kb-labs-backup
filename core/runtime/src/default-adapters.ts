@@ -9,7 +9,7 @@ export interface ResolvedAdapterConfig {
 
 /**
  * Fill blank adapter slots from installed manifests declaring `defaultFor`.
- * Explicit project/platform bindings always win. Only manifest metadata and
+ * Explicit platform bindings always win. Only manifest metadata and
  * marketplace locks are used here, so core-platform stays independent of
  * concrete adapter packages.
  */
@@ -18,10 +18,7 @@ export async function resolveInstalledAdapterDefaults(
   platformRoot: string,
   projectRoot = platformRoot,
 ): Promise<ResolvedAdapterConfig> {
-  const discovered = await discoverAdapters(
-    platformRoot,
-    projectRoot === platformRoot ? undefined : projectRoot,
-  );
+  const discovered = await discoverAdapters(platformRoot);
   return resolveDiscoveredAdapterDefaults(config, discovered, projectRoot);
 }
 

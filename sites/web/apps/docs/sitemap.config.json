@@ -225,7 +225,7 @@
         { "slug": "services/kb-devkit",       "type": "manual", "owners": ["infra/devkit/**", "tools/kb-devkit/**"] },
         { "slug": "services/kb-deploy",       "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "services/kb-monitor",      "type": "manual", "owners": ["tools/kb-monitor/**"] },
-        { "slug": "services/marketplace",     "type": "manual", "owners": ["plugins/marketplace/**", "core/extension-store/**", "core/discovery/src/marketplace-lock.ts", "services/host/app/src/adapters-routes.ts", "cli/commands/src/commands/system/adapter/**"] },
+        { "slug": "services/marketplace",     "type": "manual", "owners": ["plugins/marketplace/**", "core/extension-store/**", "core/discovery/src/marketplace-lock.ts", "cli/commands/src/commands/system/adapter/**"] },
         { "slug": "services/rest-api",        "type": "hybrid", "owners": ["plugins/rest-api/**"] },
         { "slug": "services/studio",          "type": "manual", "owners": ["studio/app/**"] },
         { "slug": "services/host-agent",      "type": "manual", "owners": ["plugins/host-agent/**"] },

@@ -1,6 +1,6 @@
 ---
 title: "Marketplace"
-description: "Install plugins into the shared machine store and manage project pins and adapters."
+description: "Install plugins into the shared machine store and manage project plugin pins and platform adapters."
 updatedAt: "2026-09-30"
 order: 4
 ---
@@ -34,32 +34,23 @@ To create that workspace from an existing project, run `kb scaffold run plugin m
 
 ## Install and bind an adapter
 
-Adapters are installed at machine scope, while a project chooses the installed package for a slot in its own config:
+Adapters are installed and bound at platform scope. Every project uses the same configured provider:
 
 ```bash
 kb marketplace install @kb-labs/adapters-fs@1.2.3 --scope platform
 kb adapter bind storage @kb-labs/adapters-fs
 ```
 
-`kb adapter bind` writes `platform.adapters.storage` in the current project's `.kb/kb.config.json[c]`. It refuses packages that are absent from the platform lock or are not adapters. Use `kb config set platform.adapterOptions.storage '{"baseDir":".kb/storage"}'` to configure adapter options in the project.
+`kb adapter bind` writes `platform.adapters.storage` in platform config. It refuses packages that are absent from the platform lock or are not adapters. Use `kb config set --scope platform platform.adapterOptions.storage '{"baseDir":".kb/storage"}'` to configure adapter options at platform scope. A project config with `platform.adapters` or `platform.adapterOptions` fails with `KB_ADAPTER_PROJECT_SCOPE`; move those fields to platform config.
 
-Studio's project Plugins page accepts a package spec and installs or uninstalls through host routes; its enable switch updates the project lock. The Adapters page installs a package at machine scope, binds it to the selected project's slot, and configures its options. The bind API is:
-
-```http
-POST /api/v1/adapters/bind
-Content-Type: application/json
-
-{"projectId":"prj_example","slot":"cache","packageId":"@kb-labs/adapters-fs"}
-```
-
-The response is an `{ "ok": true, "data": ... }` envelope. The gateway's configured local or secured access policy applies to these routes.
+Studio's project Plugins page accepts a package spec and installs or uninstalls through host routes; its enable switch updates the project lock. Adapter settings are not project settings.
 
 ## Lock ownership
 
-`.kb/marketplace.lock` is read by shared discovery. Project plugin installs and enable/disable actions update the project lock; uninstall removes the project pin. Platform adapter installs update the platform lock and platform package graph. Binding an adapter changes only the project's config. Installing a project plugin does not modify `package.json`, the package-manager lockfile, or `node_modules`.
+`.kb/marketplace.lock` is read by shared discovery. Project plugin installs and enable/disable actions update the project lock; uninstall removes the project pin. Platform adapter installs update the platform lock and platform package graph. Binding an adapter changes platform config. Installing a project plugin does not modify `package.json`, the package-manager lockfile, or `node_modules`.
 
 ## HTTP API
 
-The marketplace module exposes package management below `/api/v1/marketplace` on the host gateway. Package actions use request bodies, for example `POST /api/v1/marketplace/packages/install` with `{"specs":["@kb-labs/example@1.2.3"],"scope":"project"}`. Adapter project APIs are host-owned at `/api/v1/adapters`; they require a registered `projectId`.
+The marketplace module exposes package management below `/api/v1/marketplace` on the host gateway. Package actions use request bodies, for example `POST /api/v1/marketplace/packages/install` with `{"specs":["@kb-labs/example@1.2.3"],"scope":"project"}`.
 
 Local platforms bind the gateway to loopback and do not require login. Secured platforms require an authenticated session. In secured mode, sign in with `kb auth login` before running a marketplace mutation.

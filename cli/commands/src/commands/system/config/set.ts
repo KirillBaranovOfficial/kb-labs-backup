@@ -19,7 +19,7 @@ import {
   type SetUserConfigResult,
 } from '@kb-labs/core-config';
 import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
-import type { ErrorEnvelope } from '@kb-labs/core-platform';
+import { AdapterProjectScopeError, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 
@@ -98,6 +98,13 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
       const key = segments.join('.');
       const value = parseValueArg(argv[1], Boolean(flags.string), key);
       const scope = flags.scope as ConfigScope;
+      if (scope === 'project' && (
+        (segments[0] === 'platform' &&
+          (segments[1] === 'adapters' || segments[1] === 'adapterOptions')) ||
+        segments[0] === 'adapters' || segments[0] === 'adapterOptions'
+      )) {
+        throw new AdapterProjectScopeError();
+      }
 
       const roots = await resolveConfigRoots(getContextCwd(ctx));
       const file = await userConfigFileForScope(roots, scope);
@@ -106,7 +113,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
       });
       const effectivePlatform = (effective?.data.platform ?? undefined) as { adapters?: unknown } | undefined;
       const validate = createAdapterOptionsValidator(segments, {
-        roots: roots.sameLocation ? [roots.projectRoot] : [roots.platformRoot, roots.projectRoot],
+        platformRoot: roots.platformRoot,
         effectiveAdapters: effectivePlatform?.adapters,
       });
 

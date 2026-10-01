@@ -256,14 +256,14 @@ Edit your workspace's `.kb/kb.config.json` and swap the `cache` entry:
 }
 ```
 
-The adapter package name in `platform.adapters.cache` must match your published package name. Install it at machine scope and bind it from the project root:
+The adapter package name in `platform.adapters.cache` must match your published package name. Install it and bind it from the platform root:
 
 ```bash
 kb marketplace install @example/adapters-memcache@0.1.0 --scope platform
 kb adapter bind cache @example/adapters-memcache
 ```
 
-The install command adds the adapter to the platform package graph. The bind command records the slot in the project config after checking the platform marketplace lock.
+The install command adds the adapter to the platform package graph. The bind command records the slot in platform config after checking the platform marketplace lock. Projects inherit that binding and cannot override it.
 
 ## Step 6 — Restart services
 

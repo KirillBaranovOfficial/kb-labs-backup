@@ -1,4 +1,4 @@
-/** Bind an installed machine adapter to a slot in the current project's config. */
+/** Bind an installed machine adapter to a platform slot. */
 
 import { configErrorEnvelope, setUserConfigValue } from '@kb-labs/core-config';
 import { DiagnosticCollector, readMarketplaceLock } from '@kb-labs/core-discovery';
@@ -25,9 +25,9 @@ type BindResult = CommandResult & {
 
 export const adapterBind = defineSystemCommand<Flags, BindResult>({
   name: 'bind',
-  description: 'Bind an installed platform adapter to a project slot',
+  description: 'Bind an installed adapter to a platform slot',
   longDescription:
-    'Writes platform.adapters.<slot> in the current project configuration. The adapter package must first be installed in the machine platform.',
+    'Writes platform.adapters.<slot> in the platform configuration. The adapter package must first be installed in the platform.',
   category: 'adapter',
   examples: generateExamples('adapter bind', 'kb', [
     { flags: {}, description: 'storage @kb-labs/adapters-fs' },
@@ -35,7 +35,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
   ]),
   flags: {
     json: { type: 'boolean', description: 'Output machine-readable JSON' },
-    'dry-run': { type: 'boolean', description: 'Validate without writing project config' },
+    'dry-run': { type: 'boolean', description: 'Validate without writing platform config' },
   },
   analytics: {
     command: 'adapter.bind',
@@ -60,7 +60,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
       }
 
       const result = await setUserConfigValue({
-        filePath: await userConfigFileForScope(roots, 'project'),
+        filePath: await userConfigFileForScope(roots, 'platform'),
         path: ['platform', 'adapters', slot],
         value: packageId,
         schema: PlatformUserConfigSchema,
@@ -92,7 +92,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
       ctx.ui?.error(`${result.error}\n${result.hint ?? ''}`.trim());
       return;
     }
-    ctx.ui?.success(result.dryRun ? 'Adapter binding is valid; no config written' : 'Adapter bound to project', {
+    ctx.ui?.success(result.dryRun ? 'Adapter binding is valid; no config written' : 'Adapter bound to platform', {
       sections: [{ header: 'Adapter', items: [`Slot: ${result.slot}`, `Package: ${result.packageId}`, `Config: ${result.file}`] }],
     });
   },

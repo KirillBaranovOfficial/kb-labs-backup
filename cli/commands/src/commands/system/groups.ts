@@ -122,7 +122,7 @@ export const mcpGroup = defineSystemCommandGroup('mcp', 'Model Context Protocol 
   mcpConfig,
 ]);
 
-/** Adapter commands manage machine-installed adapters and project bindings. */
+/** Adapter commands manage platform-installed adapters and bindings. */
 export const adapterGroup = defineSystemCommandGroup('adapter', 'Adapter installation and binding commands', [
   adapterList,
   adapterBind,

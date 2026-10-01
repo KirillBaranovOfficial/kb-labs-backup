@@ -39,7 +39,6 @@ import {
   type ServiceContext,
 } from "@kb-labs/shared-daemon";
 import { applyHostGatewayPolicy, type GatewayUpstreams } from "./policy.js";
-import { createAdaptersRoutes } from "./adapters-routes.js";
 import { MarketplaceClient } from "./marketplace-client.js";
 import { createChildProcessLauncher } from "./project-runtime/launcher.js";
 import {
@@ -435,7 +434,6 @@ export async function createHostConfig(
           projectRouting: createProjectRouting({ registry, manager, logger }),
           hostRoutes: combineHostRoutes(
             createProjectsRoutes({ registry, manager }),
-            createAdaptersRoutes({ registry, platformRoot: ctx.platformRoot }),
             ...pluginsRoutes,
           ),
         },

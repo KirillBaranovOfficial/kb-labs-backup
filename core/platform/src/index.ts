@@ -24,7 +24,7 @@
 // ERRORS
 // ═══════════════════════════════════════════════════════════════════════════
 
-export { AdapterUnavailableError, AdapterCredentialsMissingError } from "./errors.js";
+export { AdapterUnavailableError, AdapterCredentialsMissingError, AdapterProjectScopeError } from "./errors.js";
 export * from "./error-envelope/index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -26,9 +26,9 @@ kb commit
 ```
 
 `kb commit` works without an LLM through its heuristic path. To enable OpenAI
-generation, configure it with `kb config set platform.adapters.llm
+generation, configure it with `kb config set --scope platform platform.adapters.llm
 @kb-labs/adapters-openai` and
-`kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'`, then
+`kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'`, then
 export `OPENAI_API_KEY` in your shell.
 
 ## Open Studio

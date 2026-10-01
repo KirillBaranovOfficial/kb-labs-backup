@@ -35,13 +35,13 @@ Use `kb marketplace plugins disable <package>` and `kb marketplace plugins enabl
 
 ## Install and bind an adapter
 
-Install the adapter in the platform package graph, then bind it to a slot for this project:
+Install the adapter in the platform package graph, then bind it to a platform slot:
 
 ```bash
 kb marketplace install @kb-labs/adapters-fs@1.2.3 --scope platform
 kb adapter bind storage @kb-labs/adapters-fs
 ```
 
-The bind command writes `platform.adapters.storage` to the current project's `.kb/kb.config.json[c]`. Adapter options remain per-project and can be set with `kb config set platform.adapterOptions.storage '{"baseDir":".kb/storage"}'`. In Studio, use the selected project's **Plugins** page to install, enable, disable, or uninstall plugins. Use **Adapters** to install a machine adapter, bind it to a project slot, and configure its options.
+The bind command writes `platform.adapters.storage` to platform config. Adapter options are platform scoped and can be set with `kb config set --scope platform platform.adapterOptions.storage '{"baseDir":".kb/storage"}'`. Projects inherit these settings. In Studio, use the selected project's **Plugins** page to install, enable, disable, or uninstall plugins.
 
 The bind fails if the package is not listed as an adapter in the platform marketplace lock. Install it first with the exact `kb marketplace install … --scope platform` command shown above.
