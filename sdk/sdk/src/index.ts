@@ -256,7 +256,10 @@ export {
 // AdapterUnavailableError — catch-able typed error thrown by NoOp adapters
 // when a slot is not configured. Plugins should catch this to degrade
 // gracefully when an optional capability is absent.
-export { AdapterUnavailableError } from "@kb-labs/core-platform";
+export {
+  AdapterUnavailableError,
+  toErrorEnvelope,
+} from "@kb-labs/core-platform";
 
 // Re-export learning stores from platform
 export type {
