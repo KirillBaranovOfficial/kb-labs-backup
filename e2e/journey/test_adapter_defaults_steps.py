@@ -1,8 +1,10 @@
 import json
+import io
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -39,6 +41,9 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 calls.append(tuple(command))
                 root = Path(cwd)
                 args = command[1:]
+                if command[0] == "kb-create" and args[:2] == ["status", "--platform-root"]:
+                    return subprocess.CompletedProcess(command, 0,
+                        json.dumps({"ok": True, "host": {"healthUrl": "http://health.test/health"}}), "")
                 if command[0] == "git" and args == ["ls-files", "-z"]:
                     return subprocess.CompletedProcess(command, 0, b"README.md\0", b"")
                 if command[0] == "kb-create" and args[:3] == ["doctor", "--platform-root", str(platform_root)]:
@@ -60,7 +65,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         *[{"slot": slot, "mode": "inmemory", "implementation": slot}
                           for slot in ("eventBus", "config", "invoke", "artifacts", "notifier")],
                         *[{"slot": slot, "mode": "noop", "implementation": slot}
-                          for slot in ("vectorStore", "llm", "embeddings", "snapshotManager")],
+                          for slot in ("vectorStore", "llm", "embeddings")],
                     ]
                     if args[-1] == "--json":
                         result = {"ok": True, "platform": {"ok": True, "checks": statuses}}
@@ -150,7 +155,20 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command}")
 
             journey = Journey("local", "adapter-defaults-fixture")
-            run_adapter_default_steps(journey, project_a, env, fake_run)
+            runtime_adapters = [
+                {"slot": "storage", "mode": "real", "implementation": "@kb-labs/adapters-fs"},
+                {"slot": "cache", "mode": "real", "implementation": "@kb-labs/adapters-state-broker"},
+                *[{"slot": slot, "mode": "real", "implementation": slot}
+                  for slot in ("logger", "analytics", "documentDatabase", "kvStore")],
+                {"slot": "logs", "mode": "real", "implementation": "HybridLogReader"},
+                *[{"slot": slot, "mode": "inmemory", "implementation": slot}
+                  for slot in ("eventBus", "config", "invoke", "artifacts", "notifier")],
+                *[{"slot": slot, "mode": "noop", "implementation": slot}
+                  for slot in ("vectorStore", "llm", "embeddings")],
+            ]
+            with patch("adapter_defaults_steps.urllib.request.urlopen",
+                       side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(runtime_adapters).encode())):
+                run_adapter_default_steps(journey, project_a, env, fake_run)
 
             expected = {f"S-054.{number}" for number in range(1, 8)} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
@@ -163,6 +181,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/mind-entry", "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root), "--json"), calls)
             self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root)), calls)
+            self.assertIn(("kb-create", "status", "--platform-root", str(platform_root), "--json"), calls)
             self.assertFalse(any(call[0] == "kb-dev" and "doctor" in call for call in calls))
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs", "--scope", "platform"), calls)
             self.assertFalse(any(item.name.startswith("kb-adapter-project-b-") for item in home.iterdir()))
