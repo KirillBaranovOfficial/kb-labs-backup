@@ -46,6 +46,11 @@ def _redact_json(value):
 def _redact_text(text: str, admin_password: str) -> str:
     if admin_password:
         text = text.replace(admin_password, "[REDACTED]")
+    text = re.sub(
+        r"(?i)(\b[A-Z0-9_]*(?:PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s]+",
+        r"\1[REDACTED]",
+        text,
+    )
     # JSONC is not strict JSON; redact scalar values for secret-named keys.
     return re.sub(
         r'(?i)(["\']?(?:password|token|secret|apiKey|key)["\']?\s*:\s*)("(?:\\.|[^"\\])*"|\'[^\']*\'|[^,}\]\s]+)',
@@ -127,16 +132,17 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         for source in sorted((root / ".kb/v2/snapshots").glob("*.json")):
             add(source, Path(".kb/v2/snapshots") / source.name)
         home_value = (env or os.environ).get("HOME")
+        launcher_root = Path(home_value) / ".kb" / "launcher" if home_value else None
         launcher_logs = []
-        if home_value:
+        if launcher_root:
             try:
-                launcher_logs = sorted((Path(home_value) / ".kb" / "launcher").glob("*.log"))
+                launcher_logs = sorted(path for path in launcher_root.rglob("*.log") if path.is_file())
             except OSError:
                 pass
         for source in launcher_logs:
             if used >= CONTENT_BUDGET:
                 break
-            relative = Path("launcher-logs") / source.name
+            relative = Path("launcher-logs") / source.relative_to(launcher_root)
             add(source, relative, tail=True)
         receipt_path = root / ".kb/v2/receipt.json"
         try:

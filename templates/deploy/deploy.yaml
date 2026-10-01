@@ -44,6 +44,7 @@ services:
     config: ./configs/gateway.jsonc
     env:
       OPENAI_KEY: ${secrets.OPENAI_KEY}
+      GATEWAY_INTERNAL_SECRET: ${secrets.GATEWAY_INTERNAL_SECRET}
     targets:
       hosts: [prod-1]
       strategy: all           # "canary" splits by percentage

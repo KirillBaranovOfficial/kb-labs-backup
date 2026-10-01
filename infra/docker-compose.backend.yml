@@ -50,6 +50,7 @@ services:
       - KB_REGISTRY_PORT=5071
       - KB_SITE_URL=${KB_SITE_URL:-https://kblabs.ru}
       - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
+      - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
     depends_on:
@@ -89,6 +90,7 @@ services:
       - NODE_ENV=production
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GATEWAY_JWT_SECRET=${GATEWAY_JWT_SECRET}
+      - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
     volumes:
       - gateway_data:/app/.kb/database
       - gateway_storage:/app/.kb/storage
@@ -107,6 +109,7 @@ services:
       - "5050:5050"
     environment:
       - NODE_ENV=production
+      - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
     depends_on:
       - kb-redis
     restart: unless-stopped

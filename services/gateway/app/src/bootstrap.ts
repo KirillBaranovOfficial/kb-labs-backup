@@ -7,7 +7,7 @@ import {
   createInMemoryKVStore,
 } from "@kb-labs/core-platform/inmemory";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
-import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
+import { requireEnvironmentSecret, runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import type {
   IHostStore,
   AuthConfig,
@@ -53,6 +53,7 @@ import type { HostRoutes } from "./host-routes.js";
 export async function bootstrap(
   repoRoot: string = process.cwd(),
 ): Promise<void> {
+  requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET");
   await runService({
     appId: "gateway",
     startDir: repoRoot,
