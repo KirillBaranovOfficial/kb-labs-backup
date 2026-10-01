@@ -212,11 +212,11 @@ jobs:
 name: conditional-workflow
 version: 1.0.0
 on:
-  push: true
+  manual: true
 jobs:
   deploy:
     runsOn: local
-    if: ${{ trigger.type == 'push' && trigger.payload.ref == 'refs/heads/main' }}
+    if: ${{ trigger.type == 'manual' }}
     steps:
       - name: Run Tests
         id: tests

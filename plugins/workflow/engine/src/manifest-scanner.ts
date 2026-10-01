@@ -31,7 +31,7 @@ const CACHE_KEY_WORKFLOWS = 'manifest-scanner:v1:workflows' as const;
 /**
  * Workflow trigger type
  */
-export type WorkflowTriggerType = 'manual' | 'webhook' | 'push' | 'event';
+export type WorkflowTriggerType = 'manual' | 'event';
 
 /**
  * Workflow trigger configuration

@@ -342,7 +342,7 @@ Steps and jobs can be conditionally executed using `if` expressions:
 ```yaml
 jobs:
   deploy:
-    if: ${{ trigger.type == 'push' && trigger.payload.ref == 'refs/heads/main' }}
+    if: ${{ trigger.type == 'manual' }}
     steps:
       - name: Deploy
         if: ${{ steps.tests.outputs.exitCode == 0 }}
