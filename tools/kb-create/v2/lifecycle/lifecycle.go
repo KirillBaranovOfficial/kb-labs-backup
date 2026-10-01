@@ -4,6 +4,7 @@
 package lifecycle
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 )
 
 type Mutation func() error
-type PackageRestore func() error
+type PackageRestore func([]contracts.Artifact) error
 
 // Mutate snapshots the active verified receipt before a destructive change.
 // A failed mutation or verification restores the exact managed state and
@@ -34,13 +35,35 @@ func Mutate(platformRoot string, now time.Time, apply, verify Mutation, restoreP
 	return snapshot, nil
 }
 
+// Rollback applies the saved package-manager state before restoring packages,
+// then gives the package callback artifacts from the saved receipt explicitly.
+// Package restoration is separate from config rendering; the snapshot is the
+// only writer of generated platform files in this lifecycle.
 func Rollback(platformRoot, snapshotID string, restorePackages PackageRestore) (contracts.Snapshot, error) {
-	snapshot, err := receipt.RestoreSnapshot(platformRoot, snapshotID)
+	snapshot, err := receipt.ReadSnapshot(platformRoot, snapshotID)
 	if err != nil {
-		return contracts.Snapshot{}, fmt.Errorf("restore snapshot %s: %w", snapshotID, err)
+		return contracts.Snapshot{}, fmt.Errorf("read snapshot %s: %w", snapshotID, err)
+	}
+	var artifacts []contracts.Artifact
+	if restorePackages != nil {
+		receiptBytes, ok := snapshot.Files[".kb/v2/receipt.json"]
+		if !ok {
+			return snapshot, fmt.Errorf("restore packages for snapshot %s: snapshot receipt is missing", snapshotID)
+		}
+		var restored contracts.InstallReceipt
+		if err := json.Unmarshal(receiptBytes, &restored); err != nil {
+			return snapshot, fmt.Errorf("restore packages for snapshot %s: decode snapshot receipt: %w", snapshotID, err)
+		}
+		if restored.Schema != contracts.ReceiptSchema || restored.ID != snapshot.ReceiptID {
+			return snapshot, fmt.Errorf("restore packages for snapshot %s: snapshot receipt identity is invalid", snapshotID)
+		}
+		artifacts = restored.Plan.Artifacts
+	}
+	if _, err := receipt.RestoreSnapshot(platformRoot, snapshotID); err != nil {
+		return snapshot, fmt.Errorf("restore snapshot %s: %w", snapshotID, err)
 	}
 	if restorePackages != nil {
-		if err := restorePackages(); err != nil {
+		if err := restorePackages(artifacts); err != nil {
 			return snapshot, fmt.Errorf("restore packages for snapshot %s: %w", snapshotID, err)
 		}
 	}
