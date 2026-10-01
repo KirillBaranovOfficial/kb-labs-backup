@@ -89,6 +89,38 @@ describe('kb adapter list', () => {
       implementation: '@kb-labs/adapters-sqlite/kv', mode: 'real', networkRequired: false,
     });
   });
+
+  it('shows a manifest-discovered local default when an installed layout leaves the slot unbound', async () => {
+    const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-fs');
+    await mkdir(join(packageRoot, 'dist'), { recursive: true });
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-fs', main: 'dist/index.js' }));
+    await writeFile(join(packageRoot, 'dist', 'index.js'), [
+      'export const manifest = { id: "fs-storage", defaultFor: ["storage"] };',
+      'export function createAdapter() { return {}; }',
+    ].join('\n'));
+    await writeMarketplaceLock(platformRoot, {
+      schema: 'kb.marketplace/3',
+      plugins: {},
+      adapters: {
+        'fs-storage': {
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-fs',
+          enabled: true, source: 'platform',
+        },
+      },
+    });
+    await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
+      platform: { adapterOptions: { storage: { baseDir: '.kb/data' } } },
+    }));
+    const { ctx, outputs } = context();
+
+    const code = await adapterList.run(ctx, [], { json: true });
+
+    expect(code).toBe(0);
+    const adapters = (outputs[0] as { adapters: Array<Record<string, unknown>> }).adapters;
+    expect(adapters.find(({ slot }) => slot === 'storage')).toMatchObject({
+      implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: join(projectRoot, '.kb', 'data'), networkRequired: false,
+    });
+  });
 });
 
 describe('kb adapter bind', () => {

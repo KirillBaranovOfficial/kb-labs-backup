@@ -203,20 +203,21 @@ export async function initializePlatform(
         projectRoot,
       };
     } catch (error) {
-      // Adapters failed to connect (Redis/Qdrant/MongoDB not running in dev).
-      // Fall back to NoOp adapters but preserve rawConfig so useConfig() works.
+      // A configured external adapter failed. Retry with no user bindings so
+      // installed manifest defaults remain active while optional capabilities
+      // use their typed unavailable fallback.
       const fallbackConfig: PlatformConfig = { adapters: {} };
       const platformInstance = await initPlatform(
         fallbackConfig,
         projectRoot,
         uiProvider,
-        undefined,
+        platformRoot,
         makeAssemblyHook(() =>
           process.env.KB_DEBUG === "true" ? platform.logger : undefined,
         ),
       );
       platformInstance.logger.warn(
-        "Platform adapters failed, using NoOp adapters",
+        "Platform adapters failed; retried with installed local defaults",
         {
           layer: "cli",
           service: LOG_SERVICE,

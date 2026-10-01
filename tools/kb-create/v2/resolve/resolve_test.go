@@ -32,14 +32,14 @@ func TestFreshPlatformInstallResolvesAndBindsBuiltinFilesystemStorage(t *testing
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{
 			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
-			Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
 			Profiles: map[string]contracts.ServiceGraph{"default": {}},
 			Requires: []catalog.Requirement{{Capability: "storage", RequiredBy: "platform"}},
-			Config: []catalog.ConfigRequirement{{ID: "storage.default", Path: "/platform/adapterOptions/storage", Default: `{"baseDir":".kb/data"}`}},
+			Config:   []catalog.ConfigRequirement{{ID: "storage.default", Path: "/platform/adapterOptions/storage", Default: `{"baseDir":".kb/data"}`}},
 		}},
 		Adapters: []catalog.Adapter{{
 			Component: catalog.Component{ID: "fs-storage", Version: "2.0.0", Package: "@kb-labs/adapters-fs", SHA256: "fs"},
-			Provides: []string{"storage"}, DefaultFor: []string{"storage"},
+			Provides:  []string{"storage"}, DefaultFor: []string{"storage"},
 		}},
 	}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
@@ -60,6 +60,53 @@ func TestFreshPlatformInstallResolvesAndBindsBuiltinFilesystemStorage(t *testing
 	}
 	if len(plan.ConfigPatches) < 2 || plan.ConfigPatches[1].Path != "/platform/adapters/storage" || plan.ConfigPatches[1].Value != "@kb-labs/adapters-fs@2.0.0" {
 		t.Fatalf("fresh install config patches = %#v", plan.ConfigPatches)
+	}
+}
+
+// case: S-054.1
+func TestFreshPlatformInstallBindsEveryPersistentBuiltinAdapter(t *testing.T) {
+	capabilities := []string{"storage", "cache", "eventBus", "documentDatabase", "kvStore", "analytics", "logger", "logRingBuffer", "logPersistence", "serviceTransport"}
+	providers := []catalog.Adapter{
+		{Component: catalog.Component{ID: "fs", Version: "2.0.0", Package: "@kb-labs/adapters-fs", SHA256: "fs"}, Provides: []string{"storage"}, DefaultFor: []string{"storage"}},
+		{Component: catalog.Component{ID: "state-broker", Version: "2.0.0", Package: "@kb-labs/adapters-state-broker", SHA256: "cache"}, Provides: []string{"cache"}, DefaultFor: []string{"cache"}},
+		{Component: catalog.Component{ID: "eventbus-cache", Version: "2.0.0", Package: "@kb-labs/adapters-eventbus-cache", SHA256: "eventbus"}, Provides: []string{"eventBus"}},
+		{Component: catalog.Component{ID: "sqlite", Version: "2.0.0", Package: "@kb-labs/adapters-sqlite", SHA256: "sqlite"}, Provides: []string{"documentDatabase", "kvStore"}, DefaultFor: []string{"documentDatabase", "kvStore"}},
+		{Component: catalog.Component{ID: "analytics-sqlite", Version: "2.0.0", Package: "@kb-labs/adapters-analytics-sqlite", SHA256: "analytics"}, Provides: []string{"analytics"}, DefaultFor: []string{"analytics"}},
+		{Component: catalog.Component{ID: "pino", Version: "2.0.0", Package: "@kb-labs/adapters-pino", SHA256: "pino"}, Provides: []string{"logger"}, DefaultFor: []string{"logger"}},
+		{Component: catalog.Component{ID: "log-ringbuffer", Version: "2.0.0", Package: "@kb-labs/adapters-log-ringbuffer", SHA256: "ring"}, Provides: []string{"logRingBuffer"}},
+		{Component: catalog.Component{ID: "log-document", Version: "2.0.0", Package: "@kb-labs/adapters-log-document", SHA256: "logs"}, Provides: []string{"logPersistence"}},
+		{Component: catalog.Component{ID: "service-transport", Version: "2.0.0", Package: "@kb-labs/adapters-service-transport-http", SHA256: "transport"}, Provides: []string{"serviceTransport"}},
+	}
+	requires := make([]catalog.Requirement, len(capabilities))
+	for index, capability := range capabilities {
+		requires[index] = catalog.Requirement{Capability: capability, RequiredBy: "platform"}
+	}
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}}, Requires: requires,
+		}},
+		Adapters: providers,
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, binding := range plan.ProviderBindings {
+		got[binding.Capability] = binding.Package
+	}
+	want := map[string]string{
+		"storage": "@kb-labs/adapters-fs", "cache": "@kb-labs/adapters-state-broker",
+		"eventBus":         "@kb-labs/adapters-eventbus-cache",
+		"documentDatabase": "@kb-labs/adapters-sqlite", "kvStore": "@kb-labs/adapters-sqlite",
+		"analytics": "@kb-labs/adapters-analytics-sqlite", "logger": "@kb-labs/adapters-pino",
+		"logRingBuffer": "@kb-labs/adapters-log-ringbuffer", "logPersistence": "@kb-labs/adapters-log-document",
+		"serviceTransport": "@kb-labs/adapters-service-transport-http",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("fresh platform provider bindings = %#v, want %#v", got, want)
 	}
 }
 

@@ -59,6 +59,15 @@ describe('ADAPTER_DEFAULTS', () => {
     expect(ADAPTER_DEFAULTS.logger.defaultFallback).toBe('inmemory');
   });
 
+  it('marks installed local-persistent providers as preferred over the in-memory test fallback', () => {
+    for (const slot of ['storage', 'cache', 'eventBus', 'documentDatabase', 'kvStore', 'analytics', 'logger', 'logs'] as const) {
+      expect(ADAPTER_DEFAULTS[slot].preferInstalledDefault).toBe(true);
+    }
+    expect(ADAPTER_DEFAULTS.llm.preferInstalledDefault).not.toBe(true);
+    expect(ADAPTER_DEFAULTS.embeddings.preferInstalledDefault).not.toBe(true);
+    expect(ADAPTER_DEFAULTS.vectorStore.preferInstalledDefault).not.toBe(true);
+  });
+
   it('is a const object — runtime mutation must be impossible (frozen at type level)', () => {
     // Type-level: `as const` makes properties readonly. We re-assert at runtime
     // that the shape is as expected. Direct mutation would be a TS error.

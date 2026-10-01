@@ -98,31 +98,15 @@ const configuredPlatformAdapterPackages = platformAdapterConfig
       return stagedPackageForAdapter(configuredPackage);
     }))]
   : [];
-// A release index is a portable installation baseline, not a copy of the
-// maintainer's local development environment.  Keep every configured adapter
-// package in the sealed member set so a consumer can opt into it later, but
-// enable by default only what works on any machine with no credentials,
-// endpoints or external services:
-//   - serviceTransport: the transport needed to reach the installed service
-//     graph;
-//   - logger + logRingBuffer: in-process logging.  platform.logs (workflow
-//     run logs, the logs WS channel, Studio log views) has no backend unless
-//     a log adapter is bound, so without them a default install silently
-//     shows no logs.  logRingBuffer is an extension adapter that taps the
-//     logger, so the two are enabled together.
-// Remote providers (and their credentials/endpoints) belong in a consumer
-// overlay; otherwise an installed CLI can fail before it can even configure
-// that overlay.
-const PORTABLE_ADAPTER_SLOTS = ['serviceTransport', 'logger', 'logRingBuffer'];
-const portablePlatformAdapterConfig = platformAdapterConfig?.serviceTransport
-  ? Object.fromEntries(
-      PORTABLE_ADAPTER_SLOTS
-        .filter(slot => typeof platformAdapterConfig[slot] === 'string')
-        .map(slot => [slot, platformAdapterConfig[slot]]),
-    )
+// Keep the bindings and options for precisely the required platform slots in
+// the release index. This makes fresh-install defaults travel with the same
+// capability list the resolver uses to produce provider bindings.
+const requiredAdapterSlots = new Set(platformRequires.map(({ capability }) => capability));
+const portablePlatformAdapterConfig = platformAdapterConfig
+  ? Object.fromEntries(Object.entries(platformAdapterConfig).filter(([slot]) => requiredAdapterSlots.has(slot)))
   : undefined;
-const portablePlatformAdapterOptions = platformAdapterOptions?.serviceTransport
-  ? { serviceTransport: platformAdapterOptions.serviceTransport }
+const portablePlatformAdapterOptions = platformAdapterOptions
+  ? Object.fromEntries(Object.entries(platformAdapterOptions).filter(([slot]) => requiredAdapterSlots.has(slot)))
   : undefined;
 for (const packageName of platformMemberPackages) {
   if (!byName.has(packageName)) {

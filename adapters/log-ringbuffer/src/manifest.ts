@@ -18,6 +18,7 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "extension",
   implements: "ILogRingBuffer",
+  defaultFor: ["logRingBuffer"],
   extends: {
     adapter: "logger",
     hook: "onLog",

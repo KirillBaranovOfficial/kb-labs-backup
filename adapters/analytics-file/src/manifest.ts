@@ -18,7 +18,6 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "IAnalytics",
-  defaultFor: ["analytics"],
   optional: {
     adapters: ["cache"], // Optional cache dependency for stats caching
   },

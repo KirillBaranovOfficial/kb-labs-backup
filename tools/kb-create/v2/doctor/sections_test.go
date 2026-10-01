@@ -91,7 +91,7 @@ func TestInstallationSectionRejectsAReceiptWithoutAHost(t *testing.T) {
 }
 
 func TestPlatformSectionReportsAStoppedOrUnhealthyHost(t *testing.T) {
-	stopped := InspectPlatform(context.Background(), host.Status{State: host.StateStopped}, nil)
+	stopped := InspectPlatform(context.Background(), host.Status{State: host.StateStopped}, nil, nil)
 	if stopped.OK || !strings.Contains(check(t, stopped, "host-process").Hint, "kb-create start") {
 		t.Fatalf("stopped = %+v", stopped)
 	}
@@ -99,7 +99,7 @@ func TestPlatformSectionReportsAStoppedOrUnhealthyHost(t *testing.T) {
 	if adapterCheck.OK || !strings.Contains(adapterCheck.Detail, "cannot be checked") || !strings.Contains(adapterCheck.Hint, "kb-create start") {
 		t.Fatalf("stopped adapter status = %+v", adapterCheck)
 	}
-	unhealthy := InspectPlatform(context.Background(), host.Status{State: host.StateUnhealthy, PID: 7}, nil)
+	unhealthy := InspectPlatform(context.Background(), host.Status{State: host.StateUnhealthy, PID: 7}, nil, nil)
 	if unhealthy.OK || !strings.Contains(check(t, unhealthy, "host-process").Hint, "kb-create restart") {
 		t.Fatalf("unhealthy = %+v", unhealthy)
 	}
@@ -129,7 +129,7 @@ func gatewayDouble(t *testing.T, health, auth string) host.Status {
 
 func TestPlatformSectionReportsPerSlotAdapterModeAndImplementation(t *testing.T) {
 	status := gatewayDouble(t, `{"upstreams":{}}`, "")
-	section := InspectPlatform(context.Background(), status, nil)
+	section := InspectPlatform(context.Background(), status, nil, nil)
 	encoded, err := json.Marshal(section)
 	if err != nil {
 		t.Fatal(err)
@@ -156,11 +156,23 @@ func TestPlatformSectionReportsPerSlotAdapterModeAndImplementation(t *testing.T)
 	}
 }
 
+// case: S-054.10
+func TestPlatformSectionRejectsInMemoryFallbackWhenPersistentProviderIsBound(t *testing.T) {
+	status := gatewayDouble(t, `{"upstreams":{}}`, "")
+	section := InspectPlatform(context.Background(), status, nil, []contracts.ProviderBinding{{
+		Capability: "cache", Package: "@kb-labs/adapters-state-broker",
+	}})
+	got := check(t, section, "adapter:cache")
+	if got.OK || got.Mode != "inmemory" || !strings.Contains(got.Hint, "kb adapter bind cache @kb-labs/adapters-state-broker") {
+		t.Fatalf("persistent cache fallback finding = %+v", got)
+	}
+}
+
 func TestPlatformSectionReadsUpstreamsAdaptersAndSignInReadiness(t *testing.T) {
 	status := gatewayDouble(t,
 		`{"upstreams":{"marketplace":{"status":"up"},"state":{"status":"down"}},"adapters":{"cache":{"available":true},"llm":{"available":false}}}`,
 		`{"ok":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in","hint":"kb-create doctor --recover"}]}`)
-	section := InspectPlatform(context.Background(), status, nil)
+	section := InspectPlatform(context.Background(), status, nil, nil)
 	if section.OK {
 		t.Fatalf("section = %+v", section)
 	}
@@ -176,7 +188,7 @@ func TestPlatformSectionReadsUpstreamsAdaptersAndSignInReadiness(t *testing.T) {
 
 func TestPlatformSectionIsHealthyWhenEverythingReportsUp(t *testing.T) {
 	status := gatewayDouble(t, `{"upstreams":{"state":{"status":"up"}},"projectRuntimes":{"active":0,"limit":4}}`, `{"ok":true,"issues":[]}`)
-	if section := InspectPlatform(context.Background(), status, nil); !section.OK {
+	if section := InspectPlatform(context.Background(), status, nil, nil); !section.OK {
 		t.Fatalf("section = %+v", section)
 	} else if check(t, section, "project-runtimes").Detail != "Project runtimes start on demand; 0 of 4 active." {
 		t.Fatalf("project runtime status = %+v", check(t, section, "project-runtimes"))
@@ -186,7 +198,7 @@ func TestPlatformSectionIsHealthyWhenEverythingReportsUp(t *testing.T) {
 func TestPlatformSectionDoesNotRequireAdminWhenAuthIsDisabled(t *testing.T) {
 	status := gatewayDouble(t, `{"upstreams":{"marketplace":{"status":"up"}}}`,
 		`{"ok":true,"authEnabled":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in"},{"code":"jwt_secret_default","severity":"error","message":"shared secret"}]}`)
-	section := InspectPlatform(context.Background(), status, nil)
+	section := InspectPlatform(context.Background(), status, nil, nil)
 	for _, item := range section.Checks {
 		if item.ID == "auth:no_active_admin" {
 			t.Fatalf("local mode must not report missing admin: %+v", item)
@@ -199,7 +211,7 @@ func TestPlatformSectionDoesNotRequireAdminWhenAuthIsDisabled(t *testing.T) {
 
 func TestPlatformSectionToleratesAHostWithoutStructuredHealth(t *testing.T) {
 	status := gatewayDouble(t, `ok`, "")
-	section := InspectPlatform(context.Background(), status, nil)
+	section := InspectPlatform(context.Background(), status, nil, nil)
 	if !section.OK || !check(t, section, "health").OK {
 		t.Fatalf("section = %+v", section)
 	}
