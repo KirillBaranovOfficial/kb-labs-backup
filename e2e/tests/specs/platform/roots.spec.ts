@@ -1,27 +1,12 @@
 import { test, expect } from '@playwright/test'
 import { REST } from '../../fixtures/urls.js'
 
-// projectRoot config overrides platformRoot config.
-// Tests verify the override is applied and surfaced in the API.
-// Config response shape: { ok: true, data: { adapters, adapterOptions, execution, ... } }
-
 test('ROOT-01: platform config endpoint is reachable and schema is valid', async ({ request }) => {
   const res = await request.get(`${REST}/api/v1/platform/config`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.ok).toBe(true)
   expect(body.data?.schema).toMatch(/kb\.platform\.config/)
-})
-
-test('ROOT-02: projectRoot config overrides platformRoot adapter config', async ({ request }) => {
-  // When a project has .kb/kb.config.json with adapterOptions, it takes precedence.
-  // We verify this by checking config is non-empty and reflects project-level values.
-  const res = await request.get(`${REST}/api/v1/platform/config`)
-  expect(res.status()).toBe(200)
-  const body = await res.json()
-  // If projectRoot override is applied, adapterOptions must not be the platform default
-  // (This is an existence check — deeper assertions need a fixture project with known config)
-  expect(body.ok).toBe(true)
 })
 
 test('ROOT-03: plugin registry uses projectRoot for local plugin discovery', async ({ request }) => {

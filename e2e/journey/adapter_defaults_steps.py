@@ -1,4 +1,4 @@
-"""Installed-platform journeys for adapter defaults and project overrides."""
+"""Installed-platform journeys for adapter defaults and platform-only bindings."""
 from __future__ import annotations
 
 import json
@@ -33,6 +33,24 @@ def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
     if not isinstance(value, dict):
         raise RuntimeError(f"`{' '.join(command)}` returned a non-object JSON value")
     return value
+
+
+def config(root: Path) -> dict:
+    config_path = root / ".kb" / "kb.config.jsonc"
+    if not config_path.exists():
+        config_path = root / ".kb" / "kb.config.json"
+    if not config_path.exists():
+        return {}
+    value = json.loads(config_path.read_text())
+    return value if isinstance(value, dict) else {}
+
+
+def write_config(root: Path, value: dict) -> None:
+    config_path = root / ".kb" / "kb.config.jsonc"
+    if not config_path.exists():
+        config_path = root / ".kb" / "kb.config.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(value, indent=2) + "\n")
 
 
 def run_adapter_default_steps(journey: Journey, project_root: str | Path,
@@ -314,7 +332,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         if _platform_snapshot(platform_root) != sealed_platform_before:
             raise RuntimeError("adapter install changed the platform receipt or installed package versions")
 
-    journey.step("replacing a default leaves the old adapter data on disk", "adapter",
+    journey.step("platform adapter replacement leaves the old adapter data on disk", "adapter",
                  assert_adapter_replacement_keeps_old_data, cases=["S-054.11"])
 
     def assert_marketplace_requires_kb_create_pins() -> None:
@@ -422,84 +440,96 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("could not register project B for adapter isolation check")
         project_b_registered = True
 
-        def assert_baseline_records() -> None:
+        def bind_platform_adapter() -> None:
+            command = ["adapter", "bind", "storage", "@kb-labs/adapters-fs", "--json"]
+            if _json(cli(command, platform_root), command).get("ok") is not True:
+                raise RuntimeError("could not bind the filesystem adapter at platform scope")
+            if config(platform_root).get("platform", {}).get("adapters", {}).get("storage") != "@kb-labs/adapters-fs":
+                raise RuntimeError("platform config does not contain the storage binding")
             for project in (project_a, project_b):
-                config_file = project / ".kb" / "kb.config.json"
-                config = json.loads(config_file.read_text()) if config_file.exists() else {}
-                if "storage" in config.get("platform", {}).get("adapters", {}):
-                    raise RuntimeError(f"project {project} unexpectedly has a project-level storage override")
-            before_a = run_workflow(project_a)
-            before_b = run_workflow(project_b)
-            _assert_records(before_a, before_b, project_a, project_b)
-        journey.step("both projects write workflow records through defaults", "adapter",
-                     assert_baseline_records, cases=["S-048.1"])
+                project_config = config(project)
+                if "adapters" in project_config.get("platform", {}):
+                    raise RuntimeError(f"project {project} contains adapter configuration")
+                if rows_for(project).get("storage", {}).get("implementation") != "@kb-labs/adapters-fs":
+                    raise RuntimeError(f"project {project} did not resolve the platform adapter")
+        journey.step("bind the platform storage adapter", "adapter", bind_platform_adapter, cases=["S-048.1"])
         if journey.steps[-1].status != "PASS":
             return
 
-        def bind_override() -> None:
-            options = ["config", "set", "platform.adapterOptions.storage", '{"baseDir":".kb/override-data"}', "--json"]
-            if _json(cli(options), options).get("ok") is not True:
-                raise RuntimeError("could not set project A storage override options")
-            bind = ["adapter", "bind", "storage", "@kb-labs/adapters-fs", "--json"]
-            if _json(cli(bind), bind).get("ok") is not True:
-                raise RuntimeError("could not bind the built-in filesystem storage override")
-            row = rows_for(project_a).get("storage")
-            if not row or row.get("baseDir") != str(project_a / ".kb" / "override-data"):
-                raise RuntimeError("storage override is not effective in project A")
-            row_b = rows_for(project_b).get("storage")
-            if not row_b or row_b.get("baseDir") != str(project_b / ".kb" / "data"):
-                raise RuntimeError("binding project A changed project B's default")
-        journey.step("bind project A storage override", "adapter", bind_override, cases=["S-048.2"])
+        def set_platform_options() -> None:
+            command = ["config", "set", "--scope", "platform", "platform.adapterOptions.storage", '{"baseDir":".kb/data"}', "--json"]
+            if _json(cli(command, platform_root), command).get("ok") is not True:
+                raise RuntimeError("could not set platform storage options")
+            for project in (project_a, project_b):
+                if rows_for(project).get("storage", {}).get("baseDir") != str(project / ".kb" / "data"):
+                    raise RuntimeError(f"project {project} did not use the platform storage options")
+        journey.step("configure platform storage options", "adapter", set_platform_options, cases=["S-048.2"])
         if journey.steps[-1].status != "PASS":
             return
 
-        override_run: tuple[str, Path, dict] | None = None
-        def write_override_record() -> None:
-            nonlocal override_run
-            override_run = run_workflow(project_a)
-            _assert_record_under(override_run, project_a / ".kb" / "override-data")
-            default_record = project_a / ".kb" / "data" / "workflows" / f"{override_run[0]}.json"
-            if default_record.exists():
-                raise RuntimeError(f"override run {override_run[0]} also wrote to the default storage directory")
-        journey.step("workflow record lands in project A override directory", "workflow",
-                     write_override_record, cases=["S-048.3"])
-        if journey.steps[-1].status != "PASS":
-            return
-        def write_project_b_record() -> None:
-            project_b_run = run_workflow(project_b)
-            _assert_record_under(project_b_run, project_b / ".kb" / "data")
-        journey.step("project B continues writing to its default", "workflow",
-                     write_project_b_record, cases=["S-048.4"])
+        def reject_project_adapter_config() -> None:
+            for project_config in (
+                {"platform": {"adapters": {"storage": "@kb-labs/adapters-fs"}}},
+                {"adapters": {"storage": "@kb-labs/adapters-fs"}},
+            ):
+                write_config(project_a, project_config)
+                result = runner(["kb", "adapter", "list", "--json"], cwd=str(project_a), env=base_env,
+                                capture_output=True, text=True, timeout=300)
+                payload = _json(result, ["adapter", "list", "--json"])
+                error = payload.get("error")
+                if result.returncode == 0 or not isinstance(error, dict) or error.get("code") != "KB_ADAPTER_PROJECT_SCOPE":
+                    raise RuntimeError("project adapter config did not return KB_ADAPTER_PROJECT_SCOPE")
+                if "platform config" not in str(error.get("hint", "")):
+                    raise RuntimeError("project adapter scope error did not point to platform config")
+            write_config(project_a, {})
+        journey.step("reject project adapter configuration", "adapter", reject_project_adapter_config, cases=["S-048.3"])
         if journey.steps[-1].status != "PASS":
             return
 
-        def unbind_and_restore() -> None:
+        def attach_project_plugin() -> None:
+            command = ["marketplace", "install", "@kb-labs/commit-entry", "--scope", "project", "--json"]
+            if _json(cli(command, project_a), command).get("ok") is not True:
+                raise RuntimeError("could not attach a plugin to project A")
+            for project, expected in ((project_a, True), (project_b, False)):
+                plugins = ["marketplace", "plugins", "list", "--json"]
+                result = _json(cli(plugins, project), plugins)
+                contains = "@kb-labs/commit-entry" in json.dumps(result)
+                if contains is not expected:
+                    raise RuntimeError(f"project {project} plugin attachment isolation is incorrect")
+                if rows_for(project).get("storage", {}).get("implementation") != "@kb-labs/adapters-fs":
+                    raise RuntimeError(f"project {project} adapter binding changed after plugin attachment")
+        journey.step("attach a plugin to project A only", "plugin", attach_project_plugin, cases=["S-048.4"])
+        if journey.steps[-1].status != "PASS":
+            return
+
+        def verify_project_configs() -> None:
+            for project in (project_a, project_b):
+                project_config = config(project)
+                value = project_config.get("platform", {})
+                if ("adapters" in value or "adapterOptions" in value or
+                        "adapters" in project_config or "adapterOptions" in project_config):
+                    raise RuntimeError(f"project {project} contains platform adapter settings")
+        journey.step("verify adapter settings are absent from project configs", "adapter", verify_project_configs, cases=["S-048.5"])
+
+        def unbind_platform_storage_and_restore_default() -> None:
             command = ["adapter", "unbind", "storage", "--json"]
-            if _json(cli(command), command).get("ok") is not True:
-                raise RuntimeError("could not unbind project A storage override")
-            restored = run_workflow(project_a)
-            _assert_record_under(restored, project_a / ".kb" / "data")
-            override_record = project_a / ".kb" / "override-data" / "workflows" / f"{restored[0]}.json"
-            if override_record.exists():
-                raise RuntimeError("new workflow run still uses project A's overridden storage directory")
-        journey.step("unbind project A and return new writes to default", "workflow",
-                     unbind_and_restore, cases=["S-048.5"])
-        if journey.steps[-1].status != "PASS":
-            return
-
-        def verify_restore_and_isolation() -> None:
-            rows_a, rows_b = rows_for(project_a), rows_for(project_b)
-            if rows_a.get("storage", {}).get("baseDir") != str(project_a / ".kb" / "data"):
-                raise RuntimeError("project A no longer reports the built-in storage default after unbind")
-            if rows_b.get("storage", {}).get("baseDir") != str(project_b / ".kb" / "data"):
-                raise RuntimeError("project B storage default changed during project A override")
-            config = json.loads((project_a / ".kb" / "kb.config.json").read_text())
-            platform = config.get("platform", {})
-            if "storage" in platform.get("adapters", {}) or "storage" in platform.get("adapterOptions", {}):
-                raise RuntimeError("project A storage binding or its scoped options remain after unbind")
-        journey.step("inspect both projects after storage unbind", "adapter", verify_restore_and_isolation, cases=["S-048.6"])
+            if _json(cli(command, platform_root), command).get("ok") is not True:
+                raise RuntimeError("could not unbind platform storage")
+            platform_config = config(platform_root).get("platform", {})
+            if "storage" in platform_config.get("adapters", {}) or "storage" in platform_config.get("adapterOptions", {}):
+                raise RuntimeError("platform storage binding or options remain after unbind")
+            row = rows_for(project_a).get("storage")
+            default_base = project_a / ".kb" / "data"
+            if (not row or row.get("implementation") != "@kb-labs/adapters-fs" or
+                    row.get("baseDir") != str(default_base)):
+                raise RuntimeError("project did not resolve the built-in filesystem default after unbind")
+            _, record, _ = run_workflow(project_a)
+            if record.parent != default_base / "workflows" or not record.name.endswith(".json"):
+                raise RuntimeError("workflow record was not written under the built-in storage default")
+        journey.step("unbind platform storage and restore the built-in default", "adapter",
+                     unbind_platform_storage_and_restore_default, cases=["S-048.6"])
     except Exception as error:
-        journey.step("project storage override flow", "adapter", lambda: str(error))
+        journey.step("project adapter and plugin isolation checks", "adapter", lambda: str(error))
     finally:
         if project_b_registered:
             try:
@@ -573,7 +603,7 @@ def _assert_missing_openai_key(runner: CommandRunner, env: dict[str, str], proje
         raise RuntimeError("bound OpenAI LLM did not return KB_ADAPTER_CREDENTIALS_MISSING")
     message = str(error.get("message", ""))
     hint = str(error.get("hint", ""))
-    expected_command = "kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"
+    expected_command = "kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"
     if "OPENAI_API_KEY" not in message or expected_command not in hint or "No request was sent" not in hint:
         raise RuntimeError("missing-key error does not identify the key, setup command, and no-send guarantee")
     doctor_command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--json"]

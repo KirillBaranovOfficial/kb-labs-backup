@@ -56,10 +56,7 @@ describe('loadPlatformConfig', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('merges project adapters when platform has none (adapters are mergeable)', async () => {
-    // `adapters` is a mergeable field (see CONFIG_FIELD_SCOPE). A project
-    // can declare adapter selection and it will be used when the platform
-    // config doesn't provide adapters of its own.
+  it('rejects project adapter bindings even when platform has none', async () => {
     const platformRoot = path.join(tmpDir, 'p1-platform')
     const projectRoot = path.join(tmpDir, 'p1-project')
     makePlatformDir(platformRoot) // no config
@@ -69,22 +66,42 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    const result = await loadPlatformConfig({
+    await expect(loadPlatformConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
         KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
+    })).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
+  })
+
+  it('rejects legacy top-level project adapter sections with the typed scope error', async () => {
+    const platformRoot = path.join(tmpDir, 'p1-legacy-platform')
+    const projectRoot = path.join(tmpDir, 'p1-legacy-project')
+    makePlatformDir(platformRoot)
+    makeProjectDir(projectRoot, { adapters: { llm: ['openai'] } })
+
+    await expect(loadPlatformConfig({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      loadEnvFile: false,
+    })).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
+  })
+
+  it('rejects project adapter bindings and options with an actionable typed error', async () => {
+    const platformRoot = path.join(tmpDir, 'p-platform-only')
+    const projectRoot = path.join(tmpDir, 'p-project-only')
+    makePlatformDir(platformRoot, { platform: { adapters: { llm: 'openai' } } })
+    makeProjectDir(projectRoot, {
+      platform: { adapterOptions: { llm: { model: 'project-model' } } },
     })
 
-    expect(result.platformRoot).toBe(path.resolve(platformRoot))
-    expect(result.projectRoot).toBe(path.resolve(projectRoot))
-    expect(result.sameLocation).toBe(false)
-    expect(result.platformConfig.adapters).toEqual({ llm: 'noop' })
-    expect(result.sources.projectConfig).toBe(
-      path.join(projectRoot, '.kb', 'kb.config.json'),
-    )
+    await expect(loadPlatformConfig({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      loadEnvFile: false,
+    })).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
   })
 
   it('loads only platform defaults when project has no config', async () => {
@@ -113,9 +130,7 @@ describe('loadPlatformConfig', () => {
     expect(result.sources.projectConfig).toBeUndefined()
   })
 
-  it('adapters deep-merge: project overrides platform per key', async () => {
-    // `adapters` is mergeable → project can override individual adapter
-    // bindings. Platform fills keys the project doesn't set.
+  it('rejects project adapter bindings instead of merging them with platform config', async () => {
     const platformRoot = path.join(tmpDir, 'p3-platform')
     const projectRoot = path.join(tmpDir, 'p3-project')
     makePlatformDir(platformRoot, {
@@ -129,27 +144,19 @@ describe('loadPlatformConfig', () => {
     makeProjectDir(projectRoot, {
       platform: {
         adapters: {
-          llm: 'anthropic', // project override → wins
+          llm: 'anthropic', // project-level adapter configuration is rejected
         },
       },
     })
 
-    const result = await loadPlatformConfig({
+    await expect(loadPlatformConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
         KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
-    })
-
-    // Project llm wins, platform cache carries over.
-    expect(result.platformConfig.adapters).toEqual({
-      llm: 'anthropic',
-      cache: 'redis',
-    })
-    expect(result.sources.platformDefaults).toBeDefined()
-    expect(result.sources.projectConfig).toBeDefined()
+    })).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
   })
 
   it('returns empty-adapters base when neither layer exists', async () => {
@@ -334,10 +341,10 @@ describe('loadPlatformConfig', () => {
     // traffic with a literal `${VAR}` baked into config (docs/adr/0037).
     const platformRoot = path.join(tmpDir, 'p10-platform')
     const projectRoot = path.join(tmpDir, 'p10-project')
-    makePlatformDir(platformRoot)
-    makeProjectDir(projectRoot, {
+    makePlatformDir(platformRoot, {
       platform: { adapters: { llm: '${MISSING_SECRET_VAR}' } },
     })
+    makeProjectDir(projectRoot)
 
     delete process.env.MISSING_SECRET_VAR
 
@@ -357,10 +364,10 @@ describe('loadPlatformConfig', () => {
   it('leaves an unresolved ${VAR} placeholder intact outside production', async () => {
     const platformRoot = path.join(tmpDir, 'p11-platform')
     const projectRoot = path.join(tmpDir, 'p11-project')
-    makePlatformDir(platformRoot)
-    makeProjectDir(projectRoot, {
+    makePlatformDir(platformRoot, {
       platform: { adapters: { llm: '${MISSING_SECRET_VAR}' } },
     })
+    makeProjectDir(projectRoot)
 
     delete process.env.MISSING_SECRET_VAR
 

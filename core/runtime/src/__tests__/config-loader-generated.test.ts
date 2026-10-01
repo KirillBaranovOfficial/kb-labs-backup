@@ -39,7 +39,7 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     })
   }
 
-  it('user config wins over generated, project over platform; generated fills the rest', async () => {
+  it('rejects project adapter overrides above generated and platform settings', async () => {
     const platformRoot = path.join(tmpDir, 'a-platform')
     const projectRoot = path.join(tmpDir, 'a-project')
     makePlatformDir(platformRoot)
@@ -55,18 +55,7 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     })
     write(projectRoot, '.kb/kb.config.json', { platform: { adapters: { llm: 'project-llm' } } })
 
-    const result = await load(platformRoot, projectRoot)
-
-    expect(result.platformConfig.adapters).toEqual({
-      llm: 'project-llm',
-      cache: 'platform-cache',
-      storage: 'generated-storage',
-    })
-    // A generated-only section still reaches the platform config.
-    expect(result.platformConfig.adapterOptions).toEqual({
-      serviceTransport: { services: { rest: { url: 'http://127.0.0.1:5050' } } },
-    })
-    expect(result.sources.generated).toEqual([path.join(platformRoot, '.kb/generated/topology.jsonc')])
+    await expect(load(platformRoot, projectRoot)).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
   })
 
   it('generated product sections sit under the project config in effectiveConfig', async () => {
@@ -86,10 +75,10 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     const platformRoot = path.join(tmpDir, 'c-platform')
     const projectRoot = path.join(tmpDir, 'c-project')
     makePlatformDir(platformRoot)
-    write(projectRoot, '.kb/kb.config.json', { platform: { adapters: { llm: 'project-llm' } } })
+    write(projectRoot, '.kb/kb.config.json', {})
 
     const result = await load(platformRoot, projectRoot)
-    expect(result.platformConfig.adapters).toEqual({ llm: 'project-llm' })
+    expect(result.platformConfig.adapters).toEqual({})
     expect(result.sources.generated).toBeUndefined()
   })
 
@@ -124,10 +113,10 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     const projectRoot = path.join(tmpDir, 'd-project')
     makePlatformDir(platformRoot)
     write(platformRoot, '.kb/generated/broken.json', '{ nope')
-    write(projectRoot, '.kb/kb.config.json', { platform: { adapters: { llm: 'project-llm' } } })
+    write(projectRoot, '.kb/kb.config.json', {})
 
     const result = await load(platformRoot, projectRoot)
-    expect(result.platformConfig.adapters).toEqual({ llm: 'project-llm' })
+    expect(result.platformConfig.adapters).toEqual({})
     expect(result.sources.generated).toBeUndefined()
   })
 })

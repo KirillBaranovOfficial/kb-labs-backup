@@ -50,15 +50,15 @@ describe('layer precedence: generated < platform user < project user < overlay',
     await write(
       project,
       '.kb/kb.config.jsonc',
-      `{ "platform": { "adapterOptions": { "llm": { "temperature": 0.9 } } } }`,
+      `{ "gateway": { "host": "project.example" } }`,
     );
   });
 
   it('project user config wins over platform user config, which wins over generated', async () => {
     const result = await loadEffectiveConfig(project, { platformRoot: platform });
     expect(result?.data).toEqual({
-      gateway: { port: 4000, host: '0.0.0.0' },
-      platform: { adapterOptions: { llm: { model: 'platform-model', baseURL: 'http://gen', temperature: 0.9 } } },
+      gateway: { port: 4000, host: 'project.example' },
+      platform: { adapterOptions: { llm: { model: 'platform-model', baseURL: 'http://gen', temperature: 0.2 } } },
     });
   });
 
@@ -70,10 +70,10 @@ describe('layer precedence: generated < platform user < project user < overlay',
     const projectFile = path.join(project, '.kb/kb.config.jsonc');
 
     expect(p['gateway.port']).toEqual({ layer: 'generated', source: generatedFile });
-    expect(p['gateway.host']).toEqual({ layer: 'platform', source: platformFile });
+    expect(p['gateway.host']).toEqual({ layer: 'project', source: projectFile });
     expect(p['platform.adapterOptions.llm.baseURL']).toEqual({ layer: 'generated', source: generatedFile });
     expect(p['platform.adapterOptions.llm.model']).toEqual({ layer: 'platform', source: platformFile });
-    expect(p['platform.adapterOptions.llm.temperature']).toEqual({ layer: 'project', source: projectFile });
+    expect(p['platform.adapterOptions.llm.temperature']).toEqual({ layer: 'platform', source: platformFile });
     expect(result!.generatedConfigPaths).toEqual([generatedFile]);
     expect(result!.layers.map((l) => l.layer)).toEqual(['generated', 'platform', 'project']);
   });
@@ -91,7 +91,7 @@ describe('layer precedence: generated < platform user < project user < overlay',
     // Both generated layers are still below the user layers.
     expect(result!.provenance['gateway.port']).toMatchObject({ layer: 'generated', source: path.join(project, '.kb/generated/local.json') });
     expect(result!.provenance['gateway.extra']?.layer).toBe('generated');
-    expect(result!.provenance['gateway.host']?.layer).toBe('platform');
+    expect(result!.provenance['gateway.host']?.layer).toBe('project');
     expect(result!.generatedConfigPaths).toEqual([
       path.join(platform, '.kb/generated/topology.jsonc'),
       path.join(project, '.kb/generated/local.json'),

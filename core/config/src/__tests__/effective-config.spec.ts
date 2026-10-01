@@ -216,6 +216,20 @@ describe('loadEffectiveConfig — deep-merge semantics', () => {
     expect(res!.data.sources).toEqual(['a', 'b']);
   });
 
+  it('rejects project adapter sections when a platform root is configured', async () => {
+    await writePlatformConfig(c.platform, '{"platform":{"adapters":{"llm":"openai"}}}');
+    await writeProjectConfig(c.project, '{"platform":{"adapterOptions":{"llm":{"model":"project-model"}}}}');
+    await expect(loadEffectiveConfig(c.project, { platformRoot: c.platform }))
+      .rejects.toMatchObject({ name: 'AdapterProjectScopeError' });
+  });
+
+  it('rejects legacy top-level project adapter sections when a platform root is configured', async () => {
+    await writePlatformConfig(c.platform, '{"platform":{"adapters":{"llm":"openai"}}}');
+    await writeProjectConfig(c.project, '{"adapters":{"llm":["openai"]}}');
+    await expect(loadEffectiveConfig(c.project, { platformRoot: c.platform }))
+      .rejects.toMatchObject({ name: 'AdapterProjectScopeError' });
+  });
+
   it('overlay arrays REPLACE base arrays by default', async () => {
     await writeProjectConfig(c.project, '{"items":[1,2,3]}');
     await writeOverlay(c.project, 'p.jsonc', '{"items":[4]}');
@@ -610,23 +624,21 @@ describe('loadEffectiveConfig — realistic scenarios', () => {
     });
   });
 
-  it('overlay extends an adapter list via kb:merge:append', async () => {
+  it('overlay extends a feature list via kb:merge:append', async () => {
     await writePlatformConfig(
       c.platform,
-      '{"platform":{"adapters":{"llm":["@kb-labs/adapters-openai"]}}}',
+      '{"feature":{"providers":["platform-provider"]}}',
     );
     await writeProjectConfig(c.project, '{}');
     await writeOverlay(
       c.project,
-      'multi-llm.jsonc',
-      `{"platform":{"adapters":{"kb:merge":{"llm":"append"},"llm":["@kb-labs/adapters-vibeproxy"]}}}`,
+      'feature-providers.jsonc',
+      `{"feature":{"kb:merge":{"providers":"append"},"providers":["project-provider"]}}`,
     );
     const res = await loadEffectiveConfig(c.project, { platformRoot: c.platform });
-    expect(
-      ((res!.data.platform as { adapters: { llm: string[] } }).adapters.llm),
-    ).toEqual([
-      '@kb-labs/adapters-openai',
-      '@kb-labs/adapters-vibeproxy',
+    expect((res!.data.feature as { providers: string[] }).providers).toEqual([
+      'platform-provider',
+      'project-provider',
     ]);
   });
 

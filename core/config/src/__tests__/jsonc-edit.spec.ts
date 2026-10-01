@@ -141,7 +141,7 @@ describe('deleteJsoncValue', () => {
   // project options
   "platform": {
     "adapters": {
-      "storage": "@kb-labs/adapters-fs", // project-only binding
+      "storage": "@kb-labs/adapters-fs", // storage binding
       "cache": "@kb-labs/adapters-cache"
     },
     "adapterOptions": { "storage": { "baseDir": ".kb/data" } }

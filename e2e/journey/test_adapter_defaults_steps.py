@@ -14,7 +14,7 @@ from service_steps import Journey
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
-    def test_default_pack_and_project_storage_override_are_observable(self):
+    def test_default_pack_and_platform_adapter_scope_are_observable(self):
         with tempfile.TemporaryDirectory(prefix="kb-adapter-defaults-") as directory:
             home = Path(directory)
             project_a = home / "project-a"
@@ -67,7 +67,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 return json.loads(config_file.read_text()) if config_file.exists() else {}
 
             def write_config(root: Path, value: dict) -> None:
-                config_file = root / ".kb" / "kb.config.json"
+                jsonc_file = root / ".kb" / "kb.config.jsonc"
+                config_file = jsonc_file if jsonc_file.exists() else root / ".kb" / "kb.config.json"
                 config_file.parent.mkdir(parents=True, exist_ok=True)
                 config_file.write_text(json.dumps(value))
 
@@ -103,7 +104,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                             return subprocess.CompletedProcess(command, 1, json.dumps(result), "")
                         return subprocess.CompletedProcess(command, 1,
                             f'Finding KB_ADAPTER_CREDENTIALS_MISSING: package=openai path=/platform/adapterOptions/llm/apiKey\nAdapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `kb-create start --platform-root "{platform_root}"`.\n', "")
-                    analytics_provider = config(root).get("platform", {}).get("adapters", {}).get(
+                    analytics_provider = config(platform_root).get("platform", {}).get("adapters", {}).get(
                         "analytics", "@kb-labs/adapters-analytics-sqlite")
                     statuses = [
                         {"slot": "storage", "mode": "real", "implementation": "@kb-labs/adapters-fs"},
@@ -133,9 +134,16 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:3] == ["adapter", "list", "--json"]:
                     value = config(root)
-                    options = value.get("platform", {}).get("adapterOptions", {}).get("storage", {})
-                    override = value.get("platform", {}).get("adapters", {}).get("storage")
-                    analytics_provider = value.get("platform", {}).get("adapters", {}).get(
+                    project_platform = value.get("platform", {})
+                    if ("adapters" in project_platform or "adapterOptions" in project_platform or
+                            "adapters" in value or "adapterOptions" in value):
+                        error = {"code": "KB_ADAPTER_PROJECT_SCOPE", "message": "Project adapter configuration is unsupported.",
+                                 "hint": "Move `platform.adapters` and `platform.adapterOptions` to the platform config."}
+                        return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
+                    platform_value = config(platform_root)
+                    platform_config = platform_value.get("platform", {})
+                    options = platform_config.get("adapterOptions", {}).get("storage", {})
+                    analytics_provider = platform_config.get("adapters", {}).get(
                         "analytics", "@kb-labs/adapters-analytics-sqlite")
                     rows = [
                         {"slot": "storage", "implementation": "@kb-labs/adapters-fs", "mode": "real",
@@ -160,7 +168,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         {"slot": "snapshotManager", "implementation": None, "mode": "unconfigured", "networkRequired": False,
                          "requiresConfiguration": True},
                     ]
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "adapters": rows, "storageOverride": override}), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "adapters": rows}), "")
                 if args[:2] == ["project", "add"]:
                     target = Path(args[2])
                     write_config(target, {})
@@ -168,25 +176,31 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 if args[:2] == ["config", "set"]:
                     if args[2:4] == ["commit.llm.enabled", "true"]:
                         return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
-                    value = config(root)
-                    value.setdefault("platform", {}).setdefault("adapterOptions", {})["storage"] = json.loads(args[3])
-                    write_config(root, value)
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "scope": "project"}), "")
+                    if args[2:4] == ["--scope", "platform"]:
+                        key, raw = args[4], args[5]
+                    else:
+                        key, raw = args[2], args[3]
+                    if key != "platform.adapterOptions.storage":
+                        return subprocess.CompletedProcess(command, 2, "", f"unexpected config key: {key}")
+                    value = config(platform_root)
+                    value.setdefault("platform", {}).setdefault("adapterOptions", {})["storage"] = json.loads(raw)
+                    write_config(platform_root, value)
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "scope": "platform"}), "")
                 if args[:2] == ["adapter", "bind"]:
-                    value = config(root)
+                    value = config(platform_root)
                     value.setdefault("platform", {}).setdefault("adapters", {})[args[2]] = args[3]
-                    write_config(root, value)
+                    write_config(platform_root, value)
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:2] == ["adapter", "unbind"]:
-                    value = config(root)
+                    value = config(platform_root)
                     value.setdefault("platform", {}).setdefault("adapters", {}).pop("storage", None)
                     value.setdefault("platform", {}).setdefault("adapterOptions", {}).pop("storage", None)
-                    write_config(root, value)
+                    write_config(platform_root, value)
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:2] == ["workflow", "run"]:
                     run_counter += 1
                     run_id = f"run-{run_counter}"
-                    value = config(root)
+                    value = config(platform_root)
                     options = value.get("platform", {}).get("adapterOptions", {}).get("storage", {})
                     base_dir = options.get("baseDir", ".kb/data")
                     record = root / base_dir / "workflows" / f"{run_id}.json"
@@ -200,7 +214,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"id": run_id, "status": "success"}}), "")
                 if args[:2] == ["commit", "generate"]:
                     error = {"code": "KB_ADAPTER_CREDENTIALS_MISSING", "message": "Adapter llm is missing OPENAI_API_KEY.",
-                             "hint": "Set OPENAI_API_KEY or run kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env. No request was sent."}
+                             "hint": "Set OPENAI_API_KEY or run kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env. No request was sent."}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["mind", "search"]:
                     error = {"code": "KB_ADAPTER_NOT_CONFIGURED", "details": {"service": "vectorStore"},
@@ -208,6 +222,13 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/mind-entry":
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+                if args[:3] == ["marketplace", "install", "@kb-labs/commit-entry"]:
+                    value = config(root)
+                    value.setdefault("plugins", {})["@kb-labs/commit-entry"] = True
+                    write_config(root, value)
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+                if args[:3] == ["marketplace", "plugins", "list"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "plugins": list(config(root).get("plugins", {}))}), "")
                 if args[:3] == ["marketplace", "install", "@kb-labs/adapters-analytics-file"]:
                     workspace = (platform_root / "pnpm-workspace.yaml").read_text()
                     if '"@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow-digest.tgz"' not in workspace:
@@ -241,8 +262,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
 
             def health_adapters() -> list[dict]:
                 # The host reports the provider currently bound in the platform config.
-                bound = {**config(platform_root).get("platform", {}).get("adapters", {}),
-                         **config(project_a).get("platform", {}).get("adapters", {})}
+                bound = config(platform_root).get("platform", {}).get("adapters", {})
                 provider = bound.get("analytics", "@kb-labs/adapters-analytics-sqlite")
                 return [{**row, "implementation": provider} if row["slot"] == "analytics" else row
                         for row in runtime_adapters]
@@ -256,6 +276,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(claims, expected)
             self.assertIn(("kb", "adapter", "list", "--json"), calls)
+            self.assertIn(("kb", "adapter", "unbind", "storage", "--json"), calls)
             self.assertIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)
             self.assertIn(("kb", "commit", "generate", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
