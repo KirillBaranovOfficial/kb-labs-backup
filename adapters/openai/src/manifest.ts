@@ -28,6 +28,9 @@ export const manifest: AdapterManifest = {
   configSchema: {
     apiKey: {
       type: "string",
+      required: true,
+      secret: true,
+      env: "OPENAI_API_KEY",
       description: "OpenAI API key (defaults to OPENAI_API_KEY env var)",
     },
     model: {

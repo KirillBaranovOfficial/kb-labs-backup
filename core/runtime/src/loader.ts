@@ -11,10 +11,10 @@ import { randomUUID } from 'node:crypto';
 import type { PlatformContainer } from './container.js';
 import type { PlatformConfig, CoreFeaturesConfig, ResourceBrokerConfig, LLMAdapterOptions, AdapterValue, NotifierAdapterOptions } from './config.js';
 import { platform } from './container.js';
-import { resolveAdapter } from './discover-adapters.js';
 import { createAnalyticsContext } from './analytics-context.js';
 import { AdapterLoader } from './adapter-loader.js';
 import type { AdapterConfig, LoadedAdapterModule } from './adapter-loader.js';
+import { configuredAdapterLoadError, loadDiscoveredAdapterModule } from './adapter-module-loader.js';
 import { EnvironmentManager } from './environment-manager.js';
 import { WorkspaceManager } from './workspace-manager.js';
 import { SnapshotManager } from './snapshot-manager.js';
@@ -129,36 +129,6 @@ function getPrimaryAdapter(value: AdapterValue | undefined): string | undefined 
   if (Array.isArray(value)) {return value[0];}
   return value;
 }
-
-/**
- * Load an adapter from a package path.
- * Uses workspace discovery to load from file paths (kb-labs-adapters/*),
- * then falls back to dynamic import for npm-installed adapters.
- *
- * @param adapterPath - Package name (e.g., "@kb-labs/adapters-openai")
- * @param cwd - Workspace root directory
- * @returns Adapter instance or undefined if loading fails
- */
-async function loadAdapter<T>(adapterPath: string, cwd: string, options?: unknown, platformRoot?: string): Promise<T | undefined> {
-  try {
-    // Use resolveAdapter to try workspace discovery first, then npm
-    const factory = await resolveAdapter(adapterPath, cwd, platformRoot);
-
-    if (factory) {
-      return (await factory(options)) as T;
-    }
-
-    platform.logger.warn('Adapter has no createAdapter or default export', { adapterPath });
-    return undefined;
-  } catch (error) {
-    platform.logger.warn('Failed to load adapter', {
-      adapterPath,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    return undefined;
-  }
-}
-
 
 /**
  * Walk `ADAPTER_DEFAULTS`, decide the mode of every slot, install
@@ -697,53 +667,7 @@ export async function initPlatform(
         const adapter = discovered.get(basePkgName);
 
         if (adapter && subpath) {
-          // Load subpath export from workspace adapter
-          const subpathFile = path.join(adapter.pkgRoot, 'dist', `${subpath}.js`);
-          try {
-            await fs.access(subpathFile);
-            const module = await import(pathToFileURL(subpathFile).href);
-
-            const factory = module.createAdapter || module.default;
-            const manifest = module.manifest;
-
-            if (!factory) {
-              throw new Error(
-                `Subpath ${modulePath} has no createAdapter or default export`
-              );
-            }
-
-            if (!manifest) {
-              throw new Error(
-                `Subpath ${modulePath} has no manifest export`
-              );
-            }
-
-            return { createAdapter: factory, manifest, pkgRoot: adapter.pkgRoot };
-          } catch (err) {
-            // Subpath file doesn't exist, try loading base package
-            const baseModule = await import(
-              pathToFileURL(
-                path.join(adapter.pkgRoot, 'dist', 'index.js')
-              ).href
-            );
-
-            const factory = baseModule.createAdapter || baseModule.default;
-            const manifest = baseModule.manifest;
-
-            if (!factory) {
-              throw new Error(
-                `Module ${modulePath} has no createAdapter or default export`
-              );
-            }
-
-            if (!manifest) {
-              throw new Error(
-                `Module ${modulePath} has no manifest export`
-              );
-            }
-
-            return { createAdapter: factory, manifest, pkgRoot: adapter.pkgRoot };
-          }
+          return await loadDiscoveredAdapterModule(adapter, modulePath);
         } else if (adapter) {
           // Load base package (no subpath)
           const module = await import(
@@ -901,7 +825,7 @@ export async function initPlatform(
           });
           continue;
         }
-        throw error;
+        throw configuredAdapterLoadError(name, primaryAdapter);
       }
     }
 

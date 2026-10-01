@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 import { ADAPTER_DEFAULTS, type AdapterSlot } from '@kb-labs/core-platform';
-import { loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
+import { discoverAdapters, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
@@ -14,6 +14,8 @@ type AdapterRow = {
   baseDir?: string;
   networkRequired: boolean;
   requiresConfiguration?: boolean;
+  credentialsStatus?: 'configured' | 'missing';
+  missingCredentials?: string[];
 };
 
 type ListResult = CommandResult & { adapters?: AdapterRow[]; projectRoot?: string };
@@ -59,12 +61,30 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     }, loaded.platformRoot, loaded.projectRoot);
     const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
     const effectiveAdapterOptions = resolvedDefaults.adapterOptions as Record<string, unknown>;
+    const discovered = await discoverAdapters(loaded.platformRoot, loaded.projectRoot);
     const rows = (Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[]).map((slot): AdapterRow => {
       const configKey = CONFIG_KEY_BY_SLOT[slot];
       const configured = configKey ? effectiveAdapters[configKey] : undefined;
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
       const packageId = configuredPackage ? packageName(configuredPackage) : undefined;
       const option = configKey ? effectiveAdapterOptions[configKey] : undefined;
+      const schema = packageId
+        ? discovered.get(packageRoot(packageId))?.module.manifest
+        : undefined;
+      const configSchema = schema && typeof schema === 'object' && 'configSchema' in schema &&
+        schema.configSchema && typeof schema.configSchema === 'object'
+        ? schema.configSchema as Record<string, { required?: boolean; secret?: boolean; env?: string }>
+        : {};
+      const optionValues = option && typeof option === 'object' && !Array.isArray(option)
+        ? option as Record<string, unknown>
+        : {};
+      const credentialOptions = Object.entries(configSchema).filter(([, field]) => field.required && field.secret && field.env);
+      const missingCredentials = credentialOptions
+        .filter(([key, field]) => {
+          const value = optionValues[key];
+          return !(typeof value === 'string' && value.length > 0) && !(ctx.runtime.env(field.env ?? '') || '').length;
+        })
+        .map(([, field]) => field.env as string);
       const baseDir = slot === 'storage' && option && typeof option === 'object' &&
         'baseDir' in option && typeof option.baseDir === 'string'
         ? path.resolve(loaded.projectRoot, option.baseDir)
@@ -78,6 +98,10 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         ...(baseDir ? { baseDir } : {}),
         networkRequired: localLogsAvailable ? false : packageId ? !LOCAL_PACKAGES.has(packageRoot(packageId)) : false,
         ...(ADAPTER_DEFAULTS[slot].defaultFallback === 'noop' && !packageId ? { requiresConfiguration: true } : {}),
+        ...(credentialOptions.length > 0 ? {
+          credentialsStatus: missingCredentials.length > 0 ? 'missing' : 'configured',
+          ...(missingCredentials.length > 0 ? { missingCredentials } : {}),
+        } : {}),
       };
     });
     const knownSlots = new Set(rows.map((row) => row.slot));

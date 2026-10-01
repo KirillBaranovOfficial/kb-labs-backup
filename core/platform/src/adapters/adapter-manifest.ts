@@ -413,6 +413,10 @@ export interface AdapterManifest {
       description?: string;
       default?: unknown;
       required?: boolean;
+      /** The option is secret material and may be absent during adapter construction. */
+      secret?: boolean;
+      /** Environment variable that supplies this secret option. */
+      env?: string;
       enum?: unknown[];
       properties?: Record<string, unknown>;
     }
