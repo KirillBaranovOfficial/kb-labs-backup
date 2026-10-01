@@ -36,12 +36,12 @@ func ValidateUpdate(active contracts.InstallReceipt, target contracts.ResolvedIn
 		kind := artifact.Kind
 		compatibilityRange := artifact.PlatformRange
 		if compatibilityRange != "" {
-			if err := compatible(compatibilityRange, targetVersion, kind+" "+artifact.ID+" platform", contracts.PolicyCompatible); err != nil {
+			if err := compatible(compatibilityRange, targetVersion, kind+" "+artifact.ID+" platform"); err != nil {
 				return updateIncompatible(kind, artifact.ID, targetVersion, compatibilityRange, err.Error())
 			}
 		}
 		if artifact.SDKRange != "" && targetSDK != "" {
-			if err := compatible(artifact.SDKRange, targetSDK, kind+" "+artifact.ID+" SDK", contracts.PolicyCompatible); err != nil {
+			if err := compatible(artifact.SDKRange, targetSDK, kind+" "+artifact.ID+" SDK"); err != nil {
 				return updateIncompatible(kind, artifact.ID, targetSDK, artifact.SDKRange, err.Error())
 			}
 		}

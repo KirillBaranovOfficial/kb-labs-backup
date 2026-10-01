@@ -10,7 +10,6 @@ import (
 	"maps"
 	"runtime"
 	"sort"
-	"strings"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -63,7 +62,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		sdkVersion = source.Channels[request.SDK.Channel]
 	}
 	if request.Policy == contracts.PolicyCompatible && platform.SDKRange != "" {
-		if err := compatible(platform.SDKRange, sdkVersion, "platform SDK", request.Policy); err != nil {
+		if err := compatible(platform.SDKRange, sdkVersion, "platform SDK"); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 	}
@@ -133,11 +132,11 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, incompatible("plugin", item.ID, "requested version is not present in the release index")
 		}
-		if err := compatible(component.PlatformRange, platform.Version, "plugin "+component.ID+" platform", request.Policy); err != nil {
+		if err := compatible(component.PlatformRange, platform.Version, "plugin "+component.ID+" platform"); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 		if request.SDK.Version != "" {
-			if err := compatible(component.SDKRange, request.SDK.Version, "plugin "+component.ID+" SDK", request.Policy); err != nil {
+			if err := compatible(component.SDKRange, request.SDK.Version, "plugin "+component.ID+" SDK"); err != nil {
 				return contracts.ResolvedInstallPlan{}, err
 			}
 		}
@@ -153,11 +152,11 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, launcherError(contracts.CodeProviderUnresolved, "no adapter provides required capability "+need.Capability, map[string]string{"capability": need.Capability, "requiredBy": need.RequiredBy})
 		}
-		if err := compatible(adapter.PlatformRange, platform.Version, "adapter "+adapter.ID+" platform", request.Policy); err != nil {
+		if err := compatible(adapter.PlatformRange, platform.Version, "adapter "+adapter.ID+" platform"); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 		if request.SDK.Version != "" {
-			if err := compatible(adapter.SDKRange, request.SDK.Version, "adapter "+adapter.ID+" SDK", request.Policy); err != nil {
+			if err := compatible(adapter.SDKRange, request.SDK.Version, "adapter "+adapter.ID+" SDK"); err != nil {
 				return contracts.ResolvedInstallPlan{}, err
 			}
 		}
@@ -438,17 +437,16 @@ func contains(values []string, wanted string) bool {
 	}
 	return false
 }
-func compatible(rangeValue, version, name string, policy contracts.CompatibilityPolicy) error {
+
+// compatible checks a declared semver range under every policy. The strict
+// policy adds the exact release matrix check (catalog.CheckCompatibility); it
+// does not turn a plugin's declared range into an exact string match.
+func compatible(rangeValue, version, name string) error {
 	if rangeValue == "" {
 		return nil
 	}
-	if policy == contracts.PolicyStrict && (strings.TrimSpace(rangeValue) == version || strings.TrimSpace(rangeValue) == "="+version) {
+	if matched, err := semrange.Satisfies(version, rangeValue); err == nil && matched {
 		return nil
-	}
-	if policy == contracts.PolicyCompatible {
-		if matched, err := semrange.Satisfies(version, rangeValue); err == nil && matched {
-			return nil
-		}
 	}
 	return incompatibleRange(name, version, rangeValue)
 }

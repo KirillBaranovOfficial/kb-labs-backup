@@ -53,7 +53,7 @@ func TestCompatiblePolicyUsesPrereleaseAwareComparatorRanges(t *testing.T) {
 }
 
 func TestIncompatibleComponentErrorExposesRangeAndRemediationHint(t *testing.T) {
-	err := compatible("=3.2.0", "3.3.0", "adapter fixture-adapter platform", contracts.PolicyCompatible)
+	err := compatible("=3.2.0", "3.3.0", "adapter fixture-adapter platform")
 	launcherErr, ok := err.(*contracts.LauncherError)
 	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents {
 		t.Fatalf("component error = %#v", err)
@@ -84,5 +84,12 @@ func TestUpdateValidationRefusesDowngradeAndNamesInstalledPluginRange(t *testing
 	}
 	if launcherErr.Hint != "Update or remove plugin fixture-compat first, then rerun `kb-create update`." {
 		t.Fatalf("component compatibility hint = %q", launcherErr.Hint)
+	}
+}
+
+// case: S-053.1
+func TestStrictPolicyStillAcceptsDeclaredSemverRanges(t *testing.T) {
+	if err := compatible("^2.0.0", "2.0.0", "plugin commit platform"); err != nil {
+		t.Fatalf("strict selection rejected a version its declared range admits: %v", err)
 	}
 }
