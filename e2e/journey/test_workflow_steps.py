@@ -20,6 +20,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             run_list_calls = {"journey-hello": 0, "journey-fails": 0, "journey-cron-target": 0}
             cron_fired = [False]
             restart_calls = []
+            marketplace_install_calls = []
 
             def fake_sleep(seconds):
                 clock[0] += seconds
@@ -27,7 +28,10 @@ class WorkflowJourneyTests(unittest.TestCase):
             def fake_run(args, *, env, cwd, timeout=120):
                 args = list(args)
                 output = {}
-                if args[:2] == ["workflow", "run"]:
+                if args[:2] == ["marketplace", "install"]:
+                    marketplace_install_calls.append(args)
+                    output = {"ok": True, "data": {"installed": [{"id": "@kb-labs/steward-entry"}]}}
+                elif args[:2] == ["workflow", "run"]:
                     run_id = "ok-run" if any(arg.startswith("--workflow-id=journey-hello") for arg in args) else "failed-run"
                     output = {"ok": True, "data": {"runId": run_id, "status": "queued"}}
                 elif args[:3] == ["workflow", "runs", "view"]:
@@ -40,7 +44,8 @@ class WorkflowJourneyTests(unittest.TestCase):
                         if run_id == "cron-run" else {"type": "manual"},
                         "metadata": {"cronId": "journey-cron"} if run_id == "cron-run" else {},
                         "inputs": {"message": "hello"} if run_id == "ok-run" else {},
-                        "jobs": [{"steps": [{"id": "deliberate-failure", "status": "failed",
+                        "jobs": [{"steps": [{"id": "failed-run:smoke:0", "name": "Deliberate failure",
+                                              "spec": {"id": "deliberate-failure"}, "status": "failed",
                                               "error": {"message": "journey-failure-diagnostic"}}]}]
                         if run_id == "failed-run" else [],
                     }}
@@ -130,7 +135,11 @@ class WorkflowJourneyTests(unittest.TestCase):
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
-        self.assertEqual(restart_calls, ["kb-create restart --platform-root <platform>"])
+        self.assertEqual(marketplace_install_calls, [["marketplace", "install", "@kb-labs/steward-entry", "--json"]])
+        self.assertEqual(restart_calls, [
+            "kb-create restart --platform-root <platform>",
+            "kb-create restart --platform-root <platform>",
+        ])
         claims = {claim["claimId"] for claim in result.case_run["claims"]}
         self.assertEqual(claims, {
             "S-006.3", "S-007.1", "S-007.2", "S-007.3", "S-009.1", "S-009.2", "S-009.3", "S-009.4",

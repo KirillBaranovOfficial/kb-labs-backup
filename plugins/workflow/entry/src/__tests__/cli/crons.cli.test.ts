@@ -4,13 +4,22 @@ import type { CronListResponse } from '@kb-labs/workflow-contracts';
 import { makeClient } from '../helpers/defaults.js';
 import { WorkflowDaemonClient } from '../../http-client.js';
 import cronListCommand from '../../commands/crons-list.js';
-import { enableCommand } from '../../commands/crons-set-enabled.js';
+import enableCommand from '../../commands/crons-enable.js';
+import { manifest } from '../../manifest.js';
 
 vi.mock('../../http-client.js', () => ({ WorkflowDaemonClient: vi.fn(function WorkflowDaemonClientMock() {}) }));
 const MockedClient = vi.mocked(WorkflowDaemonClient);
 beforeEach(() => MockedClient.mockReset());
 
 describe('workflow crons CLI', () => {
+  it('routes cron mutations to default-exported command handlers', () => {
+    const commands = manifest.cli.commands;
+    expect(commands.find((command) => command.path === 'workflow crons enable')?.handler)
+      .toBe('./commands/crons-enable.js#default');
+    expect(commands.find((command) => command.path === 'workflow crons disable')?.handler)
+      .toBe('./commands/crons-disable.js#default');
+  });
+
   const response: CronListResponse = {
     crons: [
       { id: 'nightly', source: 'user', schedule: '0 2 * * *', target: { workflow: 'release' }, enabled: true, nextFireAt: '2026-10-02T02:00:00.000Z' },
