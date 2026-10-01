@@ -10,6 +10,7 @@ import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { join, resolve } from 'node:path';
 import { prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
+import { readPlatformReleaseConfig } from '../../tools/kb-create/scripts/platform-release-config.mjs';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -27,6 +28,7 @@ const registryManifest = JSON.parse(readFileSync(resolve(required('--registry-ma
 const output = resolve(required('--output'));
 const sealer = resolve(required('--sealer'));
 const prepareScript = resolve(value('--prepare-script') ?? '/src/kb-create/scripts/prepare-release-index.mjs');
+const releaseConfigPath = resolve(value('--release-config') ?? '.kb/kb.config.jsonc');
 const stage = resolve('/tmp/kb-e2e-release-stage');
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
@@ -58,32 +60,18 @@ writeFileSync(join(stage, 'manifest.json'), `${JSON.stringify([...packages.value
 const binaryManifest = join(stage, 'binary-manifest.json');
 writeFileSync(binaryManifest, '{"binaries":[]}\n');
 
-const adapterConfig = JSON.stringify({
-  cache: '@kb-labs/adapters-state-broker',
-  logger: '@kb-labs/adapters-pino',
-  logRingBuffer: '@kb-labs/adapters-log-ringbuffer',
-  logPersistence: '@kb-labs/adapters-log-document',
-  analytics: '@kb-labs/adapters-analytics-sqlite',
-  documentDatabase: '@kb-labs/adapters-sqlite',
-  kvStore: '@kb-labs/adapters-sqlite/kv',
-  serviceTransport: '@kb-labs/adapters-service-transport-http',
-  storage: '@kb-labs/adapters-fs',
-});
+const releaseConfig = readPlatformReleaseConfig(releaseConfigPath);
+const adapterConfig = JSON.stringify(releaseConfig.adapters);
 const adapterOptions = JSON.stringify({
-  cache: { url: 'http://127.0.0.1:7777', namespace: 'kb:' },
-  logger: { level: 'info', streaming: { enabled: true, bufferSize: 1000, bufferMaxAge: 3600000 } },
-  logRingBuffer: { maxSize: 100 },
-  logPersistence: { collection: 'logs', batchSize: 100, flushInterval: 5000 },
-  analytics: { filename: '.kb/analytics/analytics.sqlite' },
-  documentDatabase: { filename: '.kb/database/kb.sqlite' },
-  kvStore: { filename: '.kb/database/kb.sqlite' },
-  storage: { baseDir: '.kb/data' },
+  ...releaseConfig.adapterOptions,
   serviceTransport: {
+    ...releaseConfig.adapterOptions.serviceTransport,
     services: Object.fromEntries((registryManifest.services ?? [])
       .filter(({ id, port }) => id && port)
       .map(({ id, port }) => [id, { url: `http://127.0.0.1:${port}` }])),
   },
 });
+const platformRequires = releaseConfig.platformRequires.join(',');
 // Core plugins (`default: true`: workflow, marketplace, scaffold) ship as
 // platform members, as release.flows.platform.platformMembers does for the
 // real release. Every other plugin comes from the marketplace.
@@ -116,7 +104,7 @@ const result = spawnSync(process.execPath, [
   // how the V2 resolver binds a capability (installed-but-unrequired
   // adapters are deliberately left unbound); .kb/overlays cannot rebind
   // platform adapters.
-  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache,analytics,documentDatabase',
+  '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig,
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
@@ -146,7 +134,7 @@ const update = spawnSync(process.execPath, [
   '--artifacts-dir', updatePackagesDir,
   '--binary-manifest', binaryManifest,
   '--platform-version', updateVersion,
-  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache,analytics,documentDatabase',
+  '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig,
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,
@@ -171,7 +159,7 @@ const canary = spawnSync(process.execPath, [
   '--artifacts-dir', canaryPackagesDir,
   '--binary-manifest', binaryManifest,
   '--platform-version', canaryVersion,
-  '--platform-requires', 'serviceTransport,logger,logRingBuffer,storage,cache,analytics,documentDatabase',
+  '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig,
   '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers,

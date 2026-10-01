@@ -166,22 +166,34 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		fmt.Fprintf(output, "Installed: %s\nRunning: %s\nReachable: %s\nNext: %s\n", installed, running, reachable, next)
 		if response.Platform != nil {
-			for _, check := range response.Platform.Checks {
-				if check.Slot != "" {
-					fmt.Fprintf(output, "Adapter %s: mode=%s implementation=%s\n", check.Slot, check.Mode, check.Implementation)
-				} else if check.ID == "adapters" {
-					fmt.Fprintf(output, "Adapters: %s\n", check.Detail)
-					if check.Hint != "" {
-						fmt.Fprintf(output, "Next: %s\n", check.Hint)
-					}
-				}
-			}
+			writeDoctorPlatformChecks(output, response.Platform.Checks)
 		}
 	}
 	if !response.OK {
 		return 1
 	}
 	return 0
+}
+
+func writeDoctorPlatformChecks(output *os.File, checks []doctor.Check) {
+	for _, check := range checks {
+		if check.Slot != "" {
+			fmt.Fprintf(output, "Adapter %s: mode=%s implementation=%s\n", check.Slot, check.Mode, check.Implementation)
+			if !check.OK {
+				if check.Detail != "" {
+					fmt.Fprintf(output, "Problem: %s\n", check.Detail)
+				}
+				if check.Hint != "" {
+					fmt.Fprintf(output, "Next: %s\n", check.Hint)
+				}
+			}
+		} else if check.ID == "adapters" {
+			fmt.Fprintf(output, "Adapters: %s\n", check.Detail)
+			if check.Hint != "" {
+				fmt.Fprintf(output, "Next: %s\n", check.Hint)
+			}
+		}
+	}
 }
 
 // inspectPlatform observes the running host. An installation whose host cannot
@@ -197,7 +209,11 @@ func (i invocation) inspectPlatform(state host.State) doctor.Section {
 	if err != nil {
 		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The host status cannot be read: " + err.Error()}})
 	}
-	return doctor.InspectPlatform(ctx, status, nil)
+	active, err := receipt.Read(i.PlatformRoot)
+	if err != nil {
+		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The active install receipt cannot be read while checking adapter bindings."}})
+	}
+	return doctor.InspectPlatform(ctx, status, nil, active.Plan.ProviderBindings)
 }
 
 // runDoctorFix applies manifest-declared safe defaults under a snapshot and

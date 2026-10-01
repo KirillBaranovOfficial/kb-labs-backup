@@ -3,6 +3,7 @@
     "adapters": {
       "storage": "@kb-labs/adapters-fs",
       "cache": "@kb-labs/adapters-state-broker",
+      "eventBus": "@kb-labs/adapters-eventbus-cache",
       "documentDatabase": "@kb-labs/adapters-sqlite",
       "kvStore": "@kb-labs/adapters-sqlite/kv",
       "logger": "@kb-labs/adapters-pino",

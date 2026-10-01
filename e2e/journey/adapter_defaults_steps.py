@@ -105,7 +105,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             "analytics": "@kb-labs/adapters-analytics-sqlite",
             "documentDatabase": "@kb-labs/adapters-sqlite",
             "kvStore": "@kb-labs/adapters-sqlite",
-            "eventBus": "InMemoryEventBus",
+            "eventBus": "@kb-labs/adapters-eventbus-cache",
             "invoke": "InMemoryInvoke",
             "artifacts": "InMemoryArtifacts",
             "config": "InMemoryConfig",
@@ -113,6 +113,10 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         for slot, implementation in expected_defaults.items():
             if rows[slot].get("implementation") != implementation:
                 raise RuntimeError(f"{slot} does not use its built-in default {implementation}")
+        persistent_slots = ("storage", "cache", "logger", "analytics", "eventBus", "documentDatabase", "kvStore", "logs")
+        for slot in persistent_slots:
+            if rows[slot].get("mode") != "real":
+                raise RuntimeError(f"persistent built-in slot {slot} fell back to {rows[slot].get('mode')}")
         if rows["cache"].get("implementation") != "@kb-labs/adapters-state-broker" or rows["cache"].get("networkRequired") is not False:
             raise RuntimeError("cache does not use the platform-local StateBroker default")
         if rows["logs"].get("implementation") != "HybridLogReader" or rows["logs"].get("mode") != "real":
@@ -156,6 +160,10 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             status = next((row for row in statuses if isinstance(row, dict) and row.get("slot") == slot), None)
             if not status or status.get("mode") != "real":
                 raise RuntimeError(f"doctor does not report the local {slot} default as loaded")
+        for slot in ("storage", "cache", "logger", "analytics", "eventBus", "documentDatabase", "kvStore"):
+            status = next((row for row in statuses if isinstance(row, dict) and row.get("slot") == slot), None)
+            if not status or status.get("mode") != "real":
+                raise RuntimeError(f"doctor reports a persistent built-in slot {slot} in fallback mode")
         logs = next((row for row in statuses if isinstance(row, dict) and row.get("slot") == "logs"), None)
         if not logs or logs.get("mode") != "real" or logs.get("implementation") != "HybridLogReader":
             raise RuntimeError("doctor does not report the local HybridLogReader as loaded")
@@ -165,6 +173,63 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("`kb-create doctor --platform-root <platform-root>` text output omits loaded storage status")
 
     journey.step("doctor verifies filesystem default is loaded", "adapter", assert_doctor, cases=["S-054.2"])
+
+    def assert_unbound_analytics_uses_manifest_default() -> None:
+        config_file = platform_root / ".kb" / "kb.config.jsonc"
+        original = config_file.read_bytes()
+        analytics_db = platform_root / ".kb" / "analytics" / "analytics.sqlite"
+        analytics_db.parent.mkdir(parents=True, exist_ok=True)
+        analytics_db.write_bytes(b"existing analytics database")
+        config = json.loads(original)
+        platform = config.setdefault("platform", {})
+        adapters = platform.setdefault("adapters", {})
+        options = platform.setdefault("adapterOptions", {})
+        provider = adapters.pop("analytics", "@kb-labs/adapters-analytics-sqlite")
+        options.pop("analytics", None)
+        config_file.write_text(json.dumps(config, indent=2) + "\n")
+        restart = ["kb-create", "restart", "--platform-root", str(platform_root), "--json"]
+        try:
+            restarted = _json(_run(runner, restart, project_a, base_env), restart)
+            if restarted.get("ok") is not True:
+                raise RuntimeError("could not restart the host with the missing persistent adapter binding")
+            command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--json"]
+            result = runner(command, cwd=str(project_a), env=base_env,
+                            capture_output=True, text=True, timeout=300)
+            payload = _json(result, command)
+            checks = payload.get("platform", {}).get("checks", [])
+            finding = next((row for row in checks if isinstance(row, dict) and row.get("slot") == "analytics"), None)
+            if result.returncode != 0 or payload.get("ok") is not True or not finding:
+                raise RuntimeError("doctor did not accept the discovered SQLite analytics default")
+            if finding.get("mode") != "real" or finding.get("implementation") != provider:
+                raise RuntimeError("doctor did not report the manifest-discovered analytics provider")
+            listed = rows_for(project_a)
+            if listed["analytics"].get("implementation") != provider or listed["analytics"].get("mode") != "real":
+                raise RuntimeError("kb adapter list did not show the discovered SQLite analytics provider")
+            if analytics_db.read_bytes() != b"existing analytics database":
+                raise RuntimeError("resolving the default replaced existing analytics data")
+        finally:
+            config_file.write_bytes(original)
+            _run(runner, restart, project_a, base_env)
+
+    journey.step("an unbound analytics slot resolves its installed persistent default", "adapter",
+                 assert_unbound_analytics_uses_manifest_default, cases=["S-054.10"])
+
+    def assert_adapter_replacement_keeps_old_data() -> None:
+        analytics_db = platform_root / ".kb" / "analytics" / "analytics.sqlite"
+        previous_data = analytics_db.read_bytes()
+        replacement = "@kb-labs/adapters-analytics-file"
+        command = ["kb", "adapter", "bind", "analytics", replacement, "--json"]
+        payload = _json(_run(runner, command, project_a, base_env), command)
+        if payload.get("ok") is not True:
+            raise RuntimeError("could not bind the replacement analytics adapter")
+        listed = rows_for(project_a)
+        if listed["analytics"].get("implementation") != replacement or listed["analytics"].get("mode") != "real":
+            raise RuntimeError("adapter bind did not override the discovered analytics default")
+        if analytics_db.read_bytes() != previous_data:
+            raise RuntimeError("replacing analytics migrated or deleted the old SQLite database")
+
+    journey.step("replacing a default leaves the old adapter data on disk", "adapter",
+                 assert_adapter_replacement_keeps_old_data, cases=["S-054.11"])
 
     def assert_stopped_host_doctor() -> None:
         stop = ["kb-create", "stop", "--platform-root", str(platform_root), "--json"]
