@@ -54,9 +54,11 @@ covers identity and authentication only.
    Membership, PDP — internal to the gateway. Anything else is a fork, not
    an adapter.
 
-3. **Tokens carry identity, not permissions.** Access JWT payload:
-   `{ sub, tenantId, type: 'user' | 'machine', iat, exp, jti, fam }`.
-   No `role`, `scopes`, or `capabilities` ever land in a token.
+3. **JWTs declare their kind explicitly.** The `type` claim is exactly one of
+   `user_access`, `user_refresh`, `machine_access`, or `machine_refresh`; each
+   verifier accepts only its own kind. User JWTs carry identity and session
+   family claims, not roles or scopes. Machine access JWTs may carry the
+   permissions needed by host authorization.
 
 4. **PDP interface exists from day one** as a stub. Handlers call
    `policy.check(...)` immediately; real RBAC + ReBAC ([ClickUp
