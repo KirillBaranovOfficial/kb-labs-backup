@@ -50,8 +50,8 @@
         "title": "Internal Agent Workflows",
         "hook": "Your AI agents are ungoverned scripts running on someone's laptop.",
         "situation": "Agent scenarios are bolted onto separate stacks with no unified policy, no audit trail, and no way to enforce security boundaries.",
-        "how": "Agents run as plugins inside the same policy-first runtime as your standard workflows — same governance, same observability.",
-        "result": "One controlled system for agent automation. No separate stack to maintain or secure.",
+        "how": "Agents can call project MCP tools exposed by installed plugins. Plugin commands use the capabilities declared in their manifests.",
+        "result": "Use governed plugin commands from a compatible agent in your project.",
         "owner": "CTO / AI Platform Team"
       },
       {

@@ -33,7 +33,7 @@
     },
     "prereqs": {
       "os": "macOS or Linux",
-      "osNote": "Windows support via WSL2"
+      "osNote": "Supported hosts: macOS and Linux"
     },
     "afterInstall": {
       "steps": [
@@ -52,7 +52,7 @@
     },
     "enterprise": {
       "link": "Talk to us about enterprise",
-      "description": "Looking for air-gapped install, custom deployment, or commercial support?"
+      "description": "Looking for air-gapped install or custom deployment? Commercial support is on the roadmap; join the waitlist for updates."
     },
     "hero": {
       "description2": "One script installs the launcher and bootstraps your first workspace. Quick install via curl, or download binaries directly.",

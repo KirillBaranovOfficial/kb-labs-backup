@@ -63,7 +63,7 @@
           },
           {
             "title": "Community Adapters",
-            "description": "Extension points are open today — anyone can write a Kafka, RabbitMQ, NATS, or any HTTP adapter.",
+            "description": "Implement an adapter against the relevant contract.",
             "status": "planned"
           },
           {
@@ -86,8 +86,8 @@
             "status": "planned"
           },
           {
-            "title": "RBAC — Role-Based Access Control",
-            "description": "Permission system for platform resources: who can run what, access which services, and manage which plugins.",
+            "title": "Fine-grained RBAC",
+            "description": "Permissions beyond the available admin/member roles: who can run what, access which services, and manage which plugins.",
             "status": "planned"
           },
           {
