@@ -283,34 +283,24 @@ describe("kb-host project routing", () => {
 
   it("starts scheduled workflow projects at host boot and keeps them warm", async () => {
     const a = await registered();
-    const workflows = join(a.root, ".kb", "workflows");
-    await mkdir(workflows, { recursive: true });
-    await writeFile(join(workflows, "scheduled.yml"), [
-      "name: scheduled",
-      "version: 1.0.0",
-      "on:",
-      "  manual: true",
-      "  schedule:",
-      '    cron: "* * * * *"',
-      "jobs: {}",
+    const crons = join(a.root, ".kb", "crons");
+    await mkdir(crons, { recursive: true });
+    await writeFile(join(crons, "every-minute.yml"), [
+      'schedule: "* * * * *"',
+      "workflow: scheduled",
       "",
     ].join("\n"));
-    await writeFile(join(workflows, "stored-active.yml"), [
-      "id: stored-active",
-      "status: active",
-      "spec:",
-      "  on:",
-      "    schedule:",
-      '      cron: "0 * * * *"',
+    await writeFile(join(crons, "hourly.yml"), [
+      'schedule: "0 * * * *"',
+      "timezone: UTC",
+      "enabled: true",
+      "workflow: stored-active",
       "",
     ].join("\n"));
-    await writeFile(join(workflows, "stored-paused.yml"), [
-      "id: stored-paused",
-      "status: paused",
-      "spec:",
-      "  on:",
-      "    schedule:",
-      '      cron: "30 * * * *"',
+    await writeFile(join(crons, "paused.yml"), [
+      'schedule: "30 * * * *"',
+      "enabled: false",
+      "workflow: stored-paused",
       "",
     ].join("\n"));
     const subject = await host({}, { idleTimeoutMs: 30, sweepIntervalMs: 10, startPollMs: 10 });
