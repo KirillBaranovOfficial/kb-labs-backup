@@ -15,6 +15,8 @@ import type { UIAccordionItem, UITabItem } from '@kb-labs/sdk/studio'
 import { useData, useMutateData, useSSE } from '@kb-labs/sdk/studio'
 import type { WorkflowRun, JobRun, StepRun } from '@kb-labs/workflow-contracts'
 import type { WorkflowLogEvent } from '@kb-labs/workflow-contracts/rest-api'
+import { projectWorkflowEndpoint } from '@kb-labs/workflow-contracts/routes'
+import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker'
 import { WorkflowStatusBadge } from '../components/shared/WorkflowStatusBadge'
 import { ConnectionBadge } from '../components/shared/ConnectionBadge'
 import { ApprovalModal } from '../components/ApprovalModal'
@@ -699,6 +701,14 @@ export default function WorkflowRunDetail() {
             )}
             <span style={{ width: 1, alignSelf: 'stretch', background: 'var(--border-primary)' }} />
             <ViewModeSelector views={VIEW_MODES} current={viewMode} onChange={setViewMode} />
+            {runId && projectId && (
+              <Link
+                to={`/observability/logs?projectId=${encodeURIComponent(projectId)}&executionId=${encodeURIComponent(runId)}`}
+                style={{ color: 'var(--link)', fontSize: 13 }}
+              >
+                Inspect run logs
+              </Link>
+            )}
           </div>
 
           {run.result?.summary && (

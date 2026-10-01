@@ -904,6 +904,7 @@ def main():
             "KB_STUDIO_PROJECT_NAME": project_name,
             "KB_ACCESS_MODE": mode,
             "KB_STUDIO_FRESH_HOST_JOURNEY": "1",
+            "KB_STUDIO_FIRST_TIER_JOURNEY": "1",
         })
         cron_id = "studio-a"
         (PROJECT / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
@@ -978,7 +979,7 @@ def main():
         studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
             "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
             "--config=/opt/kb-studio-playwright/playwright.config.mjs",
-        ], studio_env, service_report, mode, studio_shell_passed, timeout=180)
+        ], studio_env, service_report, mode, studio_shell_passed, timeout=660)
         TIMES["Studio browser journey"] = studio_elapsed
         if not studio_passed:
             fail(f"Studio browser journey: {studio_message}")

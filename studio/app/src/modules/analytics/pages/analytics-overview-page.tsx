@@ -88,8 +88,8 @@ export function AnalyticsOverviewPage() {
       <UIPage>
         <UIPageHeader title="Analytics" description="Platform-wide analytics" />
         <UIAlert
-          message="Failed to Load Analytics"
-          description={statsError?.message || 'Unknown error occurred'}
+          message="Analytics source unavailable"
+          description="Source: REST API analytics endpoint. Run kb-create doctor --platform-root <platform-root> to diagnose the service."
           variant="error"
           showIcon
           style={{ marginTop: 16 }}
