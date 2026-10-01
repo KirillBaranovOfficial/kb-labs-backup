@@ -70,7 +70,7 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 	}
 	return err
 }
-func (installArtifacts) Restore() error { return nil }
+func (installArtifacts) Restore([]contracts.Artifact) error { return nil }
 
 type installHost struct{}
 

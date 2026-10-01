@@ -60,7 +60,11 @@ func (a *offlineArtifacts) Install(items []contracts.Artifact) error {
 	}
 	return nil
 }
-func (a *offlineArtifacts) Restore() error { a.restores++; return nil }
+func (a *offlineArtifacts) Restore(items []contracts.Artifact) error {
+	a.installed = append(a.installed, items...)
+	a.restores++
+	return nil
+}
 func (a *offlineArtifacts) Uninstall(items []contracts.Artifact) error {
 	a.removed = append(a.removed, items...)
 	return nil

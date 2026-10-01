@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ func (c fixedClock) Now() time.Time { return c.Time }
 
 type fakeInstaller struct {
 	artifacts []contracts.Artifact
+	restored  []contracts.Artifact
 	err       error
 	removed   []contracts.Artifact
 	restores  int
@@ -29,7 +31,11 @@ func (f *fakeInstaller) Install(items []contracts.Artifact) error {
 	f.artifacts = append(f.artifacts, items...)
 	return f.err
 }
-func (f *fakeInstaller) Restore() error { f.restores++; return nil }
+func (f *fakeInstaller) Restore(items []contracts.Artifact) error {
+	f.restored = append(f.restored, items...)
+	f.restores++
+	return nil
+}
 func (f *fakeInstaller) Uninstall(items []contracts.Artifact) error {
 	f.removed = append(f.removed, items...)
 	return nil
@@ -156,13 +162,17 @@ func TestUninstallRemovesPlatformRootAfterRemovingReceiptArtifacts(t *testing.T)
 
 func TestUpdateRestoresPreviousReceiptWhenTheNewHostDoesNotStart(t *testing.T) {
 	root := t.TempDir()
-	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", Plan: contracts.ResolvedInstallPlan{PlanHash: "old"}}); err != nil {
+	previousArtifacts := []contracts.Artifact{{ID: "previous", Package: "@kb/previous", Version: "1.0.0"}}
+	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", Plan: contracts.ResolvedInstallPlan{PlanHash: "old", Artifacts: previousArtifacts}}); err != nil {
 		t.Fatal(err)
 	}
 	installer := &fakeInstaller{}
 	_, snapshot, err := Update(context.Background(), planIn(root, "new-plan"), Dependencies{Artifacts: installer, Host: &fakeProbe{err: errors.New("crash on boot")}, Clock: fixedClock{time.Unix(6, 0)}})
 	if err == nil || snapshot.ID == "" || installer.restores != 1 {
 		t.Fatalf("err/snapshot/restores = %v / %#v / %d", err, snapshot, installer.restores)
+	}
+	if !reflect.DeepEqual(installer.restored, previousArtifacts) {
+		t.Fatalf("restored artifacts = %#v, want previous receipt plan %#v", installer.restored, previousArtifacts)
 	}
 	active, readErr := receipt.Read(root)
 	if readErr != nil || active.ID != "before" {

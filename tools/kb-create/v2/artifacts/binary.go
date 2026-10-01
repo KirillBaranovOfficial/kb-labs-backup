@@ -129,7 +129,7 @@ func (c Composite) InstallWithProgress(items []contracts.Artifact, progress func
 	}
 	return nil
 }
-func (c Composite) Restore() error { return c.Packages.Restore() }
+func (c Composite) Restore(items []contracts.Artifact) error { return c.Packages.Restore(items) }
 func (c Composite) Uninstall(items []contracts.Artifact) error {
 	if err := c.Packages.Uninstall(items); err != nil {
 		return err
