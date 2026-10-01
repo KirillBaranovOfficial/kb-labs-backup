@@ -116,7 +116,7 @@ describe('discoverAdapters (lock-based)', () => {
     await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-sqlite' }));
     await fs.writeFile(path.join(distDir, 'index.js'), 'export const manifest = { implements: "IDocumentDatabase" }; export function createAdapter() { return {}; }');
 
-    const result = await discoverAdapters(tmpDir, undefined, {
+    const result = await discoverAdapters(tmpDir, {
       development: true,
       configuredPackages: [{ packageName: '@kb-labs/adapters-sqlite', slot: 'documentDatabase' }],
     });
@@ -128,7 +128,7 @@ describe('discoverAdapters (lock-based)', () => {
     const adapterRoot = path.join(tmpDir, 'packages', 'storage');
     await writeWorkspacePackage(tmpDir, adapterRoot, '@example/storage', 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
 
-    const result = await discoverAdapters(tmpDir, undefined, {
+    const result = await discoverAdapters(tmpDir, {
       development: true,
       configuredPackages: [{ packageName: '@example/storage', slot: 'storage' }],
     });
@@ -141,7 +141,7 @@ describe('discoverAdapters (lock-based)', () => {
     const impostorRoot = path.join(tmpDir, 'packages', 'impostor');
     await writeWorkspacePackage(tmpDir, impostorRoot, '@kb-labs/adapters-not-an-adapter', 'export const manifest = { name: "not an adapter" }; export function createAdapter() { return {}; }');
 
-    await expect(discoverAdapters(tmpDir, undefined, {
+    await expect(discoverAdapters(tmpDir, {
       development: true,
       configuredPackages: [{ packageName: '@kb-labs/adapters-not-an-adapter', slot: 'logger' }],
     })).rejects.toMatchObject({
@@ -157,7 +157,7 @@ describe('discoverAdapters (lock-based)', () => {
     await writeWorkspacePackage(tmpDir, configuredRoot, '@example/configured', 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
     await writeWorkspacePackage(tmpDir, unrelatedRoot, '@kb-labs/adapters-unrelated', 'export const manifest = { implements: "ICache" }; export function createAdapter() { throw new Error("must not import unconfigured adapter"); }');
 
-    const result = await discoverAdapters(tmpDir, undefined, {
+    const result = await discoverAdapters(tmpDir, {
       development: true,
       configuredPackages: [{ packageName: '@example/configured', slot: 'storage' }],
     });
@@ -170,7 +170,7 @@ describe('discoverAdapters (lock-based)', () => {
     const packageRoot = path.join(tmpDir, 'packages', 'invalid');
     await writeWorkspacePackage(tmpDir, packageRoot, '@example/invalid', 'export const manifest = { name: "not an adapter" }; export function createAdapter() { return {}; }');
 
-    await expect(discoverAdapters(tmpDir, undefined, {
+    await expect(discoverAdapters(tmpDir, {
       development: true,
       configuredPackages: [{ packageName: '@example/invalid', slot: 'storage' }],
     })).rejects.toMatchObject({
@@ -188,7 +188,7 @@ describe('discoverAdapters (lock-based)', () => {
     const packageRoot = path.join(tmpDir, 'packages', 'invalid');
     await writeWorkspacePackage(tmpDir, packageRoot, '@example/invalid', 'export const manifest = { implements: "IStorage" };');
 
-    await expect(discoverAdapters(tmpDir, undefined, {
+    await expect(discoverAdapters(tmpDir, {
       development: true,
       configuredPackages: [{ packageName: '@example/invalid', slot: 'storage' }],
     })).rejects.toMatchObject({
@@ -205,7 +205,7 @@ describe('discoverAdapters (lock-based)', () => {
     const packageName = '@kb-labs/adapters-installed-workspace';
     await writeWorkspacePackage(tmpDir, adapterRoot, packageName, 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
 
-    const result = await discoverAdapters(tmpDir, undefined, {
+    const result = await discoverAdapters(tmpDir, {
       development: false,
       configuredPackages: [{ packageName, slot: 'storage' }],
     });
@@ -218,7 +218,7 @@ describe('discoverAdapters (lock-based)', () => {
     try {
       const projectPackage = '@kb-labs/adapters-project';
       await writeWorkspacePackage(projectRoot, path.join(projectRoot, 'packages', 'project'), projectPackage, 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
-      const result = await discoverAdapters(tmpDir, projectRoot, {
+      const result = await discoverAdapters(tmpDir, {
         development: true,
         configuredPackages: [{ packageName: projectPackage, slot: 'storage' }],
       });
@@ -234,7 +234,7 @@ describe('discoverAdapters (lock-based)', () => {
     await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
     await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@example/unbuilt', kb: { manifest: './dist/manifest.js' }, adapter: './dist/manifest.js' }));
 
-    const failure = discoverAdapters(tmpDir, undefined, {
+    const failure = discoverAdapters(tmpDir, {
       development: true,
       configuredPackages: [{ packageName: '@example/unbuilt', slot: 'storage' }],
     });
