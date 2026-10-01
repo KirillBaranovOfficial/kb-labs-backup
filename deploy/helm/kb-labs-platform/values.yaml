@@ -112,3 +112,7 @@ marketplaceLock: {}
 # this to supply the env vars any ${VAR} in `config` above references
 # (GATEWAY_JWT_SECRET, OPENAI_API_KEY, KB_REGISTRY_URL, etc.).
 secretRefs: []
+
+# Pre-existing Kubernetes Secret containing the required GATEWAY_INTERNAL_SECRET
+# key. Required whenever the gateway or an internal upstream is enabled.
+internalSecretSecretName: ""

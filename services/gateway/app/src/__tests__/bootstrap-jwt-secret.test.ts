@@ -48,6 +48,11 @@ vi.mock("@kb-labs/core-runtime", () => ({
 }));
 
 vi.mock("@kb-labs/shared-daemon", () => ({
+  requireEnvironmentSecret: (variable: string) => {
+    const value = process.env[variable];
+    if (!value) { throw new Error(`KB_CONFIG_SECRET_MISSING: The configuration references ${variable}, which has no value. Hint: set ${variable} in the deployment secret configuration, then restart the service.`); }
+    return value;
+  },
   runService: vi.fn().mockImplementation(async (config) => {
     const logger = {
       info: vi.fn(),
@@ -116,6 +121,7 @@ describe("bootstrap — JWT secret validation (H6)", () => {
     // Reset env to original state before each test
     process.env = { ...originalEnv };
     delete process.env.GATEWAY_JWT_SECRET;
+    process.env.GATEWAY_INTERNAL_SECRET = 'gateway-internal-secret';
   });
 
   afterEach(() => {
@@ -128,6 +134,16 @@ describe("bootstrap — JWT secret validation (H6)", () => {
 
     const { bootstrap } = await import("../bootstrap.js");
     await expect(bootstrap("/tmp/test")).rejects.toThrow("GATEWAY_JWT_SECRET");
+  });
+
+  it('fails fast with the catalog diagnostic when the shared internal secret is missing in development', async () => {
+    process.env.NODE_ENV = 'development';
+    delete process.env.GATEWAY_INTERNAL_SECRET;
+
+    const { bootstrap } = await import('../bootstrap.js');
+    await expect(bootstrap('/tmp/test')).rejects.toThrow(
+      'KB_CONFIG_SECRET_MISSING: The configuration references GATEWAY_INTERNAL_SECRET, which has no value. Hint: set GATEWAY_INTERNAL_SECRET in the deployment secret configuration, then restart the service.',
+    );
   });
 
   it("does not throw in dev mode when GATEWAY_JWT_SECRET is not set", async () => {

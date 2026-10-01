@@ -110,7 +110,7 @@ func TestOfflineJourneyUsesResolvedGraphAsSingleTruth(t *testing.T) {
 		t.Fatal("empty config")
 	}
 	findings := doctor.Diagnose([]doctor.Manifest{{ID: "review", Requirements: []doctor.Requirement{{Path: "/review/token", Secret: true, Required: true, Hint: "Set REVIEW_TOKEN"}}}}, map[string]bool{})
-	if len(findings) != 1 || findings[0].Code != contracts.CodeInputRequired || findings[0].SafeFix {
+	if len(findings) != 1 || findings[0].Code != doctor.CodeAdapterCredentialsMissing || findings[0].Severity != doctor.SeverityError || findings[0].SafeFix {
 		t.Fatalf("unexpected doctor findings %#v", findings)
 	}
 }

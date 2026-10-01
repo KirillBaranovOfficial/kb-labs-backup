@@ -34,6 +34,12 @@ class PlatformStateDumpTests(unittest.TestCase):
             (launcher_logs / "host.log").write_text(
                 "\n".join(f"host-line-{number}" for number in range(500)) + "\napiKey: launcher-secret\n"
             )
+            probe_logs = launcher_logs / "probe"
+            probe_logs.mkdir()
+            (probe_logs / "host.log").write_text(
+                "\n".join(f"probe-line-{number}" for number in range(500))
+                + "\nGATEWAY_INTERNAL_SECRET=probe-secret\n"
+            )
             platform = root / "platform"
             reports = root / "reports"
             binaries = root / "bin"
@@ -118,6 +124,12 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertIn("host-line-499", launcher_tail)
             self.assertNotIn("host-line-99\n", launcher_tail)
             self.assertNotIn("launcher-secret", launcher_tail)
+            probe_tail_path = destination / "launcher-logs/probe/host.log"
+            self.assertTrue(probe_tail_path.is_file())
+            probe_tail = probe_tail_path.read_text()
+            self.assertIn("probe-line-499", probe_tail)
+            self.assertNotIn("probe-line-99\n", probe_tail)
+            self.assertNotIn("probe-secret", probe_tail)
             self.assertIn("First failure:", (destination / "index.md").read_text())
             self.assertIn("Journey git revision: abc123def", (destination / "index.md").read_text())
             size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())

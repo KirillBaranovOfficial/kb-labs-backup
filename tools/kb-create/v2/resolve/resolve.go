@@ -414,7 +414,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 			if requirement.Required && !optionalRequirement(requirement) && !contains(request.SecretInputs, requirement.ID) {
 				return nil, launcherError(contracts.CodeInputRequired, "required secret input "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
 			}
-			if contains(request.SecretInputs, requirement.ID) {
+			if requirement.Generate || contains(request.SecretInputs, requirement.ID) {
 				result = append(result, contracts.ConfigPatch{Owner: "manifest:" + requirement.ID, Environment: requirement.Env, Services: append([]string(nil), requirement.Services...)})
 			}
 			continue

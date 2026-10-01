@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
-import { runService } from "@kb-labs/shared-daemon";
+import { requireEnvironmentSecret, runService } from "@kb-labs/shared-daemon";
 import { getListenOptions } from "@kb-labs/shared-http";
 import { RegistryService } from "@kb-labs/marketplace-registry-core";
 import { createRegistryServer } from "@kb-labs/marketplace-registry-api";
@@ -28,16 +28,7 @@ async function main(): Promise<void> {
         siteUrl: process.env.KB_SITE_URL ?? "https://kblabs.ru",
       });
 
-      const internalSecret = process.env.GATEWAY_INTERNAL_SECRET;
-      const isProduction = process.env.NODE_ENV === "production";
-      if (!internalSecret && isProduction) {
-        throw new Error("GATEWAY_INTERNAL_SECRET must be set in production");
-      }
-      if (!internalSecret) {
-        logger.warn(
-          "GATEWAY_INTERNAL_SECRET not set — registry requests will be rejected until gateway trust is configured",
-        );
-      }
+      const internalSecret = requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET");
 
       const server = await createRegistryServer({
         port,
@@ -58,6 +49,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("marketplace-registry failed to start", err);
-  process.exit(1);
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(message);
+  process.exitCode = 1;
 });

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ import (
 	"github.com/kb-labs/create/v2/wizard"
 )
 
-// These journeys are the installer's "Studio access" contract, exercised the way
+// These journeys are the installer's install and secret contract, exercised the way
 // a user reaches it: the wizard (or a machine request) -> resolver -> runtime
 // apply -> files on disk. The gateway's requirements are NOT restated here: the
 // real services/gateway/app/kb-create.requirements.json is staged exactly as
@@ -85,8 +86,12 @@ func sealedGatewayCatalog(t *testing.T) catalog.Catalog {
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Platforms: []catalog.PlatformBundle{{
 			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(),
-			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "gateway-app", Port: 4000, Required: true}}}},
-			Members:  []catalog.Component{{ID: "gateway", Version: "2.0.0", Package: "@kb-labs/gateway-app", Tarball: "https://example.test/gateway.tgz", SHA256: "gateway"}},
+			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{
+				{ID: "gateway", Command: "gateway-app", Port: 4000, Required: true},
+				{ID: "rest", Command: "rest-api", Port: 5050},
+				{ID: "marketplace-registry", Command: "marketplace-registry", Port: 5071},
+			}}},
+			Members: []catalog.Component{{ID: "gateway", Version: "2.0.0", Package: "@kb-labs/gateway-app", Tarball: "https://example.test/gateway.tgz", SHA256: "gateway"}},
 		}},
 		Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "2.0.0", Package: sqlitePackage, Tarball: "https://example.test/adapters-sqlite.tgz", SHA256: "sqlite"}, Provides: []string{"documentDatabase", "kvStore"}}},
 	}
@@ -127,6 +132,9 @@ func install(t *testing.T, answers string) journeyResult {
 		t.Fatalf("plan: %v", err)
 	}
 	store := secrets.Store{PlatformRoot: root}
+	if err := secrets.EnsureGenerated(&plan, store); err != nil {
+		t.Fatalf("generate declared secrets: %v", err)
+	}
 	artifacts := &offlineArtifacts{root: root}
 	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts, Secrets: &store, Clock: journeyClock{time.Unix(1, 0)}}); err != nil {
 		t.Fatalf("apply: %v", err)
@@ -188,6 +196,7 @@ func everywhereExcept(t *testing.T, root, value string) []string {
 	return hits
 }
 
+// case: S-038.4
 func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) {
 	// channel, profile, Studio access, admin email, password + confirmation, blank => generated signing secret
 	result := install(t, "\n\nsecured\nadmin@example.com\n\n"+adminPassword+"\n"+adminPassword+"\n\n")
@@ -212,7 +221,7 @@ func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) 
 	if strings.Contains(string(mustMarshal(t, result.config)), "${") {
 		t.Fatalf("the config must not carry secret placeholders: %v", result.config)
 	}
-	for _, variable := range []string{"GATEWAY_BOOTSTRAP_ADMIN_PASSWORD", "GATEWAY_JWT_SECRET"} {
+	for _, variable := range []string{"GATEWAY_BOOTSTRAP_ADMIN_PASSWORD", "GATEWAY_JWT_SECRET", "GATEWAY_INTERNAL_SECRET"} {
 		if result.environment[variable] == "" {
 			t.Fatalf("the host must receive %s (environment: %v)", variable, keysOf(result.environment))
 		}
@@ -234,13 +243,16 @@ func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) 
 	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(result.secrets["GATEWAY_JWT_SECRET"]) {
 		t.Fatalf("the signing secret must be a generated 256-bit value, got %q", result.secrets["GATEWAY_JWT_SECRET"])
 	}
+	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(result.secrets["GATEWAY_INTERNAL_SECRET"]) {
+		t.Fatalf("the internal secret must be generated as a 256-bit value, got %q", result.secrets["GATEWAY_INTERNAL_SECRET"])
+	}
 	// ... and the requirement IDs stay verifiable for update / doctor.
-	if result.secrets["gateway.bootstrap.password"] != adminPassword || result.secrets["gateway.jwtSecret"] == "" {
+	if result.secrets["gateway.bootstrap.password"] != adminPassword || result.secrets["gateway.jwtSecret"] == "" || result.secrets["gateway.internalSecret"] == "" {
 		t.Fatalf("requirement-ID keys missing: %v", keysOf(result.secrets))
 	}
 
 	// Secret values live in exactly one file.
-	for _, value := range []string{adminPassword, result.secrets["GATEWAY_JWT_SECRET"]} {
+	for _, value := range []string{adminPassword, result.secrets["GATEWAY_JWT_SECRET"], result.secrets["GATEWAY_INTERNAL_SECRET"]} {
 		if hits := everywhereExcept(t, result.root, value); len(hits) != 0 {
 			t.Fatalf("a secret leaked outside the private store: %v", hits)
 		}
@@ -289,21 +301,25 @@ func TestSecuredInstallWithoutAnAdminPasswordStillSecuresSessions(t *testing.T) 
 	}
 }
 
-func TestLocalInstallNeedsNoSecretsAndConfiguresNoLoginAccess(t *testing.T) {
+// case: S-038.4
+func TestLocalInstallGeneratesInternalSecretAndConfiguresNoLoginAccess(t *testing.T) {
 	result := install(t, "\n\nlocal\n")
 
 	gateway := gatewaySection(t, result)
+	if result.environment["GATEWAY_INTERNAL_SECRET"] == "" || result.secrets["gateway.internalSecret"] == "" {
+		t.Fatalf("a local install must generate and pass the shared internal secret: environment=%v store=%v", keysOf(result.environment), keysOf(result.secrets))
+	}
 	if access, _ := gateway["access"].(map[string]any); access["mode"] != "local" {
 		t.Fatalf("gateway.access = %v", gateway["access"])
 	}
-	if len(result.environment) != 0 {
-		t.Fatalf("a local install gives the host no secrets: %v", keysOf(result.environment))
+	if result.environment["GATEWAY_JWT_SECRET"] == "" {
+		t.Fatalf("a local install must deliver its generated JWT secret: %v", keysOf(result.environment))
 	}
 	if result.config["host"].(map[string]any)["auth"] != "off" {
 		t.Fatalf("host.auth = %v, want off for a no-login install", result.config["host"])
 	}
-	if len(result.secrets) != 0 {
-		t.Fatalf("a local install stores no secrets: %v", keysOf(result.secrets))
+	if result.secrets["gateway.jwtSecret"] == "" {
+		t.Fatalf("a local install must retain its generated JWT secret: %v", keysOf(result.secrets))
 	}
 	// auth.bootstrap.tenantId is written by default; it must not switch login back on.
 	if auth, _ := gateway["auth"].(map[string]any); auth != nil {
@@ -409,5 +425,66 @@ func TestSecuredInstallWritesTheTenantOnlyWhenTheUserChoseOne(t *testing.T) {
 	bootstrap := gatewaySection(t, result)["auth"].(map[string]any)["bootstrap"].(map[string]any)
 	if bootstrap["tenantId"] != "acme" || bootstrap["adminEmail"] != "admin@example.com" {
 		t.Fatalf("gateway.auth.bootstrap = %v", bootstrap)
+	}
+}
+
+type captureHostEnvironment struct {
+	store secrets.Store
+	env   map[string]string
+}
+
+func (probe *captureHostEnvironment) Probe(context.Context, contracts.HostSpec) error {
+	environment, err := probe.store.Environment()
+	probe.env = environment
+	return err
+}
+
+// case: S-038.4
+func TestFreshFixtureInstallRendersInternalSecretForEveryConsumer(t *testing.T) {
+	data, err := os.ReadFile("../../../../e2e/platform/fixtures/release-index-v2.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := catalog.Decode(data)
+	if err != nil {
+		t.Fatalf("decode journey release fixture: %v", err)
+	}
+	root := t.TempDir()
+	plan, err := resolve.Plan(contracts.InstallRequest{
+		PlatformRoot: root, Platform: contracts.VersionSelector{Channel: contracts.ChannelStable},
+		SDK: contracts.VersionSelector{Version: "2.120.1"}, ServiceProfile: "default",
+		Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible,
+	}, source)
+	if err != nil {
+		t.Fatalf("resolve fresh install from journey fixture: %v", err)
+	}
+	store := secrets.Store{PlatformRoot: root}
+	if err := secrets.EnsureGenerated(&plan, store); err != nil {
+		t.Fatalf("generate fresh install secrets: %v", err)
+	}
+	probe := &captureHostEnvironment{store: store}
+	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{
+		Artifacts: &offlineArtifacts{root: root}, Host: probe, Secrets: &store,
+	}); err != nil {
+		t.Fatalf("apply fresh install: %v", err)
+	}
+	value := probe.env["GATEWAY_INTERNAL_SECRET"]
+	if value == "" {
+		t.Fatalf("fresh host environment lacks GATEWAY_INTERNAL_SECRET: %v", probe.env)
+	}
+	var consumers []string
+	for _, patch := range plan.ConfigPatches {
+		if patch.Environment == "GATEWAY_INTERNAL_SECRET" {
+			consumers = append(consumers, patch.Services...)
+		}
+	}
+	want := []string{"gateway", "rest", "marketplace-registry"}
+	if !reflect.DeepEqual(consumers, want) {
+		t.Fatalf("internal-secret consumers = %v, want %v", consumers, want)
+	}
+	for _, service := range consumers {
+		if probe.env["GATEWAY_INTERNAL_SECRET"] != value {
+			t.Fatalf("service %s cannot read the generated shared secret", service)
+		}
 	}
 }

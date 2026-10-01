@@ -35,7 +35,6 @@ func TestEnsureGeneratedCreatesPrivateRandomSecretAndPreservesSuppliedValue(t *t
 	root := t.TempDir()
 	store := Store{PlatformRoot: root}
 	plan := &contracts.ResolvedInstallPlan{
-		Request:   contracts.InstallRequest{SecretInputs: []string{"gateway.jwtSecret"}},
 		Artifacts: []contracts.Artifact{{Config: []contracts.ConfigRequirement{{ID: "gateway.jwtSecret", Secret: true, Generate: true}}}},
 	}
 	if err := EnsureGenerated(plan, store); err != nil {
@@ -61,6 +60,54 @@ func TestEnsureGeneratedCreatesPrivateRandomSecretAndPreservesSuppliedValue(t *t
 	got, _, _ := store.Get("gateway.jwtSecret")
 	if got != "operator-selected-secret" {
 		t.Fatalf("operator secret = %q", got)
+	}
+}
+
+// case: S-038.4
+func TestEnsureGeneratedInternalSecretBindsEveryProtectedService(t *testing.T) {
+	root := t.TempDir()
+	store := Store{PlatformRoot: root}
+	plan := &contracts.ResolvedInstallPlan{
+		Artifacts: []contracts.Artifact{{Config: []contracts.ConfigRequirement{{
+			ID: "gateway.internalSecret", Secret: true, Generate: true, Env: "GATEWAY_INTERNAL_SECRET",
+			Services: []string{"gateway", "rest", "marketplace-registry"},
+		}}}},
+	}
+	if err := EnsureGenerated(plan, store); err != nil {
+		t.Fatal(err)
+	}
+	value, present, err := store.Get("gateway.internalSecret")
+	if err != nil || !present || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(value) {
+		t.Fatalf("generated internal secret = %q, present=%v, err=%v", value, present, err)
+	}
+	if err := store.BindEnvironments([]contracts.ConfigPatch{{
+		Owner: "manifest:gateway.internalSecret", Environment: "GATEWAY_INTERNAL_SECRET",
+		Services: []string{"gateway", "rest", "marketplace-registry"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	environment, err := store.Environment()
+	if err != nil || environment["GATEWAY_INTERNAL_SECRET"] != value {
+		t.Fatalf("service environment = %#v, err=%v", environment, err)
+	}
+}
+
+// case: S-038.5
+func TestEnsureGeneratedPreservesInternalSecretDuringUpdate(t *testing.T) {
+	store := Store{PlatformRoot: t.TempDir()}
+	plan := &contracts.ResolvedInstallPlan{
+		Artifacts: []contracts.Artifact{{Config: []contracts.ConfigRequirement{{ID: "gateway.internalSecret", Secret: true, Generate: true}}}},
+	}
+	if err := EnsureGenerated(plan, store); err != nil {
+		t.Fatal(err)
+	}
+	before, _, _ := store.Get("gateway.internalSecret")
+	if err := EnsureGenerated(plan, store); err != nil { // update resolves the same generated requirement
+		t.Fatal(err)
+	}
+	after, _, _ := store.Get("gateway.internalSecret")
+	if after != before {
+		t.Fatalf("update replaced generated secret: before=%q after=%q", before, after)
 	}
 }
 func TestStoreRejectsInjectionName(t *testing.T) {

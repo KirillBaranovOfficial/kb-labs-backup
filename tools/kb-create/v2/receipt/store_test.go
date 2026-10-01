@@ -56,3 +56,29 @@ func TestSnapshotRestoresManagedFilesWithoutTouchingProjectFiles(t *testing.T) {
 		t.Fatalf("receipt = %#v, %v", restored, err)
 	}
 }
+
+// case: S-038.6
+func TestRollbackLeavesInstallerManagedSecretsAvailable(t *testing.T) {
+	root := t.TempDir()
+	if err := Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "receipt-1", Plan: contracts.ResolvedInstallPlan{PlanHash: "plan"}}); err != nil {
+		t.Fatal(err)
+	}
+	secretPath := filepath.Join(root, ".kb", "v2", "secrets.env")
+	if err := os.MkdirAll(filepath.Dir(secretPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	secret := "GATEWAY_INTERNAL_SECRET=generated-value\n"
+	if err := os.WriteFile(secretPath, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := CreateSnapshot(root, time.Unix(2, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RestoreSnapshot(root, snapshot.ID); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(secretPath); err != nil || string(data) != secret {
+		t.Fatalf("rollback secret store = %q, err=%v", data, err)
+	}
+}

@@ -8,7 +8,7 @@ import { createServer } from "./server";
 import { createRegistry, type IEntityRegistry } from "@kb-labs/core-registry";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
-import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
+import { requireEnvironmentSecret, runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import { getListenOptions } from "@kb-labs/shared-http";
 import { SystemMetricsCollector } from "./daemon/metrics";
 import {
@@ -28,6 +28,7 @@ let metricsCollector: SystemMetricsCollector | null = null;
  * Bootstrap REST API server
  */
 export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
+  requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET");
   await runService({
     appId: "rest-api",
     serviceId: "rest",

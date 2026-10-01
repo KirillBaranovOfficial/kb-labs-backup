@@ -144,6 +144,11 @@ Cases: S-006, S-008, S-010, S-160.
 Platform adapters remain installed in the platform root because runtime adapter discovery reads their package paths from the platform marketplace lock. Before adding an adapter, marketplace records exact `file:.kb/v2/cache/packages/*.tgz` dependencies as pnpm overrides, so pnpm cannot replace sealed packages while resolving the new adapter. Plugin packages continue to use the shared extension store at both scopes.
 Cases: S-010.1, S-054.11.
 
+### The gateway-to-service secret is required and installer-managed
+
+`GATEWAY_INTERNAL_SECRET` is required by the gateway, REST API, and marketplace-registry in every mode because each service boundary denies requests without the shared value. A fresh local or secured kb-create install generates it in the private secret store, passes it to every protected service, and retains the same value through update and rollback. Container and team deployments provide the required variable through their deployment secret configuration; startup fails with `KB_CONFIG_SECRET_MISSING` when it is absent. Users of kb-create never enter this secret manually.
+Cases: S-038.1 to S-038.7.
+
 ### Superseding decision: kb-create owns sealed artifact overrides
 
 The installed platform's package-manager configuration belongs to kb-create,

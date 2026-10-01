@@ -1,5 +1,10 @@
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.enabled }}
+{{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace-registry") }}
+{{- if not $.Values.internalSecretSecretName }}
+{{- fail (printf "GATEWAY_INTERNAL_SECRET is required: create a Kubernetes Secret with key GATEWAY_INTERNAL_SECRET and set internalSecretSecretName") }}
+{{- end }}
+{{- end }}
 {{- if and (eq $name "workflow") (gt (int $svc.replicas) 1) }}
 {{- fail (printf "services.workflow.replicas is %d, must stay 1: JobBroker/CronScheduler run in-process (plugins/workflow/daemon/src/bootstrap.ts) and a second replica double-fires every scheduled job. See docs/adr/0037-containers-are-canonical-cloud-delivery.md." (int $svc.replicas)) }}
 {{- end }}
@@ -38,6 +43,14 @@ spec:
         - name: {{ $name }}
           image: {{ include "kb-labs-platform.image" (dict "Values" $.Values "svc" $svc) }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          {{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace-registry") }}
+          env:
+            - name: GATEWAY_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.internalSecretSecretName }}
+                  key: GATEWAY_INTERNAL_SECRET
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ $svc.port }}

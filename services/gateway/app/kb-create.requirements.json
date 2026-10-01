@@ -37,6 +37,18 @@
       "hint": "HMAC secret that signs session tokens (e.g. `openssl rand -hex 64`); without it the gateway uses a public development secret"
     },
     {
+      "id": "gateway.internalSecret",
+      "secret": true,
+      "generate": true,
+      "env": "GATEWAY_INTERNAL_SECRET",
+      "services": [
+        "gateway",
+        "rest",
+        "marketplace-registry"
+      ],
+      "hint": "Shared gateway-to-service authentication secret; kb-create generates and preserves it"
+    },
+    {
       "id": "gateway.authStorage.filename",
       "path": "/platform/adapterOptions/documentDatabase/filename",
       "default": ".kb/database/kb.sqlite",

@@ -15,17 +15,14 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 )
 
-// EnsureGenerated fills generated secret requirements with a fresh per-install
-// value unless an operator already supplied one. Secret values stay in the
+// EnsureGenerated fills every selected artifact's generated secret requirements
+// with a fresh per-install value unless one already exists. Generated secrets
+// are installer-owned and do not require a user secret input. Values stay in the
 // private store and are never added to the plan or receipt.
 func EnsureGenerated(plan *contracts.ResolvedInstallPlan, store Store) error {
-	inputs := make(map[string]bool, len(plan.Request.SecretInputs))
-	for _, id := range plan.Request.SecretInputs {
-		inputs[id] = true
-	}
 	for _, artifact := range plan.Artifacts {
 		for _, requirement := range artifact.Config {
-			if !requirement.Secret || !requirement.Generate || !inputs[requirement.ID] {
+			if !requirement.Secret || !requirement.Generate {
 				continue
 			}
 			exists, err := store.Exists(requirement.ID)

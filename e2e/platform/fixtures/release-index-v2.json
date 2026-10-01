@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "2793dac9a1f2a566e38b871d6a0318c5439a3d3794786f6f192fd4f676755757",
+  "digest": "a9b7eb902f7db6586cf2ff66f552bbc7e08edb9e26ead3247d4397ab0e7c8990",
   "channels": {
     "stable": "2.120.1"
   },
@@ -205,6 +205,18 @@
                 "gateway"
               ],
               "hint": "HMAC secret that signs session tokens (e.g. `openssl rand -hex 64`); without it the gateway uses a public development secret"
+            },
+            {
+              "id": "gateway.internalSecret",
+              "secret": true,
+              "generate": true,
+              "env": "GATEWAY_INTERNAL_SECRET",
+              "services": [
+                "gateway",
+                "rest",
+                "marketplace-registry"
+              ],
+              "hint": "Shared gateway-to-service authentication secret; kb-create generates and preserves it"
             },
             {
               "id": "gateway.authStorage.filename",

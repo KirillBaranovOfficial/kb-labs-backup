@@ -1,7 +1,7 @@
 ---
 title: "Architecture"
 description: "Internal components, bootstrap sequence, and request lifecycle."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-01"
 order: 2
 ---
 
@@ -126,7 +126,7 @@ The host agent WS is the more interesting one — it's bidirectional, survives f
 
 ## Internal dispatch endpoint
 
-[`/internal/dispatch`](plugins/gateway/app/src/execute/routes.ts) is a gateway-internal endpoint used by the container execution backend. When `platform.execution.mode === 'container'`, the REST API (or workflow daemon) forwards execution requests through this endpoint to a container environment.
+[`/internal/dispatch`](plugins/gateway/app/src/execute/routes.ts) is a gateway-internal endpoint used by the container execution backend. The gateway and internal upstream services also use the shared secret for their service-to-service requests in every execution mode. When `platform.execution.mode === 'container'`, the REST API (or workflow daemon) forwards execution requests through this endpoint to a container environment.
 
 It's not exposed publicly — auth is via a separate shared secret (`GATEWAY_INTERNAL_SECRET`), not via the public token system. The endpoint accepts a handler reference plus inputs and returns the execution result.
 

@@ -16,6 +16,15 @@ helm install my-platform . --set image.tag=<release-version>
 `image.tag` is required — the chart refuses to render without it (never
 defaults to `latest`, see `docs/deployment/docker-build-hygiene.md`).
 
+The gateway, REST API, and marketplace-registry also require the same
+`GATEWAY_INTERNAL_SECRET` in every mode. Create a Kubernetes Secret and pass
+its name to the chart; rendering fails if the name is omitted:
+
+```sh
+kubectl create secret generic kb-platform-internal --from-literal=GATEWAY_INTERNAL_SECRET="$(openssl rand -hex 32)"
+helm install my-platform . --set image.tag=<release-version> --set internalSecretSecretName=kb-platform-internal
+```
+
 ## Composition
 
 Declare adapters/plugins in `values.yaml`'s `config` field, and secrets via
@@ -37,6 +46,8 @@ config:
 
 secretRefs:
   - my-platform-secrets   # must contain OPENAI_API_KEY, GATEWAY_JWT_SECRET, etc.
+
+internalSecretSecretName: kb-platform-internal # must contain GATEWAY_INTERNAL_SECRET
 ```
 
 `${VAR}` placeholders in `config` are **not** touched by Helm — they're
