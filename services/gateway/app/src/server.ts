@@ -20,6 +20,7 @@ import {
   AuthService,
   type JwtConfig,
   type UsersStore,
+  type MembershipsStore,
   type SessionsStore,
   type ApiTokensStore,
   type InvitesStore,
@@ -82,6 +83,7 @@ import type { HostRoutes } from "./host-routes.js";
 export interface UserAuthServerDeps {
   userAuthService: UserAuthServiceForRoutes;
   users: UsersStore;
+  memberships: MembershipsStore;
   sessions: SessionsStore;
   apiTokens: ApiTokensStore;
   invites: InvitesStore;
@@ -397,6 +399,7 @@ export async function createServer(
         {
           userAuthService: userAuth.userAuthService,
           users: userAuth.users,
+          memberships: userAuth.memberships,
           sessions: userAuth.sessions,
           apiTokens: userAuth.apiTokens,
           invites: userAuth.invites,

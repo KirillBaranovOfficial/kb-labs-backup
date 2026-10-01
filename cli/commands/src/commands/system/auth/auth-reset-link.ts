@@ -6,7 +6,7 @@ type ResetLinkFlags = { 'user-id': { type: 'string'; description: string }; json
 export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult & { resetUrl?: string }>({
   name: 'reset-link',
   description: 'Create an admin password reset link for a user',
-  longDescription: 'Creates a one-time password reset link that expires after one hour. Share it with the user out of band.',
+  longDescription: 'Creates a one-time password reset link that expires after 24 hours. Share it with the user out of band.',
   category: 'auth',
   examples: ['kb auth reset-link --user-id usr_123', 'kb auth reset-link --user-id usr_123 --json'],
   flags: {
