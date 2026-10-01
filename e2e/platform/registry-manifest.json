@@ -88,6 +88,7 @@
     { "name": "@kb-labs/adapters-analytics-file" },
     { "name": "@kb-labs/e2e-llm-deterministic" },
     { "name": "@kb-labs/adapters-sqlite" },
+    { "name": "@kb-labs/adapters-openai" },
     { "name": "@kb-labs/adapters-service-transport-http" },
     { "name": "@kb-labs/adapters-state-broker" }
   ],

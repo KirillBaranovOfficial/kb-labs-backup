@@ -170,6 +170,13 @@ func reapplyResolved(config map[string]any, parent, key string, resolved map[str
 		return
 	}
 	for name, value := range resolved {
+		// The package selected by the resolver can be represented by a
+		// subpath export in the sealed platform default (for example,
+		// adapters-sqlite/kv). Keep that full module specifier when it points
+		// at the same package; ConfigPatch.Value only carries package@version.
+		if module, ok := target[name].(string); ok && strings.HasPrefix(module, value+"/") {
+			continue
+		}
 		target[name] = value
 	}
 }
