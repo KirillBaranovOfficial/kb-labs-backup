@@ -329,3 +329,34 @@ describe('Auth middleware — public routes', () => {
     expect(body.error).toBe('Unauthorized');
   });
 });
+
+describe('POST /auth/logout/cli token-kind routing', () => {
+  it.each([
+    { kind: { kind: 'machine', hostId: 'host-1' }, revokeMachine: true, revokeUser: false },
+    { kind: { kind: 'user', userId: 'user-1', tenantId: 'tenant-1', familyId: 'family-1' }, revokeMachine: false, revokeUser: true },
+  ])('revokes only the verified $kind.kind token kind', async ({ kind, revokeMachine, revokeUser }) => {
+    const routeApp = Fastify({ logger: false });
+    const routeAuthService = {
+      classifyRefreshToken: vi.fn().mockResolvedValue(kind),
+      revokeRefreshToken: vi.fn().mockResolvedValue(true),
+    };
+    const userLogoutFn = vi.fn().mockResolvedValue(undefined);
+    registerAuthRoutes(routeApp, routeAuthService as never, {
+      userRefreshFn: vi.fn().mockResolvedValue(false),
+      userLogoutFn,
+      pdp: {} as never,
+    });
+    await routeApp.ready();
+
+    const response = await routeApp.inject({
+      method: 'POST', url: '/auth/logout/cli', payload: { refreshToken: 'verified-refresh-token' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true });
+    expect(routeAuthService.classifyRefreshToken).toHaveBeenCalledWith('verified-refresh-token');
+    expect(routeAuthService.revokeRefreshToken).toHaveBeenCalledTimes(revokeMachine ? 1 : 0);
+    expect(userLogoutFn).toHaveBeenCalledTimes(revokeUser ? 1 : 0);
+    await routeApp.close();
+  });
+});
