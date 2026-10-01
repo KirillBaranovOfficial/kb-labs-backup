@@ -9,7 +9,7 @@
 
 import { createHash } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { ICache, IAnalytics } from '@kb-labs/core-platform';
+import { createErrorEnvelope, type ICache, type IAnalytics } from '@kb-labs/core-platform';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { filterTools, type McpTool } from './tool-builder.js';
 import { callTool, type PlatformResolver } from './tool-router.js';
@@ -22,6 +22,62 @@ export const TOOLS_CACHE_TTL_MS = 60_000;
 /** Build a text-only MCP tool result (the only content shape this daemon emits). */
 function textResult(text: string, isError: boolean): CallToolResult {
   return { content: [{ type: 'text', text }], isError };
+}
+
+function toolError(code: string, details: Record<string, string>): CallToolResult {
+  const envelope = createErrorEnvelope(code, { details });
+  return {
+    content: [{ type: 'text', text: `${envelope.code}: ${envelope.message} — ${envelope.hint}` }],
+    structuredContent: { ...envelope },
+    isError: true,
+  };
+}
+
+interface JsonSchema {
+  type?: string;
+  required?: string[];
+  properties?: Record<string, JsonSchema>;
+  items?: JsonSchema;
+}
+
+function matchesSchemaType(value: unknown, type: string): boolean {
+  switch (type) {
+    case 'array': return Array.isArray(value);
+    case 'object': return typeof value === 'object' && value !== null && !Array.isArray(value);
+    case 'integer': return typeof value === 'number' && Number.isInteger(value);
+    case 'number': return typeof value === 'number' && Number.isFinite(value);
+    case 'boolean': return typeof value === 'boolean';
+    case 'string': return typeof value === 'string';
+    case 'null': return value === null;
+    default: return true;
+  }
+}
+
+function argumentError(schema: JsonSchema, value: unknown, path = ''): { path: string; expected: string } | null {
+  if (schema.type && !matchesSchemaType(value, schema.type)) {
+    return { path: path || 'arguments', expected: schema.type };
+  }
+  if (schema.type === 'object' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const objectValue = value as Record<string, unknown>;
+    for (const required of schema.required ?? []) {
+      if (!(required in objectValue)) {
+        return { path: path ? `${path}.${required}` : required, expected: 'required' };
+      }
+    }
+    for (const [key, propertySchema] of Object.entries(schema.properties ?? {})) {
+      if (key in objectValue) {
+        const error = argumentError(propertySchema, objectValue[key], path ? `${path}.${key}` : key);
+        if (error) return error;
+      }
+    }
+  }
+  if (schema.type === 'array' && Array.isArray(value) && schema.items) {
+    for (const [index, item] of value.entries()) {
+      const error = argumentError(schema.items, item, `${path}[${index}]`);
+      if (error) return error;
+    }
+  }
+  return null;
 }
 
 /**
@@ -120,14 +176,25 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
 
   const tool = visibleTools.find((t) => t.name === name);
   if (!tool) {
-    return textResult(`Unknown tool: ${name}`, true);
+    return toolError('KB_RUNTIME_MCP_UNKNOWN_TOOL', { tool: name });
   }
 
   // Authoritative gate — independent of the cached visibility list. When the
   // platform supplies a real policy, a tool that became forbidden after it was
   // cached is rejected here with no server code change.
   if (!permits || !permits(tool.operationType, tool.pluginId)) {
-    return textResult(`Not authorized: ${name}`, true);
+    return toolError('KB_RUNTIME_MCP_TOOL_FORBIDDEN', { tool: name });
+  }
+
+  const validationError = argumentError(tool.inputSchema as JsonSchema, args.args);
+  if (validationError) {
+    const expected = validationError.expected === 'required'
+      ? 'a required value'
+      : validationError.expected;
+    return toolError(
+      'KB_RUNTIME_MCP_INVALID_ARGUMENTS',
+      { argument: validationError.path, expected },
+    );
   }
 
   analytics?.track('mcp.tool.call.started', {
@@ -136,7 +203,24 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
     pluginId: tool.pluginId,
   }).catch(() => {});
 
-  const result = await callTool(tool, args.args, tenantId, resolvePlatform);
+  let result: Awaited<ReturnType<typeof callTool>>;
+  try {
+    result = await callTool(tool, args.args, tenantId, resolvePlatform);
+  } catch {
+    const durationMs = Date.now() - t0;
+    collector?.recordOp('mcp.tool.call', durationMs, false);
+    analytics?.track('mcp.tool.call.completed', {
+      toolName: name,
+      tenantId,
+      pluginId: tool.pluginId,
+      success: false,
+      durationMs,
+    }).catch(() => {});
+    return toolError(
+      'KB_RUNTIME_MCP_TOOL_FAILED',
+      { tool: name },
+    );
+  }
 
   const durationMs = Date.now() - t0;
   collector?.recordOp('mcp.tool.call', durationMs, result.success);
@@ -150,5 +234,11 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
     durationMs,
   }).catch(() => {});
 
-  return textResult(result.output, !result.success);
+  if (!result.success) {
+    return toolError(
+      'KB_RUNTIME_MCP_TOOL_FAILED',
+      { tool: name, exitCode: String(result.exitCode) },
+    );
+  }
+  return textResult(result.output, false);
 }
