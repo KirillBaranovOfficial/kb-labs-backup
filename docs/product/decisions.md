@@ -23,6 +23,19 @@ project-level adapter configuration from the config schema/loader, CLI, REST,
 Studio, health, doctor, and user documentation.
 Cases: S-017, S-018, S-048; S-200 is historical and superseded by S-048.
 
+### Plugin settings are platform-owned and project-scoped
+
+Plugin defaults are layered with platform defaults and per-project overrides.
+Project config is stored by `projectId` in platform state; the platform never
+reads project plugin settings from `.kb/kb.config.*` in the consumer
+repository. `kb config` resolves project scope from cwd, Studio edits the
+selected project, invalid values are checked against the plugin's declared
+settings schema, and removing a project archives its config for restoration
+when the same deterministic project ID is registered again. The SDK currently
+has no plugin settings-schema declaration; use the existing manifest
+`SchemaRef` for the planned declaration rather than adapter `configSchema`.
+Cases: S-043, S-124, S-196, S-204.
+
 ### Cases are the product specification
 
 The case catalog is the product truth for code, tests and docs. Work is case-first TDD: case → e2e claim (red) → integration and unit tests → implementation. See [ADR-0050](../adr/0050-product-cases-are-the-specification.md).
