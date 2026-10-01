@@ -67,14 +67,14 @@ function argumentError(schema: JsonSchema, value: unknown, path = ''): { path: s
     for (const [key, propertySchema] of Object.entries(schema.properties ?? {})) {
       if (key in objectValue) {
         const error = argumentError(propertySchema, objectValue[key], path ? `${path}.${key}` : key);
-        if (error) return error;
+        if (error) {return error;}
       }
     }
   }
   if (schema.type === 'array' && Array.isArray(value) && schema.items) {
     for (const [index, item] of value.entries()) {
       const error = argumentError(schema.items, item, `${path}[${index}]`);
-      if (error) return error;
+      if (error) {return error;}
     }
   }
   return null;

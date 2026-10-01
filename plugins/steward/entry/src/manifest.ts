@@ -46,7 +46,7 @@ const manifest = {
     requires: ['documentDatabase'],
   },
   cli: {
-    groupMeta: [{ name: 'steward', description: 'Personal PM/CRM for AI agents' }],
+    groupMeta: [{ path: 'steward', describe: 'Personal PM/CRM for AI agents' }],
     commands: [
       // ── Project ──────────────────────────────────────────────────────
       {
