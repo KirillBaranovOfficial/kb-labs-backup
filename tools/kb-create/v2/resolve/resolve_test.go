@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"fmt"
+	"reflect"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"strings"
@@ -152,6 +153,32 @@ func TestPlanProjectsSecretOnlyAsEnvironmentReference(t *testing.T) {
 	encoded := plan.ConfigPatches[1]
 	if encoded.Value != "" || encoded.JSON != "" || strings.Contains(fmt.Sprint(plan), "OPENAI_API_KEY=") {
 		t.Fatalf("secret escaped plan: %#v", plan)
+	}
+}
+
+// case: S-038.4
+func TestPlanProjectsGeneratedSecretWithoutUserInput(t *testing.T) {
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway"}, {ID: "rest"}, {ID: "marketplace-registry"}}}},
+			Config: []catalog.ConfigRequirement{{ID: "gateway.internalSecret", Secret: true, Generate: true, Env: "GATEWAY_INTERNAL_SECRET", Services: []string{"gateway", "rest", "marketplace-registry"}}},
+		}},
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Request.SecretInputs) != 0 {
+		t.Fatalf("kb-create must not ask the user to supply the generated secret: %v", plan.Request.SecretInputs)
+	}
+	if len(plan.ConfigPatches) != 2 || plan.ConfigPatches[1].Environment != "GATEWAY_INTERNAL_SECRET" {
+		t.Fatalf("generated secret env patch = %#v", plan.ConfigPatches)
+	}
+	if !reflect.DeepEqual(plan.ConfigPatches[1].Services, []string{"gateway", "rest", "marketplace-registry"}) {
+		t.Fatalf("generated secret service targets = %v", plan.ConfigPatches[1].Services)
 	}
 }
 

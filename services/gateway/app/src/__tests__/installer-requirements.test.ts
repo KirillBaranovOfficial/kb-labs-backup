@@ -20,6 +20,7 @@ interface Requirement {
   path?: string;
   default?: unknown;
   secret?: boolean;
+  generate?: boolean;
   env?: string;
   services?: string[];
   hint?: string;
@@ -30,6 +31,7 @@ const file = JSON.parse(readFileSync(resolve(appRoot, 'kb-create.requirements.js
   requirements: Requirement[];
 };
 const bootstrapSource = readFileSync(resolve(appRoot, 'src/bootstrap.ts'), 'utf8');
+const serverSource = readFileSync(resolve(appRoot, 'src/server.ts'), 'utf8');
 const pkg = JSON.parse(readFileSync(resolve(appRoot, 'package.json'), 'utf8')) as { files: string[]; name: string };
 
 const byId = (id: string): Requirement => {
@@ -65,10 +67,19 @@ describe('kb-create.requirements.json', () => {
   it('every secret can reach the gateway and never carries a default', () => {
     for (const r of file.requirements.filter((x) => x.secret)) {
       expect(r.env, `${r.id} env`).toMatch(/^[A-Z][A-Z0-9_]*$/);
-      expect(r.services, `${r.id} services`).toEqual(['gateway']);
+      expect(r.services, `${r.id} services`).toContain('gateway');
       expect(r.default, `${r.id} default`).toBeUndefined();
       expect(r.path, `${r.id} path`).toBeUndefined();
     }
+  });
+
+  it('generates the shared internal secret for every protected upstream', () => {
+    expect(byId('gateway.internalSecret')).toMatchObject({
+      secret: true,
+      generate: true,
+      env: 'GATEWAY_INTERNAL_SECRET',
+      services: ['gateway', 'rest', 'marketplace-registry'],
+    });
   });
 
   it('every non-secret requirement is a JSON Pointer', () => {
@@ -84,9 +95,14 @@ describe('the gateway really reads what it declares', () => {
     expect(bootstrapSource).toContain(`process.env.${name}`);
   });
 
+  it('reads the generated internal secret from the environment', () => {
+    expect(file.requirements.some((r) => r.env === 'GATEWAY_INTERNAL_SECRET')).toBe(true);
+    expect(readFileSync(resolve(appRoot, 'src/server.ts'), 'utf8')).toContain('process.env.GATEWAY_INTERNAL_SECRET');
+  });
+
   it('every declared secret env is one the gateway reads (no drifted names)', () => {
     for (const r of file.requirements.filter((x) => x.secret)) {
-      expect(bootstrapSource, `${r.id} → ${r.env}`).toContain(`process.env.${r.env}`);
+      expect(`${bootstrapSource}\n${serverSource}`, `${r.id} → ${r.env}`).toContain(`process.env.${r.env}`);
     }
   });
 
