@@ -5,6 +5,7 @@
 import { useEnv } from '@kb-labs/sdk';
 import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
 import type { GatewayCredentials, SessionCredentials } from '@kb-labs/cli-runtime/gateway';
+import { MarketplaceAuthRequiredError } from './errors.js';
 
 const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:4000';
 const MARKETPLACE_PREFIX = '/api/v1/marketplace';
@@ -78,7 +79,7 @@ async function request<T>(method: string, path: string, body?: Record<string, un
         continue;
       }
       if (response.status === 401 && !auth) {
-        throw new Error('Marketplace authentication is required. Run `kb auth login` or choose local no-auth mode during installation.');
+        throw new MarketplaceAuthRequiredError();
       }
       if (!response.ok) {
         throw new Error(await formatMarketplaceFailure(response));

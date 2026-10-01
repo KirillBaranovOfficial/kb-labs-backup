@@ -7,11 +7,70 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from marketplace_steps import run_marketplace_steps
+from marketplace_steps import _output, authenticate_secured_marketplace, run_marketplace_steps
 from service_steps import Journey
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_marketplace_failure_detail_keeps_error_start_and_end(self):
+        command = ["kb", "marketplace", "install", "@kb-labs/qa-entry"]
+        raw = "ERR_PNPM_RESOLUTION_FAILURE: root cause " + ("detail " * 400) + "final context"
+        result = subprocess.CompletedProcess(command, 1, raw, "")
+
+        with self.assertRaisesRegex(RuntimeError, "ERR_PNPM_RESOLUTION_FAILURE: root cause") as raised:
+            _output(result, command)
+
+        self.assertIn("final context", str(raised.exception))
+
+    def test_secured_marketplace_claims_typed_missing_login_then_persists_admin_session(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-auth-journey-") as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            env = {
+                "HOME": str(root),
+                "KB_JOURNEY_BASE_URL": "http://gateway.test",
+                "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+                "KB_JOURNEY_ADMIN_PASSWORD": "fixture-password",
+            }
+            calls: list[tuple[str, ...]] = []
+            logged_in = False
+
+            def fake_run(command, *, cwd, env, capture_output, text, timeout):
+                nonlocal logged_in
+                calls.append(tuple(command))
+                args = command[1:]
+                if args[:3] == ["marketplace", "plugins", "list"]:
+                    if logged_in:
+                        return subprocess.CompletedProcess(command, 0, json.dumps({"entries": []}), "")
+                    return subprocess.CompletedProcess(command, 1, json.dumps({
+                        "ok": False,
+                        "error": {
+                            "code": "KB_AUTH_REQUIRED",
+                            "message": "Authentication is required.",
+                            "hint": 'Run "kb auth login".',
+                        },
+                    }), "")
+                if args[:2] == ["auth", "login"]:
+                    logged_in = True
+                    return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
+                if args[:2] == ["auth", "status"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                        "ok": True, "session": {"authenticated": logged_in},
+                    }), "")
+                return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command[1:3]}")
+
+            journey = Journey("secured", "marketplace-auth-fixture")
+            authenticate_secured_marketplace(journey, project, env, fake_run)
+
+            self.assertEqual(journey.result().status, "PASS")
+            self.assertEqual(journey.result().case_run["claims"], [
+                {"claimId": "S-010.6", "kind": "journey", "status": "PASS"},
+            ])
+            self.assertIn(("kb", "auth", "login", "--gateway-url", "http://gateway.test",
+                           "--email", "admin@example.test", "--password", "fixture-password", "--json"), calls)
+            self.assertIn(("kb", "auth", "status", "--json"), calls)
+
     def test_marketplace_and_adapter_flows_claim_only_asserted_case_steps(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-journey-") as directory:
             home = Path(directory)
