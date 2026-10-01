@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { fillAdapterFallbacksAndRecord, initPlatform, resetPlatform } from '../loader.js';
 import { platform } from '../container.js';
-import { getAdapterStatusFor } from '../adapter-status.js';
+import { getAdapterStatusFor, resetAdapterStatus } from '../adapter-status.js';
 
 describe('Platform Loader', () => {
   beforeEach(() => {
@@ -68,6 +68,7 @@ describe('Platform Loader', () => {
   describe('Adapter Configuration', () => {
     it('reports the composed local log reader as real when its backends are loaded', () => {
       platform.setAdapter('logRingBuffer', {});
+      resetAdapterStatus();
 
       fillAdapterFallbacksAndRecord(platform, {});
 

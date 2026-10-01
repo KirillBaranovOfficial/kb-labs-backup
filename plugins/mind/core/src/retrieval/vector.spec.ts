@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { IVectorStore, VectorRecord } from '@kb-labs/sdk';
+import type { IVectorStore, VectorRecord } from '@kb-labs/sdk/adapters';
 import { vectorSearch } from './vector.js';
 
 function vectorStore(count: () => Promise<number>): IVectorStore {

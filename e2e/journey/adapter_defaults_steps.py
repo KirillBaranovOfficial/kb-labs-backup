@@ -39,6 +39,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     project_a = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
     base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project_a)
+    platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
     project_b = Path(tempfile.mkdtemp(prefix="kb-adapter-project-b-", dir=base_env["HOME"]))
     project_b_registered = False
 
@@ -129,13 +130,25 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("list fresh-install built-in adapter defaults", "adapter", assert_default_list, cases=["S-054.1"])
 
     def assert_doctor() -> None:
-        command = ["kb-dev", "doctor", "--json"]
+        command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--json"]
         payload = _json(_run(runner, command, project_a, base_env), command)
         if payload.get("ok") is not True:
-            raise RuntimeError("`kb-dev doctor --json` reports a platform health failure")
-        statuses = payload.get("adapters")
+            raise RuntimeError("`kb-create doctor --platform-root <platform-root> --json` reports a platform health failure")
+        platform = payload.get("platform")
+        statuses = platform.get("checks") if isinstance(platform, dict) else None
         if not isinstance(statuses, list):
-            raise RuntimeError("`kb-dev doctor --json` returned no adapter status report")
+            raise RuntimeError("`kb-create doctor --platform-root <platform-root> --json` returned no platform checks")
+        adapter_statuses = {row.get("slot"): row for row in statuses if isinstance(row, dict) and isinstance(row.get("slot"), str)}
+        expected_slots = {
+            "storage", "cache", "logger", "analytics", "vectorStore", "llm", "embeddings",
+            "eventBus", "config", "invoke", "documentDatabase", "kvStore", "logs", "artifacts",
+            "snapshotManager", "notifier",
+        }
+        if set(adapter_statuses) != expected_slots:
+            raise RuntimeError("doctor does not report every runtime adapter slot from /health/adapters")
+        for slot, row in adapter_statuses.items():
+            if not isinstance(row.get("mode"), str) or not row["mode"] or not isinstance(row.get("implementation"), str) or not row["implementation"]:
+                raise RuntimeError(f"doctor does not report mode and implementation for adapter slot {slot}")
         storage = next((row for row in statuses if isinstance(row, dict) and row.get("slot") == "storage"), None)
         if not storage or storage.get("implementation") != "@kb-labs/adapters-fs" or storage.get("mode") != "real":
             raise RuntimeError("doctor does not report the built-in filesystem storage default as loaded")
@@ -146,8 +159,44 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         logs = next((row for row in statuses if isinstance(row, dict) and row.get("slot") == "logs"), None)
         if not logs or logs.get("mode") != "real" or logs.get("implementation") != "HybridLogReader":
             raise RuntimeError("doctor does not report the local HybridLogReader as loaded")
+        text_command = ["kb-create", "doctor", "--platform-root", str(platform_root)]
+        text_result = _run(runner, text_command, project_a, base_env)
+        if "Adapter storage: mode=real implementation=@kb-labs/adapters-fs" not in text_result.stdout:
+            raise RuntimeError("`kb-create doctor --platform-root <platform-root>` text output omits loaded storage status")
 
     journey.step("doctor verifies filesystem default is loaded", "adapter", assert_doctor, cases=["S-054.2"])
+
+    def assert_stopped_host_doctor() -> None:
+        stop = ["kb-create", "stop", "--platform-root", str(platform_root), "--json"]
+        start = ["kb-create", "start", "--platform-root", str(platform_root), "--json"]
+        stopped = False
+        try:
+            stop_result = _run(runner, stop, project_a, base_env)
+            stopped = _json(stop_result, stop).get("ok") is True
+            if not stopped:
+                raise RuntimeError("could not stop the installed host for stopped-host diagnostics")
+            for command in (
+                ["kb-create", "doctor", "--platform-root", str(platform_root), "--json"],
+                ["kb-create", "doctor", "--platform-root", str(platform_root)],
+            ):
+                result = runner(command, cwd=str(project_a), env=base_env,
+                                capture_output=True, text=True, timeout=300)
+                if result.returncode == 0:
+                    raise RuntimeError(f"`{' '.join(command)}` unexpectedly reports adapter status while the host is stopped")
+                if command[-1] == "--json":
+                    payload = _json(result, command)
+                    checks = payload.get("platform", {}).get("checks", [])
+                    adapter_check = next((item for item in checks if isinstance(item, dict) and item.get("id") == "adapters"), None)
+                    if not adapter_check or "cannot be checked" not in adapter_check.get("detail", "") or str(platform_root) not in adapter_check.get("hint", ""):
+                        raise RuntimeError("stopped-host JSON does not explain missing adapter status and exact start command")
+                elif "cannot be checked" not in result.stdout or f"kb-create start --platform-root \"{platform_root}\"" not in result.stdout:
+                    raise RuntimeError("stopped-host text output omits the adapter limitation or exact start command")
+        finally:
+            if stopped:
+                _run(runner, start, project_a, base_env)
+
+    journey.step("doctor explains adapter status when host is stopped", "adapter",
+                 assert_stopped_host_doctor, cases=["S-054.7"])
 
     journey.step("run project workflow through default storage", "workflow",
                  lambda: _save_run(run_workflow, project_a), cases=["S-054.3"])

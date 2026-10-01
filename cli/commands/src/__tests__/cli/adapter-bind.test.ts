@@ -54,6 +54,8 @@ describe('kb adapter list', () => {
       platform: { adapters: {
         storage: '@kb-labs/adapters-fs@2.120.1',
         cache: '@kb-labs/adapters-state-broker',
+        documentDatabase: '@kb-labs/adapters-sqlite',
+        kvStore: '@kb-labs/adapters-sqlite/kv',
         logRingBuffer: '@kb-labs/adapters-log-ringbuffer',
         logPersistence: '@kb-labs/adapters-log-document',
       }, adapterOptions: { storage: { baseDir: '.kb/data' } } },
@@ -79,6 +81,12 @@ describe('kb adapter list', () => {
     });
     expect(adapters.find(({ slot }) => slot === 'logs')).toMatchObject({
       implementation: 'HybridLogReader', mode: 'real', networkRequired: false,
+    });
+    expect(adapters.find(({ slot }) => slot === 'documentDatabase')).toMatchObject({
+      implementation: '@kb-labs/adapters-sqlite', mode: 'real', networkRequired: false,
+    });
+    expect(adapters.find(({ slot }) => slot === 'kvStore')).toMatchObject({
+      implementation: '@kb-labs/adapters-sqlite/kv', mode: 'real', networkRequired: false,
     });
   });
 });

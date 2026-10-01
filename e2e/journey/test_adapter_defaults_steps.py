@@ -22,6 +22,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project_a)}
             calls: list[tuple[str, ...]] = []
             run_counter = 0
+            host_running = True
+            platform_root = (home / "kb-platform").resolve()
 
             def config(root: Path) -> dict:
                 config_file = root / ".kb" / "kb.config.json"
@@ -33,21 +35,41 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 config_file.write_text(json.dumps(value))
 
             def fake_run(command, *, cwd, env, capture_output, text, timeout):
-                nonlocal run_counter
+                nonlocal run_counter, host_running
                 calls.append(tuple(command))
                 root = Path(cwd)
                 args = command[1:]
                 if command[0] == "git" and args == ["ls-files", "-z"]:
                     return subprocess.CompletedProcess(command, 0, b"README.md\0", b"")
-                if command[0] == "kb-dev" and args == ["doctor", "--json"]:
-                    result = {"ok": True, "adapters": [
+                if command[0] == "kb-create" and args[:3] == ["doctor", "--platform-root", str(platform_root)]:
+                    if not host_running:
+                        result = {"ok": False, "platform": {"checks": [
+                            {"id": "adapters", "detail": "Adapter status cannot be checked while the host is stopped.",
+                             "hint": f'Run `kb-create start --platform-root "{platform_root}"`.'}
+                        ]}}
+                        if args[-1] == "--json":
+                            return subprocess.CompletedProcess(command, 1, json.dumps(result), "")
+                        return subprocess.CompletedProcess(command, 1,
+                            f'Adapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `kb-create start --platform-root "{platform_root}"`.\n', "")
+                    statuses = [
                         {"slot": "storage", "mode": "real", "implementation": "@kb-labs/adapters-fs"},
                         {"slot": "cache", "mode": "real", "implementation": "@kb-labs/adapters-state-broker"},
                         *[{"slot": slot, "mode": "real", "implementation": slot}
                           for slot in ("logger", "analytics", "documentDatabase", "kvStore")],
                         {"slot": "logs", "mode": "real", "implementation": "HybridLogReader"},
-                    ]}
-                    return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
+                        *[{"slot": slot, "mode": "inmemory", "implementation": slot}
+                          for slot in ("eventBus", "config", "invoke", "artifacts", "notifier")],
+                        *[{"slot": slot, "mode": "noop", "implementation": slot}
+                          for slot in ("vectorStore", "llm", "embeddings", "snapshotManager")],
+                    ]
+                    if args[-1] == "--json":
+                        result = {"ok": True, "platform": {"ok": True, "checks": statuses}}
+                        return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
+                    return subprocess.CompletedProcess(command, 0,
+                        "Adapter storage: mode=real implementation=@kb-labs/adapters-fs\n", "")
+                if command[0] == "kb-create" and args[:2] in (["stop", "--platform-root"], ["start", "--platform-root"]):
+                    host_running = args[0] == "start"
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:3] == ["adapter", "list", "--json"]:
                     value = config(root)
                     options = value.get("platform", {}).get("adapterOptions", {}).get("storage", {})
@@ -128,7 +150,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             journey = Journey("local", "adapter-defaults-fixture")
             run_adapter_default_steps(journey, project_a, env, fake_run)
 
-            expected = {f"S-054.{number}" for number in range(1, 7)} | {f"S-048.{number}" for number in range(1, 7)}
+            expected = {f"S-054.{number}" for number in range(1, 8)} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(claims, expected)
@@ -136,6 +158,9 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             self.assertIn(("kb", "config", "set", "commit.llm.enabled", "true", "--json"), calls)
             self.assertIn(("kb", "commit", "generate", "--json"), calls)
             self.assertIn(("kb", "mind", "search", "--text", "adapter defaults", "--json"), calls)
+            self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root), "--json"), calls)
+            self.assertIn(("kb-create", "doctor", "--platform-root", str(platform_root)), calls)
+            self.assertFalse(any(call[0] == "kb-dev" and "doctor" in call for call in calls))
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs", "--scope", "platform"), calls)
             self.assertFalse(any(item.name.startswith("kb-adapter-project-b-") for item in home.iterdir()))
 
