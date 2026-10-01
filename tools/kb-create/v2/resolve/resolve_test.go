@@ -27,6 +27,42 @@ func TestDeclaredProviderDefaultWinsWithoutOrderDependence(t *testing.T) {
 	}
 }
 
+func TestFreshPlatformInstallResolvesAndBindsBuiltinFilesystemStorage(t *testing.T) {
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+			Requires: []catalog.Requirement{{Capability: "storage", RequiredBy: "platform"}},
+			Config: []catalog.ConfigRequirement{{ID: "storage.default", Path: "/platform/adapterOptions/storage", Default: `{"baseDir":".kb/data"}`}},
+		}},
+		Adapters: []catalog.Adapter{{
+			Component: catalog.Component{ID: "fs-storage", Version: "2.0.0", Package: "@kb-labs/adapters-fs", SHA256: "fs"},
+			Provides: []string{"storage"}, DefaultFor: []string{"storage"},
+		}},
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapterArtifacts := 0
+	for _, artifact := range plan.Artifacts {
+		if artifact.Kind == "adapter" && artifact.Package == "@kb-labs/adapters-fs" {
+			adapterArtifacts++
+		}
+	}
+	if adapterArtifacts != 1 {
+		t.Fatalf("fresh install artifacts = %#v", plan.Artifacts)
+	}
+	if len(plan.ProviderBindings) != 1 || plan.ProviderBindings[0].Capability != "storage" || plan.ProviderBindings[0].Package != "@kb-labs/adapters-fs" {
+		t.Fatalf("fresh install storage binding = %#v", plan.ProviderBindings)
+	}
+	if len(plan.ConfigPatches) < 2 || plan.ConfigPatches[1].Path != "/platform/adapters/storage" || plan.ConfigPatches[1].Value != "@kb-labs/adapters-fs@2.0.0" {
+		t.Fatalf("fresh install config patches = %#v", plan.ConfigPatches)
+	}
+}
+
 func TestExplicitAdapterSelectionDoesNotConstrainOtherCapabilities(t *testing.T) {
 	source := catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},

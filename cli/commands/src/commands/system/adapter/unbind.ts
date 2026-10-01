@@ -37,19 +37,26 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
   analytics: { command: 'adapter.unbind', startEvent: 'ADAPTER_UNBIND_STARTED', finishEvent: 'ADAPTER_UNBIND_FINISHED' },
   async handler(ctx, argv, flags) {
     const [slot] = argv;
-    if (!slot || !/^[a-z][a-z0-9-]*$/.test(slot)) {
-      return { ok: false, error: 'Provide a lowercase adapter slot.' };
+    if (!slot || !/^[a-z][a-zA-Z0-9-]*$/.test(slot)) {
+      return { ok: false, error: 'Provide a valid adapter slot.' };
     }
 
     try {
       const roots = await resolveConfigRoots(getContextCwd(ctx));
-      const result = await unsetUserConfigValue({
-        filePath: await userConfigFileForScope(roots, 'project'),
+      const filePath = await userConfigFileForScope(roots, 'project');
+      const binding = await unsetUserConfigValue({
+        filePath,
         path: ['platform', 'adapters', slot],
         schema: PlatformUserConfigSchema,
         dryRun: Boolean(flags['dry-run']),
       });
-      return { ok: true, slot, file: result.filePath, changed: result.changed, dryRun: result.dryRun };
+      const options = await unsetUserConfigValue({
+        filePath,
+        path: ['platform', 'adapterOptions', slot],
+        schema: PlatformUserConfigSchema,
+        dryRun: Boolean(flags['dry-run']),
+      });
+      return { ok: true, slot, file: binding.filePath, changed: binding.changed || options.changed, dryRun: binding.dryRun };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
       return { ok: false, error: envelope.message, envelope };

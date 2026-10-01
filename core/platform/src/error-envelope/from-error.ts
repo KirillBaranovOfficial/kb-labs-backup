@@ -43,11 +43,12 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
 }
 
 function getAdapterConfigurationCommand(slot: string): string {
-  const adapterPackage = slot === 'llm'
-    ? '@kb-labs/adapters-openai'
-    : slot === 'embeddings'
-      ? '@kb-labs/adapters-openai/embeddings'
-      : `@kb-labs/adapters-${slot}`;
+  const packages: Record<string, string> = {
+    llm: '@kb-labs/adapters-openai',
+    embeddings: '@kb-labs/adapters-openai/embeddings',
+    vectorStore: '@kb-labs/adapters-qdrant',
+  };
+  const adapterPackage = packages[slot] ?? `@kb-labs/adapters-${slot.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
   return `kb adapter bind ${slot} ${adapterPackage}`;
 }
 

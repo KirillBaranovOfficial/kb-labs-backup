@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -94,6 +95,10 @@ func TestPlatformSectionReportsAStoppedOrUnhealthyHost(t *testing.T) {
 	if stopped.OK || !strings.Contains(check(t, stopped, "host-process").Hint, "kb-create start") {
 		t.Fatalf("stopped = %+v", stopped)
 	}
+	adapterCheck := check(t, stopped, "adapters")
+	if adapterCheck.OK || !strings.Contains(adapterCheck.Detail, "cannot be checked") || !strings.Contains(adapterCheck.Hint, "kb-create start") {
+		t.Fatalf("stopped adapter status = %+v", adapterCheck)
+	}
 	unhealthy := InspectPlatform(context.Background(), host.Status{State: host.StateUnhealthy, PID: 7}, nil)
 	if unhealthy.OK || !strings.Contains(check(t, unhealthy, "host-process").Hint, "kb-create restart") {
 		t.Fatalf("unhealthy = %+v", unhealthy)
@@ -106,6 +111,8 @@ func gatewayDouble(t *testing.T, health, auth string) host.Status {
 		switch r.URL.Path {
 		case "/health":
 			_, _ = w.Write([]byte(health))
+		case "/health/adapters":
+			_, _ = w.Write([]byte(`[{"slot":"storage","mode":"real","implementation":"@kb-labs/adapters-fs"},{"slot":"cache","mode":"inmemory","implementation":"StateBroker"}]`))
 		case "/health/auth":
 			if auth == "" {
 				http.NotFound(w, r)
@@ -118,6 +125,35 @@ func gatewayDouble(t *testing.T, health, auth string) host.Status {
 	}))
 	t.Cleanup(server.Close)
 	return host.Status{State: host.StateRunning, PID: 9, Healthy: true, HealthURL: server.URL + "/health"}
+}
+
+func TestPlatformSectionReportsPerSlotAdapterModeAndImplementation(t *testing.T) {
+	status := gatewayDouble(t, `{"upstreams":{}}`, "")
+	section := InspectPlatform(context.Background(), status, nil)
+	encoded, err := json.Marshal(section)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Checks []map[string]any `json:"checks"`
+	}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []map[string]string{
+		{"slot": "storage", "mode": "real", "implementation": "@kb-labs/adapters-fs"},
+		{"slot": "cache", "mode": "inmemory", "implementation": "StateBroker"},
+	} {
+		found := false
+		for _, got := range result.Checks {
+			if got["slot"] == want["slot"] && got["mode"] == want["mode"] && got["implementation"] == want["implementation"] {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("checks do not report adapter status %+v: %s", want, encoded)
+		}
+	}
 }
 
 func TestPlatformSectionReadsUpstreamsAdaptersAndSignInReadiness(t *testing.T) {

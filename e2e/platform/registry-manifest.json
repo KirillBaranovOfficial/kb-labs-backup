@@ -78,9 +78,12 @@
     }
   ],
   "adapters": [
+    { "name": "@kb-labs/adapters-fs" },
     { "name": "@kb-labs/data-store" },
     { "name": "@kb-labs/adapters-pino" },
     { "name": "@kb-labs/adapters-log-ringbuffer" },
+    { "name": "@kb-labs/adapters-log-document" },
+    { "name": "@kb-labs/adapters-analytics-sqlite" },
     { "name": "@kb-labs/adapters-analytics-file" },
     { "name": "@kb-labs/e2e-llm-deterministic" },
     { "name": "@kb-labs/adapters-sqlite" },

@@ -127,6 +127,15 @@ describe('toErrorEnvelope (platform errors)', () => {
     );
   });
 
+  it('maps a missing vector store to a bind action for that capability', () => {
+    const envelope = toErrorEnvelope(new AdapterUnavailableError('vectorStore'));
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+    expect(envelope.code).toBe('KB_ADAPTER_NOT_CONFIGURED');
+    expect(envelope.details?.service).toBe('vectorStore');
+    expect(envelope.actions?.[0]?.command).toMatch(/^kb adapter bind vectorStore /);
+    expect(envelope.hint).toContain('kb adapter bind vectorStore');
+  });
+
   it('maps a load-failed adapter to KB_HOST_ADAPTER_UNAVAILABLE', () => {
     const envelope = toErrorEnvelope(new AdapterUnavailableError('cache', 'load-failed'));
     expect(envelope.code).toBe('KB_HOST_ADAPTER_UNAVAILABLE');

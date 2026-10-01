@@ -41,7 +41,7 @@ export interface VectorFilter {
 
 /**
  * Vector store adapter interface.
- * Implementations: @kb-labs/adapters-qdrant (production), MemoryVectorStore (noop)
+ * Implementations: @kb-labs/adapters-qdrant (production), InMemoryVectorStore (explicit tests only)
  *
  * ## Namespaces
  *

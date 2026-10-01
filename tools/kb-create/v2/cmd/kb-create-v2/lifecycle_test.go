@@ -284,6 +284,35 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	if payload["installation"].(map[string]any)["ok"] != true || payload["platform"].(map[string]any)["ok"] != false {
 		t.Fatalf("the two questions must be answered separately: %s", raw)
 	}
+	platformChecks := payload["platform"].(map[string]any)["checks"].([]any)
+	var adapterCheck map[string]any
+	for _, item := range platformChecks {
+		if check, ok := item.(map[string]any); ok && check["id"] == "adapters" {
+			adapterCheck = check
+		}
+	}
+	if adapterCheck == nil || !strings.Contains(adapterCheck["detail"].(string), "cannot be checked") ||
+		adapterCheck["hint"] != fmt.Sprintf("Run `kb-create start --platform-root %q`.", inst.root) {
+		t.Fatalf("stopped doctor adapter check = %#v", adapterCheck)
+	}
+	textOutput, err := os.CreateTemp(t.TempDir(), "doctor-text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if textCode := (invocation{Operation: "doctor", PlatformRoot: inst.root}).run(textOutput); textCode != 1 {
+		t.Fatalf("stopped text doctor exit code = %d", textCode)
+	}
+	if err := textOutput.Close(); err != nil {
+		t.Fatal(err)
+	}
+	textBytes, err := os.ReadFile(textOutput.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(textBytes), "Adapter status cannot be checked") ||
+		!strings.Contains(string(textBytes), fmt.Sprintf("kb-create start --platform-root %q", inst.root)) {
+		t.Fatalf("stopped text doctor omits the adapter limitation or start command: %s", textBytes)
+	}
 
 	// Running host: both are healthy.
 	if _, exit, out := inst.run("start", "--json"); exit != 0 {

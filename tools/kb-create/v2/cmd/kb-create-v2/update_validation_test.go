@@ -65,7 +65,10 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			code := (invocation{Operation: "update", Index: indexPath, Input: requestPath}).run(output)
+			code := (invocation{
+				Operation: "update", Index: indexPath, Input: requestPath,
+				NodePreflight: func() error { return nil },
+			}).run(output)
 			if err := output.Close(); err != nil {
 				t.Fatal(err)
 			}

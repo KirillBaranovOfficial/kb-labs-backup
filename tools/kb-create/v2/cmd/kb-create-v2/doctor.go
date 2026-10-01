@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -110,6 +111,14 @@ func (i invocation) runDoctor(output *os.File) int {
 			installation.OK = false
 		}
 		platform := i.inspectPlatform(state)
+		for index := range platform.Checks {
+			if platform.Checks[index].ID == "adapters" && strings.Contains(platform.Checks[index].Detail, "cannot be checked") {
+				platform.Checks[index].Hint = fmt.Sprintf("Run `kb-create start --platform-root %q`.", i.PlatformRoot)
+			}
+			if platform.Checks[index].ID == "host-process" && strings.Contains(platform.Checks[index].Hint, "kb-create start") {
+				platform.Checks[index].Hint = fmt.Sprintf("Run `kb-create start --platform-root %q`.", i.PlatformRoot)
+			}
+		}
 		response.Installation, response.Platform = &installation, &platform
 	}
 	response.OK = len(findings) == 0 && (response.Installation == nil || response.Installation.OK) && (response.Platform == nil || response.Platform.OK)
@@ -156,6 +165,18 @@ func (i invocation) runDoctor(output *os.File) int {
 			fmt.Fprintf(output, "Platform version: %s\n", response.PlatformVersion)
 		}
 		fmt.Fprintf(output, "Installed: %s\nRunning: %s\nReachable: %s\nNext: %s\n", installed, running, reachable, next)
+		if response.Platform != nil {
+			for _, check := range response.Platform.Checks {
+				if check.Slot != "" {
+					fmt.Fprintf(output, "Adapter %s: mode=%s implementation=%s\n", check.Slot, check.Mode, check.Implementation)
+				} else if check.ID == "adapters" {
+					fmt.Fprintf(output, "Adapters: %s\n", check.Detail)
+					if check.Hint != "" {
+						fmt.Fprintf(output, "Next: %s\n", check.Hint)
+					}
+				}
+			}
+		}
 	}
 	if !response.OK {
 		return 1

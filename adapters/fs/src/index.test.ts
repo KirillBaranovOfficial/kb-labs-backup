@@ -8,6 +8,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createAdapter } from "./index.js";
+import { manifest } from "./manifest.js";
+
+describe("FilesystemStorageAdapter manifest", () => {
+  it("declares storage as a built-in provider default", () => {
+    expect(manifest.defaultFor).toEqual(["storage"]);
+  });
+});
 
 describe("FilesystemStorageAdapter", () => {
   let tmpDir: string;

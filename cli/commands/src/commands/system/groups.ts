@@ -19,7 +19,7 @@ import { webhookProvision, webhookList, webhookRevoke } from './webhook';
 import { configShow, configGet, configSet } from './config';
 import { projectAdd, projectList, projectShow, projectRemove } from './project';
 import { mcpConfig } from './mcp';
-import { adapterBind, adapterUnbind } from './adapter';
+import { adapterBind, adapterList, adapterUnbind } from './adapter';
 
 /**
  * Info Commands Group
@@ -125,6 +125,7 @@ export const mcpGroup = defineSystemCommandGroup('mcp', 'Model Context Protocol 
 
 /** Adapter commands manage machine-installed adapters and project bindings. */
 export const adapterGroup = defineSystemCommandGroup('adapter', 'Adapter installation and binding commands', [
+  adapterList,
   adapterBind,
   adapterUnbind,
 ]);

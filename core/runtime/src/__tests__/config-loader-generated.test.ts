@@ -93,6 +93,32 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     expect(result.sources.generated).toBeUndefined()
   })
 
+  it('projects without adapter config inherit the installer filesystem storage default', async () => {
+    const platformRoot = path.join(tmpDir, 'storage-default-platform')
+    const projectRoot = path.join(tmpDir, 'storage-default-project')
+    makePlatformDir(platformRoot)
+    write(platformRoot, '.kb/generated/adapters.json', {
+      platform: {
+        adapters: {
+          storage: '@kb-labs/adapters-fs@2.120.1',
+          cache: '@kb-labs/adapters-state-broker@2.120.1',
+        },
+        adapterOptions: {
+          storage: { baseDir: '.kb/data' },
+          cache: { url: 'http://127.0.0.1:7777' },
+        },
+      },
+    })
+    write(projectRoot, '.kb/kb.config.json', {})
+
+    const result = await load(platformRoot, projectRoot)
+
+    expect(result.platformConfig.adapters?.storage).toBe('@kb-labs/adapters-fs@2.120.1')
+    expect(result.platformConfig.adapters?.cache).toBe('@kb-labs/adapters-state-broker@2.120.1')
+    expect(result.platformConfig.adapterOptions?.storage).toEqual({ baseDir: '.kb/data' })
+    expect(result.platformConfig.adapterOptions?.cache).toEqual({ url: 'http://127.0.0.1:7777' })
+  })
+
   it('a malformed generated file is skipped instead of breaking the load', async () => {
     const platformRoot = path.join(tmpDir, 'd-platform')
     const projectRoot = path.join(tmpDir, 'd-project')

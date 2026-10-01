@@ -104,6 +104,10 @@ export interface AdaptersConfig {
   storage?: AdapterValue;
   /** Logger adapter package(s) (e.g., "@kb-labs/adapters-pino") */
   logger?: AdapterValue;
+  /** Document database adapter package(s) (e.g., "@kb-labs/adapters-sqlite"). */
+  documentDatabase?: AdapterValue;
+  /** Durable key-value store adapter package(s) (e.g., "@kb-labs/adapters-sqlite/kv"). */
+  kvStore?: AdapterValue;
   /** Optional durable log store. Without it logs remain available only in configured ephemeral readers. */
   logPersistence?: AdapterValue;
   /** Optional in-process live log buffer. It is never a cross-process store. */

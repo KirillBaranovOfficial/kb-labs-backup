@@ -15,6 +15,7 @@ from urllib.request import build_opener, HTTPCookieProcessor
 from service_steps import Journey
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
+from adapter_defaults_steps import run_adapter_default_steps
 from mcp_project_steps import (
     apply_commit_plan,
     commit_tool_schema,
@@ -272,6 +273,7 @@ def main() -> int:
     registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
     if project_root:
         run_marketplace_steps(journey, project_root, registry, os.environ.copy())
+        run_adapter_default_steps(journey, project_root, os.environ.copy())
         run_plugin_author_flow(journey, Path(project_root), Path.home() / ".local/bin/kb", registry)
     else:
         reason = "journey runner did not receive KB_JOURNEY_PROJECT_ROOT from the installed project setup"

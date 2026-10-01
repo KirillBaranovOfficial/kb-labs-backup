@@ -19,7 +19,6 @@ import type { IPlatformAdapters } from '../platform-adapters.js';
 import { InMemoryCache } from './adapters/cache.js';
 import { InMemoryStorage } from './adapters/storage.js';
 import { InMemoryEventBus } from './adapters/event-bus.js';
-import { InMemoryVectorStore } from './adapters/vector-store.js';
 import { InMemoryArtifacts } from './adapters/artifacts.js';
 import { ConsoleLogger } from './adapters/logger.js';
 import { InMemoryDocumentDatabase } from './adapters/document-database.js';
@@ -27,6 +26,7 @@ import { InMemoryKVStore } from './adapters/kv-store.js';
 import { InMemoryInvoke } from './adapters/invoke.js';
 import { InMemoryAnalyticsBuffer } from './adapters/analytics-buffer.js';
 import { InMemoryConfig } from './adapters/config.js';
+import { InMemoryNotifier } from './adapters/notifier.js';
 
 export { InMemoryCache } from './adapters/cache.js';
 export { InMemoryStorage } from './adapters/storage.js';
@@ -52,6 +52,7 @@ export {
   type InMemoryAnalyticsBufferOptions,
 } from './adapters/analytics-buffer.js';
 export { InMemoryConfig } from './adapters/config.js';
+export { InMemoryNotifier } from './adapters/notifier.js';
 
 /**
  * Typed factory map: for each slot with `defaultFallback === 'inmemory'`,
@@ -68,7 +69,6 @@ export const inmemoryFactories = {
   cache:            () => new InMemoryCache(),
   storage:          () => new InMemoryStorage(),
   eventBus:         () => new InMemoryEventBus(),
-  vectorStore:      () => new InMemoryVectorStore(),
   artifacts:        () => new InMemoryArtifacts(),
   logger:           () => new ConsoleLogger(),
   documentDatabase: () => new InMemoryDocumentDatabase(),
@@ -76,4 +76,5 @@ export const inmemoryFactories = {
   invoke:           () => new InMemoryInvoke(),
   analytics:        () => new InMemoryAnalyticsBuffer(),
   config:           () => new InMemoryConfig(),
+  notifier:         () => new InMemoryNotifier(),
 } satisfies Partial<{ [K in AdapterSlot]: () => IPlatformAdapters[K] }>;
