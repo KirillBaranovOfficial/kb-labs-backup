@@ -10,7 +10,6 @@ interface WorkflowRunFlagsInput {
   json?: boolean;
   'workflow-id'?: string;
   input?: string;
-  inputs?: string;
   isolation?: string;
   'trigger-type'?: string;
   'trigger-user'?: string;
@@ -49,7 +48,7 @@ function parseTriggerType(value: string | undefined): WorkflowRunRequest['trigge
 
 export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>({
   id: 'workflow:run',
-  description: 'Run workflow by ID with optional target/isolation overrides. Pass JSON payload via --input (not --inputs).',
+  description: 'Run workflow by ID with optional target/isolation overrides and a JSON payload via --input.',
 
   handler: {
     async execute(ctx: PluginContextV3, input: CLIInput<WorkflowRunFlagsInput>): Promise<CommandResult> {
@@ -64,11 +63,7 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
       try {
         const request: WorkflowRunRequest = {};
 
-        if (input.flags.inputs && !input.flags.input) {
-          ctx.ui?.warn?.('--inputs is deprecated; use --input instead');
-        }
-        const rawInput = input.flags.input ?? input.flags.inputs;
-        const inputPayload = parseJsonInput(rawInput);
+        const inputPayload = parseJsonInput(input.flags.input);
         if (inputPayload !== undefined) {
           request.input = inputPayload;
         }

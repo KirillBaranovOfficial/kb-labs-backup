@@ -33,7 +33,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('workflow:job-run', () => {
+describe('workflow job run', () => {
+  // case: S-185.1
   it('CJR-01: --handler submits job and prints jobId, exitCode 0', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
@@ -98,6 +99,7 @@ describe('workflow:job-run', () => {
     expect(captured.errors.length).toBeGreaterThan(0);
   });
 
+  // case: S-185.3
   it('CJR-05: --wait polls until completed, returns exitCode 0', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({

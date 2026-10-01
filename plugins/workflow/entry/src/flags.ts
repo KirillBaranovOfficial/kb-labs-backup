@@ -33,62 +33,6 @@ export const metricsFlags = {
 export type MetricsFlags = typeof metricsFlags;
 
 /**
- * Flags for workflow:status command
- */
-export const statusFlags = {
-  json: {
-    type: 'boolean',
-    description: OUTPUT_JSON_DESCRIPTION,
-    default: false,
-  },
-  'job-id': {
-    type: 'string',
-    description: 'Job ID to get status for',
-  },
-} as const;
-
-export type StatusFlags = typeof statusFlags;
-
-/**
- * Flags for workflow:logs command
- */
-export const logsFlags = {
-  json: {
-    type: 'boolean',
-    description: OUTPUT_JSON_DESCRIPTION,
-    default: false,
-  },
-  'job-id': {
-    type: 'string',
-    description: 'Job ID to get logs for (required)',
-  },
-  follow: {
-    type: 'boolean',
-    description: 'Follow log output (stream new logs)',
-    default: false,
-  },
-} as const;
-
-export type LogsFlags = typeof logsFlags;
-
-/**
- * Flags for workflow:list command
- */
-export const listFlags = {
-  json: {
-    type: 'boolean',
-    description: OUTPUT_JSON_DESCRIPTION,
-    default: false,
-  },
-  status: {
-    type: 'string',
-    description: 'Filter by status (running, completed, failed)',
-  },
-} as const;
-
-export type ListFlags = typeof listFlags;
-
-/**
  * Flags for workflow:job-run command
  */
 export const runFlags = {
@@ -134,10 +78,6 @@ export const workflowRunFlags = {
   input: {
     type: 'string',
     description: 'JSON string of workflow input payload',
-  },
-  inputs: {
-    type: 'string',
-    description: 'Deprecated alias for --input. Use --input instead.',
   },
   isolation: {
     type: 'string',

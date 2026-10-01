@@ -1,12 +1,11 @@
 /**
- * workflow:logs command - Get job or run logs
+ * workflow job logs command - Get raw job logs
  */
 
 import { defineCommand, validationError, handleError, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
-import { type LogsFlags } from '@kb-labs/workflow-contracts';
 import { WorkflowDaemonClient } from '../http-client.js';
 
-type LogsInput = LogsFlags & { argv?: string[]; flags?: LogsFlags };
+type LogsInput = { argv?: string[]; json?: boolean; flags?: { json?: boolean } };
 
 type LogEntry = { level: string; message: string; timestamp: string; stepId?: string; [key: string]: unknown };
 
@@ -29,32 +28,25 @@ function renderLogs(ctx: PluginContextV3, logs: LogEntry[], outputJson: boolean)
 }
 
 export default defineCommand<unknown, LogsInput, unknown>({
-  id: 'workflow:logs',
-  description: 'Get logs for a workflow job or run',
+  id: 'workflow:job-logs',
+  description: 'Get logs for a raw workflow job',
 
   handler: {
     async execute(ctx: PluginContextV3, input: LogsInput): Promise<CommandResult> {
-      ctx.ui?.warn?.('workflow logs is deprecated; use: kb workflow runs logs <runId>');
       const flags = input.flags ?? input;
       const outputJson = flags.json ?? false;
-      const jobId = flags['job-id'];
-      const runId = flags['run-id'];
+      const jobId = input.argv?.[0];
 
-      if (!jobId && !runId) {
-        validationError(ctx, 'Missing required flag: --job-id or --run-id', 'Usage: kb workflow logs --run-id=<run-id>', outputJson);
+      if (!jobId) {
+        validationError(ctx, 'Missing job ID', 'Usage: kb workflow job logs <jobId>', outputJson);
         return { ok: false, error: 'Command failed' };
       }
 
       try {
         const client = new WorkflowDaemonClient();
 
-        if (runId) {
-          const logs = await client.getRunLogs(runId);
-          renderLogs(ctx, logs, outputJson);
-        } else {
-          const logs = await client.getJobLogs(jobId!);
-          renderLogs(ctx, logs as LogEntry[], outputJson);
-        }
+        const logs = await client.getJobLogs(jobId);
+        renderLogs(ctx, logs as LogEntry[], outputJson);
 
         return { ok: true };
       } catch (error) {

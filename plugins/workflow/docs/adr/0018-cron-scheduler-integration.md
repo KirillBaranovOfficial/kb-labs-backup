@@ -331,7 +331,7 @@ Standard 5-field cron format:
 ## Future Work
 
 ### Phase 2 (P1)
-- CLI command: `pnpm kb workflow list --type cron`
+- CLI command: `pnpm kb workflow crons list`
 - Cron execution history tracking
 - HTTP API endpoints:
   - `GET /cron/jobs` - List all registered cron jobs

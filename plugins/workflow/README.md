@@ -90,12 +90,11 @@ kb workflow run --workflow-id=my-workflow --isolation=strict
 ### Jobs
 
 ```bash
-kb workflow status --job-id=abc123     # job state + timing
-kb workflow logs   --job-id=abc123     # execution logs
-kb workflow logs   --job-id=abc123 --follow  # stream logs live
-kb workflow list                       # active jobs
-kb workflow list   --status=running
-kb workflow job-run --handler=mind:rag-query --input='{"text":"test"}' --wait
+kb workflow job status abc123          # job state + timing
+kb workflow job logs abc123            # execution logs
+kb workflow job list                   # active raw jobs
+kb workflow runs list                  # active workflow runs
+kb workflow job run --handler=mind:rag-query --input='{"text":"test"}' --wait
 ```
 
 ### Crons
@@ -137,10 +136,11 @@ The handler must be declared in an installed plugin's `jobs.handlers` manifest.
 |---------|-------------|
 | `kb workflow health` | Daemon health check |
 | `kb workflow metrics` | Queue statistics |
-| `kb workflow status` | Job state + timing |
-| `kb workflow logs` | Job execution logs |
-| `kb workflow list` | List active jobs |
-| `kb workflow job-run` | Submit a raw job |
+| `kb workflow job status <jobId>` | Raw job state + timing |
+| `kb workflow job logs <jobId>` | Raw job execution logs |
+| `kb workflow job list` | List active raw jobs |
+| `kb workflow runs list` | List workflow runs |
+| `kb workflow job run` | Submit a raw job |
 | `kb workflow run` | Run a workflow by ID |
 | `kb workflow runs list` | List all runs |
 | `kb workflow runs view` | Full run details |
@@ -188,7 +188,7 @@ Adds a **Workflows** section to KB Labs Studio (sidebar order 10).
 
 ### 1.0.0
 
-- Initial release: health, metrics, status, logs, list, job-run, run, runs-list/view/watch/rerun commands
+- Initial release: health, metrics, raw job status/logs/run, workflow run/history commands
 - Project-scoped REST API with SSE run updates
 - Studio: Dashboard, Runs, Definitions, Jobs, Crons
 
