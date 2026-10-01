@@ -1,19 +1,19 @@
 ---
-title: "Contract-based adapters: swap Kafka for NATS without touching business logic"
-description: 12 core contracts, strict layer rules, and a dependency graph that physically prevents plugins from importing adapters. How we made infrastructure genuinely swappable.
+title: "Contract-based adapters: implement infrastructure behind a contract"
+description: 12 core contracts, strict layer rules, and a dependency graph that prevents plugins from importing adapters. How to implement an adapter behind a contract.
 lang: en
 slug: contract-based-adapters
 date: '2026-03-18'
 author: KB Labs
 tag: Architecture
-excerpt: "12 core contracts, strict layer rules, and a dependency graph that physically prevents plugins from importing adapters. How we made infrastructure genuinely swappable."
+excerpt: "12 core contracts, strict layer rules, and a dependency graph that prevents plugins from importing adapters. How to implement an adapter behind a contract."
 readTime: 7 min read
 tags:
   - architecture
   - adapters
 ---
 
-"We should be able to swap our message broker" is a sentence every architect has said and almost no codebase has actually achieved. The reason is always the same: the abstraction leaked. Business logic learned the shape of Kafka's consumer groups, or RabbitMQ's exchange bindings, or SQS's visibility timeout.
+We believe integrations should follow clear contracts. So we define the capability in an interface and let teams implement an adapter for it.
 
 KB Labs is built on the premise that this problem is solvable — not by being cleverer about abstractions, but by being disciplined about where the boundary sits.
 
@@ -34,8 +34,8 @@ class InMemoryEventBus implements IEventBus { ... }
 // Adapter B: Redis Pub/Sub (production)
 class RedisEventBus implements IEventBus { ... }
 
-// Adapter C: your own NATS/Kafka/RabbitMQ implementation
-class NatsEventBus implements IEventBus { ... }
+// Your implementation of the contract
+class CustomEventBus implements IEventBus { ... }
 ```
 
 ## 12 contracts across the platform
@@ -70,14 +70,14 @@ Both import contracts.
 
 This rule is enforced by the workspace dependency graph. If a plugin tries to add `@kb-labs/adapter-redis` to its `dependencies`, the build breaks.
 
-## How swapping actually works
+## How adapters fit
 
-The IPlatformGateway layer adds one more capability: IPC proxying. When a plugin runs in a worker process or container, its `platform.cache.get()` call doesn't hit Redis directly — it goes through a gateway RPC that includes execution context (tenant ID, trace ID, auth token). The host process resolves the adapter and executes the call.
+The IPlatformGateway layer adds one more capability: IPC proxying. When a plugin runs in a worker process or container, its `platform.cache.get()` call doesn't hit a backend directly — it goes through a gateway RPC that includes execution context (tenant ID, trace ID, auth token). The host process resolves the configured adapter and executes the call.
 
-Swapping a provider means changing adapter configuration at the host level. Workers, plugins, and workflows never know it happened.
+To add an integration, implement the relevant contract and configure the adapter for the capability it serves. Workers, plugins, and workflows use the contract interface.
 
 ## The cost and the payoff
 
 Writing adapters is work. Each one needs to map a vendor's API surface onto the contract's method signatures — sometimes with loss of vendor-specific features. We accept that trade: *the contract defines the common denominator*, and vendors compete on the merits of what the contract exposes.
 
-The payoff: any team can write their own Kafka, RabbitMQ, or NATS adapter today. The extension point is open, not roadmapped. That's not a promise — it's a `implements IEventBus` away.
+The payoff: teams can implement their own adapter against a contract. The extension point is open; which implementations are available depends on the adapters installed in a platform.

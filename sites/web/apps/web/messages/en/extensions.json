@@ -14,7 +14,7 @@
       {
         "title": "Studio",
         "description": "A local visual workspace for observing runs, logs, and plugin surfaces after you start the services.",
-        "command": "kb-dev start  →  http://127.0.0.1:3000",
+        "command": "Developer workspace: kb-dev start  →  http://127.0.0.1:3000",
         "note": "Optional. The CLI remains fully usable without it."
       },
       {

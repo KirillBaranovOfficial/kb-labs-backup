@@ -21,7 +21,7 @@
         },
         {
           "label": "Триггер переиндексации",
-          "value": "Автоматически при kb-dev start или вручную через pnpm kb mind reindex"
+          "value": "Рабочая среда разработчика: kb-dev start или pnpm kb mind reindex"
         },
         {
           "label": "Режим поиска",

@@ -33,7 +33,7 @@
     },
     "prereqs": {
       "os": "Операционная система",
-      "osNote": "macOS, Linux или WSL2"
+      "osNote": "Поддерживаемые системы: macOS и Linux"
     },
     "afterInstall": {
       "steps": [

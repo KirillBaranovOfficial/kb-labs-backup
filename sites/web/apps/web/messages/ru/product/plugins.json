@@ -52,7 +52,7 @@
       {
         "step": "1",
         "title": "Скаффолд",
-        "desc": "Запустите kb-create plugin my-plugin. Манифест, хэндлеры и tsconfig готовы."
+        "desc": "Запустите kb scaffold run plugin my-plugin --yes. Манифест, хэндлеры и tsconfig будут готовы."
       },
       {
         "step": "2",
@@ -62,7 +62,7 @@
       {
         "step": "3",
         "title": "Регистрация",
-        "desc": "Установите локально или опубликуйте в маркетплейс. kb plugins list покажет сразу."
+        "desc": "Установите локально или опубликуйте в маркетплейс. kb marketplace plugins list покажет плагин."
       }
     ],
     "surfaceTitle": "Один манифест — три поверхности",

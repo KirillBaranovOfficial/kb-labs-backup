@@ -116,7 +116,7 @@
       "eyebrow": "PRICING",
       "titleLine1": "The engine is open.",
       "titleLine2": "Pay only for convenience.",
-      "subtitle": "Runtime, SDK, CLI, the full plugin stack — MIT + KBPL1.1, self-hosted, no limits, no telemetry. This is not a free tier — this is KB Labs. We make money on hosting, support, and custom development. The core stays open."
+      "subtitle": "Runtime, SDK, CLI and Studio — plugins install from the marketplace, starting with Commit — MIT + KBPL1.1, self-hosted, no limits, no telemetry. This is not a free tier — this is KB Labs. We make money on hosting, support, and custom development. The core stays open."
     }
   }
 }
