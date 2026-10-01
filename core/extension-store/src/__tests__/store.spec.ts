@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createExtensionStore } from '../store.js';
 import { PnpmInstaller } from '../pnpm-installer.js';
@@ -51,6 +52,62 @@ describe('createExtensionStore (real pnpm, temp-dir store, no real HOME)', () =>
 
       // The dedicated CAS lives under the store, never the user's default pnpm store.
       await expect(fs.stat(path.join(kbHome, 'store', 'cas'))).resolves.toBeDefined();
+    },
+    INSTALL_TIMEOUT,
+  );
+
+  it(
+    // case: S-010.1
+    'resolves local platform package artifacts while installing into the store',
+    async () => {
+      const platformRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-extension-platform-'));
+      const artifactRoot = path.join(platformRoot, '.kb/v2/cache/packages/shared-tool-kit');
+      await fs.mkdir(artifactRoot, { recursive: true });
+      await fs.writeFile(path.join(artifactRoot, 'package.json'), JSON.stringify({
+        name: 'shared-tool-kit',
+        version: '2.0.0',
+      }));
+      const platformArchiveRoot = path.join(platformRoot, '.kb/v2/cache/package-archive');
+      await fs.mkdir(path.join(platformArchiveRoot, 'package'), { recursive: true });
+      await fs.copyFile(path.join(artifactRoot, 'package.json'), path.join(platformArchiveRoot, 'package/package.json'));
+      const platformTarball = path.join(platformRoot, '.kb/v2/cache/packages/shared-tool-kit.tgz');
+      await fs.mkdir(path.dirname(platformTarball), { recursive: true });
+      execFileSync('tar', ['-czf', platformTarball, '-C', platformArchiveRoot, 'package']);
+
+      const fixture = await createFixturePackage({ name: 'sample-plugin', version: '1.0.0' });
+      const pluginPackage = JSON.parse(await fs.readFile(path.join(fixture, 'package.json'), 'utf-8'));
+      pluginPackage.dependencies = {
+        'shared-tool-kit': 'file:.kb/v2/cache/packages/shared-tool-kit.tgz',
+      };
+      await fs.writeFile(path.join(fixture, 'package.json'), JSON.stringify(pluginPackage));
+      const pluginArchiveRoot = path.join(fixture, 'archive');
+      await fs.mkdir(path.join(pluginArchiveRoot, 'package'), { recursive: true });
+      await fs.copyFile(path.join(fixture, 'package.json'), path.join(pluginArchiveRoot, 'package/package.json'));
+      const pluginTarball = path.join(fixture, 'sample-plugin.tgz');
+      execFileSync('tar', ['-czf', pluginTarball, '-C', pluginArchiveRoot, 'package']);
+
+      try {
+        const store = createExtensionStore({
+          root: kbHome,
+          installer: new PnpmInstaller({ platformRoot }),
+        });
+        const resolved = await store.resolve({
+          name: 'sample-plugin',
+          version: '1.0.0',
+          kind: 'plugin',
+          spec: `file:${pluginTarball}`,
+        });
+
+        const storeLock = await fs.readFile(path.join(resolved.entryDir, 'pnpm-lock.yaml'), 'utf-8');
+        expect(storeLock).toContain('shared-tool-kit');
+        expect(storeLock).toContain('file:.kb/v2/cache/packages/shared-tool-kit.tgz');
+        const virtualPackages = await fs.readdir(path.join(resolved.entryDir, 'node_modules/.pnpm'));
+        expect(virtualPackages.some((name) => name.includes('shared-tool-kit'))).toBe(true);
+        await expect(fs.lstat(path.join(resolved.entryDir, '.kb'))).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        await fs.rm(platformRoot, { recursive: true, force: true });
+        await fs.rm(fixture, { recursive: true, force: true });
+      }
     },
     INSTALL_TIMEOUT,
   );

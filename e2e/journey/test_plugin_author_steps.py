@@ -24,7 +24,7 @@ with log.open("a", encoding="utf-8") as stream:
     stream.write("kb " + " ".join(args) + "\n")
 plugin = root / ".kb/plugins/demo"
 lock_path = root / ".kb/marketplace.lock"
-if args[:5] == ["scaffold", "run", "plugin", "demo", "--yes"]:
+if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and args[6:] == ["--yes"]:
     entry = plugin / "packages/demo-entry"
     core = plugin / "packages/demo-core/src/hello.ts"
     entry.mkdir(parents=True)
@@ -117,6 +117,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                                command_runner=subprocess.run, base_env=self.env)
         return journey.result()
 
+    # case: S-003.1
     def test_scaffold_link_edit_invoke_and_unlink_records_all_case_steps(self):
         result = self.run_flow()
 
@@ -131,7 +132,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
              for step in range(1, 7)],
         )
         self.assertEqual(self.log.read_text().splitlines(), [
-            "kb scaffold run plugin demo --yes",
+            "kb scaffold run plugin demo --mode standalone --yes",
             "pnpm install",
             "pnpm -w build",
             "kb marketplace link --link .kb/plugins/demo/packages/demo-entry",
