@@ -81,6 +81,11 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
             raise AssertionError(f"kb auth tokens returned unexpected JSON: {tokens_payload!r}")
 
 
+def _combined(result: subprocess.CompletedProcess[str]) -> str:
+    """Output of a command whose stderr may already be merged into stdout (stderr is None)."""
+    return (result.stdout or "") + (result.stderr or "")
+
+
 def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
                                  old_password: str, new_password: str, env: dict[str, str],
                                  invoke: Callable[..., tuple[subprocess.CompletedProcess[str], float]],
@@ -96,7 +101,7 @@ def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
         raise AssertionError("bootstrap administrator profile did not include tenantId")
     stopped, _ = invoke([launcher, "stop", "--platform-root", platform_root], env=env)
     if stopped.returncode != 0:
-        raise AssertionError(f"kb-create stop failed: {(stopped.stdout + stopped.stderr)[-400:]}")
+        raise AssertionError(f"kb-create stop failed: {_combined(stopped)[-400:]}")
     recover_args = [launcher, "doctor", "--platform-root", platform_root, "--recover", "--email", email,
                     "--tenant", tenant, "--password-stdin", "--yes"]
     recovered: subprocess.CompletedProcess[str] | None = None
@@ -108,7 +113,7 @@ def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
     finally:
         started, _ = invoke([launcher, "start", "--platform-root", platform_root], env=env)
     if started.returncode != 0:
-        raise AssertionError(f"kb-create start failed after recovery: {(started.stdout + started.stderr)[-400:]}")
+        raise AssertionError(f"kb-create start failed after recovery: {_combined(started)[-400:]}")
 
     valid_password = ""
     for password in (new_password, old_password):
@@ -127,16 +132,16 @@ def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
     if recovery_error:
         raise AssertionError("kb-create doctor --recover could not be run") from recovery_error
     if recovered is None or recovered.returncode != 0:
-        output = "" if recovered is None else recovered.stdout + recovered.stderr
+        output = "" if recovered is None else _combined(recovered)
         for secret in (old_password, new_password):
             output = output.replace(secret, "[redacted]")
         raise AssertionError(f"kb-create doctor --recover failed: {output[-400:]}")
     if valid_password != new_password:
         raise AssertionError("kb-create doctor --recover exited successfully but the new password did not authenticate")
-    if new_password in (recovered.stdout + recovered.stderr):
+    if new_password in _combined(recovered):
         raise AssertionError("kb-create doctor --recover echoed the supplied password")
     running_recovery, _ = invoke(recover_args, env=env, input_text=new_password + "\n")
-    output = (running_recovery.stdout + running_recovery.stderr).lower()
+    output = _combined(running_recovery).lower()
     if running_recovery.returncode == 0 or "stopped" not in output or "kb-create stop" not in output or "kb-create start" not in output:
         raise AssertionError("running-host recovery did not explain that the host must be stopped and restarted")
 

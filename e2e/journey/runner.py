@@ -931,9 +931,14 @@ def main():
                 first = service_result.get("first_failure") or {}
                 detail = f"{first.get('name', 'journey step')}: {first.get('message', '')}"
             except (OSError, json.JSONDecodeError):
-                detail = "service journey result JSON could not be read"
+                excerpt = " ".join(result.stdout.split())[-1500:]
+                detail = f"service_runner exited {result.returncode} without a result JSON; {excerpt or 'no output'}"
             fail(f"{mode} service journey: {detail}")
 
+        if not service_report.exists():
+            # Nothing to merge workflow claims into; the failure above names the cause.
+            append_summary(False)
+            return 1
         workflow_journey = Journey(mode, f"workflow-{mode}")
         def restart_for_workflow_history() -> None:
             restart_host(launcher, env)
