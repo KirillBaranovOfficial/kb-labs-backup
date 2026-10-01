@@ -134,6 +134,114 @@ func TestPnpmMaterializesSignedArtifactManifestForDoctor(t *testing.T) {
 	}
 }
 
+// S-024.5: package-manager restore can replace pnpm's virtual-store package
+// directory, so doctor metadata must be materialized again for the receipt
+// restored from the snapshot.
+func TestPnpmInstallUpdateRestoreKeepsManifestsForEveryReceiptArtifact(t *testing.T) {
+	root := t.TempDir()
+	old := []contracts.Artifact{
+		{ID: "analytics-file", Kind: "adapter", Package: "@kb-labs/adapters-analytics-file", Version: "2.120.1"},
+		{ID: "gateway", Kind: "platform-member", Package: "@kb-labs/gateway-app", Version: "2.120.1"},
+	}
+	updated := []contracts.Artifact{
+		{ID: "analytics-file", Kind: "adapter", Package: "@kb-labs/adapters-analytics-file", Version: "2.120.2"},
+		{ID: "gateway", Kind: "platform-member", Package: "@kb-labs/gateway-app", Version: "2.120.2"},
+	}
+	runner := &relinkingPnpmRunner{root: root, restore: old}
+	pm := Pnpm{Root: root, Runner: runner}
+	if err := pm.Install(old); err != nil {
+		t.Fatalf("install initial receipt: %v", err)
+	}
+	assertReceiptManifestsLoad(t, root, old)
+	if err := pm.Install(updated); err != nil {
+		t.Fatalf("apply update: %v", err)
+	}
+	assertReceiptManifestsLoad(t, root, updated)
+
+	if err := pm.Restore(old); err != nil {
+		t.Fatalf("restore snapshot package state: %v", err)
+	}
+	assertReceiptManifestsLoad(t, root, old)
+}
+
+func assertReceiptManifestsLoad(t *testing.T, root string, artifacts []contracts.Artifact) {
+	t.Helper()
+	for _, artifact := range artifacts {
+		if _, err := installed.Load(root, artifact); err != nil {
+			t.Errorf("load manifest for receipt artifact %s (%s@%s): %v", artifact.ID, artifact.Package, artifact.Version, err)
+		}
+	}
+}
+
+// relinkingPnpmRunner models pnpm's node_modules symlink into the virtual
+// store. Each add/install makes fresh package directories from package
+// metadata, which drops files that the previous operation wrote into them.
+type relinkingPnpmRunner struct {
+	root    string
+	restore []contracts.Artifact
+	active  []contracts.Artifact
+}
+
+func (r *relinkingPnpmRunner) Run(_ context.Context, _ io.Writer, _ string, args ...string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("pnpm command is missing")
+	}
+	switch args[0] {
+	case "add":
+		var next []contracts.Artifact
+		for _, arg := range args[1:] {
+			if !strings.HasPrefix(arg, "@kb-labs/") {
+				continue
+			}
+			separator := strings.LastIndex(arg, "@")
+			if separator < 0 {
+				continue
+			}
+			next = append(next, contracts.Artifact{ID: strings.TrimPrefix(arg[:separator], "@kb-labs/"), Package: arg[:separator], Version: arg[separator+1:]})
+		}
+		r.active = next
+	case "install":
+		r.active = append([]contracts.Artifact(nil), r.restore...)
+	default:
+		return fmt.Errorf("unexpected pnpm command %q", args[0])
+	}
+	for _, artifact := range r.active {
+		if err := r.relink(artifact); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *relinkingPnpmRunner) relink(artifact contracts.Artifact) error {
+	packageRoot := filepath.Join(r.root, "node_modules", filepath.FromSlash(artifact.Package))
+	storePackage := filepath.Join(r.root, "node_modules", ".pnpm", strings.ReplaceAll(artifact.Package, "/", "+")+"@"+artifact.Version, "node_modules", filepath.FromSlash(artifact.Package))
+	if err := os.RemoveAll(storePackage); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(storePackage, 0o755); err != nil {
+		return err
+	}
+	packageJSON, err := json.Marshal(map[string]string{"name": artifact.Package, "version": artifact.Version})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(storePackage, "package.json"), packageJSON, 0o644); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(packageRoot), 0o755); err != nil {
+		return err
+	}
+	if err := os.Remove(packageRoot); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	relative, err := filepath.Rel(filepath.Dir(packageRoot), storePackage)
+	if err != nil {
+		return err
+	}
+	return os.Symlink(relative, packageRoot)
+}
+
 func TestPnpmPersistsExplicitRegistryForLifecycleOperations(t *testing.T) {
 	root := t.TempDir()
 	runner := &fakeRunner{}

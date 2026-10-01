@@ -14,6 +14,7 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/release"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
@@ -248,6 +249,28 @@ func TestSecuredWizardInstallDeliversTheGatewayItsAdminAndSecrets(t *testing.T) 
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("secret store must be private: %v / %v", info, err)
 	}
+}
+
+// case: S-054.2
+func TestInstalledPackagesCarryManifestsForDoctor(t *testing.T) {
+	result := install(t, "\n\nlocal\n")
+
+	input, err := installed.DoctorInput(result.root, result.plan.Artifacts, map[string]bool{})
+	if err != nil {
+		t.Fatalf("doctor must load manifests written for every installed package: %v", err)
+	}
+	for _, manifest := range input.Manifests {
+		if manifest.ID != "gateway" {
+			continue
+		}
+		for _, requirement := range manifest.Requirements {
+			if requirement.ID == "gateway.bootstrap.adminEmail" && requirement.Path == "/gateway/auth/bootstrap/adminEmail" {
+				return
+			}
+		}
+		t.Fatalf("doctor manifest for gateway is missing its sealed requirement: %#v", manifest.Requirements)
+	}
+	t.Fatal("doctor did not load the installed gateway manifest")
 }
 
 func TestSecuredInstallWithoutAnAdminPasswordStillSecuresSessions(t *testing.T) {
