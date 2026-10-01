@@ -1,7 +1,6 @@
-// Package installed reads the exact V2 metadata shipped with selected
-// artifacts. It is used after installation by doctor; the release index is
-// used before installation. Both contain the same manifest projection, so the
-// launcher never guesses configuration ownership.
+// Package installed reads and materializes the exact V2 metadata selected by
+// the sealed release index. Doctor uses it after installation; the launcher
+// never guesses configuration ownership or scans unrelated packages.
 package installed
 
 import (
@@ -64,6 +63,36 @@ func LoadAll(platformRoot string, artifacts []contracts.Artifact) ([]Manifest, e
 		result = append(result, manifest)
 	}
 	return result, nil
+}
+
+// Write materializes the exact artifact metadata carried by a resolved plan
+// beside its installed package. Release tarballs need not duplicate this
+// projection: the sealed index is the source and the installer writes it only
+// after the exact package has been selected.
+func Write(platformRoot string, artifact contracts.Artifact) error {
+	if artifact.ID == "" || artifact.Package == "" || artifact.Version == "" {
+		return fmt.Errorf("artifact lacks exact ID/package/version for manifest materialization")
+	}
+	manifest := Manifest{Schema: ManifestSchema, ID: artifact.ID, Package: artifact.Package, Version: artifact.Version}
+	for _, requirement := range artifact.Config {
+		manifest.Requirements = append(manifest.Requirements, doctor.Requirement{
+			ID: requirement.ID, Path: requirement.Path, Required: requirement.Required,
+			Secret: requirement.Secret, Generate: requirement.Generate, Hint: requirement.Hint, Env: requirement.Env,
+			Services: append([]string(nil), requirement.Services...), Default: []byte(requirement.Default),
+		})
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode installed manifest for %s: %w", artifact.Package, err)
+	}
+	path := filepath.Join(platformRoot, "node_modules", filepath.FromSlash(artifact.Package), "kb-create.manifest.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return fmt.Errorf("prepare installed manifest for %s: %w", artifact.Package, err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write installed manifest for %s: %w", artifact.Package, err)
+	}
+	return nil
 }
 
 func Load(platformRoot string, artifact contracts.Artifact) (Manifest, error) {

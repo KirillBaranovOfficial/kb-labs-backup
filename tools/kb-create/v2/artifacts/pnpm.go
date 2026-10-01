@@ -18,7 +18,6 @@ import (
 	"sort"
 
 	"github.com/kb-labs/create/v2/contracts"
-	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/installed"
 	"gopkg.in/yaml.v3"
 )
@@ -103,24 +102,8 @@ func (p Pnpm) materializeManifests(items []contracts.Artifact) error {
 		if item.Kind == "binary" {
 			continue
 		}
-		manifest := installed.Manifest{Schema: installed.ManifestSchema, ID: item.ID, Package: item.Package, Version: item.Version}
-		for _, requirement := range item.Config {
-			manifest.Requirements = append(manifest.Requirements, doctor.Requirement{
-				ID: requirement.ID, Path: requirement.Path, Required: requirement.Required,
-				Secret: requirement.Secret, Generate: requirement.Generate, Hint: requirement.Hint, Env: requirement.Env,
-				Services: append([]string(nil), requirement.Services...), Default: []byte(requirement.Default),
-			})
-		}
-		data, err := json.MarshalIndent(manifest, "", "  ")
-		if err != nil {
-			return fmt.Errorf("encode installed manifest for %s: %w", item.Package, err)
-		}
-		path := filepath.Join(p.Root, "node_modules", filepath.FromSlash(item.Package), "kb-create.manifest.json")
-		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-			return fmt.Errorf("prepare installed manifest for %s: %w", item.Package, err)
-		}
-		if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
-			return fmt.Errorf("write installed manifest for %s: %w", item.Package, err)
+		if err := installed.Write(p.Root, item); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -132,7 +115,10 @@ func (p Pnpm) Restore(items []contracts.Artifact) error {
 	if err := p.mergeMinimumReleaseAgeExclude(items); err != nil {
 		return err
 	}
-	return p.run("install")
+	if err := p.run("install"); err != nil {
+		return err
+	}
+	return p.materializeManifests(items)
 }
 func (p Pnpm) Uninstall(items []contracts.Artifact) error {
 	if err := p.prepare(); err != nil {
