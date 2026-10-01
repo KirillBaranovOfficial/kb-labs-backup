@@ -2,15 +2,31 @@ package preflight
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
 )
 
 func TestValidateResourcesReportsAvailableMemoryAndMinimum(t *testing.T) {
+	available := MinimumAvailableMemory - 8*(1<<20)
+	err := validateResources(available, MinimumFreeDisk)
+	failure, ok := err.(*contracts.LauncherError)
+	if !ok || failure.Code != contracts.CodeMemoryInsufficient ||
+		failure.Details["minimum"] != "1228.80 MiB (1288490188 bytes)" || failure.Details["available"] != "1220.80 MiB (1280101580 bytes)" ||
+		failure.Details["minimumBytes"] != "1288490188" || failure.Details["availableBytes"] != "1280101580" {
+		t.Fatalf("error = %#v", err)
+	}
+	if failure.Message == "" || !strings.Contains(failure.Message, "1228.80 MiB (1288490188 bytes)") || !strings.Contains(failure.Message, "1220.80 MiB (1280101580 bytes)") ||
+		!strings.Contains(failure.Hint, "Close memory-heavy applications") || !strings.Contains(failure.Hint, "kb-create install") {
+		t.Fatalf("message/hint = %q / %q", failure.Message, failure.Hint)
+	}
+}
+
+func TestValidateResourcesComparesAvailableMemoryAtBytePrecision(t *testing.T) {
 	err := validateResources(MinimumAvailableMemory-1, MinimumFreeDisk)
 	failure, ok := err.(*contracts.LauncherError)
-	if !ok || failure.Code != contracts.CodeMemoryInsufficient || failure.Details["minimum"] != "1.20 GiB" {
+	if !ok || failure.Code != contracts.CodeMemoryInsufficient || failure.Details["availableBytes"] != "1288490187" {
 		t.Fatalf("error = %#v", err)
 	}
 }

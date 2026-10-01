@@ -20,6 +20,7 @@ class PlatformChannelStepsTest(unittest.TestCase):
         self.request.write_text(json.dumps({"platformRoot": str(self.root)}) + "\n")
         self.fresh_root = self.root / "fresh"
         self.commands: list[list[str]] = []
+        self.fail_canary_preflight = False
 
     def tearDown(self):
         self.temp.cleanup()
@@ -37,6 +38,13 @@ class PlatformChannelStepsTest(unittest.TestCase):
         if args[1] in {"stop", "start", "uninstall"}:
             return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True}), "")
         if args[1] == "apply":
+            if self.fail_canary_preflight:
+                return subprocess.CompletedProcess(args, 2, json.dumps({"ok": False, "error": {
+                    "code": "KB_INSTALL_MEMORY_INSUFFICIENT",
+                    "message": "The platform install needs at least 1228.80 MiB of available memory; 1200.00 MiB is available.",
+                    "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.",
+                    "details": {"minimum": "1228.80 MiB", "available": "1200.00 MiB"},
+                }}), "")
             self.fresh_root.joinpath(".kb/v2").mkdir(parents=True, exist_ok=True)
             plan = {"platformChannel": "canary", "serviceGraph": {"platformVersion": "3.0.2-canary.1"},
                     "artifacts": [{"kind": "platform", "version": "3.0.2-canary.1", "sha256": "platform"},
@@ -82,6 +90,25 @@ class PlatformChannelStepsTest(unittest.TestCase):
         ])
         self.assertIn("--platform-channel", self.commands[2])
         self.assertIn("--yes", self.commands[-1])
+
+    def test_insufficient_canary_preflight_blocks_dependent_claims_with_resource_reason(self):
+        self.fail_canary_preflight = True
+        result = run_platform_channel_steps(
+            mode="local", launcher="kb-create", platform_root=self.root,
+            stable_index=self.root / "stable-index.json", canary_index=self.root / "canary-index.json",
+            request_file=self.request, stable_version="3.0.0", canary_version="3.0.2-canary.1",
+            fresh_root=self.fresh_root, project_root=self.root / "project",
+            run_command=self.fake_kb,
+        ).result()
+        steps = {step["name"]: step for step in result.steps}
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertIsNone(result.first_failure)
+        self.assertEqual(steps["apply a fresh installation from the sealed canary channel"]["status"], "BLOCKED")
+        self.assertIn("1200.00 MiB is available", steps["apply a fresh installation from the sealed canary channel"]["message"])
+        self.assertIn("1228.80 MiB available memory", steps["apply a fresh installation from the sealed canary channel"]["message"])
+        self.assertEqual(steps["verify canary channel and version in receipt, status, and doctor"]["status"], "BLOCKED")
+        self.assertNotIn("S-052.2", {claim["claimId"] for claim in result.case_run["claims"]})
+        self.assertEqual([command[1] for command in self.commands], ["plan", "stop", "apply", "start"])
 
 
 if __name__ == "__main__":

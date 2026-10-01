@@ -23,6 +23,12 @@ def run_platform_channel_steps(
     root = str(platform_root)
     receipt_path = platform_root / ".kb/v2/receipt.json"
     request = json.loads(request_file.read_text())
+    resource_block_reason: str | None = None
+
+    def blocked_by_canary_preflight() -> str | None:
+        if resource_block_reason is None:
+            return None
+        return f"BLOCKED: {resource_block_reason}"
 
     def strict_exact_matrix_plan() -> None:
         strict_request = json.loads(request_file.read_text())
@@ -44,16 +50,42 @@ def run_platform_channel_steps(
     journey.step("resolve exact platform and SDK relation under strict policy", "platform.compatibility",
                  strict_exact_matrix_plan, cases=["S-053.1"])
 
-    def apply_fresh_canary() -> None:
+    def apply_fresh_canary() -> str | None:
+        nonlocal resource_block_reason
         stopped = run_command([launcher, "stop", "--platform-root", root, "--json"])
         if stopped.returncode != 0:
             raise RuntimeError("stable host could not stop before the fresh canary install")
         try:
-            result = _json_command(run_command, [launcher, "apply", "--json", "--index", str(canary_index),
-                                                 "--platform-channel", "canary", "--policy", "compatible",
-                                                 "--sdk-version", canary_version,
-                                                 "--request-platform-root", str(fresh_root),
-                                                 "--project-root", str(project_root)], "apply canary")
+            args = [launcher, "apply", "--json", "--index", str(canary_index),
+                    "--platform-channel", "canary", "--policy", "compatible",
+                    "--sdk-version", canary_version,
+                    "--request-platform-root", str(fresh_root),
+                    "--project-root", str(project_root)]
+            command = run_command(args)
+            try:
+                result = json.loads(command.stdout)
+            except json.JSONDecodeError as error:
+                raise RuntimeError("apply canary: expected JSON output") from error
+            if not isinstance(result, dict):
+                raise RuntimeError("apply canary: expected a JSON object")
+            if command.returncode != 0:
+                error = result.get("error", {})
+                if isinstance(error, dict) and error.get("code") == "KB_INSTALL_MEMORY_INSUFFICIENT":
+                    details = error.get("details", {})
+                    available = details.get("available", "unknown") if isinstance(details, dict) else "unknown"
+                    minimum = details.get("minimum", "unknown") if isinstance(details, dict) else "unknown"
+                    resource_block_reason = (
+                        f"canary install preflight requires {minimum} available memory; {available} is available. "
+                        "Free memory or increase machine memory, then rerun `kb-create install`."
+                    )
+                    restarted = run_command([launcher, "start", "--platform-root", root, "--json"])
+                    if restarted.returncode != 0:
+                        raise RuntimeError("stable host could not restart after the canary memory preflight block")
+                    return f"BLOCKED: {resource_block_reason}"
+                if isinstance(error, dict):
+                    code, message, hint = error.get("code", "unknown error"), error.get("message", ""), error.get("hint", "")
+                    raise RuntimeError(f"apply canary failed ({code}): {message} {hint}".strip())
+                raise RuntimeError(f"apply canary failed with exit {command.returncode}")
             plan = result.get("receipt", {}).get("plan", {})
             if result.get("ok") is not True or plan.get("platformChannel") != "canary" or plan.get("serviceGraph", {}).get("platformVersion") != canary_version:
                 raise RuntimeError("fresh apply did not record the exact canary channel and version")
@@ -71,6 +103,9 @@ def run_platform_channel_steps(
                  apply_fresh_canary, cases=["S-052.1"])
 
     def verify_fresh_status_and_doctor() -> None:
+        blocked = blocked_by_canary_preflight()
+        if blocked:
+            return blocked
         fresh = str(fresh_root)
         try:
             fresh_receipt = json.loads((fresh_root / ".kb/v2/receipt.json").read_text())
@@ -98,6 +133,9 @@ def run_platform_channel_steps(
                  verify_fresh_status_and_doctor, cases=["S-052.2"])
 
     def switch_to_canary() -> None:
+        blocked = blocked_by_canary_preflight()
+        if blocked:
+            return blocked
         nonlocal request
         request = json.loads(request_file.read_text())
         request["platform"] = {"channel": "canary"}
@@ -116,6 +154,9 @@ def run_platform_channel_steps(
                  cases=["S-052.3"])
 
     def verify_channel_fields() -> None:
+        blocked = blocked_by_canary_preflight()
+        if blocked:
+            return blocked
         receipt = json.loads(receipt_path.read_text())
         plan = receipt.get("plan", {})
         if plan.get("platformChannel") != "canary" or plan.get("serviceGraph", {}).get("platformVersion") != canary_version:
@@ -135,6 +176,9 @@ def run_platform_channel_steps(
                  verify_channel_fields, cases=["S-052.2"])
 
     def reject_stable_downgrade() -> None:
+        blocked = blocked_by_canary_preflight()
+        if blocked:
+            return blocked
         before = receipt_path.read_bytes()
         request["platform"] = {"channel": "stable"}
         request["sdk"] = {"version": stable_version}
@@ -159,6 +203,9 @@ def run_platform_channel_steps(
                  reject_stable_downgrade, cases=["S-052.4"])
 
     def rollback_to_stable() -> None:
+        blocked = blocked_by_canary_preflight()
+        if blocked:
+            return blocked
         result = _json_command(run_command, [launcher, "rollback", "--platform-root", root, "--yes", "--json"],
                                "rollback from canary")
         if result.get("ok") is not True or result.get("hostRestarted") is not True:
