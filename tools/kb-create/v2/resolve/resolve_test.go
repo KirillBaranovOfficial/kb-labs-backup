@@ -155,6 +155,30 @@ func TestPlanProjectsSecretOnlyAsEnvironmentReference(t *testing.T) {
 	}
 }
 
+// case: S-054.15
+func TestPlanAllowsMissingOptionalSecretAndRetainsWarning(t *testing.T) {
+	requirement := catalog.ConfigRequirement{ID: "openai.apiKey", Path: "/platform/adapterOptions/llm/apiKey", Secret: true, Required: true, Optional: true, Severity: "warning", Env: "OPENAI_API_KEY", Services: []string{"gateway"}, Action: "set OPENAI_API_KEY to enable LLM features"}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve"}}}}, Config: []catalog.ConfigRequirement{requirement}}}}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
+	if err != nil {
+		t.Fatalf("optional secret blocked plan resolution: %v", err)
+	}
+	if len(plan.ConfigPatches) != 1 {
+		t.Fatalf("missing optional secret must not create an environment patch: %#v", plan.ConfigPatches)
+	}
+	if len(plan.Artifacts) == 0 || len(plan.Artifacts[0].Config) != 1 || plan.Artifacts[0].Config[0].Severity != "warning" || !plan.Artifacts[0].Config[0].Optional || plan.Artifacts[0].Config[0].Action != requirement.Action {
+		t.Fatalf("resolved plan lost optional warning metadata: %#v", plan.Artifacts)
+	}
+}
+
+func TestPlanStillRejectsMissingRequiredSecret(t *testing.T) {
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve"}}}}, Config: []catalog.ConfigRequirement{{ID: "gateway.token", Secret: true, Required: true, Env: "GATEWAY_TOKEN", Services: []string{"gateway"}}}}}}
+	_, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
+	if launcherErr, ok := err.(*contracts.LauncherError); !ok || launcherErr.Code != contracts.CodeInputRequired {
+		t.Fatalf("missing required secret error = %T %#v", err, err)
+	}
+}
+
 func TestPlanPreservesScenarioProvenance(t *testing.T) {
 	source := catalog.Catalog{Digest: "release", Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", ScenarioID: "custom", ScenarioStateDigest: "state"}, source)

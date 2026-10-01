@@ -31,6 +31,9 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             receipt.write_text(json.dumps({"id": "sealed", "plan": {"artifacts": [
                 {"id": "workflow", "kind": "service", "package": "@kb-labs/workflow-daemon",
                  "version": "2.120.1", "sha256": "workflow-digest", "tarball": "registry/workflow.tgz"},
+                {"id": "openai", "kind": "adapter", "package": "@kb-labs/adapters-openai", "config": [
+                    {"id": "openai.apiKey", "optional": True, "severity": "warning",
+                     "action": "set OPENAI_API_KEY to enable LLM features"}]},
             ]}}) + "\n")
             sealed_package = platform_root / "node_modules" / "@kb-labs" / "workflow-daemon" / "package.json"
             sealed_package.parent.mkdir(parents=True)
@@ -248,7 +251,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                        side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(health_adapters()).encode())):
                 run_adapter_default_steps(journey, project_a, env, fake_run)
 
-            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 15)} | {f"S-048.{number}" for number in range(1, 7)}
+            expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 16)} | {f"S-048.{number}" for number in range(1, 7)}
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(claims, expected)
