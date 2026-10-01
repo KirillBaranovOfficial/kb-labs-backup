@@ -6,6 +6,11 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ## 2026-10-01
 
+### Project membership comes from the platform registry
+
+`kb project add <path>` registers the canonical path regardless of whether the repository contains `.kb/`. The platform does not create files in the user's repository during registration, and a repository's `.kb/` directory is not the authority for whether it is a project. Project configuration and state ownership are tracked as separate follow-up work.
+Cases: S-043, S-124, S-187.
+
 ### Cases are the product specification
 
 The case catalog is the product truth for code, tests and docs. Work is case-first TDD: case → e2e claim (red) → integration and unit tests → implementation. See [ADR-0050](../adr/0050-product-cases-are-the-specification.md).

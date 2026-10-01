@@ -17,7 +17,7 @@ A developer creates the documented local workflow example in a registered projec
 ## Prerequisites
 
 - [ ] KB Labs installed and host running; `kb status` reports a healthy host.
-- [ ] The current project is registered. In an unregistered project, run `kb project add --init` first.
+- [ ] The current project is registered. In an unregistered project, run `kb project add` from that project directory first.
 - [ ] In secured mode, an authenticated gateway session is available.
 
 ## Steps
