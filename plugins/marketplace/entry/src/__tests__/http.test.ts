@@ -79,13 +79,17 @@ describe('marketplace HTTP authentication', () => {
     );
   });
 
-  it('gives a first-run instruction when no auth exists', async () => {
+  // case: S-010.6
+  it('returns a typed authentication error when secured mode has no saved session', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('refreshToken is required', { status: 401 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(get('/packages')).rejects.toThrow(
-      'Marketplace authentication is required. Run `kb auth login` or choose local no-auth mode during installation.',
-    );
+    const error = await get('/packages').catch((value: unknown) => value);
+    expect(error).toMatchObject({
+      code: 'KB_AUTH_REQUIRED',
+      message: 'Authentication is required.',
+      hint: 'Run "kb auth login".',
+    });
     expect(sessionRefresh).not.toHaveBeenCalled();
     expect(credentialsRefresh).not.toHaveBeenCalled();
   });
