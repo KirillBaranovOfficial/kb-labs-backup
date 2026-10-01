@@ -28,6 +28,7 @@ type Requirement struct {
 	Generate bool     `json:"generate,omitempty"`
 	Required bool     `json:"required"`
 	Optional bool     `json:"optional,omitempty"`
+	Severity string   `json:"severity,omitempty"`
 	Hint     string   `json:"hint"`
 	Action   string   `json:"action,omitempty"`
 	Env      string   `json:"env,omitempty"`
@@ -71,7 +72,7 @@ func Diagnose(manifests []Manifest, configured map[string]bool) []Finding {
 			if requirement.Secret {
 				code = CodeAdapterCredentialsMissing
 			}
-			if requirement.Secret && requirement.Optional {
+			if requirement.Severity == SeverityWarning || requirement.Secret && requirement.Optional {
 				severity = SeverityWarning
 			}
 			safeFix := !requirement.Secret && len(requirement.Default) != 0

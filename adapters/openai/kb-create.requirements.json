@@ -7,6 +7,7 @@
       "secret": true,
       "optional": true,
       "required": true,
+      "severity": "warning",
       "env": "OPENAI_API_KEY",
       "services": ["gateway"],
       "action": "set OPENAI_API_KEY to enable LLM features",

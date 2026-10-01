@@ -411,7 +411,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 			if supplied {
 				return nil, launcherError(contracts.CodeInputRequired, "secret "+requirement.ID+" must be supplied through the secret store", map[string]string{"requirement": requirement.ID})
 			}
-			if requirement.Required && !contains(request.SecretInputs, requirement.ID) {
+			if requirement.Required && !optionalRequirement(requirement) && !contains(request.SecretInputs, requirement.ID) {
 				return nil, launcherError(contracts.CodeInputRequired, "required secret input "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
 			}
 			if contains(request.SecretInputs, requirement.ID) {
@@ -422,7 +422,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 		if !supplied {
 			value = requirement.Default
 		}
-		if value == "" && requirement.Required {
+		if value == "" && requirement.Required && !optionalRequirement(requirement) {
 			return nil, launcherError(contracts.CodeConfigRequired, "required configuration "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
 		}
 		if value != "" {
@@ -441,6 +441,11 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 	}
 	return result, nil
 }
+
+func optionalRequirement(requirement catalog.ConfigRequirement) bool {
+	return requirement.Optional || requirement.Severity == "warning"
+}
+
 func contains(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {
