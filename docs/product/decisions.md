@@ -105,6 +105,11 @@ kb-dev and kb-devkit are functionally solid and need cases and tests only. kb-de
 
 ## 2026-10-02
 
+### Platform CLI authentication gate
+
+In secured mode, a CLI command declares whether it needs platform authentication. The CLI checks for a usable saved human session or machine credential before dispatch; auth failures return the catalog `KB_AUTH_REQUIRED` envelope with the login hint. A rejected/expired credential uses the same required-auth code because the user must sign in again. Authenticated-but-forbidden operations return `KB_AUTH_FORBIDDEN`. Local mode skips the gate, and `kb auth` commands and local-only commands remain usable without a session. MCP tool failures use the ADR-0049 envelope in `structuredContent` and the matching text form.
+Cases: S-007.4, S-041.7 to S-041.10, S-104.
+
 ### Platform members: core plugins only
 
 The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.
