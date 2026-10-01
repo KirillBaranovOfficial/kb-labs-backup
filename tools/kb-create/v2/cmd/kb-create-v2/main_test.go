@@ -15,6 +15,7 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/secrets"
 )
@@ -63,6 +64,9 @@ func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progre
 		dir := filepath.Join(a.root, "node_modules", filepath.FromSlash(item.Package))
 		if err = os.MkdirAll(dir, 0o755); err == nil {
 			err = os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"`+item.Package+`","version":"`+item.Version+`"}`), 0o644)
+		}
+		if err == nil {
+			err = installed.Write(a.root, item)
 		}
 	}
 	if progress != nil {

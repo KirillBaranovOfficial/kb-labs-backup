@@ -15,6 +15,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
+	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/render"
 	"github.com/kb-labs/create/v2/resolve"
@@ -55,6 +56,9 @@ func (a *offlineArtifacts) Install(items []contracts.Artifact) error {
 		}
 		manifest := `{"name":"` + item.Package + `","version":"` + item.Version + `"}`
 		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(manifest), 0o644); err != nil {
+			return err
+		}
+		if err := installed.Write(a.root, item); err != nil {
 			return err
 		}
 	}
