@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ICache } from '@kb-labs/core-platform';
+import type { ICache, ILogger } from '@kb-labs/core-platform';
 import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
 import type { Permits } from '../mcp/authz.js';
 import type { McpTool } from '../mcp/tool-builder.js';
 import { callOutput } from '../mcp/output-capture.js';
+import resultSchema from '../../../../../contracts/ux-result/machine-result.schema.json';
+import successFixture from '../../../../../contracts/ux-result/fixtures/valid/success.json';
+import failureFixture from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
+import { filterTools } from '../mcp/tool-builder.js';
 
 // Mock the command runtime boundary so executeToolCall exercises the real
 // gate + tool-router without spawning a plugin process.
@@ -17,6 +21,30 @@ vi.mock('@kb-labs/cli-runtime', () => ({
 const { toolsCacheKey, resolveVisibleTools, executeToolCall, TOOLS_CACHE_TTL_MS } = await import(
   '../mcp/request-handler.js'
 );
+
+type MachineResult =
+  | { ok: true; data: unknown; meta?: Record<string, unknown> }
+  | { ok: false; error: Record<string, unknown> };
+
+function expectSharedMachineResult(value: unknown): asserts value is MachineResult {
+  expect(resultSchema.oneOf).toHaveLength(2);
+  expect(value).toEqual(expect.objectContaining({ ok: expect.any(Boolean) }));
+  if (typeof value !== 'object' || value === null || !('ok' in value)) {
+    throw new Error('Expected a machine result object');
+  }
+  if (value.ok === true) {
+    expect(value).toMatchObject({ ok: true, data: expect.anything() });
+    expect(Object.keys(value).every((key) => ['ok', 'data', 'meta'].includes(key))).toBe(true);
+  } else {
+    expect(value).toMatchObject({ ok: false, error: {
+      code: expect.stringMatching(/^KB_/),
+      message: expect.any(String),
+      hint: expect.any(String),
+      correlationId: expect.any(String),
+    } });
+    expect(Object.keys(value).sort()).toEqual(['error', 'ok']);
+  }
+}
 
 const allow: Permits = () => true;
 const deny: Permits = () => false;
@@ -73,6 +101,7 @@ const tool: McpTool = {
 
 const container = { logger: {}, getSocketPath: () => '/tmp/s' } as unknown as PlatformContainer;
 const resolvePlatform = () => container;
+const requestLogger = { error: vi.fn() } as unknown as ILogger;
 
 // ── toolsCacheKey ─────────────────────────────────────────────────────────
 
@@ -196,9 +225,10 @@ describe('executeToolCall', () => {
       permits: allow,
       tenantId: 't1',
       resolvePlatform,
+      logger: requestLogger,
     });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ code: 'KB_RUNTIME_MCP_UNKNOWN_TOOL', message: expect.stringContaining('ghost__nope') });
+    expect(result.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_MCP_UNKNOWN_TOOL', message: expect.stringContaining('ghost__nope') } });
     expect(textOf(result)).toContain('KB_RUNTIME_MCP_UNKNOWN_TOOL:');
     expect(textOf(result)).toContain('tools/list');
     expect(executeCommandV3).not.toHaveBeenCalled();
@@ -213,9 +243,10 @@ describe('executeToolCall', () => {
       permits: deny,
       tenantId: 't1',
       resolvePlatform,
+      logger: requestLogger,
     });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ code: 'KB_AUTH_FORBIDDEN' });
+    expect(result.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_AUTH_FORBIDDEN' } });
     expect(textOf(result)).toContain('KB_AUTH_FORBIDDEN:');
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
@@ -228,9 +259,10 @@ describe('executeToolCall', () => {
       permits: null,
       tenantId: 'anonymous',
       resolvePlatform,
+      logger: requestLogger,
     });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ code: 'KB_AUTH_REQUIRED' });
+    expect(result.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
 
@@ -244,18 +276,43 @@ describe('executeToolCall', () => {
       permits: allow,
       tenantId: 't1',
       resolvePlatform,
+      logger: requestLogger,
     });
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
-      code: 'KB_RUNTIME_MCP_INVALID_ARGUMENTS',
-      message: expect.stringContaining('force'),
-      details: { argument: 'force', expected: 'boolean' },
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_MCP_INVALID_ARGUMENTS',
+        message: expect.stringContaining('force'),
+        details: { argument: 'force', expected: 'boolean' },
+      },
     });
     expect(textOf(result)).toContain('KB_RUNTIME_MCP_INVALID_ARGUMENTS:');
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
 
-  it('executes an allowed tool and maps a success exit code', async () => {
+  // case: S-203.2
+  it('rejects undeclared arguments for tools whose schemas have no inputs', async () => {
+    const noInputTool = { ...tool, inputSchema: { type: 'object', properties: {}, additionalProperties: false } };
+    const result = await executeToolCall({
+      name: noInputTool.name,
+      args: { __ux_invalid_probe__: true },
+      visibleTools: [noInputTool],
+      permits: allow,
+      tenantId: 't1',
+      resolvePlatform,
+      logger: requestLogger,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: 'KB_RUNTIME_MCP_INVALID_ARGUMENTS', hint: expect.any(String), correlationId: expect.any(String) },
+    });
+    expect(executeCommandV3).not.toHaveBeenCalled();
+  });
+
+  // case: S-203.1
+  it('executes an allowed registry tool and returns a shared success envelope', async () => {
     // Simulate what the execution backend's uiProvider does: write into callOutput store.
     executeCommandV3.mockImplementation(async () => {
       callOutput.getStore()?.push('[info] ran');
@@ -268,9 +325,12 @@ describe('executeToolCall', () => {
       permits: allow,
       tenantId: 't1',
       resolvePlatform,
+      logger: requestLogger,
     });
     expect(result.isError).toBe(false);
     expect(textOf(result)).toContain('ran');
+    expectSharedMachineResult(result.structuredContent);
+    expect(result.structuredContent).toMatchObject({ ok: true, data: '[info] ran' });
     expect(executeCommandV3).toHaveBeenCalledWith(
       expect.objectContaining({ pluginId: 'mind', flags: { q: 'x' }, tenantId: 't1' }),
     );
@@ -281,19 +341,21 @@ describe('executeToolCall', () => {
     const unauthenticated = await executeToolCall({
       name: 'plugin__command', args: {}, visibleTools: [], permits: null, tenantId: 'tenant',
       resolvePlatform,
+      logger: requestLogger,
     });
     expect(unauthenticated).toMatchObject({
       isError: true,
-      structuredContent: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' },
+      structuredContent: { ok: false, error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' } },
     });
 
     const forbidden = await executeToolCall({
       name: tool.name, args: {}, visibleTools: [tool], permits: () => false, tenantId: 't1',
       resolvePlatform,
+      logger: requestLogger,
     });
     expect(forbidden).toMatchObject({
       isError: true,
-      structuredContent: { code: 'KB_AUTH_FORBIDDEN' },
+      structuredContent: { ok: false, error: { code: 'KB_AUTH_FORBIDDEN' } },
     });
   });
 
@@ -308,6 +370,7 @@ describe('executeToolCall', () => {
       permits: allow,
       tenantId: 't1',
       resolvePlatform,
+      logger: requestLogger,
       analytics,
     });
     expect(track).toHaveBeenCalledWith('mcp.tool.call.started', expect.objectContaining({
@@ -329,12 +392,14 @@ describe('executeToolCall', () => {
       permits: allow,
       tenantId: 't1',
       resolvePlatform,
+      logger: requestLogger,
       collector,
     });
     expect(recordOp).toHaveBeenCalledWith('mcp.tool.call', expect.any(Number), true);
   });
 
-  it('maps a non-zero exit code to isError', async () => {
+  // case: S-203.2
+  it('maps a non-zero exit code to a shared failure envelope', async () => {
     executeCommandV3.mockResolvedValue(1);
     const result = await executeToolCall({
       name: tool.name,
@@ -343,8 +408,79 @@ describe('executeToolCall', () => {
       permits: allow,
       tenantId: 't1',
       resolvePlatform,
+      logger: requestLogger,
     });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ code: 'KB_RUNTIME_MCP_TOOL_FAILED' });
+    expectSharedMachineResult(result.structuredContent);
+    expect(result.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_MCP_TOOL_FAILED' } });
+  });
+
+  // case: S-203.3
+  it('correlates unexpected execution failures in logs without exposing their details', async () => {
+    const logger = { error: vi.fn() };
+    executeCommandV3.mockRejectedValueOnce(new Error('private failure stack'));
+    const result = await executeToolCall({
+      name: tool.name,
+      args: {},
+      visibleTools: [tool],
+      permits: allow,
+      tenantId: 't1',
+      resolvePlatform,
+      logger: logger as unknown as Parameters<typeof executeToolCall>[0]['logger'],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED' } });
+    expect(JSON.stringify(result)).not.toContain('private failure stack');
+    const envelope = (result.structuredContent as { error: { correlationId: string } }).error;
+    expect(envelope.correlationId).toEqual(expect.any(String));
+    expect(textOf(result)).toContain(envelope.correlationId);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Unexpected MCP request failure',
+      expect.objectContaining({ message: 'private failure stack', stack: expect.stringContaining('private failure stack') }),
+      { correlationId: envelope.correlationId },
+    );
+  });
+
+  // case: S-203.6
+  it('applies the shared result contract to every tool produced by the registry', async () => {
+    const snapshot = makeRegistry([
+      cmd('mind search', 'read'),
+      cmd('mind inspect', 'read'),
+      cmd('mind deploy', 'execute'),
+    ]).snapshot();
+    const registeredTools = filterTools(snapshot, allow);
+    expect(registeredTools.length).toBeGreaterThan(0);
+
+    for (const registeredTool of registeredTools) {
+      executeCommandV3.mockResolvedValueOnce(0);
+      const success = await executeToolCall({
+        name: registeredTool.name,
+        args: {},
+        visibleTools: registeredTools,
+        permits: allow,
+        tenantId: 't1',
+        resolvePlatform,
+        logger: requestLogger,
+      });
+      expect(success.isError).toBe(false);
+      expectSharedMachineResult(success.structuredContent);
+
+      executeCommandV3.mockResolvedValueOnce(1);
+      const failure = await executeToolCall({
+        name: registeredTool.name,
+        args: {},
+        visibleTools: registeredTools,
+        permits: allow,
+        tenantId: 't1',
+        resolvePlatform,
+        logger: requestLogger,
+      });
+      expect(failure.isError).toBe(true);
+      expectSharedMachineResult(failure.structuredContent);
+    }
+
+    expectSharedMachineResult(successFixture);
+    expectSharedMachineResult(failureFixture);
   });
 });

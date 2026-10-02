@@ -15,10 +15,12 @@ describe("MCP access mode", () => {
     expect(mcpUnauthenticatedResponse()).toMatchObject({
       statusCode: 401,
       body: {
+        ok: false,
         error: {
           code: 'KB_AUTH_REQUIRED',
           message: 'Authentication is required.',
           hint: 'Run "kb auth login".',
+          correlationId: expect.any(String),
         },
       },
     });

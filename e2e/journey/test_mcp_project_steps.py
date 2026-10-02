@@ -11,7 +11,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_arguments, local_auth,
-                               project_isolation, secured_auth, unknown_tool)
+                               mcp_ux_result_contract, project_isolation, secured_auth, unknown_tool)
+from service_runner import _case_claims, checks
 
 
 def tool_error(code: str, message: str, hint: str):
@@ -23,15 +24,92 @@ def tool_error(code: str, message: str, hint: str):
         "retryable": False,
         "message": message,
         "hint": hint,
+        "correlationId": "corr-test",
     }
+    machine_result = {"ok": False, "error": envelope}
     return {"result": {
         "isError": True,
-        "structuredContent": envelope,
-        "content": [{"type": "text", "text": f"{code}: {message} — {hint}"}],
+        "structuredContent": machine_result,
+        "content": [{"type": "text", "text": f"{code}: {message} — {hint} (correlationId: corr-test)"}],
     }}
 
 
 class ProjectMcpJourneyTests(unittest.TestCase):
+    def test_live_registry_ux_step_is_registered_as_s203_claim(self):
+        step = "MCP UX result contract from live registry"
+        self.assertIn(step, {name for name, _, _ in checks("local")})
+        self.assertEqual(_case_claims(step), ["S-203.2", "S-203.6"])
+
+    def test_ux_contract_claim_discovers_and_checks_every_live_registry_tool(self):
+        tools = [
+            {"name": "plugin__required", "inputSchema": {"type": "object", "required": ["name"]}},
+            {"name": "plugin__no_inputs", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "kb-labs__mcp_diagnostics", "inputSchema": {"type": "object", "properties": {}}},
+        ]
+        failure = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Invalid arguments", "Pass valid arguments.")
+        calls = []
+
+        def fake_request(path, **kwargs):
+            payload = kwargs.get("payload", {})
+            calls.append((payload.get("method"), payload.get("params", {}).get("name"), payload.get("params", {}).get("arguments"), kwargs.get("token")))
+            if payload.get("method") == "tools/list":
+                return 200, {"result": {"tools": tools}}, {}
+            return 200, failure, {}
+
+        with patch("service_runner.request", side_effect=fake_request):
+            self.assertIsNone(mcp_ux_result_contract("prj_a", "token"))
+        self.assertEqual([call[1] for call in calls[1:]], [tool["name"] for tool in tools])
+        self.assertEqual(calls[1][2], {})
+        self.assertEqual(calls[2][2], {"__ux_invalid_probe__": True})
+        self.assertTrue(all(call[3] == "token" for call in calls))
+
+    def test_ux_contract_claim_checks_secured_diagnostics_and_missing_token_envelopes(self):
+        tools = [{"name": "plugin__read", "inputSchema": {"type": "object", "required": ["id"]}}]
+        failure = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Invalid arguments", "Pass valid arguments.")
+        unauthorized = {"ok": False, "error": {
+            "code": "KB_AUTH_REQUIRED", "area": "auth", "stage": "login", "severity": "error",
+            "retryable": False, "message": "Authentication is required.",
+            "hint": 'Run "kb auth login".', "correlationId": "corr-auth",
+        }}
+        calls = []
+
+        def fake_request(path, **kwargs):
+            payload = kwargs.get("payload", {})
+            call = (payload.get("method"), payload.get("params", {}).get("name"), kwargs.get("token"))
+            calls.append(call)
+            if payload.get("method") == "tools/list":
+                if kwargs.get("token"):
+                    return 200, {"result": {"tools": tools}}, {}
+                return 401, unauthorized, {}
+            if kwargs.get("token"):
+                return 200, failure, {}
+            return 401, unauthorized, {}
+
+        with patch("service_runner.request", side_effect=fake_request):
+            self.assertIsNone(mcp_ux_result_contract("prj_a", "token", secured=True))
+        self.assertEqual(calls[2], ("tools/call", "kb-labs__mcp_diagnostics", ""))
+        self.assertEqual(calls[3], ("tools/list", None, ""))
+
+    def test_ux_contract_claim_rejects_stack_text_and_missing_correlation_id(self):
+        tools = [{"name": "plugin__read", "inputSchema": {"type": "object", "required": ["id"]}}]
+        failure = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Invalid arguments", "Pass valid arguments.")
+        failure["result"]["content"][0]["text"] += "\nTraceback (most recent call last):"
+        with patch("service_runner.request", side_effect=[
+            (200, {"result": {"tools": tools}}, {}),
+            (200, failure, {}),
+        ]):
+            self.assertIn("stack trace", mcp_ux_result_contract("prj_a", "token"))
+
+    def test_ux_contract_claim_rejects_error_without_correlation_id(self):
+        tools = [{"name": "plugin__read", "inputSchema": {"type": "object", "required": ["id"]}}]
+        failure = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Invalid arguments", "Pass valid arguments.")
+        del failure["result"]["structuredContent"]["error"]["correlationId"]
+        with patch("service_runner.request", side_effect=[
+            (200, {"result": {"tools": tools}}, {}),
+            (200, failure, {}),
+        ]):
+            self.assertIn("correlationId", mcp_ux_result_contract("prj_a", "token"))
+
     def test_unknown_tool_requires_typed_result_and_discovery_hint(self):
         response = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown MCP tool", "Call tools/list to discover tools.")
         with patch("service_runner.request", return_value=(200, response, {})):
@@ -58,9 +136,10 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         def fake_request(path, **kwargs):
             calls.append(kwargs.get("token"))
-            return (401, {"error": {
+            return (401, {"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
-                "hint": 'Run "kb auth login".',
+                "area": "auth", "stage": "login", "severity": "error", "retryable": False,
+                "hint": 'Run "kb auth login".', "correlationId": "corr-auth",
             }}, {})
 
         with patch("service_runner.request", side_effect=fake_request):
@@ -68,12 +147,16 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         self.assertEqual(calls, ["", "not-a-real-token"])
 
     def test_secured_auth_rejects_http_401_without_the_catalog_envelope(self):
-        with patch("service_runner.request", return_value=(401, {"error": "unauthorized"}, {})):
+        with patch("service_runner.request", return_value=(401, {"ok": False, "error": "unauthorized"}, {})):
             self.assertIn("no KB_AUTH_REQUIRED envelope", secured_auth("prj_a"))
 
     def test_secured_auth_fails_if_either_request_authenticates(self):
         responses = iter([
-            (401, {"error": {"code": "KB_AUTH_REQUIRED", "message": "Authentication is required.", "hint": 'Run "kb auth login".'}}, {}),
+            (401, {"ok": False, "error": {
+                "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
+                "area": "auth", "stage": "login", "severity": "error", "retryable": False,
+                "hint": 'Run "kb auth login".', "correlationId": "corr-auth",
+            }}, {}),
             (200, {"result": {"tools": []}}, {}),
         ])
         with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(responses)):
