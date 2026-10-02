@@ -1,0 +1,59 @@
+// Command gen generates the shared Go error catalog from the platform source.
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"go/format"
+	"os"
+	"path/filepath"
+	"sort"
+)
+
+type entry struct {
+	Code      string `json:"code"`
+	Area      string `json:"area"`
+	Stage     string `json:"stage"`
+	Severity  string `json:"severity"`
+	Retryable bool   `json:"retryable"`
+	Message   string `json:"message"`
+	Hint      string `json:"hint"`
+}
+
+func main() {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		fail(err)
+	}
+	catalogPath := filepath.Join(root, "core", "platform", "src", "error-envelope", "errors.catalog.json")
+	content, err := os.ReadFile(catalogPath)
+	if err != nil {
+		fail(err)
+	}
+	var catalog struct {
+		Codes []entry `json:"codes"`
+	}
+	if err := json.Unmarshal(content, &catalog); err != nil {
+		fail(err)
+	}
+	sort.Slice(catalog.Codes, func(i, j int) bool { return catalog.Codes[i].Code < catalog.Codes[j].Code })
+	var source bytes.Buffer
+	_, _ = source.WriteString("// Code generated from core/platform/src/error-envelope/errors.catalog.json; DO NOT EDIT.\n\npackage diag\n\nvar catalogEntries = map[string]CatalogEntry{\n")
+	for _, item := range catalog.Codes {
+		_, _ = fmt.Fprintf(&source, "\t%q: {Code: %q, Area: %q, Stage: %q, Severity: %q, Retryable: %t, Message: %q, Hint: %q},\n", item.Code, item.Code, item.Area, item.Stage, item.Severity, item.Retryable, item.Message, item.Hint)
+	}
+	_, _ = source.WriteString("}\n")
+	formatted, err := format.Source(source.Bytes())
+	if err != nil {
+		fail(err)
+	}
+	if err := os.WriteFile("catalog_gen.go", formatted, 0o644); err != nil {
+		fail(err)
+	}
+}
+
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(1)
+}

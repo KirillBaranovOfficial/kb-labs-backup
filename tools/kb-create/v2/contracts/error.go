@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/kb-labs/clikit/diag"
 )
 
 // ErrorStage is the moment of the user journey in which an error happened.
@@ -25,8 +27,6 @@ const (
 	StageUpdate     ErrorStage = "update"
 	StageRollback   ErrorStage = "rollback"
 )
-
-//go:generate go run ./gen
 
 // validStages is the journey vocabulary from error-envelope.schema.json.
 var validStages = map[ErrorStage]bool{StagePreflight: true, StageResolve: true, StageApply: true, StageVerify: true, StageRecover: true, StageStart: true, StageLogin: true, StageAddProject: true, StageRun: true, StageExtend: true, StageUpdate: true, StageRollback: true}
@@ -54,9 +54,7 @@ const (
 	SeverityWarning ErrorSeverity = "warning"
 )
 
-// Launcher error codes. The catalog of record is
-// core/platform/src/error-envelope/errors.catalog.json; codes_gen.go
-// is generated from it (go generate) and a test fails when it is stale.
+// Launcher error codes used by kb-create's operation layer.
 const (
 	CodeOperationInvalid       = "KB_INSTALL_OPERATION_INVALID"
 	CodeToolchainUnsupported   = "KB_INSTALL_TOOLCHAIN_UNSUPPORTED"
@@ -99,8 +97,7 @@ const (
 	CodeHostStateDirUnwritable = "KB_HOST_STATE_DIR_UNWRITABLE"
 )
 
-// CodeInfo is the catalog data the launcher needs to build an envelope offline.
-// launcherCodes (codes_gen.go) holds every catalog code.
+// CodeInfo is the catalog data kb-create needs to build an envelope offline.
 type CodeInfo struct {
 	Area      ErrorArea
 	Stage     ErrorStage
@@ -109,8 +106,11 @@ type CodeInfo struct {
 
 // LookupCode returns the launcher's catalog data for a code.
 func LookupCode(code string) (CodeInfo, bool) {
-	info, ok := launcherCodes[code]
-	return info, ok
+	entry, ok := diag.LookupCatalog(code)
+	if !ok {
+		return CodeInfo{}, false
+	}
+	return CodeInfo{Area: ErrorArea(entry.Area), Stage: ErrorStage(entry.Stage), Retryable: entry.Retryable}, true
 }
 
 // codePrefixAreas maps the KB_<PREFIX>_ segment of a code to its area.
