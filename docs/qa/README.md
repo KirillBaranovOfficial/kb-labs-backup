@@ -46,7 +46,6 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-016](S-016-mind-rag-search.md) | Mind — RAG search | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
 | [S-017](S-017-gateway-own-key.md) | Configure the platform LLM adapter with the user's own key | solo-developer | P1 | active | false | [local, secured] | [cli] | — |
 | [S-018](S-018-gateway-switch-provider.md) | S-018 — Switch the configured LLM provider | solo-developer | P1 | active | false | [local, secured] | [cli, studio] | — |
-| [S-019](S-019-gateway-usage-quota.md) | S-019 — Cumulative gateway usage and quota (not shipped) | solo-developer | P1 | historical | false | [local, secured] | [cli] | — |
 | [S-020](S-020-studio-first-login.md) | Studio — First login | solo-developer | P0 | active | true | [secured] | [studio] | — |
 | [S-021](S-021-studio-workflow-runs.md) | S-021 — View workflow runs in Studio | solo-developer | P1 | active | true | [local, secured] | [studio] | — |
 | [S-022](S-022-studio-trigger-workflow.md) | S-022 — Trigger a workflow from Studio | solo-developer | P1 | active | true | [local, secured] | [studio] | — |
