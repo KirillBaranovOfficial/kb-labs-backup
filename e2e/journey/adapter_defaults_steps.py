@@ -5,9 +5,11 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import urllib.request
+from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
@@ -342,7 +344,18 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         original = config_file.read_bytes()
         analytics_db = project_state / "analytics" / "analytics.sqlite"
         analytics_db.parent.mkdir(parents=True, exist_ok=True)
-        analytics_db.write_bytes(b"existing analytics database")
+        with closing(sqlite3.connect(analytics_db)) as database, database:
+            database.execute("""
+                CREATE TABLE events (
+                    id TEXT PRIMARY KEY, schema TEXT NOT NULL DEFAULT 'kb.v1', type TEXT NOT NULL,
+                    ts TEXT NOT NULL, ingest_ts TEXT, run_id TEXT, product TEXT, version TEXT,
+                    actor_type TEXT, actor_id TEXT, actor_name TEXT, ctx TEXT, payload TEXT
+                )
+            """)
+            database.execute(
+                "INSERT INTO events (id, type, ts, payload) VALUES (?, ?, ?, ?)",
+                ("restart-check", "journey.restart-check", "2026-10-02T00:00:00.000Z", "{\"check\":true}"),
+            )
         config = json.loads(original)
         platform = config.setdefault("platform", {})
         adapters = platform.setdefault("adapters", {})
@@ -372,8 +385,12 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             listed = rows_for(project_a)
             if listed["analytics"].get("implementation") != provider or listed["analytics"].get("mode") != "real":
                 raise RuntimeError("kb adapter list did not show the discovered SQLite analytics provider")
-            if analytics_db.read_bytes() != b"existing analytics database":
-                raise RuntimeError("resolving the default replaced existing analytics data")
+            with closing(sqlite3.connect(analytics_db)) as database:
+                event = database.execute(
+                    "SELECT type, payload FROM events WHERE id = ?", ("restart-check",)
+                ).fetchone()
+            if event != ("journey.restart-check", "{\"check\":true}"):
+                raise RuntimeError("the analytics database did not retain its readable event across restart")
         finally:
             config_file.write_bytes(original)
             _run(runner, restart, project_a, base_env)

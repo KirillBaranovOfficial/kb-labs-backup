@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
+import { toErrorEnvelope } from '@kb-labs/sdk';
 import { SQLiteAnalytics } from './index.js';
 
 let tmpDir: string;
@@ -160,5 +162,49 @@ describe('SQLiteAnalytics', () => {
 
   it('dispose delegates to close', () => {
     expect(() => db.dispose()).not.toThrow();
+  });
+
+  // case: S-054.10
+  it('keeps analytics events readable across a platform state restart cycle', async () => {
+    const projectRoot = join(tmpDir, 'project');
+    const kbHome = join(tmpDir, 'kb-home');
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+
+    try {
+      const firstStart = new SQLiteAnalytics({ workspace: { cwd: projectRoot } });
+      const databasePath = resolveRuntimeStatePath(projectRoot, ['analytics', 'analytics.sqlite']);
+      expect(firstStart.getSource()).toEqual({ product: 'unknown', version: '0.0.0' });
+      await firstStart.track('journey.restart-check', { check: true });
+      firstStart.close();
+
+      const restarted = new SQLiteAnalytics({ workspace: { cwd: projectRoot } });
+      const { events } = await restarted.getEvents({ type: 'journey.restart-check' });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.payload).toEqual({ check: true });
+      expect(databasePath).toContain(join(kbHome, 'state'));
+      restarted.close();
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
+  it('reports a corrupt analytics file as a typed actionable adapter error', () => {
+    const databasePath = join(tmpDir, 'corrupt.sqlite');
+    writeFileSync(databasePath, 'not a sqlite database');
+
+    let thrown: unknown;
+    try {
+      new SQLiteAnalytics({ dbPath: databasePath });
+    } catch (error) {
+      thrown = error;
+    }
+
+    const envelope = toErrorEnvelope(thrown);
+    expect(envelope.code).toBe('KB_HOST_ADAPTER_UNAVAILABLE');
+    expect(envelope.message).toContain(databasePath);
+    expect(envelope.hint).toContain('kb-create stop --platform-root "$PLATFORM_ROOT"');
+    expect(envelope.hint).toContain('kb-create start --platform-root "$PLATFORM_ROOT"');
   });
 });
