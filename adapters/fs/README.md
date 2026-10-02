@@ -35,21 +35,19 @@ Add to your `kb.config.json`:
   "platform": {
     "adapters": {
       "storage": "@kb-labs/adapters-fs"
-    },
-    "adapterOptions": {
-      "storage": {
-        "baseDir": ".kb/data"
-      }
     }
   }
 }
 ```
 
+No `baseDir` option is needed for the default. Files are stored under
+`<KB_HOME>/state/<projectId>/storage`, outside the repository.
+
 ### Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `baseDir` | `string` | `process.cwd()` | Base directory for all file operations |
+| `baseDir` | `string` | `<KB_HOME>/state/<projectId>/storage` | Base directory for all file operations; the project ID is derived from the canonical project path |
 
 ## Usage
 

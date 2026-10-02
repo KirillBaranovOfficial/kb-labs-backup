@@ -10,21 +10,19 @@ from typing import Callable
 
 from service_steps import Journey
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
+from invocations import run_command
 
 
 def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120):
     cli_path = env.get("KB_JOURNEY_CLI_PATH")
     if cli_path:
-        return subprocess.run(
-            [cli_path, *args], env=env, cwd=cwd, text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            timeout=timeout, check=False,
-        )
-    return subprocess.run(
-        ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"', "kb", *args],
-        env=env, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        timeout=timeout, check=False,
-    )
+        command = [cli_path, *args]
+    else:
+        command = ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"', "kb", *args]
+    result = run_command(command, env=env, cwd=cwd, timeout=timeout)
+    return subprocess.CompletedProcess(command, result.returncode,
+                                        stdout=(result.stdout or "") + (result.stderr or ""),
+                                        stderr=result.stderr)
 
 
 def _json_cli(args: list[str], *, env: dict[str, str], cwd: Path) -> object:
@@ -70,6 +68,7 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
         with tempfile.TemporaryDirectory(prefix="kb-anonymous-cli-home-") as anonymous_home:
             anonymous_env = env.copy()
             anonymous_env["HOME"] = anonymous_home
+            anonymous_env["KB_JOURNEY_HOME_LABEL"] = "anonymous"
             platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
             cli_path = env.get("KB_JOURNEY_CLI_PATH")
             if not platform_root or not cli_path:
@@ -381,7 +380,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
             raise AssertionError(f"run did not complete with the submitted input: {success_detail!r}")
 
     journey.step("verify terminal status and submitted input", "workflow", inspect_success,
-                 cases=["S-007.2", "S-056.1"])
+                 cases=["S-007.2", "S-056.1", "PC-002.5"])
     journey.step("verify input appears in workflow log", "workflow",
                  lambda: None if "hello" in _logs(successful_id, env=env, cwd=project)
                  else "workflow logs did not contain the submitted value hello", cases=["S-007.3"])

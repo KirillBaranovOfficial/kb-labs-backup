@@ -120,19 +120,23 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         );
       }
 
-      const roots = await resolveConfigRoots(getContextCwd(ctx));
+      const roots = await resolveConfigRoots(getContextCwd(ctx), scope === 'platform' ? 'platform' : 'required');
+      if (scope === 'project' && !roots.projectId) {
+        throw new Error('Project config requires a registered project.');
+      }
       const file = await userConfigFileForScope(roots, scope);
       const runtimeConfig = await loadPlatformConfig({
         startDir: getContextCwd(ctx),
         loadEnvFile: false,
-        projectId: roots.projectId,
+        projectScope: scope === 'platform' ? 'platform' : 'required',
+        ...(roots.projectId ? { projectId: roots.projectId } : {}),
       });
       const platform = await loadEffectiveConfig(roots.projectRoot, {
         platformRoot: roots.platformRoot,
-        projectId: roots.projectId,
+        ...(roots.projectId ? { projectId: roots.projectId } : {}),
         pluginDefaults: manifestSettingsLayers(runtimeConfig),
       });
-      const projectSettings = await readProjectSettings({ projectId: roots.projectId });
+      const projectSettings = roots.projectId ? await readProjectSettings({ projectId: roots.projectId }) : {};
       const effectiveData = mergeOverlay(platform?.data ?? {}, projectSettings) as Record<string, unknown>;
       const platformBaseData = (platform?.layers ?? [])
         .filter(({ layer }) => layer !== 'project' && layer !== 'overlay')
@@ -188,7 +192,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
 
       const result = scope === 'project'
         ? await writeProjectSetting({
-            projectId: roots.projectId,
+            projectId: roots.projectId!,
             path: segments,
             value,
             dryRun: Boolean(flags['dry-run']),
@@ -221,7 +225,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
       const layers = [...(platform?.layers ?? []), {
         layer: 'project' as const,
         path: file,
-        data: projectSettings,
+        data: scope === 'platform' ? {} : projectSettings,
       }];
       for (const layer of [...layers].reverse()) {
         if (layer.path === file) {

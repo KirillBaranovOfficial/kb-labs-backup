@@ -25,6 +25,7 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
     running = undefined;
   });
 
+  // case: PC-002.1
   it("serves the gateway on the configured port and proxies marketplace and state", async () => {
     running = await startTestHost();
 

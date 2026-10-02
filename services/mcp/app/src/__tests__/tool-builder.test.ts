@@ -105,7 +105,7 @@ describe('filterTools', () => {
     const spy = vi.spyOn(mod, 'generateCommandSchema').mockReturnValue({ type: 'object' });
     const tools = filterTools({ manifests: [entry('p', [cmd('do it', 'read')])] }, allow);
     expect(spy).toHaveBeenCalledOnce();
-    expect(tools[0]!.inputSchema).toEqual({ type: 'object' });
+    expect(tools[0]!.inputSchema).toEqual({ type: 'object', additionalProperties: false });
     spy.mockRestore();
   });
 

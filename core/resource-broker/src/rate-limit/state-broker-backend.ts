@@ -53,7 +53,7 @@ interface CumulativeStats {
  * ```typescript
  * import { createStateBroker } from '@kb-labs/core-state-broker';
  *
- * const broker = createStateBroker({ backend: 'http', url: 'http://localhost:7777' });
+ * const broker = createStateBroker({ backend: 'http' }); // resolves the live address from the host launch contract
  * const backend = new StateBrokerRateLimitBackend(broker);
  *
  * // Now rate limits are coordinated across all processes using the same daemon

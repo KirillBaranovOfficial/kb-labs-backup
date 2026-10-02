@@ -53,6 +53,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/devkit": "workspace:*",
     "@types/node": "^24.3.3",
     "esbuild": "^0.28.1",

@@ -38,7 +38,7 @@ import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
 import { createContextLogger } from "@kb-labs/core-platform";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
-import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
+import { isPlatformAuthExempt, isPlatformAuthExemptFlag } from "./platform-auth-policy";
 
 declare global {
   var __KB_PLATFORM_CONFIG__: PlatformConfig | undefined;
@@ -51,6 +51,18 @@ type ILogger = PlatformContainer["logger"];
 type RuntimeInitOptions = RuntimeSetupOptions;
 type CliRuntimeInstance = Awaited<ReturnType<typeof createCliRuntime>>;
 type CliExecutionContext = CliRuntimeInstance["context"];
+
+function usesPlatformScope(
+  cmdPath: string[],
+  rest: string[],
+  global: { help?: boolean; version?: boolean },
+): boolean {
+  if ((global.help && cmdPath.length === 0) || global.version) { return true; }
+  if (isPlatformAuthExempt(cmdPath.join(" "), "system")) { return true; }
+  if (cmdPath[0] !== "project") { return false; }
+  if (["add", "list", "remove"].includes(cmdPath[1] ?? "")) { return true; }
+  return cmdPath[1] === "show" && rest.some((argument) => !argument.startsWith("-"));
+}
 
 export interface CliRuntimeOptions {
   env?: NodeJS.ProcessEnv;
@@ -82,6 +94,9 @@ export async function executeCli(
   options: CliRuntimeOptions = {},
 ): Promise<number | void> {
   const cwd = options.cwd ?? process.cwd();
+  const parse = options.parseArgs ?? parseArgs;
+  const { cmdPath, rest, global, flagsObj } = parse(argv);
+  const projectScope = usesPlatformScope(cmdPath, rest, global) ? "platform" : "required";
 
   loadEnvFile(cwd);
 
@@ -92,7 +107,10 @@ export async function executeCli(
     effectiveConfig,
     platformRoot,
     projectRoot,
-  } = await initializePlatform(cwd, options.moduleUrl);
+  } = await initializePlatform(cwd, options.moduleUrl, {
+    skipAdapterInitialization: global.help && isPlatformAuthExemptFlag('help'),
+    projectScope,
+  });
 
   if (platformRoot) {
     loadEnvFile(platformRoot);
@@ -111,7 +129,6 @@ export async function executeCli(
 
   const env = options.env ?? process.env;
   const version = resolveVersion(options.version, env);
-  const parse = options.parseArgs ?? parseArgs;
   const registryStore = options.registry ?? registry;
   const jsonPresenterFactory =
     options.createJsonPresenter ?? createJsonPresenter;
@@ -125,8 +142,6 @@ export async function executeCli(
         : undefined;
       return createCliRuntime({ ...runtimeOptions, context: providedContext });
     });
-
-  const { cmdPath, rest, global, flagsObj } = parse(argv);
 
   applyLogLevel(global.debug, global.logLevel, env.KB_LOG_LEVEL);
 

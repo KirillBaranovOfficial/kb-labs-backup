@@ -119,10 +119,10 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
         });
       }
 
-      const roots = await resolveConfigRoots(getContextCwd(ctx));
+      const scope = flags.scope as ConfigScope | undefined;
+      const roots = await resolveConfigRoots(getContextCwd(ctx), scope === 'platform' ? 'platform' : 'required');
 
-      if (flags.scope) {
-        const scope = flags.scope as ConfigScope;
+      if (scope) {
         const file = await userConfigFileForScope(roots, scope);
         let text: string;
         try {
@@ -148,6 +148,10 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
           layer: scope,
           source: file,
         };
+      }
+
+      if (!roots.projectId) {
+        throw new Error('Effective config requires a registered project.');
       }
 
       const runtimeConfig = await loadPlatformConfig({

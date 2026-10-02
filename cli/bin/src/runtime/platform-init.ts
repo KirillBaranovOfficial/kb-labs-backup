@@ -31,6 +31,13 @@ const CLI_LIFECYCLE_HOOK_ID = "cli-runtime";
 const LOG_SERVICE = "platform-init";
 let lifecycleHooksRegistered = false;
 
+export function hasExplicitDevelopmentMode(config: Record<string, unknown> | undefined): boolean {
+  if (!config) { return false; }
+  const platformConfig = config.platform;
+  return Boolean(platformConfig && typeof platformConfig === "object" &&
+    (platformConfig as Record<string, unknown>).mode === "development");
+}
+
 function lifecycleLogger() {
   return createContextLogger(platform.logger, {
     applicationId: "kb",
@@ -115,6 +122,7 @@ export interface PlatformInitResult {
 export async function initializePlatform(
   cwd: string,
   moduleUrl?: string,
+  options: { skipAdapterInitialization?: boolean; projectScope?: 'required' | 'platform' } = {},
 ): Promise<PlatformInitResult> {
   ensureLifecycleHooksRegistered();
 
@@ -140,6 +148,7 @@ export async function initializePlatform(
     loadResult = await loadPlatformConfig({
       moduleUrl,
       startDir: cwd,
+      projectScope: options.projectScope,
     });
   } catch {
     // Config file missing or unreadable — proceed with full fallback below.
@@ -154,9 +163,19 @@ export async function initializePlatform(
       projectRoot,
       sources,
     } = loadResult;
+    if (options.skipAdapterInitialization) {
+      return {
+        platform,
+        platformConfig,
+        rawConfig,
+        effectiveConfig,
+        platformRoot,
+        projectRoot,
+      };
+    }
     try {
-      // Relative adapter paths (e.g. ".kb/database/kb.sqlite") must resolve
-      // against the project root — this is where the user's .kb/ lives.
+      // User-supplied relative adapter paths are rooted at the project root;
+      // built-in defaults are absolute paths under the platform state home.
       // Pass platformRoot so initPlatform finds marketplace.lock in the
       // right place when platform is installed separately from the project.
       const platformInstance = await initPlatform(
@@ -164,9 +183,14 @@ export async function initializePlatform(
         projectRoot,
         uiProvider,
         platformRoot !== projectRoot ? platformRoot : undefined,
-        makeAssemblyHook(() =>
-          process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-        ),
+        {
+          assemblyHook: makeAssemblyHook(() =>
+            process.env.KB_DEBUG === "true" ? platform.logger : undefined,
+          ),
+          workspaceDevelopment: hasExplicitDevelopmentMode(
+            loadResult.sameLocation ? rawConfig : loadResult.rawPlatformConfig,
+          ),
+        },
       );
 
       platformInstance.logger.info("Platform adapters initialized", {
@@ -212,9 +236,11 @@ export async function initializePlatform(
         projectRoot,
         uiProvider,
         platformRoot,
-        makeAssemblyHook(() =>
-          process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-        ),
+        {
+          assemblyHook: makeAssemblyHook(() =>
+            process.env.KB_DEBUG === "true" ? platform.logger : undefined,
+          ),
+        },
       );
       platformInstance.logger.warn(
         "Platform adapters failed; retried with installed local defaults",
@@ -237,14 +263,24 @@ export async function initializePlatform(
 
   // Full fallback: config could not be loaded at all.
   const fallbackConfig: PlatformConfig = { adapters: {} };
+  if (options.skipAdapterInitialization) {
+    return {
+      platform,
+      platformConfig: fallbackConfig,
+      platformRoot: cwd,
+      projectRoot: cwd,
+    };
+  }
   const platformInstance = await initPlatform(
     fallbackConfig,
     cwd,
     uiProvider,
     undefined,
-    makeAssemblyHook(() =>
-      process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-    ),
+    {
+      assemblyHook: makeAssemblyHook(() =>
+        process.env.KB_DEBUG === "true" ? platform.logger : undefined,
+      ),
+    },
   );
   platformInstance.logger.warn(
     "Platform initialization failed, using NoOp adapters",

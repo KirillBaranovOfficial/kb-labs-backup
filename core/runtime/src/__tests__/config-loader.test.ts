@@ -1,9 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
 import { loadPlatformConfig } from '../config-loader.js'
+import { createProjectRegistry } from '@kb-labs/core-project-registry'
 
 /**
  * Create a minimal platform installation layout at `<dir>`:
@@ -41,6 +42,13 @@ function makeProjectDir(dir: string, configContents?: unknown): void {
 describe('loadPlatformConfig', () => {
   let tmpDir: string
   let originalCwd: string
+  async function loadConfig(options: Parameters<typeof loadPlatformConfig>[0]) {
+    const env: NodeJS.ProcessEnv = { ...options?.env, KB_HOME: path.join(tmpDir, 'kb-home') }
+    if (env.KB_PLATFORM_ROOT) env.KB_PLATFORM_ROOT = realpathSync(env.KB_PLATFORM_ROOT)
+    const startDir = realpathSync(options?.startDir ?? process.cwd())
+    const project = await createProjectRegistry({ env }).add(startDir)
+    return loadPlatformConfig({ ...options, startDir, env, projectId: project.project.id })
+  }
 
   beforeAll(() => {
     originalCwd = process.cwd()
@@ -67,11 +75,10 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
     })
@@ -84,9 +91,9 @@ describe('loadPlatformConfig', () => {
     makePlatformDir(platformRoot)
     makeProjectDir(projectRoot, { adapters: { llm: ['openai'] } })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
-      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      env: { KB_PLATFORM_ROOT: platformRoot },
       loadEnvFile: false,
     })
     expect(result.platformConfig).toEqual({ adapters: {} })
@@ -100,9 +107,9 @@ describe('loadPlatformConfig', () => {
       platform: { adapterOptions: { llm: { model: 'project-model' } } },
     })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
-      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      env: { KB_PLATFORM_ROOT: platformRoot },
       loadEnvFile: false,
     })
     expect(result.platformConfig.adapters).toEqual({ llm: 'openai' })
@@ -118,18 +125,17 @@ describe('loadPlatformConfig', () => {
     })
     makeProjectDir(projectRoot) // no config
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
     })
 
     expect(result.platformConfig.adapters).toEqual({ cache: 'redis' })
     expect(result.sources.platformDefaults).toBe(
-      path.join(platformRoot, '.kb', 'kb.config.json'),
+      realpathSync(path.join(platformRoot, '.kb', 'kb.config.json')),
     )
     expect(result.sources.projectConfig).toBeUndefined()
   })
@@ -153,11 +159,10 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
     })
@@ -170,11 +175,10 @@ describe('loadPlatformConfig', () => {
     makePlatformDir(platformRoot) // no config
     makeProjectDir(projectRoot) // no config
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
     })
@@ -193,11 +197,10 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: workspaceRoot,
       env: {
         KB_PLATFORM_ROOT: workspaceRoot,
-        KB_PROJECT_ROOT: workspaceRoot,
       },
       loadEnvFile: false,
     })
@@ -205,7 +208,7 @@ describe('loadPlatformConfig', () => {
     expect(result.sameLocation).toBe(true)
     expect(result.platformConfig.adapters).toEqual({ llm: 'workspace-llm' })
     expect(result.sources.platformDefaults).toBe(
-      path.join(workspaceRoot, '.kb', 'kb.config.json'),
+      realpathSync(path.join(workspaceRoot, '.kb', 'kb.config.json')),
     )
     expect(result.sources.projectConfig).toBeUndefined()
   })
@@ -224,11 +227,10 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: workspaceRoot,
       env: {
         KB_PLATFORM_ROOT: workspaceRoot,
-        KB_PROJECT_ROOT: workspaceRoot,
       },
       loadEnvFile: false,
     })
@@ -253,11 +255,10 @@ describe('loadPlatformConfig', () => {
       '{ this is not: valid json',
     )
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
     })
@@ -273,11 +274,10 @@ describe('loadPlatformConfig', () => {
     makePlatformDir(platformRoot)
     makeProjectDir(projectRoot, { unrelated: 'data' })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
     })
@@ -286,14 +286,16 @@ describe('loadPlatformConfig', () => {
     expect(result.rawConfig).toBeUndefined()
   })
 
-  // case: S-204.8
+  // case: S-204.10
   it('loads plugin overrides by registered project ID and ignores repository config', async () => {
     const platformRoot = path.join(tmpDir, 'p7-settings-platform')
     const projectRoot = path.join(tmpDir, 'p7-settings-project')
     const platformHome = path.join(tmpDir, 'p7-settings-home')
     makePlatformDir(platformRoot, { plugins: { commit: { scope: { scopes: [{ id: 'shared' }] } } } })
     makeProjectDir(projectRoot, { plugins: { commit: { scope: { scopes: [{ id: 'legacy' }] } } } })
-    const stateDir = path.join(platformHome, 'state', 'prj_settings')
+    const env = { KB_PLATFORM_ROOT: realpathSync(platformRoot), KB_HOME: platformHome }
+    const registration = await createProjectRegistry({ env }).add(realpathSync(projectRoot))
+    const stateDir = path.join(platformHome, 'state', registration.project.id)
     mkdirSync(stateDir, { recursive: true })
     writeFileSync(path.join(stateDir, 'config.jsonc'), JSON.stringify({
       plugins: { commit: { scope: { scopes: [{ id: 'project' }] } } },
@@ -302,17 +304,42 @@ describe('loadPlatformConfig', () => {
     const result = await loadPlatformConfig({
       startDir: projectRoot,
       env: {
-        KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
-        KB_HOME: platformHome,
+        ...env,
       },
-      projectId: 'prj_settings',
+      projectId: registration.project.id,
       loadEnvFile: false,
     })
 
     expect(result.effectiveConfig?.plugins).toEqual({ commit: { scope: { scopes: [{ id: 'project' }] } } })
     expect(JSON.parse(readFileSync(path.join(projectRoot, '.kb', 'kb.config.json'), 'utf8')))
       .toEqual({ plugins: { commit: { scope: { scopes: [{ id: 'legacy' }] } } } })
+  })
+
+  // case: S-204.8
+  it('does not apply a project store layer in platform scope', async () => {
+    const platformRoot = path.join(tmpDir, 'p7-platform-scope-platform')
+    const startDir = path.join(tmpDir, 'p7-platform-scope-outside')
+    const platformHome = path.join(tmpDir, 'p7-platform-scope-home')
+    makePlatformDir(platformRoot)
+    mkdirSync(startDir, { recursive: true })
+    const projectState = path.join(platformHome, 'state', 'ambient-project')
+    mkdirSync(projectState, { recursive: true })
+    writeFileSync(path.join(projectState, 'config.jsonc'), JSON.stringify({ plugins: { commit: { enabled: true } } }))
+
+    const result = await loadPlatformConfig({
+      startDir,
+      projectScope: 'platform',
+      env: {
+        KB_PLATFORM_ROOT: realpathSync(platformRoot),
+        KB_HOME: platformHome,
+        KB_PROJECT_ID: 'ambient-project',
+      },
+      loadEnvFile: false,
+    })
+
+    expect((result.effectiveConfig?.plugins as Record<string, unknown> | undefined)?.commit).toBeUndefined()
+    expect(result.sources.overlays).toBeUndefined()
+    expect(result.projectRoot).toBe(result.platformRoot)
   })
 
   it('loads .env file from projectRoot when loadEnvFile is true', async () => {
@@ -328,11 +355,10 @@ describe('loadPlatformConfig', () => {
     // Pre-condition
     delete process.env.KB_TEST_LOADED_VAR
 
-    await loadPlatformConfig({
+    await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: true,
     })
@@ -355,11 +381,10 @@ describe('loadPlatformConfig', () => {
 
     delete process.env.KB_TEST_SHOULD_NOT_LOAD
 
-    await loadPlatformConfig({
+    await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
     })
@@ -380,12 +405,11 @@ describe('loadPlatformConfig', () => {
     delete process.env.MISSING_SECRET_VAR
 
     await expect(
-      loadPlatformConfig({
+      loadConfig({
         startDir: projectRoot,
         env: {
           KB_PLATFORM_ROOT: platformRoot,
-          KB_PROJECT_ROOT: projectRoot,
-          NODE_ENV: 'production',
+            NODE_ENV: 'production',
         },
         loadEnvFile: false,
       }),
@@ -402,11 +426,10 @@ describe('loadPlatformConfig', () => {
 
     delete process.env.MISSING_SECRET_VAR
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
-        KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
     })
@@ -429,7 +452,7 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: workspaceRoot,
       env: {
         KB_PLATFORM_ROOT: workspaceRoot,

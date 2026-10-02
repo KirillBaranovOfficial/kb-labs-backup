@@ -56,7 +56,7 @@ export function StateBrokerPage() {
         />
         <UIAlert
           message="Failed to load State Broker stats"
-          description={error instanceof Error ? error.message : 'Unknown error. Make sure State Daemon is running on localhost:7777'}
+          description={error instanceof Error ? error.message : 'Unknown error. Make sure the host StateBroker service is running.'}
           variant="error"
           showIcon
           style={{ marginBottom: 24 }}

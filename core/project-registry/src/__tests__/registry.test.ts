@@ -8,6 +8,8 @@ import { deriveProjectId } from '../project-id.js';
 import {
   PROJECT_REGISTRY_SCHEMA_VERSION,
   createProjectRegistry,
+  findProjectContainingPath,
+  findRegisteredProjectContainingPathSync,
   projectStateDir,
   resolveKbHome,
 } from '../registry.js';
@@ -48,6 +50,29 @@ describe('resolveKbHome', () => {
 });
 
 describe('add / list / get / remove', () => {
+  // case: S-204.7
+  it('resolves the deepest registered project containing cwd', async () => {
+    const outer = makeProject('outer');
+    const inner = join(outer, 'nested-project');
+    const cwd = join(inner, 'packages', 'app');
+    mkdirSync(cwd, { recursive: true });
+    const registry = createProjectRegistry({ root });
+    await registry.add(outer);
+    const { project: innerProject } = await registry.add(inner);
+
+    const match = await findProjectContainingPath(registry, cwd);
+
+    expect(match?.project.id).toBe(innerProject.id);
+    expect(readdirSync(cwd)).toEqual([]);
+  });
+
+  it('does not infer synchronous project identity from repository files', () => {
+    const project = makeProject('only-repository-markers', true);
+    writeFileSync(join(project, '.kb', 'kb.config.json'), '{}');
+
+    expect(findRegisteredProjectContainingPathSync(project, { root })).toBeUndefined();
+  });
+
   it('registers a project, persists it and reports the declaration state', async () => {
     const dir = makeProject('alpha', true);
     const registry = createProjectRegistry({ root, now: () => new Date('2026-09-26T10:00:00.000Z') });

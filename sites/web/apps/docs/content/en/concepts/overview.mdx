@@ -1,7 +1,7 @@
 ---
 title: "Architecture Overview"
 description: "How KB Labs services fit together."
-updatedAt: "2026-09-30"
+updatedAt: "2026-10-02"
 order: 1
 ---
 
@@ -22,7 +22,7 @@ KB Labs is not a monolith. It's a set of cooperating services — a CLI, a REST 
                                         │ routes by path
           ┌──────────────┬──────────────┬──────────────┐
           ▼              ▼              ▼              ▼
-   Project runtime  Marketplace (:5070) State (:7777) Host Agent …
+   Project runtime  Marketplace (host-assigned) State (host-assigned) Host Agent …
    REST/workflow/MCP
           │
           └──────────────┐
@@ -69,9 +69,11 @@ A reverse proxy that aggregates the REST API and workflow daemon behind a single
 
 The web UI. Serves a Next.js application that communicates with the gateway. Studio pages contributed by plugins are mounted via Module Federation at runtime — installing a plugin that contributes a Studio page makes it appear in the sidebar without rebuilding Studio itself.
 
-### State daemon (port 7777)
+### State daemon (host-assigned loopback address)
 
 A lightweight in-process state broker used by the REST API, workflow daemon, and gateway for coordination: distributed locks, rate-limit counters, short-lived ephemeral state. Not a general-purpose database — it holds only transient data.
+
+When `kb-create` runs the host, it allocates the StateBroker loopback address and passes it to child runtimes. Do not configure a fixed address in platform config.
 
 ### Project MCP endpoint
 

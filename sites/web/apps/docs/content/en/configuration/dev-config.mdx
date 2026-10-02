@@ -1,7 +1,7 @@
 ---
 title: "devservices.yaml"
 description: "kb-dev service definitions — ports, commands, dependencies, health checks, groups."
-updatedAt: "2026-04-07"
+updatedAt: "2026-10-02"
 order: 2
 ---
 
@@ -166,7 +166,6 @@ Environment variables passed to the subprocess. Values can reference other env v
 {
   "state-daemon": {
     "env": {
-      "KB_STATE_DAEMON_PORT": "7777",
       "KB_STATE_DAEMON_HOST": "localhost"
     }
   }
@@ -174,6 +173,9 @@ Environment variables passed to the subprocess. Values can reference other env v
 ```
 
 These are merged with the process env that `kb-dev` itself was started with — don't repeat `PATH` or `HOME` unless you need to override them.
+
+When the service runs inside the `kb-create` host, the host assigns its loopback
+port and the daemon does not need a fixed `KB_STATE_DAEMON_PORT` entry here.
 
 ### `optional`
 

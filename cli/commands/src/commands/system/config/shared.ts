@@ -28,12 +28,23 @@ export type ConfigScope = (typeof CONFIG_SCOPES)[number];
 export interface ConfigRoots {
   platformRoot: string;
   projectRoot: string;
-  projectId: string;
+  projectId?: string;
   sameLocation: boolean;
 }
 
 /** Resolve the platform and project roots the way every other command does (ADR-0012). */
-export async function resolveConfigRoots(cwd: string): Promise<ConfigRoots> {
+export async function resolveConfigRoots(
+  cwd: string,
+  projectScope: 'required' | 'platform' = 'required',
+): Promise<ConfigRoots> {
+  if (projectScope === 'platform') {
+    const loaded = await loadPlatformConfig({ startDir: cwd, loadEnvFile: false, projectScope: 'platform' });
+    return {
+      platformRoot: loaded.platformRoot,
+      projectRoot: loaded.platformRoot,
+      sameLocation: true,
+    };
+  }
   const { rootDir: projectRoot } = await resolveProjectRoot({ cwd });
   const projects = await createProjectRegistry().list();
   const project = projects.find(({ project }) => project.path === projectRoot)?.project;
@@ -52,6 +63,9 @@ export async function resolveConfigRoots(cwd: string): Promise<ConfigRoots> {
 /** The user config file a scope writes to. */
 export async function userConfigFileForScope(roots: ConfigRoots, scope: ConfigScope): Promise<string> {
   if (scope === 'project') {
+    if (!roots.projectId) {
+      throw new Error('Project config requires a registered project.');
+    }
     return projectSettingsPath({ projectId: roots.projectId });
   }
   return resolveUserConfigFile(roots.platformRoot);

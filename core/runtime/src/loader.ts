@@ -30,10 +30,11 @@ import {
   getAdapterStatusRegistry,
   resetAdapterStatus,
 } from './adapter-status.js';
-import { ADAPTER_DEFAULTS, type AdapterSlot } from '@kb-labs/core-platform';
+import { ADAPTER_DEFAULTS, type AdapterSlot, type HostServiceEnvironment } from '@kb-labs/core-platform';
 import { inmemoryFactories } from '@kb-labs/core-platform/inmemory';
 import { noopFactories } from '@kb-labs/core-platform/noop';
 import { WorkflowEngine } from './core/workflow-engine.js';
+import { getHostGatewayAddresses } from './host-gateway-address.js';
 
 const OPTIONAL_ADAPTER_SLOTS = new Set(['logPersistence', 'logRingBuffer']);
 
@@ -486,12 +487,21 @@ export async function initPlatform(
   cwd: string = process.cwd(),
   uiProvider?: (hostType: string) => any,
   platformRoot?: string,
-  assemblyHook?: (
-    platform: PlatformContainer,
-    broker: IResourceBroker,
-    adapterConfig: Partial<Record<string, unknown>>,
-  ) => Partial<Record<string, unknown>>,
+  options: {
+    assemblyHook?: (
+      platform: PlatformContainer,
+      broker: IResourceBroker,
+      adapterConfig: Partial<Record<string, unknown>>,
+    ) => Partial<Record<string, unknown>>;
+    workspaceDevelopment?: boolean;
+    hostServiceEnvironment?: HostServiceEnvironment;
+  } = {},
 ): Promise<PlatformContainer> {
+  const {
+    assemblyHook,
+    workspaceDevelopment = false,
+    hostServiceEnvironment,
+  } = options;
 
   // ✅ Idempotent: If already initialized, return existing singleton
   // This prevents duplicate adapter instances across CLI and sandbox processes
@@ -650,7 +660,18 @@ export async function initPlatform(
     const loadModule = async (modulePath: string): Promise<LoadedAdapterModule> => {
       try {
         const { discoverAdapters } = await import('./discover-adapters.js');
-        const discovered = await discoverAdapters(platformRoot ?? cwd);
+        const discovered = await discoverAdapters(
+          platformRoot ?? cwd,
+          {
+            development: workspaceDevelopment,
+            configuredPackages: Object.entries(adapters).flatMap(([slot, value]) =>
+              normalizeAdapterValue(value as AdapterValue).map(modulePath => ({
+                packageName: modulePath.split('/').slice(0, 2).join('/'),
+                slot,
+              })),
+            ),
+          },
+        );
 
         // Parse module path into base package and subpath (same logic as resolveAdapter)
         const basePkgName = modulePath.split('/').slice(0, 2).join('/'); // "@kb-labs/adapters-openai"
@@ -779,6 +800,9 @@ export async function initPlatform(
         // Pre-load module to access manifest (primary adapter only)
         const module = await loadModule(primaryAdapter);
         const baseOptions = (adapterOptions as Record<string, unknown>)[name] ?? {};
+        const hostServiceOptions = name === 'cache' && hostServiceEnvironment
+          ? { hostServiceEnvironment }
+          : {};
 
         // Inject requested contexts from manifest
         const requestedContexts = module.manifest.contexts ?? [];
@@ -793,7 +817,7 @@ export async function initPlatform(
         adapterConfigs[name] = {
           module: primaryAdapter,
           // Merge contexts with user options (user options can override)
-          config: { ...contexts, ...baseOptions },
+          config: { ...contexts, ...baseOptions, ...hostServiceOptions },
         };
 
         // Collect middleware declarations from manifest
@@ -882,11 +906,12 @@ export async function initPlatform(
         const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory');
         const { GatewayDispatchTransport } = await import('@kb-labs/gateway-core');
         const containerCfg = execution.container;
+        const { dispatchEndpoint } = getHostGatewayAddresses();
 
         const strictIsolation = {
           buildTransport(ctx: { runtimeHostId: string; namespaceId: string }) {
             return new GatewayDispatchTransport({
-              dispatchEndpoint: containerCfg.gatewayDispatchUrl,
+              dispatchEndpoint,
               internalSecret: containerCfg.gatewayInternalSecret,
               runtimeHostId: ctx.runtimeHostId,
               namespaceId: ctx.namespaceId,
@@ -984,17 +1009,18 @@ export async function initPlatform(
         platform.initExecutionBackend(backend);
 
         platform.logger.info('ExecutionBackend initialized: container mode via Gateway', {
-          dispatchUrl: containerCfg.gatewayDispatchUrl,
+          dispatchEndpoint,
         });
-      } else if (execution.workspaceAgent?.enabled && execution.workspaceAgent.gatewayUrl) {
+      } else if (execution.workspaceAgent?.enabled) {
         // ── Standard mode + Workspace Agent routing ──
         // Local backend (in-process/worker-pool) with workspace-agent dispatch via Gateway.
         const { createIsolatedExecutionBackend } = await import('@kb-labs/plugin-execution-factory');
         const { GatewayHostResolver, GatewayDispatchTransport } = await import('@kb-labs/gateway-core');
 
         const agentCfg = execution.workspaceAgent;
+        const { gatewayUrl, dispatchEndpoint } = getHostGatewayAddresses();
         const hostResolver = new GatewayHostResolver({
-          gatewayUrl: agentCfg.gatewayUrl,
+          gatewayUrl,
           internalSecret: agentCfg.internalSecret,
         });
 
@@ -1002,7 +1028,7 @@ export async function initPlatform(
           // Container transport (unused here, but required by interface)
           buildTransport(ctx: { runtimeHostId: string; namespaceId: string }) {
             return new GatewayDispatchTransport({
-              dispatchEndpoint: `${agentCfg.gatewayUrl}/internal/dispatch`,
+              dispatchEndpoint,
               internalSecret: agentCfg.internalSecret,
               runtimeHostId: ctx.runtimeHostId,
               namespaceId: ctx.namespaceId,
@@ -1011,7 +1037,7 @@ export async function initPlatform(
           hostResolver,
           buildTransportForHost(hostId: string, namespaceId: string) {
             return new GatewayDispatchTransport({
-              dispatchEndpoint: `${agentCfg.gatewayUrl}/internal/dispatch`,
+              dispatchEndpoint,
               internalSecret: agentCfg.internalSecret,
               runtimeHostId: hostId,
               namespaceId,
@@ -1039,7 +1065,7 @@ export async function initPlatform(
         platform.initExecutionBackend(backend);
 
         platform.logger.info('ExecutionBackend initialized: workspace-agent routing via Gateway', {
-          gatewayUrl: agentCfg.gatewayUrl,
+          gatewayUrl,
           fallback: agentCfg.fallback ?? 'local',
         });
       } else {

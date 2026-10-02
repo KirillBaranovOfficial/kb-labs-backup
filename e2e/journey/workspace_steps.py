@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from service_steps import Journey
+from invocations import run_command
 
 
 def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
@@ -18,18 +19,67 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
         env.pop("KB_NET_OFFSET", None)
 
         def run(*args: str) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(
-                ["node", str(cli), *args], cwd=repo_root, env=env,
-                capture_output=True, text=True, check=False, timeout=120,
+            return run_command(["node", str(cli), *args], cwd=repo_root, env=env, timeout=120)
+
+        def register_checkout() -> str | None:
+            result = run_command(
+                [
+                    "node", "--input-type=module", "-e",
+                    "const { createProjectRegistry } = await import(process.argv[1]); "
+                    "await createProjectRegistry({ env: process.env }).add(process.argv[2]);",
+                    str(repo_root / "core/project-registry/dist/index.js"),
+                    str(repo_root),
+                ],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
             )
+            if result.returncode != 0:
+                return f"could not register workspace checkout in isolated KB_HOME: {result.stderr or result.stdout}"
+            return None
 
         def validate_cases() -> str | None:
+            registration_error = register_checkout()
+            if registration_error:
+                return registration_error
             result = run("qa", "cases", "validate", "--json")
             if result.returncode != 0:
                 return f"workspace QA case validation failed (exit {result.returncode}): {result.stderr or result.stdout}"
             return None
 
         journey.step("validate QA cases with the workspace CLI", "workspace-cli", validate_cases, cases=["S-179.2"])
+
+        def list_workspace_adapters() -> str | None:
+            result = run("adapter", "list", "--json")
+            if result.returncode != 0:
+                return f"workspace adapter listing failed (exit {result.returncode}): {result.stderr or result.stdout}"
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                return f"workspace adapter listing did not return JSON: {error}"
+            rows = payload.get("adapters", []) if isinstance(payload, dict) else []
+            implementations = {row.get("slot"): row.get("implementation") for row in rows if isinstance(row, dict)}
+            expected = {
+                "storage": "@kb-labs/adapters-fs",
+                "cache": "@kb-labs/adapters-state-broker",
+                "eventBus": "@kb-labs/adapters-eventbus-cache",
+                "documentDatabase": "@kb-labs/adapters-sqlite",
+                "kvStore": "@kb-labs/adapters-sqlite/kv",
+                "logger": "@kb-labs/adapters-pino",
+                "logRingBuffer": "@kb-labs/adapters-log-ringbuffer",
+                "logPersistence": "@kb-labs/adapters-log-document",
+                "analytics": "@kb-labs/adapters-analytics-sqlite",
+                "serviceTransport": "@kb-labs/adapters-service-transport-http",
+            }
+            missing = [slot for slot, package in expected.items() if implementations.get(slot) != package]
+            if missing:
+                return f"workspace adapter listing did not resolve configured workspace packages for: {', '.join(missing)}"
+            return None
+
+        journey.step("list configured workspace adapters", "workspace-cli", list_workspace_adapters, cases=["S-179.5"])
 
         def list_plugin_commands() -> str | None:
             result = run("--help")

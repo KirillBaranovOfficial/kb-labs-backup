@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import { platform } from "../container.js";
 import { launchPlatform, resetPlatformRuntime } from "../platform-launch.js";
 
@@ -13,11 +14,20 @@ const assemblyHook = (
 
 describe("launchPlatform", () => {
   let projectRoot: string;
+  let kbHome: string;
+  let previousHome: string | undefined;
+  let previousKbHome: string | undefined;
   let previousSocketHash: string | undefined;
 
   beforeEach(async () => {
     resetPlatformRuntime();
     projectRoot = await mkdtemp(path.join(tmpdir(), "kb-platform-launch-"));
+    kbHome = await mkdtemp(path.join(tmpdir(), "kb-platform-launch-home-"));
+    previousHome = process.env.HOME;
+    previousKbHome = process.env.KB_HOME;
+    process.env.HOME = kbHome;
+    process.env.KB_HOME = kbHome;
+    await createProjectRegistry({ root: kbHome }).add(projectRoot);
     previousSocketHash = process.env.KB_SOCKET_HASH;
     delete process.env.KB_SOCKET_HASH;
   });
@@ -25,6 +35,9 @@ describe("launchPlatform", () => {
   afterEach(async () => {
     resetPlatformRuntime();
     await rm(projectRoot, { recursive: true, force: true });
+    await rm(kbHome, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousKbHome === undefined) delete process.env.KB_HOME; else process.env.KB_HOME = previousKbHome;
     delete process.env.PLATFORM_LAUNCH_TEST;
     if (previousSocketHash === undefined) {
       delete process.env.KB_SOCKET_HASH;
@@ -48,7 +61,7 @@ describe("launchPlatform", () => {
     });
 
     expect(runtime.platform).toBe(platform);
-    expect(runtime.roots.projectRoot).toBe(projectRoot);
+    expect(runtime.roots.projectRoot).toBe(await realpath(projectRoot));
     expect(process.env.PLATFORM_LAUNCH_TEST).toBe("value");
     expect(process.env.KB_SOCKET_HASH).toMatch(/^[0-9a-f]{8}$/);
     expect(runtime.startupReport.applicationId).toBe("test-service");

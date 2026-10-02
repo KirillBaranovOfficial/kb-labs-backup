@@ -62,6 +62,7 @@ function makeCtx(cwd: string): { ctx: PluginContextV3; out: Captured } {
 }
 
 let tmp: string;
+let kbHome: string;
 let platformRoot: string;
 let projectRoot: string;
 let projectId: string;
@@ -131,19 +132,31 @@ async function run(
   return { code, out };
 }
 
+async function runAt(
+  cwd: string,
+  command: { run: (ctx: PluginContextV3, argv: string[], flags: Record<string, unknown>) => Promise<number> },
+  argv: string[],
+  flags: Record<string, unknown> = {},
+): Promise<{ code: number; out: Captured }> {
+  const { ctx, out } = makeCtx(cwd);
+  const code = await command.run(ctx, argv, { json: true, ...flags });
+  return { code, out };
+}
+
 beforeEach(async () => {
   tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'kb-config-cmd-'));
+  kbHome = path.join(tmp, 'kb-home');
   platformRoot = path.join(tmp, 'platform');
   projectRoot = path.join(tmp, 'project');
   await fsp.mkdir(path.join(platformRoot, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true });
   await fsp.mkdir(projectRoot, { recursive: true });
+  projectRoot = await fsp.realpath(projectRoot);
   await write(platformRoot, '.kb/kb.config.jsonc', PLATFORM_CONFIG);
   await write(projectRoot, '.kb/kb.config.jsonc', PROJECT_CONFIG);
   await writeCommitSettingsManifest();
   vi.stubEnv('KB_PLATFORM_ROOT', platformRoot);
-  vi.stubEnv('KB_PROJECT_ROOT', projectRoot);
-  vi.stubEnv('KB_HOME', path.join(tmp, 'platform-home'));
-  projectId = (await createProjectRegistry().add(projectRoot)).project.id;
+  vi.stubEnv('KB_HOME', kbHome);
+  projectId = (await createProjectRegistry({ env: process.env }).add(projectRoot)).project.id;
 });
 
 afterEach(async () => {
@@ -154,7 +167,7 @@ afterEach(async () => {
 
 const PROJECT_FILE = () => path.join(projectRoot, '.kb', 'kb.config.jsonc');
 const PLATFORM_FILE = () => path.join(platformRoot, '.kb', 'kb.config.jsonc');
-const PROJECT_SETTINGS_FILE = () => path.join(tmp, 'platform-home', 'state', projectId, 'config.jsonc');
+const PROJECT_SETTINGS_FILE = () => path.join(kbHome, 'state', projectId, 'config.jsonc');
 
 // ── config set ───────────────────────────────────────────────────────────────
 
@@ -204,7 +217,7 @@ describe('config set', () => {
     expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toBe(before);
   });
 
-  // case: S-204.9
+  // case: S-204.11
   it('merges and attributes manifest, platform, then project settings', async () => {
     const manifestDefault = await run(configGet, ['plugins.commit.llm.maxTokens']);
     expect(manifestDefault.out.json[0]).toMatchObject({ value: 2000, layer: 'manifest' });
@@ -409,7 +422,7 @@ describe('config set', () => {
 // ── config get ───────────────────────────────────────────────────────────────
 
 describe('config get', () => {
-  // case: S-204.7
+  // case: S-204.9
   it('returns KB_PROJECT_UNKNOWN outside the registered project context', async () => {
     await createProjectRegistry().remove(projectId);
     const { code, out } = await run(configGet, ['plugins.commit.scope.scopes']);
@@ -418,6 +431,29 @@ describe('config get', () => {
       code: 'KB_PROJECT_UNKNOWN',
       hint: expect.stringContaining('kb project add'),
     });
+  });
+
+  // case: S-204.8
+  it('reads and writes platform settings outside a registered project without a project layer', async () => {
+    const outsideRoot = path.join(tmp, 'outside-project')
+    await fsp.mkdir(outsideRoot, { recursive: true })
+
+    const written = await runAt(outsideRoot, configSet, ['plugins.commit.scope.scopes', '[]'], { scope: 'platform' })
+    expect(written.code).toBe(0)
+    expect(written.out.json[0]).toMatchObject({ ok: true, scope: 'platform', file: PLATFORM_FILE() })
+    await expect(fsp.access(PROJECT_SETTINGS_FILE())).rejects.toThrow()
+
+    const read = await runAt(outsideRoot, configGet, ['plugins.commit.scope.scopes'], { scope: 'platform' })
+    expect(read.code).toBe(0)
+    expect(read.out.json[0]).toMatchObject({
+      ok: true,
+      scope: 'platform',
+      found: true,
+      value: [],
+      layer: 'platform',
+      source: PLATFORM_FILE(),
+    })
+    await expect(fsp.access(PROJECT_SETTINGS_FILE())).rejects.toThrow()
   });
 
   it('returns the effective value with layer and file provenance', async () => {

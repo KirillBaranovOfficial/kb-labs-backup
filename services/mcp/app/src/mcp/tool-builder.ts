@@ -127,7 +127,10 @@ function buildTool(entry: RegistrySnapshotManifestEntry, decl: CliCommandDecl): 
   return {
     name: toolName(entry.pluginId, decl.path),
     description: decl.describe,
-    inputSchema: generateCommandSchema(toCommandManifest(decl, entry)),
+    inputSchema: {
+      ...generateCommandSchema(toCommandManifest(decl, entry)),
+      additionalProperties: false,
+    },
     pluginId: entry.pluginId,
     pluginRoot: entry.pluginRoot,
     handlerPath: decl.handler,

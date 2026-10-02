@@ -4,11 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import pty
 import re
-import select
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -26,6 +23,8 @@ from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run
 from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status, run_local_auth_steps, run_secured_auth_steps
 from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
 from platform_state_dump import PlatformStateDumpOnce
+from invocations import (invocation_context, open_http, run_command, run_pty_command,
+                         start_background_command)
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = os.getenv("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -40,7 +39,7 @@ PROJECT = HOME / "fresh-project"
 TIMES: dict[str, float] = {}
 MAX_PNPM_RSS_MIB = 0.0
 PLATFORM_SIZE_MIB: float | None = None
-PROCESSES: list[subprocess.Popen] = []
+PROCESSES = []
 FIRST_FAILURE = ""
 CASE_JOURNEY: Journey | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
@@ -58,54 +57,31 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
     global MAX_PNPM_RSS_MIB, LAST_COMMAND_ENV, LAST_COMMAND_CWD
     LAST_COMMAND_ENV = dict(env or BASE_ENV)
     LAST_COMMAND_CWD = str(cwd) if cwd else str(Path.cwd())
+    child_env = env or BASE_ENV
     started = time.monotonic()
-    proc = subprocess.Popen(args, cwd=cwd, env=env or BASE_ENV, text=True,
-                            stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if input_text is not None:
-        proc.stdin.write(input_text)
-        proc.stdin.close()
-    deadline = started + timeout
-    while proc.poll() is None:
-        MAX_PNPM_RSS_MIB = max(MAX_PNPM_RSS_MIB, sample_pnpm_rss(proc.pid))
-        if time.monotonic() >= deadline:
-            proc.kill()
-            proc.wait()
-            raise subprocess.TimeoutExpired(args, timeout)
-        time.sleep(0.05)
-    output = proc.stdout.read()
-    return subprocess.CompletedProcess(args, proc.returncode, stdout=output), time.monotonic() - started
+    result = run_command(args, cwd=cwd or Path.cwd(), env=child_env, timeout=timeout,
+                         input=input_text, stderr=subprocess.STDOUT,
+                         monitor_process=lambda pid: _sample_pnpm_rss_for_run(pid))
+    duration = time.monotonic() - started
+    return subprocess.CompletedProcess(args, result.returncode,
+                                       stdout=(result.stdout or "") + (result.stderr or ""),
+                                       stderr=result.stderr or ""), duration
+
+
+def _sample_pnpm_rss_for_run(pid: int) -> None:
+    global MAX_PNPM_RSS_MIB
+    MAX_PNPM_RSS_MIB = max(MAX_PNPM_RSS_MIB, sample_pnpm_rss(pid))
 
 
 def run_tty_confirmation(args: list[str], *, env=None, timeout=900):
-    started = time.monotonic()
-    master, slave = pty.openpty()
-    proc = subprocess.Popen(args, env=env or BASE_ENV, stdin=slave, stdout=slave,
-                            stderr=slave, close_fds=True)
-    os.close(slave)
-    output = bytearray()
     confirmed = False
-    deadline = started + timeout
-    while proc.poll() is None:
-        if time.monotonic() >= deadline:
-            proc.kill()
-            proc.wait()
-            os.close(master)
-            raise subprocess.TimeoutExpired(args, timeout)
-        readable, _, _ = select.select([master], [], [], 0.2)
-        if not readable:
-            continue
-        try:
-            chunk = os.read(master, 4096)
-        except OSError:
-            break
-        output.extend(chunk)
-        if not confirmed and b"Continue? [y/N]" in output:
-            os.write(master, b"y\n")
+    def respond(transcript: str):
+        nonlocal confirmed
+        if not confirmed and "Continue? [y/N]" in transcript:
             confirmed = True
-    proc.wait()
-    os.close(master)
-    return subprocess.CompletedProcess(args, proc.returncode, stdout=output.decode(errors="replace")), time.monotonic() - started
+            return "y\n"
+        return None
+    return run_pty_command(args, env=env or BASE_ENV, timeout=timeout, on_output=respond)
 
 
 def sample_pnpm_rss(_root_pid: int) -> float:
@@ -174,10 +150,12 @@ def mcp_rpc(url: str, method: str, request_id: int, params=None, token=None):
         method="POST",
     )
     try:
-        response = urllib.request.urlopen(request, timeout=30)
+        status, raw, _ = open_http(urllib.request.urlopen, request, timeout=30, env=os.environ)
+        if status >= 400:
+            raise RuntimeError(f"MCP {method} returned HTTP {status}")
+        body = raw.decode()
     except urllib.error.HTTPError as error:
         raise RuntimeError(f"MCP {method} returned HTTP {error.code}") from error
-    body = response.read().decode()
     if any(line.startswith("data:") for line in body.splitlines()):
         body = "\n".join(line[5:].strip() for line in body.splitlines() if line.startswith("data:"))
     return json.loads(body)
@@ -228,64 +206,50 @@ def verify_project_mcp(env: dict[str, str], local: bool):
 
 def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
     global MAX_PNPM_RSS_MIB
-    master, slave = pty.openpty()
-    started = time.monotonic()
-    proc = subprocess.Popen(command, stdin=slave, stdout=slave, stderr=slave,
-                            env=env, start_new_session=True)
-    os.close(slave)
-    output = bytearray()
-    deadline = time.monotonic() + 900
     sent_choice = not choice
     sent_access_mode = False
     last_prompt = ""
     apply_started = None
-    while proc.poll() is None and time.monotonic() < deadline:
-        MAX_PNPM_RSS_MIB = max(MAX_PNPM_RSS_MIB, sample_pnpm_rss(proc.pid))
-        try:
-            ready, _, _ = select.select([master], [], [], 0.2)
-            if not ready:
-                continue
-            chunk = os.read(master, 8192)
-            if chunk:
-                output.extend(chunk)
-                if apply_started is None and re.search(rb"Applying installation", chunk, re.I):
-                    apply_started = time.monotonic()
-                visible = output.decode(errors="replace")[-2000:]
-                if access_mode == "secured" and not sent_access_mode and "Studio access" in visible:
-                    os.write(master, b"secured\n")
-                    sent_access_mode = True
-                    last_prompt = "Studio access (secured)"
-                    continue
-                prompts = re.findall(r"(?im)^.*(?:\?|\[.*(?:default|y/n|yes/no).*\]|default[^\n]*:|press enter[^\n]*|select[^\n]*:|project directory[^\n]*:|admin email[^\n]*:|admin tenant[^\n]*:|admin password[^\n]*:|confirm admin password[^\n]*:|session signing secret[^\n]*:).*?$", visible)
-                prompt = prompts[-1] if prompts else ""
-                if prompt and prompt != last_prompt:
-                    answer = ""
-                    if re.search(r"Project directory", prompt, re.I):
-                        answer = str(PROJECT)
-                    elif access_mode == "secured" and re.search(r"Studio access", prompt, re.I):
-                        answer = "secured"
-                    elif access_mode == "secured" and re.search(r"Admin email", prompt, re.I):
-                        answer = "journey-admin@example.test"
-                    elif access_mode == "secured" and re.search(r"Admin tenant", prompt, re.I):
-                        answer = "journey"
-                    elif access_mode == "secured" and re.search(r"Admin password", prompt, re.I) and not re.search(r"Confirm", prompt, re.I):
-                        answer = "JourneyPassw0rd!"
-                    elif access_mode == "secured" and re.search(r"Confirm admin password", prompt, re.I):
-                        answer = "JourneyPassw0rd!"
-                    elif choice and not sent_choice and re.search(r"scenario|journey|setup", prompt, re.I):
-                        answer = choice
-                    if answer:
-                        sent_choice = True
-                    os.write(master, (answer + "\n").encode())
-                    last_prompt = prompt
-        except OSError:
-            break
-    if proc.poll() is None:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait()
-    os.close(master)
-    finished = time.monotonic()
-    return proc.returncode, output.decode(errors="replace"), finished - started, apply_started - started if apply_started else None
+    started = time.monotonic()
+    seen_length = 0
+    def respond(transcript: str):
+        nonlocal sent_choice, sent_access_mode, last_prompt, apply_started, seen_length
+        global MAX_PNPM_RSS_MIB
+        if apply_started is None and re.search(r"Applying installation", transcript[seen_length:], re.I):
+            apply_started = time.monotonic()
+        seen_length = len(transcript)
+        visible = transcript[-2000:]
+        if access_mode == "secured" and not sent_access_mode and "Studio access" in visible:
+            sent_access_mode = True
+            last_prompt = "Studio access (secured)"
+            return "secured\n"
+        prompts = re.findall(r"(?im)^.*(?:\?|\[.*(?:default|y/n|yes/no).*\]|default[^\n]*:|press enter[^\n]*|select[^\n]*:|project directory[^\n]*:|admin email[^\n]*:|admin tenant[^\n]*:|admin password[^\n]*:|confirm admin password[^\n]*:|session signing secret[^\n]*:).*?$", visible)
+        prompt = prompts[-1] if prompts else ""
+        if not prompt or prompt == last_prompt:
+            return None
+        answer = ""
+        if re.search(r"Project directory", prompt, re.I):
+            answer = str(PROJECT)
+        elif access_mode == "secured" and re.search(r"Studio access", prompt, re.I):
+            answer = "secured"
+        elif access_mode == "secured" and re.search(r"Admin email", prompt, re.I):
+            answer = "journey-admin@example.test"
+        elif access_mode == "secured" and re.search(r"Admin tenant", prompt, re.I):
+            answer = "journey"
+        elif access_mode == "secured" and re.search(r"Admin password", prompt, re.I) and not re.search(r"Confirm", prompt, re.I):
+            answer = "JourneyPassw0rd!"
+        elif access_mode == "secured" and re.search(r"Confirm admin password", prompt, re.I):
+            answer = "JourneyPassw0rd!"
+        elif choice and not sent_choice and re.search(r"scenario|journey|setup", prompt, re.I):
+            answer = choice
+        if answer:
+            sent_choice = True
+        last_prompt = prompt
+        return answer + "\n"
+    result, duration = run_pty_command(command, env=env, timeout=900, on_output=respond,
+                                       monitor_process=_sample_pnpm_rss_for_run,
+                                       start_new_session=True, raise_on_timeout=False)
+    return result.returncode, result.stdout, duration, apply_started - started if apply_started else None
 
 
 def human_text_is_clean(output: str):
@@ -461,6 +425,10 @@ def main():
     STATE_DUMP_GUARD.reset()
     env = BASE_ENV.copy()
     env["HOME"] = str(HOME)
+    env["KB_JOURNEY_HOME_LABEL"] = "main"
+    env["KB_JOURNEY_INVOCATIONS"] = str(Path(os.getenv(
+        "KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).resolve().parent)
+    os.environ["KB_JOURNEY_INVOCATIONS"] = env["KB_JOURNEY_INVOCATIONS"]
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
     (HOME / ".profile").write_text("if [ -f ~/.bashrc ]; then . ~/.bashrc; fi\n")
     (HOME / ".bash_profile").write_text("if [ -f ~/.profile ]; then . ~/.profile; fi\n")
@@ -498,9 +466,10 @@ def main():
         return 0 if passed else failure_exit()
 
     if VARIANT == "occupied-port":
-        listener = subprocess.Popen(["python3", "-u", "-c", "import http.server; s=http.server.HTTPServer(('0.0.0.0',4000),http.server.SimpleHTTPRequestHandler); print('ready', flush=True); s.serve_forever()"], stdout=subprocess.PIPE, text=True)
+        listener_command = ["python3", "-u", "-c", "import http.server; s=http.server.HTTPServer(('0.0.0.0',4000),http.server.SimpleHTTPRequestHandler); print('ready', flush=True); s.serve_forever()"]
+        listener = start_background_command(listener_command, env=env)
         PROCESSES.append(listener)
-        if listener.stdout is not None and listener.stdout.readline().strip() != "ready":
+        if not listener.wait_for_output("ready", 5):
             fail("port collision fixture failed to bind port 4000")
     if VARIANT == "relative-path":
         FRONT = "agent"
@@ -690,7 +659,10 @@ def main():
                     stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n")
                 fail("kb commit first value: output did not include the supplied scope")
         status, _ = run(["git", "status", "--porcelain"], env=env, cwd=PROJECT)
-        if status.stdout.strip() != "?? note.txt" and status.stdout.strip() != "A  note.txt":
+        clean_repo = not (PROJECT / ".kb").exists() and status.stdout.strip() in {"?? note.txt", "A  note.txt"}
+        record_case("first CLI commands leave fresh repository untouched", clean_repo,
+                    f"project gained KB Labs files: {status.stdout.strip()}", cases=["S-054.17"])
+        if not clean_repo:
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":
@@ -708,8 +680,11 @@ def main():
             request_file.write_text(json.dumps(request) + "\n")
             update_index = HOME / "release-index-update.json"
             update_url = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/release-index-update.json"
-            with urllib.request.urlopen(update_url, timeout=30) as response:
-                update_index.write_bytes(response.read())
+            update_status, update_body, _ = open_http(
+                urllib.request.urlopen, urllib.request.Request(update_url), timeout=30, env=env)
+            if update_status != 200:
+                raise RuntimeError(f"GET {update_url} returned HTTP {update_status}")
+            update_index.write_bytes(update_body)
             updated_version = stable_platform_version(json.loads(update_index.read_text()))
             request.setdefault("platform", {})["version"] = updated_version
             request["platform"].pop("channel", None)
@@ -772,8 +747,11 @@ def main():
                 canary_index = HOME / "release-index-canary.json"
                 canary_url = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/release-index-canary.json"
                 try:
-                    with urllib.request.urlopen(canary_url, timeout=30) as response:
-                        canary_index.write_bytes(response.read())
+                    canary_status, canary_body, _ = open_http(
+                        urllib.request.urlopen, urllib.request.Request(canary_url), timeout=30, env=env)
+                    if canary_status != 200:
+                        raise RuntimeError(f"GET {canary_url} returned HTTP {canary_status}")
+                    canary_index.write_bytes(canary_body)
                     canary_version = channel_platform_version(json.loads(canary_index.read_text()), "canary")
                     channel_request = HOME / "platform-channel-request.json"
                     channel_request.write_text(json.dumps(stable_request) + "\n")
@@ -1084,17 +1062,31 @@ def main():
             studio_shell_passed = False
         if mode == "secured":
             try:
-                member_email, member_password = create_studio_member(
-                    "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
-                    service_env["KB_JOURNEY_ADMIN_PASSWORD"])
+                with invocation_context(step_id="S-106.2"):
+                    member_email, member_password = create_studio_member(
+                        "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                        service_env["KB_JOURNEY_ADMIN_PASSWORD"])
                 studio_env["KB_STUDIO_MEMBER_EMAIL"] = member_email
                 studio_env["KB_STUDIO_MEMBER_PASSWORD"] = member_password
+                required_studio_credentials = (
+                    "KB_STUDIO_ADMIN_EMAIL", "KB_STUDIO_ADMIN_PASSWORD",
+                    "KB_STUDIO_MEMBER_EMAIL", "KB_STUDIO_MEMBER_PASSWORD",
+                )
+                missing_studio_credentials = [key for key in required_studio_credentials
+                                              if not studio_env.get(key)]
+                if missing_studio_credentials:
+                    raise RuntimeError(
+                        "secured Studio test setup did not export "
+                        + ", ".join(missing_studio_credentials)
+                        + "; provide journey admin credentials and rerun the secured journey"
+                    )
             except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
                 fail(f"Studio secured member setup: {error}")
-        studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
-            "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
-            "--config=/opt/kb-studio-playwright/playwright.config.mjs",
-        ], studio_env, service_report, mode, studio_shell_passed, timeout=660)
+        with invocation_context(step_id="S-106.1,S-106.2,S-106.3,S-106.4,S-106.5,S-106.6,S-107.1,S-107.2,S-107.3"):
+            studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
+                "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
+                "--config=/opt/kb-studio-playwright/playwright.config.mjs",
+            ], studio_env, service_report, mode, studio_shell_passed, timeout=660)
         TIMES["Studio browser journey"] = studio_elapsed
         if not studio_passed:
             fail(f"Studio browser journey: {studio_message}")

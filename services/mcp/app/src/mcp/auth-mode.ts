@@ -1,4 +1,5 @@
 export type McpAuthMode = "local" | "secured";
+import { randomUUID } from 'node:crypto';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 export function isMcpCorsPreflight(method: string, headers: Record<string, unknown>): boolean {
@@ -27,6 +28,12 @@ export function rejectsUnauthenticatedRequest(
   return mode === "secured" && !authenticated;
 }
 
-export function mcpUnauthenticatedResponse(): { statusCode: 401; body: { error: ReturnType<typeof createErrorEnvelope> } } {
-  return { statusCode: 401, body: { error: createErrorEnvelope('KB_AUTH_REQUIRED') } };
+export function mcpUnauthenticatedResponse(): {
+  statusCode: 401;
+  body: { ok: false; error: ReturnType<typeof createErrorEnvelope> };
+} {
+  return {
+    statusCode: 401,
+    body: { ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', { correlationId: randomUUID() }) },
+  };
 }

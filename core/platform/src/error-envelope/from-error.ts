@@ -44,6 +44,9 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
         ...options,
         cause: error.message,
         details: { slot: error.slot, reason: error.reason },
+        ...(error.hint ? { hint: error.hint } : {}),
+        ...(error.userMessage ? { message: error.userMessage } : {}),
+        ...(error.action ? { actions: [error.action] } : {}),
       });
     }
     const command = getAdapterConfigurationCommand(error.slot);

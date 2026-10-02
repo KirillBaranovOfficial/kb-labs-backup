@@ -170,10 +170,8 @@ export interface ExecutionConfig {
   /**
    * Container execution options (used when mode=container).
    * RoutingBackend dispatches via Gateway to isolated containers.
-   */
+  */
   container?: {
-    /** URL for the Gateway's internal dispatch endpoint */
-    gatewayDispatchUrl: string;
     /** Internal secret for the dispatch endpoint */
     gatewayInternalSecret: string;
   };
@@ -186,8 +184,6 @@ export interface ExecutionConfig {
   workspaceAgent?: {
     /** Enable workspace-agent routing (default: false) */
     enabled: boolean;
-    /** Gateway base URL (e.g., http://localhost:4000) */
-    gatewayUrl: string;
     /** Internal secret for Gateway endpoints */
     internalSecret: string;
     /** Fallback when no agent available: 'local' (default) or 'error' */
@@ -311,6 +307,8 @@ export interface CoreFeaturesConfig {
 export interface PlatformDirConfig {
   /** Absolute or `~`-relative path to the platform workspace. */
   dir?: string;
+  /** Explicitly enables development workspace package resolution. */
+  mode?: "development" | "production";
 }
 
 /**

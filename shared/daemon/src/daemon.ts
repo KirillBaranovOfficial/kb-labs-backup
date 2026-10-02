@@ -34,8 +34,8 @@ interface NetworkServiceConfig {
    * Edge services that are not in the map use defaultPort + KB_NET_OFFSET.
    */
   serviceId?: string;
-  defaultPort: number;
-  portEnvVar: string;
+  defaultPort?: number;
+  portEnvVar?: string;
   defaultHost?: string;
   hostEnvVar?: string;
 }
@@ -46,6 +46,7 @@ interface PlatformLaunchOptions {
   loadEnv?: boolean;
   storeRawConfig?: boolean;
   uiProvider?: PlatformUiProvider;
+  hostServiceEnvironment?: import('@kb-labs/core-platform').HostServiceEnvironment;
 }
 
 export interface ServiceConfig extends NetworkServiceConfig {
@@ -107,9 +108,20 @@ function resolveNetwork(
   const port =
     address && "port" in address
       ? address.port
-      : (process.env[module.portEnvVar]
-          ? parseInt(process.env[module.portEnvVar]!, 10)
-          : module.defaultPort) + netOffset;
+      : (() => {
+          const configuredPort = module.portEnvVar
+            ? process.env[module.portEnvVar]
+            : undefined;
+          const fallbackPort = configuredPort
+            ? parseInt(configuredPort, 10)
+            : module.defaultPort;
+          if (fallbackPort === undefined) {
+            throw new Error(
+              `Service transport has no listen address for "${serviceId}" and no port was configured.`,
+            );
+          }
+          return fallbackPort + netOffset;
+        })();
 
   const transportHost = address && "host" in address ? address.host : undefined;
   const host =
@@ -169,12 +181,14 @@ export async function runHost(config: HostConfig): Promise<void> {
     serviceId: config.serviceId ?? config.appId,
     kind: "service",
     startDir: config.startDir,
+    projectScope: "platform",
     moduleUrl: config.moduleUrl,
     assemblyHook: config.platform.assemblyHook,
     failurePolicy: config.platform.failurePolicy,
     loadEnv: config.platform.loadEnv,
     storeRawConfig: config.platform.storeRawConfig,
     uiProvider: config.platform.uiProvider,
+    hostServiceEnvironment: config.platform.hostServiceEnvironment,
   });
 
   const logger = runtime.logger.forComponent("service-bootstrap");

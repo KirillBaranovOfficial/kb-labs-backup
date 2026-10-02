@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { noopTraceContext, noopUI } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { writeMarketplaceLock } from '@kb-labs/core-discovery';
 import { adapterBind } from '../../commands/system/adapter/bind.js';
 import { adapterList } from '../../commands/system/adapter/list.js';
@@ -33,14 +34,17 @@ function context() {
 
 beforeEach(async () => {
   sandbox = await mkdtemp(join(tmpdir(), 'kb-adapter-bind-'));
+  const kbHome = join(sandbox, 'kb-home');
   platformRoot = join(sandbox, 'platform');
   projectRoot = join(sandbox, 'project');
   await mkdir(join(platformRoot, '.kb'), { recursive: true });
   await mkdir(join(projectRoot, '.kb'), { recursive: true });
+  projectRoot = await realpath(projectRoot);
   await writeFile(join(platformRoot, '.kb', 'kb.config.json'), '{}');
   await writeFile(join(projectRoot, '.kb', 'kb.config.json'), '{}');
   vi.stubEnv('KB_PLATFORM_ROOT', platformRoot);
-  vi.stubEnv('KB_PROJECT_ROOT', projectRoot);
+  vi.stubEnv('KB_HOME', kbHome);
+  await createProjectRegistry({ env: process.env }).add(projectRoot);
 });
 
 afterEach(async () => {

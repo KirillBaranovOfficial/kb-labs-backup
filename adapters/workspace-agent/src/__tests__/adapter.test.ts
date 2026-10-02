@@ -27,13 +27,18 @@ function mockFetchError(status: number, body: string): void {
 
 describe('AgentWorkspaceAdapter', () => {
   let cacheDir: string;
+  let previousGatewayUrl: string | undefined;
 
   beforeEach(async () => {
+    previousGatewayUrl = process.env.KB_GATEWAY_URL;
+    process.env.KB_GATEWAY_URL = 'http://127.0.0.1:4567';
     cacheDir = await mkdtemp(join(tmpdir(), 'ws-agent-test-'));
   });
 
   afterEach(async () => {
     vi.unstubAllGlobals();
+    if (previousGatewayUrl === undefined) { delete process.env.KB_GATEWAY_URL; }
+    else { process.env.KB_GATEWAY_URL = previousGatewayUrl; }
     await rm(cacheDir, { recursive: true, force: true });
   });
 
@@ -43,7 +48,6 @@ describe('AgentWorkspaceAdapter', () => {
       mockFetchOk(files);
 
       const adapter = new AgentWorkspaceAdapter({
-        gatewayUrl: 'http://localhost:4000',
         internalSecret: 'test-secret',
         namespaceId: 'ns-1',
         cacheDir,
@@ -55,12 +59,23 @@ describe('AgentWorkspaceAdapter', () => {
       const fetchMock = vi.mocked(fetch);
       expect(fetchMock).toHaveBeenCalledOnce();
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe('http://localhost:4000/internal/dispatch');
+      expect(url).toBe('http://127.0.0.1:4567/internal/dispatch');
       expect((init.headers as Record<string, string>)['x-internal-secret']).toBe('test-secret');
       const body = JSON.parse(init.body as string);
       expect(body.adapter).toBe('filesystem');
       expect(body.method).toBe('fetchWorkspace');
       expect(body.namespaceId).toBe('ns-1');
+    });
+
+    it('requires the host Gateway address instead of using a default', () => {
+      delete process.env.KB_GATEWAY_URL;
+      let thrown: unknown;
+      try {
+        new AgentWorkspaceAdapter({ cacheDir });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({ code: 'KB_HOST_SERVICE_ADDRESS_MISSING' });
     });
 
     it('writes fetched files to cacheDir/workspaceId/', async () => {

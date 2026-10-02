@@ -3,6 +3,11 @@ import { promises as fsp } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 import { findRepoRoot } from '@kb-labs/core-sys'
+import {
+  createProjectRegistry,
+  findProjectContainingPath,
+  ProjectRegistryError,
+} from '@kb-labs/core-project-registry'
 
 import type {
   PlatformRootResolution,
@@ -15,12 +20,6 @@ import type {
   WorkspaceFs,
   WorkspaceRootResolution,
 } from './types'
-
-/**
- * Filenames probed when looking for a project config. Both variants are
- * accepted because `loadPlatformConfig` reads either one.
- */
-const PROJECT_CONFIG_FILENAMES = ['kb.config.jsonc', 'kb.config.json'] as const
 
 /**
  * Package markers used to recognise an installed KB Labs platform. Any one of
@@ -47,130 +46,42 @@ const defaultFs: WorkspaceFs = {
 // Project root (previously "workspace root")
 // ──────────────────────────────────────────────────────────────────────────
 
-function resolveProjectEnvRoot(
-  env: Record<string, string | undefined> | undefined,
-): string | undefined {
-  if (!env) {
-    return undefined
-  }
-  return (
-    env.KB_PROJECT_ROOT ??
-    env.KB_LABS_WORKSPACE_ROOT ??
-    env.KB_LABS_REPO_ROOT
-  )
-}
-
-/**
- * Walk up from `startDir` looking for a directory that contains
- * `.kb/kb.config.jsonc` or `.kb/kb.config.json`. Returns the first match, or
- * `undefined` if none is found before the filesystem root.
- *
- * This is the canonical "is this a project?" probe — exported so CLI
- * commands, discovery, and scope-aware code can share the same rules the
- * config loader uses.
- */
-export async function findProjectConfigRoot(
+/** Return the deepest registered project containing `startDir`. */
+export async function findRegisteredProjectRoot(
   startDir: string,
-  fs: WorkspaceFs = defaultFs,
+  env: Record<string, string | undefined> = process.env,
 ): Promise<string | undefined> {
-  let current = path.resolve(startDir)
-
-  while (true) {
-    for (const name of PROJECT_CONFIG_FILENAMES) {
-      const configPath = path.join(current, '.kb', name)
-      // eslint-disable-next-line no-await-in-loop -- Sequential walk is intentional
-      if (await fs.exists(configPath)) {
-        return current
-      }
-    }
-
-    const parent = path.dirname(current)
-    if (parent === current) {
-      return undefined
-    }
-
-    current = parent
-  }
+  const view = await findProjectContainingPath(createProjectRegistry({ env }), startDir)
+  return view?.project.path
 }
 
 /**
- * Resolve the project root — the directory that contains the user's
- * `.kb/kb.config.json` and plugin state.
- *
- * Priority order:
- *
- * 1. Explicit `cwd` option (e.g. CLI flag).
- * 2. Environment variables: `KB_PROJECT_ROOT` (preferred), then the legacy
- *    `KB_LABS_WORKSPACE_ROOT` / `KB_LABS_REPO_ROOT`.
- * 3. Nearest `.kb/kb.config.json` ancestor walking up from `startDir`.
- * 4. Repository root discovered via `findRepoRoot` (pnpm workspace, `.git`,
- *    `package.json`).
- * 5. Fallback to `startDir` / `process.cwd()`.
- *
- * In monorepo dev mode this typically returns the workspace root. In installed
- * mode it returns the user's project directory.
+ * Resolve project identity from the platform registry. Repository files,
+ * environment root overrides, and repository boundaries do not create
+ * project membership.
  */
 export async function resolveProjectRoot(
   options: ResolveProjectRootOptions = {},
 ): Promise<ProjectRootResolution> {
-  const {
-    cwd,
-    env = process.env,
-    fs = defaultFs,
-    startDir = process.cwd(),
-  } = options
-
-  if (cwd) {
-    return {
-      rootDir: path.resolve(cwd),
-      source: 'explicit',
-    }
+  const { cwd, env = process.env, startDir = process.cwd() } = options
+  const current = path.resolve(cwd ?? startDir)
+  const rootDir = await findRegisteredProjectRoot(current, env)
+  if (!rootDir) {
+    throw new ProjectRegistryError(
+      'KB_PROJECT_UNKNOWN',
+      `No registered project contains "${current}".`,
+      { path: current },
+    )
   }
-
-  const envRoot = resolveProjectEnvRoot(env)
-  if (envRoot) {
-    return {
-      rootDir: path.resolve(envRoot),
-      source: 'env',
-    }
-  }
-
-  const configRoot = await findProjectConfigRoot(startDir, fs)
-  if (configRoot) {
-    return {
-      rootDir: configRoot,
-      source: 'config',
-    }
-  }
-
-  try {
-    const repoRoot = await findRepoRoot(startDir)
-    const resolvedRepo = path.resolve(repoRoot)
-    const fsRoot = path.parse(resolvedRepo).root
-
-    if (resolvedRepo !== fsRoot) {
-      return {
-        rootDir: resolvedRepo,
-        source: 'repo',
-      }
-    }
-  } catch {
-    // swallow and fall through to fallback
-  }
-
-  return {
-    rootDir: path.resolve(startDir),
-    source: 'fallback',
-  }
+  return { rootDir, source: 'registry' }
 }
 
 /**
  * @deprecated Use {@link resolveProjectRoot}. This alias is kept for
  * backwards compatibility; semantics are identical.
  *
- * The name "workspace root" is ambiguous — in KB Labs terminology, what it
- * actually refers to is the project root (where `.kb/kb.config.json` lives),
- * not the KB Labs platform installation. Prefer the explicit name.
+ * The name "workspace root" is ambiguous in KB Labs terminology. Prefer
+ * the explicit project-root name.
  */
 export async function resolveWorkspaceRoot(
   options: ResolveWorkspaceRootOptions = {},
@@ -426,16 +337,26 @@ export async function resolvePlatformRoot(
 export async function resolveRoots(
   options: ResolveRootsOptions = {},
 ): Promise<RootsResolution> {
-  const [platform, project] = await Promise.all([
-    resolvePlatformRoot(options),
-    resolveProjectRoot(options),
+  const platform = await resolvePlatformRoot(options)
+  if (options.projectScope === 'platform') {
+    return {
+      platformRoot: platform.rootDir,
+      projectRoot: platform.rootDir,
+      sameLocation: true,
+      sources: { platform: platform.source, project: 'platform' },
+    }
+  }
+
+  const project = await resolveProjectRoot(options)
+  const [platformCanonical, projectCanonical] = await Promise.all([
+    fsp.realpath(platform.rootDir).catch(() => path.resolve(platform.rootDir)),
+    fsp.realpath(project.rootDir).catch(() => path.resolve(project.rootDir)),
   ])
 
   return {
     platformRoot: platform.rootDir,
     projectRoot: project.rootDir,
-    sameLocation:
-      path.resolve(platform.rootDir) === path.resolve(project.rootDir),
+    sameLocation: platformCanonical === projectCanonical,
     sources: {
       platform: platform.source,
       project: project.source,

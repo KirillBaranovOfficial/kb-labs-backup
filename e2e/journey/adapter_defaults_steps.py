@@ -13,12 +13,13 @@ from typing import Callable
 
 from service_steps import Journey
 from marketplace_steps import _platform_snapshot
+from invocations import open_http, run_command, run_with_runner
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def _run(runner: CommandRunner, command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    result = runner(command, cwd=str(cwd), env=env, capture_output=True, text=True, timeout=300)
+    result = run_with_runner(runner, command, cwd=str(cwd), env=env, timeout=300)
     if result.returncode != 0:
         detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())[-400:]
         raise RuntimeError(f"`{' '.join(command)}` exited {result.returncode}: {detail}")
@@ -53,13 +54,51 @@ def write_config(root: Path, value: dict) -> None:
     config_path.write_text(json.dumps(value, indent=2) + "\n")
 
 
+def _project_state_dir(project_root: Path, env: dict[str, str]) -> Path:
+    kb_home = Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb"))).resolve()
+    registry_path = kb_home / "projects.json"
+    try:
+        projects = json.loads(registry_path.read_text()).get("projects", [])
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"could not read project registry {registry_path}") from error
+    canonical = project_root.resolve()
+    project = next((row for row in projects if isinstance(row, dict) and Path(row.get("path", "")).resolve() == canonical), None)
+    if not project or not isinstance(project.get("id"), str):
+        raise RuntimeError(f"project is not registered in {registry_path}: {canonical}")
+    return kb_home / "state" / project["id"]
+
+
 def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                               env: dict[str, str] | None = None,
-                              runner: CommandRunner = subprocess.run) -> None:
+                              runner: CommandRunner = run_command) -> None:
     """Run S-054 and S-048 using installed `kb` commands in both auth modes."""
     project_a = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
+    command_runner = runner
+    def runner(command, **kwargs):
+        options = dict(kwargs)
+        timeout = options.pop("timeout", 300)
+        options.pop("capture_output", None)
+        text_mode = options.pop("text", True)
+        options.pop("stdout", None)
+        options.pop("stderr", None)
+        result = run_with_runner(command_runner, command, timeout=timeout, **options)
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        if text_mode:
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
+        elif isinstance(stdout, str):
+            stdout = stdout.encode()
+            stderr = stderr.encode() if isinstance(stderr, str) else stderr
+        elif isinstance(stderr, str):
+            stderr = stderr.encode()
+        return subprocess.CompletedProcess(command, result.returncode,
+                                            stdout=stdout + stderr, stderr=stderr)
     base_env["KB_JOURNEY_PROJECT_ROOT"] = str(project_a)
+    project_state = _project_state_dir(project_a, base_env)
     platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
     project_b = Path(tempfile.mkdtemp(prefix="kb-adapter-project-b-", dir=base_env["HOME"]))
     project_b_registered = False
@@ -110,8 +149,8 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
 
     def assert_default_list() -> None:
         rows = rows_for(project_a)
-        if "storage" not in rows or rows["storage"].get("baseDir") != str(project_a / ".kb" / "data"):
-            raise RuntimeError("storage default is not filesystem storage at the project's .kb/data directory")
+        if "storage" not in rows or rows["storage"].get("baseDir") != str(project_state / "storage"):
+            raise RuntimeError(f"storage default path mismatch: expected {str(project_state / 'storage')!r}, received {rows.get('storage', {}).get('baseDir')!r}")
         if rows["storage"].get("networkRequired") is not False:
             raise RuntimeError("filesystem storage reports a network dependency")
         expected_slots = {
@@ -205,8 +244,8 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         rows = rows_for(project_a)
         if rows["storage"].get("implementation") != "@kb-labs/adapters-fs" or rows["storage"].get("mode") != "real":
             raise RuntimeError("installed-layout CLI did not load the sealed filesystem storage default")
-        if rows["storage"].get("baseDir") != str(project_a / ".kb" / "data"):
-            raise RuntimeError("installed-layout CLI did not resolve storage beneath the project's .kb/data directory")
+        if rows["storage"].get("baseDir") != str(project_state / "storage"):
+            raise RuntimeError("installed-layout CLI did not resolve storage beneath the registered project's platform state directory")
         if rows["kvStore"].get("implementation") != "@kb-labs/adapters-sqlite/kv":
             raise RuntimeError("installed-layout CLI did not load the sealed SQLite KV export subpath")
 
@@ -219,8 +258,12 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         health_url = host_status.get("host", {}).get("healthUrl")
         if not isinstance(health_url, str) or not health_url:
             raise RuntimeError("`kb-create status --json` returned no host health URL")
-        with urllib.request.urlopen(health_url.rsplit("/", 1)[0] + "/health/adapters", timeout=10) as response:
-            runtime_adapters = json.loads(response.read())
+        health_request = urllib.request.Request(health_url.rsplit("/", 1)[0] + "/health/adapters")
+        health_status, health_body, _ = open_http(
+            urllib.request.urlopen, health_request, timeout=10, env=base_env)
+        if health_status != 200:
+            raise RuntimeError(f"GET {health_request.full_url} returned HTTP {health_status}")
+        runtime_adapters = json.loads(health_body)
         if not isinstance(runtime_adapters, list):
             raise RuntimeError("GET /health/adapters returned no adapter list")
         expected_adapters = {row.get("slot"): row for row in runtime_adapters if isinstance(row, dict)}
@@ -297,7 +340,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     def assert_unbound_analytics_uses_manifest_default() -> None:
         config_file = platform_root / ".kb" / "kb.config.jsonc"
         original = config_file.read_bytes()
-        analytics_db = platform_root / ".kb" / "analytics" / "analytics.sqlite"
+        analytics_db = project_state / "analytics" / "analytics.sqlite"
         analytics_db.parent.mkdir(parents=True, exist_ok=True)
         analytics_db.write_bytes(b"existing analytics database")
         config = json.loads(original)
@@ -339,7 +382,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                  assert_unbound_analytics_uses_manifest_default, cases=["S-054.10"])
 
     def assert_adapter_replacement_keeps_old_data() -> None:
-        analytics_db = platform_root / ".kb" / "analytics" / "analytics.sqlite"
+        analytics_db = project_state / "analytics" / "analytics.sqlite"
         previous_data = analytics_db.read_bytes()
         replacement = "@kb-labs/adapters-analytics-file"
         install = ["kb", "marketplace", "install", replacement, "--scope", "platform", "--json"]
@@ -546,7 +589,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             if "storage" in platform_config.get("adapters", {}) or "storage" in platform_config.get("adapterOptions", {}):
                 raise RuntimeError("platform storage binding or options remain after unbind")
             row = rows_for(project_a).get("storage")
-            default_base = project_a / ".kb" / "data"
+            default_base = project_state / "storage"
             if (not row or row.get("implementation") != "@kb-labs/adapters-fs" or
                     row.get("baseDir") != str(default_base)):
                 raise RuntimeError("project did not resolve the built-in filesystem default after unbind")

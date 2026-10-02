@@ -32,6 +32,8 @@ services:
     container_name: kb-state-daemon
     ports:
       - "7777:7777"
+    environment:
+      - KB_STATE_DAEMON_PORT=7777
     # No adapters, no persistence (InMemoryStateBroker) — see plugins/state/daemon/Dockerfile.
     # A restart wipes any in-flight locks; that is current, expected behaviour.
     restart: unless-stopped

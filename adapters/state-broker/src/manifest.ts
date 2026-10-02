@@ -21,11 +21,6 @@ export const manifest: AdapterManifest = {
     },
   },
   configSchema: {
-    url: {
-      type: "string",
-      default: "http://localhost:7777",
-      description: "URL of the platform-local StateBroker daemon",
-    },
     namespace: {
       type: "string",
       default: "kb:",

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import Journey
+from invocations import open_http, run_command, run_with_runner
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
 from marketplace_steps import _registry_version, _output
@@ -28,6 +29,7 @@ from mcp_project_steps import (
     commit_tool_schema,
     invalid_arguments,
     local_auth,
+    mcp_ux_result_contract,
     project_isolation,
     secured_auth,
     unknown_tool,
@@ -48,7 +50,7 @@ def project_plugin_settings_isolation() -> str | None:
         return "BLOCKED: provide KB_JOURNEY_CLI_PATH for project settings checks"
 
     def run_cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
+        return run_command(
             [cli, *args], cwd=cwd, env=os.environ.copy(), capture_output=True,
             text=True, check=False, timeout=90,
         )
@@ -79,7 +81,7 @@ def project_plugin_settings_isolation() -> str | None:
         ids: list[str] = []
         for project in projects:
             project.mkdir()
-            initialized = subprocess.run(
+            initialized = run_command(
                 ["git", "init", "--quiet", str(project)], capture_output=True,
                 text=True, check=False, timeout=30,
             )
@@ -193,6 +195,23 @@ def project_plugin_settings_isolation() -> str | None:
                 or "kb project add" not in outside_error["hint"]):
             return "config get outside registered projects did not return KB_PROJECT_UNKNOWN with the registration hint"
 
+        outside_platform_write = run_cli(
+            root, "config", "set", "--scope", "platform", "plugins.commit.scope.scopes", scopes, "--json",
+        )
+        if outside_platform_write.returncode != 0:
+            return f"platform-scoped config set required a project: {(outside_platform_write.stderr or outside_platform_write.stdout).strip()}"
+        outside_platform_read = run_cli(
+            root, "config", "get", "plugins.commit.scope.scopes", "--scope", "platform", "--json",
+        )
+        try:
+            outside_platform_payload = json.loads(outside_platform_read.stdout)
+        except json.JSONDecodeError:
+            return "platform-scoped config get outside registered projects returned invalid JSON"
+        if (outside_platform_read.returncode != 0 or not isinstance(outside_platform_payload, dict)
+                or outside_platform_payload.get("value") != json.loads(scopes)
+                or outside_platform_payload.get("layer") != "platform"):
+            return "platform-scoped config get outside registered projects did not read only the platform layer"
+
         for project in projects:
             shutil.rmtree(project / ".kb", ignore_errors=True)
             files = sorted(path.name for path in project.iterdir() if path.name != ".git")
@@ -229,7 +248,7 @@ def project_plugin_settings_isolation() -> str | None:
             return "Project B's Commit scope selector did not retain only the platform default"
 
         for project in projects:
-            status = subprocess.run(
+            status = run_command(
                 ["git", "status", "--porcelain", "--untracked-files=all"], cwd=project,
                 capture_output=True, text=True, check=False, timeout=30,
             )
@@ -250,12 +269,7 @@ def request(path: str, *, method="GET", payload=None, token="", accept="applicat
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(BASE_URL + path, data=body, headers=headers, method=method)
     try:
-        with HTTP.open(req, timeout=15) as response:
-            raw = response.read()
-            status = response.status
-            response_headers = dict(response.headers.items())
-    except urllib.error.HTTPError as error:
-        raw, status, response_headers = error.read(), error.code, dict(error.headers.items())
+        status, raw, response_headers = open_http(HTTP.open, req, timeout=15, env=os.environ)
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
     try:
@@ -341,6 +355,8 @@ def checks(mode: str):
         yield ("project MCP commit mutation", "mcp", lambda: "BLOCKED: provide KB_JOURNEY_PROJECT_ROOT for the disposable commit fixture")
     yield ("project MCP unknown tool error", "mcp", lambda: unknown_tool(pid, auth_token()))
     yield ("project MCP invalid argument error", "mcp", lambda: invalid_arguments(pid, auth_token()))
+    yield ("MCP UX result contract from live registry", "mcp", lambda: mcp_ux_result_contract(
+        pid, auth_token(), secured=mode == "secured"))
     project_b_id = os.getenv("KB_JOURNEY_PROJECT_B_ID", "")
     if project_b_id:
         yield ("project MCP cross-project isolation", "mcp", lambda: project_isolation(pid, project_b_id, auth_token()))
@@ -454,15 +470,18 @@ def _case_claims(name: str) -> list[str]:
         "project MCP commit mutation": "S-140.2",
         "project MCP unknown tool error": "S-140.3",
         "project MCP invalid argument error": "S-140.4",
+        "MCP UX result contract from live registry": "S-203.2",
         "project MCP cross-project isolation": "S-140.5",
     }
     case_id = case_by_name.get(name)
     if name == "project MCP secured missing and invalid token rejection":
         return ["S-045.5", "S-140.6"]
+    if name == "MCP UX result contract from live registry":
+        return ["S-203.2", "S-203.6"]
     if not case_id:
         return []
     if name == "project plugin settings isolation and clean repositories":
-        return ["S-204.1", "S-204.2", "S-204.7", "S-204.8", "S-204.9"]
+        return ["S-204.1", "S-204.2", "S-204.8", "S-204.9", "S-204.10", "S-204.11"]
     return [case_id]
 
 
@@ -480,7 +499,7 @@ def configure_installed_cli_path() -> None:
         os.environ["PATH"] = os.pathsep.join([bin_dir, *current])
 
 
-def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runner=subprocess.run) -> None:
+def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runner=run_command) -> None:
     """Restore the CLI session after the auth journey intentionally logs out."""
     email = env.get("KB_JOURNEY_ADMIN_EMAIL", "").strip()
     password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
@@ -489,8 +508,7 @@ def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runne
     command = [str(kb_path), "auth", "login", "--gateway-url",
                env.get("KB_JOURNEY_BASE_URL", BASE_URL), "--email", email,
                "--password", password]
-    result = runner(command, cwd=env.get("HOME"), env=env, capture_output=True,
-                    text=True, timeout=90, check=False)
+    result = run_with_runner(runner, command, cwd=env.get("HOME"), env=env, timeout=90)
     if result.returncode != 0:
         detail = " ".join((result.stdout + " " + result.stderr).split())
         suffix = f"; {detail}" if detail else ""
@@ -527,14 +545,19 @@ def _find_project_id(payload: object) -> str:
 
 def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
     """Prepare the staged note commit required by S-140.2 in the isolated KB state."""
-    subprocess.run(["git", "-C", str(project_root), "config", "user.name", "KB Labs Journey"],
-                   check=True, capture_output=True, text=True)
-    subprocess.run(["git", "-C", str(project_root), "config", "user.email", "journey@example.com"],
-                   check=True, capture_output=True, text=True)
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        command = ["git", "-C", str(project_root), *args]
+        result = run_command(command, cwd=project_root, env=env, timeout=30)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, command,
+                                                output=result.stdout, stderr=result.stderr)
+        return result
+
+    git("config", "user.name", "KB Labs Journey")
+    git("config", "user.email", "journey@example.com")
 
     def git_files(*args: str) -> list[str]:
-        result = subprocess.run(["git", "-C", str(project_root), *args], capture_output=True,
-                               check=True, text=True)
+        result = git(*args)
         return [line for line in result.stdout.splitlines() if line]
 
     status = {
@@ -573,8 +596,15 @@ def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
 
 
 def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
-                         runner=subprocess.run) -> str:
+                         runner=run_command) -> str:
     """Install Commit into project A and register a clean project B for isolation."""
+    command_runner = runner
+    def runner(command, **kwargs):
+        options = dict(kwargs)
+        timeout = options.pop("timeout", 120)
+        options.pop("capture_output", None)
+        options.pop("text", None)
+        return run_with_runner(command_runner, command, timeout=timeout, **options)
     project_a = Path(project_root).resolve()
     package = "@kb-labs/commit-entry"
     version = _registry_version(package, registry, env, runner)
@@ -587,7 +617,12 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     home = Path(env["HOME"])
     project_b = home / "project-b-mcp"
     project_b.mkdir(parents=True, exist_ok=False)
-    subprocess.run(["git", "init", "-q", str(project_b)], check=True)
+    result = run_command(["git", "init", "-q", str(project_b)], cwd=project_b.parent,
+                         env=env, timeout=30)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode,
+                                            ["git", "init", "-q", str(project_b)],
+                                            output=result.stdout, stderr=result.stderr)
     register = ["kb", "project", "add", str(project_b), "--json"]
     result = runner(register, cwd=str(project_b), env=env, capture_output=True,
                     text=True, timeout=120)
@@ -613,6 +648,7 @@ def main() -> int:
     parser.add_argument("--output", default="service-journey.json")
     parser.add_argument("--run-id")
     args = parser.parse_args()
+    os.environ.setdefault("KB_JOURNEY_INVOCATIONS", str(Path(args.output).resolve().parent))
     journey = Journey(args.mode, args.run_id or str(uuid.uuid4()))
     try:
         configure_installed_cli_path()

@@ -10,9 +10,9 @@
 
 ## Overview
 
-State Daemon is a platform infrastructure service (`:7777`) that provides
-distributed state management via HTTP (State Broker). Platform services use it
-to share state across processes without direct coupling.
+State Daemon is a platform infrastructure service that provides distributed
+state management via HTTP (State Broker). The `kb-create` host assigns its
+loopback address at startup and passes it to child runtimes.
 
 ---
 
@@ -20,7 +20,8 @@ to share state across processes without direct coupling.
 
 **KB Labs platform** `>= 0.1.0`
 
-**Port:** `:7777`
+**Address:** host-assigned loopback address under `kb-create`; `kb-dev` uses
+the port configured for the standalone development service.
 
 ---
 
@@ -33,7 +34,8 @@ kb-dev start         # starts state daemon + all platform services
 kb-dev status        # verify state-daemon is running
 ```
 
-Health check: `GET http://localhost:7777/health`
+Use `kb-dev status` to check the standalone development service. Host-managed
+StateBroker addresses are private runtime values and are not a fixed URL.
 
 ---
 

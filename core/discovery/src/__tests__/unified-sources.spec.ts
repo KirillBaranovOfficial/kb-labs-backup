@@ -10,7 +10,7 @@ import * as os from 'node:os';
 import { DiscoveryManager } from '../discovery-manager.js';
 import { writeMarketplaceLock, createEmptyLock, createMarketplaceEntry } from '../marketplace-lock.js';
 import { computePackageIntegrity } from '../integrity.js';
-import { findWorkspaceCandidates } from '../workspace-source.js';
+import { findWorkspaceCandidates, findWorkspacePackages } from '../workspace-source.js';
 
 interface PluginFixture {
   dir: string;
@@ -307,5 +307,23 @@ describe('findWorkspaceCandidates', () => {
     const found = await findWorkspaceCandidates(root);
 
     expect(found).toEqual([{ packageName: '@x/solo', packageRoot: root }]);
+  });
+});
+
+describe('findWorkspacePackages', () => {
+  it('finds configured packages before they are built', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-ws-packages-'));
+    try {
+      const adapterRoot = path.join(root, 'adapters', 'sqlite');
+      await fs.mkdir(adapterRoot, { recursive: true });
+      await fs.writeFile(path.join(adapterRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-sqlite' }));
+      await fs.writeFile(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
+
+      const found = await findWorkspacePackages(root);
+
+      expect(found).toEqual([{ packageName: '@kb-labs/adapters-sqlite', packageRoot: adapterRoot }]);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });

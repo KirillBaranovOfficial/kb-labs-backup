@@ -13,7 +13,7 @@ import type {
   WorkflowInfo,
   WorkflowListResponse,
 } from '@kb-labs/workflow-contracts';
-import { useEnv } from '@kb-labs/sdk';
+import { getHostServiceAddress, useEnv } from '@kb-labs/sdk';
 import { deriveProjectId } from '@kb-labs/core-project-registry';
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
 import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
@@ -126,7 +126,6 @@ export interface JobStatusDetail extends Omit<JobStatusInfo, 'result'> {
   }>;
 }
 
-const DEFAULT_GATEWAY_URL = 'http://127.0.0.1:4000';
 
 export interface DaemonClientOptions {
   url?: string;
@@ -140,7 +139,9 @@ export function getWorkflowDaemonUrl(
   if (!projectId) {
     throw new Error('Workflow needs a registered project. Run `kb project add` from the project directory, then retry.');
   }
-  const gatewayUrl = useEnv('KB_GATEWAY_URL') ?? DEFAULT_GATEWAY_URL;
+  const gatewayUrl = getHostServiceAddress('gateway', {
+    KB_GATEWAY_URL: useEnv('KB_GATEWAY_URL'),
+  });
   return `${gatewayUrl.replace(/\/$/, '')}${projectWorkflowRoute(projectId)}`;
 }
 

@@ -1,4 +1,4 @@
-import { useEnv } from '@kb-labs/sdk';
+import { getHostServiceAddress, useEnv } from '@kb-labs/sdk';
 import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 
 const REGISTRY_GATEWAY_PREFIX = '/api/v1/registry';
@@ -7,7 +7,9 @@ const FETCH_TIMEOUT_MS = 60_000;
 function resolveRegistryBaseUrl(): string {
   const explicit = useEnv('KB_REGISTRY_URL');
   if (explicit) { return explicit.replace(/\/$/, ''); }
-  const gateway = useEnv('KB_GATEWAY_URL') ?? 'http://127.0.0.1:4000';
+  const gateway = getHostServiceAddress('gateway', {
+    KB_GATEWAY_URL: useEnv('KB_GATEWAY_URL'),
+  });
   return `${gateway.replace(/\/$/, '')}${REGISTRY_GATEWAY_PREFIX}`;
 }
 

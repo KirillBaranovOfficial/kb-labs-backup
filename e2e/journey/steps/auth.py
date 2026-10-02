@@ -8,11 +8,13 @@ Call ``run_local_auth_steps(base_url)`` after a local install.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from invocations import open_http, run_command
 
 
 def _request(base_url: str, path: str, *, method: str = "GET", token: str | None = None,
@@ -24,11 +26,7 @@ def _request(base_url: str, path: str, *, method: str = "GET", token: str | None
     if data is not None:
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(base_url.rstrip("/") + path, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            status, raw = response.status, response.read()
-    except urllib.error.HTTPError as error:
-        status, raw = error.code, error.read()
+    status, raw, _ = open_http(urllib.request.urlopen, request, timeout=15, env=os.environ)
     if status != expected:
         raise AssertionError(f"{method} {path}: expected HTTP {expected}, got {status}: {raw[:300]!r}")
     if not raw:
@@ -54,7 +52,7 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
                         password: str | None = None) -> None:
     """Prove the CLI status surface in local and secured mode."""
     def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run([cli_path, *args], env=env, text=True, capture_output=True, check=False)
+        return run_command([cli_path, *args], env=env)
 
     if authenticated:
         if not base_url or not email or not password:
@@ -85,7 +83,7 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
 def run_cli_auth_forbidden(cli_path: str, env: dict[str, str], *, user_id: str = "member-1") -> None:
     """A logged-in member must get the gateway's typed permission denial."""
     args = [cli_path, "auth", "reset-link", "--user-id", user_id, "--json"]
-    result = subprocess.run(args, env=env, text=True, capture_output=True, check=False)
+    result = run_command(args, env=env)
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as error:

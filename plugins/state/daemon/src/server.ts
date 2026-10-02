@@ -56,7 +56,12 @@ export class StateDaemonServer {
   }
 
   async start(): Promise<void> {
-    const port = this.config.port ?? 7777;
+    const port = this.config.port;
+    if (port === undefined) {
+      throw new Error(
+        "State Daemon has no assigned port. Start it through the host or set KB_STATE_DAEMON_PORT before starting the standalone daemon.",
+      );
+    }
     const host = this.config.host ?? "localhost";
 
     const server = Fastify({

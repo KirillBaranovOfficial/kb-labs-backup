@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from pathlib import Path
+
+from invocations import invocation_context, run_command
 
 
 SERVICE_SOURCES = {
@@ -39,11 +43,12 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
 def main() -> int:
     results = []
     for mode in ("local", "secured"):
-        output = subprocess.check_output(
-            ["pnpm", "-s", "kb", "qa", "cases", "coverage", "--level", "all", "--mode", mode, "--json"],
-            text=True,
-        )
-        results.append(json.loads(output))
+        command = ["pnpm", "-s", "kb", "qa", "cases", "coverage", "--level", "all", "--mode", mode, "--json"]
+        with invocation_context(step_id="journey.case-selection"):
+            result = run_command(command, cwd=Path.cwd(), env=os.environ, timeout=120)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout, stderr=result.stderr)
+        results.append(json.loads(result.stdout))
     print(json.dumps(selectors_from_coverage(results)))
     return 0
 

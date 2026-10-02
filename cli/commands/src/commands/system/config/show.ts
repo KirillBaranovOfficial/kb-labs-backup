@@ -256,6 +256,9 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
     try {
       const cwd = getContextCwd(ctx);
       const roots = await resolveConfigRoots(cwd);
+      if (!roots.projectId) {
+        throw new Error('Effective config requires a registered project.');
+      }
       const result = await loadPlatformConfig({ startDir: cwd, loadEnvFile: false, projectId: roots.projectId });
       const rows = buildRows(result);
 

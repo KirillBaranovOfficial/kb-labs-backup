@@ -88,6 +88,7 @@ function isolateEnvironment(home: string): () => void {
     "KB_SOCKET_HASH",
     "KB_PROJECT_ROOT",
     "KB_PLATFORM_ROOT",
+    "KB_STATE_DAEMON_URL",
   ] as const;
   const saved = new Map(keys.map((key) => [key, process.env[key]]));
   process.env.HOME = home;
@@ -116,6 +117,9 @@ export async function startTestHost(
   const gatewayPort = await reservePort();
   const projectRoot = await writeProject(config, gatewayPort);
   const restoreEnv = isolateEnvironment(projectRoot);
+  // Treat the isolated fixture as the platform root. Host startup is a
+  // platform operation and must not resolve a registered project from cwd.
+  process.env.KB_PLATFORM_ROOT = projectRoot;
 
   const exitCodes: number[] = [];
   const exitSpy = vi.spyOn(process, "exit").mockImplementation((code) => {

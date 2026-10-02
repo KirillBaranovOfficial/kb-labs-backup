@@ -1,5 +1,6 @@
 {
   "platform": {
+    "mode": "development",
     "adapters": {
       "storage": "@kb-labs/adapters-fs",
       "cache": "@kb-labs/adapters-state-broker",

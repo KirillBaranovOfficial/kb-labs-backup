@@ -71,7 +71,7 @@ async function main(): Promise<number> {
     loaded.projectRoot,
     undefined,
     loaded.platformRoot !== loaded.projectRoot ? loaded.platformRoot : undefined,
-    makeAssemblyHook(),
+    { assemblyHook: makeAssemblyHook() },
   );
   try {
     const config = loaded.effectiveConfig ?? loaded.rawConfig;

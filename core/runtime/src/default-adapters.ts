@@ -1,6 +1,7 @@
 /** Resolve manifest-declared built-in adapter defaults for installed platforms. */
 
 import { discoverAdapters, type DiscoveredAdapter } from './discover-adapters.js';
+import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 
 export interface ResolvedAdapterConfig {
   adapters: Record<string, unknown>;
@@ -74,10 +75,10 @@ export function resolveDiscoveredAdapterDefaults(
 
   function defaultOptions(slot: string): Record<string, unknown> {
     switch (slot) {
-      case 'storage': return { baseDir: '.kb/data' };
+      case 'storage': return { baseDir: resolveRuntimeStatePath(projectRoot, ['storage']) };
       case 'documentDatabase':
-      case 'kvStore': return { filename: '.kb/database/kb.sqlite' };
-      case 'analytics': return { filename: '.kb/analytics/analytics.sqlite' };
+      case 'kvStore': return { filename: resolveRuntimeStatePath(projectRoot, ['database', 'kb.sqlite']) };
+      case 'analytics': return { filename: resolveRuntimeStatePath(projectRoot, ['analytics', 'analytics.sqlite']) };
       case 'logRingBuffer': return { maxSize: 100 };
       case 'logPersistence': return { collection: 'logs' };
       default: return {};

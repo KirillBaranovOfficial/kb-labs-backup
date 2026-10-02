@@ -6,6 +6,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
+import { getHostServiceAddress, HostServiceAddressError } from '@kb-labs/core-platform';
 import { normalizeBasePath, resolvePaths } from './path-helpers';
 import { hostname } from 'node:os';
 import type { HistoricalMetricsCollector } from '../daemon/metrics';
@@ -38,7 +39,7 @@ export async function registerObservabilityRoutes(
   for (const path of stateBrokerPaths) {
     fastify.get(path, { schema: { tags: ['Observability'], summary: 'State Broker statistics' } }, async (_request, reply) => {
       try {
-        const stateBrokerUrl = process.env.KB_STATE_DAEMON_URL || 'http://localhost:7777';
+        const stateBrokerUrl = getHostServiceAddress('state-broker');
 
         fastify.log.debug({ url: stateBrokerUrl }, 'Fetching State Broker stats');
 
@@ -89,10 +90,13 @@ export async function registerObservabilityRoutes(
         return reply.code(503).send({
           ok: false,
           error: {
-            code: isTimeout ? 'STATE_BROKER_TIMEOUT' : 'STATE_BROKER_ERROR',
+            code: error instanceof HostServiceAddressError
+              ? error.code
+              : isTimeout ? 'STATE_BROKER_TIMEOUT' : 'STATE_BROKER_ERROR',
             message: isTimeout
               ? 'State Broker daemon did not respond in time'
               : error instanceof Error ? error.message : String(error),
+            ...(error instanceof HostServiceAddressError ? { hint: error.hint } : {}),
             details: {
               isTimeout,
             },

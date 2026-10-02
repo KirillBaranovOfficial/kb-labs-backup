@@ -6,25 +6,41 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { initializePlatform } from '../platform-init';
+import { initializePlatform, hasExplicitDevelopmentMode } from '../platform-init';
 import { platform } from '@kb-labs/core-runtime';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, realpath, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
 describe('Platform Initialization (Real)', () => {
   let testDir: string;
+  let kbHome: string;
+  let previousHome: string | undefined;
+  let previousKbHome: string | undefined;
+  let previousPlatformRoot: string | undefined;
 
   beforeEach(async () => {
     // Create temp directory for test configs
     testDir = join(tmpdir(), `kb-test-${Date.now()}`);
     await mkdir(testDir, { recursive: true });
     await mkdir(join(testDir, '.kb'), { recursive: true });
+    kbHome = join(testDir, 'home');
+    previousHome = process.env.HOME;
+    previousKbHome = process.env.KB_HOME;
+    previousPlatformRoot = process.env.KB_PLATFORM_ROOT;
+    process.env.HOME = kbHome;
+    process.env.KB_HOME = kbHome;
+    await createProjectRegistry({ root: kbHome }).add(testDir);
+    process.env.KB_PLATFORM_ROOT = await realpath(testDir);
   });
 
   afterEach(async () => {
     // Cleanup
     await rm(testDir, { recursive: true, force: true });
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousKbHome === undefined) delete process.env.KB_HOME; else process.env.KB_HOME = previousKbHome;
+    if (previousPlatformRoot === undefined) delete process.env.KB_PLATFORM_ROOT; else process.env.KB_PLATFORM_ROOT = previousPlatformRoot;
   });
 
   describe('Config Discovery', () => {
@@ -79,7 +95,7 @@ describe('Platform Initialization (Real)', () => {
       // single config file as platform defaults (adapters is platform-only,
       // so a project-layer override would be rejected by design — see ADR-0012).
       const originalPlatformRoot = process.env.KB_PLATFORM_ROOT;
-      process.env.KB_PLATFORM_ROOT = testDir;
+      process.env.KB_PLATFORM_ROOT = await realpath(testDir);
       try {
         const result = await initializePlatform(nestedDir);
 
@@ -150,6 +166,25 @@ describe('Platform Initialization (Real)', () => {
   });
 
   describe('Platform Initialization', () => {
+    it('loads platform-only configuration without resolving a project', async () => {
+      const unregistered = join(testDir, 'unregistered-cwd');
+      await mkdir(join(unregistered, '.kb'), { recursive: true });
+      await writeFile(join(unregistered, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapters: {} } }));
+      const originalPlatformRoot = process.env.KB_PLATFORM_ROOT;
+      process.env.KB_PLATFORM_ROOT = unregistered;
+      try {
+        const result = await initializePlatform(unregistered, undefined, {
+          skipAdapterInitialization: true,
+          projectScope: 'platform',
+        });
+        expect(result.projectRoot).toBe(unregistered);
+        expect(result.rawConfig).toBeDefined();
+      } finally {
+        if (originalPlatformRoot === undefined) delete process.env.KB_PLATFORM_ROOT;
+        else process.env.KB_PLATFORM_ROOT = originalPlatformRoot;
+      }
+    });
+
     it('should initialize platform with config', async () => {
       const configPath = join(testDir, '.kb', 'kb.config.json');
       await writeFile(configPath, JSON.stringify({
@@ -233,5 +268,14 @@ describe('Platform Initialization (Real)', () => {
 
       expect(result.platformConfig).toBeDefined();
     });
+  });
+});
+
+describe('platform development mode marker', () => {
+  it('activates only for the explicit platform.mode development marker', () => {
+    expect(hasExplicitDevelopmentMode({ platform: { mode: 'development' } })).toBe(true);
+    expect(hasExplicitDevelopmentMode({ platform: { mode: 'production' } })).toBe(false);
+    expect(hasExplicitDevelopmentMode({ profile: { products: { release: { workspace: { type: 'pnpm', root: '.' } } } } })).toBe(false);
+    expect(hasExplicitDevelopmentMode(undefined)).toBe(false);
   });
 });

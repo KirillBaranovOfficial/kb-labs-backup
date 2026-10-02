@@ -10,15 +10,12 @@
  *   place from which plugin discovery should scan `node_modules`, and where
  *   cloud/CI deployments may place per-installation platform defaults.
  *
- * - **projectRoot** — the directory that contains the user's `.kb/` folder,
- *   including `.kb/kb.config.json` and any runtime state written by plugins
- *   (`.kb/qa`, `.kb/mind`, `.kb/release`, `.kb/marketplace.lock`, etc.).
- *   This is *where the user is working*.
+ * - **projectRoot** — the registered project directory containing the user's
+ *   current working directory. Membership comes from the platform registry;
+ *   repository config files do not establish project identity.
  *
- * In development (monorepo workspace) mode these two roots typically resolve
- * to the same directory. In installed mode they are different — the platform
- * lives under e.g. `/opt/kb-labs` while the project lives under
- * `~/work/my-app`.
+ * A development workspace is a project only after registration. In installed
+ * mode the platform and project roots are usually different.
  */
 
 /**
@@ -34,11 +31,8 @@ export interface WorkspaceFs {
 // ──────────────────────────────────────────────────────────────────────────
 
 export type ProjectRootSource =
-  | 'explicit'
-  | 'env'
-  | 'config'
-  | 'repo'
-  | 'fallback'
+  | 'registry'
+  | 'platform'
 
 export interface ProjectRootResolution {
   rootDir: string
@@ -46,17 +40,13 @@ export interface ProjectRootResolution {
 }
 
 export interface ResolveProjectRootOptions {
-  /**
-   * Explicit root directory to use (e.g. from CLI flag). Highest priority.
-   */
+  /** Current working directory used to find its registered project. */
   cwd?: string
   /**
    * Starting directory for discovery. Defaults to process.cwd().
    */
   startDir?: string
-  /**
-   * Environment variables map. Defaults to process.env.
-   */
+  /** Environment variables used to select KB_HOME for the project registry. */
   env?: Record<string, string | undefined>
   /**
    * Optionally inject custom filesystem helpers for testing.
@@ -133,7 +123,10 @@ export interface ResolvePlatformRootOptions {
 
 export interface ResolveRootsOptions
   extends ResolvePlatformRootOptions,
-    ResolveProjectRootOptions {}
+    ResolveProjectRootOptions {
+  /** Resolve only platform identity; the returned projectRoot aliases platformRoot. */
+  projectScope?: 'required' | 'platform'
+}
 
 export interface RootsResolution {
   /** Where `node_modules/@kb-labs/*` lives. */

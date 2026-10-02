@@ -43,13 +43,19 @@ spec:
         - name: {{ $name }}
           image: {{ include "kb-labs-platform.image" (dict "Values" $.Values "svc" $svc) }}
           imagePullPolicy: {{ $.Values.image.pullPolicy }}
-          {{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace-registry") }}
+          {{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace-registry") (eq $name "state-daemon") }}
           env:
+            {{- if eq $name "state-daemon" }}
+            - name: KB_STATE_DAEMON_PORT
+              value: {{ $svc.port | quote }}
+            {{- end }}
+            {{- if or (eq $name "gateway") (eq $name "rest-api") (eq $name "marketplace-registry") }}
             - name: GATEWAY_INTERNAL_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ $.Values.internalSecretSecretName }}
                   key: GATEWAY_INTERNAL_SECRET
+            {{- end }}
           {{- end }}
           ports:
             - name: http
