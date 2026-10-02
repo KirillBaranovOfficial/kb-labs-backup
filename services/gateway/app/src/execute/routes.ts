@@ -29,7 +29,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
    * POST /api/v1/execute
    * hide: true — uses ndjson chunked streaming via reply.raw, incompatible with OpenAPI response schema
    */
-  app.post('/api/v1/execute', { schema: { tags: ['Execute'], summary: 'Execute a plugin handler', hide: true } }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/execute', { config: { ux: 'raw' }, schema: { tags: ['Execute'], summary: 'Execute a plugin handler', hide: true } }, async (request: FastifyRequest, reply: FastifyReply) => {
     const auth = request.authContext;
     if (!auth) {
       return reply.code(401).send({ error: 'Unauthorized' });

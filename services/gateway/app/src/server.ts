@@ -137,7 +137,7 @@ export async function createServer(
   webhookManifests?: WebhookManifestEntry[],
   projectRouting?: ProjectRouting,
   hostRoutes?: HostRoutes,
-  routeObserver?: (method: string | string[], url: string) => void,
+  routeObserver?: (route: { method: string | string[]; url: string; schema?: unknown; config?: unknown }) => void,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -166,7 +166,9 @@ export async function createServer(
   registerGatewayUxBoundary(app, gatewayLogger);
   if (routeObserver) {
     app.addHook("onRoute", (route) => {
-      if (route.url) { routeObserver(route.method, route.url); }
+      if (route.url) {
+        routeObserver({ method: route.method, url: route.url, schema: route.schema, config: route.config });
+      }
     });
   }
 

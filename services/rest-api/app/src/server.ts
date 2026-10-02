@@ -116,7 +116,8 @@ function createPinoCompatibleLogger(logger: ILogger): FastifyBaseLogger {
 export async function createServer(
   config: RestApiConfig,
   repoRoot: string,
-  registry: IEntityRegistry
+  registry: IEntityRegistry,
+  routeObserver?: (route: { method: string | string[]; url: string; schema?: unknown; config?: unknown }) => void
 ): Promise<FastifyInstance> {
   // HTTP/2 configuration (requires HTTPS)
   const useHttp2 = config.http2?.enabled ?? false;
@@ -204,6 +205,21 @@ export async function createServer(
   // Store registry in server instance
   server.registry = registry;
 
+  if (routeObserver) {
+    const observeRoute = (route: { method: string | string[]; url: string; schema?: unknown; config?: unknown }) => {
+      routeObserver({
+        method: route.method,
+        url: route.url,
+        schema: route.schema,
+        config: route.config,
+      });
+    };
+    (server.addHook as unknown as (
+      name: 'onRoute',
+      hook: typeof observeRoute
+    ) => void).call(server, 'onRoute', observeRoute);
+  }
+
   // Register plugins
   await registerPlugins(server as unknown as FastifyInstance, config);
 
@@ -215,4 +231,3 @@ export async function createServer(
 
   return server as unknown as FastifyInstance;
 }
-

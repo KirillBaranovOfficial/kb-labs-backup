@@ -33,6 +33,8 @@ export function registerEnvelopeMiddleware(
   // Use 'onSend' hook to modify payload after Fastify serializes it but before sending
   // This ensures we get the serialized JSON string and can wrap it properly
   server.addHook('onSend', async (request, reply, payload) => {
+    if (request.routeOptions.config.ux === 'raw' && reply.statusCode < 400) return payload;
+
     // Set header with try-catch to prevent ERR_HTTP_HEADERS_SENT
     try {
       if (!reply.raw.headersSent) {
@@ -40,11 +42,6 @@ export function registerEnvelopeMiddleware(
       }
     } catch (err) {
       // Headers already sent, ignore
-    }
-
-    // Skip envelope wrapping for streaming responses
-    if (reply.getHeader('content-type') === 'text/event-stream') {
-      return payload;
     }
 
     // Serialize plain objects that reached onSend without going through

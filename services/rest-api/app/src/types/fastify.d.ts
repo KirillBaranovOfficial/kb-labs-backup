@@ -38,6 +38,10 @@ declare module 'fastify/types/instance' {
 }
 
 declare module 'fastify' {
+  interface FastifyContextConfig {
+    ux?: 'raw';
+  }
+
   interface FastifyInstance {
     registry?: IEntityRegistry;
     kbReadiness?: ReadinessState;

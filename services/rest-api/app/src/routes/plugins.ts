@@ -817,6 +817,7 @@ export async function registerPluginSnapshotRoutes(
   }>(
     `${basePath}/plugins/@:scope/:name/readme`,
     {
+      config: { ux: "raw" },
       schema: { hide: true },
     },
     async (request, reply) => {
@@ -862,6 +863,7 @@ export async function registerPluginSnapshotRoutes(
   }>(
     `${basePath}/plugins/@:scope/:name/changelog`,
     {
+      config: { ux: "raw" },
       schema: { hide: true },
     },
     async (request, reply) => {
@@ -949,6 +951,7 @@ export async function registerPluginSnapshotRoutes(
   }>(
     "/plugins/@:scope/:name/widgets/*",
     {
+      config: { ux: "raw" },
       schema: { hide: true },
     },
     async (request, reply) => {

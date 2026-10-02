@@ -23,7 +23,7 @@ export function registerAggregatedDocsRoutes(
   const upstreamServiceIds = Object.values(config.upstreams).map((u) => u.serviceId);
 
   // Merged OpenAPI spec from all upstreams
-  app.get('/openapi-merged.json', async (_req, reply) => {
+  app.get('/openapi-merged.json', { schema: { tags: ['Documentation'], summary: 'Merged OpenAPI document' } }, async (_req, reply) => {
     // Try cache first
     if (cache) {
       try {

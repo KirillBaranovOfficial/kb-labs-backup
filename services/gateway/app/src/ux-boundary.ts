@@ -12,6 +12,7 @@ import { createUxFailureResult, createUxSuccessResult, isUxResult } from '@kb-la
 /** Install the final JSON result boundary before registering route plugins. */
 export function registerGatewayUxBoundary(app: FastifyInstance, logger: ILogger): void {
   app.addHook('onSend', async (request, reply, payload) => {
+    if (request.routeOptions.config.ux === 'raw' && reply.statusCode < 400) return payload;
     if (typeof payload !== 'string') return payload;
     let body: unknown;
     try { body = JSON.parse(payload); } catch { return payload; }

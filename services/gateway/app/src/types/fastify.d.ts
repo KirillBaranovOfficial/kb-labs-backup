@@ -6,6 +6,10 @@
 import 'fastify';
 
 declare module 'fastify' {
+  interface FastifyContextConfig {
+    ux?: 'raw';
+  }
+
   interface FastifyRequest {
     /** Raw request body captured by preParsing hook (used for HMAC verification). */
     rawBody?: Buffer;

@@ -18,7 +18,21 @@ export function registerInternalRoutes(
   hostRegistry: HostRegistry,
   cache?: import('@kb-labs/core-platform').ICache,
 ): void {
-  scope.post('/internal/dispatch', async (request, reply) => {
+  scope.post('/internal/dispatch', {
+    schema: {
+      body: {
+        type: 'object',
+        properties: {
+          namespaceId: { type: 'string' },
+          hostId: { type: 'string' },
+          adapter: { type: 'string' },
+          method: { type: 'string' },
+          args: { type: 'array' },
+        },
+        required: ['namespaceId', 'adapter', 'method'],
+      },
+    },
+  }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];
     if (!internalSecret || provided !== internalSecret) {
       return reply.code(403).send({ error: 'Forbidden' });
@@ -64,7 +78,9 @@ export function registerInternalRoutes(
     }
   });
 
-  scope.get('/internal/auth/handle/:handle', async (request, reply) => {
+  scope.get('/internal/auth/handle/:handle', {
+    schema: { params: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'] } },
+  }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];
     if (!internalSecret || provided !== internalSecret) {
       return reply.code(403).send({ error: 'Forbidden' });
@@ -80,7 +96,24 @@ export function registerInternalRoutes(
     return { namespaceId: record.namespaceId, name: record.name, handle: record.handle };
   });
 
-  scope.post('/internal/resolve-host', async (request, reply) => {
+  scope.post('/internal/resolve-host', {
+    schema: {
+      body: {
+        type: 'object',
+        properties: {
+          namespaceId: { type: 'string' },
+          target: {
+            type: 'object',
+            properties: {
+              hostId: { type: 'string' },
+              hostSelection: { type: 'string' },
+              repoFingerprint: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];
     if (!internalSecret || provided !== internalSecret) {
       return reply.code(403).send({ error: 'Forbidden' });
