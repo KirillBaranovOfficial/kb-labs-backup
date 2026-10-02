@@ -28,6 +28,7 @@ type DiagnoseResult = CommandResult & {
 export const logsDiagnose = defineSystemCommand<Flags, DiagnoseResult>({
   name: 'diagnose',
   scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description: 'Analyze recent errors and warnings (agent-friendly diagnostic report)',
   category: 'logs',
   examples: generateExamples('logs diagnose', 'kb', [

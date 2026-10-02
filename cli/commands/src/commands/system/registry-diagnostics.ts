@@ -25,6 +25,7 @@ type DiagnosticsResult = CommandResult & {
 export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, DiagnosticsResult>({
   name: 'diagnostics',
   scope: 'platform',
+  jsonTest: { noSafeValidPath: 'Fresh diagnostics discovery imports every installed plugin manifest.' },
   description: 'Show registry diagnostic report',
   category: 'registry',
   examples: [],
@@ -58,7 +59,7 @@ export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, Diagnos
   },
   formatter(result, ctx, flags) {
     if (flags.json) {
-      ctx.ui.info(JSON.stringify(result.report, null, 2));
+      ctx.ui.json({ ok: true, data: result.report });
       return;
     }
 

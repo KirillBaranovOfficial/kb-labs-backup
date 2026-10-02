@@ -31,7 +31,7 @@ import { getDefaultMiddlewares } from "./middlewares";
 import { executePlugin, createSystemCommandContext } from "./plugin-executor";
 import { tryResolveGateway, executeViaGateway } from "./gateway-executor";
 import { loadEnvFile } from "./env-loader";
-import { initializePlatform } from "./platform-init";
+import { initializePlatform, resolveProjectConfig } from "./platform-init";
 import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
@@ -116,17 +116,7 @@ export async function executeCli(
       projectScope: "platform",
     });
   } catch (error) {
-    const envelope = isProjectRegistryError(error)
-      ? projectErrorEnvelope(error)
-      : toErrorEnvelope(error);
-    const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
-    if (global.json) {
-      presenter.json({ ok: false, error: envelope });
-    } else {
-      presenter.error(`${envelope.message} [${envelope.code}]`);
-      presenter.write(`Hint: ${envelope.hint}\n`);
-    }
-    return 1;
+    return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
   }
   globalThis.__KB_RAW_CONFIG__ = initialized.rawConfig;
   const authRoute = registryStore.resolve(cmdPath);
@@ -152,19 +142,12 @@ export async function executeCli(
   const projectScope = resolveProjectScope(authRoute, global, cmdPath);
   if (projectScope === "required") {
     try {
-      initialized = await initializePlatform(cwd, options.moduleUrl, { projectScope });
+      initialized = {
+        ...initialized,
+        ...await resolveProjectConfig(cwd, options.moduleUrl),
+      };
     } catch (error) {
-      const envelope = isProjectRegistryError(error)
-        ? projectErrorEnvelope(error)
-        : toErrorEnvelope(error);
-      const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
-      if (global.json) {
-        presenter.json({ ok: false, error: envelope });
-      } else {
-        presenter.error(`${envelope.message} [${envelope.code}]`);
-        presenter.write(`Hint: ${envelope.hint}\n`);
-      }
-      return 1;
+      return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
     }
   }
 
@@ -583,6 +566,25 @@ function reportGateResult<T>(
     return 1;
   }
   return gated.value;
+}
+
+function reportInitializationError(
+  error: unknown,
+  global: ReturnType<typeof parseArgs>["global"],
+  jsonPresenterFactory: typeof createJsonPresenter,
+  textPresenterFactory: typeof createTextPresenter,
+): number {
+  const envelope = isProjectRegistryError(error)
+    ? projectErrorEnvelope(error)
+    : toErrorEnvelope(error);
+  const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
+  if (global.json) {
+    presenter.json({ ok: false, error: envelope });
+  } else {
+    presenter.error(`${envelope.message} [${envelope.code}]`);
+    presenter.write(`Hint: ${envelope.hint}\n`);
+  }
+  return 1;
 }
 
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";

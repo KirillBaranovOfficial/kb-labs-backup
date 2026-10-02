@@ -265,6 +265,7 @@ type PluginsRegistryFlags = {
 export const pluginsRegistry = defineSystemCommand<PluginsRegistryFlags, PluginsRegistryResult>({
   name: 'registry',
   scope: 'project',
+  jsonTest: { safeArgs: [] },
   description: 'List all REST API plugin manifests for REST API server',
   category: 'marketplace',
   examples: generateExamples('registry', 'marketplace', [

@@ -23,6 +23,7 @@ export type ProjectShowResult = CommandResult & {
 export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
   name: 'show',
   scope: 'platform',
+  jsonTest: { safeArgs: ["__fixture_project_id__"] },
   description: 'Show one registered project',
   longDescription:
     'Shows a project by id, name or path. Without an argument the current folder is looked up. ' +

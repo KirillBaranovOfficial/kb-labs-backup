@@ -59,6 +59,7 @@ export function renderMcpClientConfig(
 export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
   name: "config",
   scope: 'project',
+  jsonTest: { safeArgs: ["claude"] },
   description: "Print MCP client configuration for the current project",
   longDescription:
     "Prints a ready-to-copy HTTP MCP configuration for Claude Code, Codex, or Cursor. In secured mode, set KB_MCP_TOKEN to a gateway-issued user or API token.",

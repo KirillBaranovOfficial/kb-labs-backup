@@ -14,6 +14,7 @@ type VersionResult = CommandResult & {
 export const version = defineSystemCommand<VersionFlags, VersionResult>({
   name: 'version',
   scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description: 'Show CLI version',
   longDescription: 'Displays the current version of the KB Labs CLI',
   category: 'info',

@@ -109,6 +109,8 @@ export interface PlatformInitResult {
   projectRoot: string;
 }
 
+export type ProjectConfigResult = Omit<PlatformInitResult, "platform">;
+
 /**
  * Initialize the platform for the CLI process.
  *
@@ -251,4 +253,27 @@ export async function initializePlatform(
         projectRoot,
       };
   }
+}
+
+/**
+ * Resolve the selected project's config and overlays after platform adapters
+ * have been initialized. This reuses the single platform container and only
+ * returns the project-aware config view for dispatch.
+ */
+export async function resolveProjectConfig(
+  cwd: string,
+  moduleUrl?: string,
+): Promise<ProjectConfigResult> {
+  const loadResult = await loadPlatformConfig({
+    moduleUrl,
+    startDir: cwd,
+    projectScope: "required",
+  });
+  return {
+    platformConfig: loadResult.platformConfig,
+    rawConfig: loadResult.rawConfig,
+    effectiveConfig: loadResult.effectiveConfig,
+    platformRoot: loadResult.platformRoot,
+    projectRoot: loadResult.projectRoot,
+  };
 }

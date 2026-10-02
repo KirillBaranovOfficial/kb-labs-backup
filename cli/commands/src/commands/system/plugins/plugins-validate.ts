@@ -76,6 +76,7 @@ async function validateManifestAgainstContracts(
 export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginValidateResult>({
   name: 'plugin:validate',
   scope: 'project',
+  jsonTest: { safeArgs: ["--manifest", "__fixture_manifest__"] },
   description: 'Validate plugin manifest and contracts',
   category: 'marketplace',
   flags: {

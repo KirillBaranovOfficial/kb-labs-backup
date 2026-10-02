@@ -101,6 +101,7 @@ function fallbackSummary(stats: ReturnType<typeof computeLogStats>): string {
 export const logsSummarize = defineSystemCommand<Flags, LogSummarizeResult>({
   name: 'summarize',
   scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command may invoke a model service to summarize logs." },
   description: 'AI-powered log analysis — ask a question about your logs',
   category: 'logs',
   examples: generateExamples('logs summarize', 'kb', [

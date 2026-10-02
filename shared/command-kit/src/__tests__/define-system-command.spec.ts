@@ -70,10 +70,34 @@ describe('defineSystemCommand', () => {
   });
 
   describe('Basic Command Creation', () => {
+    it('rejects undeclared flags through the JSON error presenter', async () => {
+      const handler = vi.fn(async () => ({ ok: true as const }));
+      const command = defineSystemCommand({
+        name: 'strict-flags',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
+        description: 'Strict flag validation fixture',
+        flags: { json: { type: 'boolean' } },
+        handler,
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true, unexpected: true });
+
+      expect(exitCode).toBe(2);
+      expect(handler).not.toHaveBeenCalled();
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'KB_RUNTIME_INPUT_INVALID',
+          hint: expect.any(String),
+        }),
+      }));
+    });
     it('should create a command with correct metadata', () => {
       const command = defineSystemCommand({
         name: 'test-cmd',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test command',
         longDescription: 'Long description',
         category: 'testing',
@@ -101,6 +125,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -113,6 +138,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -125,6 +151,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -139,6 +166,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           name: { type: 'string', description: 'Name', required: true },
@@ -185,6 +213,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           mode: { type: 'string', choices: ['dev', 'prod'] as const },
@@ -204,6 +233,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler,
@@ -230,6 +260,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true, data: 'success' }),
@@ -243,6 +274,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: false, error: 'failed' }),
@@ -256,6 +288,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => 42,
@@ -269,6 +302,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: () => ({ ok: true }),
@@ -286,6 +320,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           name: { type: 'string', required: true },
@@ -305,6 +340,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           name: { type: 'string', required: true },
@@ -328,6 +364,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           count: { type: 'number', default: 10 },
@@ -351,6 +388,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => {
@@ -368,6 +406,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => {
@@ -384,6 +423,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => {
@@ -405,6 +445,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         analytics: {
@@ -429,6 +470,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {
           name: { type: 'string' },
@@ -456,6 +498,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler,
@@ -472,6 +515,7 @@ describe('defineSystemCommand', () => {
       const command = defineSystemCommand({
         name: 'test-cmd',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -493,6 +537,7 @@ describe('defineSystemCommandGroup', () => {
     const cmd1 = defineSystemCommand({
       name: 'cmd1',
       scope: 'project',
+      jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
       description: 'Command 1',
       flags: {},
       handler: async () => ({ ok: true }),
@@ -501,6 +546,7 @@ describe('defineSystemCommandGroup', () => {
     const cmd2 = defineSystemCommand({
       name: 'cmd2',
       scope: 'project',
+      jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
       description: 'Command 2',
       flags: {},
       handler: async () => ({ ok: true }),

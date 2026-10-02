@@ -23,6 +23,7 @@ type UnbindResult = CommandResult & {
 export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
   name: 'unbind',
   scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command changes the platform adapter binding." },
   description: 'Remove an adapter binding from the platform',
   longDescription:
     'Removes platform.adapters.<slot> and platform.adapterOptions.<slot> from platform configuration.',

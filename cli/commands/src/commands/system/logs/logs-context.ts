@@ -23,6 +23,7 @@ type Flags = {
 export const logsContext = defineSystemCommand<Flags, CommandResult>({
   name: "context",
   scope: 'platform',
+  jsonTest: { safeArgs: ["--request-id", "__fixture_request_id__"] },
   description: "Show full timeline for an execution, trace, or request",
   category: "logs",
   examples: generateExamples("logs context", "kb", [

@@ -22,6 +22,7 @@ type PluginsScaffoldFlags = {
 export const pluginsScaffold = defineSystemCommand<PluginsScaffoldFlags, PluginsScaffoldResult>({
   name: 'scaffold',
   scope: 'project',
+  jsonTest: { noSafeValidPath: "This command creates files in a plugin workspace." },
   description: 'Generate a new KB CLI plugin template',
   category: 'marketplace',
   examples: generateExamples('scaffold', 'marketplace', [

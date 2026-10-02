@@ -90,6 +90,7 @@ async function resolveBearerToken(
 export const authRegister = defineSystemCommand<RegisterFlags, RegisterResult>({
   name: 'register',
   scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command creates an authentication account." },
   description: 'Register a new service account with Gateway',
   longDescription:
     'Creates a new client registration in Gateway and returns clientId + clientSecret. ' +

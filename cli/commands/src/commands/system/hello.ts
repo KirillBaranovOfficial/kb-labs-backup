@@ -12,6 +12,7 @@ type HelloResult = CommandResult & {
 export const hello = defineSystemCommand<HelloFlags, HelloResult>({
   name: 'hello',
   scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description: 'Print Hello World',
   longDescription: 'Prints "Hello World" — a simple smoke-test for CLI functionality',
   category: 'info',
