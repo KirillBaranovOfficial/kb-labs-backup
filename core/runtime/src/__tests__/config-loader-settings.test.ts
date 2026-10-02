@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { createProjectRegistry } from '@kb-labs/core-project-registry'
 
 const discoveryResult = vi.hoisted(() => ({
   plugins: [] as Array<{ id: string; packageRoot: string; manifestPath: string }>,
@@ -32,11 +33,14 @@ describe('loadPlatformConfig project plugin settings', () => {
     const projectRoot = path.join(temporaryRoot, 'project')
     const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'sample')
     const home = path.join(temporaryRoot, 'home')
-    const projectId = 'prj_settings'
+    mkdirSync(projectRoot, { recursive: true })
     mkdirSync(path.join(platformRoot, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true })
     mkdirSync(path.join(platformRoot, '.kb'), { recursive: true })
-    mkdirSync(path.join(home, 'state', projectId), { recursive: true })
     mkdirSync(packageRoot, { recursive: true })
+    const env = { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot, KB_HOME: home }
+    const project = await createProjectRegistry({ env }).add(realpathSync(projectRoot))
+    const projectId = project.project.id
+    mkdirSync(path.join(home, 'state', projectId), { recursive: true })
     writeFileSync(path.join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
       plugins: { sample: { enabled: false, scope: { scopes: [{ id: 'platform' }] } } },
     }))
@@ -55,7 +59,7 @@ describe('loadPlatformConfig project plugin settings', () => {
 
     const result = await loadPlatformConfig({
       startDir: projectRoot,
-      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot, KB_HOME: home },
+      env,
       projectId,
       loadEnvFile: false,
     })

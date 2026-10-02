@@ -23,8 +23,11 @@ function makeProjectDir(dir: string): void {
 
 async function projectRegistration(projectRoot: string) {
   const env = { KB_HOME: path.join(tmpDir, 'kb-home') }
-  const project = await createProjectRegistry({ env }).add(realpathSync(projectRoot))
-  return { env, projectId: project.project.id }
+  const root = realpathSync(projectRoot)
+  const registry = createProjectRegistry({ env })
+  const existing = (await registry.list()).find((entry) => entry.project.path === root)
+  const project = existing?.project ?? (await registry.add(root)).project
+  return { env, projectId: project.id }
 }
 
 async function writeOverlay(projectRoot: string, name: string, contents: string): Promise<string> {
@@ -50,8 +53,8 @@ describe('loadPlatformConfig: overlays', () => {
     const env: NodeJS.ProcessEnv = { ...options?.env, KB_HOME: path.join(tmpDir, 'kb-home') }
     if (env.KB_PLATFORM_ROOT) env.KB_PLATFORM_ROOT = realpathSync(env.KB_PLATFORM_ROOT)
     const startDir = realpathSync(options?.startDir ?? process.cwd())
-    const registration = await createProjectRegistry({ env }).add(startDir)
-    return loadPlatformConfig({ ...options, startDir, env, projectId: registration.project.id })
+    const registration = await projectRegistration(startDir)
+    return loadPlatformConfig({ ...options, startDir, env, projectId: registration.projectId })
   }
 
   beforeAll(() => {
@@ -97,7 +100,7 @@ describe('loadPlatformConfig: overlays', () => {
 
     expect(result.platformConfig.adapters).toEqual({ llm: 'openai' })
     expect((result.platformConfig.platform as Record<string, unknown>)?.features).toEqual({ rerank: true })
-    expect(result.sources.overlays).toEqual([realpathSync(overlayPath)])
+    expect(result.sources.overlays).toEqual([overlayPath])
   })
 
   it('merges multiple overlays in lexicographic order', async () => {
@@ -115,7 +118,7 @@ describe('loadPlatformConfig: overlays', () => {
     })
 
     expect((result.platformConfig.platform as Record<string, unknown>)?.features).toEqual({ mode: 'last', added: true })
-    expect(result.sources.overlays).toEqual([realpathSync(aPath), realpathSync(bPath)])
+    expect(result.sources.overlays).toEqual([aPath, bPath])
   })
 
   it('effectiveConfig applies overlays to product sections; rawConfig stays raw', async () => {
@@ -124,7 +127,7 @@ describe('loadPlatformConfig: overlays', () => {
     makePlatformDir(platformRoot)
     makeProjectDir(projectRoot)
     await writeProjectSettings(projectRoot, { plugins: { mind: { retrieval: { rerank: true } } } })
-    await writeOverlay(projectRoot, 'hyde__overlay.jsonc', '{ "plugins": { "mind": { retrieval: { hyde: true } } } }')
+    await writeOverlay(projectRoot, 'hyde__overlay.jsonc', '{ "plugins": { "mind": { "retrieval": { "hyde": true } } } }')
 
     const result = await loadConfig({
       startDir: projectRoot,

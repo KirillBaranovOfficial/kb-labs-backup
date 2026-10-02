@@ -27,8 +27,11 @@ async function projectRegistration(root: string) {
   mkdirSync(root, { recursive: true })
   const home = path.join(tmpDir, 'kb-home')
   const env = { KB_HOME: home }
-  const project = await createProjectRegistry({ env }).add(realpathSync(root))
-  return { env, projectId: project.project.id }
+  const canonicalRoot = realpathSync(root)
+  const registry = createProjectRegistry({ env })
+  const existing = (await registry.list()).find((entry) => entry.project.path === canonicalRoot)
+  const project = existing?.project ?? (await registry.add(canonicalRoot)).project
+  return { env, projectId: project.id }
 }
 
 async function writeProjectSettings(root: string, contents: unknown): Promise<void> {

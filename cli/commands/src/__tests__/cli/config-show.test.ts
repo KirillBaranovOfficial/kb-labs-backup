@@ -29,10 +29,17 @@ type LoadPlatformConfigResult = {
 };
 
 const loadPlatformConfigMock = vi.fn<() => Promise<LoadPlatformConfigResult>>();
+const sharedConfigMock = vi.hoisted(() => ({
+  resolveConfigRoots: vi.fn(),
+  manifestSettingsLayers: vi.fn(() => []),
+  renderErrorEnvelope: vi.fn(),
+}));
 
 vi.mock('@kb-labs/core-runtime', () => ({
   loadPlatformConfig: (...args: unknown[]) => loadPlatformConfigMock(),
 }));
+
+vi.mock('../../commands/system/config/shared.js', () => sharedConfigMock);
 
 function makeCtx(overrides: Partial<PluginContextV3['ui']> = {}): PluginContextV3 {
   return {
@@ -88,6 +95,12 @@ function splitRootResult(overrides: Partial<LoadPlatformConfigResult> = {}): Loa
 describe('config show', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sharedConfigMock.resolveConfigRoots.mockResolvedValue({
+      platformRoot: '/platform-root',
+      projectRoot: '/project-root',
+      projectId: 'prj_config_show_test',
+      sameLocation: false,
+    });
   });
 
   it('attributes platform-owned fields to "platform" and project-only fields to "project"', async () => {

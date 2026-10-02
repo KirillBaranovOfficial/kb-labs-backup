@@ -440,7 +440,8 @@ describe('config get', () => {
 
     const written = await runAt(outsideRoot, configSet, ['plugins.commit.scope.scopes', '[]'], { scope: 'platform' })
     expect(written.code).toBe(0)
-    expect(written.out.json[0]).toMatchObject({ ok: true, scope: 'platform', file: PLATFORM_FILE() })
+    expect(written.out.json[0]).toMatchObject({ ok: true, scope: 'platform' })
+    expect(await fsp.realpath(String(written.out.json[0]?.file))).toBe(await fsp.realpath(PLATFORM_FILE()))
     await expect(fsp.access(PROJECT_SETTINGS_FILE())).rejects.toThrow()
 
     const read = await runAt(outsideRoot, configGet, ['plugins.commit.scope.scopes'], { scope: 'platform' })
@@ -451,8 +452,8 @@ describe('config get', () => {
       found: true,
       value: [],
       layer: 'platform',
-      source: PLATFORM_FILE(),
     })
+    expect(await fsp.realpath(String(read.out.json[0]?.source))).toBe(await fsp.realpath(PLATFORM_FILE()))
     await expect(fsp.access(PROJECT_SETTINGS_FILE())).rejects.toThrow()
   });
 
