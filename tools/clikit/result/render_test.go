@@ -94,6 +94,18 @@ func TestRenderDiag_HumanShowsReasonAndHint(t *testing.T) {
 	}
 }
 
+func TestRenderDiag_HumanDoesNotPrintMachineCause(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	d := diag.New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.",
+		diag.WithCause("raw internal Go error text"),
+		diag.WithCorrelationID("corr-cause"))
+	var out, herr bytes.Buffer
+	RenderDiag(&out, &herr, d, ModeHuman)
+	if strings.Contains(herr.String(), "raw internal Go error text") {
+		t.Fatalf("human output leaked machine cause: %s", herr.String())
+	}
+}
+
 // case: S-203.1, S-203.2
 func TestMachineResultMatchesSharedContractFixtures(t *testing.T) {
 	for _, fixture := range []string{

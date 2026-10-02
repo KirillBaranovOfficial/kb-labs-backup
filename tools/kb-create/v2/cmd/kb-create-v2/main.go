@@ -521,11 +521,7 @@ func (i invocation) registerProject(projectRoot string) (string, error) {
 	output, err := command.Output()
 	if err != nil {
 		var failure struct {
-			Error *struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-				Hint    string `json:"hint"`
-			} `json:"error"`
+			Error *diag.Diag `json:"error"`
 		}
 		if json.Unmarshal(output, &failure) == nil && failure.Error != nil {
 			return "", fmt.Errorf("%s [%s]. %s", failure.Error.Message, failure.Error.Code, failure.Error.Hint)

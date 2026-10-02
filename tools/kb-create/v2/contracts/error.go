@@ -81,16 +81,15 @@ func LookupCode(code string) (CodeInfo, bool) {
 }
 
 // NewDiag constructs the shared clikit diagnostic for a kb-create error code.
-// Cause remains wrapped for programmatic inspection and is never serialized.
+// The wrapped cause remains available through Unwrap; callers may add safe
+// machine-envelope cause text explicitly with clikit's WithCause option.
 func NewDiag(code, message, hint string, cause error) *diag.Diag {
-	var result *diag.Diag
-	if cause != nil {
-		result = diag.Wrap(cause, code, message)
-	} else {
-		result = diag.New(code, message)
-	}
+	opts := make([]diag.Opt, 0, 2)
 	if hint != "" {
-		result.Hint = hint
+		opts = append(opts, diag.WithHint(hint))
 	}
-	return result
+	if cause != nil {
+		return diag.Wrap(cause, code, message, opts...)
+	}
+	return diag.New(code, message, opts...)
 }

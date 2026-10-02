@@ -46,7 +46,7 @@ func jsonEnvelope(out CommandOutput) map[string]any {
 		"data": out.JSON,
 	}
 	if len(out.Warnings) > 0 {
-		warnings := make([]map[string]any, 0, len(out.Warnings))
+		warnings := make([]diag.Envelope, 0, len(out.Warnings))
 		for _, warning := range out.Warnings {
 			if warning != nil {
 				warnings = append(warnings, errorEnvelope(warning))
@@ -59,39 +59,17 @@ func jsonEnvelope(out CommandOutput) map[string]any {
 	return env
 }
 
-func errorEnvelope(d *diag.Diag) map[string]any {
+func errorEnvelope(d *diag.Diag) diag.Envelope {
 	if d == nil {
-		return nil
+		return diag.Envelope{}
 	}
 	d = diag.FromError(d)
-	catalog, ok := diag.LookupCatalog(d.Code)
-	if !ok {
-		d = diag.FromError(fmt.Errorf("normalized diagnostic code %q has no catalog entry", d.Code))
-		catalog, _ = diag.LookupCatalog(d.Code)
+	envelope, err := diag.ToEnvelope(d)
+	if err != nil {
+		fallback := diag.New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.")
+		envelope, _ = diag.ToEnvelope(fallback)
 	}
-	p := map[string]any{
-		"code":      catalog.Code,
-		"area":      catalog.Area,
-		"stage":     catalog.Stage,
-		"severity":  catalog.Severity,
-		"retryable": catalog.Retryable,
-		"message":   d.Message,
-		"hint":      catalog.Hint,
-	}
-	if d.Reason != "" {
-		p["cause"] = d.Reason
-	}
-	if d.CorrelationID != "" {
-		p["correlationId"] = d.CorrelationID
-	}
-	if len(d.Meta) > 0 {
-		details := make(map[string]string, len(d.Meta))
-		for key, value := range d.Meta {
-			details[key] = fmt.Sprint(value)
-		}
-		p["details"] = details
-	}
-	return p
+	return envelope
 }
 
 // FailureEnvelope returns the shared machine error envelope for result streams.

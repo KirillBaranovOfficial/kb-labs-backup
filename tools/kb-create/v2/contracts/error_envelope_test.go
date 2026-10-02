@@ -37,7 +37,7 @@ func loadCatalog(t *testing.T) catalogFile {
 	return catalog
 }
 
-func TestNewDiagUsesSharedCatalogAndDoesNotSerializeCause(t *testing.T) {
+func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	cause := os.ErrNotExist
 	value := NewDiag(CodeInputRequired, "required input is missing", "pass --input", cause)
 	if value.Code != CodeInputRequired || value.Hint != "pass --input" || value.Unwrap() != cause {
@@ -52,7 +52,12 @@ func TestNewDiagUsesSharedCatalogAndDoesNotSerializeCause(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, exists := fields["cause"]; exists {
-		t.Fatalf("internal cause serialized: %s", data)
+		t.Fatalf("raw Go cause was serialized: %s", data)
+	}
+	for _, field := range []string{"area", "stage", "severity", "retryable", "message", "hint"} {
+		if _, exists := fields[field]; !exists {
+			t.Fatalf("canonical field %q missing: %s", field, data)
+		}
 	}
 }
 

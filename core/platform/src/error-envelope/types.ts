@@ -1,8 +1,8 @@
 /**
  * @module @kb-labs/core-platform/error-envelope/types
  *
- * The unified error envelope shared by the Go launcher (`LauncherError`),
- * the TS platform and Studio. Mirrors `error-envelope.schema.json`.
+ * The unified error envelope shared by Go CLIs through clikit, the TS platform,
+ * and Studio. Mirrors `error-envelope.schema.json`.
  * See docs/architecture/target/08-errors.md section 2 and ADR-0033.
  */
 

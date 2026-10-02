@@ -267,24 +267,16 @@ func (p streamProgress) Emit(event runtime.ProgressEvent) {
 
 func errorFromOperationResult(data []byte, exitCode int) error {
 	var envelope struct {
-		Error struct {
-			Code          string         `json:"code"`
-			Message       string         `json:"message"`
-			Hint          string         `json:"hint"`
-			CorrelationID string         `json:"correlationId"`
-			Details       map[string]any `json:"details"`
-		} `json:"error"`
+		Error *diag.Diag `json:"error"`
 	}
-	if json.Unmarshal(data, &envelope) == nil && envelope.Error.Code != "" {
+	if json.Unmarshal(data, &envelope) == nil && envelope.Error != nil && envelope.Error.Code != "" {
+		result := envelope.Error
 		if exitCode == diag.ExitInput {
-			return diag.New("KB_RUNTIME_INPUT_INVALID", envelope.Error.Message, diag.WithCorrelationID(envelope.Error.CorrelationID))
+			return diag.New("KB_RUNTIME_INPUT_INVALID", result.Message,
+				diag.WithHint(result.Hint), diag.WithCause(result.Cause),
+				diag.WithCorrelationID(result.CorrelationID), diag.WithMeta(result.Meta))
 		}
-		d := diag.New(envelope.Error.Code, envelope.Error.Message, diag.WithCorrelationID(envelope.Error.CorrelationID))
-		d.Hint = envelope.Error.Hint
-		if len(envelope.Error.Details) > 0 {
-			d.Meta = envelope.Error.Details
-		}
-		return d
+		return result
 	}
 	if exitCode == diag.ExitInput {
 		return diag.New("KB_RUNTIME_INPUT_INVALID", "The command input is invalid.")

@@ -186,7 +186,11 @@ func (s *Server) updateRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.fail(w, http.StatusBadRequest, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "The update request is not valid.", "Send exactly one of an exact version or a channel (stable, canary, experimental).", err))
+		diagnostic := contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "The update request is not valid.", "Send exactly one of an exact version or a channel (stable, canary, experimental).", err)
+		if input.Version != "" && input.Channel != "" {
+			diagnostic.Cause = "exactly one of version and channel is required"
+		}
+		s.fail(w, http.StatusBadRequest, diagnostic)
 		return
 	}
 	s.write(w, http.StatusAccepted, UpdateRequestResponse{OK: true, Protocol: ProtocolVersion, Request: request})
