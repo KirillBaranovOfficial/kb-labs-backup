@@ -476,11 +476,11 @@ def mcp_diagnostics(project_id: str, token: str) -> str | None:
     return None
 
 
-def _case_claims(name: str) -> list[str]:
+def _case_claims(name: str, mode: str = "local") -> list[str]:
     if name in {"gateway readiness", "workflow health"}:
         return ["PC-002.3"]
     if name == "registered project runtime identity":
-        return ["PC-002.8", "S-124.11"]
+        return ["PC-002.8", "S-124.11", "S-124.13"]
     case_by_name = {
         "project plugin settings isolation and clean repositories": "S-204.1",
         "project-scoped MCP initialize": "S-045.1",
@@ -499,7 +499,10 @@ def _case_claims(name: str) -> list[str]:
     if name == "project MCP secured missing and invalid token rejection":
         return ["S-045.5", "S-140.6"]
     if name == "MCP UX result contract from live registry":
-        return ["S-203.2", "S-203.6"]
+        claims = ["S-203.2", "S-203.6"]
+        if mode == "secured":
+            return [*claims, "S-045.6", "S-140.7"]
+        return claims
     if not case_id:
         return []
     if name == "project plugin settings isolation and clean repositories":
@@ -507,10 +510,10 @@ def _case_claims(name: str) -> list[str]:
     return [case_id]
 
 
-def run_service_steps(journey: Journey, steps) -> None:
+def run_service_steps(journey: Journey, steps, mode: str = "local") -> None:
     """Run capability checks through Journey so raised checks are recorded."""
     for name, capability, check in steps:
-        journey.step(name, capability, check, cases=_case_claims(name))
+        journey.step(name, capability, check, cases=_case_claims(name, mode))
 
 
 def configure_installed_cli_path() -> None:
@@ -687,7 +690,7 @@ def main() -> int:
             def prepare_projects() -> None:
                 os.environ["KB_JOURNEY_PROJECT_B_ID"] = prepare_mcp_projects(project_root, registry, env)
             journey.step("prepare MCP project fixtures", "mcp", prepare_projects)
-        run_service_steps(journey, checks(args.mode))
+        run_service_steps(journey, checks(args.mode), args.mode)
         if project_root:
             _run_installed_flows(journey, project_root, registry)
         else:

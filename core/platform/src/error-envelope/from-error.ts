@@ -9,6 +9,7 @@
  */
 
 import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
+import { HostServiceAddressError } from '../host-service-address.js';
 import { createErrorEnvelope, type CreateEnvelopeOptions } from './catalog.js';
 import type { ErrorEnvelope } from './types.js';
 
@@ -16,6 +17,17 @@ export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'a
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+  if (error instanceof HostServiceAddressError) {
+    return createErrorEnvelope(
+      error.reason === 'missing' ? 'KB_HOST_SERVICE_ADDRESS_MISSING' : 'KB_HOST_SERVICE_ADDRESS_INVALID',
+      {
+        ...options,
+        cause: error.message,
+        details: { service: error.service },
+        hint: error.hint,
+      },
+    );
+  }
   if (error instanceof PlatformConfigError) {
     const message = error.reason === 'read'
       ? `Platform configuration file "${error.configPath}" cannot be read.`

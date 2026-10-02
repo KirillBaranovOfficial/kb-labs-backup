@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
+import { HostServiceAddressError } from '../host-service-address.js';
 import {
   ERROR_STAGES,
   createErrorEnvelope,
@@ -228,6 +229,21 @@ describe('toErrorEnvelope (platform errors)', () => {
     const envelope = toErrorEnvelope('boom');
     expect(envelope.code).toBe('KB_RUNTIME_UNEXPECTED');
     expect(envelope.cause).toBe('boom');
+  });
+
+  // case: S-054.19
+  it('maps a missing host gateway address to its catalog code and preserves correlation', () => {
+    const envelope = toErrorEnvelope(
+      new HostServiceAddressError('gateway'),
+      { correlationId: 'corr-workflow' },
+    );
+    expect(envelope).toMatchObject({
+      code: 'KB_HOST_SERVICE_ADDRESS_MISSING',
+      details: { service: 'gateway' },
+      correlationId: 'corr-workflow',
+      hint: 'Start the host with kb-create start so it can pass live host service addresses to this runtime.',
+    });
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
   });
 
   it('rejects codes that are not in the catalog', () => {

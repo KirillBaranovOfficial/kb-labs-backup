@@ -120,7 +120,8 @@ describe("kb-host project routing", () => {
     expect(fromA.path).toBe("/rest/whoami");
   });
 
-  it("starts the registered project's real runtime and serves its REST health route", async () => {
+  // case: S-124.13
+  it("starts the registered project's runtime on an installed layout and serves its REST health route", async () => {
     const project = await registered();
     const previousKbHome = process.env.KB_HOME;
     process.env.KB_HOME = kbHome;

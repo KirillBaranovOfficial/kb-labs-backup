@@ -39,6 +39,16 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         step = "MCP UX result contract from live registry"
         self.assertIn(step, {name for name, _, _ in checks("local")})
         self.assertEqual(_case_claims(step), ["S-203.2", "S-203.6"])
+        self.assertEqual(
+            _case_claims(step, "secured"),
+            ["S-203.2", "S-203.6", "S-045.6", "S-140.7"],
+        )
+
+    def test_installed_project_runtime_step_claims_registered_identity_cases(self):
+        self.assertEqual(
+            _case_claims("registered project runtime identity"),
+            ["PC-002.8", "S-124.11", "S-124.13"],
+        )
 
     def test_ux_contract_claim_discovers_and_checks_every_live_registry_tool(self):
         tools = [

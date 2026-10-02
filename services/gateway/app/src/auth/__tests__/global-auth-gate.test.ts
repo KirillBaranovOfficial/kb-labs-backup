@@ -104,7 +104,10 @@ describe('Gateway global auth gate', () => {
       if (isPlatformPublicRoute(method, url)) { continue; }
       const response = await app.inject({ method, url });
       expect(response.statusCode, `${method} ${url}`).toBe(401);
-      expect(response.json(), `${method} ${url}`).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' } });
+      expect(response.json(), `${method} ${url}`).toMatchObject({
+        ok: false,
+        error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".', correlationId: expect.any(String) },
+      });
     }
     expect(projectResolutions).toBe(0);
     expect(upstreamHits).toBe(0);
@@ -138,7 +141,7 @@ describe('Gateway global auth gate', () => {
       method: 'GET', url: '/webhooks/plugin/event', headers: { authorization: 'Bearer invalid-token' },
     });
     expect(response.statusCode).toBe(401);
-    expect(response.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
+    expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED', correlationId: expect.any(String) } });
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -178,7 +181,7 @@ describe('Gateway global auth gate', () => {
 
     const ordinary = await app.inject({ method: 'OPTIONS', url: '/api/v1/private' });
     expect(ordinary.statusCode).toBe(401);
-    expect(ordinary.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
+    expect(ordinary.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED', correlationId: expect.any(String) } });
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -253,7 +256,7 @@ describe('Gateway global auth gate', () => {
       headers: { authorization: 'Bearer not-valid' },
     });
     expect(invalid.statusCode).toBe(401);
-    expect(invalid.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
+    expect(invalid.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED', correlationId: expect.any(String) } });
   });
 
   it('admits only exact manifest-declared webhook routes and documented public route/method pairs', () => {

@@ -124,6 +124,13 @@ export function createAuthMiddleware(
   const authEnabled = options.authEnabled !== false;
   const userAuth = options.userAuth ? createUserAuthMiddleware(options.userAuth) : undefined;
   return async function authMiddleware(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const unauthorized = (cause?: string) => reply.code(401).send({
+      ok: false,
+      error: createErrorEnvelope('KB_AUTH_REQUIRED', {
+        correlationId: String(request.id),
+        ...(cause ? { cause } : {}),
+      }),
+    });
     if (isCorsPreflight(request)) { sendCorsPreflight(request, reply); return; }
     if (!request.url.startsWith('/internal/')) { removeClientIdentityHeaders(request); }
     if (!authEnabled) {
@@ -144,7 +151,7 @@ export function createAuthMiddleware(
     }
     if (routePath.startsWith('/internal/')) {
       if (options.internalSecret && request.headers['x-internal-secret'] === options.internalSecret) { return; }
-      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
+      return unauthorized();
     }
     // These routes are admitted only from webhook manifest declarations. The
     // registered platform handler verifies the declaration's auth before dispatch.
@@ -165,10 +172,10 @@ export function createAuthMiddleware(
     if (request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') { return; }
     if (!token) {
       if (registryPublicRead) { return; }
-      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
+      return unauthorized();
     }
     const authContext = await resolveToken(token, cache, jwtConfig).catch(() => null);
-    if (!authContext) { return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') }); }
+    if (!authContext) { return unauthorized(); }
     request.authContext = authContext;
     attachGatewayIdentity(request, options.internalSecret);
   };
