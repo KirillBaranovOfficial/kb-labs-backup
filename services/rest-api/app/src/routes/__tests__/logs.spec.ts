@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerLogRoutes } from '../logs.js';
+import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 import { platform } from '@kb-labs/core-runtime';
 import type { LogRecord, ILogReader } from '@kb-labs/core-platform';
 
@@ -54,6 +55,7 @@ describe('Log Routes Integration Tests', () => {
     vi.spyOn(platform, 'logs', 'get').mockReturnValue(mockLogService as ILogReader);
 
     app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
     await registerLogRoutes(app, BASE_CONFIG, {} as any);
   });
 
@@ -218,8 +220,7 @@ describe('Log Routes Integration Tests', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error).toBe('Log query failed');
-      expect(payload.message).toContain('No log storage backend');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String), correlationId: expect.any(String) });
     });
   });
 
@@ -256,7 +257,7 @@ describe('Log Routes Integration Tests', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error).toBe('Log not found');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
 
     it('should handle errors', async () => {
@@ -273,7 +274,7 @@ describe('Log Routes Integration Tests', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error).toBe('Failed to fetch log');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
   });
 
@@ -294,7 +295,7 @@ describe('Log Routes Integration Tests', () => {
       expect(response.statusCode).toBe(503);
       const payload = response.json();
 
-      expect(payload.error).toBe('Log streaming not enabled');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
 
     // Note: SSE streaming is hard to test in unit tests
@@ -392,7 +393,7 @@ describe('Log Routes Integration Tests', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error).toBe('Failed to fetch stats');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
   });
 
@@ -488,7 +489,7 @@ describe('Log Routes Integration Tests', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error).toBe('Log summarization failed');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
   });
 });

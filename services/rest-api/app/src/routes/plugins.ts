@@ -1,3 +1,4 @@
+import { noBodySchema, withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/plugins
  * Plugin routes registration
@@ -695,7 +696,7 @@ export async function registerPluginSnapshotRoutes(
 ): Promise<void> {
   const basePath = config.basePath;
 
-  server.post(`${basePath}/plugins/refresh`, async (_request, reply) => {
+  server.post(`${basePath}/plugins/refresh`, { schema: { querystring: { type: 'object', additionalProperties: false }, body: noBodySchema, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { rev: { type: 'integer' }, total: { type: 'integer' }, generatedAt: { type: 'string', format: 'date-time' }, partial: { type: 'boolean' }, stale: { type: 'boolean' } }, required: ['rev', 'total', 'generatedAt', 'partial', 'stale'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } }, async (_request, reply) => {
     try {
       await restDomainOperationMetrics.observeOperation(
         "plugin.registry.refresh",
@@ -744,7 +745,7 @@ export async function registerPluginSnapshotRoutes(
   });
 
   // Raw manifests endpoint for Studio/debug consumers
-  server.get(`${basePath}/plugins/registry`, async (_request, reply) => {
+  server.get(`${basePath}/plugins/registry`, { schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { manifests: { type: 'array', items: { type: 'object', properties: { pluginId: { type: 'string' }, manifest: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, version: { type: 'string' } }, additionalProperties: true }, pluginRoot: { type: 'string' }, source: { type: 'object', properties: { kind: { type: 'string' }, packageName: { type: 'string' }, path: { type: 'string' } }, additionalProperties: true }, discoveredAt: { type: 'string', format: 'date-time' }, buildTimestamp: { type: 'string', format: 'date-time' }, validation: { type: 'object', properties: { valid: { type: 'boolean' }, errors: { type: 'array', items: { type: 'string' } } }, required: ['valid', 'errors'], additionalProperties: true } }, required: ['pluginId', 'manifest', 'pluginRoot', 'source', 'discoveredAt', 'validation'], additionalProperties: true } }, apiBasePath: { type: 'string' }, diagnostics: { type: 'object', properties: { total: { type: 'integer' }, items: { type: 'array', items: { type: 'object', properties: { severity: { type: 'string' }, code: { type: 'string' }, reasonCode: { type: 'string' }, message: { type: 'string' }, pluginId: { type: 'string' }, filePath: { type: 'string' }, remediation: { type: 'string' }, ts: { type: 'string' } }, required: ['severity', 'code', 'reasonCode', 'message', 'ts'], additionalProperties: true } } }, required: ['total', 'items'], additionalProperties: true } }, required: ['manifests', 'apiBasePath', 'diagnostics'], additionalProperties: false } }) } }, async (_request, reply) => {
     try {
       const snapshot = await restDomainOperationMetrics.observeOperation(
         "plugin.registry.snapshot",
@@ -910,6 +911,8 @@ export async function registerPluginSnapshotRoutes(
       schema: {
         tags: ["Studio"],
         summary: "Get Studio Registry V2 (plugin pages for Module Federation)",
+        querystring: { type: 'object', additionalProperties: false },
+        response: withUxErrorResponses({ 200: { type: 'object', properties: { version: { type: 'string' }, generatedAt: { type: 'string', format: 'date-time' }, plugins: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: true } } }, required: ['version', 'generatedAt', 'plugins'], additionalProperties: false } }),
       },
     },
     async (_request, reply) => {
@@ -1024,7 +1027,7 @@ export async function registerPluginSnapshotRoutes(
   );
 
   // Plugin registry health endpoint
-  server.get(`${basePath}/plugins/health`, async (_request, reply) => {
+  server.get(`${basePath}/plugins/health`, { schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { healthy: { type: 'boolean' }, snapshot: { type: 'object', properties: { partial: { type: 'boolean' }, stale: { type: 'boolean' }, corrupted: { type: 'boolean' }, rev: { type: 'integer' }, generatedAt: { type: 'string' }, totalManifests: { type: 'integer' }, partialReasons: { type: 'array', items: { type: 'string' } } }, required: ['partial', 'stale', 'rev', 'generatedAt', 'totalManifests', 'partialReasons'], additionalProperties: false }, registryErrors: { type: 'object', properties: { total: { type: 'integer' }, items: { type: 'array', items: { type: 'object', properties: { pluginPath: { type: 'string' }, pluginId: { type: 'string' }, error: { type: 'string' }, code: { type: 'string' } }, additionalProperties: false } } }, required: ['total', 'items'], additionalProperties: false }, diagnostics: { type: 'object', properties: { total: { type: 'integer' }, errors: { type: 'integer' }, warnings: { type: 'integer' }, items: { type: 'array', items: { type: 'object', properties: { severity: { type: 'string' }, code: { type: 'string' }, reasonCode: { type: 'string' }, message: { type: 'string' }, pluginId: { type: 'string' }, filePath: { type: 'string' }, remediation: { type: 'string' }, ts: { type: 'string' } }, required: ['severity', 'code', 'reasonCode', 'message', 'ts'], additionalProperties: false } } }, required: ['total', 'errors', 'warnings', 'items'], additionalProperties: false }, validation: { type: 'object', properties: { totalIssues: { type: 'integer' }, issues: { type: 'array', items: { type: 'object', properties: { pluginId: { type: 'string' }, errors: { type: 'array', items: { type: 'string' } } }, required: ['pluginId', 'errors'], additionalProperties: false } } }, required: ['totalIssues', 'issues'], additionalProperties: false }, message: { type: 'string' } }, required: ['healthy', 'snapshot', 'registryErrors', 'diagnostics', 'validation', 'message'], additionalProperties: false } }) } }, async (_request, reply) => {
     try {
       const snapshot = await restDomainOperationMetrics.observeOperation(
         "plugin.registry.health",
@@ -1151,7 +1154,7 @@ export async function registerPluginSnapshotRoutes(
   });
 
   // AI Assistant endpoint: ask questions about a plugin
-  server.post(`${basePath}/plugins/:pluginId/ask`, async (request, reply) => {
+  server.post(`${basePath}/plugins/:pluginId/ask`, { schema: { querystring: { type: 'object', additionalProperties: false }, params: { type: 'object', properties: { pluginId: { type: 'string', minLength: 1 } }, required: ['pluginId'], additionalProperties: false }, body: { type: 'object', properties: { question: { type: 'string', minLength: 1 } }, required: ['question'], additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { answer: { type: 'string' }, usage: { type: 'object', properties: { promptTokens: { type: 'integer' }, completionTokens: { type: 'integer' }, totalTokens: { type: 'integer' } }, additionalProperties: false } }, required: ['answer'], additionalProperties: false } }) } }, async (request, reply) => {
     try {
       const { pluginId } = request.params as { pluginId: string };
       const { question } = request.body as { question: string };

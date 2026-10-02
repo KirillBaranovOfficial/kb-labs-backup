@@ -1,5 +1,5 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
-import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 
 function errorEnvelope(error: unknown): ErrorEnvelope | null {
@@ -32,7 +32,7 @@ export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult &
     try {
       const response = await gatewayApiFetch(`http://127.0.0.1:4000/auth/users/${encodeURIComponent(flags['user-id'])}/password-reset-link`, { method: 'POST' });
       if (!response.ok) { return fail(`Gateway could not create the reset link (HTTP ${response.status}). Check the user ID and retry kb auth reset-link.`); }
-      const result = await response.json() as { resetUrl: string; expiresAt: number };
+      const result = await readGatewaySuccessData<{ resetUrl: string; expiresAt: number }>(response);
       if (flags.json) { ctx.ui?.json({ ok: true, ...result }); }
       else { ctx.ui?.write?.(`Password reset link (expires ${new Date(result.expiresAt).toISOString()}):\n${result.resetUrl}\n`); }
       return { ok: true, resetUrl: result.resetUrl };

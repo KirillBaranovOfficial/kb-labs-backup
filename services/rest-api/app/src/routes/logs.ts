@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/logs
  * Live log streaming and querying endpoints
@@ -34,6 +35,9 @@ interface TopError {
   message: string;
   count: number;
 }
+
+const logRecordSchema = { type: 'object', properties: { id: { type: 'string' }, time: { type: 'string', format: 'date-time' }, level: { type: 'string' }, msg: { type: 'string' }, plugin: { type: 'string' } }, required: ['id', 'time', 'level', 'msg'], additionalProperties: true } as const;
+const logQuerySchema = { type: 'object', properties: { level: { enum: ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] }, plugin: { type: 'string' }, from: { type: 'string', format: 'date-time' }, to: { type: 'string', format: 'date-time' }, search: { type: 'string', minLength: 1 }, limit: { type: 'string', pattern: '^[1-9][0-9]*$' }, offset: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' } }, additionalProperties: false } as const;
 
 /**
  * Map Pino numeric level to string level
@@ -352,7 +356,7 @@ export async function registerLogRoutes(
     };
   }>(
     "/api/v1/logs",
-    { schema: { tags: ["Logs"], summary: "Query logs with filters" } },
+    { schema: { tags: ["Logs"], summary: "Query logs with filters", querystring: logQuerySchema, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { logs: { type: 'array', items: logRecordSchema }, total: { type: 'integer' }, hasMore: { type: 'boolean' }, filters: { type: 'object', properties: { level: { type: 'string' }, plugin: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, search: { type: 'string' }, limit: { type: 'string' }, offset: { type: 'string' } }, additionalProperties: false }, source: { type: 'string' }, stats: { type: 'object', properties: { buffer: { type: 'object', properties: { size: { type: 'integer' }, maxSize: { type: 'integer' }, oldest: { type: 'string' }, newest: { type: 'string' } }, required: ['size', 'maxSize'], additionalProperties: false }, persistence: { type: 'object', properties: { totalLogs: { type: 'integer' }, oldestTimestamp: { type: 'string' }, newestTimestamp: { type: 'string' }, sizeBytes: { type: 'integer' } }, required: ['totalLogs', 'sizeBytes'], additionalProperties: false } }, additionalProperties: false } }, required: ['logs', 'total', 'hasMore', 'filters', 'stats'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
     async (request, reply) => {
       try {
         // Parse numeric query params (Fastify doesn't parse them automatically)
@@ -456,7 +460,7 @@ export async function registerLogRoutes(
     Querystring: { includeRelated?: string };
   }>(
     "/api/v1/logs/:id",
-    { schema: { tags: ["Logs"], summary: "Get log entry by ID" } },
+    { schema: { tags: ["Logs"], summary: "Get log entry by ID", params: { type: 'object', properties: { id: { type: 'string', minLength: 1 } }, required: ['id'], additionalProperties: false }, querystring: { type: 'object', properties: { includeRelated: { enum: ['true', 'false'] } }, additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { log: logRecordSchema, related: { type: 'array', items: logRecordSchema } }, required: ['log'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
     async (request, reply) => {
       try {
         const log = await platform.logs.getById(request.params.id);
@@ -504,6 +508,9 @@ export async function registerLogRoutes(
       schema: {
         tags: ["Logs"],
         summary: "Get logs related to a specific entry",
+        params: { type: 'object', properties: { id: { type: 'string', minLength: 1 } }, required: ['id'], additionalProperties: false },
+        querystring: { type: 'object', additionalProperties: false },
+        response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { total: { type: 'integer' }, logs: { type: 'array', items: logRecordSchema }, correlationKeys: { type: 'object' } }, required: ['total', 'logs', 'correlationKeys'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }),
       },
     },
     async (request, reply) => {
@@ -544,7 +551,7 @@ export async function registerLogRoutes(
    */
   server.get(
     "/api/v1/logs/stream",
-    { schema: { hide: true } },
+    { config: { ux: 'raw' }, schema: { hide: true, querystring: { type: 'object', additionalProperties: false } } },
     async (request, reply) => {
       // Check if streaming is supported
       const caps = platform.logs.getCapabilities();
@@ -587,7 +594,7 @@ export async function registerLogRoutes(
    */
   server.get(
     "/api/v1/logs/stats",
-    { schema: { tags: ["Logs"], summary: "Get log storage statistics" } },
+    { schema: { tags: ["Logs"], summary: "Get log storage statistics", querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { capabilities: { type: 'object', properties: { hasBuffer: { type: 'boolean' }, hasPersistence: { type: 'boolean' }, hasSearch: { type: 'boolean' }, hasStreaming: { type: 'boolean' } }, required: ['hasBuffer', 'hasPersistence', 'hasSearch', 'hasStreaming'], additionalProperties: false }, buffer: { type: 'object', properties: { size: { type: 'integer' }, maxSize: { type: 'integer' }, oldest: { type: 'string', format: 'date-time' }, newest: { type: 'string', format: 'date-time' } }, required: ['size', 'maxSize'], additionalProperties: false }, persistence: { type: 'object', properties: { totalLogs: { type: 'integer' }, oldest: { type: 'string', format: 'date-time' }, newest: { type: 'string', format: 'date-time' }, sizeBytes: { type: 'integer' } }, required: ['totalLogs', 'sizeBytes'], additionalProperties: false } }, required: ['capabilities'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
     async (request, reply) => {
       try {
         const stats = await platform.logs.getStats();
@@ -666,7 +673,7 @@ export async function registerLogRoutes(
     };
   }>(
     "/api/v1/logs/summarize",
-    { schema: { tags: ["Logs"], summary: "AI-powered log summarization" } },
+    { schema: { tags: ["Logs"], summary: "AI-powered log summarization", querystring: { type: 'object', additionalProperties: false }, body: { type: 'object', properties: { timeRange: { type: 'object', properties: { from: { type: 'string', format: 'date-time' }, to: { type: 'string', format: 'date-time' } }, additionalProperties: false }, filters: { type: 'object', properties: { level: { type: 'string' }, plugin: { type: 'string' }, traceId: { type: 'string' }, executionId: { type: 'string' } }, additionalProperties: false }, groupBy: { enum: ['trace', 'execution', 'plugin'] }, question: { type: 'string' }, includeContext: { type: 'object', properties: { errors: { type: 'boolean' }, warnings: { type: 'boolean' }, info: { type: 'boolean' }, metadata: { type: 'boolean' }, stackTraces: { type: 'boolean' } }, additionalProperties: false } }, additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { summary: { type: 'object', properties: { question: { type: 'string' }, timeRange: { type: 'object', properties: { from: { type: ['string', 'null'] }, to: { type: ['string', 'null'] } }, required: ['from', 'to'], additionalProperties: false }, total: { type: 'integer' }, stats: { type: 'object' }, groups: { type: ['object', 'null'] } }, required: ['question', 'timeRange', 'total', 'stats'], additionalProperties: false }, aiSummary: { type: ['string', 'null'] }, message: { type: ['string', 'null'] } }, required: ['summary', 'aiSummary', 'message'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
     async (request, reply) => {
       const { timeRange, filters, groupBy, question, includeContext } =
         request.body;

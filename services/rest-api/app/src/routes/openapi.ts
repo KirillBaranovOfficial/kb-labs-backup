@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/openapi
  * OpenAPI specification endpoints
@@ -24,8 +25,11 @@ export async function registerOpenAPIRoutes(
   fastify.get('/openapi-plugins.json', {
     schema: {
       hide: true,
+      querystring: { type: 'object', additionalProperties: false },
+      response: withUxErrorResponses({ 200: { type: 'object', properties: { openapi: { type: 'string' }, info: { type: 'object', properties: { title: { type: 'string' }, version: { type: 'string' }, description: { type: 'string' } }, required: ['title', 'version'], additionalProperties: false }, paths: { type: 'object', additionalProperties: { type: 'object' } }, components: { type: 'object', properties: { schemas: { type: 'object', additionalProperties: { type: 'object' } } }, additionalProperties: false }, 'x-kb-plugin-id': { type: 'string' } }, required: ['openapi', 'info', 'paths'], additionalProperties: false } }),
     },
     config: {
+      ux: 'raw',
       rateLimit: {
         max: 10, // 10 requests
         timeWindow: '1 minute',
@@ -69,7 +73,11 @@ export async function registerOpenAPIRoutes(
   });
 
   // Per-plugin OpenAPI spec
-  fastify.get('/openapi/:pluginId', async (req, reply) => {
+  fastify.get('/openapi/:pluginId', { schema: {
+    params: { type: 'object', properties: { pluginId: { type: 'string', minLength: 1 } }, required: ['pluginId'], additionalProperties: false },
+    querystring: { type: 'object', additionalProperties: false },
+    response: withUxErrorResponses({ 200: { type: 'object', properties: { openapi: { type: 'string' }, info: { type: 'object', properties: { title: { type: 'string' }, version: { type: 'string' }, description: { type: 'string' } }, required: ['title', 'version'], additionalProperties: false }, paths: { type: 'object', additionalProperties: { type: 'object' } }, components: { type: 'object', properties: { schemas: { type: 'object', additionalProperties: { type: 'object' } } }, additionalProperties: false }, 'x-kb-plugin-id': { type: 'string' } }, required: ['openapi', 'info', 'paths'], additionalProperties: false } }),
+  } }, async (req, reply) => {
     try {
       const { pluginId } = req.params as { pluginId: string };
       const spec = await restDomainOperationMetrics.observeOperation('openapi.plugin.get', async () =>

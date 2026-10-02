@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/jobs
  * Scheduled jobs management endpoints
@@ -73,10 +74,10 @@ export async function registerJobsRoutes(
       tags: ['Jobs'],
       summary: 'List scheduled jobs',
       querystring: ListJobsQuerySchema,
-      response: {
+      response: withUxErrorResponses({
         200: JobsListResponseSchema,
         503: ErrorResponseSchema,
-      },
+      }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -104,10 +105,11 @@ export async function registerJobsRoutes(
     schema: {
       tags: ['Jobs'],
       summary: 'Get cron jobs statistics',
-      response: {
+      querystring: z.object({}).strict(),
+      response: withUxErrorResponses({
         200: JobStatsResponseSchema,
         503: ErrorResponseSchema,
-      },
+      }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -129,12 +131,13 @@ export async function registerJobsRoutes(
     schema: {
       tags: ['Jobs'],
       summary: 'Get job details',
-      params: z.object({ id: z.string() }),
-      response: {
+      params: z.object({ id: z.string().min(1) }).strict(),
+      querystring: z.object({}).strict(),
+      response: withUxErrorResponses({
         200: JobResponseSchema,
         404: ErrorResponseSchema,
         503: ErrorResponseSchema,
-      },
+      }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -163,12 +166,14 @@ export async function registerJobsRoutes(
     schema: {
       tags: ['Jobs'],
       summary: 'Trigger job execution immediately',
-      params: z.object({ id: z.string() }),
-      response: {
+      params: z.object({ id: z.string().min(1) }).strict(),
+      querystring: z.object({}).strict(),
+      body: z.object({}).strict(),
+      response: withUxErrorResponses({
         200: JobActionResponseSchema,
         404: ErrorResponseSchema,
         503: ErrorResponseSchema,
-      },
+      }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -199,12 +204,14 @@ export async function registerJobsRoutes(
     schema: {
       tags: ['Jobs'],
       summary: 'Pause job execution',
-      params: z.object({ id: z.string() }),
-      response: {
+      params: z.object({ id: z.string().min(1) }).strict(),
+      querystring: z.object({}).strict(),
+      body: z.object({}).strict(),
+      response: withUxErrorResponses({
         200: JobActionResponseSchema,
         404: ErrorResponseSchema,
         503: ErrorResponseSchema,
-      },
+      }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -233,12 +240,14 @@ export async function registerJobsRoutes(
     schema: {
       tags: ['Jobs'],
       summary: 'Resume paused job',
-      params: z.object({ id: z.string() }),
-      response: {
+      params: z.object({ id: z.string().min(1) }).strict(),
+      querystring: z.object({}).strict(),
+      body: z.object({}).strict(),
+      response: withUxErrorResponses({
         200: JobActionResponseSchema,
         404: ErrorResponseSchema,
         503: ErrorResponseSchema,
-      },
+      }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {

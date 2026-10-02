@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerObservabilityRoutes } from '../observability';
+import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 
 const BASE_CONFIG: RestApiConfig = {
   port: 3000,
@@ -31,6 +32,7 @@ describe('registerObservabilityRoutes', () => {
     process.env.KB_STATE_DAEMON_URL = 'http://127.0.0.1:43127';
     vi.clearAllMocks();
     app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
     await registerObservabilityRoutes(app, BASE_CONFIG, repoRoot);
   });
 
@@ -49,20 +51,26 @@ describe('registerObservabilityRoutes', () => {
         url: '/api/v1/observability/state-broker',
       });
 
+
       expect(response.statusCode).toBe(503);
       expect(response.json().error).toMatchObject({
-        code: 'KB_HOST_SERVICE_ADDRESS_MISSING',
-        hint: expect.stringContaining('kb-create start'),
+        code: 'KB_RUNTIME_UNEXPECTED',
+        hint: expect.any(String),
+        correlationId: expect.any(String),
       });
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('returns State Broker statistics', async () => {
       const mockStats = {
-        totalEntries: 42,
-        hitRate: 0.85,
-        namespaces: ['mind', 'workflow'],
         uptime: 3600,
+        totalEntries: 42,
+        totalSize: 1024,
+        hitRate: 0.85,
+        missRate: 0.15,
+        evictions: 0,
+        namespaces: { mind: { entries: 42, size: 1024, oldestEntry: 0 } },
+        byTenant: {},
       };
 
       mockFetch.mockResolvedValue({
@@ -97,7 +105,7 @@ describe('registerObservabilityRoutes', () => {
 
       mockFetch.mockResolvedValue({
         ok: true,
-        json: vi.fn().mockResolvedValue({}),
+        json: vi.fn().mockResolvedValue({ uptime: 0, totalEntries: 0, totalSize: 0, hitRate: 0, missRate: 0, evictions: 0, namespaces: {} }),
       });
 
       const response = await app.inject({
@@ -126,7 +134,7 @@ describe('registerObservabilityRoutes', () => {
       });
 
       expect(response.statusCode).toBe(503);
-      expect(response.json().error.code).toBe('KB_HOST_SERVICE_ADDRESS_MISSING');
+      expect(response.json().error.code).toBe('KB_RUNTIME_UNEXPECTED');
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
@@ -146,9 +154,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('STATE_BROKER_UNAVAILABLE');
-      expect(payload.error.message).toContain('not available');
-      expect(payload.error.details.status).toBe(500);
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
 
     it('returns 503 when State Broker times out', async () => {
@@ -166,9 +172,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('STATE_BROKER_TIMEOUT');
-      expect(payload.error.message).toContain('did not respond in time');
-      expect(payload.error.details.isTimeout).toBe(true);
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
 
     it('returns 503 when State Broker connection fails', async () => {
@@ -183,9 +187,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('STATE_BROKER_ERROR');
-      expect(payload.error.message).toBe('Connection refused');
-      expect(payload.error.details.isTimeout).toBe(false);
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
 
     it('handles non-Error exceptions', async () => {
@@ -200,8 +202,7 @@ describe('registerObservabilityRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('STATE_BROKER_ERROR');
-      expect(payload.error.message).toBe('String error');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
   });
 });

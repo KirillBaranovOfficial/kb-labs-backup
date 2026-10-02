@@ -31,6 +31,8 @@ export function registerInternalRoutes(
         },
         required: ['namespaceId', 'adapter', 'method'],
       },
+      querystring: { type: 'object', properties: {}, additionalProperties: false },
+      response: { 200: { type: 'object', properties: { result: {} }, required: ['result'] }, 400: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 403: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 502: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 503: { type: 'object', properties: { error: { type: 'string' }, namespaceId: { type: 'string' } }, required: ['error'] } },
     },
   }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];
@@ -79,7 +81,7 @@ export function registerInternalRoutes(
   });
 
   scope.get('/internal/auth/handle/:handle', {
-    schema: { params: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'] } },
+    schema: { params: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'] }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { namespaceId: { type: 'string' }, name: { type: 'string' }, handle: { type: 'string' } }, required: ['namespaceId', 'name', 'handle'] }, 403: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 404: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 503: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] } } },
   }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];
     if (!internalSecret || provided !== internalSecret) {
@@ -112,6 +114,8 @@ export function registerInternalRoutes(
           },
         },
       },
+      querystring: { type: 'object', properties: {}, additionalProperties: false },
+      response: { 200: { type: 'object', properties: { hostId: { type: 'string' }, strategy: { type: 'string' }, namespaceId: { type: 'string' } }, required: ['hostId', 'strategy', 'namespaceId'] }, 403: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 404: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] } },
     },
   }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];

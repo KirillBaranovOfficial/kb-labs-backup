@@ -5,6 +5,7 @@ import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 const gatewayApiFetch = vi.hoisted(() => vi.fn());
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
   gatewayApiFetch,
+  readGatewaySuccessData: async (response: Response) => (await response.json() as { data: unknown }).data,
   GatewayApiError: class GatewayApiError extends Error {
     constructor(readonly envelope: Record<string, unknown>) { super(String(envelope.message)); }
   },
@@ -27,7 +28,7 @@ describe('kb auth reset-link', () => {
   it('calls the shared gateway client for the password reset link', async () => {
     const errors: string[] = [];
     const json: unknown[] = [];
-    gatewayApiFetch.mockResolvedValue(new Response(JSON.stringify({ resetUrl: 'https://gateway.test/reset', expiresAt: 1 }), { status: 200 }));
+    gatewayApiFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true, data: { resetUrl: 'https://gateway.test/reset', expiresAt: 1 } }), { status: 200 }));
     const result = await authResetLink.run(context(errors, json), [], { 'user-id': 'user-1', json: true });
     expect(gatewayApiFetch).toHaveBeenCalledWith('http://127.0.0.1:4000/auth/users/user-1/password-reset-link', { method: 'POST' });
     expect(result).toBe(0);

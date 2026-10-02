@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/platform
  * Platform configuration endpoints
@@ -106,7 +107,10 @@ export async function registerPlatformRoutes(
   const configPaths = resolvePaths(basePath, '/platform/config');
 
   for (const path of configPaths) {
-    fastify.get(path, async (_request, reply) => {
+    fastify.get(path, { schema: {
+      querystring: { type: 'object', additionalProperties: false },
+      response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { schema: { const: 'kb.platform.config/1' }, ts: { type: 'string', format: 'date-time' }, adapters: { type: 'object', additionalProperties: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }, { type: 'null' }] } }, adapterOptions: { type: 'object' }, execution: { type: 'object', properties: { mode: { type: 'string' } }, required: ['mode'], additionalProperties: false }, redacted: { type: 'array', items: { type: 'string' } } }, required: ['schema', 'ts', 'adapters', 'adapterOptions', 'execution', 'redacted'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }),
+    } }, async (_request, reply) => {
       try {
         const { adapters, adapterOptions, execution } = await restDomainOperationMetrics.observeOperation(
           'platform.config.get',

@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/debug-routes
  * Debug endpoint to list all registered routes
@@ -59,7 +60,10 @@ export async function registerDebugRoutes(
   const routesPaths = resolvePaths(basePath, '/routes');
 
   for (const path of routesPaths) {
-    fastify.get(path, async (_request, reply) => {
+    fastify.get(path, { schema: {
+      querystring: { type: 'object', additionalProperties: false },
+      response: withUxErrorResponses({ 200: { type: 'object', properties: { schema: { const: 'kb.routes/1' }, ts: { type: 'string', format: 'date-time' }, count: { type: 'integer' }, routes: { type: 'array', items: { type: 'object', properties: { method: { type: 'string' }, url: { type: 'string' } }, required: ['method', 'url'], additionalProperties: false } }, raw: { type: ['string', 'null'] } }, required: ['schema', 'ts', 'count', 'routes', 'raw'], additionalProperties: false } }),
+    } }, async (_request, reply) => {
       // Filter to only show /api/v1 routes (skip duplicates without prefix)
       let routes = collectedRoutes.filter(r => r.url.startsWith('/api/'));
 

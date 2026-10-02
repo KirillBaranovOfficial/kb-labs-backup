@@ -1,5 +1,5 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
-import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 
 function errorEnvelope(error: unknown): ErrorEnvelope | null {
@@ -79,14 +79,14 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
           ...(days === undefined ? {} : { expiresInDays: days }),
         });
         if (!response.ok) {return fail(`Gateway could not create the API token (HTTP ${response.status}). Retry kb auth tokens --name <name>.`);}
-        const result = await response.json() as { token: string; tokenRecord: TokenRecord };
+        const result = await readGatewaySuccessData<{ token: string; tokenRecord: TokenRecord }>(response);
         if (flags.json) {ctx.ui?.json({ ok: true, ...result });}
         else {ctx.ui?.write?.(`Token ${result.tokenRecord.name}${result.tokenRecord.expiresAt ? ` (expires ${new Date(result.tokenRecord.expiresAt).toISOString()})` : ' (no expiry)'}:\n${result.token}\n`);}
         return { ok: true, token: result.token };
       }
       const response = await request('/auth/tokens');
       if (!response.ok) {return fail(`Gateway could not list API tokens (HTTP ${response.status}). Retry kb auth tokens.`);}
-      const result = await response.json() as { tokens: TokenRecord[] };
+      const result = await readGatewaySuccessData<{ tokens: TokenRecord[] }>(response);
       if (flags.json) {ctx.ui?.json({ ok: true, ...result });}
       else if (result.tokens.length === 0) {ctx.ui?.write?.('No API tokens. Create one with `kb auth tokens --name "nightly CI"`.\n');}
       else {ctx.ui?.write?.(result.tokens.map((token) => `${token.tokenId}  ${token.name}  ${token.expiresAt ? `expires ${new Date(token.expiresAt).toISOString()}` : 'no expiry'}${token.revokedAt ? '  revoked' : ''}`).join('\n') + '\n');}

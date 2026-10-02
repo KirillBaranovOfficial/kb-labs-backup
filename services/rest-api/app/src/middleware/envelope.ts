@@ -25,10 +25,36 @@ function isPluginErrorEnvelope(err: unknown): err is PluginErrorEnvelope {
 /**
  * Register envelope middleware
  */
-export function registerEnvelopeMiddleware(
-  server: FastifyInstance,
+export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
+  server: Server,
   config: RestApiConfig
 ): void {
+  server.addHook('preSerialization', async (request, reply, payload) => {
+    if (reply.statusCode < 400) return payload;
+
+    const correlationId = String(request.id || '');
+    const rawError = payload && typeof payload === 'object' && 'error' in payload
+      ? payload.error
+      : undefined;
+    const typedError = isErrorEnvelope(rawError) ? rawError : undefined;
+    const rawCode = rawError && typeof rawError === 'object' && 'code' in rawError
+      ? rawError.code
+      : undefined;
+    const knownCode = typeof rawCode === 'string' && getCatalogEntry(rawCode) ? rawCode : undefined;
+    const code = typedError && getCatalogEntry(typedError.code)
+      ? typedError.code
+      : knownCode
+        ? knownCode
+      : reply.statusCode === 401 ? 'KB_AUTH_REQUIRED'
+        : reply.statusCode === 403 ? 'KB_AUTH_FORBIDDEN'
+          : reply.statusCode === 400 ? 'KB_RUNTIME_INPUT_INVALID' : 'KB_RUNTIME_UNEXPECTED';
+    const error = typedError && getCatalogEntry(typedError.code)
+      ? { ...typedError, correlationId: typedError.correlationId || correlationId }
+      : createErrorEnvelope(code, { correlationId });
+
+    return createUxFailureResult(error);
+  });
+
   // Add response schema version header and wrap in envelope
   // Use 'onSend' hook to modify payload after Fastify serializes it but before sending
   // This ensures we get the serialized JSON string and can wrap it properly

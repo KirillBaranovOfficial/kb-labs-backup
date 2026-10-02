@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * Internal adapter-call endpoint — reverse proxy for Workspace Agent.
  *
@@ -168,7 +169,14 @@ export async function registerAdapterCallRoutes(
   const internalSecret = process.env.GATEWAY_INTERNAL_SECRET;
   const logger = platform.logger.child({ layer: 'rest', route: 'adapter-call' });
 
-  server.post('/api/v1/internal/adapter-call', async (
+  server.post('/api/v1/internal/adapter-call', { schema: {
+    querystring: { type: 'object', additionalProperties: false },
+    body: { type: 'object', properties: {
+      requestId: { type: 'string', minLength: 1 }, adapter: { enum: ['llm', 'cache', 'vectorStore', 'embeddings', 'storage', 'state'] }, method: { type: 'string', minLength: 1 }, args: { type: 'array', items: {} },
+      context: { type: 'object', properties: { namespaceId: { type: 'string' }, hostId: { type: 'string' }, workspaceId: { type: 'string' }, environmentId: { type: 'string' }, executionRequestId: { type: 'string' }, userId: { type: 'string' }, sessionId: { type: 'string' } }, required: ['namespaceId', 'hostId'], additionalProperties: false },
+    }, required: ['requestId', 'adapter', 'method', 'args', 'context'], additionalProperties: false },
+    response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, result: {} }, required: ['ok', 'result'], additionalProperties: false } }),
+  } }, async (
     request: FastifyRequest,
     reply: FastifyReply,
   ) => {

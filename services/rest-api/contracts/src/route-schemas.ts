@@ -25,7 +25,7 @@ const AnyRecord = z.record(z.string(), z.unknown());
 
 export const ListJobsQuerySchema = z.object({
   status: z.enum(['active', 'paused']).optional(),
-});
+}).strict();
 
 export const JobSchema = z.object({
   id: z.string(),

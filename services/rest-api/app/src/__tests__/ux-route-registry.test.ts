@@ -43,7 +43,7 @@ describe('REST production route declarations', () => {
   });
 
   // case: S-203.1, S-203.2, S-203.3, S-203.6
-  it('discovers routes from the production server registry and requires a schema or explicit raw declaration', async () => {
+  it('discovers production registrations and requires closed request and response schemas or an explicit raw declaration', async () => {
     const routes: Array<{ method: string | string[]; url: string; schema?: unknown; config?: unknown }> = [];
     const app = await createServer(restApiConfigSchema.parse({ port: 5050 }), process.cwd(), registry, (route) => routes.push(route));
     apps.push(app);
@@ -52,7 +52,15 @@ describe('REST production route declarations', () => {
     expect(routes.length).toBeGreaterThan(0);
     const missing = routes.filter((route) => {
       const config = route.config as { ux?: string } | undefined;
-      return route.schema === undefined && config?.ux !== 'raw';
+      if (config?.ux === 'raw') return false;
+      if (!route.schema || typeof route.schema !== 'object') return true;
+      const schema = route.schema as { params?: unknown; querystring?: unknown; body?: unknown; response?: Record<number, unknown> };
+      if (route.url.includes(':') && !schema.params) return true;
+      const methods = Array.isArray(route.method) ? route.method : [route.method];
+      const hasJsonMethod = methods.some((method) => method !== 'HEAD');
+      if (hasJsonMethod && !schema.querystring) return true;
+      if (methods.some((method) => ['POST', 'PUT', 'PATCH'].includes(method)) && !schema.body) return true;
+      return hasJsonMethod && !schema.response?.[200];
     });
     expect(missing.map(({ method, url }) => `${Array.isArray(method) ? method.join(',') : method} ${url}`)).toEqual([]);
   });

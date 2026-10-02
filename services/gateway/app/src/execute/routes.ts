@@ -202,7 +202,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
   /**
    * POST /api/v1/execute/:executionId/cancel
    */
-  app.post('/api/v1/execute/:executionId/cancel', { schema: { tags: ['Execute'], summary: 'Cancel an active execution' } }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/execute/:executionId/cancel', { schema: { tags: ['Execute'], summary: 'Cancel an active execution', params: { type: 'object', properties: { executionId: { type: 'string', minLength: 1 } }, required: ['executionId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { reason: { type: 'string', enum: ['user', 'timeout', 'disconnect', 'system'] } }, additionalProperties: false }, response: { 200: { type: 'object', properties: { executionId: { type: 'string' }, status: { type: 'string', enum: ['cancelled', 'already_cancelled'] }, reason: { type: 'string' } }, required: ['executionId', 'status', 'reason'] }, 401: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 403: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 404: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 409: { type: 'object', properties: { executionId: { type: 'string' }, status: { type: 'string', enum: ['cancelled', 'already_cancelled'] }, reason: { type: 'string' } }, required: ['executionId', 'status', 'reason'] } } } }, async (request: FastifyRequest, reply: FastifyReply) => {
     const auth = request.authContext;
     if (!auth) {
       return reply.code(401).send({ error: 'Unauthorized' });

@@ -4,7 +4,7 @@
  */
 
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, RouteOptions } from 'fastify';
 import type { FastifyBaseLogger } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
@@ -117,7 +117,7 @@ export async function createServer(
   config: RestApiConfig,
   repoRoot: string,
   registry: IEntityRegistry,
-  routeObserver?: (route: { method: string | string[]; url: string; schema?: unknown; config?: unknown }) => void
+  routeObserver?: (route: RouteOptions) => void
 ): Promise<FastifyInstance> {
   // HTTP/2 configuration (requires HTTPS)
   const useHttp2 = config.http2?.enabled ?? false;
@@ -206,14 +206,7 @@ export async function createServer(
   server.registry = registry;
 
   if (routeObserver) {
-    const observeRoute = (route: { method: string | string[]; url: string; schema?: unknown; config?: unknown }) => {
-      routeObserver({
-        method: route.method,
-        url: route.url,
-        schema: route.schema,
-        config: route.config,
-      });
-    };
+    const observeRoute = (route: RouteOptions) => routeObserver(route);
     (server.addHook as unknown as (
       name: 'onRoute',
       hook: typeof observeRoute

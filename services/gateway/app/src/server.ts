@@ -164,6 +164,14 @@ export async function createServer(
       : {}),
   });
   registerGatewayUxBoundary(app, gatewayLogger);
+  // CORS preflight is an empty protocol response, not a JSON UX route.
+  app.addHook('onRoute', (route) => {
+    const methods = Array.isArray(route.method) ? route.method : [route.method];
+    // Swagger UI serves HTML, JavaScript and YAML directly, outside the JSON UX envelope.
+    if (methods.includes('OPTIONS') || route.url.startsWith('/docs')) {
+      route.config = { ...route.config, ux: 'raw' };
+    }
+  });
   if (routeObserver) {
     app.addHook("onRoute", (route) => {
       if (route.url) {
@@ -537,7 +545,7 @@ export async function createServer(
 
     scope.get(
       "/health",
-      { schema: { tags: ["System"], summary: "Gateway health check" } },
+      { schema: { tags: ["System"], summary: "Gateway health check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] }, version: { type: 'string' }, uptime: { type: 'number' }, timestamp: { type: 'string', format: 'date-time' }, adapters: { type: 'object', additionalProperties: { type: 'object', properties: { available: { type: 'boolean' }, latencyMs: { type: 'number' } }, required: ['available'] } }, upstreams: { type: 'object', additionalProperties: { type: 'object', properties: { status: { type: 'string' }, latencyMs: { type: 'number' } }, required: ['status'] } }, projectRuntimes: { type: 'object' } }, required: ['status', 'version', 'uptime', 'timestamp', 'adapters', 'upstreams'] } } } },
       async () => {
         const snapshot = await collectHealthSnapshot();
         // Runtime state changes faster than the cached snapshot lives: read it live.
@@ -554,6 +562,8 @@ export async function createServer(
           tags: ["System"],
           summary:
             "Platform adapter status — mode (real | inmemory | noop) per slot",
+          querystring: { type: 'object', properties: {}, additionalProperties: false },
+          response: { 200: { type: 'array', items: { type: 'object', properties: { slot: { type: 'string' }, mode: { type: 'string', enum: ['real', 'inmemory', 'noop'] }, implementation: { type: 'string' }, reason: { type: 'string' }, recordedAt: { type: 'string', format: 'date-time' } }, required: ['slot', 'mode', 'implementation', 'reason', 'recordedAt'] } } },
         },
       },
       async () => {
@@ -567,7 +577,7 @@ export async function createServer(
 
     scope.get(
       "/ready",
-      { schema: { tags: ["System"], summary: "Gateway readiness check" } },
+      { schema: { tags: ["System"], summary: "Gateway readiness check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object' }, 503: { type: 'object' } } } },
       async (_request, reply) => {
         const health = await collectHealthSnapshot();
         const upstreams =
@@ -628,6 +638,7 @@ export async function createServer(
     scope.get(
       "/metrics",
       {
+        config: { ux: 'raw' },
         schema: {
           tags: ["Observability"],
           summary: "Gateway metrics in Prometheus format",
@@ -652,6 +663,8 @@ export async function createServer(
         schema: {
           tags: ["Observability"],
           summary: "Gateway observability contract descriptor",
+          querystring: { type: 'object', properties: {}, additionalProperties: false },
+          response: { 200: { type: 'object' } },
         },
       },
       async () => observability.buildDescribe(),
@@ -663,6 +676,8 @@ export async function createServer(
         schema: {
           tags: ["Observability"],
           summary: "Gateway observability health snapshot",
+          querystring: { type: 'object', properties: {}, additionalProperties: false },
+          response: { 200: { type: 'object' } },
         },
       },
       async () => {
@@ -706,7 +721,7 @@ export async function createServer(
     const hostRegistry = registry ?? new HostRegistry(cache);
     scope.post(
       "/hosts/register",
-      { schema: { tags: ["Hosts"], summary: "Register a host" } },
+      { schema: { tags: ["Hosts"], summary: "Register a host", querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { name: { type: 'string' }, namespaceId: { type: 'string' }, capabilities: { type: 'array', items: { type: 'string', enum: ['filesystem', 'git', 'editor-context', 'execution'] } }, workspacePaths: { type: 'array', items: { type: 'string' } }, hostType: { type: 'string', enum: ['local', 'cloud'] } }, required: ['name', 'namespaceId', 'capabilities', 'workspacePaths'], additionalProperties: false }, response: { 201: { type: 'object', properties: { hostId: { type: 'string' }, machineToken: { type: 'string' }, status: { type: 'string' } }, required: ['hostId', 'machineToken', 'status'] }, 400: { type: 'object' } } } },
       async (request, reply) => {
         const parsed = HostRegistrationSchema.safeParse(request.body);
         if (!parsed.success) {
@@ -726,7 +741,7 @@ export async function createServer(
     // List hosts (auth required)
     scope.get(
       "/hosts",
-      { schema: { tags: ["Hosts"], summary: "List registered hosts" } },
+      { schema: { tags: ["Hosts"], summary: "List registered hosts", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { hosts: { type: 'array', items: { type: 'object' } } }, required: ['hosts'] }, 401: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
@@ -740,7 +755,7 @@ export async function createServer(
     // Get host by ID (auth required)
     scope.get<{ Params: { hostId: string } }>(
       "/hosts/:hostId",
-      { schema: { tags: ["Hosts"], summary: "Get host by ID" } },
+      { schema: { tags: ["Hosts"], summary: "Get host by ID", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object' }, 401: { type: 'object' }, 404: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
@@ -758,7 +773,7 @@ export async function createServer(
     // Deregister host (auth required)
     scope.delete<{ Params: { hostId: string } }>(
       "/hosts/:hostId",
-      { schema: { tags: ["Hosts"], summary: "Deregister a host" } },
+      { schema: { tags: ["Hosts"], summary: "Deregister a host", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 204: { type: 'null' }, 401: { type: 'object' }, 404: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {

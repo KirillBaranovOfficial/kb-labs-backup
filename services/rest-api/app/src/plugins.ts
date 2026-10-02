@@ -22,6 +22,13 @@ export async function registerPlugins(
   server: FastifyInstance,
   config: RestApiConfig
 ): Promise<void> {
+  // CORS preflight is an empty protocol response rather than a JSON UX route.
+  server.addHook('onRoute', (route) => {
+    const methods = Array.isArray(route.method) ? route.method : [route.method];
+    if (methods.includes('OPTIONS')) {
+      route.config = { ...route.config, ux: 'raw' };
+    }
+  });
   // CORS plugin with profile support
   const corsProfile = config.cors.profile || 'dev';
   let corsOrigins: string[] | boolean = config.cors.origins;
@@ -128,4 +135,3 @@ export async function registerPlugins(
     ui: corsProfile !== 'prod',
   });
 }
-

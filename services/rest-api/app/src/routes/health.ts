@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/health
  * Health check and diagnostics endpoints
@@ -6,6 +7,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/core-registry';
+import { CANONICAL_OBSERVABILITY_METRICS } from '@kb-labs/core-contracts';
 import { normalizeBasePath, resolvePaths } from './path-helpers';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
@@ -49,7 +51,23 @@ export async function registerHealthRoutes(
   const observabilityHealthPaths = resolvePaths(basePath, '/observability/health');
 
   for (const path of healthPaths) {
-    fastify.get(path, async (_request, reply) => {
+    fastify.get(path, { config: { ux: 'raw' }, schema: {
+      querystring: { type: 'object', additionalProperties: false },
+      response: withUxErrorResponses({ 200: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          schema: { const: 'kb.health/1' }, ts: { type: 'string', format: 'date-time' },
+          uptimeSec: { type: 'integer', minimum: 0 },
+          version: { type: 'object', properties: { kbLabs: { type: 'string' }, rest: { type: 'string' }, studio: { type: 'string' }, git: { type: 'object', properties: { sha: { type: 'string' }, dirty: { type: 'boolean' } }, required: ['sha', 'dirty'], additionalProperties: false } }, required: ['kbLabs', 'rest'], additionalProperties: false },
+          registry: { type: 'object', properties: { total: { type: 'integer' }, withRest: { type: 'integer' }, withStudio: { type: 'integer' }, errors: { type: 'integer' }, generatedAt: { type: 'string', format: 'date-time' }, expiresAt: { type: 'string', format: 'date-time' }, partial: { type: 'boolean' }, stale: { type: 'boolean' } }, required: ['total', 'withRest', 'withStudio', 'errors', 'generatedAt', 'partial', 'stale'], additionalProperties: false },
+          status: { enum: ['healthy', 'degraded'] },
+          components: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, version: { type: 'string' }, restRoutes: { type: 'integer' }, studioWidgets: { type: 'integer' }, lastError: { type: 'string' } }, required: ['id'], additionalProperties: false } },
+          meta: { type: 'object', properties: { source: { const: 'rest' }, readiness: { type: 'object', properties: {
+            ready: { type: 'boolean' }, reason: { type: 'string' }, registryLoaded: { type: 'boolean' }, registryPartial: { type: 'boolean' }, registryStale: { type: 'boolean' }, pluginRoutesMounted: { type: 'boolean' }, pluginMountInProgress: { type: 'boolean' }, pluginRouteCount: { type: 'integer' }, pluginRouteErrors: { type: 'integer' }, readinessFailures: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, error: { type: 'string' } }, required: ['id', 'error'], additionalProperties: false } },
+          }, additionalProperties: true } }, required: ['source', 'readiness'], additionalProperties: true },
+        }, required: ['schema', 'ts', 'uptimeSec', 'version', 'registry', 'status', 'components'],
+      } }),
+    } }, async (_request, reply) => {
       const eventHub = fastify.kbEventHub;
       try {
         const baseSnapshot = await getBaseSnapshot(registry);
@@ -96,7 +114,20 @@ export async function registerHealthRoutes(
   }
 
   for (const path of readyPaths) {
-    fastify.get(path, async (_request, reply) => {
+    fastify.get(path, { config: { ux: 'raw' }, schema: {
+      querystring: { type: 'object', additionalProperties: false },
+      response: withUxErrorResponses({ 200: {
+        type: 'object', properties: {
+          schema: { const: 'kb.ready/1' }, ts: { type: 'string', format: 'date-time' }, ready: { type: 'boolean' }, status: { enum: ['ready', 'degraded', 'initializing'] }, reason: { type: 'string' },
+          components: { type: 'object', properties: {
+            cliApi: { type: 'object', properties: { initialized: { type: 'boolean' } }, required: ['initialized'], additionalProperties: false },
+            registry: { type: 'object', properties: { loaded: { type: 'boolean' }, partial: { type: 'boolean' }, stale: { type: 'boolean' } }, required: ['loaded', 'partial', 'stale'], additionalProperties: false },
+            plugins: { type: 'object', properties: { mounted: { type: 'boolean' }, inProgress: { type: 'boolean' }, routeCount: { type: 'integer' }, errors: { type: 'integer' }, failures: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, error: { type: 'string' } }, required: ['id', 'error'], additionalProperties: false } }, lastCompletedAt: { type: ['string', 'null'] }, lastDurationMs: { type: ['number', 'null'] } }, required: ['mounted', 'inProgress', 'routeCount', 'errors', 'failures', 'lastCompletedAt', 'lastDurationMs'], additionalProperties: false },
+            redis: { type: 'object', properties: { enabled: { type: 'boolean' }, healthy: { type: 'boolean' }, states: { type: 'object' } }, required: ['enabled', 'healthy', 'states'], additionalProperties: false },
+          }, required: ['cliApi', 'registry', 'plugins', 'redis'], additionalProperties: true },
+        }, required: ['schema', 'ts', 'ready', 'status', 'reason', 'components'], additionalProperties: false,
+      }, 503: { type: 'object', properties: { schema: { const: 'kb.ready/1' }, ts: { type: 'string', format: 'date-time' }, ready: { const: false }, status: { const: 'initializing' }, reason: { type: 'string' }, components: { type: 'object', additionalProperties: true } }, required: ['schema', 'ts', 'ready', 'status', 'reason', 'components'], additionalProperties: false } }),
+    } }, async (_request, reply) => {
       const eventHub = fastify.kbEventHub;
       const { registryLoaded, registryPartial, registryStale } = evaluateRegistryState(registry);
       readiness.registryLoaded = registryLoaded;
@@ -129,11 +160,11 @@ export async function registerHealthRoutes(
   }
 
   for (const path of observabilityDescribePaths) {
-    fastify.get(path, async () => buildRestObservabilityDescribe(basePath));
+    fastify.get(path, { config: { ux: 'raw' }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { schema: { const: 'kb.observability/1' }, contractVersion: { type: 'string' }, serviceId: { const: 'rest' }, instanceId: { type: 'string' }, serviceType: { type: 'string' }, version: { type: 'string' }, environment: { type: 'string' }, startedAt: { type: 'string', format: 'date-time' }, dependencies: { type: 'array', items: { type: 'object', properties: { serviceId: { type: 'string' }, required: { type: 'boolean' }, description: { type: 'string' } }, required: ['serviceId', 'required'], additionalProperties: false } }, metricsEndpoint: { type: 'string' }, healthEndpoint: { type: 'string' }, logsSource: { type: 'string' }, capabilities: { type: 'array', items: { type: 'string' } }, metricFamilies: { type: 'array', items: { enum: CANONICAL_OBSERVABILITY_METRICS } } }, required: ['schema', 'contractVersion', 'serviceId', 'instanceId', 'serviceType', 'version', 'environment', 'startedAt', 'dependencies', 'metricsEndpoint', 'healthEndpoint', 'logsSource', 'capabilities', 'metricFamilies'], additionalProperties: false } }) } }, async () => buildRestObservabilityDescribe(basePath));
   }
 
   for (const path of observabilityHealthPaths) {
-    fastify.get(path, async () => {
+    fastify.get(path, { config: { ux: 'raw' }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { schema: { const: 'kb.observability/1' }, contractVersion: { type: 'string' }, serviceId: { const: 'rest' }, instanceId: { type: 'string' }, observedAt: { type: 'string', format: 'date-time' }, status: { enum: ['healthy', 'degraded', 'unhealthy'] }, uptimeSec: { type: 'number' }, metricsEndpoint: { type: 'string' }, logsSource: { type: 'string' }, capabilities: { type: 'array', items: { type: 'string' } }, checks: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, status: { enum: ['ok', 'warn', 'error'] }, message: { type: 'string' }, latencyMs: { type: 'number' }, details: { type: 'object', additionalProperties: true } }, required: ['id', 'status'], additionalProperties: true } }, snapshot: { type: 'object', additionalProperties: true }, topOperations: { type: 'array', items: { type: 'object', properties: { operation: { type: 'string' }, count: { type: 'number' }, avgDurationMs: { type: 'number' }, maxDurationMs: { type: 'number' }, errorCount: { type: 'number' } }, required: ['operation'], additionalProperties: true } }, state: { type: 'string' }, meta: { type: 'object', additionalProperties: true } }, required: ['schema', 'contractVersion', 'serviceId', 'instanceId', 'observedAt', 'status', 'uptimeSec', 'metricsEndpoint', 'logsSource', 'capabilities', 'checks'], additionalProperties: true } }) } }, async () => {
       try {
         const baseSnapshot = await getBaseSnapshot(registry);
         const pluginsMetrics = metricsCollector.getLastPluginMountSnapshot();
