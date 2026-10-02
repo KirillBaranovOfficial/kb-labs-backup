@@ -145,6 +145,17 @@ Cases: S-179.5, S-179.6, S-179.7, S-179.8, S-179.9, S-179.10, S-179.11, S-179.12
 
 ## 2026-10-02
 
+### System CLI commands declare startup scope
+
+Every registered system CLI command declares whether startup requires a
+registered project. Plugin commands are always project-scoped because plugins
+attach to projects (ADR-0052). Global help without a command and version are
+platform-scoped global flags. `project show` is platform-scoped and resolves an
+explicit reference itself, or looks up cwd when no reference is given; an
+unknown cwd returns `KB_PROJECT_UNKNOWN`. Scope and auth exemption remain
+independent declarations.
+Cases: S-124, S-054.17, PC-002.6.
+
 ### Platform CLI authentication gate
 
 The platform owns one deny-by-default authentication gate at each entry point. CLI wraps every system and plugin command before dispatch; only its platform-owned auth/help/version/bootstrap/diagnostic allowlist bypasses the gate. Plugins and services declare no auth metadata. The Gateway authenticates globally before routing to services, project runtimes, or plugin REST handlers; only explicit public routes pass anonymously. Manifest-declared webhook routes are authenticated by their declared webhook verifier (secret, HMAC, or custom validator), not by a user session; undeclared paths cannot bypass the gateway gate by resembling webhook routes. MCP authenticates at its transport boundary before session or tool dispatch and retains HTTP 401 for unauthenticated clients. In all entry points, authentication precedes permissions and product preconditions. Local mode is a no-op. Authenticated authorization failures use `KB_AUTH_FORBIDDEN` with the permission the Gateway checked, or a catalog message that does not name a role when no permission is available.
