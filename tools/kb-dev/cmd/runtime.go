@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	sharedtoolchain "github.com/kb-labs/clikit/toolchain"
 	"github.com/kb-labs/dev/internal/manager"
 	"github.com/spf13/cobra"
@@ -23,7 +24,7 @@ func ensureSupportedRuntime(cmd *cobra.Command, mgr *manager.Manager) error {
 		return err
 	}
 	var in io.Reader = os.Stdin
-	var out io.Writer = os.Stdout
+	var out io.Writer = clikitcommand.OutputWriter()
 	if cmd != nil {
 		in, out = cmd.InOrStdin(), cmd.OutOrStdout()
 	}

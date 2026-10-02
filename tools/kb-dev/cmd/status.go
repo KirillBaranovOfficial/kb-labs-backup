@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -51,6 +52,9 @@ func runStatus(_ *cobra.Command, _ []string) error {
 
 	result := mgr.Status()
 
+	if !result.OK {
+		return commandFailure("kb-dev status")
+	}
 	if jsonMode {
 		return JSONOut(result)
 	}
@@ -58,8 +62,8 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	out := newOutput()
 	cfg := mgr.Config()
 
-	fmt.Println()
-	fmt.Println(out.label.Render("KB Labs Services"))
+	clikitcommand.Println()
+	clikitcommand.Println(out.label.Render("KB Labs Services"))
 
 	// socketDir is the constant /tmp/kb-<hash>/ shared by all socket services;
 	// captured during rendering and shown once in the footer instead of per row.
@@ -71,7 +75,7 @@ func runStatus(_ *cobra.Command, _ []string) error {
 			continue
 		}
 
-		fmt.Printf("\n  %s\n", out.dim.Render("["+group+"]"))
+		clikitcommand.Printf("\n  %s\n", out.dim.Render("["+group+"]"))
 
 		for _, id := range services {
 			ss, ok := result.Services[id]
@@ -109,7 +113,7 @@ func runStatus(_ *cobra.Command, _ []string) error {
 				extras += "  " + out.dim.Render(cpuStr+" / "+memStr)
 			}
 
-			fmt.Printf("  %s %s%s%s%s\n",
+			clikitcommand.Printf("  %s %s%s%s%s\n",
 				out.StatusIcon(ss.State),
 				Pad(id, 22),
 				out.StatusColor(Pad(ss.State, 10)),
@@ -123,19 +127,19 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	fmt.Println()
+	clikitcommand.Println()
 	if socketDir != "" {
-		fmt.Printf("  %s\n", out.dim.Render("sockets · "+socketDir))
+		clikitcommand.Printf("  %s\n", out.dim.Render("sockets · "+socketDir))
 	}
 	s := result.Summary
-	fmt.Printf("  %s · %s · %s · %s  (%d total)\n",
+	clikitcommand.Printf("  %s · %s · %s · %s  (%d total)\n",
 		out.alive.Render(fmt.Sprintf("%d alive", s.Alive)),
 		out.starting.Render(fmt.Sprintf("%d starting", s.Starting)),
 		out.failed.Render(fmt.Sprintf("%d failed", s.Failed)),
 		out.dead.Render(fmt.Sprintf("%d dead", s.Dead)),
 		s.Total,
 	)
-	fmt.Println()
+	clikitcommand.Println()
 
 	return nil
 }
@@ -192,16 +196,19 @@ func runFleetStatus() error {
 		result.Projects[item.Alias] = state
 	}
 
+	if !result.OK {
+		return commandFailure("kb-dev status")
+	}
 	if jsonMode {
 		return JSONOut(result)
 	}
 
 	out := newOutput()
-	fmt.Println()
-	fmt.Println(out.label.Render("KB Labs Projects"))
+	clikitcommand.Println()
+	clikitcommand.Println(out.label.Render("KB Labs Projects"))
 	for _, item := range items {
 		if item.Mgr == nil {
-			fmt.Printf("  %s %s  %s\n", out.StatusIcon("failed"), Pad(item.Alias, 22), out.failed.Render(item.Error))
+			clikitcommand.Printf("  %s %s  %s\n", out.StatusIcon("failed"), Pad(item.Alias, 22), out.failed.Render(item.Error))
 			continue
 		}
 		status := item.Mgr.Status()
@@ -214,16 +221,16 @@ func runFleetStatus() error {
 		if state, ok := result.Projects[item.Alias]; ok {
 			resources = state.Resources
 		}
-		fmt.Printf("  %s %s %s  %d/%d healthy  cpu=%.1f%% rss=%s  %s\n",
+		clikitcommand.Printf("  %s %s %s  %d/%d healthy  cpu=%.1f%% rss=%s  %s\n",
 			out.StatusIcon(state), Pad(item.Alias, 22), out.StatusColor(Pad(state, 10)),
 			summary.Alive, summary.Total, resources.CPUPercent, process.FormatMemory(resources.RSSBytes), out.dim.Render(item.Path))
 		for _, anomaly := range status.RuntimeAnomaly {
 			out.Detail(fmt.Sprintf("%s: %s (pid %d)", anomaly.State, anomaly.Reason, anomaly.PID))
 		}
 	}
-	fmt.Println()
+	clikitcommand.Println()
 	if !result.OK {
-		return errSilent
+		return commandFailure("kb-dev status")
 	}
 	return nil
 }

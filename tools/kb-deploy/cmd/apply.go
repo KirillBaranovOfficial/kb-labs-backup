@@ -116,7 +116,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	})
 
 	if res.Err != nil {
-		// res.Err is a structured *diag.Diag (ERR_WAVE_FAILED) carrying every
+		// res.Err is a structured *diag.Diag (KB_DEPLOY_WAVE_FAILED) carrying every
 		// per-action failure in meta; let the top-level handler render it.
 		return res.Err
 	}

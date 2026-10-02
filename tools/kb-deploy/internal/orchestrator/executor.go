@@ -122,10 +122,9 @@ func Execute(opts ExecuteOptions) *Result {
 		fmt.Fprintf(opts.Stderr, "wave %d failed; attempting auto-rollback of completed hosts\n", waveIdx+1)
 		rolled := rollbackWave(waveResults, opts, forceRestart)
 		res.RolledBack = rolled
-		// Rollback fired → distinct exit code (3) recorded in the diagnostic.
+		// Rollback details remain part of the typed failure metadata.
 		if d, ok := res.Err.(*diag.Diag); ok {
 			d.Meta["rolledBack"] = len(rolled)
-			d.Meta["exitCode"] = diag.ExitForbidden
 		}
 		return res
 	}
@@ -134,8 +133,8 @@ func Execute(opts ExecuteOptions) *Result {
 
 // waveDiag turns a failed wave's per-action results into a structured Diag:
 // Message says which wave failed, Reason summarizes each failure, and Meta
-// carries the machine-readable failure list. exitCode defaults to ExitConfig
-// (2); the rollback path overrides it to ExitForbidden (3).
+// carries the machine-readable failure list. All operation failures use the
+// shared process exit code 1.
 func waveDiag(wave int, results []ActionResult) *diag.Diag {
 	var failures []map[string]any
 	var reasons []string
@@ -152,13 +151,12 @@ func waveDiag(wave int, results []ActionResult) *diag.Diag {
 		reasons = append(reasons, fmt.Sprintf("%s %s@%s: %v",
 			r.Action.Kind, r.Action.Service, r.Action.Host, r.Err))
 	}
-	return diag.New("ERR_WAVE_FAILED",
+	return diag.New("KB_DEPLOY_WAVE_FAILED",
 		fmt.Sprintf("deploy wave %d failed", wave),
 		diag.WithReason(strings.Join(reasons, "; ")),
 		diag.WithMeta(map[string]any{
 			"wave":     wave,
 			"failures": failures,
-			"exitCode": diag.ExitConfig,
 		}),
 	)
 }
@@ -184,7 +182,7 @@ func deliverConfigs(opts ExecuteOptions) (map[string]bool, error) {
 		host, err := opts.Resolver(name)
 		if err != nil {
 			restoreConfigs(opts, delivered)
-			return nil, diag.Wrap(err, "ERR_CONFIG_DELIVERY",
+			return nil, diag.Wrap(err, "KB_DEPLOY_CONFIG_DELIVERY",
 				fmt.Sprintf("could not resolve host %q for config delivery", name),
 				diag.WithReason(err.Error()),
 				diag.WithMeta(map[string]any{"host": name}))
@@ -192,7 +190,7 @@ func deliverConfigs(opts ExecuteOptions) (map[string]bool, error) {
 		hc := opts.Configs[name]
 		if err := host.DeliverConfig(hc.JSONC, hc.Env); err != nil {
 			restoreConfigs(opts, delivered)
-			return nil, diag.Wrap(err, "ERR_CONFIG_DELIVERY",
+			return nil, diag.Wrap(err, "KB_DEPLOY_CONFIG_DELIVERY",
 				fmt.Sprintf("config delivery to host %q failed", name),
 				diag.WithReason(err.Error()),
 				diag.WithMeta(map[string]any{"host": name}))

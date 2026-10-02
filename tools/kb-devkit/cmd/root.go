@@ -2,21 +2,14 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
-	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 )
-
-// errSilent is a sentinel that suppresses double-printing in --json mode.
-// Commands that already emitted their own JSON envelope return this error
-// so Execute() knows not to print an additional error envelope.
-var errSilent = errors.New("")
 
 // Global flags accessible to all subcommands.
 var (
@@ -69,23 +62,9 @@ Examples:
 	SilenceErrors: true,
 }
 
-// Execute is the main entry point called from main.go. Errors bubbling up to
-// the root are rendered as structured diagnostics (message+reason+hint for
-// humans; {ok:false,error:{…}} for machines) and the process exits with the
-// diagnostic's shared exit code. The errSilent sentinel means a command
-// already wrote command-specific output and prevents duplicate rendering.
+// Execute is the main entry point called from main.go.
 func Execute() {
-	clikitcommand.InstallInputBoundary(rootCmd)
-	_, err := rootCmd.ExecuteC()
-	if err == nil {
-		return
-	}
-	if err.Error() == "" {
-		os.Exit(1)
-	}
-	d := diag.FromError(err)
-	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
-	os.Exit(code)
+	os.Exit(clikitcommand.Execute(rootCmd, os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func init() {

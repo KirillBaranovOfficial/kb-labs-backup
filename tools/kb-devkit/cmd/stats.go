@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"sort"
 	"strings"
 
@@ -27,11 +28,10 @@ coverage metrics, and tech debt summary.`,
 		s := computeStats(results)
 
 		if jsonMode {
-			_ = JSONOut(s)
 			if !s.OK {
-				return errSilent
+				return commandFailure("kb-devkit stats")
 			}
-			return nil
+			return JSONOut(s)
 		}
 
 		printStats(s)
@@ -336,7 +336,7 @@ func max1(n int) int {
 func printStats(s workspaceStats) {
 	o := newOutput()
 
-	fmt.Printf("\n%s\n\n", o.label.Render("KB Devkit — Workspace Stats"))
+	clikitcommand.Printf("\n%s\n\n", o.label.Render("KB Devkit — Workspace Stats"))
 
 	// Score line.
 	gradeStyle := o.healthy
@@ -345,14 +345,14 @@ func printStats(s workspaceStats) {
 	} else if s.Score < 80 {
 		gradeStyle = o.warning
 	}
-	fmt.Printf("  Health Score   %s  (%s)\n\n",
+	clikitcommand.Printf("  Health Score   %s  (%s)\n\n",
 		gradeStyle.Render(fmt.Sprintf("%d/100  Grade %s", s.Score, s.Grade)),
 		fmt.Sprintf("%d healthy, %d warning, %d error of %d total",
 			s.Summary.Healthy, s.Summary.Warning, s.Summary.Error, s.Summary.Total),
 	)
 
 	// By category.
-	fmt.Printf("  %s\n", o.label.Render("By category"))
+	clikitcommand.Printf("  %s\n", o.label.Render("By category"))
 	var cats []string
 	for cat := range s.ByCategory {
 		cats = append(cats, cat)
@@ -361,16 +361,16 @@ func printStats(s workspaceStats) {
 	for _, cat := range cats {
 		cs := s.ByCategory[cat]
 		bar := gradeBar(cs.Healthy, cs.Total)
-		fmt.Printf("  %-14s  %s  %s\n",
+		clikitcommand.Printf("  %-14s  %s  %s\n",
 			cat,
 			bar,
 			o.dim.Render(fmt.Sprintf("%d/%d  Grade %s", cs.Healthy, cs.Total, cs.Grade)),
 		)
 	}
-	fmt.Println()
+	clikitcommand.Println()
 
 	// Issues by type.
-	fmt.Printf("  %s\n", o.label.Render("Issues by check"))
+	clikitcommand.Printf("  %s\n", o.label.Render("Issues by check"))
 	type checkEntry struct {
 		name string
 		its  issueTypeStats
@@ -385,36 +385,36 @@ func printStats(s workspaceStats) {
 	})
 	for _, ce := range checkList {
 		its := ce.its
-		fmt.Printf("  %-16s  %s errors  %s warnings  in %s packages\n",
+		clikitcommand.Printf("  %-16s  %s errors  %s warnings  in %s packages\n",
 			ce.name,
 			errorNum(its.Errors, o),
 			warnNum(its.Warnings, o),
 			o.dim.Render(fmt.Sprintf("%d", its.Packages)),
 		)
 	}
-	fmt.Println()
+	clikitcommand.Println()
 
 	// Coverage.
-	fmt.Printf("  %s\n", o.label.Render("Coverage (TS packages)"))
+	clikitcommand.Printf("  %s\n", o.label.Render("Coverage (TS packages)"))
 	printCovRow("ESLint config", s.Coverage.WithESLint, o)
 	printCovRow("TSConfig     ", s.Coverage.WithTSConfig, o)
 	printCovRow("README.md    ", s.Coverage.WithREADME, o)
 	printCovRow("engines field", s.Coverage.WithEngines, o)
 	printCovRow("exports field", s.Coverage.WithExports, o)
-	fmt.Println()
+	clikitcommand.Println()
 
 	// Top issues.
 	if len(s.TopIssues) > 0 {
-		fmt.Printf("  %s\n", o.label.Render("Most common issues"))
+		clikitcommand.Printf("  %s\n", o.label.Render("Most common issues"))
 		for i, ti := range s.TopIssues {
-			fmt.Printf("  %d. [%s] %s  %s\n",
+			clikitcommand.Printf("  %d. [%s] %s  %s\n",
 				i+1,
 				o.dim.Render(ti.Check),
 				ti.Message,
 				o.dim.Render(fmt.Sprintf("(%d packages)", ti.Packages)),
 			)
 		}
-		fmt.Println()
+		clikitcommand.Println()
 	}
 }
 
@@ -425,7 +425,7 @@ func printCovRow(label string, p pct, o output) {
 	} else if p.Pct < 90 {
 		icon = o.StatusIcon("warning")
 	}
-	fmt.Printf("  %s %-14s  %s\n",
+	clikitcommand.Printf("  %s %-14s  %s\n",
 		icon, label,
 		o.dim.Render(fmt.Sprintf("%.0f%%  (%d/%d)", p.Pct, p.Pass, p.Total)),
 	)

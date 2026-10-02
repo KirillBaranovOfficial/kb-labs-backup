@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 
 	"github.com/kb-labs/dev/internal/manager"
 	"github.com/spf13/cobra"
@@ -29,6 +29,9 @@ func runHealth(_ *cobra.Command, _ []string) error {
 
 	result := mgr.Health()
 
+	if !result.OK {
+		return commandFailure("kb-dev health")
+	}
 	if jsonMode {
 		return JSONOut(result)
 	}
@@ -36,9 +39,9 @@ func runHealth(_ *cobra.Command, _ []string) error {
 	out := newOutput()
 	cfg := mgr.Config()
 
-	fmt.Println()
-	fmt.Println(out.label.Render("Health Check"))
-	fmt.Println()
+	clikitcommand.Println()
+	clikitcommand.Println(out.label.Render("Health Check"))
+	clikitcommand.Println()
 
 	for _, group := range cfg.GroupOrder() {
 		services := cfg.Groups[group]
@@ -46,13 +49,13 @@ func runHealth(_ *cobra.Command, _ []string) error {
 			continue
 		}
 
-		fmt.Printf("  %s\n", out.dim.Render("["+group+"]"))
+		clikitcommand.Printf("  %s\n", out.dim.Render("["+group+"]"))
 
 		for _, id := range services {
 			sh, ok := result.Services[id]
 			if !ok {
 				// No health check configured.
-				fmt.Printf("    %s %s  %s\n", out.StatusIcon("dead"), Pad(id, 20), out.dim.Render("no health check"))
+				clikitcommand.Printf("    %s %s  %s\n", out.StatusIcon("dead"), Pad(id, 20), out.dim.Render("no health check"))
 				continue
 			}
 
@@ -61,17 +64,14 @@ func runHealth(_ *cobra.Command, _ []string) error {
 				if sh.Slow {
 					latency = out.degraded.Render(latency + " (slow)")
 				}
-				fmt.Printf("    %s %s  %s\n", out.StatusIcon("alive"), Pad(id, 20), latency)
+				clikitcommand.Printf("    %s %s  %s\n", out.StatusIcon("alive"), Pad(id, 20), latency)
 			} else {
-				fmt.Printf("    %s %s  %s\n", out.StatusIcon("failed"), Pad(id, 20), out.failed.Render("failing"))
+				clikitcommand.Printf("    %s %s  %s\n", out.StatusIcon("failed"), Pad(id, 20), out.failed.Render("failing"))
 			}
 		}
 	}
-	fmt.Println()
+	clikitcommand.Println()
 
-	if !result.OK {
-		return errSilent
-	}
 	return nil
 }
 
@@ -106,14 +106,17 @@ func runFleetHealth() error {
 		result.Projects[item.Alias] = entry
 	}
 	if jsonMode {
+		if !result.OK {
+			return commandFailure("kb-dev health")
+		}
 		return JSONOut(result)
 	}
 	out := newOutput()
-	fmt.Println()
-	fmt.Println(out.label.Render("KB Labs Fleet Health"))
+	clikitcommand.Println()
+	clikitcommand.Println(out.label.Render("KB Labs Fleet Health"))
 	for _, item := range items {
 		if item.Mgr == nil {
-			fmt.Printf("  %s %s  %s\n", out.StatusIcon("failed"), Pad(item.Alias, 22), out.failed.Render(item.Error))
+			clikitcommand.Printf("  %s %s  %s\n", out.StatusIcon("failed"), Pad(item.Alias, 22), out.failed.Render(item.Error))
 			continue
 		}
 		health := item.Mgr.Health()
@@ -121,11 +124,8 @@ func runFleetHealth() error {
 		if !health.OK {
 			state = "failed"
 		}
-		fmt.Printf("  %s %s %s\n", out.StatusIcon(state), Pad(item.Alias, 22), out.StatusColor(state))
+		clikitcommand.Printf("  %s %s %s\n", out.StatusIcon(state), Pad(item.Alias, 22), out.StatusColor(state))
 	}
-	fmt.Println()
-	if !result.OK {
-		return errSilent
-	}
+	clikitcommand.Println()
 	return nil
 }

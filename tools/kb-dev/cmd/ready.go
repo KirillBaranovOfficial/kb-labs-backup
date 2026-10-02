@@ -29,6 +29,9 @@ func runReady(cmd *cobra.Command, args []string) error {
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	result := mgr.Ready(cmd.Context(), args, timeout)
 
+	if !result.OK {
+		return commandFailure("kb-dev ready")
+	}
 	if jsonMode {
 		return JSONOut(result)
 	}
@@ -45,7 +48,6 @@ func runReady(cmd *cobra.Command, args []string) error {
 		if result.Hint != "" {
 			out.Warn(result.Hint)
 		}
-		return errSilent
 	}
 	return nil
 }

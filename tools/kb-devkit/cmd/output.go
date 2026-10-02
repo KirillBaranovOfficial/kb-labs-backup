@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
 	"strings"
 
@@ -47,25 +47,25 @@ func newOutput() output {
 	}
 }
 
-func (o output) Info(msg string) { fmt.Printf("%s %s\n", o.infoTag, msg) }
-func (o output) OK(msg string)   { fmt.Printf("%s %s\n", o.okTag, msg) }
-func (o output) Warn(msg string) { fmt.Printf("%s %s\n", o.warnTag, msg) }
-func (o output) Err(msg string)  { fmt.Printf("%s %s\n", o.errTag, msg) }
+func (o output) Info(msg string) { clikitcommand.Printf("%s %s\n", o.infoTag, msg) }
+func (o output) OK(msg string)   { clikitcommand.Printf("%s %s\n", o.okTag, msg) }
+func (o output) Warn(msg string) { clikitcommand.Printf("%s %s\n", o.warnTag, msg) }
+func (o output) Err(msg string)  { clikitcommand.Printf("%s %s\n", o.errTag, msg) }
 
 func (o output) Section(title string) {
-	fmt.Printf("\n%s %s\n", o.infoTag, o.label.Render(title))
+	clikitcommand.Printf("\n%s %s\n", o.infoTag, o.label.Render(title))
 }
 
 func (o output) KeyValue(k, v string) {
-	fmt.Printf("  %s %s\n", o.label.Render(k+":"), o.value.Render(v))
+	clikitcommand.Printf("  %s %s\n", o.label.Render(k+":"), o.value.Render(v))
 }
 
 func (o output) Bullet(label, details string) {
 	if details == "" {
-		fmt.Printf("    %s %s\n", o.bullet.Render("●"), label)
+		clikitcommand.Printf("    %s %s\n", o.bullet.Render("●"), label)
 		return
 	}
-	fmt.Printf("    %s %-30s  %s\n", o.bullet.Render("●"), label, o.dim.Render(details))
+	clikitcommand.Printf("    %s %-30s  %s\n", o.bullet.Render("●"), label, o.dim.Render(details))
 }
 
 // StatusIcon returns the colored icon for a package/workspace health state.
@@ -96,7 +96,7 @@ func (o output) SeverityColor(severity string) string {
 
 // Detail prints a diagnostic line indented under a package.
 func (o output) Detail(msg string) {
-	fmt.Printf("    %s\n", o.dim.Render("↳ "+msg))
+	clikitcommand.Printf("    %s\n", o.dim.Render("↳ "+msg))
 }
 
 // Pad pads a string to the given width.
@@ -106,18 +106,7 @@ func Pad(s string, width int) string {
 
 // JSONOut writes a value as JSON to stdout.
 func JSONOut(v any) error {
-	result.Render(os.Stdout, result.Success("", v), result.ModeJSON)
-	return nil
-}
-
-// JSONLOut writes a single JSONL line to stdout (for watch/gate streaming).
-func JSONLOut(v any) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Println(string(b))
-	return err
+	return result.Return(v)
 }
 
 func color(enabled bool, ansi string) lipgloss.TerminalColor {

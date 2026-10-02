@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"path/filepath"
 
 	"github.com/kb-labs/dev/internal/logger"
@@ -52,7 +52,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 
 	follow, _ := cmd.Flags().GetBool("follow")
 	if follow {
-		return logger.Follow(cmd.Context(), logsDir, svcID, os.Stdout)
+		return logger.Follow(cmd.Context(), logsDir, svcID, clikitcommand.OutputWriter())
 	}
 
 	lines, _ := cmd.Flags().GetInt("lines")
@@ -72,7 +72,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, line := range tail {
-		fmt.Println(line)
+		clikitcommand.Println(line)
 	}
 	return nil
 }
@@ -119,22 +119,22 @@ func runFleetLogs(cmd *cobra.Command, serviceID string) error {
 		}
 		result.Projects[item.Alias] = entry
 	}
+	if !result.OK {
+		return commandFailure("kb-dev logs")
+	}
 	if jsonMode {
 		return JSONOut(result)
 	}
 	for _, item := range items {
 		entry := result.Projects[item.Alias]
-		fmt.Printf("\n--- %s (%s) ---\n", item.Alias, entry.Path)
+		clikitcommand.Printf("\n--- %s (%s) ---\n", item.Alias, entry.Path)
 		if entry.Error != "" {
-			fmt.Println(entry.Error)
+			clikitcommand.Println(entry.Error)
 			continue
 		}
 		for _, line := range entry.Lines {
-			fmt.Println(line)
+			clikitcommand.Println(line)
 		}
-	}
-	if !result.OK {
-		return errSilent
 	}
 	return nil
 }

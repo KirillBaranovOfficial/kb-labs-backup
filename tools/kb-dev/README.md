@@ -433,7 +433,7 @@ kb-labs-dev/
 │   ├── ensure.go                   idempotent desired state
 │   ├── ready.go                    blocking readiness gate
 │   ├── watch.go                    JSONL event streaming
-│   ├── helpers.go                  shared loadManager, errSilent
+│   ├── helpers.go                  shared loadManager
 │   └── output.go                   lipgloss formatting
 └── internal/
     ├── config/                     discover + parse devservices.yaml, toposort, validation

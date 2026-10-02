@@ -984,6 +984,15 @@
       "hint": "Correct the reported fields and retry; run the command with --help for the expected input."
     },
     {
+      "code": "KB_RUNTIME_COMMAND_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The command could not complete.",
+      "hint": "Resolve the reported command failure, then run the command again."
+    },
+    {
       "code": "KB_RUNTIME_UNEXPECTED",
       "area": "runtime",
       "stage": "run",

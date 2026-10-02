@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/spf13/cobra"
@@ -30,14 +31,12 @@ var depsCmd = &cobra.Command{
 			result := checks.DetectCircular(ws.Packages)
 
 			if jsonMode {
-				_ = JSONOut(map[string]any{
-					"ok":      len(result) == 0,
+				if len(result) > 0 {
+					return commandFailure("kb-devkit deps")
+				}
+				return JSONOut(map[string]any{
 					"circles": result,
 				})
-				if len(result) > 0 {
-					return errSilent
-				}
-				return nil
 			}
 
 			o := newOutput()
@@ -56,19 +55,19 @@ var depsCmd = &cobra.Command{
 						break
 					}
 				}
-				fmt.Printf("\n  %s %s\n", o.StatusIcon("error"), o.label.Render(name))
+				clikitcommand.Printf("\n  %s %s\n", o.StatusIcon("error"), o.label.Render(name))
 				for _, issue := range issues {
-					fmt.Printf("     %s\n", o.dim.Render("↳ "+issue.Message))
+					clikitcommand.Printf("     %s\n", o.dim.Render("↳ "+issue.Message))
 				}
 			}
-			fmt.Println()
+			clikitcommand.Println()
 			return nil
 		}
 
 		// Default: show dependency summary.
 		o := newOutput()
 		o.Info(fmt.Sprintf("Workspace: %d packages discovered", len(ws.Packages)))
-		fmt.Println()
+		clikitcommand.Println()
 		o.Info("Use --circular to detect circular dependencies")
 		o.Info("Use --why @scope/package to trace dependency chains")
 

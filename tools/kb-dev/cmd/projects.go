@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"sort"
 
 	"github.com/kb-labs/dev/internal/config"
@@ -79,14 +79,14 @@ func runProjects(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	fmt.Println()
-	fmt.Println(out.label.Render("KB Labs Projects"))
+	clikitcommand.Println()
+	clikitcommand.Println(out.label.Render("KB Labs Projects"))
 	for _, st := range statuses {
 		state := "dead"
 		if st.Running {
 			state = "alive"
 		}
-		fmt.Printf("  %s %s%s%s\n",
+		clikitcommand.Printf("  %s %s%s%s\n",
 			out.StatusIcon(state),
 			Pad(st.Alias, 20),
 			out.StatusColor(Pad(state, 10)),
@@ -96,7 +96,7 @@ func runProjects(cmd *cobra.Command, _ []string) error {
 			out.Detail(st.Error)
 		}
 	}
-	fmt.Println()
+	clikitcommand.Println()
 
 	return nil
 }

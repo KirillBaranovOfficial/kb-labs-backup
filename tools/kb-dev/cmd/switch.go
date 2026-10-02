@@ -36,11 +36,11 @@ func runSwitch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if !startResult.OK {
+		return commandFailure("kb-dev switch")
+	}
 	if jsonMode {
 		return JSONOut(startResult)
-	}
-	if !startResult.OK {
-		return errSilent
 	}
 	printHighlights(mgr.Config().Services)
 	return nil

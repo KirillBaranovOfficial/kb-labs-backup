@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
 
 	"github.com/kb-labs/dev/internal/config"
@@ -73,9 +74,9 @@ func runHookCheck(cmd *cobra.Command, _ []string) error {
 func runHook(_ *cobra.Command, args []string) error {
 	switch args[0] {
 	case "zsh":
-		fmt.Println(zshHookSnippet)
+		clikitcommand.Println(zshHookSnippet)
 	case "bash":
-		fmt.Println(bashHookSnippet)
+		clikitcommand.Println(bashHookSnippet)
 	default:
 		return fmt.Errorf("unsupported shell %q (want zsh or bash)", args[0])
 	}

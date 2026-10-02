@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
-	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/dev/internal/config"
 	"github.com/spf13/cobra"
@@ -71,24 +70,9 @@ Examples:
 	SilenceErrors: true,
 }
 
-// Execute is the main entry point called from main.go. Any error bubbling up to
-// the root is normalized and rendered once through clikit.
-//
-// Commands that already emitted command-specific output return the errSilent
-// sentinel (empty message); Execute then exits without re-rendering.
+// Execute is the main entry point called from main.go.
 func Execute() {
-	clikitcommand.InstallInputBoundary(rootCmd)
-	_, err := rootCmd.ExecuteC()
-	if err == nil {
-		return
-	}
-	if err.Error() == "" {
-		// errSilent: retain the handler's failure exit without duplicate output.
-		os.Exit(1)
-	}
-	d := diag.FromError(err)
-	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
-	os.Exit(code)
+	os.Exit(clikitcommand.Execute(rootCmd, os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func init() {

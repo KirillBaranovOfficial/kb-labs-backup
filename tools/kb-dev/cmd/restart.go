@@ -37,6 +37,9 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	cascade := ShouldCascade(cmd, true) // default true for restart
 	result := mgr.Restart(cmd.Context(), targets, cascade, forceFlag)
 
+	if !result.OK {
+		return commandFailure("kb-dev restart")
+	}
 	if jsonMode {
 		return JSONOut(result)
 	}
@@ -53,8 +56,5 @@ func runRestart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if !result.OK {
-		return errSilent
-	}
 	return nil
 }
