@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/analytics
  * Analytics endpoints for querying events, stats, and monitoring
@@ -15,6 +16,30 @@ import type {
   BufferStatus,
   DlqStatus,
 } from '@kb-labs/core-platform/adapters';
+
+const analyticsQuerySchema = {
+  type: 'object', properties: {
+    type: { anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
+    source: { type: 'string' }, actor: { type: 'string' },
+    from: { type: 'string' }, to: { type: 'string' },
+    limit: { type: 'string', pattern: '^[1-9][0-9]*$' }, offset: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' },
+  }, additionalProperties: false,
+} as const;
+const analyticsDailyQuerySchema = {
+  type: 'object', properties: {
+    from: { type: 'string' }, to: { type: 'string' },
+    groupBy: { enum: ['hour', 'day', 'week', 'month'] }, breakdownBy: { type: 'string', minLength: 1 },
+    metrics: { type: 'string', minLength: 1 }, models: { type: 'string', minLength: 1 },
+  }, additionalProperties: false,
+} as const;
+const eventItemSchema = { type: 'object', properties: {
+  id: { type: 'string' }, schema: { const: 'kb.v1' }, type: { type: 'string' }, ts: { type: 'string', format: 'date-time' }, ingestTs: { type: 'string', format: 'date-time' },
+  source: { type: 'object', properties: { product: { type: 'string' }, version: { type: 'string' } }, required: ['product', 'version'], additionalProperties: false },
+  runId: { type: 'string' }, actor: { type: 'object', properties: { type: { enum: ['user', 'agent', 'ci'] }, id: { type: 'string' }, name: { type: 'string' } }, required: ['type'], additionalProperties: false },
+  ctx: { type: 'object', additionalProperties: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }, { type: 'null' }] } },
+  payload: {}, hashMeta: { type: 'object', properties: { algo: { const: 'hmac-sha256' }, saltId: { type: 'string' } }, required: ['algo', 'saltId'], additionalProperties: false },
+}, required: ['id', 'schema', 'type', 'ts', 'ingestTs', 'source', 'runId'], additionalProperties: false } as const;
+const uxSuccess = (data: object) => ({ type: 'object', properties: { ok: { const: true }, data }, required: ['ok', 'data'], additionalProperties: false });
 
 /**
  * Register analytics routes
@@ -44,7 +69,7 @@ export async function registerAnalyticsRoutes(
         limit?: string;
         offset?: string;
       };
-    }>(path, async (request, reply) => {
+    }>(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: analyticsQuerySchema, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { events: { type: 'array', items: eventItemSchema }, total: { type: 'integer' }, hasMore: { type: 'boolean' } }, required: ['events', 'total', 'hasMore'], additionalProperties: false }) }) } }, async (request, reply) => {
       try {
         const analytics = platform.analytics;
 
@@ -127,7 +152,7 @@ export async function registerAnalyticsRoutes(
   // Get aggregated statistics
   const statsPaths = resolvePaths(basePath, '/analytics/stats');
   for (const path of statsPaths) {
-    fastify.get(path, async (_request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { totalEvents: { type: 'integer' }, byType: { type: 'object', additionalProperties: { type: 'integer' } }, bySource: { type: 'object', additionalProperties: { type: 'integer' } }, byActor: { type: 'object', additionalProperties: { type: 'integer' } }, timeRange: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: false } }, required: ['totalEvents', 'byType', 'bySource', 'byActor', 'timeRange'], additionalProperties: false }) }) } }, async (_request, reply) => {
       try {
         const analytics = platform.analytics;
 
@@ -190,7 +215,7 @@ export async function registerAnalyticsRoutes(
   // Get WAL buffer status (if applicable)
   const bufferPaths = resolvePaths(basePath, '/analytics/buffer/status');
   for (const path of bufferPaths) {
-    fastify.get(path, async (_request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { segments: { type: 'integer' }, totalSizeBytes: { type: 'integer' }, oldestEventTs: { type: ['string', 'null'] }, newestEventTs: { type: ['string', 'null'] } }, required: ['segments', 'totalSizeBytes', 'oldestEventTs', 'newestEventTs'], additionalProperties: false }) }) } }, async (_request, reply) => {
       try {
         const analytics = platform.analytics;
 
@@ -260,7 +285,7 @@ export async function registerAnalyticsRoutes(
   // Get Dead-Letter Queue status (if applicable)
   const dlqPaths = resolvePaths(basePath, '/analytics/dlq/status');
   for (const path of dlqPaths) {
-    fastify.get(path, async (_request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { failedEvents: { type: 'integer' }, oldestFailureTs: { type: ['string', 'null'] } }, required: ['failedEvents', 'oldestFailureTs'], additionalProperties: false }) }) } }, async (_request, reply) => {
       try {
         const analytics = platform.analytics;
 

@@ -102,7 +102,7 @@ describe('filterTools', () => {
 
   it('delegates input schema generation to generateCommandSchema', async () => {
     const mod = await import('@kb-labs/cli-commands');
-    const spy = vi.spyOn(mod, 'generateCommandSchema').mockReturnValue({ type: 'object' });
+    const spy = vi.spyOn(mod, 'generateCommandSchema').mockReturnValue({ type: 'object', additionalProperties: false });
     const tools = filterTools({ manifests: [entry('p', [cmd('do it', 'read')])] }, allow);
     expect(spy).toHaveBeenCalledOnce();
     expect(tools[0]!.inputSchema).toEqual({ type: 'object', additionalProperties: false });
@@ -117,6 +117,7 @@ describe('filterTools', () => {
     const schema = tools[0]!.inputSchema as { properties: Record<string, unknown>; required?: string[] };
     expect(schema.properties.text).toBeDefined();
     expect(schema.required).toContain('text');
+    expect(tools[0]!.inputSchema).toMatchObject({ additionalProperties: false });
   });
 
   it('skips a command with no "path" field instead of throwing', () => {

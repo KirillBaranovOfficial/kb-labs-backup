@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/adapters
  * Platform adapter analytics endpoints
@@ -58,6 +59,24 @@ interface LLMUsageStats {
     to: string;
   };
 }
+
+const adapterQuerySchema = {
+  type: 'object', properties: {
+    from: { type: 'string' }, to: { type: 'string' },
+    groupBy: { enum: ['hour', 'day', 'week', 'month'] }, breakdownBy: { type: 'string', minLength: 1 },
+    metrics: { type: 'string', minLength: 1 }, models: { type: 'string', minLength: 1 },
+  }, additionalProperties: false,
+} as const;
+const dailyStatSchema = { type: 'object', properties: { date: { type: 'string' }, count: { type: 'number' }, metrics: { type: 'object', additionalProperties: { type: 'number' } }, breakdown: { type: 'string' } }, required: ['date', 'count'], additionalProperties: false } as const;
+const usageDataSchema = { type: 'object', properties: {
+  totalRequests: { type: 'number' }, totalTokens: { type: 'number' }, totalCost: { type: 'number' }, costPer1KTokens: { type: 'number' }, totalCacheReadTokens: { type: 'number' }, totalBillableTokens: { type: 'number' }, totalCacheSavingsUsd: { type: 'number' }, byModel: { type: 'object' }, errors: { type: 'number' }, errorBreakdown: { type: 'object', properties: { timeout: { type: 'number' }, rateLimit: { type: 'number' }, invalidRequest: { type: 'number' }, serverError: { type: 'number' }, other: { type: 'number' } }, additionalProperties: false },
+  totalEmbeddings: { type: 'number' }, totalTokensProcessed: { type: 'number' }, totalTextLength: { type: 'number' }, costPer1KChars: { type: 'number' }, avgDurationMs: { type: 'number' }, p50DurationMs: { type: 'number' }, p95DurationMs: { type: 'number' }, p99DurationMs: { type: 'number' }, batchRequests: { type: 'number' }, singleRequests: { type: 'number' }, avgBatchSize: { type: 'number' },
+  searchQueries: { type: 'number' }, upsertOperations: { type: 'number' }, deleteOperations: { type: 'number' }, totalVectorsUpserted: { type: 'number' }, totalVectorsDeleted: { type: 'number' }, avgSearchDuration: { type: 'number' }, avgSearchScore: { type: 'number' }, avgResultsCount: { type: 'number' }, p50SearchDuration: { type: 'number' }, p95SearchDuration: { type: 'number' }, p99SearchDuration: { type: 'number' },
+  totalGets: { type: 'number' }, hits: { type: 'number' }, misses: { type: 'number' }, hitRate: { type: 'number' }, sets: { type: 'number' }, avgGetDuration: { type: 'number' }, avgSetDuration: { type: 'number' },
+  readOperations: { type: 'number' }, writeOperations: { type: 'number' }, totalBytesRead: { type: 'number' }, totalBytesWritten: { type: 'number' }, avgReadDuration: { type: 'number' }, avgWriteDuration: { type: 'number' },
+  timeRange: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: false },
+}, additionalProperties: false } as const;
+const adapterSuccessResponse = { type: 'object', properties: { ok: { const: true }, data: { anyOf: [{ type: 'array', items: dailyStatSchema }, usageDataSchema] }, meta: { type: 'object', properties: { source: { const: 'analytics-adapter' }, totalEvents: { type: 'integer' } }, additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } as const;
 
 /** Analytics event extended with legacy `properties` field */
 type AnyAnalyticsEvent = AnalyticsEvent & { properties?: Record<string, unknown> };
@@ -235,7 +254,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated LLM usage statistics
   const llmUsagePaths = resolvePaths(basePath, '/adapters/llm/usage');
   for (const path of llmUsagePaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       // Check if analytics supports reading
@@ -471,7 +490,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv), models (csv, legacy filter)
   const llmDailyStatsPaths = resolvePaths(basePath, '/adapters/llm/daily-stats');
   for (const path of llmDailyStatsPaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -531,7 +550,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const embeddingsDailyStatsPaths = resolvePaths(basePath, '/adapters/embeddings/daily-stats');
   for (const path of embeddingsDailyStatsPaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -579,7 +598,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated Embeddings usage statistics
   const embeddingsUsagePaths = resolvePaths(basePath, '/adapters/embeddings/usage');
   for (const path of embeddingsUsagePaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getEvents) {
@@ -735,7 +754,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const vectorstoreDailyStatsPaths = resolvePaths(basePath, '/adapters/vectorstore/daily-stats');
   for (const path of vectorstoreDailyStatsPaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -783,7 +802,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated VectorStore usage statistics
   const vectorstoreUsagePaths = resolvePaths(basePath, '/adapters/vectorstore/usage');
   for (const path of vectorstoreUsagePaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getEvents) {
@@ -919,7 +938,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const cacheDailyStatsPaths = resolvePaths(basePath, '/adapters/cache/daily-stats');
   for (const path of cacheDailyStatsPaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -967,7 +986,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated Cache usage statistics
   const cacheUsagePaths = resolvePaths(basePath, '/adapters/cache/usage');
   for (const path of cacheUsagePaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getEvents) {
@@ -1069,7 +1088,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const storageDailyStatsPaths = resolvePaths(basePath, '/adapters/storage/daily-stats');
   for (const path of storageDailyStatsPaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -1117,7 +1136,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated Storage usage statistics
   const storageUsagePaths = resolvePaths(basePath, '/adapters/storage/usage');
   for (const path of storageUsagePaths) {
-    fastify.get(path, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getEvents) {

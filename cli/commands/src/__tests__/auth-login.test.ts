@@ -19,6 +19,7 @@ vi.mock('@kb-labs/cli-runtime/gateway', () => ({
   SessionManager: class {
     save = mockSessionSave;
   },
+  readGatewaySuccessData: async (response: Response) => (await response.json() as { data: unknown }).data,
 }));
 
 // Mock fetch globally
@@ -41,11 +42,12 @@ const ME_RESPONSE = {
 };
 
 function makeJsonResponse(body: unknown, status = 200): Response {
+  const result = status >= 200 && status < 300 ? { ok: true, data: body } : body;
   return {
     ok: status >= 200 && status < 300,
     status,
-    text: async () => JSON.stringify(body),
-    json: async () => body,
+    text: async () => JSON.stringify(result),
+    json: async () => result,
   } as unknown as Response;
 }
 

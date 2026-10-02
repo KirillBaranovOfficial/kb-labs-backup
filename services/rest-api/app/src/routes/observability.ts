@@ -1,3 +1,4 @@
+import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/observability
  * Observability endpoints for monitoring system internals
@@ -37,7 +38,7 @@ export async function registerObservabilityRoutes(
   // GET /api/v1/observability/state-broker
   // Returns statistics from State Broker daemon (cache hits, namespaces, etc.)
   for (const path of stateBrokerPaths) {
-    fastify.get(path, { schema: { tags: ['Observability'], summary: 'State Broker statistics' } }, async (_request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Observability'], summary: 'State Broker statistics', querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { uptime: { type: 'number' }, totalEntries: { type: 'integer' }, totalSize: { type: 'integer' }, hitRate: { type: 'number' }, missRate: { type: 'number' }, evictions: { type: 'integer' }, namespaces: { type: 'object', additionalProperties: { type: 'object', properties: { entries: { type: 'integer' }, size: { type: 'integer' }, oldestEntry: { type: 'number' } }, required: ['entries', 'size', 'oldestEntry'], additionalProperties: false } }, byTenant: { type: 'object', additionalProperties: { type: 'object', properties: { entries: { type: 'integer' }, size: { type: 'integer' }, lastAccess: { type: 'number' } }, required: ['entries', 'size', 'lastAccess'], additionalProperties: false } } }, required: ['uptime', 'totalEntries', 'totalSize', 'hitRate', 'missRate', 'evictions', 'namespaces'], additionalProperties: false }, meta: { type: 'object', properties: { source: { const: 'state-broker' }, daemonUrl: { type: 'string', format: 'uri' } }, required: ['source', 'daemonUrl'], additionalProperties: false } }, required: ['ok', 'data', 'meta'], additionalProperties: false } }) } }, async (_request, reply) => {
       try {
         const stateBrokerUrl = getHostServiceAddress('state-broker');
 
@@ -110,7 +111,7 @@ export async function registerObservabilityRoutes(
   // GET /api/v1/observability/system-metrics
   // Returns system resource metrics (CPU, memory, uptime, load) from all REST API instances
   for (const path of systemMetricsPaths) {
-    fastify.get(path, { schema: { tags: ['Observability'], summary: 'System resource metrics' } }, async (_request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Observability'], summary: 'System resource metrics', querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { instances: { type: 'array', items: { type: 'object', properties: { instanceId: { type: 'string' }, timestamp: { type: 'number' }, cpuPercent: { type: 'number' }, rssBytes: { type: 'number' }, heapUsedBytes: { type: 'number' }, eventLoopLagMs: { type: 'number' }, activeOperations: { type: 'number' } }, required: ['timestamp'], additionalProperties: false } }, summary: { type: 'object', properties: { totalInstances: { type: 'integer' }, activeInstances: { type: 'integer' }, staleInstances: { type: 'integer' }, deadInstances: { type: 'integer' }, avgCpu: { type: 'number' }, avgMemory: { type: 'number' }, avgHeap: { type: 'number' } }, required: ['totalInstances', 'activeInstances', 'staleInstances', 'deadInstances', 'avgCpu', 'avgMemory', 'avgHeap'], additionalProperties: false } }, required: ['instances', 'summary'], additionalProperties: false }, meta: { type: 'object', properties: { source: { const: 'platform-cache' }, timestamp: { type: 'number' } }, required: ['source', 'timestamp'], additionalProperties: false } }, required: ['ok', 'data', 'meta'], additionalProperties: false } }) } }, async (_request, reply) => {
       try {
         if (!platform?.cache) {
           return reply.code(503).send({
@@ -254,8 +255,9 @@ export async function registerObservabilityRoutes(
             },
           },
           required: ['metric', 'range'],
+          additionalProperties: false,
         },
-        response: {
+        response: withUxErrorResponses({
           200: {
             type: 'object',
             properties: {
@@ -282,7 +284,7 @@ export async function registerObservabilityRoutes(
               },
             },
           },
-        },
+        }),
       },
     }, async (request, reply: FastifyReply) => {
       if (!historicalMetrics) {
@@ -361,8 +363,9 @@ export async function registerObservabilityRoutes(
             },
           },
           required: ['metric'],
+          additionalProperties: false,
         },
-        response: {
+        response: withUxErrorResponses({
           200: {
             type: 'object',
             properties: {
@@ -389,7 +392,7 @@ export async function registerObservabilityRoutes(
               },
             },
           },
-        },
+        }),
       },
     }, async (request, reply: FastifyReply) => {
       if (!historicalMetrics) {
@@ -448,6 +451,7 @@ export async function registerObservabilityRoutes(
   // AI-powered insights chat using LLM with system metrics as context
   for (const path of insightsChatPaths) {
     fastify.post(path, {
+      config: { uxFixture: { validResult: 'error-envelope' } },
       schema: {
         tags: ['Observability'],
         summary: 'AI-powered observability insights chat',
@@ -463,10 +467,14 @@ export async function registerObservabilityRoutes(
                 timeRange: { type: 'string', enum: ['1h', '6h', '24h', '7d'] },
                 plugins: { type: 'array', items: { type: 'string' } },
               },
+              additionalProperties: false,
             },
           },
           required: ['question'],
+          additionalProperties: false,
         },
+        querystring: { type: 'object', additionalProperties: false },
+        response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { answer: { type: 'string' }, context: { type: 'array', items: { type: 'string' } }, usage: { type: 'object', properties: { promptTokens: { type: 'integer' }, completionTokens: { type: 'integer' }, totalTokens: { type: 'integer' } }, required: ['promptTokens', 'completionTokens', 'totalTokens'], additionalProperties: false } }, required: ['answer', 'context', 'usage'], additionalProperties: false }, meta: { type: 'object', properties: { source: { const: 'llm-insights' }, model: { type: 'string' } }, required: ['source', 'model'], additionalProperties: false } }, required: ['ok', 'data', 'meta'], additionalProperties: false } }),
       },
     }, async (request, reply) => {
       if (!platform?.llm) {

@@ -4,7 +4,7 @@
  */
 
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, RouteOptions } from 'fastify';
 import type { FastifyBaseLogger } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
@@ -116,7 +116,8 @@ function createPinoCompatibleLogger(logger: ILogger): FastifyBaseLogger {
 export async function createServer(
   config: RestApiConfig,
   repoRoot: string,
-  registry: IEntityRegistry
+  registry: IEntityRegistry,
+  routeObserver?: (route: RouteOptions) => void
 ): Promise<FastifyInstance> {
   // HTTP/2 configuration (requires HTTPS)
   const useHttp2 = config.http2?.enabled ?? false;
@@ -158,6 +159,7 @@ export async function createServer(
         disableRequestLogging: true,
         requestTimeout: config.timeouts?.requestTimeout || 30000,
         bodyLimit: config.timeouts?.bodyLimit || 10485760,
+        ajv: { customOptions: { removeAdditional: false } },
         http2: true,
         https: httpsOptions,
       })
@@ -168,6 +170,7 @@ export async function createServer(
         disableRequestLogging: true,
         requestTimeout: config.timeouts?.requestTimeout || 30000,
         bodyLimit: config.timeouts?.bodyLimit || 10485760,
+        ajv: { customOptions: { removeAdditional: false } },
       });
 
   // Add our own logger to server instance
@@ -204,6 +207,14 @@ export async function createServer(
   // Store registry in server instance
   server.registry = registry;
 
+  if (routeObserver) {
+    const observeRoute = (route: RouteOptions) => routeObserver(route);
+    (server.addHook as unknown as (
+      name: 'onRoute',
+      hook: typeof observeRoute
+    ) => void).call(server, 'onRoute', observeRoute);
+  }
+
   // Register plugins
   await registerPlugins(server as unknown as FastifyInstance, config);
 
@@ -215,4 +226,3 @@ export async function createServer(
 
   return server as unknown as FastifyInstance;
 }
-

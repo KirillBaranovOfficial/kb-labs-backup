@@ -21,6 +21,7 @@ describe('generateCommandSchema', () => {
     expect(schema['type']).toBe('object');
     expect(schema['title']).toBe('workflow runs list');
     expect(schema['description']).toBe('List workflow runs');
+    expect(schema['additionalProperties']).toBe(false);
   });
 
   it('maps flag types correctly', () => {

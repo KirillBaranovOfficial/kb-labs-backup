@@ -68,6 +68,35 @@ export interface ErrorEnvelope {
   details?: Record<string, string>;
 }
 
+/** JSON Schema form used by Fastify response validators and serializers. */
+export const ErrorEnvelopeJsonSchema = {
+  type: 'object',
+  properties: {
+    code: { type: 'string', pattern: '^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$' },
+    area: { enum: ERROR_AREAS },
+    stage: { enum: ERROR_STAGES },
+    severity: { enum: ERROR_SEVERITIES },
+    retryable: { type: 'boolean' },
+    message: { type: 'string', minLength: 1 },
+    cause: { type: 'string' },
+    hint: { type: 'string', minLength: 1 },
+    actions: { type: 'array', items: { type: 'object', properties: { id: { type: 'string', minLength: 1 }, label: { type: 'string', minLength: 1 }, command: { type: 'string' } }, required: ['id', 'label'], additionalProperties: false } },
+    docs: { type: 'string' },
+    correlationId: { type: 'string' },
+    details: { type: 'object', additionalProperties: { type: 'string' } },
+  },
+  required: ['code', 'area', 'stage', 'severity', 'retryable', 'message', 'hint'],
+  additionalProperties: false,
+} as const;
+
+/** Shared failure result schema returned by HTTP and machine boundaries. */
+export const UxFailureResultJsonSchema = {
+  type: 'object',
+  properties: { ok: { const: false }, error: ErrorEnvelopeJsonSchema },
+  required: ['ok', 'error'],
+  additionalProperties: false,
+} as const;
+
 /** One row of `errors.catalog.json`. */
 export interface ErrorCatalogEntry {
   code: string;

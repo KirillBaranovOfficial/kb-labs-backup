@@ -13,6 +13,7 @@ vi.mock('./credentials.js', () => ({
 }));
 
 import { gatewayApiFetch } from './api-client.js';
+import { readGatewaySuccessData } from './result.js';
 
 describe('gatewayApiFetch auth mapping', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); mocks.session = null; mocks.refresh.mockReset(); });
@@ -37,5 +38,29 @@ describe('gatewayApiFetch auth mapping', () => {
         message: 'Permission denied: users:write',
       },
     });
+  });
+});
+
+describe('readGatewaySuccessData', () => {
+  // case: S-203.1
+  it('unwraps the shared success result returned by Gateway JSON routes', async () => {
+    const response = new Response(JSON.stringify({ ok: true, data: { accessToken: 'token' } }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    await expect(readGatewaySuccessData<{ accessToken: string }>(response)).resolves.toEqual({ accessToken: 'token' });
+  });
+
+  // case: S-203.2
+  it('rejects invalid or failed result envelopes with a safe error', async () => {
+    const invalid = new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
+    await expect(readGatewaySuccessData(invalid)).rejects.toThrow('invalid result envelope');
+    const failure = new Response(JSON.stringify({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_UNEXPECTED', area: 'runtime', stage: 'run', severity: 'error', retryable: false,
+        message: 'The operation failed unexpectedly.', hint: 'Copy diagnostics and contact support.', correlationId: 'corr-1',
+      },
+    }), { headers: { 'Content-Type': 'application/json' } });
+    await expect(readGatewaySuccessData(failure)).rejects.toThrow('KB_RUNTIME_UNEXPECTED');
   });
 });

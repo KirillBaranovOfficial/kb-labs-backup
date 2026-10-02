@@ -41,6 +41,7 @@ vi.mock('../clients/subscription-registry.js', () => ({
 
 import { registerExecuteRoutes } from '../execute/routes.js';
 import { executionRegistry } from '../execute/execution-registry.js';
+import { registerGatewayUxErrorResponses } from '../ux-boundary.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ let app: FastifyInstance;
 
 beforeAll(async () => {
   app = Fastify({ logger: false });
+  registerGatewayUxErrorResponses(app);
 
   // Inject authContext via preHandler
   app.addHook('preHandler', async (request) => {
@@ -189,8 +191,7 @@ describe('POST /api/v1/execute — error cases', () => {
       payload: { handlerRef: 'h', input: {} },
     });
     expect(res.statusCode).toBe(400);
-    const body = res.json() as { error: string };
-    expect(body.error).toBe('Bad Request');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', correlationId: expect.any(String) } });
   });
 
   it('returns 400 when handlerRef is missing', async () => {
@@ -212,9 +213,7 @@ describe('POST /api/v1/execute — error cases', () => {
     });
 
     expect(res.statusCode).toBe(503);
-    const body = res.json() as { error: string; namespaceId: string };
-    expect(body.error).toBe('No execution host connected');
-    expect(body.namespaceId).toBe('ns-test');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
     expect(noopLogger.warn).toHaveBeenCalledWith(
       'No execution host connected for namespace',
       expect.objectContaining({
@@ -295,8 +294,7 @@ describe('POST /api/v1/execute/:id/cancel', () => {
     });
 
     expect(res.statusCode).toBe(404);
-    const body = res.json() as { error: string };
-    expect(body.error).toContain('not found');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED' } });
   });
 
   it('returns 403 when execution belongs to different namespace', async () => {
@@ -343,8 +341,7 @@ describe('POST /api/v1/execute/:id/cancel', () => {
     });
 
     expect(res.statusCode).toBe(409);
-    const body = res.json() as { status: string };
-    expect(body.status).toBe('already_cancelled');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
 
     executionRegistry.remove('exec-already-cancelled');
   });
@@ -380,6 +377,7 @@ describe('POST /api/v1/execute — auth guard', () => {
 
   beforeAll(async () => {
     appNoAuth = Fastify({ logger: false });
+    registerGatewayUxErrorResponses(appNoAuth);
     // No preHandler — authContext stays undefined
     registerExecuteRoutes(appNoAuth, noopLogger);
     await appNoAuth.ready();

@@ -23,6 +23,7 @@ export async function registerEventRoutes(
   server.route({
     method: 'GET',
     url: endpoint,
+    config: { ux: 'raw' },
     onRequest: authHook ? [authHook] : undefined,
     handler: async (request, reply) => {
       // Explicit CORS headers for EventSource (browser requires these before opening connection)

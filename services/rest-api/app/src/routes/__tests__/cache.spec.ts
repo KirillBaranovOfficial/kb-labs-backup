@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerCacheRoutes } from '../cache';
+import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 
 const BASE_CONFIG: RestApiConfig = {
   port: 3000,
@@ -42,6 +43,7 @@ describe('registerCacheRoutes', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
 
     mockCliApi = {
       snapshot: vi.fn(),
@@ -153,10 +155,12 @@ describe('registerCacheRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('CACHE_INVALIDATION_FAILED');
-      expect(payload.error.message).toBe('Registry refresh failed');
-      expect(payload.meta.requestId).toBeDefined();
-      expect(payload.meta.durationMs).toBeGreaterThanOrEqual(0);
+      expect(payload.error).toMatchObject({
+        code: 'KB_RUNTIME_UNEXPECTED',
+        hint: expect.any(String),
+        correlationId: expect.any(String),
+      });
+      expect(JSON.stringify(payload)).not.toContain('Registry refresh failed');
 
       expect(mockCliApi.refresh).toHaveBeenCalledTimes(1);
       expect(mockCliApi.listPlugins).not.toHaveBeenCalled();
@@ -177,8 +181,8 @@ describe('registerCacheRoutes', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('CACHE_INVALIDATION_FAILED');
-      expect(payload.error.message).toBe('Cache invalidation failed');
+      expect(payload.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(payload.error.hint).toEqual(expect.any(String));
     });
 
     it('handles snapshot() errors', async () => {
@@ -194,7 +198,8 @@ describe('registerCacheRoutes', () => {
       expect(response.statusCode).toBe(500);
       const payload = response.json();
       expect(payload.ok).toBe(false);
-      expect(payload.error.message).toBe('Registry snapshot unavailable');
+      expect(payload.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(payload.error.correlationId).toEqual(expect.any(String));
     });
 
     it('tracks request timing in metadata', async () => {

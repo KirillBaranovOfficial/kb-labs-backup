@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import type { JobEventType } from './types';
 
 // Type for job response data
@@ -12,6 +13,25 @@ interface JobResponseData {
   status: string;
   progress?: number;
   error?: string;
+}
+
+function isJobResponseData(value: unknown): value is JobResponseData {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    && 'jobId' in value && typeof value.jobId === 'string'
+    && 'status' in value && typeof value.status === 'string'
+    && (!('progress' in value) || typeof value.progress === 'number')
+    && (!('error' in value) || typeof value.error === 'string');
+}
+
+/** Decode the Gateway UX-result envelope used by JSON job endpoints. */
+export function decodeJobResponseData(value: unknown): JobResponseData {
+  if (!isUxResult(value)) throw new Error('Gateway returned an invalid result envelope for the job response.');
+  if (!value.ok) {
+    const { error } = value;
+    throw new Error(`${error.code}: ${error.message} — ${error.hint}${error.correlationId ? ` (correlationId: ${error.correlationId})` : ''}`);
+  }
+  if (!isJobResponseData(value.data)) throw new Error('Gateway returned an invalid job response payload.');
+  return value.data;
 }
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
@@ -152,7 +172,7 @@ export function useJobEvents(
                 throw new Error(`HTTP ${response.status}`);
               }
               
-              const data = await response.json() as JobResponseData;
+              const data = decodeJobResponseData(await response.json());
               const currentStatus = data.status;
               
               // Check if status changed
@@ -218,7 +238,7 @@ export function useJobEvents(
             throw new Error(`HTTP ${response.status}`);
           }
           
-          const data = await response.json() as JobResponseData;
+          const data = decodeJobResponseData(await response.json());
           const currentStatus = data.status;
           
           // Check if status changed
@@ -282,4 +302,3 @@ export function useJobEvents(
     reconnect,
   };
 }
-

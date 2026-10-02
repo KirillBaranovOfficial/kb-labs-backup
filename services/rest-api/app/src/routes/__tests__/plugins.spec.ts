@@ -10,6 +10,7 @@ import {
 import type { ReadinessState } from '../readiness';
 import * as fs from 'node:fs/promises';
 import { platform } from '@kb-labs/core-runtime';
+import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 
 // Mock dependencies
 vi.mock('@kb-labs/plugin-execution/http', () => ({
@@ -183,6 +184,7 @@ describe('registerPluginRoutes', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
     readiness = createMockReadinessState();
 
     // Mock fs.access to simulate file existence
@@ -694,6 +696,7 @@ describe('registerPluginSnapshotRoutes', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
   });
 
   afterEach(async () => {
@@ -791,7 +794,7 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as { manifests: any[] };
+    const payload = response.json().data as { manifests: any[] };
     expect(payload.manifests).toHaveLength(2);
     expect(payload.manifests[0]).toMatchObject({
       pluginId: '@kb-labs/plugin-1',
@@ -818,9 +821,9 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(500);
-    const payload = response.json() as { error: string; message: string };
-    expect(payload.error).toBe('Failed to load plugin registry');
-    expect(payload.message).toContain('Registry service unavailable');
+    const payload = response.json() as { ok: false; error: { code: string; hint: string; correlationId: string } };
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String), correlationId: expect.any(String) });
   });
 
   it('handles studio registry generation errors', async () => {
@@ -838,9 +841,9 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(500);
-    const payload = response.json() as { error: string; message: string };
-    expect(payload.error).toBe('Failed to generate studio registry');
-    expect(payload.message).toContain('Studio registry generation failed');
+    const payload = response.json() as { ok: false; error: { code: string; hint: string; correlationId: string } };
+    expect(payload.ok).toBe(false);
+    expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String), correlationId: expect.any(String) });
   });
 
   it('returns empty manifests when registry is empty', async () => {
@@ -858,7 +861,7 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as { manifests: any[] };
+    const payload = response.json().data as { manifests: any[] };
     expect(payload.manifests).toEqual([]);
   });
 
@@ -886,7 +889,7 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as {
+    const payload = response.json().data as {
       diagnostics: {
         total: number;
         items: Array<{ code: string; reasonCode: string; pluginId?: string }>;
@@ -922,7 +925,7 @@ describe('registerPluginSnapshotRoutes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    const payload = response.json() as {
+    const payload = response.json().data as {
       healthy: boolean;
       diagnostics: {
         total: number;

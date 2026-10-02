@@ -16,6 +16,16 @@ export interface UxFailureResult {
 
 export type UxResult<T = unknown> = UxSuccessResult<T> | UxFailureResult;
 
+/** Construct the shared success shape at a machine-result boundary. */
+export function createUxSuccessResult<T>(data: T, meta?: Record<string, unknown>): UxSuccessResult<T> {
+  return { ok: true, data, ...(meta ? { meta } : {}) };
+}
+
+/** Construct the shared failure shape at a machine-result boundary. */
+export function createUxFailureResult(error: ErrorEnvelope): UxFailureResult {
+  return { ok: false, error };
+}
+
 type UxResultCandidate = Record<string, unknown> & { ok: unknown };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

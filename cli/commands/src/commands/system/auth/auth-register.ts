@@ -18,7 +18,7 @@
  */
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
-import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { CredentialsManager, readGatewaySuccessData, SessionManager } from '@kb-labs/cli-runtime/gateway';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 type RegisterFlags = {
@@ -145,11 +145,11 @@ export const authRegister = defineSystemCommand<RegisterFlags, RegisterResult>({
       return fail(ctx, flags.json, msg);
     }
 
-    const data = await response.json() as {
+    const data = await readGatewaySuccessData<{
       clientId: string;
       clientSecret: string;
       hostId: string;
-    };
+    }>(response);
 
     if (flags.json) {
       ctx.ui?.json({

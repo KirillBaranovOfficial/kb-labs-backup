@@ -169,7 +169,7 @@ describe("studio hosting enabled", () => {
     const app = await studioApp();
     const health = await app.inject({ method: "GET", url: "/health" });
     expect(health.statusCode).toBe(200);
-    expect(health.json()).toHaveProperty("status");
+    expect(health.json()).toMatchObject({ ok: true, data: { status: expect.any(String) } });
     for (const url of ["/api/nope", "/auth/nope", "/hosts/nope", "/webhooks/x/y", "/docs-all"]) {
       const res = await app.inject({ method: "GET", url });
       expect(res.body).not.toContain("__KB_STUDIO_CONFIG__");
@@ -201,7 +201,7 @@ describe("studio hosting enabled", () => {
     const alias = await app.inject({ ...init, url: "/api/auth/token" });
     expect(native.statusCode).not.toBe(404);
     expect(alias.statusCode).toBe(native.statusCode);
-    expect(alias.body).toBe(native.body);
+    expect(alias.json()).toMatchObject({ ok: false, error: { code: native.json().error.code } });
     const health = await app.inject({ method: "GET", url: "/api/health" });
     expect(health.statusCode).toBe(200);
   });

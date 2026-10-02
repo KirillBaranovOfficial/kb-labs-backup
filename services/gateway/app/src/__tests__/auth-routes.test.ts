@@ -14,6 +14,7 @@ import { signAccessToken, type JwtConfig } from '@kb-labs/gateway-auth';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import { createAuthMiddleware } from '../auth/middleware.js';
 import { registerAuthRoutes } from '../auth/routes.js';
+import { registerGatewayUxErrorResponses } from '../ux-boundary.js';
 
 // ── Minimal stub cache (no pre-seeded static tokens) ─────────────────────────
 
@@ -67,6 +68,7 @@ beforeAll(async () => {
 
   authService = makeAuthService();
   app = Fastify({ logger: false });
+  registerGatewayUxErrorResponses(app);
 
   const cache = makeCache();
   app.addHook('preHandler', createAuthMiddleware(cache, testJwtConfig));
@@ -139,8 +141,7 @@ describe('POST /auth/register', () => {
       payload: {},
     });
     expect(res.statusCode).toBe(400);
-    const body = res.json() as { error: string };
-    expect(body.error).toBe('Bad Request');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', correlationId: expect.any(String) } });
   });
 
   it('returns 400 when body is empty (authenticated admin)', async () => {
@@ -333,6 +334,7 @@ describe('POST /auth/logout/cli token-kind routing', () => {
     { kind: { kind: 'user', userId: 'user-1', tenantId: 'tenant-1', familyId: 'family-1' }, revokeMachine: false, revokeUser: true },
   ])('revokes only the verified $kind.kind token kind', async ({ kind, revokeMachine, revokeUser }) => {
     const routeApp = Fastify({ logger: false });
+    registerGatewayUxErrorResponses(routeApp);
     const routeAuthService = {
       classifyRefreshToken: vi.fn().mockResolvedValue(kind),
       revokeRefreshToken: vi.fn().mockResolvedValue(true),
@@ -359,6 +361,7 @@ describe('POST /auth/logout/cli token-kind routing', () => {
 
   it('does not route an unrecognized refresh token to either revoker', async () => {
     const routeApp = Fastify({ logger: false });
+    registerGatewayUxErrorResponses(routeApp);
     const routeAuthService = {
       classifyRefreshToken: vi.fn().mockResolvedValue(null),
       revokeRefreshToken: vi.fn(),

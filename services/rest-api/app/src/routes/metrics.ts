@@ -95,7 +95,7 @@ export function registerMetricsRoutes(
     return promMetrics + '\n' + customLines.join('\n');
   };
   for (const path of metricsPaths) {
-    server.get(path, handler);
+    server.get(path, { config: { ux: 'raw' } }, handler);
   }
 
   server.get(`${basePath}/metrics/headers/debug`, {
@@ -105,6 +105,7 @@ export function registerMetricsRoutes(
         properties: {
           limit: { type: 'integer', minimum: 1, maximum: 200 },
         },
+        additionalProperties: false,
       },
       response: {
         200: {

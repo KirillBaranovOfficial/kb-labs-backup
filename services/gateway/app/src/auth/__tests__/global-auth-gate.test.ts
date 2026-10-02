@@ -88,7 +88,7 @@ describe('Gateway global auth gate', () => {
       undefined,
       projectRouting,
       undefined,
-      (method, url) => routeInventory.push({ method, url }),
+      ({ method, url }) => routeInventory.push({ method, url }),
     );
     await app.ready();
 
@@ -104,7 +104,7 @@ describe('Gateway global auth gate', () => {
       if (isPlatformPublicRoute(method, url)) { continue; }
       const response = await app.inject({ method, url });
       expect(response.statusCode, `${method} ${url}`).toBe(401);
-      expect(response.json(), `${method} ${url}`).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".' } });
+      expect(response.json(), `${method} ${url}`).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".', correlationId: expect.any(String) } });
     }
     expect(projectResolutions).toBe(0);
     expect(upstreamHits).toBe(0);

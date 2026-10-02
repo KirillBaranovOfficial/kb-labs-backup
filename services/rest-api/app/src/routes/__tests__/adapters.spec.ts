@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
+import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 
 // Mutable platform object that tests can configure
 const mockPlatform: any = { analytics: {} };
@@ -100,6 +102,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -159,6 +162,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -192,6 +196,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -202,8 +207,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
       expect(response.statusCode).toBe(400);
       const payload = response.json();
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('INVALID_DATE_RANGE');
-      expect(payload.error.message).toContain('Invalid "from" date format');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) });
 
       await app.close();
     });
@@ -217,6 +221,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -227,8 +232,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
       expect(response.statusCode).toBe(400);
       const payload = response.json();
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('INVALID_DATE_RANGE');
-      expect(payload.error.message).toContain('Invalid "to" date format');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) });
 
       await app.close();
     });
@@ -242,6 +246,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -252,7 +257,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
       expect(response.statusCode).toBe(501);
       const payload = response.json();
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('ANALYTICS_NOT_IMPLEMENTED');
+      expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
 
       await app.close();
     });
@@ -287,6 +292,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -312,6 +318,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -322,7 +329,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
       expect(response.statusCode).toBe(400);
       const payload = response.json();
       expect(payload.ok).toBe(false);
-      expect(payload.error.code).toBe('INVALID_DATE_RANGE');
+      expect(payload.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
 
       await app.close();
     });
@@ -368,6 +375,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -394,6 +402,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -444,6 +453,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -484,6 +494,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -537,6 +548,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -572,6 +584,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -600,6 +613,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -623,6 +637,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -644,6 +659,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({
@@ -665,6 +681,7 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       const { registerAdaptersRoutes } = await import('../adapters');
       const app = Fastify({ logger: false });
+      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
       await registerAdaptersRoutes(app as any, BASE_CONFIG);
 
       const response = await app.inject({

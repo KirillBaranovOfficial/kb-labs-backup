@@ -58,6 +58,7 @@ import { createAuthMiddleware } from '../middleware.js';
 import { registerAuthRoutes, type MachineAuthRoutesUserExt } from '../routes.js';
 import { registerUserAuthRoutes, createUserRefreshFn } from '../user-routes.js';
 import { COOKIE_ACCESS, COOKIE_REFRESH, COOKIE_CSRF } from '../user-cookies.js';
+import { registerGatewayUxErrorResponses } from '../../ux-boundary.js';
 import bcryptjs from 'bcryptjs';
 
 // Minimal no-op ICache stub used to satisfy machine auth service constructor.
@@ -182,6 +183,7 @@ async function buildApp(opts: BuildAppOpts = {}): Promise<TestCtx> {
   };
 
   const app = Fastify({ logger: false, trustProxy: true });
+  registerGatewayUxErrorResponses(app);
   await app.register(fastifyCookie);
 
   // User-auth middleware runs first (before machine Bearer check).
@@ -828,7 +830,7 @@ describe('POST /auth/activate', () => {
       payload: { token: 'totally-invalid-token', password: 'NewPassword123!' },
     });
     expect(r.statusCode).toBe(422);
-    expect(r.json()).toMatchObject({ error: 'invalid_invite', message: 'Invalid or expired invite' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
   });
 
   it('returns 400 when token is missing', async () => {
@@ -985,7 +987,7 @@ describe('personal API tokens', () => {
       payload: { name: 'invalid expiry', expiresInDays: 366 },
     });
     expect(invalid.statusCode).toBe(400);
-    expect(invalid.json().message).toBe('expiresInDays must be an integer from 1 to 365');
+    expect(invalid.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', correlationId: expect.any(String) } });
   });
 
   it('does not let an owner revoke another user API token', async () => {
@@ -1240,11 +1242,11 @@ describe('GET /auth/users (admin only)', () => {
     const disable = await ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/disable',
       headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken } });
     expect(disable.statusCode).toBe(409);
-    expect(disable.json()).toMatchObject({ error: 'last_admin' });
+    expect(disable.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
     const demote = await ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/role',
       headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken }, payload: { role: 'member' } });
     expect(demote.statusCode).toBe(409);
-    expect(demote.json()).toMatchObject({ error: 'last_admin' });
+    expect(demote.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
     expect((await ctx.users.getById('admin-1'))?.status).toBe('active');
   });
 

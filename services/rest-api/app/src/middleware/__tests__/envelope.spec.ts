@@ -56,6 +56,19 @@ describe('registerEnvelopeMiddleware', () => {
       expect(typeof body.meta.durationMs).toBe('number');
     });
 
+    it('keeps non-JSON output raw when the route definition declares ux: raw', async () => {
+      app.get('/raw-response', { config: { ux: 'raw' } }, async (_request: FastifyRequest, reply: FastifyReply) => {
+        reply.type('text/plain');
+        return 'health probe';
+      });
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/raw-response' });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toBe('health probe');
+      expect(response.headers['content-type']).toContain('text/plain');
+    });
+
     it('should add x-schema-version header', async () => {
       app.get('/test', async () => ({ value: 42 }));
       await app.ready();
@@ -108,11 +121,11 @@ describe('registerEnvelopeMiddleware', () => {
   });
 
   describe('error responses', () => {
-    it('should wrap errors in error envelope', async () => {
+    it('should return a catalogued validation failure using the platform envelope', async () => {
       app.get('/error', async () => {
         const error = new Error('Something went wrong') as Error & { statusCode?: number; code?: string };
         error.statusCode = 400;
-        error.code = 'E_BAD_REQUEST';
+        error.code = 'KB_RUNTIME_INPUT_INVALID';
         throw error;
       });
       await app.ready();
@@ -122,12 +135,13 @@ describe('registerEnvelopeMiddleware', () => {
 
       const body = response.json();
       expect(body.ok).toBe(false);
-      expect(body.error.code).toBe('E_BAD_REQUEST');
-      expect(body.error.message).toBe('Something went wrong');
-      expect(body.meta.apiVersion).toBe('1.0.0');
+      expect(body.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
+      expect(body.error.correlationId).toBeDefined();
+      expect(body.error.cause).toBeUndefined();
+      expect(body.meta).toBeUndefined();
     });
 
-    it('should default to E_INTERNAL for unknown errors', async () => {
+    it('should redact unknown errors and correlate them', async () => {
       app.get('/internal-error', async () => {
         throw new Error('Unexpected error');
       });
@@ -138,10 +152,13 @@ describe('registerEnvelopeMiddleware', () => {
 
       const body = response.json();
       expect(body.ok).toBe(false);
-      expect(body.error.code).toBe('E_INTERNAL');
+      expect(body.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(body.error.correlationId).toBeDefined();
+      expect(body.error.message).not.toContain('Unexpected error');
+      expect(JSON.stringify(body)).not.toContain('stack');
     });
 
-    it('should include error details when provided', async () => {
+    it('should not expose internal error details', async () => {
       app.get('/detailed-error', async () => {
         const error = new Error('Validation failed') as Error & { statusCode?: number; code?: string; details?: unknown };
         error.statusCode = 422;
@@ -152,10 +169,11 @@ describe('registerEnvelopeMiddleware', () => {
       await app.ready();
 
       const body = (await app.inject({ method: 'GET', url: '/detailed-error' })).json();
-      expect(body.error.details).toEqual({ field: 'email', reason: 'invalid format' });
+      expect(body.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(body.error.details).toBeUndefined();
     });
 
-    it('should include traceId when provided', async () => {
+    it('should not expose internal trace fields', async () => {
       app.get('/traced-error', async () => {
         const error = new Error('Traceable error') as Error & { statusCode?: number; traceId?: string };
         error.statusCode = 500;
@@ -165,7 +183,8 @@ describe('registerEnvelopeMiddleware', () => {
       await app.ready();
 
       const body = (await app.inject({ method: 'GET', url: '/traced-error' })).json();
-      expect(body.error.traceId).toBe('trace-123-abc');
+      expect(body.error.correlationId).toBeDefined();
+      expect(body.error.traceId).toBeUndefined();
     });
 
     it('should always produce ok:false for error responses — never ok:true wrapping', async () => {
@@ -196,12 +215,20 @@ describe('registerEnvelopeMiddleware', () => {
       // Must be ErrorEnvelope, not { ok: true, data: PluginErrorEnvelope }
       expect(body.ok).toBe(false);
       expect(body.error).toBeDefined();
-      expect(body.error.code).toBe('E_PLUGIN_VALIDATION');
-      expect(body.error.message).toBe('Plugin validation failed');
-      // Plugin metadata preserved in details
-      expect(body.error.details.pluginId).toBe('my-plugin');
-      expect(body.error.details.pluginVersion).toBe('1.0.0');
+      expect(body.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(body.error.correlationId).toBeDefined();
+      expect(JSON.stringify(body)).not.toContain('my-plugin');
       expect(body.data).toBeUndefined();
+    });
+
+    // case: S-203.2
+    it('normalizes route-local secured failures and preserves the HTTP status', async () => {
+      app.get('/unauthorized', async (_request: FastifyRequest, reply: FastifyReply) => reply.code(401).send({ error: { code: 'KB_AUTH_REQUIRED' } }));
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/unauthorized' });
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED', correlationId: expect.any(String) } });
     });
   });
 

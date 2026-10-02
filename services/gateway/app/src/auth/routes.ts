@@ -21,6 +21,14 @@ import {
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import { sendAuthError } from './error-response.js';
 import { COOKIE_REFRESH } from './user-cookies.js';
+import { optionalRequestBodySchema, uxErrorResponses } from '../route-schema.js';
+
+const string = { type: 'string' } as const;
+const tokenResponse = {
+  type: 'object',
+  properties: { accessToken: string, refreshToken: string, expiresIn: { type: 'number' }, tokenType: { type: 'string', const: 'Bearer' } },
+  required: ['accessToken', 'refreshToken', 'expiresIn', 'tokenType'],
+} as const;
 
 export interface MachineAuthRoutesUserExt {
   /** Called when a user refresh cookie is detected in POST /auth/refresh.
@@ -43,7 +51,7 @@ export function registerAuthRoutes(
   //   - Cookie-auth user without permission → 403 (PDP check below)
   //   - Cookie-auth admin with MACHINE_REGISTER → 200
   //   - Bearer-auth machine with machine:register in JWT permissions → 200
-  app.post('/auth/register', { schema: { tags: ['Auth'], summary: 'Register new agent and get credentials' } }, async (request, reply) => {
+  app.post('/auth/register', { schema: { tags: ['Auth'], summary: 'Register new agent and get credentials', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { name: { type: 'string', minLength: 1, maxLength: 64 }, capabilities: { type: 'array', items: string }, publicKey: string, handle: { type: 'string', pattern: '^[a-z0-9-]{2,32}$' }, email: { type: 'string', format: 'email' } }, required: ['name'], additionalProperties: false }, response: { 200: { type: 'object', properties: { clientId: string, clientSecret: string, hostId: string, namespaceId: string, handle: string }, required: ['clientId', 'clientSecret', 'hostId', 'namespaceId'] }, ...uxErrorResponses([400, 401, 403, 409]) } } }, async (request, reply) => {
     // Gate behind MACHINE_REGISTER permission.
     // Two auth paths: cookie-authenticated user (userAuthContext) or Bearer machine (authContext).
     const userCtx = request.userAuthContext;
@@ -86,7 +94,7 @@ export function registerAuthRoutes(
   });
 
   // Issue token pair (machine credentials → JWT pair).
-  app.post('/auth/token', { schema: { tags: ['Auth'], summary: 'Issue JWT token pair' } }, async (request, reply) => {
+  app.post('/auth/token', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Auth'], summary: 'Issue JWT token pair', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { clientId: string, clientSecret: string }, required: ['clientId', 'clientSecret'], additionalProperties: false }, response: { 200: tokenResponse, ...uxErrorResponses([400, 401]) } } }, async (request, reply) => {
     const parsed = TokenRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Bad Request', issues: parsed.error.issues });
@@ -103,7 +111,7 @@ export function registerAuthRoutes(
   // Refresh token pair.
   // If a user refresh cookie is detected AND userExt.userRefreshFn is provided,
   // the user path is handled first. Otherwise, falls back to machine body refresh.
-  app.post('/auth/refresh', { schema: { tags: ['Auth'], summary: 'Refresh JWT token pair (machine or user)' } }, async (request, reply) => {
+  app.post('/auth/refresh', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Auth'], summary: 'Refresh JWT token pair (machine or user)', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: optionalRequestBodySchema({ type: 'object', properties: { refreshToken: string }, required: ['refreshToken'], additionalProperties: false }), response: { 200: { oneOf: [tokenResponse, { type: 'object', properties: { ok: { type: 'boolean', const: true } }, required: ['ok'], additionalProperties: false }] }, ...uxErrorResponses([400, 401]) } } }, async (request, reply) => {
     // User cookie refresh — handled by the user-auth subsystem if wired.
     const cookies = (request as FastifyRequest & { cookies?: Record<string, string | undefined> }).cookies;
     const refreshCookie = cookies?.[COOKIE_REFRESH];
@@ -126,7 +134,7 @@ export function registerAuthRoutes(
     return reply.send(tokens);
   });
 
-  app.post<{ Body: { refreshToken?: string } }>('/auth/logout/cli', { schema: { tags: ['Auth'], summary: 'Revoke a CLI session or machine refresh token' } }, async (request, reply) => {
+  app.post<{ Body: { refreshToken?: string } }>('/auth/logout/cli', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Auth'], summary: 'Revoke a CLI session or machine refresh token', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { refreshToken: string }, additionalProperties: false }, response: { 200: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] }, ...uxErrorResponses([400]) } } }, async (request, reply) => {
     const refreshToken = request.body?.refreshToken;
     if (typeof refreshToken !== 'string' || !refreshToken) {
       return reply.code(400).send({ error: 'Bad Request', message: 'refreshToken is required' });

@@ -38,6 +38,11 @@ declare module 'fastify/types/instance' {
 }
 
 declare module 'fastify' {
+  interface FastifyContextConfig {
+    ux?: 'raw';
+    uxFixture?: { validResult: 'error-envelope' };
+  }
+
   interface FastifyInstance {
     registry?: IEntityRegistry;
     kbReadiness?: ReadinessState;

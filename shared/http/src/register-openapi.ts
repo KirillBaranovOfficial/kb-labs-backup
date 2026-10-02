@@ -28,6 +28,7 @@ import type { ZodSchema } from 'zod';
 interface FastifyLike {
   register(plugin: unknown, opts?: unknown): unknown;
   get(path: string, opts: unknown, handler: (req: unknown, reply: unknown) => unknown): void;
+  addHook(name: 'onRoute', hook: (route: { url: string; config?: Record<string, unknown> }) => void): void;
   swagger?(): unknown;
 }
 
@@ -94,6 +95,15 @@ export async function registerOpenAPI(server: FastifyLike, options: OpenAPIOptio
   const specPath = options.specPath ?? '/openapi.json';
   const docsPath = options.docsPath ?? '/docs';
 
+  // The Swagger UI and its static specification assets are documents/files,
+  // not UX result routes. Declare that protocol shape on each live route.
+  const docsRoot = docsPath.replace(/\/$/, '');
+  server.addHook('onRoute', (route) => {
+    if (route.url === docsRoot || route.url.startsWith(`${docsRoot}/`)) {
+      route.config = { ...route.config, ux: 'raw' };
+    }
+  });
+
   if (options.ui !== false) {
     const swaggerUi = await import('@fastify/swagger-ui');
 
@@ -109,7 +119,7 @@ export async function registerOpenAPI(server: FastifyLike, options: OpenAPIOptio
   // /openapi.json — canonical spec endpoint.
   // x-openapi-spec: true header signals to response middlewares (e.g. envelope wrappers)
   // that this is a raw spec response and must not be wrapped.
-  server.get(specPath, { schema: { hide: true } }, (_req: unknown, reply: unknown) => {
+  server.get(specPath, { config: { ux: 'raw' }, schema: { hide: true } }, (_req: unknown, reply: unknown) => {
     const s = server as { swagger?: () => Record<string, unknown> | undefined };
     const spec = s.swagger?.();
     const r = reply as {

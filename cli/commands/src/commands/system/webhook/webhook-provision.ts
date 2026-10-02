@@ -6,6 +6,7 @@
  */
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
 import { CredentialsManager } from '@kb-labs/cli-runtime/gateway';
 
 type ProvisionFlags = {
@@ -95,7 +96,7 @@ export const webhookProvision = defineSystemCommand<ProvisionFlags, ProvisionRes
       return { ok: false, error: msg };
     }
 
-    const data = await response.json() as { url: string; secret: string; rotated: boolean };
+    const data = await readGatewaySuccessData<{ url: string; secret: string; rotated: boolean }>(response);
 
     if (flags.json) {
       ctx.ui?.json({ ok: true, url: data.url, secret: data.secret, rotated: data.rotated });

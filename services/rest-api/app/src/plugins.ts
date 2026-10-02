@@ -14,6 +14,7 @@ import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import fastifyCors, { type FastifyCorsOptions } from '@fastify/cors';
 import fastifyRateLimit, { type RateLimitPluginOptions } from '@fastify/rate-limit';
 import { registerOpenAPI } from '@kb-labs/shared-http';
+import { withUxErrorResponses } from './routes/route-schema.js';
 
 /**
  * Register all Fastify plugins
@@ -22,6 +23,21 @@ export async function registerPlugins(
   server: FastifyInstance,
   config: RestApiConfig
 ): Promise<void> {
+  // CORS preflight is an empty protocol response rather than a JSON UX route.
+  server.addHook('onRoute', (route) => {
+    const methods = Array.isArray(route.method) ? route.method : [route.method];
+    if (methods.includes('OPTIONS')) {
+      route.config = { ...route.config, ux: 'raw' };
+    }
+    if (route.schema && typeof route.schema === 'object') {
+      const schema = route.schema as { response?: Record<number, unknown> };
+      const responses = schema.response ?? {};
+      const usesZodCompiler = Object.values(responses).some((response) => response !== null && typeof response === 'object' && 'safeParse' in response);
+      if (!usesZodCompiler) {
+        route.schema = { ...route.schema, response: withUxErrorResponses(responses) };
+      }
+    }
+  });
   // CORS plugin with profile support
   const corsProfile = config.cors.profile || 'dev';
   let corsOrigins: string[] | boolean = config.cors.origins;
@@ -128,4 +144,3 @@ export async function registerPlugins(
     ui: corsProfile !== 'prod',
   });
 }
-

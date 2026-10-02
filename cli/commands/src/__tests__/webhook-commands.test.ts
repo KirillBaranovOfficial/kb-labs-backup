@@ -23,6 +23,7 @@ vi.mock('@kb-labs/cli-runtime/gateway', () => ({
   CredentialsManager: class {
     load = mockLoad;
   },
+  readGatewaySuccessData: async (response: Response) => (await response.json() as { data: unknown }).data,
 }));
 
 const mockFetch = vi.fn();
@@ -35,11 +36,12 @@ import { webhookRevoke } from '../commands/system/webhook/webhook-revoke.js';
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function makeJsonResponse(body: unknown, status = 200): Response {
+  const result = status >= 200 && status < 300 ? { ok: true, data: body } : body;
   return {
     ok: status >= 200 && status < 300,
     status,
-    text: async () => JSON.stringify(body),
-    json: async () => body,
+    text: async () => JSON.stringify(result),
+    json: async () => result,
   } as unknown as Response;
 }
 

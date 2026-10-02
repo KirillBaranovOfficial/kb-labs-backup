@@ -1,4 +1,4 @@
-import { createErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, isErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { CredentialsManager } from './credentials.js';
 import { SessionManager } from './session.js';
 import type { GatewayCredentials, SessionCredentials } from './types.js';
@@ -82,10 +82,10 @@ export async function gatewayApiFetch(input: string | URL, init: RequestInit = {
     throw new GatewayApiError(requiredAuthEnvelope(auth?.gatewayUrl));
   }
   if (response.status === 403) {
-    const body = await response.clone().json().catch(() => null) as { permission?: unknown; error?: { code?: unknown } } | null;
+    const body = await response.clone().json().catch(() => null) as { permission?: unknown; error?: unknown } | null;
     const permission = typeof body?.permission === 'string' ? body.permission : undefined;
-    const serverEnvelope = typeof body?.error === 'object' && body.error !== null && body.error.code === 'KB_AUTH_FORBIDDEN'
-      ? body.error as unknown as ErrorEnvelope
+    const serverEnvelope = isErrorEnvelope(body?.error) && body.error.code === 'KB_AUTH_FORBIDDEN'
+      ? body.error
       : undefined;
     throw new GatewayApiError(serverEnvelope ?? createErrorEnvelope('KB_AUTH_FORBIDDEN', {
       ...(permission ? { details: { permission } } : {}),

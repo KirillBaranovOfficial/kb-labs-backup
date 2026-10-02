@@ -138,7 +138,7 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     delete process.env.KB_NET_OFFSET;
     process.env.KB_LOG_LEVEL = 'silent';
     process.env.KB_LOG_STREAM = 'stderr';
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ webhooks: [] }) }) as typeof fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, data: { webhooks: [] } }) }) as typeof fetch;
     const projects = await createProjectRegistry({ env: process.env });
     fixtureProjectId = (await projects.add(workspaceRoot)).project.id;
     const platformConfig = {

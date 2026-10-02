@@ -9,6 +9,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { GatewayCredentials, ICredentialsManager } from './types.js';
+import { readGatewaySuccessData } from './result.js';
 
 /** Default credentials file path */
 const CREDENTIALS_PATH = path.join(os.homedir(), '.kb', 'credentials.json');
@@ -65,11 +66,11 @@ export class CredentialsManager implements ICredentialsManager {
       throw new Error(`Token refresh failed (${response.status}): ${body}`);
     }
 
-    const data = (await response.json()) as {
+    const data = await readGatewaySuccessData<{
       accessToken: string;
       refreshToken: string;
       expiresIn: number;
-    };
+    }>(response);
 
     const updated: GatewayCredentials = {
       gatewayUrl: credentials.gatewayUrl,

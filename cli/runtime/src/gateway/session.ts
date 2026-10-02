@@ -11,6 +11,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { SessionCredentials, ISessionManager } from './types.js';
+import { readGatewaySuccessData } from './result.js';
 
 /** Default session file path */
 const SESSION_PATH = path.join(os.homedir(), '.kb', 'session.json');
@@ -67,11 +68,11 @@ export class SessionManager implements ISessionManager {
       throw new Error(`Session refresh failed (${response.status}): ${body}`);
     }
 
-    const data = (await response.json()) as {
+    const data = await readGatewaySuccessData<{
       accessToken: string;
       refreshToken: string;
       expiresIn: number;
-    };
+    }>(response);
 
     const updated: SessionCredentials = {
       gatewayUrl: session.gatewayUrl,
