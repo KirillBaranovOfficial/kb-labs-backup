@@ -18,7 +18,7 @@ export function registerInternalRoutes(
   hostRegistry: HostRegistry,
   cache?: import('@kb-labs/core-platform').ICache,
 ): void {
-  scope.post('/internal/dispatch', {
+  scope.post('/internal/dispatch', { config: { uxFixture: { validResult: 'error-envelope' } },
     schema: {
       body: {
         type: 'object',
@@ -80,7 +80,7 @@ export function registerInternalRoutes(
     }
   });
 
-  scope.get('/internal/auth/handle/:handle', {
+  scope.get('/internal/auth/handle/:handle', { config: { uxFixture: { validResult: 'error-envelope' } },
     schema: { params: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'] }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { namespaceId: { type: 'string' }, name: { type: 'string' }, handle: { type: 'string' } }, required: ['namespaceId', 'name', 'handle'] }, 403: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 404: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] }, 503: { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] } } },
   }, async (request, reply) => {
     const provided = request.headers['x-internal-secret'];
@@ -98,7 +98,7 @@ export function registerInternalRoutes(
     return { namespaceId: record.namespaceId, name: record.name, handle: record.handle };
   });
 
-  scope.post('/internal/resolve-host', {
+  scope.post('/internal/resolve-host', { config: { uxFixture: { validResult: 'error-envelope' } },
     schema: {
       body: {
         type: 'object',

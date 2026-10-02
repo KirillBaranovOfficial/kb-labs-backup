@@ -69,7 +69,7 @@ export async function registerAnalyticsRoutes(
         limit?: string;
         offset?: string;
       };
-    }>(path, { schema: { querystring: analyticsQuerySchema, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { events: { type: 'array', items: eventItemSchema }, total: { type: 'integer' }, hasMore: { type: 'boolean' } }, required: ['events', 'total', 'hasMore'], additionalProperties: false }) }) } }, async (request, reply) => {
+    }>(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: analyticsQuerySchema, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { events: { type: 'array', items: eventItemSchema }, total: { type: 'integer' }, hasMore: { type: 'boolean' } }, required: ['events', 'total', 'hasMore'], additionalProperties: false }) }) } }, async (request, reply) => {
       try {
         const analytics = platform.analytics;
 
@@ -152,7 +152,7 @@ export async function registerAnalyticsRoutes(
   // Get aggregated statistics
   const statsPaths = resolvePaths(basePath, '/analytics/stats');
   for (const path of statsPaths) {
-    fastify.get(path, { schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { totalEvents: { type: 'integer' }, byType: { type: 'object', additionalProperties: { type: 'integer' } }, bySource: { type: 'object', additionalProperties: { type: 'integer' } }, byActor: { type: 'object', additionalProperties: { type: 'integer' } }, timeRange: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: false } }, required: ['totalEvents', 'byType', 'bySource', 'byActor', 'timeRange'], additionalProperties: false }) }) } }, async (_request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { totalEvents: { type: 'integer' }, byType: { type: 'object', additionalProperties: { type: 'integer' } }, bySource: { type: 'object', additionalProperties: { type: 'integer' } }, byActor: { type: 'object', additionalProperties: { type: 'integer' } }, timeRange: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' } }, required: ['from', 'to'], additionalProperties: false } }, required: ['totalEvents', 'byType', 'bySource', 'byActor', 'timeRange'], additionalProperties: false }) }) } }, async (_request, reply) => {
       try {
         const analytics = platform.analytics;
 
@@ -215,7 +215,7 @@ export async function registerAnalyticsRoutes(
   // Get WAL buffer status (if applicable)
   const bufferPaths = resolvePaths(basePath, '/analytics/buffer/status');
   for (const path of bufferPaths) {
-    fastify.get(path, { schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { segments: { type: 'integer' }, totalSizeBytes: { type: 'integer' }, oldestEventTs: { type: ['string', 'null'] }, newestEventTs: { type: ['string', 'null'] } }, required: ['segments', 'totalSizeBytes', 'oldestEventTs', 'newestEventTs'], additionalProperties: false }) }) } }, async (_request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { segments: { type: 'integer' }, totalSizeBytes: { type: 'integer' }, oldestEventTs: { type: ['string', 'null'] }, newestEventTs: { type: ['string', 'null'] } }, required: ['segments', 'totalSizeBytes', 'oldestEventTs', 'newestEventTs'], additionalProperties: false }) }) } }, async (_request, reply) => {
       try {
         const analytics = platform.analytics;
 
@@ -285,7 +285,7 @@ export async function registerAnalyticsRoutes(
   // Get Dead-Letter Queue status (if applicable)
   const dlqPaths = resolvePaths(basePath, '/analytics/dlq/status');
   for (const path of dlqPaths) {
-    fastify.get(path, { schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { failedEvents: { type: 'integer' }, oldestFailureTs: { type: ['string', 'null'] } }, required: ['failedEvents', 'oldestFailureTs'], additionalProperties: false }) }) } }, async (_request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: uxSuccess({ type: 'object', properties: { failedEvents: { type: 'integer' }, oldestFailureTs: { type: ['string', 'null'] } }, required: ['failedEvents', 'oldestFailureTs'], additionalProperties: false }) }) } }, async (_request, reply) => {
       try {
         const analytics = platform.analytics;
 

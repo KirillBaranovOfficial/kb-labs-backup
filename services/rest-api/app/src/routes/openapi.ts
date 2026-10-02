@@ -73,7 +73,7 @@ export async function registerOpenAPIRoutes(
   });
 
   // Per-plugin OpenAPI spec
-  fastify.get('/openapi/:pluginId', { schema: {
+  fastify.get('/openapi/:pluginId', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: {
     params: { type: 'object', properties: { pluginId: { type: 'string', minLength: 1 } }, required: ['pluginId'], additionalProperties: false },
     querystring: { type: 'object', additionalProperties: false },
     response: withUxErrorResponses({ 200: { type: 'object', properties: { openapi: { type: 'string' }, info: { type: 'object', properties: { title: { type: 'string' }, version: { type: 'string' }, description: { type: 'string' } }, required: ['title', 'version'], additionalProperties: false }, paths: { type: 'object', additionalProperties: { type: 'object' } }, components: { type: 'object', properties: { schemas: { type: 'object', additionalProperties: { type: 'object' } } }, additionalProperties: false }, 'x-kb-plugin-id': { type: 'string' } }, required: ['openapi', 'info', 'paths'], additionalProperties: false } }),

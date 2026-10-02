@@ -9,6 +9,7 @@ import { createErrorEnvelope, getCatalogEntry } from '@kb-labs/core-platform';
 import { isErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { createUxFailureResult, createUxSuccessResult, isUxResult } from '@kb-labs/core-platform/ux-result';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { ZodError } from 'zod';
 
 function isPluginErrorEnvelope(err: unknown): err is PluginErrorEnvelope {
   return (
@@ -170,7 +171,7 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
       errorCode = error.code;
     } else {
       const err = error instanceof Error ? error as Error & { statusCode?: number; code?: string } : undefined;
-      statusCode = err?.statusCode || 500;
+      statusCode = err?.statusCode || (error instanceof ZodError ? 400 : 500);
       errorCode = err?.code;
     }
 
@@ -192,6 +193,7 @@ export function registerEnvelopeMiddleware<Server extends FastifyInstance>(
 
     const errorEnvelope: ErrorEnvelope = createErrorEnvelope(code, { correlationId });
 
+    reply.serializer((payload) => JSON.stringify(payload));
     reply.status(statusCode).send(createUxFailureResult(errorEnvelope));
   });
 }

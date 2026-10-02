@@ -908,6 +908,7 @@ export async function registerPluginSnapshotRoutes(
   server.get(
     `${basePath}/studio/registry`,
     {
+      config: { uxFixture: { validResult: 'error-envelope' } },
       schema: {
         tags: ["Studio"],
         summary: "Get Studio Registry V2 (plugin pages for Module Federation)",
@@ -1154,7 +1155,7 @@ export async function registerPluginSnapshotRoutes(
   });
 
   // AI Assistant endpoint: ask questions about a plugin
-  server.post(`${basePath}/plugins/:pluginId/ask`, { schema: { querystring: { type: 'object', additionalProperties: false }, params: { type: 'object', properties: { pluginId: { type: 'string', minLength: 1 } }, required: ['pluginId'], additionalProperties: false }, body: { type: 'object', properties: { question: { type: 'string', minLength: 1 } }, required: ['question'], additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { answer: { type: 'string' }, usage: { type: 'object', properties: { promptTokens: { type: 'integer' }, completionTokens: { type: 'integer' }, totalTokens: { type: 'integer' } }, additionalProperties: false } }, required: ['answer'], additionalProperties: false } }) } }, async (request, reply) => {
+  server.post(`${basePath}/plugins/:pluginId/ask`, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: { type: 'object', additionalProperties: false }, params: { type: 'object', properties: { pluginId: { type: 'string', minLength: 1 } }, required: ['pluginId'], additionalProperties: false }, body: { type: 'object', properties: { question: { type: 'string', minLength: 1 } }, required: ['question'], additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { answer: { type: 'string' }, usage: { type: 'object', properties: { promptTokens: { type: 'integer' }, completionTokens: { type: 'integer' }, totalTokens: { type: 'integer' } }, additionalProperties: false } }, required: ['answer'], additionalProperties: false } }) } }, async (request, reply) => {
     try {
       const { pluginId } = request.params as { pluginId: string };
       const { question } = request.body as { question: string };

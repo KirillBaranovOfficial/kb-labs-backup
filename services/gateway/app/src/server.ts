@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type { RouteOptions } from 'fastify';
 import fastifyCookie from "@fastify/cookie";
 import fastifyCors from "@fastify/cors";
 import fastifyHttpProxy from "@fastify/http-proxy";
@@ -54,6 +55,7 @@ import { attachGatewayWs, type SocketWsUpstream } from "./ws/gateway-ws.js";
 import { GatewayObservabilityCollector } from "./observability/collector.js";
 import { randomUUID } from "node:crypto";
 import { registerGatewayUxBoundary } from './ux-boundary.js';
+import { withUxErrorResponses } from './route-schema.js';
 import { registerInternalRoutes } from "./internal/routes.js";
 import {
   createPressureOnRequest,
@@ -137,7 +139,7 @@ export async function createServer(
   webhookManifests?: WebhookManifestEntry[],
   projectRouting?: ProjectRouting,
   hostRoutes?: HostRoutes,
-  routeObserver?: (route: { method: string | string[]; url: string; schema?: unknown; config?: unknown }) => void,
+  routeObserver?: (route: RouteOptions) => void,
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -153,6 +155,7 @@ export async function createServer(
     : undefined;
   const app = Fastify({
     logger: false,
+    ajv: { customOptions: { removeAdditional: false } },
     // CD-10: gateway sits behind nginx; parse X-Forwarded-For for real client IPs.
     trustProxy: true,
     // Studio calls auth under /api/auth/*; route it to the gateway's /auth/*.
@@ -171,11 +174,15 @@ export async function createServer(
     if (methods.includes('OPTIONS') || route.url.startsWith('/docs')) {
       route.config = { ...route.config, ux: 'raw' };
     }
+    if (route.config?.ux !== 'raw' && route.schema && typeof route.schema === 'object') {
+      const schema = route.schema as { response?: Record<number, unknown> };
+      route.schema = { ...route.schema, response: withUxErrorResponses(schema.response ?? {}) };
+    }
   });
   if (routeObserver) {
     app.addHook("onRoute", (route) => {
       if (route.url) {
-        routeObserver({ method: route.method, url: route.url, schema: route.schema, config: route.config });
+        routeObserver(route);
       }
     });
   }
@@ -577,7 +584,7 @@ export async function createServer(
 
     scope.get(
       "/ready",
-      { schema: { tags: ["System"], summary: "Gateway readiness check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object' }, 503: { type: 'object' } } } },
+      { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["System"], summary: "Gateway readiness check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object' }, 503: { type: 'object' } } } },
       async (_request, reply) => {
         const health = await collectHealthSnapshot();
         const upstreams =
@@ -755,7 +762,7 @@ export async function createServer(
     // Get host by ID (auth required)
     scope.get<{ Params: { hostId: string } }>(
       "/hosts/:hostId",
-      { schema: { tags: ["Hosts"], summary: "Get host by ID", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object' }, 401: { type: 'object' }, 404: { type: 'object' } } } },
+      { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Hosts"], summary: "Get host by ID", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object' }, 401: { type: 'object' }, 404: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
@@ -773,7 +780,7 @@ export async function createServer(
     // Deregister host (auth required)
     scope.delete<{ Params: { hostId: string } }>(
       "/hosts/:hostId",
-      { schema: { tags: ["Hosts"], summary: "Deregister a host", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 204: { type: 'null' }, 401: { type: 'object' }, 404: { type: 'object' } } } },
+      { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Hosts"], summary: "Deregister a host", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 204: { type: 'null' }, 401: { type: 'object' }, 404: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {

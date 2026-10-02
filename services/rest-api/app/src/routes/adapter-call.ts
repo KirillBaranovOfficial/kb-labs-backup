@@ -169,7 +169,7 @@ export async function registerAdapterCallRoutes(
   const internalSecret = process.env.GATEWAY_INTERNAL_SECRET;
   const logger = platform.logger.child({ layer: 'rest', route: 'adapter-call' });
 
-  server.post('/api/v1/internal/adapter-call', { schema: {
+  server.post('/api/v1/internal/adapter-call', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: {
     querystring: { type: 'object', additionalProperties: false },
     body: { type: 'object', properties: {
       requestId: { type: 'string', minLength: 1 }, adapter: { enum: ['llm', 'cache', 'vectorStore', 'embeddings', 'storage', 'state'] }, method: { type: 'string', minLength: 1 }, args: { type: 'array', items: {} },

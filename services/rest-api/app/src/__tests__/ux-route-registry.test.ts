@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import { restApiConfigSchema } from '@kb-labs/rest-api-core';
+import { platform, resetPlatform } from '@kb-labs/core-runtime';
 import { createServer } from '../server';
+import type { RouteOptions } from 'fastify';
 
 const snapshot: RegistrySnapshot = {
   schema: 'kb.registry/1',
@@ -35,17 +37,132 @@ const registry = {
   dispose: async () => undefined,
 } as unknown as IEntityRegistry;
 
+function schemaExample(input: unknown): unknown {
+  if (!input || typeof input !== 'object') return {};
+  const schema = input as Record<string, unknown>;
+  if ('const' in schema) return schema.const;
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+  for (const key of ['anyOf', 'oneOf']) {
+    const alternatives = schema[key];
+    if (Array.isArray(alternatives) && alternatives.length > 0) {
+      const firstNonNull = alternatives.find((item) => (item as Record<string, unknown>)?.type !== 'null');
+      return schemaExample(firstNonNull ?? alternatives[0]);
+    }
+  }
+  if (schema.type === 'object' || schema.properties) {
+    const properties = (schema.properties ?? {}) as Record<string, unknown>;
+    const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
+    return Object.fromEntries(required.map((key) => [key, schemaExample(properties[key])])) as Record<string, unknown>;
+  }
+  if (schema.type === 'array') {
+    const count = typeof schema.minItems === 'number' ? Math.max(1, schema.minItems) : 1;
+    return Array.from({ length: count }, () => schemaExample(schema.items));
+  }
+  if (schema.type === 'string') {
+    if (schema.format === 'date-time') return '2030-01-02T03:04:05.000Z';
+    if (schema.format === 'date') return '2030-01-02';
+    if (schema.format === 'email') return 'fixture@example.test';
+    if (typeof schema.pattern === 'string' && schema.pattern.includes('a-z0-9')) return 'fixture-01';
+    return 'fixture';
+  }
+  if (schema.type === 'integer' || schema.type === 'number') return typeof schema.minimum === 'number' ? schema.minimum : 1;
+  if (schema.type === 'boolean') return true;
+  return {};
+}
+
+function pathForRoute(url: string, paramsSchema: unknown): string {
+  const params = (paramsSchema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {};
+  return url.replace(/:([^/]+)/g, (_match, name: string) => encodeURIComponent(String(schemaExample(params[name])))).replace(/\*/g, 'fixture');
+}
+
+type FixtureMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+function requestForRoute(route: RouteOptions, method: FixtureMethod): { method: FixtureMethod; url: string; payload?: string; headers?: { 'content-type': string } } {
+  const schema = (route.schema ?? {}) as { params?: unknown; querystring?: unknown; body?: unknown };
+  const query = schemaExample(schema.querystring) as Record<string, unknown>;
+  const search = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)] as [string, string]));
+  const request: { method: FixtureMethod; url: string; payload?: string; headers?: { 'content-type': string } } = {
+    method,
+    url: `${pathForRoute(route.url, schema.params)}${search.size ? `?${search}` : ''}`,
+  };
+  if (['POST', 'PUT', 'PATCH'].includes(method) && schema.body) {
+    request.payload = JSON.stringify(schemaExample(schema.body));
+    request.headers = { 'content-type': 'application/json' };
+  }
+  return request;
+}
+
+function invalidRequestForRoute(route: RouteOptions, method: FixtureMethod): { method: FixtureMethod; url: string; payload?: string; headers?: { 'content-type': string } } {
+  const request = requestForRoute(route, method);
+  const schema = (route.schema ?? {}) as { body?: unknown; querystring?: unknown };
+  if (['POST', 'PUT', 'PATCH'].includes(method) && schema.body) {
+    const bodySchema = schema.body as { anyOf?: Array<{ maxProperties?: number }>; properties?: Record<string, unknown>; required?: string[] };
+    const isNoBody = bodySchema.anyOf?.some((branch) => branch.maxProperties === 0) ?? false;
+    const hasRequired = (bodySchema.required?.length ?? 0) > 0;
+    request.payload = isNoBody || !hasRequired && Object.keys(bodySchema.properties ?? {}).length === 0 ? '{"__ux_fixture_invalid__":true}' : '{}';
+    request.headers = { 'content-type': 'application/json' };
+  }
+  const entries = new URL(request.url, 'http://fixture.test');
+  entries.searchParams.set('__ux_fixture_invalid__', 'true');
+  request.url = `${entries.pathname}${entries.search}`;
+  return request;
+}
+
+function assertUxResult(response: { statusCode: number; body: string }, expectFailure: boolean): void {
+  const body = JSON.parse(response.body) as { ok?: boolean; data?: unknown; error?: { code?: string; message?: string; hint?: string; correlationId?: string; stack?: string } };
+  expect(typeof body.ok).toBe('boolean');
+  if (expectFailure) {
+    expect(response.statusCode).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error?.code).toMatch(/^KB_/);
+    expect(body.error?.message).toEqual(expect.any(String));
+    expect(body.error?.hint).toEqual(expect.any(String));
+    expect(body.error?.correlationId).toEqual(expect.any(String));
+  } else if (body.ok === true) {
+    expect(body).toHaveProperty('data');
+  } else {
+    expect(response.statusCode).toBeGreaterThanOrEqual(400);
+    expect(body.error?.code).toMatch(/^KB_/);
+    expect(body.error?.message).toEqual(expect.any(String));
+    expect(body.error?.hint).toEqual(expect.any(String));
+    expect(body.error?.correlationId).toEqual(expect.any(String));
+  }
+}
+
 describe('REST production route declarations', () => {
   const apps: Array<Awaited<ReturnType<typeof createServer>>> = [];
+  const originalTenantTier = process.env.KB_TENANT_DEFAULT_TIER;
 
   afterEach(async () => {
     await Promise.all(apps.splice(0).map((app) => app.close()));
+    resetPlatform();
+    vi.unstubAllGlobals();
+    if (originalTenantTier === undefined) delete process.env.KB_TENANT_DEFAULT_TIER;
+    else process.env.KB_TENANT_DEFAULT_TIER = originalTenantTier;
   });
 
   // case: S-203.1, S-203.2, S-203.3, S-203.6
   it('discovers production registrations and requires closed request and response schemas or an explicit raw declaration', async () => {
-    const routes: Array<{ method: string | string[]; url: string; schema?: unknown; config?: unknown }> = [];
-    const app = await createServer(restApiConfigSchema.parse({ port: 5050 }), process.cwd(), registry, (route) => routes.push(route));
+    let injectFailure = false;
+    process.env.KB_TENANT_DEFAULT_TIER = 'enterprise';
+    const routes: RouteOptions[] = [];
+    const cache = new Map<string, unknown>();
+    platform.setAdapter('cache', {
+      get: async <T>(key: string) => (cache.get(key) as T | undefined) ?? null,
+      set: async (key: string, value: unknown) => { cache.set(key, value); },
+      delete: async (key: string) => { cache.delete(key); },
+      clear: async () => { cache.clear(); },
+    });
+    platform.setAdapter('logger', { info() {}, warn() {}, error() {}, debug() {}, child() { return this; } });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ uptime: 0, totalEntries: 0, totalSize: 0, hitRate: 0, missRate: 0, evictions: 0, namespaces: {}, byTenant: {} }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const app = await createServer(restApiConfigSchema.parse({ port: 5050 }), process.cwd(), registry, (route) => {
+      const original = route.handler;
+      route.handler = async function (...args) {
+        if (injectFailure) throw new Error('fixture unexpected failure');
+        return original.apply(this, args);
+      };
+      routes.push(route);
+    });
     apps.push(app);
     await app.ready();
 
@@ -63,5 +180,50 @@ describe('REST production route declarations', () => {
       return hasJsonMethod && !schema.response?.[200];
     });
     expect(missing.map(({ method, url }) => `${Array.isArray(method) ? method.join(',') : method} ${url}`)).toEqual([]);
+
+    const jsonRoutes: Array<{ route: RouteOptions; method: FixtureMethod }> = [];
+    for (const route of routes) {
+      const config = route.config as { ux?: string } | undefined;
+      if (config?.ux === 'raw') {
+        expect(route.config).toMatchObject({ ux: 'raw' });
+        continue;
+      }
+      const methods = (Array.isArray(route.method) ? route.method : [route.method]).filter((method) => method !== 'HEAD');
+      for (const method of methods) {
+        if (method === 'GET' || method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') jsonRoutes.push({ route, method: method as FixtureMethod });
+      }
+    }
+
+    const missingValidFixtureMetadata: string[] = [];
+    for (const { route, method } of jsonRoutes) {
+      const valid = await app.inject(requestForRoute(route, method));
+      assertUxResult(valid, false);
+      expect((route.schema as { response?: Record<number, unknown> }).response?.[valid.statusCode], `${method} ${route.url} missing response schema for ${valid.statusCode}`).toBeDefined();
+      const routeConfig = route.config as { uxFixture?: { validResult?: 'error-envelope' } } | undefined;
+      expect(valid.statusCode).toBeGreaterThanOrEqual(200);
+      expect(valid.statusCode).toBeLessThan(600);
+      if (valid.json().ok === false && routeConfig?.uxFixture?.validResult !== 'error-envelope') {
+        const validBody = valid.json() as { error?: { code?: string } };
+        missingValidFixtureMetadata.push(`${method} ${route.url}: ${valid.statusCode} ${validBody.error?.code}`);
+      }
+
+      const invalid = await app.inject(invalidRequestForRoute(route, method));
+      expect(invalid.statusCode, `${method} ${route.url} invalid input status: ${invalid.body}`).toBe(400);
+      expect((route.schema as { response?: Record<number, unknown> }).response?.[invalid.statusCode], `${method} ${route.url} missing response schema for 400`).toBeDefined();
+      assertUxResult(invalid, true);
+
+      injectFailure = true;
+      const failed = await app.inject(requestForRoute(route, method));
+      injectFailure = false;
+      expect(failed.statusCode, `${method} ${route.url} failure injection did not reach the handler`).toBe(500);
+      expect((route.schema as { response?: Record<number, unknown> }).response?.[failed.statusCode], `${method} ${route.url} missing response schema for 500`).toBeDefined();
+      const failureBody = failed.json() as { ok: boolean; error: { code: string; correlationId?: string; hint?: string } };
+      expect(failureBody).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED' } });
+      expect(failureBody.error.correlationId).toEqual(expect.any(String));
+      expect(failureBody.error.hint).toEqual(expect.any(String));
+      expect(failed.body).not.toContain('fixture unexpected failure');
+      expect(failed.body).not.toContain('stack');
+    }
+    expect(missingValidFixtureMetadata, 'routes without state fixtures must declare their valid unavailable result beside the route').toEqual([]);
   });
 });

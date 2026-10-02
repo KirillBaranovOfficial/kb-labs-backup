@@ -105,6 +105,7 @@ export function registerMetricsRoutes(
         properties: {
           limit: { type: 'integer', minimum: 1, maximum: 200 },
         },
+        additionalProperties: false,
       },
       response: {
         200: {

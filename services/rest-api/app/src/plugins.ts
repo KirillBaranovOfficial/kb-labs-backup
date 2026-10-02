@@ -14,6 +14,7 @@ import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import fastifyCors, { type FastifyCorsOptions } from '@fastify/cors';
 import fastifyRateLimit, { type RateLimitPluginOptions } from '@fastify/rate-limit';
 import { registerOpenAPI } from '@kb-labs/shared-http';
+import { withUxErrorResponses } from './routes/route-schema.js';
 
 /**
  * Register all Fastify plugins
@@ -27,6 +28,14 @@ export async function registerPlugins(
     const methods = Array.isArray(route.method) ? route.method : [route.method];
     if (methods.includes('OPTIONS')) {
       route.config = { ...route.config, ux: 'raw' };
+    }
+    if (route.schema && typeof route.schema === 'object') {
+      const schema = route.schema as { response?: Record<number, unknown> };
+      const responses = schema.response ?? {};
+      const usesZodCompiler = Object.values(responses).some((response) => response !== null && typeof response === 'object' && 'safeParse' in response);
+      if (!usesZodCompiler) {
+        route.schema = { ...route.schema, response: withUxErrorResponses(responses) };
+      }
     }
   });
   // CORS plugin with profile support

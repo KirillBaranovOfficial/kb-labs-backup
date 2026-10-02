@@ -254,7 +254,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated LLM usage statistics
   const llmUsagePaths = resolvePaths(basePath, '/adapters/llm/usage');
   for (const path of llmUsagePaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       // Check if analytics supports reading
@@ -490,7 +490,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv), models (csv, legacy filter)
   const llmDailyStatsPaths = resolvePaths(basePath, '/adapters/llm/daily-stats');
   for (const path of llmDailyStatsPaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -550,7 +550,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const embeddingsDailyStatsPaths = resolvePaths(basePath, '/adapters/embeddings/daily-stats');
   for (const path of embeddingsDailyStatsPaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -598,7 +598,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated Embeddings usage statistics
   const embeddingsUsagePaths = resolvePaths(basePath, '/adapters/embeddings/usage');
   for (const path of embeddingsUsagePaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getEvents) {
@@ -754,7 +754,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const vectorstoreDailyStatsPaths = resolvePaths(basePath, '/adapters/vectorstore/daily-stats');
   for (const path of vectorstoreDailyStatsPaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -802,7 +802,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated VectorStore usage statistics
   const vectorstoreUsagePaths = resolvePaths(basePath, '/adapters/vectorstore/usage');
   for (const path of vectorstoreUsagePaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getEvents) {
@@ -938,7 +938,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const cacheDailyStatsPaths = resolvePaths(basePath, '/adapters/cache/daily-stats');
   for (const path of cacheDailyStatsPaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -986,7 +986,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated Cache usage statistics
   const cacheUsagePaths = resolvePaths(basePath, '/adapters/cache/usage');
   for (const path of cacheUsagePaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getEvents) {
@@ -1088,7 +1088,7 @@ export async function registerAdaptersRoutes(
   // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const storageDailyStatsPaths = resolvePaths(basePath, '/adapters/storage/daily-stats');
   for (const path of storageDailyStatsPaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getDailyStats) {
@@ -1136,7 +1136,7 @@ export async function registerAdaptersRoutes(
   // Returns aggregated Storage usage statistics
   const storageUsagePaths = resolvePaths(basePath, '/adapters/storage/usage');
   for (const path of storageUsagePaths) {
-    fastify.get(path, { schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
+    fastify.get(path, { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { querystring: adapterQuerySchema, response: withUxErrorResponses({ 200: adapterSuccessResponse }) } }, async (request, reply) => {
       const analytics = platform.analytics;
 
       if (!analytics.getEvents) {

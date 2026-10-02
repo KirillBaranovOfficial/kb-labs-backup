@@ -18,7 +18,6 @@ import {
   JobResponseSchema,
   JobStatsResponseSchema,
   JobActionResponseSchema,
-  ErrorResponseSchema,
 } from '@kb-labs/rest-api-contracts';
 import { normalizeBasePath } from './path-helpers';
 
@@ -74,10 +73,7 @@ export async function registerJobsRoutes(
       tags: ['Jobs'],
       summary: 'List scheduled jobs',
       querystring: ListJobsQuerySchema,
-      response: withUxErrorResponses({
-        200: JobsListResponseSchema,
-        503: ErrorResponseSchema,
-      }),
+      response: withUxErrorResponses({ 200: JobsListResponseSchema }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -106,10 +102,7 @@ export async function registerJobsRoutes(
       tags: ['Jobs'],
       summary: 'Get cron jobs statistics',
       querystring: z.object({}).strict(),
-      response: withUxErrorResponses({
-        200: JobStatsResponseSchema,
-        503: ErrorResponseSchema,
-      }),
+      response: withUxErrorResponses({ 200: JobStatsResponseSchema }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -128,16 +121,13 @@ export async function registerJobsRoutes(
   s.route({
     method: 'GET',
     url: `${basePath}/jobs/:id`,
+    config: { uxFixture: { validResult: 'error-envelope' } },
     schema: {
       tags: ['Jobs'],
       summary: 'Get job details',
       params: z.object({ id: z.string().min(1) }).strict(),
       querystring: z.object({}).strict(),
-      response: withUxErrorResponses({
-        200: JobResponseSchema,
-        404: ErrorResponseSchema,
-        503: ErrorResponseSchema,
-      }),
+      response: withUxErrorResponses({ 200: JobResponseSchema }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -163,17 +153,14 @@ export async function registerJobsRoutes(
   s.route({
     method: 'POST',
     url: `${basePath}/jobs/:id/trigger`,
+    config: { uxFixture: { validResult: 'error-envelope' } },
     schema: {
       tags: ['Jobs'],
       summary: 'Trigger job execution immediately',
       params: z.object({ id: z.string().min(1) }).strict(),
       querystring: z.object({}).strict(),
       body: z.object({}).strict(),
-      response: withUxErrorResponses({
-        200: JobActionResponseSchema,
-        404: ErrorResponseSchema,
-        503: ErrorResponseSchema,
-      }),
+      response: withUxErrorResponses({ 200: JobActionResponseSchema }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -201,17 +188,14 @@ export async function registerJobsRoutes(
   s.route({
     method: 'POST',
     url: `${basePath}/jobs/:id/pause`,
+    config: { uxFixture: { validResult: 'error-envelope' } },
     schema: {
       tags: ['Jobs'],
       summary: 'Pause job execution',
       params: z.object({ id: z.string().min(1) }).strict(),
       querystring: z.object({}).strict(),
       body: z.object({}).strict(),
-      response: withUxErrorResponses({
-        200: JobActionResponseSchema,
-        404: ErrorResponseSchema,
-        503: ErrorResponseSchema,
-      }),
+      response: withUxErrorResponses({ 200: JobActionResponseSchema }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {
@@ -237,17 +221,14 @@ export async function registerJobsRoutes(
   s.route({
     method: 'POST',
     url: `${basePath}/jobs/:id/resume`,
+    config: { uxFixture: { validResult: 'error-envelope' } },
     schema: {
       tags: ['Jobs'],
       summary: 'Resume paused job',
       params: z.object({ id: z.string().min(1) }).strict(),
       querystring: z.object({}).strict(),
       body: z.object({}).strict(),
-      response: withUxErrorResponses({
-        200: JobActionResponseSchema,
-        404: ErrorResponseSchema,
-        503: ErrorResponseSchema,
-      }),
+      response: withUxErrorResponses({ 200: JobActionResponseSchema }),
     },
     handler: async (request, reply) => {
       if (!cronManager) {

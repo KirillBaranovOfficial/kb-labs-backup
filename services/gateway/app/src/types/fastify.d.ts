@@ -8,6 +8,7 @@ import 'fastify';
 declare module 'fastify' {
   interface FastifyContextConfig {
     ux?: 'raw';
+    uxFixture?: { validResult: 'error-envelope' };
   }
 
   interface FastifyRequest {

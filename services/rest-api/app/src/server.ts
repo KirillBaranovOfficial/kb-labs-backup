@@ -159,6 +159,7 @@ export async function createServer(
         disableRequestLogging: true,
         requestTimeout: config.timeouts?.requestTimeout || 30000,
         bodyLimit: config.timeouts?.bodyLimit || 10485760,
+        ajv: { customOptions: { removeAdditional: false } },
         http2: true,
         https: httpsOptions,
       })
@@ -169,6 +170,7 @@ export async function createServer(
         disableRequestLogging: true,
         requestTimeout: config.timeouts?.requestTimeout || 30000,
         bodyLimit: config.timeouts?.bodyLimit || 10485760,
+        ajv: { customOptions: { removeAdditional: false } },
       });
 
   // Add our own logger to server instance

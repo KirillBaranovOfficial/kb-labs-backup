@@ -14,6 +14,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ICache, ILogger, IServiceTransport, ServiceTransportResponse } from '@kb-labs/core-platform';
 import type { JwtConfig } from '@kb-labs/gateway-auth';
 import type { GatewayConfig } from '@kb-labs/gateway-contracts';
+import type { RouteOptions } from 'fastify';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,52 @@ const noopLogger: ILogger = {
 } as unknown as ILogger;
 
 const stubJwtConfig: JwtConfig = { secret: 'test-secret' };
+
+type FixtureMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+function schemaExample(input: unknown): unknown {
+  if (!input || typeof input !== 'object') return {};
+  const schema = input as Record<string, unknown>;
+  if ('const' in schema) return schema.const;
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+  for (const key of ['anyOf', 'oneOf']) {
+    const variants = schema[key];
+    if (Array.isArray(variants) && variants.length > 0) return schemaExample(variants[0]);
+  }
+  if (schema.type === 'object' || schema.properties) {
+    const properties = (schema.properties ?? {}) as Record<string, unknown>;
+    const required = Array.isArray(schema.required) ? schema.required.map(String) : [];
+    return Object.fromEntries(required.map((key) => [key, schemaExample(properties[key])]));
+  }
+  if (schema.type === 'array') return [schemaExample(schema.items)];
+  if (schema.type === 'string') {
+    if (schema.format === 'date-time') return '2030-01-02T03:04:05.000Z';
+    if (schema.format === 'date') return '2030-01-02';
+    if (typeof schema.pattern === 'string' && schema.pattern.includes('a-z0-9')) return 'fixture-01';
+    return 'fixture';
+  }
+  if (schema.type === 'integer' || schema.type === 'number') return typeof schema.minimum === 'number' ? schema.minimum : 1;
+  if (schema.type === 'boolean') return true;
+  return {};
+}
+
+function routeRequest(route: RouteOptions, method: FixtureMethod, invalid = false): { method: FixtureMethod; url: string; payload?: string; headers?: { 'content-type': string } } {
+  const schema = (route.schema ?? {}) as { params?: unknown; querystring?: unknown; body?: unknown };
+  const params = (schema.params as { properties?: Record<string, unknown> } | undefined)?.properties ?? {};
+  let url = route.url.replace(/:([^/]+)/g, (_match, name: string) => encodeURIComponent(String(schemaExample(params[name])))).replace(/\*/g, 'fixture');
+  const query = invalid ? { __ux_fixture_invalid__: 'true' } : schemaExample(schema.querystring) as Record<string, unknown>;
+  const search = new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)] as [string, string]));
+  if (search.size) url += `?${search}`;
+  const request: { method: FixtureMethod; url: string; payload?: string; headers?: { 'content-type': string } } = { method, url };
+  if (invalid && ['POST', 'PUT', 'PATCH'].includes(method) && schema.body) {
+    const bodySchema = schema.body as { anyOf?: Array<{ maxProperties?: number }>; required?: string[]; properties?: Record<string, unknown> };
+    const noBody = bodySchema.anyOf?.some((branch) => branch.maxProperties === 0) ?? false;
+    request.payload = noBody || !bodySchema.required?.length && !Object.keys(bodySchema.properties ?? {}).length ? '{"__ux_fixture_invalid__":true}' : '{}';
+  }
+  else if (!invalid && ['POST', 'PUT', 'PATCH'].includes(method) && schema.body) request.payload = JSON.stringify(schemaExample(schema.body));
+  if (request.payload !== undefined) request.headers = { 'content-type': 'application/json' };
+  return request;
+}
 
 function makeTransport(callResult?: ServiceTransportResponse): IServiceTransport {
   const mockCall = vi.fn().mockResolvedValue(
@@ -230,8 +277,16 @@ describe('Gateway /health endpoint', () => {
 
 describe('Gateway production route declarations', () => {
   it('discovers production routes and requires request and response schemas or an explicit raw declaration', async () => {
-    const routes: Array<{ method: string | string[]; url: string; schema?: unknown; config?: unknown }> = [];
-    const app = await buildHealthApp({}, undefined, (route) => routes.push(route));
+    let injectFailure = false;
+    const routes: RouteOptions[] = [];
+    const app = await buildHealthApp({ access: { mode: 'local' } }, undefined, (route) => {
+      const original = route.handler;
+      route.handler = async function (...args) {
+        if (injectFailure) throw new Error('fixture unexpected failure');
+        return original.apply(this, args);
+      };
+      routes.push(route);
+    });
     try {
       expect(routes.length).toBeGreaterThan(0);
       const missing = routes.filter((route) => {
@@ -247,6 +302,51 @@ describe('Gateway production route declarations', () => {
         return hasJsonMethod && !Object.entries(schema.response ?? {}).some(([status]) => Number(status) >= 200 && Number(status) < 300);
       });
       expect(missing.map(({ method, url }) => `${Array.isArray(method) ? method.join(',') : method} ${url}`)).toEqual([]);
+
+      const missingFixtureMetadata: string[] = [];
+      for (const route of routes) {
+        const config = route.config as { ux?: string } | undefined;
+        if (config?.ux === 'raw') {
+          expect(route.config).toMatchObject({ ux: 'raw' });
+          continue;
+        }
+        const methods = (Array.isArray(route.method) ? route.method : [route.method]).filter((method) => method !== 'HEAD');
+        for (const method of methods) {
+          if (method !== 'GET' && method !== 'POST' && method !== 'PUT' && method !== 'PATCH' && method !== 'DELETE') continue;
+          const fixtureMethod = method as FixtureMethod;
+          const valid = await app.inject(routeRequest(route, fixtureMethod));
+          const responseSchemas = (route.schema as { response?: Record<number, unknown> } | undefined)?.response ?? {};
+          expect(responseSchemas[valid.statusCode], `${method} ${route.url} missing response schema for ${valid.statusCode}`).toBeDefined();
+          const validBody = valid.json() as { ok?: boolean; data?: unknown; error?: { code?: string; message?: string; hint?: string; correlationId?: string } };
+          expect(typeof validBody.ok, `${method} ${route.url} valid request did not return UX envelope`).toBe('boolean');
+          if (validBody.ok === false) {
+            expect(valid.statusCode).toBeGreaterThanOrEqual(400);
+            expect(validBody.error?.code).toMatch(/^KB_/);
+            expect(validBody.error?.message).toEqual(expect.any(String));
+            expect(validBody.error?.hint).toEqual(expect.any(String));
+            expect(validBody.error?.correlationId).toEqual(expect.any(String));
+            const fixture = (route.config as { uxFixture?: { validResult?: 'error-envelope' } } | undefined)?.uxFixture;
+            if (fixture?.validResult !== 'error-envelope') missingFixtureMetadata.push(`${method} ${route.url}: ${valid.statusCode}`);
+          } else expect(validBody).toHaveProperty('data');
+
+          const invalid = await app.inject(routeRequest(route, fixtureMethod, true));
+          const invalidBody = invalid.json() as { ok?: boolean; error?: { code?: string; message?: string; hint?: string; correlationId?: string } };
+          expect(invalid.statusCode, `${method} ${route.url} invalid request status`).toBe(400);
+          expect(responseSchemas[invalid.statusCode], `${method} ${route.url} missing response schema for 400`).toBeDefined();
+          expect(invalidBody).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String), correlationId: expect.any(String) } });
+
+          injectFailure = true;
+          const failed = await app.inject(routeRequest(route, fixtureMethod));
+          injectFailure = false;
+          const failureBody = failed.json() as { ok?: boolean; error?: { code?: string; correlationId?: string; hint?: string } };
+          expect(failed.statusCode, `${method} ${route.url} unexpected failure injection did not reach handler`).toBe(500);
+          expect(responseSchemas[failed.statusCode], `${method} ${route.url} missing response schema for 500`).toBeDefined();
+          expect(failureBody).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String), hint: expect.any(String) } });
+          expect(failed.body).not.toContain('fixture unexpected failure');
+          expect(failed.body).not.toContain('stack');
+        }
+      }
+      expect(missingFixtureMetadata, 'routes without live fixtures must declare their unavailable result beside the route').toEqual([]);
     } finally {
       await app.close();
     }

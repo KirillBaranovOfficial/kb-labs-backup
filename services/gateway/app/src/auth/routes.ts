@@ -97,7 +97,7 @@ export function registerAuthRoutes(
   });
 
   // Issue token pair (machine credentials → JWT pair).
-  app.post('/auth/token', { schema: { tags: ['Auth'], summary: 'Issue JWT token pair', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { clientId: string, clientSecret: string }, required: ['clientId', 'clientSecret'], additionalProperties: false }, response: { 200: tokenResponse, 400: errorResponse, 401: errorResponse } } }, async (request, reply) => {
+  app.post('/auth/token', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Auth'], summary: 'Issue JWT token pair', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { clientId: string, clientSecret: string }, required: ['clientId', 'clientSecret'], additionalProperties: false }, response: { 200: tokenResponse, 400: errorResponse, 401: errorResponse } } }, async (request, reply) => {
     const parsed = TokenRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Bad Request', issues: parsed.error.issues });
@@ -114,7 +114,7 @@ export function registerAuthRoutes(
   // Refresh token pair.
   // If a user refresh cookie is detected AND userExt.userRefreshFn is provided,
   // the user path is handled first. Otherwise, falls back to machine body refresh.
-  app.post('/auth/refresh', { schema: { tags: ['Auth'], summary: 'Refresh JWT token pair (machine or user)', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: optionalRequestBodySchema({ type: 'object', properties: { refreshToken: string }, required: ['refreshToken'], additionalProperties: false }), response: { 200: { oneOf: [tokenResponse, { type: 'object', properties: { ok: { type: 'boolean', const: true } }, required: ['ok'], additionalProperties: false }] }, 400: errorResponse, 401: errorResponse } } }, async (request, reply) => {
+  app.post('/auth/refresh', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Auth'], summary: 'Refresh JWT token pair (machine or user)', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: optionalRequestBodySchema({ type: 'object', properties: { refreshToken: string }, required: ['refreshToken'], additionalProperties: false }), response: { 200: { oneOf: [tokenResponse, { type: 'object', properties: { ok: { type: 'boolean', const: true } }, required: ['ok'], additionalProperties: false }] }, 400: errorResponse, 401: errorResponse } } }, async (request, reply) => {
     // User cookie refresh — handled by the user-auth subsystem if wired.
     const cookies = (request as FastifyRequest & { cookies?: Record<string, string | undefined> }).cookies;
     const refreshCookie = cookies?.[COOKIE_REFRESH];
@@ -137,7 +137,7 @@ export function registerAuthRoutes(
     return reply.send(tokens);
   });
 
-  app.post<{ Body: { refreshToken?: string } }>('/auth/logout/cli', { schema: { tags: ['Auth'], summary: 'Revoke a CLI session or machine refresh token', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { refreshToken: string }, additionalProperties: false }, response: { 200: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] }, 400: errorResponse } } }, async (request, reply) => {
+  app.post<{ Body: { refreshToken?: string } }>('/auth/logout/cli', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Auth'], summary: 'Revoke a CLI session or machine refresh token', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { refreshToken: string }, additionalProperties: false }, response: { 200: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] }, 400: errorResponse } } }, async (request, reply) => {
     const refreshToken = request.body?.refreshToken;
     if (typeof refreshToken !== 'string' || !refreshToken) {
       return reply.code(400).send({ error: 'Bad Request', message: 'refreshToken is required' });
