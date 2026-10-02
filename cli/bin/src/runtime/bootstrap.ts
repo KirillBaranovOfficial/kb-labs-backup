@@ -31,12 +31,13 @@ import { getDefaultMiddlewares } from "./middlewares";
 import { executePlugin, createSystemCommandContext } from "./plugin-executor";
 import { tryResolveGateway, executeViaGateway } from "./gateway-executor";
 import { loadEnvFile } from "./env-loader";
-import { initializePlatform, isProjectUnknownError } from "./platform-init";
+import { initializePlatform } from "./platform-init";
 import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, createErrorEnvelope } from "@kb-labs/core-platform";
+import { createContextLogger, toErrorEnvelope } from "@kb-labs/core-platform";
+import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
 import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
@@ -102,11 +103,9 @@ export async function executeCli(
       projectScope,
     });
   } catch (error) {
-    if (!isProjectUnknownError(error)) {
-      throw error;
-    }
-    const path = error.details?.path ?? cwd;
-    const envelope = createErrorEnvelope('KB_PROJECT_UNKNOWN', { details: { path } });
+    const envelope = isProjectRegistryError(error)
+      ? projectErrorEnvelope(error)
+      : toErrorEnvelope(error);
     const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
     if (global.json) {
       presenter.json({ ok: false, error: envelope });

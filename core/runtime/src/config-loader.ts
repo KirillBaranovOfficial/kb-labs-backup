@@ -58,7 +58,7 @@ import {
   type FieldMergePolicy,
 } from "@kb-labs/core-config";
 import { resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
-import { AdapterProjectScopeError } from "@kb-labs/core-platform";
+import { AdapterProjectScopeError, PlatformConfigError } from "@kb-labs/core-platform";
 
 import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
 import { interpolateConfig } from "./config-interpolation.js";
@@ -292,10 +292,34 @@ function toPlatformSection(
   return platformSection;
 }
 
+function throwConfigDiagnostic(
+  diagnostic: { code: string; message: string; detail?: unknown; path?: string },
+  fallbackPath: string,
+): never {
+  const reason = diagnostic.code.includes('PARSE')
+    ? 'parse'
+    : diagnostic.code.includes('READ')
+      ? 'read'
+      : 'invalid';
+  const detail = typeof diagnostic.detail === 'string' ? diagnostic.detail : diagnostic.message;
+  throw new PlatformConfigError(diagnostic.path ?? fallbackPath, reason, detail);
+}
+
+function throwFirstConfigError(
+  diagnostics: readonly { level?: string; code: string; message: string; detail?: unknown; path?: string }[],
+  fallbackPath: string,
+): void {
+  const diagnostic = diagnostics.find((entry) => entry.level === 'error');
+  if (diagnostic) {
+    throwConfigDiagnostic(diagnostic, fallbackPath);
+  }
+}
+
 /**
  * Read a KB Labs config file and extract its `platform` section. Returns
- * `{ platformSection, rawConfig }` where either field may be `undefined` if
- * the file is missing, malformed, or has no `platform` section.
+ * `{ platformSection, rawConfig }` where the config section may be `undefined`
+ * when a present valid file has no `platform` section. Missing files are
+ * handled by the caller; unreadable, malformed, and invalid files are errors.
  *
  * `adapterOptions` lives at the top level of the config file (not inside
  * `platform`), so we merge it into the returned platformSection so that
@@ -312,7 +336,12 @@ async function readConfigFile(configPath: string): Promise<{
   }>(configPath);
 
   if (!result.ok) {
-    return {};
+    throwFirstConfigError(result.diagnostics, configPath);
+    throw new PlatformConfigError(configPath, 'invalid', 'Config reader returned no data or diagnostic.');
+  }
+
+  if (typeof result.data !== 'object' || result.data === null || Array.isArray(result.data)) {
+    throw new PlatformConfigError(configPath, 'invalid', 'Top-level configuration value must be an object.');
   }
 
   const data = result.data as Record<string, unknown> & {
@@ -345,9 +374,9 @@ async function readConfigFile(configPath: string): Promise<{
  *      file is used for both layers and is read only once.
  *   5. `effective = mergeDefined(platformDefaults ?? {}, projectConfig ?? {})`.
  *
- * The function never throws on missing files or malformed JSON — it silently
- * degrades to an empty config so that callers can continue with NoOp
- * adapters. Callers that need strict validation should inspect `sources`.
+ * Missing config layers are valid and contribute no overrides. A present but
+ * unreadable, malformed, or invalid file throws `PlatformConfigError`; callers
+ * must render that failure instead of starting with a different config.
  */
 export async function loadPlatformConfig(
   options: LoadPlatformConfigOptions = {},
@@ -467,6 +496,7 @@ export async function loadPlatformConfig(
     roots.platformRoot,
     roots.projectRoot,
   ]);
+  throwFirstConfigError(generatedLayer.diagnostics, roots.platformRoot);
   if (generatedLayer.files.length > 0) {
     const generatedSection = toPlatformSection(generatedLayer.data);
     if (generatedSection) {
@@ -495,6 +525,7 @@ export async function loadPlatformConfig(
   // Overlay semantics differ from the platform↔project merge: arrays replace
   // by default, with opt-in append via the `kb:merge` directive.
   const overlayResult = await loadOverlays(roots.projectRoot);
+  throwFirstConfigError(overlayResult.diagnostics, path.join(roots.projectRoot, '.kb', 'overlays'));
   if (overlayResult.overlays.some(overlay =>
     overlay.data.adapters !== undefined || overlay.data.adapterOptions !== undefined)) {
     throw new AdapterProjectScopeError();
@@ -539,7 +570,10 @@ export async function loadPlatformConfig(
       validation.errors
         ?.map((e) => `${e.instancePath || "/"}: ${e.message ?? "invalid"}`)
         .join("; ") ?? "unknown validation error";
-    throw new Error(
+    const invalidPath = appliedOverlays.at(-1) ?? projectConfigSource ?? platformDefaultsSource ?? roots.platformRoot;
+    throw new PlatformConfigError(
+      invalidPath,
+      'invalid',
       `Platform config is invalid after applying overlays (${appliedOverlays.length} overlay(s)): ${detail}`,
     );
   }

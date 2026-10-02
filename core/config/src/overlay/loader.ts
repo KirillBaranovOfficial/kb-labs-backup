@@ -55,6 +55,7 @@ export async function loadOverlays(projectRoot: string): Promise<LoadOverlaysRes
       code: 'OVERLAYS_DIR_READ_FAILED',
       message: `Failed to read overlays directory: ${dir}`,
       detail: String(e),
+      path: dir,
     });
     return { overlays: [], diagnostics };
   }
@@ -65,7 +66,7 @@ export async function loadOverlays(projectRoot: string): Promise<LoadOverlaysRes
   for (const name of jsoncFiles) {
     const full = path.join(dir, name);
     const read = await readJsonWithDiagnostics<unknown>(full);
-    diagnostics.push(...read.diagnostics);
+    diagnostics.push(...read.diagnostics.map((diagnostic) => ({ ...diagnostic, path: diagnostic.path ?? full })));
     if (!read.ok) {
       continue;
     }
@@ -75,6 +76,7 @@ export async function loadOverlays(projectRoot: string): Promise<LoadOverlaysRes
         level: 'error',
         code: 'OVERLAY_NOT_OBJECT',
         message: `Overlay must be a JSON object at top level: ${full}`,
+        path: full,
       });
       continue;
     }

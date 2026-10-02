@@ -39,7 +39,7 @@ type LogSearchResult = CommandResult & {
 
 export const logsSearch = defineSystemCommand<Flags, LogSearchResult>({
   name: "search",
-  scope: 'project',
+  scope: 'platform',
   description: "Full-text search across logs",
   category: "logs",
   examples: generateExamples("logs search", "kb", [
