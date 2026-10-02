@@ -625,6 +625,27 @@ def main():
         append_summary(False)
         return failure_exit()
 
+    if VARIANT.endswith("secured"):
+        provider_config = json.dumps({
+            "email-password": {"type": "email-password"},
+            "corp": {
+                "type": "oidc",
+                "issuer": "https://idp-stub:9443",
+                "clientId": "kb-gateway",
+                "clientSecretEnv": "OIDC_CORP_CLIENT_SECRET",
+                "scopes": ["openid", "email"],
+                "pkce": True,
+            },
+        })
+        for key, value in (("gateway.auth.providers", provider_config),
+                           ("gateway.auth.cookieSecure", "false")):
+            configured, _ = run(
+                ["bash", "-c", '. "$HOME/.profile"; kb config set --scope platform "$1" "$2" --json',
+                 "journey", key, value], env=env, cwd=PROJECT, timeout=90)
+            if not require(configured, step=f"kb config set --scope platform {key}"):
+                append_summary(False)
+                return failure_exit()
+
     result, elapsed = run([launcher, "start", "--platform-root", str(PLATFORM)], env=env, timeout=300)
     TIMES["start"] = elapsed
     if not require(result, step="kb-create start"):
@@ -880,6 +901,9 @@ def main():
         service_env["KB_JOURNEY_PROJECT_ROOT"] = str(PROJECT)
         auth_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-auth-{mode}.json")
         auth_journey = Journey(mode, f"auth-{mode}")
+        if mode == "secured":
+            from secured_connection_steps import register_secured_connection_steps
+            register_secured_connection_steps(auth_journey, service_env)
 
         def run_auth_flow():
             if mode == "local":
@@ -1072,6 +1096,10 @@ def main():
                         service_env["KB_JOURNEY_ADMIN_PASSWORD"])
                 studio_env["KB_STUDIO_MEMBER_EMAIL"] = member_email
                 studio_env["KB_STUDIO_MEMBER_PASSWORD"] = member_password
+                studio_env["KB_STUDIO_OAUTH_JOURNEY"] = "1"
+                studio_env["KB_STUDIO_OIDC_PROVIDER_ID"] = "corp"
+                studio_env["KB_STUDIO_OIDC_PROVIDER_NAME"] = "corp"
+                studio_env["KB_STUDIO_OIDC_EMAIL"] = service_env["KB_JOURNEY_ADMIN_EMAIL"]
                 required_studio_credentials = (
                     "KB_STUDIO_ADMIN_EMAIL", "KB_STUDIO_ADMIN_PASSWORD",
                     "KB_STUDIO_MEMBER_EMAIL", "KB_STUDIO_MEMBER_PASSWORD",
@@ -1086,7 +1114,10 @@ def main():
                     )
             except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
                 fail(f"Studio secured member setup: {error}")
-        with invocation_context(step_id="S-106.1,S-106.2,S-106.3,S-106.4,S-106.5,S-106.6,S-107.1,S-107.2,S-107.3"):
+        studio_claims = "S-106.1,S-106.2,S-106.3,S-106.4,S-106.5,S-106.6,S-107.1,S-107.2,S-107.3"
+        if mode == "secured":
+            studio_claims += ",S-109.1,S-109.2,S-109.3,S-109.4"
+        with invocation_context(step_id=studio_claims):
             studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
                 "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
                 "--config=/opt/kb-studio-playwright/playwright.config.mjs",

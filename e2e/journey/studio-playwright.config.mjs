@@ -13,6 +13,7 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   use: {
     headless: true,
+    ignoreHTTPSErrors: process.env.KB_STUDIO_OAUTH_JOURNEY === '1',
     actionTimeout: 10_000,
     navigationTimeout: 15_000,
   },
