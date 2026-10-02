@@ -24,8 +24,11 @@ func TestRender_JSON(t *testing.T) {
 	if err := json.Unmarshal(b.Bytes(), &env); err != nil {
 		t.Fatalf("not json: %v", err)
 	}
-	if env["ok"] != true || env["status"] != "success" {
+	if env["ok"] != true {
 		t.Errorf("envelope = %v", env)
+	}
+	if len(env) != 2 {
+		t.Errorf("success envelope keys = %v, want only ok and data", env)
 	}
 	data, _ := env["data"].(map[string]any)
 	if data["x"].(float64) != 1 {
@@ -37,16 +40,16 @@ func TestRender_AgentFallsBackToJSON(t *testing.T) {
 	var b bytes.Buffer
 	// No Agent payload set → agent mode uses the JSON envelope.
 	Render(&b, Success("h", map[string]any{"x": 1}), ModeAgent)
-	if !strings.Contains(b.String(), `"status": "success"`) {
+	if !strings.Contains(b.String(), `"data"`) {
 		t.Errorf("agent fallback = %q", b.String())
 	}
 }
 
 func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
-	d := diag.New("ERR_WAVE_FAILED", "wave 1 failed",
+	d := diag.New("KB_RUNTIME_UNEXPECTED", "The operation failed.",
 		diag.WithReason("health gate timed out"),
 		diag.WithHint("see meta.failures"),
-		diag.WithMeta(map[string]any{"wave": 1}))
+		diag.WithCorrelationID("corr-test"))
 	var out, herr bytes.Buffer
 	code := RenderDiag(&out, &herr, d, ModeJSON)
 	if code != diag.ExitError {
@@ -60,34 +63,47 @@ func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
 		t.Errorf("ok = %v", env["ok"])
 	}
 	e := env["error"].(map[string]any)
-	if e["code"] != "ERR_WAVE_FAILED" || e["reason"] != "health gate timed out" || e["hint"] != "see meta.failures" {
+	if e["code"] != "KB_RUNTIME_UNEXPECTED" || e["message"] != "The operation failed." || e["hint"] != "see meta.failures" || e["correlationId"] != "corr-test" {
 		t.Errorf("error payload = %v", e)
 	}
-	if _, ok := e["meta"]; !ok {
-		t.Error("json mode should include meta")
+	if len(env) != 2 || len(e) != 9 {
+		t.Errorf("failure envelope has extra fields: %v", env)
 	}
 }
 
 func TestRenderDiag_AgentOmitsMeta(t *testing.T) {
-	d := diag.New("ERR_X", "x", diag.WithMeta(map[string]any{"big": "blob"}))
+	d := diag.New("KB_RUNTIME_UNEXPECTED", "x", diag.WithCorrelationID("corr-test"))
 	var out, herr bytes.Buffer
 	RenderDiag(&out, &herr, d, ModeAgent)
-	if strings.Contains(out.String(), "big") {
-		t.Errorf("agent mode must omit meta, got %q", out.String())
+	if !strings.Contains(out.String(), "correlationId") {
+		t.Errorf("agent failure must retain correlationId, got %q", out.String())
 	}
 }
 
 func TestRenderDiag_HumanShowsReasonAndHint(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
-	d := diag.New("ERR_MANIFEST_MISSING", "service gateway has no manifest",
+	d := diag.New("KB_RUNTIME_UNEXPECTED", "The operation failed.",
 		diag.WithReason("shipped without a service manifest"),
-		diag.WithHint("add dist/manifest.json"))
+		diag.WithHint("add dist/manifest.json"),
+		diag.WithCorrelationID("corr-human"))
 	var out, herr bytes.Buffer
 	RenderDiag(&out, &herr, d, ModeHuman)
 	h := herr.String()
-	for _, want := range []string{"ERR_MANIFEST_MISSING", "why:", "shipped without", "hint:", "add dist/manifest.json"} {
+	for _, want := range []string{"KB_RUNTIME_UNEXPECTED", "The operation failed.", "why:", "shipped without", "next:", "add dist/manifest.json", "correlationId:", "corr-human"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("human diag missing %q in:\n%s", want, h)
+		}
+	}
+}
+
+// case: S-203.1, S-203.2
+func TestMachineResultMatchesSharedContractFixtures(t *testing.T) {
+	for _, fixture := range []string{
+		"../../../contracts/ux-result/fixtures/valid/success.json",
+		"../../../contracts/ux-result/fixtures/valid/failure.json",
+	} {
+		if err := ValidateFixture(fixture); err != nil {
+			t.Errorf("shared fixture %s: %v", fixture, err)
 		}
 	}
 }

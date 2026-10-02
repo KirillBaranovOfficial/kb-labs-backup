@@ -51,9 +51,8 @@ func TestWithWarnings_DoesNotDowngradeNonSuccess(t *testing.T) {
 	}
 }
 
-// The full JSON envelope must surface warnings (with meta) so a machine caller
-// sees what was non-fatally dropped.
-func TestRender_JSONIncludesWarnings(t *testing.T) {
+// Warnings are no longer emitted as a parallel root-level protocol field.
+func TestRender_JSONHasOnlySharedSuccessFields(t *testing.T) {
 	o := Success("ok", nil).WithWarnings(
 		diag.New("ERR_DEP_PRUNED", "pruned", diag.WithMeta(map[string]any{"dep": "redis"})),
 	)
@@ -64,44 +63,32 @@ func TestRender_JSONIncludesWarnings(t *testing.T) {
 	if err := json.Unmarshal(b.Bytes(), &env); err != nil {
 		t.Fatalf("not json: %v", err)
 	}
-	if env["status"] != "warning" {
-		t.Errorf("status = %v, want warning", env["status"])
-	}
-	ws, ok := env["warnings"].([]any)
-	if !ok || len(ws) != 1 {
-		t.Fatalf("warnings = %v", env["warnings"])
-	}
-	w0 := ws[0].(map[string]any)
-	if w0["code"] != "ERR_DEP_PRUNED" {
-		t.Errorf("warning code = %v", w0["code"])
-	}
-	if _, ok := w0["meta"]; !ok {
-		t.Error("JSON warnings should carry meta")
+	if len(env) != 3 || env["ok"] != true || env["meta"] == nil {
+		t.Errorf("success envelope = %v, want ok, data, and warning metadata", env)
 	}
 }
 
-// The explicit-Agent branch (out.Agent != nil) — distinct from the
-// fall-back-to-JSON path the existing test covers.
-func TestRender_AgentUsesExplicitPayload(t *testing.T) {
+// Agent mode must use the same protocol as JSON mode.
+func TestRender_AgentUsesSharedEnvelope(t *testing.T) {
 	o := Success("h", map[string]any{"full": true})
 	o.Agent = map[string]any{"compact": "yes"}
 	var b bytes.Buffer
 	Render(&b, o, ModeAgent)
 
-	if !strings.Contains(b.String(), `"compact"`) {
-		t.Errorf("agent output should use explicit Agent payload, got %q", b.String())
+	if !strings.Contains(b.String(), `"data"`) || !strings.Contains(b.String(), `"full"`) {
+		t.Errorf("agent output should use shared envelope, got %q", b.String())
 	}
-	if strings.Contains(b.String(), "full") {
-		t.Errorf("agent output must not leak the JSON payload, got %q", b.String())
+	if strings.Contains(b.String(), `"compact"`) {
+		t.Errorf("agent mode must not create a parallel protocol, got %q", b.String())
 	}
 }
 
-// Success with no JSON payload must omit "data" rather than emit null.
-func TestRender_JSONOmitsDataWhenNil(t *testing.T) {
+// Success with no value serializes data as null.
+func TestRender_JSONIncludesNullData(t *testing.T) {
 	var b bytes.Buffer
 	Render(&b, Success("h", nil), ModeJSON)
-	if strings.Contains(b.String(), "data") {
-		t.Errorf("envelope should omit data when JSON is nil, got %q", b.String())
+	if !strings.Contains(b.String(), `"data": null`) {
+		t.Errorf("envelope should include null data, got %q", b.String())
 	}
 }
 
@@ -116,12 +103,11 @@ func TestRenderDiag_NilIsSafe(t *testing.T) {
 	}
 }
 
-func TestRenderDiag_AgentExitCodeIsResolved(t *testing.T) {
-	diag.RegisterExitCodes(map[string]int{"ERR_CFG_RENDER": diag.ExitConfig})
-	d := diag.New("ERR_CFG_RENDER", "bad config")
+func TestRenderDiag_InvalidInputUsesExitTwo(t *testing.T) {
+	d := diag.New("KB_RUNTIME_INPUT_INVALID", "The provided input is invalid.")
 	var out, herr bytes.Buffer
-	if code := RenderDiag(&out, &herr, d, ModeAgent); code != diag.ExitConfig {
-		t.Errorf("agent RenderDiag exit = %d, want %d", code, diag.ExitConfig)
+	if code := RenderDiag(&out, &herr, d, ModeAgent); code != diag.ExitInput {
+		t.Errorf("agent RenderDiag exit = %d, want %d", code, diag.ExitInput)
 	}
 }
 
