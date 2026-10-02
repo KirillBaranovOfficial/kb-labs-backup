@@ -56,6 +56,10 @@ describe('errors.catalog.json lint', () => {
       ADAPTER: 'plugin',
       UPDATE: 'update',
       RUNTIME: 'runtime',
+      DEPLOY: 'runtime',
+      SERVICE: 'runtime',
+      ENV: 'config',
+      MARKETPLACE: 'plugin',
     };
     for (const entry of errorCatalog.codes) {
       const prefix = entry.code.split('_')[1] ?? '';

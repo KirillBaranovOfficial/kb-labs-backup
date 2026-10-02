@@ -20,7 +20,7 @@ func TestSuccess_Shape(t *testing.T) {
 // previously untested. It must: collect warnings, skip nils, and downgrade a
 // success to "warning" — without touching a non-success status.
 func TestWithWarnings_DowngradesSuccessToWarning(t *testing.T) {
-	o := Success("ok", nil).WithWarnings(diag.New("ERR_DEP_PRUNED", "pruned dep"))
+	o := Success("ok", nil).WithWarnings(diag.New("KB_RUNTIME_UNEXPECTED", "pruned dep"))
 	if o.Status != StatusWarning {
 		t.Errorf("status = %q, want warning", o.Status)
 	}
@@ -30,7 +30,7 @@ func TestWithWarnings_DowngradesSuccessToWarning(t *testing.T) {
 }
 
 func TestWithWarnings_SkipsNil(t *testing.T) {
-	o := Success("ok", nil).WithWarnings(nil, diag.New("ERR_W", "w"), nil)
+	o := Success("ok", nil).WithWarnings(nil, diag.New("KB_RUNTIME_UNEXPECTED", "w"), nil)
 	if len(o.Warnings) != 1 {
 		t.Errorf("warnings = %d, want 1 (nils skipped)", len(o.Warnings))
 	}
@@ -45,7 +45,7 @@ func TestWithWarnings_NoWarningsKeepsSuccess(t *testing.T) {
 
 func TestWithWarnings_DoesNotDowngradeNonSuccess(t *testing.T) {
 	// A command that already failed keeps its status even with warnings.
-	o := CommandOutput{Ok: false, Status: StatusError}.WithWarnings(diag.New("ERR_W", "w"))
+	o := CommandOutput{Ok: false, Status: StatusError}.WithWarnings(diag.New("KB_RUNTIME_UNEXPECTED", "w"))
 	if o.Status != StatusError {
 		t.Errorf("status = %q, want error preserved", o.Status)
 	}
@@ -54,7 +54,7 @@ func TestWithWarnings_DoesNotDowngradeNonSuccess(t *testing.T) {
 // Warnings are no longer emitted as a parallel root-level protocol field.
 func TestRender_JSONHasOnlySharedSuccessFields(t *testing.T) {
 	o := Success("ok", nil).WithWarnings(
-		diag.New("ERR_DEP_PRUNED", "pruned", diag.WithMeta(map[string]any{"dep": "redis"})),
+		diag.New("KB_RUNTIME_UNEXPECTED", "pruned", diag.WithMeta(map[string]any{"dep": "redis"})),
 	)
 	var b bytes.Buffer
 	Render(&b, o, ModeJSON)

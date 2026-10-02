@@ -8,10 +8,11 @@ import (
 	"testing"
 )
 
-func TestNewUsesPlatformCodeAndHint(t *testing.T) {
+func TestNewUsesCatalogHint(t *testing.T) {
 	d := New("KB_RUNTIME_INPUT_INVALID", "The provided input is invalid.")
-	if d.Code != "KB_RUNTIME_INPUT_INVALID" || d.Hint == "" {
-		t.Fatalf("diagnostic = %+v, want platform code and actionable hint", d)
+	entry, ok := LookupCatalog(d.Code)
+	if !ok || d.Hint != entry.Hint {
+		t.Fatalf("diagnostic = %+v, want the platform catalog hint", d)
 	}
 }
 
@@ -32,32 +33,15 @@ func TestFromErrorLogsRawDetailsAndReturnsSafeCorrelatedDiag(t *testing.T) {
 	}
 }
 
-func TestKnownLegacyCodesMapToPlatformCatalog(t *testing.T) {
-	cases := map[string]string{
-		"ERR_CONFIG_LOAD":      "KB_CONFIG_LOAD_FAILED",
-		"ERR_WAVE_FAILED":      "KB_DEPLOY_WAVE_FAILED",
-		"ERR_PROFILE_MISMATCH": "KB_ENV_PROFILE_MISMATCH",
-		"ERR_HEALTH_TIMEOUT":   "KB_SERVICE_HEALTH_TIMEOUT",
-	}
-	for legacy, want := range cases {
-		if got := PlatformCode(legacy); got != want {
-			t.Errorf("PlatformCode(%q) = %q, want %q", legacy, got, want)
-		}
-	}
-	if got := PlatformCode("ERR_UNREGISTERED"); got != "KB_RUNTIME_UNEXPECTED" {
-		t.Errorf("unknown legacy code mapped to %q", got)
-	}
-}
-
-func TestTypedFailureGetsCorrelationAtBoundary(t *testing.T) {
+func TestUncataloguedTypedFailureBecomesUnexpectedAtBoundary(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	d := FromErrorWithLogger(New("KB_CONFIG_LOAD_FAILED", "Configuration could not be loaded."), logger)
-	if d.Code != "KB_CONFIG_LOAD_FAILED" || d.CorrelationID == "" {
-		t.Fatalf("diag = %+v, want preserved code and correlation ID", d)
+	d := FromErrorWithLogger(New("KB_RUNTIME_UNREGISTERED", "This code is missing from the catalog."), logger)
+	if d.Code != "KB_RUNTIME_UNEXPECTED" || d.CorrelationID == "" {
+		t.Fatalf("diag = %+v, want unexpected code and correlation ID", d)
 	}
-	if logs.Len() != 0 {
-		t.Fatalf("known typed failure unexpectedly logged as unknown: %s", logs.String())
+	if !strings.Contains(logs.String(), "correlationId") || !strings.Contains(logs.String(), "stack") {
+		t.Fatalf("uncatalogued typed error was not logged with correlation and stack: %s", logs.String())
 	}
 }
 

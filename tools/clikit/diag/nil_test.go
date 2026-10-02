@@ -18,7 +18,7 @@ func TestNilDiag_ErrorAndUnwrapAreSafe(t *testing.T) {
 }
 
 func TestWithMeta_MergesIntoExisting(t *testing.T) {
-	d := New("ERR_MERGE", "x",
+	d := New("KB_RUNTIME_UNEXPECTED", "x",
 		WithMeta(map[string]any{"a": 1}),
 		WithMeta(map[string]any{"b": 2}),
 	)
@@ -29,7 +29,7 @@ func TestWithMeta_MergesIntoExisting(t *testing.T) {
 
 func TestWrap_PreservesCauseAndIsChain(t *testing.T) {
 	sentinel := errors.New("disk full")
-	d := Wrap(sentinel, "ERR_WRITE", "could not write")
+	d := Wrap(sentinel, "KB_RUNTIME_DISK_FULL", "could not write")
 	if !errors.Is(d, sentinel) {
 		t.Error("errors.Is must find the wrapped sentinel")
 	}

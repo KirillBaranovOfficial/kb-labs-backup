@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/kb-labs/clikit/diag"
 )
 
 // fakeRunner records commands and returns canned responses.
@@ -174,10 +176,11 @@ func TestInstallService_NoReleaseID(t *testing.T) {
 			h := &Host{Name: "p1", Runner: fr}
 			_, err := h.InstallService(InstallOpts{ServicePkg: "@kb-labs/gateway", Version: "1.2.3"})
 			if err == nil {
-				t.Fatal("expected ERR_INSTALL_NO_RELEASE_ID")
+				t.Fatal("expected missing release identifier error")
 			}
-			if !strings.Contains(err.Error(), "ERR_INSTALL_NO_RELEASE_ID") {
-				t.Errorf("error = %v, want ERR_INSTALL_NO_RELEASE_ID", err)
+			var diagnostic *diag.Diag
+			if !errors.As(err, &diagnostic) || diagnostic.Code != "KB_INSTALL_RELEASE_ID_MISSING" {
+				t.Errorf("error = %v, want KB_INSTALL_RELEASE_ID_MISSING", err)
 			}
 		})
 	}
@@ -213,8 +216,9 @@ func TestPackageIntegrity_EmptyIsError(t *testing.T) {
 	fr := &fakeRunner{responses: map[string]string{"npm view": "\n"}}
 	h := &Host{Name: "p1", Runner: fr}
 	_, err := h.PackageIntegrity("@kb-labs/gateway-app", "2.94.0", "http://127.0.0.1:4873")
-	if err == nil || !strings.Contains(err.Error(), "ERR_REGISTRY_INTEGRITY") {
-		t.Fatalf("want ERR_REGISTRY_INTEGRITY, got %v", err)
+	var diagnostic *diag.Diag
+	if err == nil || !errors.As(err, &diagnostic) || diagnostic.Code != "KB_MARKETPLACE_REGISTRY_INTEGRITY" {
+		t.Fatalf("want KB_MARKETPLACE_REGISTRY_INTEGRITY, got %v", err)
 	}
 }
 

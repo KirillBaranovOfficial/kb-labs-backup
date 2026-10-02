@@ -46,9 +46,8 @@ func TestRender_AgentFallsBackToJSON(t *testing.T) {
 }
 
 func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
-	d := diag.New("KB_RUNTIME_UNEXPECTED", "The operation failed.",
+	d := diag.New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.",
 		diag.WithReason("health gate timed out"),
-		diag.WithHint("see meta.failures"),
 		diag.WithCorrelationID("corr-test"))
 	var out, herr bytes.Buffer
 	code := RenderDiag(&out, &herr, d, ModeJSON)
@@ -63,7 +62,7 @@ func TestRenderDiag_JSONHasFullErrorEnvelope(t *testing.T) {
 		t.Errorf("ok = %v", env["ok"])
 	}
 	e := env["error"].(map[string]any)
-	if e["code"] != "KB_RUNTIME_UNEXPECTED" || e["message"] != "The operation failed." || e["hint"] != "see meta.failures" || e["correlationId"] != "corr-test" {
+	if e["code"] != "KB_RUNTIME_UNEXPECTED" || e["message"] != "An unexpected error occurred." || e["hint"] != "Re-run with --debug and include the correlationId in a report." || e["correlationId"] != "corr-test" {
 		t.Errorf("error payload = %v", e)
 	}
 	if len(env) != 2 || len(e) != 9 {
@@ -82,14 +81,13 @@ func TestRenderDiag_AgentOmitsMeta(t *testing.T) {
 
 func TestRenderDiag_HumanShowsReasonAndHint(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
-	d := diag.New("KB_RUNTIME_UNEXPECTED", "The operation failed.",
+	d := diag.New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.",
 		diag.WithReason("shipped without a service manifest"),
-		diag.WithHint("add dist/manifest.json"),
 		diag.WithCorrelationID("corr-human"))
 	var out, herr bytes.Buffer
 	RenderDiag(&out, &herr, d, ModeHuman)
 	h := herr.String()
-	for _, want := range []string{"KB_RUNTIME_UNEXPECTED", "The operation failed.", "why:", "shipped without", "next:", "add dist/manifest.json", "correlationId:", "corr-human"} {
+	for _, want := range []string{"KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", "why:", "shipped without", "next:", "Re-run with --debug", "correlationId:", "corr-human"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("human diag missing %q in:\n%s", want, h)
 		}
