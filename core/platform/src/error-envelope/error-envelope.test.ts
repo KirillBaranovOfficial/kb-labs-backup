@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError } from '../errors.js';
+import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
 import {
   ERROR_STAGES,
   createErrorEnvelope,
@@ -111,6 +111,31 @@ describe('renderTemplate', () => {
 });
 
 describe('toErrorEnvelope (platform errors)', () => {
+  it('maps platform config load failures to actionable KB_CONFIG_INVALID envelopes', () => {
+    const error = new PlatformConfigError('/tmp/platform/.kb/kb.config.json', 'parse', 'Unexpected token');
+    const envelope = toErrorEnvelope(error);
+
+    expect(envelope).toMatchObject({
+      code: 'KB_CONFIG_INVALID',
+      message: 'Platform configuration file "/tmp/platform/.kb/kb.config.json" contains invalid JSON.',
+      hint: 'Run python3 -m json.tool "/tmp/platform/.kb/kb.config.json" to locate the syntax error, fix the file, then retry the CLI command.',
+      details: { path: '/tmp/platform/.kb/kb.config.json' },
+      cause: 'Unexpected token',
+    });
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+  });
+
+  it('gives a concrete inspection command for structurally invalid config', () => {
+    const envelope = toErrorEnvelope(new PlatformConfigError(
+      '/tmp/platform/.kb/kb.config.json', 'invalid', 'platform.adapters must be an object',
+    ));
+
+    expect(envelope.code).toBe('KB_CONFIG_INVALID');
+    expect(envelope.cause).toBe('platform.adapters must be an object');
+    expect(envelope.hint).toContain('Run sed -n \'1,200p\' "/tmp/platform/.kb/kb.config.json"');
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+  });
+
   it('maps project adapter configuration to an actionable scope error', () => {
     const envelope = toErrorEnvelope(new AdapterProjectScopeError());
     expect(validateErrorEnvelope(envelope)).toEqual([]);

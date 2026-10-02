@@ -119,14 +119,14 @@ describe('Platform Initialization (Real)', () => {
       expect(result.rawConfig).toBeUndefined();
     });
 
-    it('should use NoOp adapters when config is malformed JSON', async () => {
+    it('rejects malformed config instead of initializing NoOp adapters', async () => {
       const configPath = join(testDir, '.kb', 'kb.config.json');
       await writeFile(configPath, '{ invalid json }');
 
-      const result = await initializePlatform(testDir);
-
-      expect(result.platformConfig).toEqual({ adapters: {} });
-      expect(result.rawConfig).toBeUndefined();
+      await expect(initializePlatform(testDir)).rejects.toMatchObject({
+        name: 'PlatformConfigError',
+        reason: 'parse',
+      });
     });
 
     it('should use NoOp adapters when config has no platform field', async () => {
@@ -142,26 +142,15 @@ describe('Platform Initialization (Real)', () => {
       expect(result.rawConfig!.someOtherField).toBe('value');
     });
 
-    it('should handle file read errors gracefully', async () => {
+    it('rejects config files that cannot be read', async () => {
       const configPath = join(testDir, '.kb', 'kb.config.json');
-      await writeFile(configPath, JSON.stringify({ platform: { adapters: {} } }));
+      await rm(configPath, { force: true });
+      await mkdir(configPath);
 
-      // Make file unreadable (permission error)
-      // Note: This may not work on all systems, skip if it fails
-      try {
-        const { chmod } = await import('node:fs/promises');
-        await chmod(configPath, 0o000);
-
-        const result = await initializePlatform(testDir);
-
-        expect(result.platformConfig).toEqual({ adapters: {} });
-
-        // Restore permissions for cleanup
-        await chmod(configPath, 0o644);
-      } catch (_err) {
-        // Skip test if chmod fails (not supported on all systems)
-        console.warn('Skipping permission test - chmod not supported');
-      }
+      await expect(initializePlatform(testDir)).rejects.toMatchObject({
+        name: 'PlatformConfigError',
+        reason: 'read',
+      });
     });
   });
 

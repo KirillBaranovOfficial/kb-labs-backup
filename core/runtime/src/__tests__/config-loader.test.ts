@@ -248,7 +248,24 @@ describe('loadPlatformConfig', () => {
     })
   })
 
-  it('silently degrades when config file is malformed JSON', async () => {
+  it('returns empty defaults when optional config layers are absent', async () => {
+    const platformRoot = path.join(tmpDir, 'p6-platform-absent')
+    const projectRoot = path.join(tmpDir, 'p6-project-absent')
+    makePlatformDir(platformRoot)
+    makeProjectDir(projectRoot)
+
+    const result = await loadConfig({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      loadEnvFile: false,
+    })
+
+    expect(result.platformConfig).toEqual({ adapters: {} })
+    expect(result.sources.platformDefaults).toBeUndefined()
+    expect(result.sources.projectConfig).toBeUndefined()
+  })
+
+  it('rejects malformed JSON in project config with a typed config error', async () => {
     const platformRoot = path.join(tmpDir, 'p6-platform')
     const projectRoot = path.join(tmpDir, 'p6-project')
     makePlatformDir(platformRoot)
@@ -258,18 +275,83 @@ describe('loadPlatformConfig', () => {
       '{ this is not: valid json',
     )
 
-    const result = await loadConfig({
+    const configPath = path.join(projectRoot, '.kb', 'kb.config.json')
+    await expect(loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
         KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
+    })).rejects.toMatchObject({
+      name: 'PlatformConfigError',
+      reason: 'parse',
+      configPath: realpathSync(configPath),
     })
+  })
 
-    // No throw, empty-adapters base, caller can still detect the failure
-    // via sources (left undefined) or by inspecting the (missing) raw config.
-    expect(result.platformConfig).toEqual({ adapters: {} })
+  it('rejects config paths that cannot be read', async () => {
+    const platformRoot = path.join(tmpDir, 'p6-unreadable-platform')
+    const projectRoot = path.join(tmpDir, 'p6-unreadable-project')
+    makePlatformDir(platformRoot)
+    makeProjectDir(projectRoot)
+    const configPath = path.join(projectRoot, '.kb', 'kb.config.json')
+    mkdirSync(path.dirname(configPath), { recursive: true })
+    mkdirSync(configPath)
+
+    await expect(loadConfig({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      loadEnvFile: false,
+    })).rejects.toMatchObject({
+      name: 'PlatformConfigError',
+      reason: 'read',
+      configPath: realpathSync(configPath),
+    })
+  })
+
+  it('rejects structurally invalid platform configuration with a typed config error', async () => {
+    const platformRoot = path.join(tmpDir, 'p6-invalid-platform')
+    const projectRoot = path.join(tmpDir, 'p6-invalid-project')
+    makePlatformDir(platformRoot, { platform: { adapters: 'not-an-object' } })
+    makeProjectDir(projectRoot)
+    const configPath = path.join(platformRoot, '.kb', 'kb.config.json')
+
+    await expect(loadConfig({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      loadEnvFile: false,
+    })).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'invalid', configPath: realpathSync(configPath) })
+  })
+
+  it('rejects malformed generated and overlay config layers', async () => {
+    const platformRoot = path.join(tmpDir, 'p6-generated-platform')
+    const projectRoot = path.join(tmpDir, 'p6-generated-project')
+    makePlatformDir(platformRoot)
+    makeProjectDir(projectRoot)
+    const generatedPath = path.join(platformRoot, '.kb', 'generated', 'base.json')
+    mkdirSync(path.dirname(generatedPath), { recursive: true })
+    writeFileSync(generatedPath, '{ invalid')
+
+    await expect(loadConfig({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      loadEnvFile: false,
+    })).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'parse', configPath: realpathSync(generatedPath) })
+
+    const overlayPlatformRoot = path.join(tmpDir, 'p6-overlay-platform')
+    const overlayRoot = path.join(tmpDir, 'p6-overlay-project')
+    makePlatformDir(overlayPlatformRoot)
+    makeProjectDir(overlayRoot)
+    const overlayPath = path.join(overlayRoot, '.kb', 'overlays', 'broken.jsonc')
+    mkdirSync(path.dirname(overlayPath), { recursive: true })
+    writeFileSync(overlayPath, '{ invalid')
+
+    await expect(loadConfig({
+      startDir: overlayRoot,
+      env: { KB_PLATFORM_ROOT: overlayPlatformRoot, KB_PROJECT_ROOT: overlayRoot },
+      loadEnvFile: false,
+    })).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'parse', configPath: realpathSync(overlayPath) })
   })
 
   it('tolerates config without a `platform` section', async () => {

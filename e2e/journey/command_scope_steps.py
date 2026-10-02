@@ -100,3 +100,101 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
         global_help_and_version_do_not_initialize_a_project,
         cases=["S-054.17", "PC-002.6"],
     )
+
+    def platform_commands_work_without_project_or_config() -> str | None:
+        with tempfile.TemporaryDirectory(prefix="kb-platform-command-home-") as home, \
+                tempfile.TemporaryDirectory(prefix="kb-platform-command-cwd-") as cwd:
+            env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
+            env.pop("KB_PLATFORM_ROOT", None)
+            env.pop("KB_NET_OFFSET", None)
+            for args in (["hello", "--json"], ["logs", "query", "--json"]):
+                result = run_command(
+                    ["node", str(cli), *args],
+                    cwd=cwd,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=120,
+                )
+                if result.returncode != 0:
+                    return f"platform command {args!r} failed outside a registered project: {result.stderr or result.stdout}"
+                try:
+                    payload = json.loads(result.stdout)
+                except json.JSONDecodeError:
+                    return f"platform command {args!r} did not return JSON: {result.stderr or result.stdout}"
+                if args[0] == "hello":
+                    if payload.get("message") != "Hello World" or payload.get("status") != "ready":
+                        return f"platform command {args!r} returned unexpected greeting: {payload}"
+                elif payload.get("ok") is not True:
+                    return f"platform command {args!r} returned failure: {payload}"
+            if (Path(cwd) / ".kb").exists():
+                return "platform commands created project state in the unregistered cwd"
+            return None
+
+    journey.step(
+        "run greeting and platform log query without project configuration",
+        "cli",
+        platform_commands_work_without_project_or_config,
+        cases=["PC-002.7", "S-203.8"],
+    )
+
+
+def run_config_failure_steps(journey: Journey, repo_root: Path) -> None:
+    cli = repo_root / "cli/bin/dist/bin.js"
+
+    def invalid_project_configs_fail_before_handler() -> str | None:
+        with tempfile.TemporaryDirectory(prefix="kb-config-failure-home-") as home, \
+                tempfile.TemporaryDirectory(prefix="kb-config-failure-cwd-") as cwd, \
+                tempfile.TemporaryDirectory(prefix="kb-config-failure-projects-") as projects:
+            env = {**os.environ, "HOME": home, "KB_HOME": str(Path(home) / ".kb")}
+            env.pop("KB_PLATFORM_ROOT", None)
+            env.pop("KB_NET_OFFSET", None)
+
+            def invoke(args: list[str], command_cwd: Path = cwd) -> tuple[int, dict]:
+                result = run_command(
+                    ["node", str(cli), *args], cwd=command_cwd, env=env,
+                    capture_output=True, text=True, check=False, timeout=120,
+                )
+                try:
+                    return result.returncode, json.loads(result.stdout)
+                except json.JSONDecodeError:
+                    raise AssertionError(f"{args!r} did not return JSON: {result.stderr or result.stdout}")
+
+            project = Path(projects) / "malformed"
+            project.mkdir()
+            (project / ".kb").mkdir()
+            code, added = invoke(["project", "add", str(project), "--json"])
+            if code != 0 or added.get("ok") is not True:
+                return f"could not register config fixture: {added}"
+            malformed = project / ".kb/kb.config.json"
+            malformed.write_text('{ "platform": ', encoding="utf-8")
+            code, result = invoke(["config", "show", "--json"], project)
+            error = result.get("error", {})
+            if code != 1 or result.get("ok") is not False or error.get("code") != "KB_CONFIG_INVALID":
+                return f"malformed config did not fail with KB_CONFIG_INVALID: {result}"
+            if str(malformed) not in error.get("message", "") or not error.get("hint"):
+                return f"malformed config error omitted its path or repair hint: {error}"
+
+            unreadable_project = Path(projects) / "unreadable"
+            unreadable_project.mkdir()
+            (unreadable_project / ".kb").mkdir()
+            code, added = invoke(["project", "add", str(unreadable_project), "--json"])
+            if code != 0 or added.get("ok") is not True:
+                return f"could not register unreadable-config fixture: {added}"
+            unreadable = unreadable_project / ".kb/kb.config.json"
+            unreadable.mkdir()
+            code, result = invoke(["config", "show", "--json"], unreadable_project)
+            error = result.get("error", {})
+            if code != 1 or result.get("ok") is not False or error.get("code") != "KB_CONFIG_INVALID":
+                return f"unreadable config did not fail with KB_CONFIG_INVALID: {result}"
+            if str(unreadable) not in error.get("message", "") or not error.get("hint"):
+                return f"unreadable config error omitted its path or repair hint: {error}"
+            return None
+
+    journey.step(
+        "report malformed and unreadable config before command execution",
+        "cli",
+        invalid_project_configs_fail_before_handler,
+        cases=["S-203.7"],
+    )

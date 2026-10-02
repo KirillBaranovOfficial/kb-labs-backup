@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from command_scope_steps import run_command_scope_steps
+from command_scope_steps import run_command_scope_steps, run_config_failure_steps
 from service_steps import Journey
 
 
@@ -16,11 +16,15 @@ class CommandScopeStepsTest(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[2]
         journey = Journey("local", "command-scope")
         run_command_scope_steps(journey, repo_root)
+        run_config_failure_steps(journey, repo_root)
 
         result = journey.result()
         claims = {claim["claimId"] for claim in result.case_run["claims"]}
         self.assertEqual(result.status, "PASS", result.first_failure)
-        self.assertEqual(claims, {"S-124.10", "S-054.17", "PC-002.6"})
+        self.assertEqual(
+            claims,
+            {"S-124.10", "S-054.17", "PC-002.6", "PC-002.7", "S-203.7", "S-203.8"},
+        )
 
 
 if __name__ == "__main__":

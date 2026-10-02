@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'nod
 import path from 'node:path'
 import os from 'node:os'
 
-import { AdapterProjectScopeError } from '@kb-labs/core-platform'
+import { AdapterProjectScopeError, PlatformConfigError } from '@kb-labs/core-platform'
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
 import { loadPlatformConfig } from '../config-loader.js'
 
@@ -149,22 +149,19 @@ describe('loadPlatformConfig: overlays', () => {
     })).rejects.toThrow(/Platform config is invalid after applying overlays/)
   })
 
-  it('propagates overlay loader diagnostics into sources.overlayDiagnostics', async () => {
+  it('rejects a non-object overlay config file', async () => {
     const platformRoot = path.join(tmpDir, 'o6-platform')
     const projectRoot = path.join(tmpDir, 'o6-project')
     makePlatformDir(platformRoot)
     makeProjectDir(projectRoot)
     writeOverlay(projectRoot, 'a-good.jsonc', '{ "platform": { "features": { "mode": "safe" } } }')
-    writeOverlay(projectRoot, 'b-broken.jsonc', '{ this is not valid json')
     writeOverlay(projectRoot, 'c-array.jsonc', '[1, 2, 3]')
 
-    const result = await loadConfig({
+    await expect(loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
-    })
-
-    expect(result.sources.overlayDiagnostics?.map((diagnostic) => diagnostic.code)).toEqual(expect.arrayContaining(['JSON_PARSE_FAILED', 'OVERLAY_NOT_OBJECT']))
+    })).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'invalid' })
   })
 
   it('omits overlayDiagnostics when there are no issues', async () => {
