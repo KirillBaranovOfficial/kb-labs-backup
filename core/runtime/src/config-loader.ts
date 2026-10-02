@@ -49,7 +49,9 @@ import {
   mergeOverlay,
   readProjectSettings,
   projectOverlaysPath,
+  projectSettingsPath,
   PluginSettingsSchemaLoadError,
+  JsoncSyntaxError,
   resolvePluginSettingsValidator,
   validateProductConfig,
   type Diagnostic,
@@ -57,7 +59,7 @@ import {
 } from "@kb-labs/core-config";
 import { DiscoveryManager } from "@kb-labs/core-discovery";
 import { resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
-import { AdapterProjectScopeError } from "@kb-labs/core-platform";
+import { AdapterProjectScopeError, PlatformConfigError } from "@kb-labs/core-platform";
 
 import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
 import { interpolateConfig } from "./config-interpolation.js";
@@ -175,13 +177,7 @@ export interface LoadPlatformConfigResult {
      * when the platform-owned project overlay directory is absent.
      */
     overlays?: string[];
-    /**
-     * Non-fatal diagnostics from the overlay loader: malformed JSONC files,
-     * overlays with non-object top-level (`OVERLAY_NOT_OBJECT`), read errors.
-     * Each entry corresponds to an overlay file that was found but skipped or
-     * partially parsed — present here even though the rest of the load
-     * completed. Empty/omitted when the overlay step produced no diagnostics.
-     */
+    /** Non-error diagnostics from overlay loading. Error diagnostics reject the load. */
     overlayDiagnostics?: Diagnostic[];
   };
 }
@@ -300,10 +296,34 @@ function toPlatformSection(
   return platformSection;
 }
 
+function throwConfigDiagnostic(
+  diagnostic: { code: string; message: string; detail?: unknown; path?: string },
+  fallbackPath: string,
+): never {
+  const reason = diagnostic.code.includes('PARSE')
+    ? 'parse'
+    : diagnostic.code.includes('READ')
+      ? 'read'
+      : 'invalid';
+  const detail = typeof diagnostic.detail === 'string' ? diagnostic.detail : diagnostic.message;
+  throw new PlatformConfigError(diagnostic.path ?? fallbackPath, reason, detail);
+}
+
+function throwFirstConfigError(
+  diagnostics: readonly { level?: string; code: string; message: string; detail?: unknown; path?: string }[],
+  fallbackPath: string,
+): void {
+  const diagnostic = diagnostics.find((entry) => entry.level === 'error');
+  if (diagnostic) {
+    throwConfigDiagnostic(diagnostic, fallbackPath);
+  }
+}
+
 /**
  * Read a KB Labs config file and extract its `platform` section. Returns
- * `{ platformSection, rawConfig }` where either field may be `undefined` if
- * the file is missing, malformed, or has no `platform` section.
+ * `{ platformSection, rawConfig }` where the config section may be `undefined`
+ * when a present valid file has no `platform` section. Missing files are
+ * handled by the caller; unreadable, malformed, and invalid files are errors.
  *
  * `adapterOptions` lives at the top level of the config file (not inside
  * `platform`), so we merge it into the returned platformSection so that
@@ -320,7 +340,12 @@ async function readConfigFile(configPath: string): Promise<{
   }>(configPath);
 
   if (!result.ok) {
-    return {};
+    throwFirstConfigError(result.diagnostics, configPath);
+    throw new PlatformConfigError(configPath, 'invalid', 'Config reader returned no data or diagnostic.');
+  }
+
+  if (typeof result.data !== 'object' || result.data === null || Array.isArray(result.data)) {
+    throw new PlatformConfigError(configPath, 'invalid', 'Top-level configuration value must be an object.');
   }
 
   const data = result.data as Record<string, unknown> & {
@@ -390,9 +415,9 @@ async function loadPluginSettingsDefaults(roots: RootsResolution): Promise<NonNu
  *      The consumer repository is not a configuration source.
  *   5. `effective = mergeDefined(platformDefaults ?? {}, projectConfig ?? {})`.
  *
- * The function never throws on missing files or malformed JSON — it silently
- * degrades to an empty config so that callers can continue with NoOp
- * adapters. Callers that need strict validation should inspect `sources`.
+ * Missing config layers are valid and contribute no overrides. A present but
+ * unreadable, malformed, or invalid file throws `PlatformConfigError`; callers
+ * must render that failure instead of starting with a different config.
  */
 export async function loadPlatformConfig(
   options: LoadPlatformConfigOptions = {},
@@ -506,6 +531,7 @@ export async function loadPlatformConfig(
   // into the platform defaults so every user value (platform or project) wins
   // over it, and it is absent (no-op) for installs that do not generate config.
   const generatedLayer = await loadGeneratedLayer([roots.platformRoot]);
+  throwFirstConfigError(generatedLayer.diagnostics, roots.platformRoot);
   if (generatedLayer.files.length > 0) {
     const generatedSection = toPlatformSection(generatedLayer.data);
     if (generatedSection) {
@@ -532,10 +558,29 @@ export async function loadPlatformConfig(
   // Apply project store overlays as the final, highest-priority layer.
   // Overlay semantics differ from the platform↔project merge: arrays replace
   // by default, with opt-in append via the `kb:merge` directive.
-  const overlayResult = projectId
-    ? await loadOverlays(projectOverlaysPath({ projectId, env }))
+  const overlaysPath = projectId ? projectOverlaysPath({ projectId, env }) : undefined;
+  const overlayResult = overlaysPath
+    ? await loadOverlays(overlaysPath)
     : { overlays: [], diagnostics: [] };
-  const projectSettings = projectId ? await readProjectSettings({ projectId, env }) : {};
+  if (overlaysPath) {
+    throwFirstConfigError(overlayResult.diagnostics, overlaysPath);
+  }
+  let projectSettings: Record<string, unknown> = {};
+  if (projectId) {
+    const settingsPath = projectSettingsPath({ projectId, env });
+    try {
+      projectSettings = await readProjectSettings({ projectId, env });
+    } catch (error) {
+      if (error instanceof PlatformConfigError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      const reason = error instanceof JsoncSyntaxError
+        ? 'parse'
+        : error !== null && typeof error === 'object' && 'code' in error
+          ? 'read'
+          : 'invalid';
+      throw new PlatformConfigError(settingsPath, reason, detail);
+    }
+  }
   const projectPlatformSettings = projectSettings.platform;
   if (projectSettings.adapters !== undefined || projectSettings.adapterOptions !== undefined ||
       (projectPlatformSettings !== null && typeof projectPlatformSettings === 'object' && !Array.isArray(projectPlatformSettings) &&
@@ -580,7 +625,10 @@ export async function loadPlatformConfig(
       validation.errors
         ?.map((e) => `${e.instancePath || "/"}: ${e.message ?? "invalid"}`)
         .join("; ") ?? "unknown validation error";
-    throw new Error(
+    const invalidPath = appliedOverlays.at(-1) ?? projectConfigSource ?? platformDefaultsSource ?? roots.platformRoot;
+    throw new PlatformConfigError(
+      invalidPath,
+      'invalid',
       `Platform config is invalid after applying overlays (${appliedOverlays.length} overlay(s)): ${detail}`,
     );
   }

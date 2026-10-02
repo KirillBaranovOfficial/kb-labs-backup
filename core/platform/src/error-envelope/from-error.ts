@@ -8,7 +8,7 @@
  * `@kb-labs/plugin-contracts`; both delegate here for the rest.
  */
 
-import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError } from '../errors.js';
+import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
 import { createErrorEnvelope, type CreateEnvelopeOptions } from './catalog.js';
 import type { ErrorEnvelope } from './types.js';
 
@@ -16,6 +16,25 @@ export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'a
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+  if (error instanceof PlatformConfigError) {
+    const message = error.reason === 'read'
+      ? `Platform configuration file "${error.configPath}" cannot be read.`
+      : error.reason === 'parse'
+        ? `Platform configuration file "${error.configPath}" contains invalid JSON.`
+        : `Platform configuration file "${error.configPath}" is invalid.`;
+    const hint = error.reason === 'parse'
+      ? `Run python3 -m json.tool "${error.configPath}" to locate the syntax error, fix the file, then retry the CLI command.`
+      : error.reason === 'read'
+        ? `Run ls -l "${error.configPath}" to inspect the file and permissions, correct the issue, then retry the CLI command.`
+        : `Run sed -n '1,200p' "${error.configPath}" to inspect the invalid settings, correct the reported issue, then retry the CLI command.`;
+    return createErrorEnvelope('KB_CONFIG_INVALID', {
+      ...options,
+      details: { path: error.configPath },
+      cause: error.detail,
+      message,
+      hint,
+    });
+  }
   if (error instanceof AdapterProjectScopeError) {
     return createErrorEnvelope('KB_ADAPTER_PROJECT_SCOPE', {
       ...options,

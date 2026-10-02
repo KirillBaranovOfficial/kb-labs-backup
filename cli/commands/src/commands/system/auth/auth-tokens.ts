@@ -27,6 +27,7 @@ interface TokenRecord {
 
 export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { tokens?: TokenRecord[]; token?: string }>({
   name: 'tokens',
+  scope: 'platform',
   description: 'List, create, or revoke your API tokens',
   longDescription: 'API tokens are personal credentials for agents and CI. Each token inherits your current account permissions. Set an optional expiry from 1 to 365 days.',
   category: 'auth',

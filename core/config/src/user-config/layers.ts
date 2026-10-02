@@ -98,6 +98,7 @@ export async function loadGeneratedLayer(roots: readonly string[]): Promise<Gene
           code: 'GENERATED_DIR_READ_FAILED',
           message: `Failed to read generated config directory: ${dir}`,
           detail: String(error),
+          path: dir,
         });
       }
       continue;
@@ -106,7 +107,7 @@ export async function loadGeneratedLayer(roots: readonly string[]): Promise<Gene
     for (const name of names.filter((n) => n.endsWith('.json') || n.endsWith('.jsonc')).sort()) {
       const full = path.join(dir, name);
       const read = await readJsonWithDiagnostics<unknown>(full);
-      diagnostics.push(...read.diagnostics);
+      diagnostics.push(...read.diagnostics.map((diagnostic) => ({ ...diagnostic, path: diagnostic.path ?? full })));
       if (!read.ok) {
         continue;
       }
@@ -115,6 +116,7 @@ export async function loadGeneratedLayer(roots: readonly string[]): Promise<Gene
           level: 'error',
           code: 'CONFIG_NOT_OBJECT',
           message: `Generated config must be a JSON object at top level: ${full}`,
+          path: full,
         });
         continue;
       }

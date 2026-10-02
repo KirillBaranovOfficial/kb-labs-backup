@@ -32,6 +32,7 @@ interface FlagDefinition {
  */
 export interface Command {
   name: string;
+  scope: 'platform' | 'project';
   describe: string;
   longDescription?: string;
   category?: string;
@@ -92,6 +93,8 @@ export interface SystemCommandConfig<
 > {
   /** Command name (required for system commands) */
   name: string;
+  /** Startup scope required before command execution. */
+  scope: 'platform' | 'project';
   /** Command description (required for system commands) */
   description: string;
   /** Long description for help */
@@ -248,11 +251,12 @@ export function defineSystemCommand<
 >(
   config: SystemCommandConfig<TFlags, TResult, TArgv>
 ): Command {
-  const { name, description, longDescription, category, aliases, examples, flags, handler, formatter } = config;
+  const { name, scope, description, longDescription, category, aliases, examples, flags, handler, formatter } = config;
 
   // Return command with direct handler (no wrapping needed - system commands don't use V3 defineCommand)
   return {
     name,
+    scope,
     describe: description,
     longDescription,
     category: category || 'system',

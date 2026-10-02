@@ -36,6 +36,7 @@
     "@kb-labs/cli-runtime": "workspace:*",
     "@kb-labs/core-config": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-runtime": "workspace:*",
     "@kb-labs/core-sandbox": "workspace:*",
     "@kb-labs/core-sys": "workspace:*",
@@ -53,7 +54,6 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/devkit": "workspace:*",
     "@types/node": "^24.3.3",
     "esbuild": "^0.28.1",

@@ -22,6 +22,7 @@ type ProvisionResult = CommandResult & {
 
 export const webhookProvision = defineSystemCommand<ProvisionFlags, ProvisionResult>({
   name: 'provision',
+  scope: 'platform',
   description: 'Provision (or rotate) a webhook secret',
   longDescription:
     'Generates a new webhook secret for a plugin+event combination and registers it with the Gateway. ' +

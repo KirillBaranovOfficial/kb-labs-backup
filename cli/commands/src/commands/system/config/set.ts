@@ -71,6 +71,7 @@ export type ConfigSetResult = CommandResult & {
 
 export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
   name: 'set',
+  scope: 'project',
   description: 'Set a configuration value in the user config (comments are preserved)',
   longDescription:
     'Writes one key (dotted path) into the user config file of a scope: project (default) or platform. ' +

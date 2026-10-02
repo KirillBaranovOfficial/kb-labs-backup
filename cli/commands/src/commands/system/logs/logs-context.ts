@@ -22,6 +22,7 @@ type Flags = {
 
 export const logsContext = defineSystemCommand<Flags, CommandResult>({
   name: "context",
+  scope: 'platform',
   description: "Show full timeline for an execution, trace, or request",
   category: "logs",
   examples: generateExamples("logs context", "kb", [

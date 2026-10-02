@@ -998,6 +998,9 @@ importers:
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../core/platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../core/project-registry
       '@kb-labs/core-runtime':
         specifier: workspace:*
         version: link:../../core/runtime
@@ -1044,9 +1047,6 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
-      '@kb-labs/core-project-registry':
-        specifier: workspace:*
-        version: link:../../core/project-registry
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit

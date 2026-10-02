@@ -39,6 +39,7 @@ type LogGetResult = CommandResult & {
 
 export const logsGet = defineSystemCommand<Flags, LogGetResult>({
   name: "get",
+  scope: 'platform',
   description: "Get single log by ID (with optional related logs)",
   category: "logs",
   examples: generateExamples("logs get", "kb", [

@@ -232,6 +232,7 @@ type ConfigShowResult = CommandResult & {
 
 export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>({
   name: 'show',
+  scope: 'project',
   description: 'Show the effective (merged) platform config with per-field provenance',
   longDescription:
     'Resolves the fully-merged config (manifest defaults, generated and platform config, project settings, and overlays) and ' +

@@ -39,6 +39,7 @@ type Flags = {
 
 export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
   name: "query",
+  scope: 'platform',
   description:
     "Query logs by level, platform context, correlation, and time range",
   category: "logs",

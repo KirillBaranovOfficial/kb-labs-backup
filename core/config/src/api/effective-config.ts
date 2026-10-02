@@ -28,11 +28,12 @@ import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
 import { readJsonWithDiagnostics, mergeDefined } from '../runtime/runtime.js';
-import { AdapterProjectScopeError } from '@kb-labs/core-platform';
+import { AdapterProjectScopeError, PlatformConfigError } from '@kb-labs/core-platform';
 import type { Diagnostic } from '../types/index.js';
 import { loadOverlays } from '../overlay/loader.js';
 import { mergeOverlay } from '../overlay/merge.js';
 import { projectOverlaysPath, projectSettingsPath, readProjectSettings } from '../project-settings-store.js';
+import { JsoncSyntaxError } from '../user-config/jsonc-edit.js';
 import {
   buildProvenance,
   loadGeneratedLayer,
@@ -93,7 +94,7 @@ export interface EffectiveConfigResult {
    * (arrays are leaves; see `ValueProvenance.contributors`).
    */
   provenance: Record<string, ValueProvenance>;
-  /** Non-fatal diagnostics (malformed files, layer rejected, etc). */
+  /** Non-error diagnostics. Error diagnostics reject the load as PlatformConfigError. */
   diagnostics: Diagnostic[];
 }
 
@@ -119,8 +120,13 @@ async function findAllConfigsInRoot(root: string): Promise<string[]> {
     try {
       await fsp.access(full);
       found.push(full);
-    } catch {
-      // missing — skip
+    } catch (error) {
+      const code = error !== null && typeof error === 'object' && 'code' in error
+        ? error.code
+        : undefined;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new PlatformConfigError(full, 'read', detail);
     }
   }
   return found;
@@ -176,6 +182,26 @@ async function readObjectsAtRoot(
   return { paths: loaded, data: merged, files };
 }
 
+function throwConfigDiagnostic(
+  diagnostic: Diagnostic,
+  fallbackPath: string,
+): never {
+  const reason = diagnostic.code.includes('PARSE')
+    ? 'parse'
+    : diagnostic.code.includes('READ')
+      ? 'read'
+      : 'invalid';
+  const detail = 'detail' in diagnostic && typeof diagnostic.detail === 'string'
+    ? diagnostic.detail
+    : diagnostic.message;
+  throw new PlatformConfigError(diagnostic.path ?? fallbackPath, reason, detail);
+}
+
+function throwConfigErrors(diagnostics: readonly Diagnostic[], fallbackPath: string): void {
+  const diagnostic = diagnostics.find((entry) => entry.level === 'error');
+  if (diagnostic) throwConfigDiagnostic(diagnostic, fallbackPath);
+}
+
 /**
  * Load platform config plus optional platform-owned project settings. The
  * consumer repository is never consulted for `.kb/kb.config.*` or overlays.
@@ -190,13 +216,28 @@ export async function loadEffectiveConfig(
   const generatedRoots = platformRoot ? [platformRoot] : [];
   const generatedLayer = await loadGeneratedLayer(generatedRoots);
   diagnostics.push(...generatedLayer.diagnostics);
+  throwConfigErrors(generatedLayer.diagnostics, platformRoot ?? '<platform generated config>');
 
   const platformLayer = platformRoot
     ? await readObjectsAtRoot(platformRoot, diagnostics, 'platform')
     : { paths: [] as string[], data: {} as Record<string, unknown>, files: [] as ConfigLayerFile[] };
-  const projectSettings = options.projectId
-    ? await readProjectSettings({ projectId: options.projectId, root: options.storeRoot })
-    : {};
+  const projectSettingsFile = options.projectId
+    ? projectSettingsPath({ projectId: options.projectId, root: options.storeRoot })
+    : undefined;
+  let projectSettings: Record<string, unknown> = {};
+  if (options.projectId) {
+    try {
+      projectSettings = await readProjectSettings({ projectId: options.projectId, root: options.storeRoot });
+    } catch (error) {
+      const reason = error instanceof JsoncSyntaxError
+        ? 'parse'
+        : error !== null && typeof error === 'object' && 'code' in error
+          ? 'read'
+          : 'invalid';
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new PlatformConfigError(projectSettingsFile!, reason, detail);
+    }
+  }
   const projectPlatform = projectSettings.platform;
   if (projectSettings.adapters !== undefined || projectSettings.adapterOptions !== undefined ||
       (projectPlatform !== null && typeof projectPlatform === 'object' && !Array.isArray(projectPlatform) &&
@@ -204,9 +245,6 @@ export async function loadEffectiveConfig(
           (projectPlatform as Record<string, unknown>).adapterOptions !== undefined))) {
     throw new AdapterProjectScopeError();
   }
-  const projectSettingsFile = options.projectId
-    ? projectSettingsPath({ projectId: options.projectId, root: options.storeRoot })
-    : undefined;
   let projectSettingsPresent = false;
   if (projectSettingsFile) {
     try {
@@ -227,6 +265,10 @@ export async function loadEffectiveConfig(
     ? await loadOverlays(projectOverlaysPath({ projectId: options.projectId, root: options.storeRoot }))
     : { overlays: [], diagnostics: [] };
   diagnostics.push(...overlayResult.diagnostics);
+  throwConfigErrors(overlayResult.diagnostics, options.projectId
+    ? projectOverlaysPath({ projectId: options.projectId, root: options.storeRoot })
+    : '<project overlays>');
+  throwConfigErrors(diagnostics, platformRoot ?? '<platform config>');
   const nothingFound =
     (options.pluginDefaults?.length ?? 0) === 0 &&
     generatedLayer.files.length === 0 &&

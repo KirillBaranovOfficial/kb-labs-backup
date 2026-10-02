@@ -210,6 +210,7 @@ export async function autoUpdateCompletion(registry: TrieBackedRegistry): Promis
 export function createCompletionCommand(registry: TrieBackedRegistry) {
   return defineSystemCommand({
     name: 'completion',
+    scope: 'platform',
     description: 'Generate or install shell completion',
     longDescription:
       'Print a shell completion script or bake a static one into your shell profile.\n\n' +

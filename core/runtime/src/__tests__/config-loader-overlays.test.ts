@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'nod
 import path from 'node:path'
 import os from 'node:os'
 
-import { AdapterProjectScopeError } from '@kb-labs/core-platform'
+import { AdapterProjectScopeError, PlatformConfigError } from '@kb-labs/core-platform'
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
 import { loadPlatformConfig } from '../config-loader.js'
 
@@ -168,22 +168,72 @@ describe('loadPlatformConfig: overlays', () => {
     })).rejects.toThrow(/Platform config is invalid after applying overlays/)
   })
 
-  it('propagates overlay loader diagnostics into sources.overlayDiagnostics', async () => {
+  it('rejects a non-object overlay config file', async () => {
     const platformRoot = path.join(tmpDir, 'o6-platform')
     const projectRoot = path.join(tmpDir, 'o6-project')
     makePlatformDir(platformRoot)
     makeProjectDir(projectRoot)
     await writeOverlay(projectRoot, 'a-good.jsonc', '{ "platform": { "features": { "mode": "safe" } } }')
-    await writeOverlay(projectRoot, 'b-broken.jsonc', '{ this is not valid json')
     await writeOverlay(projectRoot, 'c-array.jsonc', '[1, 2, 3]')
 
-    const result = await loadConfig({
+    await expect(loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot },
       loadEnvFile: false,
-    })
+    })).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'invalid' })
+  })
 
-    expect(result.sources.overlayDiagnostics?.map((diagnostic) => diagnostic.code)).toEqual(expect.arrayContaining(['JSON_PARSE_FAILED', 'OVERLAY_NOT_OBJECT']))
+  it('rejects malformed and unreadable platform-state overlays with typed config errors', async () => {
+    const platformRoot = path.join(tmpDir, 'o8-platform')
+    const projectRoot = path.join(tmpDir, 'o8-project')
+    makePlatformDir(platformRoot)
+    makeProjectDir(projectRoot)
+    const malformedPath = await writeOverlay(projectRoot, 'broken.jsonc', '{ invalid')
+
+    await expect(loadConfig({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot },
+      loadEnvFile: false,
+    })).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'parse', configPath: malformedPath })
+
+    const unreadableProjectRoot = path.join(tmpDir, 'o9-project')
+    makeProjectDir(unreadableProjectRoot)
+    const unreadablePath = await writeOverlay(unreadableProjectRoot, 'unreadable.jsonc', '{}')
+    rmSync(unreadablePath)
+    mkdirSync(unreadablePath)
+
+    await expect(loadConfig({
+      startDir: unreadableProjectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot },
+      loadEnvFile: false,
+    })).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'read', configPath: unreadablePath })
+  })
+
+  it('rejects malformed, unreadable, and non-object project settings with typed config errors', async () => {
+    const platformRoot = path.join(tmpDir, 'o10-platform')
+    const projectRoot = path.join(tmpDir, 'o10-project')
+    makePlatformDir(platformRoot)
+    makeProjectDir(projectRoot)
+
+    const registration = await projectRegistration(projectRoot)
+    const stateDir = path.join(tmpDir, 'kb-home', 'state', registration.projectId)
+    mkdirSync(stateDir, { recursive: true })
+    const settingsPath = path.join(stateDir, 'config.jsonc')
+    writeFileSync(settingsPath, '{ invalid')
+    const options = {
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot },
+      loadEnvFile: false,
+    }
+
+    await expect(loadConfig(options)).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'parse', configPath: settingsPath })
+
+    writeFileSync(settingsPath, '[]')
+    await expect(loadConfig(options)).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'invalid', configPath: settingsPath })
+
+    rmSync(settingsPath)
+    mkdirSync(settingsPath)
+    await expect(loadConfig(options)).rejects.toMatchObject({ name: 'PlatformConfigError', reason: 'read', configPath: settingsPath })
   })
 
   it('omits overlayDiagnostics when there are no issues', async () => {
