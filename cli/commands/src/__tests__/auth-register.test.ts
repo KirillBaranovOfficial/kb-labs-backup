@@ -35,6 +35,7 @@ vi.mock('@kb-labs/cli-runtime/gateway', () => ({
     isExpired = mockSessionIsExpired;
     refresh = mockSessionRefresh;
   },
+  readGatewaySuccessData: async (response: Response) => (await response.json() as { data: unknown }).data,
 }));
 
 const mockFetch = vi.fn();
@@ -43,11 +44,12 @@ vi.stubGlobal('fetch', mockFetch);
 import { authRegister } from '../commands/system/auth/auth-register.js';
 
 function makeJsonResponse(body: unknown, status = 200): Response {
+  const result = status >= 200 && status < 300 ? { ok: true, data: body } : body;
   return {
     ok: status >= 200 && status < 300,
     status,
-    text: async () => JSON.stringify(body),
-    json: async () => body,
+    text: async () => JSON.stringify(result),
+    json: async () => result,
   } as unknown as Response;
 }
 

@@ -91,6 +91,7 @@ describe('Gateway /health endpoint', () => {
     vi.clearAllMocks();
   });
 
+  // case: S-203.1
   it('returns healthy when all adapters available', async () => {
     mockAdapters = {
       llm: { complete: vi.fn() },
@@ -104,7 +105,7 @@ describe('Gateway /health endpoint', () => {
     const res = await app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);
 
-    const body = res.json();
+    const body = res.json().data;
     expect(body.status).toBe('healthy');
     expect(body.version).toBe('1.0');
     expect(body.adapters.llm.available).toBe(true);
@@ -125,7 +126,7 @@ describe('Gateway /health endpoint', () => {
     app = await buildHealthApp();
 
     const res = await app.inject({ method: 'GET', url: '/health' });
-    const body = res.json();
+    const body = res.json().data;
     expect(body.status).toBe('degraded');
     expect(body.adapters.llm.available).toBe(true);
     expect(body.adapters.analytics.available).toBe(false);
@@ -142,7 +143,7 @@ describe('Gateway /health endpoint', () => {
     app = await buildHealthApp();
 
     const res = await app.inject({ method: 'GET', url: '/health' });
-    const body = res.json();
+    const body = res.json().data;
     expect(body.status).toBe('unhealthy');
   });
 
@@ -151,7 +152,7 @@ describe('Gateway /health endpoint', () => {
     app = await buildHealthApp();
 
     const res = await app.inject({ method: 'GET', url: '/health' });
-    const body = res.json();
+    const body = res.json().data;
     expect(typeof body.uptime).toBe('number');
     expect(body.uptime).toBeGreaterThanOrEqual(0);
     expect(typeof body.timestamp).toBe('string');
@@ -166,7 +167,7 @@ describe('Gateway /health endpoint', () => {
     app = await buildHealthApp();
 
     const res = await app.inject({ method: 'GET', url: '/health' });
-    const body = res.json();
+    const body = res.json().data;
     expect(typeof body.adapters.llm.latencyMs).toBe('number');
     expect(body.adapters.llm.latencyMs).toBeGreaterThanOrEqual(0);
   });
@@ -185,7 +186,7 @@ describe('Gateway /health endpoint', () => {
     }, transport);
 
     const res = await app.inject({ method: 'GET', url: '/health' });
-    const body = res.json();
+    const body = res.json().data;
     expect(body.upstreams['rest-api']).toBeDefined();
     expect(body.upstreams['rest-api'].status).toBe('up');
     expect(typeof body.upstreams['rest-api'].latencyMs).toBe('number');
@@ -245,7 +246,7 @@ describe('Gateway /health/adapters endpoint', () => {
     const res = await app.inject({ method: 'GET', url: '/health/adapters' });
     expect(res.statusCode).toBe(200);
 
-    const body = res.json();
+    const body = res.json().data;
     expect(Array.isArray(body)).toBe(true);
     expect(body).toHaveLength(2);
     expect(body[0]).toMatchObject({ slot: 'cache', mode: 'inmemory' });
@@ -259,7 +260,7 @@ describe('Gateway /health/adapters endpoint', () => {
 
     const res = await app.inject({ method: 'GET', url: '/health/adapters' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual([]);
+    expect(res.json()).toMatchObject({ ok: true, data: [] });
   });
 
   it('is public (no auth required)', async () => {

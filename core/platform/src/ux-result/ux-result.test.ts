@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { isUxResult, validateUxResult } from './index.js';
+import { createUxFailureResult, createUxSuccessResult, isUxResult, validateUxResult } from './index.js';
 
 const repositoryRoot = resolve(fileURLToPath(new URL('../../../..', import.meta.url)));
 const fixturesRoot = join(repositoryRoot, 'contracts/ux-result/fixtures');
@@ -16,6 +16,17 @@ function loadFixtures(kind: 'valid' | 'invalid'): Array<{ name: string; value: u
 }
 
 describe('shared UX-result fixtures', () => {
+  it('constructs success and failure results with the shared contract shapes', () => {
+    const failureFixture = JSON.parse(readFileSync(join(fixturesRoot, 'valid/failure.json'), 'utf8')) as { error: Parameters<typeof createUxFailureResult>[0] };
+    const success = createUxSuccessResult({ id: 'item-1' }, { requestId: 'req-1' });
+    const failure = createUxFailureResult(failureFixture.error);
+
+    expect(success).toEqual({ ok: true, data: { id: 'item-1' }, meta: { requestId: 'req-1' } });
+    expect(failure).toEqual(failureFixture);
+    expect(isUxResult(success)).toBe(true);
+    expect(isUxResult(failure)).toBe(true);
+  });
+
   for (const { name, value } of loadFixtures('valid')) {
     // case: S-203.5
     it(`accepts valid/${name}`, () => {
