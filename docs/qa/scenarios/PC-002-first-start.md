@@ -22,7 +22,7 @@ A developer starts the V2 host runtime and confirms its managed services become 
 
 | # | Action | Expected |
 |---|---|---|
-| PC-002.1 | Run `kb-create start --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok: true`, `operation: "start"`, and `host.pid` greater than 0. |
+| PC-002.1 | With no project registered, run `kb-create start --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok: true`, `operation: "start"`, and `host.pid` greater than 0. Starting the platform host does not require project registration. |
 | PC-002.2 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok: true`, `host.state: "running"`, `running: true`, and `reachable: true`. |
 | PC-002.3 | Request `GET /ready` from the configured gateway and `GET /api/v1/projects/$PROJECT_ID/workflow/health` | Both requests return HTTP 200 with JSON response bodies. |
 | PC-002.4 | Run `kb-create stop --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok: true` and `operation: "stop"`; a subsequent status reports `host.state: "stopped"` and `running: false`. |
