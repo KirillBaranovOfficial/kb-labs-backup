@@ -30,7 +30,7 @@ definitions, executions, history, and logs scoped to each project.
 | S-198.4 | Advance the scheduler through Project A's due time and inspect both project histories and Studio's selected-project Crons and Runs views | Exactly the Project A scheduled run appears in A's history and views; B shows no cron or run from A. Logs are available only while viewing A. |
 | S-198.5 | Run a workflow that provisions an isolated git worktree, then run an installed plugin command from that worktree | The command resolves the owning registered project ID while its cwd remains the worktree path. |
 | S-198.6 | From a workflow step in the worktree, run `kb project show --json` and a platform CLI command | `KB_PLATFORM_ROOT` points to the installed platform, `KB_WORKSPACE_ROOT` points to the worktree, and the command resolves the owning project ID. |
-| S-198.7 | Register a repository, add a git worktree outside its directory, and run a plugin command there; then run the same command from a worktree of an unregistered repository | The registered repository's worktree resolves to its owning project. The unregistered worktree returns `KB_PROJECT_UNKNOWN` with a `kb project add <path>` hint. |
+| S-198.7 | Register a repository root, then a project directory inside another repository; run plugin commands from their worktrees, including a path inside and outside the registered subdirectory; then run from an unregistered or bare repository | Each registered worktree path inside its registered project resolves to that project. A path outside a registered subdirectory, an unregistered repository, and a bare repository return `KB_PROJECT_UNKNOWN` with a `kb project add <path>` hint. |
 
 ## Dependencies
 

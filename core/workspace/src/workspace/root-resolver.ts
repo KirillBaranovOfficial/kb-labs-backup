@@ -33,6 +33,15 @@ const PLATFORM_PACKAGE_MARKERS = [
   '@kb-labs/core-runtime',
 ] as const
 const execFileAsync = promisify(execFile)
+type GitExec = (
+  file: string,
+  args: string[],
+  options: { cwd: string; timeout: number },
+) => Promise<{ stdout: string | Buffer }>
+const defaultGitExec: GitExec = async (file, args, options) => {
+  const result = await execFileAsync(file, args, options)
+  return { stdout: result.stdout.toString() }
+}
 
 const defaultFs: WorkspaceFs = {
   async exists(target: string): Promise<boolean> {
@@ -49,13 +58,37 @@ const defaultFs: WorkspaceFs = {
 // Project root (previously "workspace root")
 // ──────────────────────────────────────────────────────────────────────────
 
-async function gitCommonDir(startDir: string): Promise<string | undefined> {
+async function gitCheckoutMapping(
+  startDir: string,
+  gitExec: GitExec,
+): Promise<string | undefined> {
   try {
-    const { stdout } = await execFileAsync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+    const { stdout } = await gitExec('git', [
+      'rev-parse',
+      '--path-format=absolute',
+      '--show-toplevel',
+      '--git-common-dir',
+    ], {
       cwd: startDir,
       timeout: 5_000,
     })
-    return fsp.realpath(stdout.trim())
+    const [topLevelOutput, commonDirOutput, extraOutput] = stdout.toString().trimEnd().split(/\r?\n/)
+    if (!topLevelOutput || !commonDirOutput || extraOutput !== undefined) return undefined
+
+    const [topLevel, commonDir, canonicalStart] = await Promise.all([
+      fsp.realpath(topLevelOutput),
+      fsp.realpath(commonDirOutput),
+      fsp.realpath(startDir),
+    ])
+    // Only the standard main-checkout layout lets us map a worktree path back
+    // to the registered project path without probing every registry entry.
+    if (path.basename(commonDir) !== '.git') return undefined
+
+    const relativePath = path.relative(topLevel, canonicalStart)
+    if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+      return undefined
+    }
+    return path.resolve(path.dirname(commonDir), relativePath)
   } catch {
     return undefined
   }
@@ -65,20 +98,16 @@ async function gitCommonDir(startDir: string): Promise<string | undefined> {
 export async function findRegisteredProjectRoot(
   startDir: string,
   env: Record<string, string | undefined> = process.env,
+  gitExec: GitExec = defaultGitExec,
 ): Promise<string | undefined> {
   const registry = createProjectRegistry({ env })
   const containing = await findProjectContainingPath(registry, startDir)
   if (containing) return containing.project.path
 
-  const cwdCommonDir = await gitCommonDir(startDir)
-  if (!cwdCommonDir) return undefined
-  const projects = await registry.list()
-  for (const project of projects) {
-    // eslint-disable-next-line no-await-in-loop -- registry order must not override the common-dir match
-    const registeredCommonDir = await gitCommonDir(project.project.path)
-    if (registeredCommonDir === cwdCommonDir) return project.project.path
-  }
-  return undefined
+  const mappedPath = await gitCheckoutMapping(startDir, gitExec)
+  if (!mappedPath) return undefined
+  const mappedProject = await findProjectContainingPath(registry, mappedPath)
+  return mappedProject?.project.path
 }
 
 /**
