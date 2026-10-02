@@ -31,6 +31,20 @@ const CLI_LIFECYCLE_HOOK_ID = "cli-runtime";
 const LOG_SERVICE = "platform-init";
 let lifecycleHooksRegistered = false;
 
+export function isProjectUnknownError(error: unknown): error is Error & {
+  code: 'KB_PROJECT_UNKNOWN';
+  details?: Record<string, string>;
+} {
+  if (!(error instanceof Error) || !('code' in error) || error.code !== 'KB_PROJECT_UNKNOWN') {
+    return false;
+  }
+  if (!('details' in error) || error.details === undefined) {
+    return true;
+  }
+  return typeof error.details === 'object' && error.details !== null &&
+    Object.values(error.details).every((value) => typeof value === 'string');
+}
+
 export function hasExplicitDevelopmentMode(config: Record<string, unknown> | undefined): boolean {
   if (!config) { return false; }
   const platformConfig = config.platform;
@@ -150,7 +164,10 @@ export async function initializePlatform(
       startDir: cwd,
       projectScope: options.projectScope,
     });
-  } catch {
+  } catch (error) {
+    if (isProjectUnknownError(error)) {
+      throw error;
+    }
     // Config file missing or unreadable — proceed with full fallback below.
   }
 

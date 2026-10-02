@@ -53,6 +53,7 @@ export type ProjectAddResult = CommandResult & {
 
 export const projectAdd = defineSystemCommand<AddFlags, ProjectAddResult>({
   name: 'add',
+  scope: 'platform',
   description: 'Register a project folder with the platform',
   longDescription:
     'Adds a folder to the machine-level project registry (KB_HOME/projects.json, default ~/.kb). ' +

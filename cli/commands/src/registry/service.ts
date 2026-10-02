@@ -196,6 +196,10 @@ export class TrieBackedRegistry {
     return this.systemRouter.listSystemTopLevel();
   }
 
+  listSystemCommands(): SystemCommand[] {
+    return this.systemRouter.listSystemCommands();
+  }
+
   getPluginGroupDescribe(segments: string[]): string | undefined {
     return this.pluginRouter.getGroupDescribe(segments);
   }

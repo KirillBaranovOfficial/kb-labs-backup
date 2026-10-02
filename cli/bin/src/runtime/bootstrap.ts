@@ -14,6 +14,7 @@ import {
   renderManifestCommandHelp,
   renderProductHelp,
   registry,
+  registerBuiltinSystemCommands,
   generateCommandSchema,
   type RegisteredCommand,
 } from "@kb-labs/cli-commands";
@@ -30,15 +31,16 @@ import { getDefaultMiddlewares } from "./middlewares";
 import { executePlugin, createSystemCommandContext } from "./plugin-executor";
 import { tryResolveGateway, executeViaGateway } from "./gateway-executor";
 import { loadEnvFile } from "./env-loader";
-import { initializePlatform } from "./platform-init";
+import { initializePlatform, isProjectUnknownError } from "./platform-init";
 import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope } from "@kb-labs/core-platform";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
-import { isPlatformAuthExempt, isPlatformAuthExemptFlag } from "./platform-auth-policy";
+import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
+import { resolveProjectScope } from './command-scope';
 
 declare global {
   var __KB_PLATFORM_CONFIG__: PlatformConfig | undefined;
@@ -51,18 +53,6 @@ type ILogger = PlatformContainer["logger"];
 type RuntimeInitOptions = RuntimeSetupOptions;
 type CliRuntimeInstance = Awaited<ReturnType<typeof createCliRuntime>>;
 type CliExecutionContext = CliRuntimeInstance["context"];
-
-function usesPlatformScope(
-  cmdPath: string[],
-  rest: string[],
-  global: { help?: boolean; version?: boolean },
-): boolean {
-  if ((global.help && cmdPath.length === 0) || global.version) { return true; }
-  if (isPlatformAuthExempt(cmdPath.join(" "), "system")) { return true; }
-  if (cmdPath[0] !== "project") { return false; }
-  if (["add", "list", "remove"].includes(cmdPath[1] ?? "")) { return true; }
-  return cmdPath[1] === "show" && rest.some((argument) => !argument.startsWith("-"));
-}
 
 export interface CliRuntimeOptions {
   env?: NodeJS.ProcessEnv;
@@ -96,21 +86,37 @@ export async function executeCli(
   const cwd = options.cwd ?? process.cwd();
   const parse = options.parseArgs ?? parseArgs;
   const { cmdPath, rest, global, flagsObj } = parse(argv);
-  const projectScope = usesPlatformScope(cmdPath, rest, global) ? "platform" : "required";
+  const registryStore = options.registry ?? registry;
+  registerBuiltinSystemCommands();
+  const projectScope = resolveProjectScope(registryStore.resolve(cmdPath), global, cmdPath);
+
+  const jsonPresenterFactory = options.createJsonPresenter ?? createJsonPresenter;
+  const textPresenterFactory = options.createTextPresenter ?? createTextPresenter;
 
   loadEnvFile(cwd);
 
-  const {
-    platform,
-    platformConfig,
-    rawConfig,
-    effectiveConfig,
-    platformRoot,
-    projectRoot,
-  } = await initializePlatform(cwd, options.moduleUrl, {
-    skipAdapterInitialization: global.help && isPlatformAuthExemptFlag('help'),
-    projectScope,
-  });
+  let initialized: Awaited<ReturnType<typeof initializePlatform>>;
+  try {
+    initialized = await initializePlatform(cwd, options.moduleUrl, {
+      skipAdapterInitialization: global.help && cmdPath.length === 0 && isPlatformAuthExemptFlag('help'),
+      projectScope,
+    });
+  } catch (error) {
+    if (!isProjectUnknownError(error)) {
+      throw error;
+    }
+    const path = error.details?.path ?? cwd;
+    const envelope = createErrorEnvelope('KB_PROJECT_UNKNOWN', { details: { path } });
+    const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
+    if (global.json) {
+      presenter.json({ ok: false, error: envelope });
+    } else {
+      presenter.error(`${envelope.message} [${envelope.code}]`);
+      presenter.write(`Hint: ${envelope.hint}\n`);
+    }
+    return 1;
+  }
+  const { platform, platformConfig, rawConfig, effectiveConfig, platformRoot, projectRoot } = initialized;
 
   if (platformRoot) {
     loadEnvFile(platformRoot);
@@ -129,11 +135,6 @@ export async function executeCli(
 
   const env = options.env ?? process.env;
   const version = resolveVersion(options.version, env);
-  const registryStore = options.registry ?? registry;
-  const jsonPresenterFactory =
-    options.createJsonPresenter ?? createJsonPresenter;
-  const textPresenterFactory =
-    options.createTextPresenter ?? createTextPresenter;
   const runtimeFactory =
     options.createRuntime ??
     (async (runtimeOptions: RuntimeInitOptions) => {

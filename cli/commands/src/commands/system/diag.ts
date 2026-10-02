@@ -501,6 +501,7 @@ async function runTrace(ctx: TraceCtx): Promise<CommandTraceResult> {
 
 export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResult>({
   name: 'diag',
+  scope: 'platform',
   description: 'Comprehensive system diagnostics (plugins, environment, versions)',
   category: 'info',
   examples: generateExamples('diag', 'kb', [

@@ -26,6 +26,7 @@ type ListResult = CommandResult & {
 
 export const webhookList = defineSystemCommand<ListFlags, ListResult>({
   name: 'list',
+  scope: 'platform',
   description: 'List declared webhook endpoints',
   longDescription:
     'Lists all webhook endpoints declared in installed plugin manifests. ' +

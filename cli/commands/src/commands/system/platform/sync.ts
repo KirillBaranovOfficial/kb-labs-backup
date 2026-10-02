@@ -29,6 +29,7 @@ function isMode(value: string | undefined): value is PlatformSyncMode {
 
 export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, PlatformSyncCommandResult>({
   name: 'provision',
+  scope: 'platform',
   description: 'Reconcile .kb/marketplace.lock with installed adapters & plugins',
   longDescription:
     'Reads .kb/marketplace.lock as the declarative source of truth for which adapters ' +
