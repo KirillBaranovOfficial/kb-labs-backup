@@ -60,7 +60,10 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
                 payload = json.loads(result.stdout)
             except json.JSONDecodeError as error:
                 return f"workspace adapter listing did not return JSON: {error}"
-            rows = payload.get("adapters", []) if isinstance(payload, dict) else []
+            data = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(payload, dict) or payload.get("ok") is not True or not isinstance(data, dict):
+                return "workspace adapter listing did not return a successful JSON envelope"
+            rows = data.get("adapters", [])
             implementations = {row.get("slot"): row.get("implementation") for row in rows if isinstance(row, dict)}
             expected = {
                 "storage": "@kb-labs/adapters-fs",

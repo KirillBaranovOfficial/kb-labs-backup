@@ -31,6 +31,24 @@ describe('platform authentication gate', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  // case: S-041.7
+  it('blocks the secured platform marketplace list before gateway-dependent dispatch', async () => {
+    const handler = vi.fn(async () => 0);
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'secured',
+      commandPath: 'marketplace plugins list',
+      commandKind: 'plugin',
+      hasAuth: false,
+    }, handler);
+
+    expect(result).toMatchObject({ error: {
+      code: 'KB_AUTH_REQUIRED',
+      message: 'Authentication is required.',
+      hint: 'Run "kb auth login".',
+    } });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   // case: S-041.8
   it('allows only platform-owned system commands without a session', async () => {
     for (const commandPath of ['auth login', 'auth logout', 'auth status', 'auth register', 'info version', 'info health', 'diag']) {
