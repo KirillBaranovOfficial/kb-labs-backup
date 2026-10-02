@@ -59,12 +59,16 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
         return { ok: false, error: err instanceof Error ? err.message : String(err), result: { id: '', scope: '' } };
       }
 
+      // Path validation uses the shared validation presenter, so the human
+      // message remains actionable without treating bad input as a runtime error.
+      if (pluginPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(pluginPath)) {
+        validationError(ctx, 'The --link path must be relative to the selected scope directory.', undefined, flags.json);
+        return { ok: false, error: 'The --link path must be relative to the selected scope directory.', result: { id: '', scope: '' } };
+      }
+
       try {
         // The path is relative to the resolved marketplace scope root. This
         // keeps platform adapter links usable without exposing machine paths.
-        if (pluginPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(pluginPath)) {
-          throw new Error('The --link path must be relative to the selected scope directory.');
-        }
         const result = await post<LinkResponse>(`/packages/link`, { path: pluginPath, ...scopeBody(scopeCtx) });
 
         if (flags.json) {

@@ -4,10 +4,11 @@ import { configErrorEnvelope, setUserConfigValue } from '@kb-labs/core-config';
 import { DiagnosticCollector, readMarketplaceLock } from '@kb-labs/core-discovery';
 import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { handleError } from '@kb-labs/shared-cli-ui';
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
-import { renderErrorEnvelope, resolveConfigRoots, userConfigFileForScope } from '../config/shared';
+import { resolveConfigRoots, userConfigFileForScope } from '../config/shared';
 
 type Flags = {
   json: { type: 'boolean'; description?: string };
@@ -86,7 +87,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
   },
   formatter(result, ctx, flags) {
     if (!result.ok && result.envelope) {
-      renderErrorEnvelope(ctx, result.envelope, Boolean(flags.json));
+      handleError(ctx, { envelope: result.envelope }, Boolean(flags.json));
       return;
     }
     if (flags.json) {

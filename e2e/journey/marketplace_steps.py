@@ -112,7 +112,7 @@ def validate_shared_failure(result: subprocess.CompletedProcess[str], *, json_mo
             raise AssertionError(f"JSON failure does not match {code}")
         return
     output = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
-    if f"{message} [{code}]" not in output or f"Hint:  {hint}" not in output:
+    if f"{message} [{code}]" not in output or "Hint:" not in output or hint not in output:
         raise AssertionError(f"human failure does not match {code}")
     if "Traceback" in output or output.lstrip().startswith("{"):
         raise AssertionError("human failure exposed a stack trace or raw JSON")

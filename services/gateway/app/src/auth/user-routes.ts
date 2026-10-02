@@ -437,7 +437,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
             return;
           }
         }
-        return reply.code(401).send({ error: 'invalid_credentials' });
+        return sendAuthError(reply, 401, undefined, undefined, 'KB_AUTH_INVALID_CREDENTIALS');
       }
       throw err;
     }
@@ -494,7 +494,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
             return;
           }
         }
-        return reply.code(401).send({ error: 'invalid_credentials' });
+        return sendAuthError(reply, 401, undefined, undefined, 'KB_AUTH_INVALID_CREDENTIALS');
       }
       throw err;
     }

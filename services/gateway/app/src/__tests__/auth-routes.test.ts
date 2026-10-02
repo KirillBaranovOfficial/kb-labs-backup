@@ -218,9 +218,9 @@ describe('POST /auth/token', () => {
     });
 
     expect(res.statusCode).toBe(401);
-    const body = res.json() as { error: string; message: string };
-    expect(body.error).toBe('Unauthorized');
-    expect(body.message).toContain('Invalid credentials');
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_INVALID_CREDENTIALS', message: 'The credentials are invalid.',
+    } });
   });
 
   it('returns 400 when clientId is missing', async () => {
@@ -285,9 +285,7 @@ describe('POST /auth/refresh', () => {
     });
 
     expect(res.statusCode).toBe(401);
-    const body = res.json() as { error: string; message: string };
-    expect(body.error).toBe('Unauthorized');
-    expect(body.message).toContain('Invalid or expired');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
   });
 
   it('returns 400 when refreshToken field is missing', async () => {
@@ -325,8 +323,7 @@ describe('Auth middleware — public routes', () => {
 
     // 401 from the handler (bad credentials) — not from middleware
     expect(res.statusCode).toBe(401);
-    const body = res.json() as { error: string };
-    expect(body.error).toBe('Unauthorized');
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 });
 

@@ -82,6 +82,30 @@ describe('marketplace:install', () => {
     expect(captured.errors.length).toBeGreaterThan(0);
   });
 
+  it.each([false, true])('renders KB_PLUGIN_NOT_FOUND through the shared presenter (json=%s)', async (json) => {
+    const envelope = {
+      code: 'KB_PLUGIN_NOT_FOUND',
+      message: 'Plugin @kb-labs/not-published was not found in the registry.',
+      hint: 'kb marketplace search',
+    };
+    mockedPost.mockRejectedValue(Object.assign(new Error(envelope.message), { envelope }));
+
+    const { ui, captured } = createCapturedUI();
+    const ctx = createMockContext({ ui });
+    const result = await installCommand.execute(ctx, mockCLIInput({
+      argv: ['@kb-labs/not-published'],
+      flags: { json },
+    }));
+
+    expect(result.ok).toBe(false);
+    if (json) {
+      expect(captured.json[0]).toEqual({ ok: false, error: envelope });
+    } else {
+      expect(captured.errors[0]).toBe(`${envelope.message} [${envelope.code}]`);
+      expect(captured.warnings.at(-1)?.opts).toMatchObject({ hint: envelope.hint });
+    }
+  });
+
   it('CI-04: missing argv — returns exitCode 1, validation error shown', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });

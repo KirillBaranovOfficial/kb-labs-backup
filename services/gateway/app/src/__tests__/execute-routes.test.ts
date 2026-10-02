@@ -317,8 +317,9 @@ describe('POST /api/v1/execute/:id/cancel', () => {
     });
 
     expect(res.statusCode).toBe(403);
-    const body = res.json() as { error: string };
-    expect(body.error).toContain('Forbidden');
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_FORBIDDEN', cause: 'Execution belongs to another namespace',
+    } });
 
     executionRegistry.remove('exec-other-ns');
   });

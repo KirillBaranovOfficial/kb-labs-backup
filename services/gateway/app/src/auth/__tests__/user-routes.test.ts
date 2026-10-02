@@ -287,7 +287,7 @@ describe('POST /auth/login', () => {
     expect(names).toContain(COOKIE_CSRF);
   });
 
-  it('returns 401 with { error: "invalid_credentials" } on wrong password (CD-8)', async () => {
+  it('returns the shared credentials envelope on wrong password (CD-8)', async () => {
     const r = await ctx.app.inject({
       method: 'POST',
       url: '/auth/login',
@@ -296,7 +296,7 @@ describe('POST /auth/login', () => {
     });
 
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'invalid_credentials' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 
   it('returns 401 with identical shape on unknown email (CD-8)', async () => {
@@ -308,7 +308,7 @@ describe('POST /auth/login', () => {
     });
 
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'invalid_credentials' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 
   it('returns 400 when email is missing', async () => {
@@ -371,7 +371,7 @@ describe('POST /auth/login/cli', () => {
     expect(r.headers['set-cookie']).toBeUndefined();
   });
 
-  it('returns 401 with { error: "invalid_credentials" } on wrong password (same shape as /auth/login)', async () => {
+  it('returns the shared credentials envelope on CLI wrong password', async () => {
     const r = await ctx.app.inject({
       method: 'POST',
       url: '/auth/login/cli',
@@ -379,7 +379,7 @@ describe('POST /auth/login/cli', () => {
       payload: { email: 'admin@test.com', password: 'WrongPassword99!' },
     });
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'invalid_credentials' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 
   it('returns 400 when email or password is missing', async () => {
@@ -451,7 +451,7 @@ describe('POST /auth/refresh/cli', () => {
       method: 'POST', url: '/auth/refresh/cli', headers: { host: HOST }, payload: { refreshToken: 'not-a-jwt' },
     });
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'Unauthorized' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
   });
 });
 

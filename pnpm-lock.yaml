@@ -4191,6 +4191,9 @@ importers:
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
+      '@kb-labs/shared-cli-ui':
+        specifier: workspace:*
+        version: link:../../../shared/cli-ui
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*

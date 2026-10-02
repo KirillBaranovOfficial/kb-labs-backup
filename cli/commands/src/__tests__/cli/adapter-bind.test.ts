@@ -16,20 +16,29 @@ let projectRoot: string;
 
 function context() {
   const outputs: unknown[] = [];
+  const errors: string[] = [];
+  const hints: string[] = [];
   const ctx: PluginContextV3 = {
     host: 'cli',
     requestId: 'adapter-bind-test',
     pluginId: '@kb-labs/system',
     pluginVersion: '1.0.0',
     cwd: projectRoot,
-    ui: { ...noopUI, json: (data: unknown) => outputs.push(data) },
+    ui: {
+      ...noopUI,
+      json: (data: unknown) => outputs.push(data),
+      error: (message: string, options?: { hint?: string }) => {
+        errors.push(message);
+        if (options?.hint) hints.push(options.hint);
+      },
+    },
     platform: { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() } } as never,
     runtime: { fs: {} as never, fetch: vi.fn(), env: vi.fn() },
     api: {} as never,
     hostContext: { host: 'cli', argv: [], flags: {} },
     trace: noopTraceContext,
   };
-  return { ctx, outputs };
+  return { ctx, outputs, errors, hints };
 }
 
 beforeEach(async () => {
@@ -216,6 +225,16 @@ describe('kb adapter bind', () => {
         hint: 'kb marketplace install @kb-labs/adapters-missing --scope platform',
       },
     });
+  });
+
+  it('renders the missing adapter next step through the shared human presenter', async () => {
+    const { ctx, errors, hints } = context();
+
+    const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-missing'], {});
+
+    expect(code).toBe(1);
+    expect(errors.join('\n')).toContain('Adapter package @kb-labs/adapters-missing is not installed on this platform. [KB_ADAPTER_NOT_INSTALLED]');
+    expect(hints).toContain('kb marketplace install @kb-labs/adapters-missing --scope platform');
   });
 
   it('validates a binding without writing in dry-run mode', async () => {
