@@ -21,13 +21,17 @@ describe('handleError', () => {
     });
   });
 
-  it('keeps untyped errors in the internal error envelope', () => {
+  it('maps unexpected errors to the shared platform error envelope', () => {
     const json = vi.fn();
     handleError({ ui: { json } }, new Error('request failed'), true);
-    expect(json).toHaveBeenCalledWith({
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
       ok: false,
-      error: { code: 'INTERNAL_ERROR', message: 'request failed' },
-    });
+      error: expect.objectContaining({
+        code: 'KB_RUNTIME_UNEXPECTED',
+        message: expect.any(String),
+        hint: expect.any(String),
+      }),
+    }));
   });
 
   it('shows a permission carried by an authorization envelope in human output', () => {

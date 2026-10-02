@@ -13,7 +13,6 @@ import {
   handleError,
   AdapterCredentialsMissingError,
   AdapterUnavailableError,
-  toErrorEnvelope,
   type PluginContextV3,
   type CommandResult,
   type ArtifactInfo,
@@ -51,6 +50,7 @@ export default defineCommand({
   handler: {
     async execute(ctx: PluginContextV3, input: GenerateInput): Promise<GenerateResult> {
       const startTime = Date.now();
+      const flags = input.flags ?? input;
       const llm = useLLM();
       const cwd = (await findRepoRoot(ctx.cwd || process.cwd())) ?? process.cwd();
 
@@ -63,7 +63,6 @@ export default defineCommand({
       const config = resolveCommitConfig(fileConfig ?? {}, env);
 
       // V3: Flags come in input.flags (CLI) or directly in input (REST API)
-      const flags = input.flags ?? input;
       const effectiveScope = flags.scope ?? config.scope?.default ?? 'root';
       const scopeCwd = resolveScopePath(cwd, effectiveScope, config.scope?.scopes);
       const allowSecrets = flags['allow-secrets'] ?? false;
@@ -71,19 +70,21 @@ export default defineCommand({
 
       // Check for changes (with scope for nested repos)
       const statusLoader = useLoader('Checking git status...');
-      statusLoader.start();
+      if (!flags.json) { statusLoader.start(); }
       const status = await getGitStatus(scopeCwd);
 
       if (!hasChanges(status)) {
-        statusLoader.stop();
-        ctx.ui?.warn?.('No changes to commit');
+        if (!flags.json) {
+          statusLoader.stop();
+          ctx.ui?.warn?.('No changes to commit');
+        }
         return { ok: false, error: 'No changes to commit' };
       }
-      statusLoader.succeed('Found changes to commit');
+      if (!flags.json) { statusLoader.succeed('Found changes to commit'); }
 
       // Generate plan
       const analyzeLoader = useLoader('Analyzing changes...');
-      analyzeLoader.start();
+      if (!flags.json) { analyzeLoader.start(); }
 
       // Create LLM wrapper with config values
       const llmComplete =
@@ -109,16 +110,12 @@ export default defineCommand({
           config,
           allowSecrets,
           autoConfirm,
-          onProgress: (message) => analyzeLoader.update({ text: message }),
+          onProgress: (message) => { if (!flags.json) { analyzeLoader.update({ text: message }); } },
         });
       } catch (err) {
-        analyzeLoader.fail('Failed to generate commit plan');
+        if (!flags.json) { analyzeLoader.fail('Failed to generate commit plan'); }
         if ((err instanceof AdapterUnavailableError && err.reason === 'not-configured') || err instanceof AdapterCredentialsMissingError) {
-          if (flags.json) {
-            ctx.ui?.json?.({ ok: false, error: toErrorEnvelope(err) });
-          } else {
-            handleError(ctx, err);
-          }
+          handleError(ctx, err, Boolean(flags.json));
           return { ok: false, error: 'Command failed' };
         }
         handleError(ctx, err, flags.json);
@@ -127,18 +124,18 @@ export default defineCommand({
 
       // Save plan
       const saveLoader = useLoader('Saving plan...');
-      saveLoader.start();
+      if (!flags.json) { saveLoader.start(); }
       try {
         await savePlan(cwd, plan, effectiveScope);
       } catch (err) {
-        saveLoader.fail('Failed to save plan');
+        if (!flags.json) { saveLoader.fail('Failed to save plan'); }
         handleError(ctx, err, flags.json);
         return { ok: false, error: 'Command failed' };
       }
       const planPath = getCurrentPlanPath(cwd, effectiveScope);
-      saveLoader.succeed('Plan saved');
+      if (!flags.json) { saveLoader.succeed('Plan saved'); }
 
-      analyzeLoader.succeed(`Generated commit plan with ${plan.commits.length} commit(s)`);
+      if (!flags.json) { analyzeLoader.succeed(`Generated commit plan with ${plan.commits.length} commit(s)`); }
 
       // Output
       const output: GenerateOutput = {
