@@ -24,6 +24,7 @@ type DiagnosticsResult = CommandResult & {
 
 export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, DiagnosticsResult>({
   name: 'diagnostics',
+  scope: 'platform',
   description: 'Show registry diagnostic report',
   category: 'registry',
   examples: [],

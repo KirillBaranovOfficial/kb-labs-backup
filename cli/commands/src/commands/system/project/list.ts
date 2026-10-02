@@ -21,6 +21,7 @@ function pad(value: string, width: number): string {
 
 export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
   name: 'list',
+  scope: 'platform',
   description: 'List registered projects',
   longDescription: 'Lists the projects in the machine-level registry with their status and last use.',
   category: 'project',

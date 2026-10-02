@@ -370,6 +370,16 @@ export class TrieRouter {
     return results;
   }
 
+  listSystemCommands(): SystemCommand[] {
+    const commands = new Set<SystemCommand>();
+    const visit = (node: TrieNode): void => {
+      if (node.systemCommand) { commands.add(node.systemCommand); }
+      for (const child of node.children.values()) { visit(child); }
+    };
+    visit(this.root);
+    return [...commands];
+  }
+
   /**
    * Collect all plugin commands reachable from node.
    */

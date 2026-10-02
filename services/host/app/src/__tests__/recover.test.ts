@@ -163,7 +163,11 @@ describe("kb-recover", () => {
     const { exitCode, captured } = await run({ yes: true });
 
     expect(exitCode).not.toBe(0);
-    expect(captured.json[0]!.error).toMatch(/--password-stdin or --generate/);
+    expect(captured.json[0]!.error).toMatchObject({
+      code: "KB_INSTALL_RECOVERY_FAILED",
+      message: expect.stringMatching(/--password-stdin or --generate/),
+      hint: expect.stringContaining("--password-stdin --yes"),
+    });
   });
 
   it("rejects --password-stdin together with --generate", async () => {
@@ -175,7 +179,11 @@ describe("kb-recover", () => {
     const { exitCode, captured } = await run({ email: undefined, generate: true, yes: true });
 
     expect(exitCode).not.toBe(0);
-    expect(captured.json[0]!.error).toMatch(/email is unknown/i);
+    expect(captured.json[0]!.error).toMatchObject({
+      code: "KB_INSTALL_RECOVERY_FAILED",
+      message: expect.stringMatching(/email is unknown/i),
+      hint: expect.stringContaining("--email"),
+    });
   });
 
   it("takes email and tenant from the GATEWAY_BOOTSTRAP_* env when flags are absent", async () => {
@@ -212,7 +220,11 @@ describe("kb-recover", () => {
     const { exitCode, captured } = await run({ generate: true, yes: true });
 
     expect(exitCode).not.toBe(0);
-    expect(captured.json[0]!.error).toMatch(/documentDatabase/);
+    expect(captured.json[0]!.error).toMatchObject({
+      code: "KB_INSTALL_RECOVERY_FAILED",
+      message: expect.stringMatching(/documentDatabase/),
+      hint: expect.stringContaining("kb-create doctor --platform-root"),
+    });
   });
 
   describe("running-host guard", () => {
@@ -236,11 +248,16 @@ describe("kb-recover", () => {
         }),
     );
 
+    // case: S-100.4
     it("refuses while something listens on the gateway port, and writes nothing", async () => {
       const { exitCode, captured } = await run({ generate: true, yes: true });
 
       expect(exitCode).not.toBe(0);
-      expect(captured.json[0]!.error).toMatch(/kb-create stop/);
+      expect(captured.json[0]!.error).toMatchObject({
+        code: "KB_INSTALL_RECOVERY_FAILED",
+        message: expect.stringMatching(/kb-create stop/),
+        hint: expect.stringContaining("kb-create stop --platform-root"),
+      });
       expect(await users.findByEmailTenant(EMAIL, TENANT)).toBeNull();
     });
   });

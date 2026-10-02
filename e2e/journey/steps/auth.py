@@ -183,7 +183,7 @@ def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
         raise AssertionError("kb-create doctor --recover echoed the supplied password")
     running_recovery, _ = invoke(recover_args, env=env, input_text=new_password + "\n")
     output = _combined(running_recovery).lower()
-    if running_recovery.returncode == 0 or "stopped" not in output or "kb-create stop" not in output or "kb-create start" not in output:
+    if running_recovery.returncode == 0 or "kb_install_recovery_host_running" not in output or "stopped" not in output or "kb-create stop" not in output or "kb-create start" not in output:
         raise AssertionError("running-host recovery did not explain that the host must be stopped and restarted")
 
 

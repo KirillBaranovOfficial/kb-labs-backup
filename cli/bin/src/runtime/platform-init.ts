@@ -5,8 +5,7 @@
  * `@kb-labs/core-runtime`. The shared loader is responsible for resolving
  * `platformRoot` and `projectRoot`, loading the `.env` file, reading both
  * platform defaults and project config, and deep-merging them. This file
- * only adds CLI-specific concerns: the UI provider, lifecycle hooks, and
- * NoOp fallback on failure.
+ * only adds CLI-specific concerns: the UI provider and lifecycle hooks.
  */
 
 import { createHash } from "node:crypto";
@@ -141,29 +140,22 @@ export async function initializePlatform(
 
   const uiProvider = createCLIUIProvider();
 
-  // Load config outside of the adapter-init try/catch so rawConfig survives
-  // even when initPlatform fails (e.g. Redis/Qdrant not running in dev).
-  let loadResult: Awaited<ReturnType<typeof loadPlatformConfig>> | undefined;
-  try {
-    loadResult = await loadPlatformConfig({
-      moduleUrl,
-      startDir: cwd,
-      projectScope: options.projectScope,
-    });
-  } catch {
-    // Config file missing or unreadable — proceed with full fallback below.
-  }
+  // Config-load failures propagate to bootstrap for shared-envelope rendering.
+  const loadResult = await loadPlatformConfig({
+    moduleUrl,
+    startDir: cwd,
+    projectScope: options.projectScope,
+  });
 
-  if (loadResult) {
-    const {
+  const {
       platformConfig,
       rawConfig,
       effectiveConfig,
       platformRoot,
       projectRoot,
       sources,
-    } = loadResult;
-    if (options.skipAdapterInitialization) {
+  } = loadResult;
+  if (options.skipAdapterInitialization) {
       return {
         platform,
         platformConfig,
@@ -172,8 +164,8 @@ export async function initializePlatform(
         platformRoot,
         projectRoot,
       };
-    }
-    try {
+  }
+  try {
       // User-supplied relative adapter paths are rooted at the project root;
       // built-in defaults are absolute paths under the platform state home.
       // Pass platformRoot so initPlatform finds marketplace.lock in the
@@ -258,38 +250,5 @@ export async function initializePlatform(
         platformRoot,
         projectRoot,
       };
-    }
   }
-
-  // Full fallback: config could not be loaded at all.
-  const fallbackConfig: PlatformConfig = { adapters: {} };
-  if (options.skipAdapterInitialization) {
-    return {
-      platform,
-      platformConfig: fallbackConfig,
-      platformRoot: cwd,
-      projectRoot: cwd,
-    };
-  }
-  const platformInstance = await initPlatform(
-    fallbackConfig,
-    cwd,
-    uiProvider,
-    undefined,
-    {
-      assemblyHook: makeAssemblyHook(() =>
-        process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-      ),
-    },
-  );
-  platformInstance.logger.warn(
-    "Platform initialization failed, using NoOp adapters",
-    { layer: "cli", service: LOG_SERVICE },
-  );
-  return {
-    platform: platformInstance,
-    platformConfig: fallbackConfig,
-    platformRoot: cwd,
-    projectRoot: cwd,
-  };
 }

@@ -10,6 +10,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from platform_state_dump import dump_platform_state
+from scoreboard import write_scoreboards
+
+
+def write_case_scoreboards(summary_path: str | Path) -> None:
+    report_dir = Path(summary_path).parent
+    catalog = Path(__file__).resolve().parent / "scenarios"
+    if not catalog.is_dir():
+        catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
+    write_scoreboards(report_dir, catalog)
 
 
 def record_runner_failure(summary_path: str | Path, mode: str, error: Exception, phase: str) -> None:
@@ -61,6 +70,7 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
             print(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}", file=sys.stderr)
         try:
             record_runner_failure(summary_path, mode, error, "startup")
+            write_case_scoreboards(summary_path)
         except OSError as write_error:
             print(f"Journey runner startup failed; could not write result: {write_error}", file=sys.stderr)
         print(f"Journey runner startup failed: {error.__class__.__name__}: {error}", file=sys.stderr)
@@ -87,6 +97,7 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
             print(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}", file=sys.stderr)
         try:
             record_runner_failure(summary_path, mode, error, "crash")
+            write_case_scoreboards(summary_path)
         except OSError as write_error:
             print(f"Journey runner crashed; could not write result: {write_error}", file=sys.stderr)
         print(f"Journey runner crashed: {error.__class__.__name__}: {error}", file=sys.stderr)

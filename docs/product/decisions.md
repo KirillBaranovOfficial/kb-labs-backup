@@ -145,6 +145,17 @@ Cases: S-179.5, S-179.6, S-179.7, S-179.8, S-179.9, S-179.10, S-179.11, S-179.12
 
 ## 2026-10-02
 
+### System CLI commands declare startup scope
+
+Every registered system CLI command declares whether startup requires a
+registered project. Plugin commands are always project-scoped because plugins
+attach to projects (ADR-0052). Global help without a command and version are
+platform-scoped global flags. `project show` is platform-scoped and resolves an
+explicit reference itself, or looks up cwd when no reference is given; an
+unknown cwd returns `KB_PROJECT_UNKNOWN`. Scope and auth exemption remain
+independent declarations.
+Cases: S-124, S-054.17, PC-002.6.
+
 ### Platform CLI authentication gate
 
 The platform owns one deny-by-default authentication gate at each entry point. CLI wraps every system and plugin command before dispatch; only its platform-owned auth/help/version/bootstrap/diagnostic allowlist bypasses the gate. Plugins and services declare no auth metadata. The Gateway authenticates globally before routing to services, project runtimes, or plugin REST handlers; only explicit public routes pass anonymously. Manifest-declared webhook routes are authenticated by their declared webhook verifier (secret, HMAC, or custom validator), not by a user session; undeclared paths cannot bypass the gateway gate by resembling webhook routes. MCP authenticates at its transport boundary before session or tool dispatch and retains HTTP 401 for unauthenticated clients. In all entry points, authentication precedes permissions and product preconditions. Local mode is a no-op. Authenticated authorization failures use `KB_AUTH_FORBIDDEN` with the permission the Gateway checked, or a catalog message that does not name a role when no permission is available.
@@ -258,3 +269,27 @@ does not own service artifacts.
 
 Cases: S-194. This is a proposal only; confirm the command and secured-mode
 authorization surface before implementation.
+
+### 2026-10-02: CLI config absence is valid; present broken config is an error
+
+Platform and project config layers are optional. An installed platform can use
+its built-in adapter manifests when it has no user-written platform config, and
+a source checkout can omit `platform.mode`; absence does not imply malformed
+configuration or trigger a setup error. When a config file is present but
+cannot be read, parsed, or validated, CLI startup returns a shared typed config
+error before running a command. It must not silently replace that configuration
+with NoOp adapters. Adapter initialization degradation remains governed by
+S-054.2 and is not covered by this config-load decision.
+
+System logs query platform and host records without project registration.
+Project-specific workflow log views remain scoped to their selected project.
+`mcp config` stays project-scoped because its URL and result contain the
+registered project identity. `docs generate-cli-reference` stays
+project-scoped because it writes documentation into the project tree. The
+simple `hello` command is platform-scoped because it reads no project state and
+writes no project files. `config get`, `config set`, and `config show` remain
+project-scoped while g50 resolves platform/project config targeting; a future
+platform-target mode should be explicit rather than inferred from cwd.
+
+Cases: PC-002.7, S-003.7, S-054.2, S-054.18, S-199.6, S-201.1–S-201.2,
+S-203.7–S-203.8.

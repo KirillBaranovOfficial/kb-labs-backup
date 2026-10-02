@@ -73,6 +73,7 @@ describe('defineSystemCommand', () => {
     it('should create a command with correct metadata', () => {
       const command = defineSystemCommand({
         name: 'test-cmd',
+        scope: 'project',
         description: 'Test command',
         longDescription: 'Long description',
         category: 'testing',
@@ -99,6 +100,7 @@ describe('defineSystemCommand', () => {
     it('should default category to "system"', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -110,6 +112,7 @@ describe('defineSystemCommand', () => {
     it('should default aliases to empty array', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -121,6 +124,7 @@ describe('defineSystemCommand', () => {
     it('should default examples to empty array', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -134,6 +138,7 @@ describe('defineSystemCommand', () => {
     it('should convert flag schema to FlagDefinition[]', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {
           name: { type: 'string', description: 'Name', required: true },
@@ -179,6 +184,7 @@ describe('defineSystemCommand', () => {
     it('should handle choices for string flags', () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {
           mode: { type: 'string', choices: ['dev', 'prod'] as const },
@@ -197,6 +203,7 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler,
@@ -222,6 +229,7 @@ describe('defineSystemCommand', () => {
     it('should return 0 for successful CommandResult', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true, data: 'success' }),
@@ -234,6 +242,7 @@ describe('defineSystemCommand', () => {
     it('should return 1 for failed CommandResult', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: false, error: 'failed' }),
@@ -246,6 +255,7 @@ describe('defineSystemCommand', () => {
     it('should return numeric exit code directly', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => 42,
@@ -258,6 +268,7 @@ describe('defineSystemCommand', () => {
     it('should handle synchronous handlers', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: () => ({ ok: true }),
@@ -274,6 +285,7 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {
           name: { type: 'string', required: true },
@@ -292,6 +304,7 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {
           name: { type: 'string', required: true },
@@ -314,6 +327,7 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {
           count: { type: 'number', default: 10 },
@@ -336,6 +350,7 @@ describe('defineSystemCommand', () => {
     it('should handle handler errors', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => {
@@ -352,6 +367,7 @@ describe('defineSystemCommand', () => {
     it('should log errors to platform logger', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => {
@@ -367,6 +383,7 @@ describe('defineSystemCommand', () => {
     it('should output error in JSON mode', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => {
@@ -387,6 +404,7 @@ describe('defineSystemCommand', () => {
     it('should accept analytics config (legacy)', async () => {
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         analytics: {
@@ -410,6 +428,7 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {
           name: { type: 'string' },
@@ -436,6 +455,7 @@ describe('defineSystemCommand', () => {
 
       const command = defineSystemCommand({
         name: 'test',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler,
@@ -451,6 +471,7 @@ describe('defineSystemCommand', () => {
     it('should log command execution', async () => {
       const command = defineSystemCommand({
         name: 'test-cmd',
+        scope: 'project',
         description: 'Test',
         flags: {},
         handler: async () => ({ ok: true }),
@@ -471,6 +492,7 @@ describe('defineSystemCommandGroup', () => {
   it('should create a command group', () => {
     const cmd1 = defineSystemCommand({
       name: 'cmd1',
+      scope: 'project',
       description: 'Command 1',
       flags: {},
       handler: async () => ({ ok: true }),
@@ -478,6 +500,7 @@ describe('defineSystemCommandGroup', () => {
 
     const cmd2 = defineSystemCommand({
       name: 'cmd2',
+      scope: 'project',
       description: 'Command 2',
       flags: {},
       handler: async () => ({ ok: true }),

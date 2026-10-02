@@ -15,7 +15,7 @@ export type {
   RouteResult,
   RegistryDiagnostics,
 } from "./registry/trie-router";
-export { registerBuiltinCommands } from "./utils/register";
+export { registerBuiltinCommands, registerBuiltinSystemCommands } from "./utils/register";
 export * from "./utils/help-generator";
 export { generateExamples, type ExampleCase } from "./utils/generate-examples";
 export { TimingTracker } from "@kb-labs/shared-cli-ui";

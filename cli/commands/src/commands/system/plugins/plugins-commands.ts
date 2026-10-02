@@ -28,6 +28,7 @@ type GroupedCommands = Record<string, RegisteredCommand[]>;
 
 export const pluginsCommands = defineSystemCommand<PluginsCommandsFlags, PluginsCommandsResult>({
   name: 'commands',
+  scope: 'project',
   description: 'Show all plugin commands with their real invocation syntax',
   category: 'marketplace',
   examples: generateExamples('commands', 'marketplace', [

@@ -102,6 +102,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
 
     const command = defineSystemCommand({
       name: 'test',
+      scope: 'project',
       description: 'Test',
       flags: {},
       handler,
@@ -138,6 +139,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
 
     const command = defineSystemCommand({
       name: 'test',
+      scope: 'project',
       description: 'Test',
       flags: {},
       handler,
@@ -178,6 +180,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
 
     const command = defineSystemCommand({
       name: 'test',
+      scope: 'project',
       description: 'Test',
       flags: {},
       handler,
@@ -214,6 +217,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
 
     const command = defineSystemCommand({
       name: 'test',
+      scope: 'project',
       description: 'Test',
       flags: {},
       handler,
@@ -240,6 +244,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
 
     const command = defineSystemCommand({
       name: 'test',
+      scope: 'project',
       description: 'Test',
       flags: {},
       handler,

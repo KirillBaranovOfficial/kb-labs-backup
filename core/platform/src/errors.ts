@@ -83,3 +83,19 @@ export class AdapterCredentialsMissingError extends Error {
     Object.setPrototypeOf(this, AdapterCredentialsMissingError.prototype);
   }
 }
+
+/** A present platform configuration layer could not be loaded or validated. */
+export class PlatformConfigError extends Error {
+  public readonly configPath: string;
+  public readonly reason: 'read' | 'parse' | 'invalid';
+  public readonly detail: string;
+
+  constructor(configPath: string, reason: 'read' | 'parse' | 'invalid', detail: string) {
+    super(`Platform configuration ${configPath} failed to ${reason}: ${detail}`);
+    this.name = 'PlatformConfigError';
+    this.configPath = configPath;
+    this.reason = reason;
+    this.detail = detail;
+    Object.setPrototypeOf(this, PlatformConfigError.prototype);
+  }
+}

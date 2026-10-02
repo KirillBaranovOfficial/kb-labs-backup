@@ -3,6 +3,7 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { PlatformConfigError } from '@kb-labs/core-platform';
 import { loadEffectiveConfig as resolveEffectiveConfig } from '../api/effective-config';
 
 const TEST_PROJECT_ID = 'prj_effective_test';
@@ -402,7 +403,26 @@ describe('loadEffectiveConfig — diagnostics', () => {
 
   it('rejects a malformed platform-owned project settings document', async () => {
     await writeProjectConfig(c.project, '{ not json');
-    await expect(loadEffectiveConfig(c.project)).rejects.toThrow();
+    await expect(loadEffectiveConfig(c.project)).rejects.toMatchObject({
+      name: 'PlatformConfigError', reason: 'parse',
+      configPath: path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'config.jsonc'),
+    });
+  });
+
+  it('maps unreadable project settings and overlays to typed read errors', async () => {
+    const settingsPath = path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'config.jsonc');
+    await fsp.mkdir(settingsPath, { recursive: true });
+    await expect(loadEffectiveConfig(c.project)).rejects.toMatchObject({
+      name: 'PlatformConfigError', reason: 'read', configPath: settingsPath,
+    });
+
+    await fsp.rm(settingsPath, { recursive: true });
+    await writeProjectConfig(c.project, '{}');
+    const overlayPath = path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'overlays', 'unreadable.jsonc');
+    await fsp.mkdir(overlayPath, { recursive: true });
+    await expect(loadEffectiveConfig(c.project)).rejects.toMatchObject({
+      name: 'PlatformConfigError', reason: 'read', configPath: overlayPath,
+    });
   });
 
   // case: S-204.8
@@ -411,29 +431,29 @@ describe('loadEffectiveConfig — diagnostics', () => {
     expect(await loadEffectiveConfig(c.project)).toBeNull();
   });
 
-  it('reports CONFIG_NOT_OBJECT when platform top-level is an array', async () => {
+  it('rejects CONFIG_NOT_OBJECT when platform top-level is an array', async () => {
     await writePlatformConfig(c.platform, '[1,2,3]');
-    const res = await loadEffectiveConfig(c.project, { platformRoot: c.platform });
-    expect(res!.diagnostics.some((d) => d.code === 'CONFIG_NOT_OBJECT')).toBe(true);
+    await expect(loadEffectiveConfig(c.project, { platformRoot: c.platform })).rejects.toMatchObject({
+      name: 'PlatformConfigError', reason: 'invalid',
+    });
   });
 
-  it('reports OVERLAY_NOT_OBJECT for non-object overlay', async () => {
+  it('rejects OVERLAY_NOT_OBJECT for non-object overlay', async () => {
     await writeProjectConfig(c.project, '{}');
     await writeOverlay(c.project, 'bad.jsonc', '[1,2,3]');
-    const res = await loadEffectiveConfig(c.project);
-    expect(res!.diagnostics.some((d) => d.code === 'OVERLAY_NOT_OBJECT')).toBe(true);
-    // Bad overlay must not poison the result.
-    expect(res!.data).toEqual({});
+    await expect(loadEffectiveConfig(c.project)).rejects.toMatchObject({
+      name: 'PlatformConfigError', reason: 'invalid',
+    });
   });
 
-  it('skips malformed overlay but applies the rest', async () => {
+  it('rejects a malformed overlay instead of applying a partial config', async () => {
     await writeProjectConfig(c.project, '{"v":0}');
     await writeOverlay(c.project, 'a.jsonc', '{"v":1}');
     await writeOverlay(c.project, 'b.jsonc', '{ broken');
     await writeOverlay(c.project, 'c.jsonc', '{"v":3}');
-    const res = await loadEffectiveConfig(c.project);
-    expect(res!.diagnostics.some((d) => d.code === 'JSON_PARSE_FAILED')).toBe(true);
-    expect(res!.data.v).toBe(3); // c.jsonc still applied after b.jsonc was skipped
+    await expect(loadEffectiveConfig(c.project)).rejects.toMatchObject({
+      name: 'PlatformConfigError', reason: 'parse',
+    });
   });
 
   it('emits no diagnostics on the happy path', async () => {
@@ -444,20 +464,18 @@ describe('loadEffectiveConfig — diagnostics', () => {
     expect(res!.diagnostics).toEqual([]);
   });
 
-  it('aggregates diagnostics across multiple layers', async () => {
+  it('rejects the first invalid layer when multiple layers contain errors', async () => {
     await writePlatformConfig(c.platform, '{ bad platform');
     await writeOverlay(c.project, 'bad.jsonc', '{ broken');
-    const res = await loadEffectiveConfig(c.project, { platformRoot: c.platform });
-    const codes = res!.diagnostics.map((d) => d.code);
-    expect(codes).toContain('JSON_PARSE_FAILED');
-    expect(codes).toContain('JSON_PARSE_FAILED');
+    await expect(loadEffectiveConfig(c.project, { platformRoot: c.platform })).rejects.toBeInstanceOf(PlatformConfigError);
   });
 
-  it('empty overlay file is reported as JSON_PARSE_FAILED, not silent', async () => {
+  it('rejects an empty overlay file as invalid JSON', async () => {
     await writeProjectConfig(c.project, '{}');
     await writeOverlay(c.project, 'empty.jsonc', '');
-    const res = await loadEffectiveConfig(c.project);
-    expect(res!.diagnostics.some((d) => d.code === 'JSON_PARSE_FAILED')).toBe(true);
+    await expect(loadEffectiveConfig(c.project)).rejects.toMatchObject({
+      name: 'PlatformConfigError', reason: 'parse',
+    });
   });
 });
 

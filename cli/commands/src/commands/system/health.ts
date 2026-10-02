@@ -31,6 +31,7 @@ type HealthResult = HealthSuccess | HealthFailure;
 
 export const health = defineSystemCommand<HealthFlags, HealthResult>({
   name: 'health',
+  scope: 'platform',
   description: 'Report overall CLI health snapshot',
   longDescription: 'Shows the kb.health/1 snapshot shared with REST and Studio.',
   category: 'info',

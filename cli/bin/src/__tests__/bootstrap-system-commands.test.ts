@@ -71,6 +71,7 @@ describe('Bootstrap System Commands', () => {
     // Create a mock system command
     mockSystemCommand = {
       name: 'test-system',
+        scope: 'project',
       describe: 'Test system command',
       category: 'system',
       aliases: [],
@@ -236,6 +237,7 @@ describe('Bootstrap System Commands', () => {
     it('should return exit code from system command', async () => {
       const exitingCommand: Command = {
         name: 'test-exit',
+        scope: 'project',
         describe: 'Test exit codes',
         category: 'system',
         aliases: [],
@@ -288,6 +290,7 @@ describe('Bootstrap System Commands', () => {
     it('should handle system command errors gracefully', async () => {
       const errorCommand: Command = {
         name: 'test-error',
+        scope: 'project',
         describe: 'Test error handling',
         category: 'system',
         aliases: [],
@@ -400,6 +403,7 @@ describe('Bootstrap System Commands', () => {
     it('should provide pure PluginContextV3 to system command (no tracker)', async () => {
       const helperCommand: Command = {
         name: 'test-helpers',
+        scope: 'project',
         describe: 'Test PluginContextV3',
         category: 'system',
         aliases: [],
@@ -459,6 +463,7 @@ describe('Bootstrap System Commands', () => {
     it('should provide all required PluginContextV3 fields', async () => {
       const validationCommand: Command = {
         name: 'test-validation',
+        scope: 'project',
         describe: 'Validate PluginContextV3 fields',
         category: 'system',
         aliases: [],

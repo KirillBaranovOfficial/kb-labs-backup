@@ -23,6 +23,7 @@ from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run
 from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status, run_local_auth_steps, run_secured_auth_steps
 from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
 from platform_state_dump import PlatformStateDumpOnce
+from scoreboard import write_scoreboards
 from invocations import (invocation_context, open_http, run_command, run_pty_command,
                          start_background_command)
 
@@ -302,6 +303,9 @@ def append_summary(passed: bool):
                 stream.write(f"tree {path}: exists={path.exists()} symlink={path.is_symlink()} target={target!r} resolved={path.resolve(strict=False)}\n")
                 if path.is_file() and path.name in {"kb", "bin.js"}:
                     stream.write(f"file {path}: {path.read_text(errors='replace')[:3000]}\n")
+    copied_catalog = Path(__file__).with_name("scenarios")
+    catalog = copied_catalog if copied_catalog.is_dir() else Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
+    write_scoreboards(report.parent, catalog)
     print("\n".join(lines))
 
 

@@ -33,6 +33,7 @@ function makeRegistry() {
 function makeSystemCmd(name: string, aliases: string[] = []): SystemCommand {
   return {
     name,
+    scope: 'project',
     describe: `System command: ${name}`,
     category: 'system',
     aliases,

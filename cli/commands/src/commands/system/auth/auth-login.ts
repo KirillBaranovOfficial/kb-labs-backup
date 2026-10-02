@@ -34,6 +34,7 @@ type LoginResult = CommandResult & {
 
 export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
   name: 'login',
+  scope: 'platform',
   description: 'Authenticate CLI with Gateway',
   longDescription:
     'Machine identity: exchange --client-id/--client-secret for JWT tokens, saved to ' +

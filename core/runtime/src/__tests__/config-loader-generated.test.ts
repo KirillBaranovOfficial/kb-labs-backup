@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
+import { PlatformConfigError } from '@kb-labs/core-platform'
 import { loadPlatformConfig } from '../config-loader.js'
 
 let tmpDir: string
@@ -126,13 +127,15 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     expect(result.platformConfig.adapterOptions?.cache).toBeUndefined()
   })
 
-  it('a malformed generated file is skipped instead of breaking the load', async () => {
+  it('rejects a malformed generated config file', async () => {
     const platformRoot = path.join(tmpDir, 'd-platform')
     const projectRoot = path.join(tmpDir, 'd-project')
     makePlatformDir(platformRoot)
     write(platformRoot, '.kb/generated/broken.json', '{ nope')
-    const result = await load(platformRoot, projectRoot)
-    expect(result.platformConfig.adapters).toEqual({})
-    expect(result.sources.generated).toBeUndefined()
+    await expect(load(platformRoot, projectRoot)).rejects.toMatchObject({
+      name: 'PlatformConfigError',
+      reason: 'parse',
+      configPath: realpathSync(path.join(platformRoot, '.kb/generated/broken.json')),
+    })
   })
 })
