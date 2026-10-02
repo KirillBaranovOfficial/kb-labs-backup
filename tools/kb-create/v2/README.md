@@ -143,7 +143,7 @@ flowchart TD
   E --> F["InstallReceipt + immutable snapshot"]
   F --> G["Render config + service graph"]
   G --> H["Verify config + host declaration, trial-run the host"]
-  H --> I["Success or LauncherError + diagnostic bundle"]
+  H --> I["Success or shared clikit result + diagnostic bundle"]
   F --> J["doctor --fix / update / uninstall / rollback (around the host)"]
 ```
 
@@ -362,15 +362,16 @@ and uses the same engine/recovery model.
 
 ## Errors, logs and diagnostics
 
-Every operation uses one redacted `LauncherError` contract:
+CLI failures use the shared `clikit/diag` diagnostic and result envelope:
 
 ```text
-code, stage(resolve|apply|verify|recover), retryable,
-message, safe cause, hint, correlation ID, safe details
+ok, error { code, message, hint, correlationId, details }
 ```
 
-The error is rendered for humans, returned through `--json` and agent
-protocol, persisted in the journal/receipt, and consumed by `doctor --fix`.
+Human mode renders the same catalogued `KB_*` code, message, hint and
+correlation ID. JSON mode returns the shared error envelope. Wrapped Go causes
+remain internal and are never serialized; unexpected causes are recorded in a
+structured local log keyed by the correlation ID.
 
 Each invocation writes a full local log. A failure additionally writes a
 redacted dossier under `.kb/diagnostics/<correlation-id>/` with resolved plan,
@@ -421,7 +422,7 @@ V2 may replace the launcher only when all are true:
 ## Delivery sequence
 
 1. Define V2 contracts and fixture catalog: request, matrix, resolved plan,
-   receipt, snapshot and `LauncherError` schemas.
+   receipt, snapshot and shared platform error schemas.
 2. Complete the V2 runtime's resolved-plan application, journal and receipt
    events; it owns execution semantics rather than adapting old state.
 3. Implement config/service graph renderer and verifier, then make offline

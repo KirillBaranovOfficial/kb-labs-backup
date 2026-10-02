@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/resolve"
@@ -16,7 +17,7 @@ import (
 type PlanResponse struct {
 	OK    bool                           `json:"ok"`
 	Plan  *contracts.ResolvedInstallPlan `json:"plan,omitempty"`
-	Error *contracts.LauncherError       `json:"error,omitempty"`
+	Error *diag.Diag                     `json:"error,omitempty"`
 }
 
 func DecodeRequest(data []byte) (contracts.InstallRequest, error) {
@@ -47,18 +48,18 @@ func PlanWith(data []byte, source catalog.Catalog, options resolve.Options) Plan
 		if strings.Contains(err.Error(), "platform root is required") {
 			code = contracts.CodeInputRequired
 		}
-		return failure(code, contracts.StageResolve, err)
+		return failure(code, err)
 	}
 	resolved, err := resolve.PlanWith(request, source, options)
 	if err != nil {
-		if typed, ok := err.(*contracts.LauncherError); ok {
+		if typed, ok := err.(*diag.Diag); ok {
 			return PlanResponse{OK: false, Error: typed}
 		}
-		return failure(contracts.CodeIncompatibleComponents, contracts.StageResolve, err)
+		return failure(contracts.CodeIncompatibleComponents, err)
 	}
 	return PlanResponse{OK: true, Plan: &resolved}
 }
 
-func failure(code string, stage contracts.ErrorStage, err error) PlanResponse {
-	return PlanResponse{OK: false, Error: &contracts.LauncherError{Code: code, Stage: stage, Message: "V2 installation plan could not be resolved", Cause: err.Error(), Hint: "correct the request or choose a compatible release set"}}
+func failure(code string, err error) PlanResponse {
+	return PlanResponse{OK: false, Error: contracts.NewDiag(code, "V2 installation plan could not be resolved", "correct the request or choose a compatible release set", err)}
 }

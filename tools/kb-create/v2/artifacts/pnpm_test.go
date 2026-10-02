@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -131,8 +132,8 @@ func TestPnpmReportsSignalTerminationAsLikelyMemoryFailure(t *testing.T) {
 		return exec.Command("sh", "-c", "kill -9 $$").Run()
 	})
 	err := (Pnpm{Root: t.TempDir(), Runner: runner}).Install([]contracts.Artifact{{ID: "a", Package: "@kb/a", Version: "1.0.0"}})
-	failure, ok := err.(*contracts.LauncherError)
-	if !ok || failure.Code != contracts.CodePackageManagerKilled || !strings.Contains(failure.Message, "likely out of memory") || !strings.Contains(failure.Message, "992.3 MiB RSS") || failure.Details["requiredAvailableMemory"] != "1.20 GiB" || failure.Details["tunedPeakMemory"] != "992.3 MiB" {
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodePackageManagerKilled || !strings.Contains(failure.Message, "likely out of memory") || !strings.Contains(failure.Message, "992.3 MiB RSS") || failure.Meta["requiredAvailableMemory"] != "1.20 GiB" || failure.Meta["tunedPeakMemory"] != "992.3 MiB" {
 		t.Fatalf("error = %#v", err)
 	}
 }

@@ -17,7 +17,7 @@ func TestPlanUsesOnlyV2JSONRequestAndCatalog(t *testing.T) {
 }
 func TestPlanReturnsStructuredFailureForBadRequest(t *testing.T) {
 	response := Plan([]byte(`not-json`), catalog.Catalog{})
-	if response.OK || response.Error == nil || response.Error.Stage != contracts.StageResolve {
+	if response.OK || response.Error == nil || response.Error.Code == "" {
 		t.Fatalf("response = %#v", response)
 	}
 }

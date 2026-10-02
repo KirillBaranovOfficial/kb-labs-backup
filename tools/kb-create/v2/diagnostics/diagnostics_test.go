@@ -1,6 +1,7 @@
 package diagnostics
 
 import (
+	"github.com/kb-labs/clikit/diag"
 	"os"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 
 func TestWriteRedactsEveryAttachableField(t *testing.T) {
 	root := t.TempDir()
-	path, err := Write(root, Dossier{CorrelationID: "c1", Stage: contracts.StageApply, Error: &contracts.LauncherError{Cause: "token=secret", Details: map[string]string{"registry": "https://secret@registry"}}, Journal: []string{"secret"}, Logs: []string{"key secret"}}, []string{"secret"})
+	path, err := Write(root, Dossier{CorrelationID: "c1", Stage: contracts.StageApply, Error: diag.New("KB_INSTALL_INPUT_REQUIRED", "input missing", diag.WithReason("token=secret"), diag.WithMeta(map[string]any{"registry": "https://secret@registry"})), Journal: []string{"secret"}, Logs: []string{"key secret"}}, []string{"secret"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"net"
 	"os"
 	"os/exec"
@@ -69,12 +70,12 @@ func newRunner(t *testing.T, ready, grace int, hostArgs ...string) fixture {
 
 func launcherCode(t *testing.T, err error) string {
 	t.Helper()
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if !errors.As(err, &typed) {
-		t.Fatalf("expected a LauncherError, got %v", err)
+		t.Fatalf("expected a Diag, got %v", err)
 	}
-	if problems := typed.Validate(); len(problems) != 0 {
-		t.Fatalf("error %s is not a valid envelope: %v", typed.Code, problems)
+	if typed.Hint == "" {
+		t.Fatalf("diagnostic %s has no hint", typed.Code)
 	}
 	return typed.Code
 }
@@ -144,8 +145,8 @@ func TestPortInUse(t *testing.T) {
 	if err := CheckPorts(plan); err == nil {
 		t.Fatal("expected early port conflict")
 	} else {
-		var typed *contracts.LauncherError
-		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Details["port"] != fmt.Sprint(f.port) || typed.Details["pid"] == "" || typed.Details["command"] == "" {
+		var typed *diag.Diag
+		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Meta["port"] != fmt.Sprint(f.port) || typed.Meta["pid"] == "" || typed.Meta["command"] == "" {
 			t.Fatalf("port diagnostic lacks owner details: %#v", err)
 		}
 	}

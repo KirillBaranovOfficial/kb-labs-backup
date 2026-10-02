@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"net"
 	"net/http"
@@ -107,7 +108,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/host/restart", s.restart)
 	mux.HandleFunc("POST /v1/update-request", s.updateRequest)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		s.fail(w, http.StatusNotFound, contracts.NewLauncherError("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request.", nil))
+		s.fail(w, http.StatusNotFound, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request.", nil))
 	})
 	return s.guard(mux)
 }
@@ -117,7 +118,7 @@ func (s *Server) handler() http.Handler {
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorized(r) {
-			s.fail(w, http.StatusUnauthorized, contracts.NewLauncherError("KB_HOST_CONTROL_UNAUTHORIZED", "The launcher control channel rejected the request token.", "Read the current token from control.json in the launcher state directory.", nil))
+			s.fail(w, http.StatusUnauthorized, contracts.NewDiag("KB_HOST_CONTROL_UNAUTHORIZED", "The launcher control channel rejected the request token.", "Read the current token from control.json in the launcher state directory.", nil))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -176,23 +177,23 @@ func (s *Server) updateRequest(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	var input UpdateRequestInput
 	if err := decoder.Decode(&input); err != nil {
-		s.fail(w, http.StatusBadRequest, contracts.NewLauncherError("KB_RUNTIME_INPUT_INVALID", "The update request body is not valid.", "Send {\"version\":\"x.y.z\"} or {\"channel\":\"stable\"}.", err))
+		s.fail(w, http.StatusBadRequest, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "The update request body is not valid.", "Send {\"version\":\"x.y.z\"} or {\"channel\":\"stable\"}.", err))
 		return
 	}
 	request, err := s.queue.Add(input)
 	if errors.Is(err, errQueueFull) {
-		s.fail(w, http.StatusTooManyRequests, contracts.NewLauncherError("KB_RUNTIME_RATE_LIMITED", "Too many update requests are waiting.", "Wait for the pending update requests to be processed.", err))
+		s.fail(w, http.StatusTooManyRequests, contracts.NewDiag("KB_RUNTIME_RATE_LIMITED", "Too many update requests are waiting.", "Wait for the pending update requests to be processed.", err))
 		return
 	}
 	if err != nil {
-		s.fail(w, http.StatusBadRequest, contracts.NewLauncherError("KB_RUNTIME_INPUT_INVALID", "The update request is not valid.", "Send exactly one of an exact version or a channel (stable, canary, experimental).", err))
+		s.fail(w, http.StatusBadRequest, contracts.NewDiag("KB_RUNTIME_INPUT_INVALID", "The update request is not valid.", "Send exactly one of an exact version or a channel (stable, canary, experimental).", err))
 		return
 	}
 	s.write(w, http.StatusAccepted, UpdateRequestResponse{OK: true, Protocol: ProtocolVersion, Request: request})
 }
 
 func (s *Server) failWith(w http.ResponseWriter, err error) {
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		status := http.StatusInternalServerError
 		if typed.Code == "KB_HOST_ALREADY_RUNNING" {
@@ -201,10 +202,11 @@ func (s *Server) failWith(w http.ResponseWriter, err error) {
 		s.fail(w, status, typed)
 		return
 	}
-	s.fail(w, http.StatusInternalServerError, contracts.NewLauncherError("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err))
+	s.fail(w, http.StatusInternalServerError, contracts.NewDiag("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err))
 }
 
-func (s *Server) fail(w http.ResponseWriter, status int, err *contracts.LauncherError) {
+func (s *Server) fail(w http.ResponseWriter, status int, err *diag.Diag) {
+	err = diag.FromError(err)
 	s.write(w, status, ErrorResponse{OK: false, Error: err})
 }
 

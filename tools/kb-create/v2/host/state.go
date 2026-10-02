@@ -3,6 +3,7 @@ package host
 import (
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -39,7 +40,7 @@ func KBHome() (string, error) {
 func StateHome() (State, error) {
 	root, err := KBHome()
 	if err != nil {
-		return State{}, contracts.NewLauncherError(contracts.CodeHostStateDirUnwritable, "Cannot resolve the launcher state directory.", "Set KB_HOME to a writable directory.", err)
+		return State{}, contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "Cannot resolve the launcher state directory.", "Set KB_HOME to a writable directory.", err)
 	}
 	return State{Dir: filepath.Join(root, "launcher")}, nil
 }
@@ -55,8 +56,8 @@ func (s State) OperationLock() string  { return filepath.Join(s.Dir, "operation.
 // Ensure creates the state directory with owner-only permissions.
 func (s State) Ensure() error { return os.MkdirAll(s.Dir, 0o700) }
 
-func (s State) unwritable(cause error) *contracts.LauncherError {
-	return contracts.NewLauncherError(contracts.CodeHostStateDirUnwritable, "Cannot write to the state directory "+s.Dir+".", "Fix the directory permissions or free disk space.", cause)
+func (s State) unwritable(cause error) *diag.Diag {
+	return contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "Cannot write to the state directory "+s.Dir+".", "Fix the directory permissions or free disk space.", cause)
 }
 
 // AcquireOperation takes the per-user lifecycle lock so two launchers never
@@ -88,13 +89,13 @@ func (s State) AcquireOperation(operation string) (func(), error) {
 			return nil, s.unwritable(err)
 		}
 		if holder, alive := s.lockHolder(); alive {
-			failure := contracts.NewLauncherError(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %d).", holder), "Wait for it to finish; if no launcher is running, remove the stale lock file "+path+".", nil)
-			failure.Details = map[string]string{"pid": strconv.Itoa(holder), "path": path}
+			failure := contracts.NewDiag(contracts.CodeOperationInProgress, fmt.Sprintf("Another launcher operation is already running (process %d).", holder), "Wait for it to finish; if no launcher is running, remove the stale lock file "+path+".", nil)
+			failure.Meta = map[string]any{"pid": strconv.Itoa(holder), "path": path}
 			return nil, failure
 		}
 		_ = os.Remove(path)
 	}
-	return nil, contracts.NewLauncherError(contracts.CodeOperationInProgress, "Another launcher operation is already running.", "Wait for it to finish; if no launcher is running, remove the stale lock file "+path+".", nil)
+	return nil, contracts.NewDiag(contracts.CodeOperationInProgress, "Another launcher operation is already running.", "Wait for it to finish; if no launcher is running, remove the stale lock file "+path+".", nil)
 }
 
 func (s State) lockHolder() (int, bool) {

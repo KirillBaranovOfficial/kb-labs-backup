@@ -22,9 +22,12 @@ def _json_command(run_command: CommandRunner, args: list[str], label: str) -> di
         value = json.loads(result.stdout)
     except json.JSONDecodeError as error:
         raise RuntimeError(f"{label}: expected JSON output") from error
-    if not isinstance(value, dict):
-        raise RuntimeError(f"{label}: expected a JSON object")
-    return value
+    if not isinstance(value, dict) or value.get("ok") is not True:
+        raise RuntimeError(f"{label}: expected a successful result envelope")
+    payload = value.get("data")
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label}: result envelope did not contain an object payload")
+    return payload
 
 
 def _log_tail(stdout: str) -> str:
@@ -100,7 +103,7 @@ def run_platform_update_steps(
         if actual != base_version:
             raise RuntimeError(f"active receipt is {actual!r}, expected version {base_version}")
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"], "initial status")
-        if status.get("ok") is not True or status.get("running") is not True or status.get("reachable") is not True:
+        if status.get("running") is not True or status.get("reachable") is not True:
             raise RuntimeError("initial kb-create status did not confirm a running, reachable host")
         before_update = _hash(config_paths[0])
         config_checkpoints["beforeUpdate"] = before_update
@@ -118,7 +121,7 @@ def run_platform_update_steps(
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(update_index),
                                           "--input", str(request_file)], "plan update")
         graph = plan.get("plan", {}).get("serviceGraph", {})
-        if plan.get("ok") is not True or graph.get("platformVersion") != updated_version:
+        if graph.get("platformVersion") != updated_version:
             raise RuntimeError(f"update plan did not resolve platform {updated_version}: {graph.get('platformVersion')!r}")
 
     journey.step("plan the newer sealed release", "platform.update", plan_new_release, cases=["S-023.2"])
@@ -129,7 +132,7 @@ def run_platform_update_steps(
                                             "--input", str(request_file)], "update platform")
         snapshot = result.get("snapshot")
         receipt = result.get("receipt")
-        if result.get("ok") is not True or not isinstance(snapshot, dict) or not snapshot.get("id"):
+        if not isinstance(snapshot, dict) or not snapshot.get("id"):
             raise RuntimeError("update did not return ok=true and a recovery snapshot ID")
         if not isinstance(receipt, dict) or receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion") != updated_version:
             raise RuntimeError(f"update receipt does not identify platform {updated_version}")
@@ -143,9 +146,12 @@ def run_platform_update_steps(
             raise RuntimeError("update result did not include its operation log path")
         snapshot_id = str(snapshot["id"])
         record_config_checkpoint("afterUpdateHostRestart")
+        human = run_command([launcher, "update", "--index", str(update_index), "--input", str(request_file)])
+        if human.returncode != 0 or "Platform update completed." not in human.stdout:
+            raise RuntimeError("human update did not show its completion summary")
 
     journey.step("update the running host and save its recovery snapshot", "platform.update", update,
-                 cases=["S-023.3", "S-023.7", "S-024.1"], details=checkpoint_details)
+                 cases=["S-023.3", "S-023.7", "S-024.1", "S-203.8"], details=checkpoint_details)
 
     def verify_updated_install() -> None:
         receipt = json.loads(receipt_path.read_text())
@@ -153,7 +159,7 @@ def run_platform_update_steps(
         if version != updated_version:
             raise RuntimeError(f"active receipt is {version!r}, expected {updated_version}")
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"], "updated status")
-        if status.get("ok") is not True or status.get("running") is not True or status.get("reachable") is not True:
+        if status.get("running") is not True or status.get("reachable") is not True:
             raise RuntimeError("kb-create status did not confirm the updated host is healthy")
         config_hash = _hash(config_paths[0])
         verified_hash = receipt.get("verification", {}).get("configSha256")
@@ -174,11 +180,12 @@ def run_platform_update_steps(
         if result.returncode != 0:
             raise RuntimeError(f"project list after update: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
         try:
-            payload = json.loads(result.stdout)
+            envelope = json.loads(result.stdout)
+            payload = envelope.get("data", {}) if isinstance(envelope, dict) else {}
         except json.JSONDecodeError as error:
             raise RuntimeError("project list after update did not return JSON") from error
-        if payload.get("ok") is not True or not isinstance(payload.get("projects"), list):
-            raise RuntimeError("project list after update did not return ok=true and a projects array")
+        if not isinstance(payload.get("projects"), list):
+            raise RuntimeError("project list after update did not return a projects payload")
 
     journey.step("run the core project list command after update", "platform.update", project_command,
                  cases=["S-023.5"])
@@ -198,7 +205,7 @@ def run_platform_update_steps(
                                             "--input", str(request_file)], "repeat update")
         receipt = result.get("receipt")
         snapshot = result.get("snapshot")
-        if result.get("ok") is not True or not isinstance(receipt, dict) or not isinstance(snapshot, dict):
+        if not isinstance(receipt, dict) or not isinstance(snapshot, dict):
             raise RuntimeError("repeat update did not return a verified receipt and snapshot")
         plan = receipt.get("plan", {})
         if plan.get("serviceGraph", {}).get("platformVersion") != updated_version:
@@ -221,17 +228,21 @@ def run_platform_update_steps(
     def rollback() -> None:
         if not snapshot_id:
             raise RuntimeError("update did not produce a snapshot ID for rollback")
+        human = run_command([launcher, "rollback", "--platform-root", root,
+                             "--snapshot", snapshot_id, "--yes"])
+        if human.returncode != 0 or "Platform rollback completed." not in human.stdout:
+            raise RuntimeError("human rollback did not show its completion summary")
         result = _json_command(run_command, [launcher, "rollback", "--platform-root", root,
                                             "--snapshot", snapshot_id, "--yes", "--json"], "rollback platform")
         snapshot = result.get("snapshot")
-        if result.get("ok") is not True or not isinstance(snapshot, dict) or not snapshot.get("id"):
+        if not isinstance(snapshot, dict) or not snapshot.get("id"):
             raise RuntimeError("rollback did not return ok=true and the restored snapshot")
         if result.get("hostRestarted") is not True or not result.get("logPath"):
             raise RuntimeError("rollback did not report host restart and an operation log")
         record_config_checkpoint("afterRollbackHostRestart")
 
     journey.step("roll back to version N with explicit non-TTY confirmation", "platform.rollback", rollback,
-                 cases=["S-024.2"], details=checkpoint_details)
+                 cases=["S-024.2", "S-203.8"], details=checkpoint_details)
 
     def reject_unknown_snapshot() -> None:
         before = receipt_path.read_bytes()
@@ -244,14 +255,14 @@ def run_platform_update_steps(
         except json.JSONDecodeError as error:
             raise RuntimeError("unknown-snapshot rollback returned non-JSON output") from error
         error = payload.get("error", {}) if isinstance(payload, dict) else {}
-        if not isinstance(error, dict) or not error.get("code") or not error.get("hint"):
+        if not isinstance(error, dict) or not error.get("code") or not error.get("hint") or not error.get("correlationId"):
             raise RuntimeError("unknown-snapshot rollback omitted its structured recovery error or hint")
         if receipt_path.read_bytes() != before:
             raise RuntimeError("unknown-snapshot rollback changed the active receipt")
         record_config_checkpoint("afterMissingSnapshotRecovery")
 
     journey.step("reject a missing snapshot without changing the active install", "platform.rollback",
-                 reject_unknown_snapshot, cases=["S-024.4"], details=checkpoint_details)
+                 reject_unknown_snapshot, cases=["S-024.4", "S-203.9"], details=checkpoint_details)
 
     def verify_rollback() -> str | None:
         receipt = json.loads(receipt_path.read_text())
@@ -259,7 +270,7 @@ def run_platform_update_steps(
         if version != base_version:
             raise RuntimeError(f"restored receipt is {version!r}, expected {base_version}")
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"], "restored status")
-        if status.get("ok") is not True or status.get("running") is not True or status.get("reachable") is not True:
+        if status.get("running") is not True or status.get("reachable") is not True:
             raise RuntimeError("kb-create status did not confirm the restored host")
         before_update = config_checkpoints.get("beforeUpdate")
         after_rollback = config_checkpoints.get("afterRollbackHostRestart")
@@ -290,19 +301,20 @@ def run_platform_update_steps(
         if command.returncode != 0:
             raise RuntimeError(f"project list after rollback: exit {command.returncode}; {' '.join(command.stdout.split())[-500:]}")
         try:
-            payload = json.loads(command.stdout)
+            envelope = json.loads(command.stdout)
+            payload = envelope.get("data", {}) if isinstance(envelope, dict) else {}
         except json.JSONDecodeError as error:
             raise RuntimeError("project list after rollback did not return JSON") from error
-        if payload.get("ok") is not True or not isinstance(payload.get("projects"), list):
-            raise RuntimeError("project list after rollback did not return ok=true and a projects array")
+        if not isinstance(payload.get("projects"), list):
+            raise RuntimeError("project list after rollback did not return a projects payload")
 
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
                  cases=["S-024.3", "S-041.4"] if verify_contract_transition else ["S-024.3"], details=checkpoint_details)
 
     def doctor() -> None:
         result = _json_command(run_command, [launcher, "doctor", "--platform-root", root, "--json"], "doctor")
-        if result.get("ok") is not True or result.get("platform", {}).get("ok") is not True:
+        if result.get("platform", {}).get("ok") is not True:
             raise RuntimeError("kb-create doctor did not report a healthy restored platform")
 
-    journey.step("diagnose the restored platform", "platform.rollback", doctor, cases=["S-024.5"])
+    journey.step("diagnose the restored platform", "platform.rollback", doctor, cases=["S-024.5", "S-203.8"])
     return journey

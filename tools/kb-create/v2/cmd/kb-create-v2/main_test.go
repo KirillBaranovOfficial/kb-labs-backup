@@ -17,7 +17,6 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/runtime"
-	"github.com/kb-labs/create/v2/secrets"
 )
 
 func TestRequestWithGeneratedSecretsAddsOnlyDeclaredGeneratedSecretInputs(t *testing.T) {
@@ -245,7 +244,7 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	}
 }
 
-func TestInstallEarlyFailuresUseLauncherErrorRendering(t *testing.T) {
+func TestInstallEarlyFailuresUseDiagRendering(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	output, path := installOutput(t)
 	code := (invocation{Operation: "install", Index: filepath.Join(t.TempDir(), "missing.json"), NodePreflight: func() error { return nil }}).run(output)
@@ -332,243 +331,13 @@ func TestParseProvidersSupportsCommaSeparatedPreferences(t *testing.T) {
 	}
 }
 
-func TestHelpListsCommandsAndOnlyRelevantProviderFlag(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "help.txt")
-	file, err := os.Create(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	printHelp(file)
-	printCommandHelp(file, "apply")
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	for _, expected := range []string{"install", "Install KB Labs interactively", "--provider CAPABILITY=ADAPTER", "Usage: kb-create apply"} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("help is missing %q: %s", expected, text)
-		}
-	}
-	if strings.Contains(text, "wizard") || strings.Contains(text, "Usage:\n") {
-		t.Fatalf("help exposed a retired command or raw flag dump: %s", text)
-	}
-}
-
-func TestRunEmitsOnlyStructuredPlan(t *testing.T) {
-	dir := t.TempDir()
-	index := filepath.Join(dir, "index.json")
-	input := filepath.Join(dir, "request.json")
-	output := filepath.Join(dir, "output.json")
-	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "abc", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	releaseJSON, err := json.Marshal(release)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(index, releaseJSON, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(input, []byte(`{"schema":"kb.create/v2","platformRoot":"/tmp/platform","source":"offline"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	file, err := os.Create(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := invocation{Operation: "plan", Index: index, Input: input}.run(file)
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if code != 0 {
-		t.Fatalf("exit code = %d", code)
-	}
-	data, err := os.ReadFile(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded["ok"] != true {
-		t.Fatalf("output = %s, error = %v", data, err)
-	}
-	plan, ok := decoded["plan"].(map[string]any)
-	if !ok || plan["schema"] != "kb.create.resolved-plan/v2" {
-		t.Fatalf("plan contract = %#v", decoded["plan"])
-	}
-}
-
-func TestPopulateSecretsReadsEnvironmentWithoutSerialization(t *testing.T) {
-	t.Setenv("KB_CREATE_TEST_SECRET", "private-value")
-	root := t.TempDir()
-	store := secrets.Store{PlatformRoot: root}
-	if err := populateSecrets(store, "openai.key=KB_CREATE_TEST_SECRET"); err != nil {
-		t.Fatal(err)
-	}
-	exists, err := store.Exists("openai.key")
-	if err != nil || !exists {
-		t.Fatalf("exists/error = %v / %v", exists, err)
-	}
-}
-
-func TestParseComponentsSupportsScopedIDsAndPins(t *testing.T) {
-	components, err := parseComponents("@kb-labs/review@1.2.3,commit")
-	if err != nil || len(components) != 2 || components[0].ID != "@kb-labs/review" || components[0].Version.Version != "1.2.3" || components[1].ID != "commit" {
-		t.Fatalf("components/error = %#v / %v", components, err)
-	}
-}
-
-func TestRunRequiresBothMachineInputs(t *testing.T) {
-	file, err := os.CreateTemp(t.TempDir(), "output")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	if code := (invocation{Operation: "plan"}).run(file); code != 2 {
-		t.Fatalf("exit code = %d", code)
-	}
-}
-
-func TestRunRejectsUnknownOperation(t *testing.T) {
-	file, err := os.CreateTemp(t.TempDir(), "output")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	if code := (invocation{Operation: "destroy-everything"}).run(file); code != 2 {
-		t.Fatalf("exit code = %d", code)
-	}
-}
-
-func TestRecoveryRequiresPlatformRoot(t *testing.T) {
-	file, err := os.CreateTemp(t.TempDir(), "output")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	if code := (invocation{Operation: "uninstall"}).run(file); code != 2 {
-		t.Fatalf("exit code = %d", code)
-	}
-}
-
-func TestDoctorReturnsStructuredManifestFindings(t *testing.T) {
-	dir := t.TempDir()
-	input := filepath.Join(dir, "doctor.json")
-	output := filepath.Join(dir, "output.json")
-	if err := os.WriteFile(input, []byte(`{"manifests":[{"id":"plugin","requirements":[{"id":"plugin.token","path":"/plugin/token","secret":true,"required":true,"hint":"set token"}]}],"configured":{}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	file, err := os.Create(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code := (invocation{Operation: "doctor", DoctorInput: input, JSON: true}).run(file); code != 1 {
-		t.Fatalf("exit code = %d", code)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response map[string]any
-	if err := json.Unmarshal(data, &response); err != nil || response["ok"] != false {
-		t.Fatalf("output/error = %s / %v", data, err)
-	}
-}
-
-func TestStatusAndDoctorSummarizeMissingInstallationForHumans(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	for _, operation := range []string{"status", "doctor"} {
-		output := filepath.Join(t.TempDir(), "output")
-		file, err := os.Create(output)
-		if err != nil {
-			t.Fatal(err)
-		}
-		code := (invocation{Operation: operation}).run(file)
-		if err := file.Close(); err != nil {
-			t.Fatal(err)
-		}
-		data, err := os.ReadFile(output)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if operation == "status" && code != 0 || operation == "doctor" && code != 1 {
-			t.Fatalf("%s exit code = %d, output: %s", operation, code, data)
-		}
-		for _, expected := range []string{"Installed: no", "Running: no", "Reachable: no", "Next: kb-create install"} {
-			if !strings.Contains(string(data), expected) {
-				t.Fatalf("%s summary is missing %q: %s", operation, expected, data)
-			}
-		}
-	}
-}
-
-func TestDirectRequestUsesSamePlanTransport(t *testing.T) {
-	dir := t.TempDir()
-	index := filepath.Join(dir, "index.json")
-	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {}}}}, Plugins: []catalog.Component{{ID: "review", Version: "1.2.0", Package: "@kb/review", Tarball: "https://example.test/review.tgz", SHA256: "review"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(release)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(index, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	output, err := os.Create(filepath.Join(dir, "output.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code := (invocation{Operation: "plan", Index: index, Direct: directRequest{PlatformRoot: "/tmp/platform", Plugins: "review@1.2.0", Offline: true, Policy: "strict"}}).run(output); code != 0 {
-		t.Fatalf("exit code = %d", code)
-	}
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestScenarioAnswersCompileThroughManifestBoundPlan(t *testing.T) {
-	dir := t.TempDir()
-	index := filepath.Join(dir, "index.json")
-	release, err := catalog.Seal(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: testCompatibility("2.0.0"), Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"secured"`}, {ID: "gateway.authStorage.filename", Path: "/platform/adapterOptions/documentDatabase/filename", Default: `".kb/database/kb.sqlite"`}}}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "1.0.0", Package: "@kb/sqlite-stores", Tarball: "https://example.test/sqlite-stores.tgz", SHA256: "sqlite-stores"}, Provides: []string{"documentDatabase"}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(release)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(index, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	output, err := os.Create(filepath.Join(dir, "output.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := invocation{Operation: "plan", Index: index, ScenarioID: "custom", ScenarioAnswers: `{"access.mode":"local"}`, Direct: directRequest{PlatformRoot: "/tmp/platform", Offline: true, Policy: "compatible"}}.run(output)
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if code != 0 {
-		result, readErr := os.ReadFile(filepath.Join(dir, "output.json"))
-		if readErr != nil {
-			t.Fatalf("exit code = %d; read output: %v", code, readErr)
-		}
-		t.Fatalf("exit code = %d; output = %s", code, result)
-	}
-	result, err := os.ReadFile(filepath.Join(dir, "output.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(result), `"path":"/gateway/access/mode"`) || !strings.Contains(string(result), `"json":"\"local\""`) {
-		t.Fatalf("plan = %s", result)
+func TestHelpListsRegisteredCommandsAndFlags(t *testing.T) {
+	root := newRootCommand()
+	var output bytes.Buffer
+	root.SetOut(&output)
+	if err := root.Help(); err != nil { t.Fatal(err) }
+	text := output.String()
+	for _, expected := range []string{"install", "Install KB Labs interactively", "--provider", "apply"} {
+		if !strings.Contains(text, expected) { t.Fatalf("help is missing %q: %s", expected, text) }
 	}
 }

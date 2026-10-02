@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"reflect"
@@ -15,7 +16,7 @@ func TestAmbiguousProviderFailsFast(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if value, ok := err.(*contracts.LauncherError); !ok || value.Code != contracts.CodeProviderAmbiguous {
+	if value, ok := err.(*diag.Diag); !ok || value.Code != contracts.CodeProviderAmbiguous {
 		t.Fatalf("%T %#v", err, err)
 	}
 }
@@ -175,7 +176,7 @@ func TestPlanAllowsMissingOptionalSecretAndRetainsWarning(t *testing.T) {
 func TestPlanStillRejectsMissingRequiredSecret(t *testing.T) {
 	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Command: "serve"}}}}, Config: []catalog.ConfigRequirement{{ID: "gateway.token", Secret: true, Required: true, Env: "GATEWAY_TOKEN", Services: []string{"gateway"}}}}}}
 	_, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, source)
-	if launcherErr, ok := err.(*contracts.LauncherError); !ok || launcherErr.Code != contracts.CodeInputRequired {
+	if launcherErr, ok := err.(*diag.Diag); !ok || launcherErr.Code != contracts.CodeInputRequired {
 		t.Fatalf("missing required secret error = %T %#v", err, err)
 	}
 }
@@ -325,7 +326,7 @@ func TestPlanCarriesServiceHealthCheckIntoServiceGraph(t *testing.T) {
 func TestPlanRejectsConflictingManifestRequirementOwnership(t *testing.T) {
 	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Config: []catalog.ConfigRequirement{{ID: "shared", Path: "/platform/shared"}}}}, Plugins: []catalog.Component{{ID: "plugin", Version: "1", Package: "@kb/plugin", SHA256: "plugin", Config: []catalog.ConfigRequirement{{ID: "shared", Path: "/plugin/shared"}}}}}
 	_, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", Plugins: []contracts.ComponentRequest{{ID: "plugin"}}}, source)
-	if value, ok := err.(*contracts.LauncherError); !ok || value.Code != contracts.CodeConfigRequired {
+	if value, ok := err.(*diag.Diag); !ok || value.Code != contracts.CodeConfigRequired {
 		t.Fatalf("error = %#v", err)
 	}
 }

@@ -66,11 +66,7 @@ func (i invocation) runDoctor(output *os.File) int {
 	}
 	if i.DoctorInput == "" {
 		if _, err := receipt.Read(i.PlatformRoot); err != nil {
-			if i.JSON {
-				write(output, map[string]any{"ok": false, "operation": "doctor", "installed": false, "running": false, "reachable": false, "next": "kb-create install"})
-			} else {
-				fmt.Fprintln(output, "Installed: no\nRunning: no\nReachable: no\nNext: kb-create install")
-			}
+			write(output, failure(contracts.CodeReceiptUnavailable, "No active installation receipt was found.", "Run `kb-create install` to create the platform, then retry `kb-create doctor`.", err))
 			return 1
 		}
 	}
@@ -117,7 +113,7 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		state, stateErr := host.StateHome()
 		if stateErr != nil {
-			write(output, map[string]any{"ok": false, "error": asLauncherError(stateErr)})
+			write(output, map[string]any{"ok": false, "error": asDiag(stateErr)})
 			return 2
 		}
 		installation := doctor.InspectInstallation(i.PlatformRoot, state)
@@ -267,12 +263,12 @@ func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int 
 	unresolvedRequiredInput := false
 	state, err := host.StateHome()
 	if err != nil {
-		write(output, map[string]any{"ok": false, "error": asLauncherError(err)})
+		write(output, map[string]any{"ok": false, "error": asDiag(err)})
 		return 2
 	}
 	release, err := state.AcquireOperation("doctor-fix")
 	if err != nil {
-		write(output, map[string]any{"ok": false, "error": asLauncherError(err)})
+		write(output, map[string]any{"ok": false, "error": asDiag(err)})
 		return 2
 	}
 	defer release()
@@ -315,7 +311,7 @@ func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int 
 		},
 	})
 	if err != nil {
-		writeLauncherFailure(output, root, correlationID, "", asLauncherError(err), nil)
+		writeDiagnosticFailure(output, root, correlationID, "", asDiag(err), nil)
 		return 1
 	}
 	fixOK := !unresolvedRequiredInput
@@ -340,21 +336,21 @@ func (i invocation) runRecover(output *os.File) int {
 	}
 	release, err := state.AcquireOperation("recover")
 	if err != nil {
-		return command.fail(1, asLauncherError(err))
+		return command.fail(1, asDiag(err))
 	}
 	defer release()
 	if runner.Spec.Recover == nil {
-		return command.fail(1, contracts.NewLauncherError(contracts.CodeRecoveryUnavailable, "The installed platform does not ship a recovery tool.", "Update the platform with \"kb-create update\", then retry.", nil))
+		return command.fail(1, contracts.NewDiag(contracts.CodeRecoveryUnavailable, "The installed platform does not ship a recovery tool.", "Update the platform with \"kb-create update\", then retry.", nil))
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	status, _ := runner.Status(ctx)
 	if _, supervised := supervisor.LivePID(state); supervised || status.State != host.StateStopped {
-		return command.fail(1, contracts.NewLauncherError(contracts.CodeRecoveryHostRunning, "Recovery needs the host to be stopped, but it is running.", "Run \"kb-create stop\", recover, then \"kb-create start\".", nil))
+		return command.fail(1, contracts.NewDiag(contracts.CodeRecoveryHostRunning, "Recovery needs the host to be stopped, but it is running.", "Run \"kb-create stop\", recover, then \"kb-create start\".", nil))
 	}
 	code, err := runner.RunTool(ctx, *runner.Spec.Recover, i.Recover.args(), os.Stdin, output, os.Stderr)
 	if err != nil {
-		return command.fail(1, contracts.NewLauncherError(contracts.CodeRecoveryFailed, "The platform's recovery tool could not be run.", "Inspect the platform installation with \"kb-create doctor\".", err))
+		return command.fail(1, contracts.NewDiag(contracts.CodeRecoveryFailed, "The platform's recovery tool could not be run.", "Inspect the platform installation with \"kb-create doctor\".", err))
 	}
 	return code
 }

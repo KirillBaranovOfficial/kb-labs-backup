@@ -3,12 +3,12 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"github.com/kb-labs/clikit/diag"
 	"os"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
 )
@@ -52,7 +52,7 @@ func TestRunPublishesControlChannelAndStopsHostOnCancel(t *testing.T) {
 	}
 	// A second supervisor for the same state home must refuse to start.
 	err := (&Supervisor{Runner: &stubRunner{}, State: state}).Run(context.Background())
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_HOST_ALREADY_RUNNING" {
 		t.Fatalf("second supervisor: %v", err)
 	}

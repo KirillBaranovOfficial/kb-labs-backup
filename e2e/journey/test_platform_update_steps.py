@@ -43,16 +43,21 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             update_count = sum(command[1] == "update" for command in self.commands)
             self.config.write_text('{"stable":true,"platform":"3.0.1"}\n')
             self._write_receipt("3.0.1")
+            if "--json" not in args:
+                stdout = "Platform update completed.\n"
+                return subprocess.CompletedProcess(args, 0, stdout, "")
             stdout = json.dumps({"ok": True, "receipt": {"plan": {"serviceGraph": {"platformVersion": "3.0.1"}, "planHash": "resolved-plan-hash"}},
                                  "snapshot": {"id": f"snapshot-{update_count}"},
                                  "hostRestarted": True, "logPath": "/logs/update.log"})
         elif args[1] == "rollback":
             if "missing-journey-snapshot" in args:
-                stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_NO_SNAPSHOT", "hint": "restore a named snapshot"}})
+                stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_NO_SNAPSHOT", "hint": "restore a named snapshot", "correlationId": "c-missing"}})
                 code = 1
             else:
                 self.config.write_text('{"stable":true}\n')
                 self._write_receipt("3.0.0")
+                if "--json" not in args:
+                    return subprocess.CompletedProcess(args, 0, "Platform rollback completed.\n", "")
                 stdout = json.dumps({"ok": True, "snapshot": {"id": "snapshot-1"},
                                      "hostRestarted": True, "logPath": "/logs/rollback.log"})
         elif args[1] == "status":
@@ -64,6 +69,11 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         else:
             code = 2
             stdout = "unexpected fake command"
+        if stdout:
+            decoded = json.loads(stdout) if stdout.startswith("{") else None
+            if isinstance(decoded, dict) and decoded.get("ok") is True and "data" not in decoded:
+                decoded = {"ok": True, "data": {key: value for key, value in decoded.items() if key != "ok"}}
+                stdout = json.dumps(decoded)
         return subprocess.CompletedProcess(args, code, stdout, "")
 
     def test_update_rollback_claims_all_steps_and_confirms_non_tty_rollback(self):
@@ -101,9 +111,10 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(checkpoints["afterRollbackHostRestart"], checkpoints["afterMissingSnapshotRecovery"])
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
         self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} |
-                         {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4"})
+                         {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.8", "S-203.9"})
         self.assertEqual([command[1] for command in self.commands], [
-            "status", "plan", "update", "status", "project", "plan", "update", "rollback", "rollback", "status", "project", "doctor",
+            "status", "plan", "update", "update", "status", "project", "plan", "update",
+            "rollback", "rollback", "rollback", "status", "project", "doctor",
         ])
         for operation in ("plan", "update"):
             command = next(args for args in self.commands if args[1] == operation)
@@ -111,6 +122,9 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         rollback = next(args for args in self.commands if args[1] == "rollback" and "missing-journey-snapshot" not in args)
         self.assertIn("--yes", rollback)
         self.assertIn("snapshot-1", rollback)
+        self.assertNotIn("--json", self.commands[3])
+        self.assertNotIn("--json", self.commands[8])
+        self.assertIn("--json", self.commands[9])
         self.assertEqual(self.user_checks, 3)
         self.assertEqual(contract_transition_checks, 2)
         self.assertIn("S-041.4", steps["verify updated receipt, config, and host status"]["cases"])
@@ -220,8 +234,8 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             result = self.fake_kb(args)
             if args[1] == "plan" and sum(command[1] == "update" for command in self.commands) > 0:
                 payload = json.loads(result.stdout)
-                payload["plan"]["planHash"] = "drifted-plan-hash"
-                payload["plan"]["scenarioStateDigest"] = "changed-state"
+                payload["data"]["plan"]["planHash"] = "drifted-plan-hash"
+                payload["data"]["plan"]["scenarioStateDigest"] = "changed-state"
                 result = subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
             return result
 
@@ -234,7 +248,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(failure["cases"], ["S-023.6"])
         self.assertIn("plan.planHash", failure["message"])
         self.assertIn("plan.scenarioStateDigest", failure["message"])
-        self.assertEqual(sum(command[1] == "update" for command in self.commands), 1)
+        self.assertEqual(sum(command[1] == "update" for command in self.commands), 2)
 
 
 if __name__ == "__main__":

@@ -182,8 +182,8 @@ func (p Pnpm) run(command string, specs ...string) error {
 	if err := runner.Run(context.Background(), log, "pnpm", args...); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() < 0 {
-			failure := contracts.NewLauncherError(contracts.CodePackageManagerKilled, "The package manager was killed, likely out of memory. The tuned install peaked at 992.3 MiB RSS (the unbounded run reached 1.14 GiB); this install requires 1.20 GiB available memory.", "Free memory, then rerun `kb-create install`.", err)
-			failure.Details = map[string]string{"requiredAvailableMemory": "1.20 GiB", "unboundedPeakMemory": "1.14 GiB", "tunedPeakMemory": "992.3 MiB"}
+			failure := contracts.NewDiag(contracts.CodePackageManagerKilled, "The package manager was killed, likely out of memory. The tuned install peaked at 992.3 MiB RSS (the unbounded run reached 1.14 GiB); this install requires 1.20 GiB available memory.", "Free memory, then rerun `kb-create install`.", err)
+			failure.Meta = map[string]any{"requiredAvailableMemory": "1.20 GiB", "unboundedPeakMemory": "1.14 GiB", "tunedPeakMemory": "992.3 MiB"}
 			return failure
 		}
 		return fmt.Errorf("pnpm %s exact artifacts: %w", command, err)

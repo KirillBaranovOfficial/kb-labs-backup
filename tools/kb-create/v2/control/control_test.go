@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"net/http"
 	"os"
@@ -178,7 +179,7 @@ func TestRestartStopsThenStarts(t *testing.T) {
 
 func TestRestartFailureUsesTheEnvelope(t *testing.T) {
 	server, runner, _ := startServer(t)
-	runner.startEr = contracts.NewLauncherError("KB_INSTALL_PORT_IN_USE", "Port 1 is used by another application.", "Free the port.", nil)
+	runner.startEr = contracts.NewDiag("KB_INSTALL_PORT_IN_USE", "Port 1 is used by another application.", "Free the port.", nil)
 	status, body, _ := call(t, server, http.MethodPost, "/v1/host/restart", server.Token(), nil, nil)
 	if status != http.StatusInternalServerError || !strings.Contains(string(body), "KB_INSTALL_PORT_IN_USE") {
 		t.Fatalf("status %d body %s", status, body)
@@ -262,7 +263,7 @@ func TestClientRoundTrip(t *testing.T) {
 		t.Fatalf("update: %+v %v", accepted, err)
 	}
 	_, err = client.RequestUpdate(context.Background(), UpdateRequestInput{})
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_RUNTIME_INPUT_INVALID" {
 		t.Fatalf("invalid update: %v", err)
 	}
@@ -278,7 +279,7 @@ func TestConnectIgnoresControlFileOfDeadLauncher(t *testing.T) {
 	data, _ := json.Marshal(File{Protocol: 1, Address: "127.0.0.1:1", Token: "t", PID: 2147483646, Version: "x"})
 	_ = os.WriteFile(state.Control(), data, 0o600)
 	_, err := Connect(state)
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_HOST_CONTROL_UNAVAILABLE" {
 		t.Fatalf("connect: %v", err)
 	}

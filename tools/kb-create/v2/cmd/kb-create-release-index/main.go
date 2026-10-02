@@ -22,7 +22,7 @@ func main() {
 	manifestRoot := flag.String("manifest-root", "", "staging root containing exact V2 package manifests")
 	flag.Parse()
 	if err := run(*input, *output, *manifestRoot); err != nil {
-		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"ok": false, "error": contracts.NewLauncherError(contracts.CodeReleaseIndexInvalid, "could not seal V2 release index", "fix the normalized manifest export before publishing the release", err)})
+		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"ok": false, "error": contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "could not seal V2 release index", "fix the normalized manifest export before publishing the release", err)})
 		os.Exit(2)
 	}
 }

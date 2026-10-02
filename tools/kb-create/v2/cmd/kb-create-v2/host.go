@@ -1,16 +1,16 @@
 package v2cli
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -45,17 +45,17 @@ type hostCommand struct {
 }
 
 // setup resolves the per-user state home and the runner of the installation.
-func (c hostCommand) setup() (*host.ProcessRunner, host.State, *contracts.LauncherError) {
+func (c hostCommand) setup() (*host.ProcessRunner, host.State, *diag.Diag) {
 	if c.PlatformRoot == "" {
-		return nil, host.State{}, contracts.NewLauncherError(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
+		return nil, host.State{}, contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
 	}
 	state, err := host.StateHome()
 	if err != nil {
-		return nil, host.State{}, asLauncherError(err)
+		return nil, host.State{}, asDiag(err)
 	}
 	runner, err := host.NewRunner(c.PlatformRoot, state)
 	if err != nil {
-		return nil, host.State{}, asLauncherError(err)
+		return nil, host.State{}, asDiag(err)
 	}
 	return runner, state, nil
 }
@@ -77,7 +77,7 @@ func (c hostCommand) run(operation string) int {
 	case "supervise":
 		return c.supervise(ctx, runner, state)
 	}
-	return c.fail(2, contracts.NewLauncherError(contracts.CodeOperationInvalid, "operation is not supported", "use start, stop, status, restart or supervise", nil))
+	return c.fail(2, contracts.NewDiag(contracts.CodeOperationInvalid, "operation is not supported", "use start, stop, status, restart or supervise", nil))
 }
 
 // hostStatus implements `status`: the host, its supervisor and the installed
@@ -85,7 +85,7 @@ func (c hostCommand) run(operation string) int {
 func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state host.State) int {
 	status, err := runner.Status(ctx)
 	if err != nil {
-		return c.fail(1, asLauncherError(err))
+		return c.fail(1, asDiag(err))
 	}
 	payload := map[string]any{"ok": true, "operation": "status", "host": status, "installed": true, "running": status.State == host.StateRunning, "reachable": status.Healthy}
 	next := "kb-create start"
@@ -111,7 +111,7 @@ func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state h
 		payload["supervisor"] = info
 	}
 	if status.State == host.StateUnhealthy {
-		return c.failWith(1, contracts.NewLauncherError("KB_HOST_UNHEALTHY", "The host responds but is unhealthy.", "Run \"kb-create restart\" or \"kb-create doctor\".", nil), payload)
+		return c.failWith(1, contracts.NewDiag("KB_HOST_UNHEALTHY", "The host responds but is unhealthy.", "Run \"kb-create restart\" or \"kb-create doctor\".", nil), payload)
 	}
 	if !c.JSON {
 		running := "no"
@@ -148,22 +148,22 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 		// Direct host: no control channel, the host is a child of this process
 		// and stops when the launcher is interrupted.
 		if err := host.RunForeground(ctx, process); err != nil {
-			return c.fail(1, asLauncherError(err))
+			return c.fail(1, asDiag(err))
 		}
 		return 0
 	}
 	status, _ := process.Status(ctx)
 	if status.State != host.StateStopped {
-		return c.fail(1, contracts.NewLauncherError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil))
+		return c.fail(1, contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil))
 	}
 	if pid, alive := supervisor.LivePID(state); alive {
-		e := contracts.NewLauncherError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil)
-		e.Details = map[string]string{"supervisorPid": fmt.Sprint(pid)}
+		e := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil)
+		e.Meta = map[string]any{"supervisorPid": fmt.Sprint(pid)}
 		return c.fail(1, e)
 	}
 	info, err := c.spawnSupervisor(ctx, process, state)
 	if err != nil {
-		return c.fail(1, asLauncherError(err))
+		return c.fail(1, asDiag(err))
 	}
 	return c.succeed(map[string]any{"ok": true, "operation": "start", "host": info}, fmt.Sprintf("host started (pid %d)", info.PID))
 }
@@ -173,25 +173,25 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 // its startup failure as a JSON envelope on stdout, captured in supervisor.log.
 func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessRunner, state host.State) (host.Info, error) {
 	if err := state.Ensure(); err != nil {
-		return host.Info{}, contracts.NewLauncherError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+state.Dir+".", "Fix the directory permissions or free disk space.", err)
+		return host.Info{}, contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+state.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	executable := c.Executable
 	if executable == "" {
 		var err error
 		if executable, err = os.Executable(); err != nil {
-			return host.Info{}, contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", err)
+			return host.Info{}, contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", err)
 		}
 	}
 	logFile, err := os.OpenFile(state.SupervisorLog(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		return host.Info{}, contracts.NewLauncherError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+state.Dir+".", "Fix the directory permissions or free disk space.", err)
+		return host.Info{}, contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+state.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	defer logFile.Close()
 	cmd := exec.Command(executable, "supervise", "--json", "--platform-root", c.PlatformRoot)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	host.ConfigureDetached(cmd)
 	if err := cmd.Start(); err != nil {
-		return host.Info{}, contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", err)
+		return host.Info{}, contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", err)
 	}
 	exited := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(exited) }()
@@ -209,10 +209,10 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 			return host.Info{}, supervisorFailure(state)
 		case <-deadline:
 			host.KillProcess(cmd.Process.Pid)
-			return host.Info{}, contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", errors.New("supervisor did not report a healthy host in time"))
+			return host.Info{}, contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", errors.New("supervisor did not report a healthy host in time"))
 		case <-ctx.Done():
 			host.KillProcess(cmd.Process.Pid)
-			return host.Info{}, contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", ctx.Err())
+			return host.Info{}, contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", ctx.Err())
 		case <-ticker.C:
 		}
 	}
@@ -223,28 +223,27 @@ func supervisorFailure(state host.State) error {
 	file, err := os.Open(state.SupervisorLog())
 	if err == nil {
 		defer file.Close()
-		scanner := bufio.NewScanner(file)
-		var last string
-		for scanner.Scan() {
-			if line := strings.TrimSpace(scanner.Text()); line != "" {
-				last = line
+		data, _ := io.ReadAll(file)
+		var parsed struct {
+			Error *diag.Diag `json:"error"`
+		}
+		for offset := 0; offset < len(data); offset++ {
+			if data[offset] != '{' {
+				continue
+			}
+			if json.Unmarshal(bytes.TrimSpace(data[offset:]), &parsed) == nil && parsed.Error != nil {
+				return parsed.Error
 			}
 		}
-		var parsed struct {
-			Error *contracts.LauncherError `json:"error"`
-		}
-		if json.Unmarshal([]byte(last), &parsed) == nil && parsed.Error != nil {
-			return parsed.Error
-		}
 	}
-	e := contracts.NewLauncherError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", errors.New("supervisor exited before the host became healthy"))
-	e.Details = map[string]string{"log": state.SupervisorLog()}
+	e := contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", errors.New("supervisor exited before the host became healthy"))
+	e.Meta = map[string]any{"log": state.SupervisorLog()}
 	return e
 }
 
 func (c hostCommand) supervise(ctx context.Context, runner host.Runner, state host.State) int {
 	if err := (&supervisor.Supervisor{Runner: runner, State: state, Version: c.Version}).Run(ctx); err != nil {
-		return c.fail(1, asLauncherError(err))
+		return c.fail(1, asDiag(err))
 	}
 	return 0
 }
@@ -252,7 +251,7 @@ func (c hostCommand) supervise(ctx context.Context, runner host.Runner, state ho
 func (c hostCommand) stop(ctx context.Context, runner host.Runner, state host.State) int {
 	result, err := halt(ctx, runner, state)
 	if err != nil {
-		return c.fail(1, asLauncherError(err))
+		return c.fail(1, asDiag(err))
 	}
 	message := "host stopped"
 	if !result.WasRunning {
@@ -307,17 +306,17 @@ func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, st
 	if client, err := control.Connect(state); err == nil {
 		response, restartErr := client.Restart(ctx)
 		if restartErr != nil {
-			return c.fail(1, asLauncherError(restartErr))
+			return c.fail(1, asDiag(restartErr))
 		}
 		return c.succeed(map[string]any{"ok": true, "operation": "restart", "stopped": response.Stopped, "host": response.Host}, "host restarted")
 	}
 	stopped, err := runner.Stop(ctx)
 	if err != nil {
-		return c.fail(1, asLauncherError(err))
+		return c.fail(1, asDiag(err))
 	}
 	info, startErr := c.spawnSupervisor(ctx, runner, state)
 	if startErr != nil {
-		return c.fail(1, asLauncherError(startErr))
+		return c.fail(1, asDiag(startErr))
 	}
 	return c.succeed(map[string]any{"ok": true, "operation": "restart", "stopped": stopped, "host": info}, "host restarted")
 }
@@ -348,12 +347,12 @@ func (h lifecycleHost) Resume(ctx context.Context) error {
 	return err
 }
 
-func asLauncherError(err error) *contracts.LauncherError {
-	var typed *contracts.LauncherError
+func asDiag(err error) *diag.Diag {
+	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		return typed
 	}
-	return contracts.NewLauncherError("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err)
+	return contracts.NewDiag("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err)
 }
 
 func (c hostCommand) succeed(payload map[string]any, human string) int {
@@ -365,11 +364,11 @@ func (c hostCommand) succeed(payload map[string]any, human string) int {
 	return 0
 }
 
-func (c hostCommand) fail(code int, failure *contracts.LauncherError) int {
+func (c hostCommand) fail(code int, failure *diag.Diag) int {
 	return c.failWith(code, failure, nil)
 }
 
-func (c hostCommand) failWith(code int, failure *contracts.LauncherError, extra map[string]any) int {
+func (c hostCommand) failWith(code int, failure *diag.Diag, extra map[string]any) int {
 	if c.JSON {
 		payload := map[string]any{"ok": false, "error": failure}
 		for key, value := range extra {
@@ -381,9 +380,6 @@ func (c hostCommand) failWith(code int, failure *contracts.LauncherError, extra 
 		return code
 	}
 	fmt.Fprintf(c.Err, "%s: %s\n", failure.Code, failure.Message)
-	if failure.Cause != "" {
-		fmt.Fprintf(c.Err, "cause: %s\n", failure.Cause)
-	}
 	fmt.Fprintf(c.Err, "hint: %s\n", failure.Hint)
 	return code
 }

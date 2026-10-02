@@ -2,6 +2,7 @@ package verify
 
 import (
 	"errors"
+	"github.com/kb-labs/clikit/diag"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,7 +27,7 @@ func writeConfig(t *testing.T, root string) {
 }
 
 func hostCode(err error) string {
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		return typed.Code
 	}

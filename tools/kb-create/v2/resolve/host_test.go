@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"github.com/kb-labs/clikit/diag"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
@@ -34,7 +35,7 @@ func TestPlanCarriesThePlatformsHost(t *testing.T) {
 
 func TestPlanRejectsAPlatformThatDeclaresNoHost(t *testing.T) {
 	_, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x"}, hostCatalog(nil))
-	launcherErr, ok := err.(*contracts.LauncherError)
+	launcherErr, ok := err.(*diag.Diag)
 	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents {
 		t.Fatalf("err = %#v", err)
 	}

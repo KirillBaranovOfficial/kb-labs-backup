@@ -112,7 +112,7 @@ func TestGoErrorCodesExistInPlatformCatalog(t *testing.T) {
 				case *ast.SelectorExpr:
 					name = function.Sel.Name
 				}
-				if name == "New" || name == "Wrap" || name == "NewLauncherError" || name == "failure" {
+				if name == "New" || name == "Wrap" || name == "failure" {
 					index := 0
 					if name == "Wrap" {
 						index = 1

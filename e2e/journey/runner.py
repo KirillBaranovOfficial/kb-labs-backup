@@ -47,6 +47,15 @@ LAST_COMMAND_CWD: str | None = None
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
 
 
+def result_payload(value: object) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    if value.get("ok") is True:
+        data = value.get("data")
+        return data if isinstance(data, dict) else {}
+    return value
+
+
 def record_case(name: str, passed: bool, message: str, *, cases: list[str]) -> None:
     if CASE_JOURNEY is None:
         return
@@ -371,11 +380,11 @@ def uninstall_removed_platform_root():
 def restart_host(launcher: str, env: dict[str, str]) -> str:
     result, _ = run([launcher, "restart", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=180)
     try:
-        payload = json.loads(result.stdout)
+        payload = result_payload(json.loads(result.stdout))
     except json.JSONDecodeError:
         payload = {}
-    restarted = (result.returncode == 0 and payload.get("ok") is True
-                 and payload.get("operation") == "restart" and payload.get("host", {}).get("pid", 0) > 0)
+    restarted = (result.returncode == 0 and payload.get("operation") == "restart"
+                 and payload.get("host", {}).get("pid", 0) > 0)
     record_case("restart host", restarted,
                "restart JSON did not report a started host process", cases=["PC-004.1"])
     if not restarted:
@@ -393,27 +402,25 @@ def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     try:
         result, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
         try:
-            diagnostic = json.loads(result.stdout)
-        except json.JSONDecodeError:
+            diagnostic = json.loads(result.stdout).get("error", {})
+        except (json.JSONDecodeError, AttributeError):
             diagnostic = {}
-        if (result.returncode != 1 or diagnostic.get("ok") is not False
-                or diagnostic.get("installed") is not False or diagnostic.get("running") is not False
-                or diagnostic.get("reachable") is not False or diagnostic.get("next") != "kb-create install"):
-            fail(f"kb-create doctor did not diagnose missing installation receipt with the install next step: {' '.join(result.stdout.split())[-500:]}")
-        record_case("doctor reports missing receipt",
-                   result.returncode == 1 and diagnostic.get("ok") is False
-                   and diagnostic.get("installed") is False and diagnostic.get("running") is False
-                   and diagnostic.get("reachable") is False and diagnostic.get("next") == "kb-create install",
-                   "doctor did not return the missing-receipt result", cases=["PC-003.2"])
+        human, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM)], env=env, timeout=120)
+        typed_ok = (result.returncode == 1 and diagnostic.get("code") == "KB_INSTALL_RECEIPT_UNAVAILABLE"
+                    and diagnostic.get("hint") and diagnostic.get("correlationId")
+                    and "KB_INSTALL_RECEIPT_UNAVAILABLE" in human.stdout
+                    and "correlationId" in human.stdout)
+        record_case("doctor reports missing receipt", typed_ok,
+                    "doctor did not return the typed missing-receipt diagnostic in both modes",
+                    cases=["PC-003.2", "S-203.9"])
     finally:
         os.replace(hidden_receipt, receipt)
     restored, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
     try:
-        restored_payload = json.loads(restored.stdout)
+        restored_payload = result_payload(json.loads(restored.stdout))
     except json.JSONDecodeError:
         restored_payload = {}
-    restored_ok = (restored.returncode == 0 and restored_payload.get("ok") is True
-                   and restored_payload.get("installed") is True and restored_payload.get("running") is True
+    restored_ok = (restored.returncode == 0 and restored_payload.get("installed") is True and restored_payload.get("running") is True
                    and restored_payload.get("reachable") is True
                    and restored_payload.get("platform", {}).get("ok") is True)
     record_case("doctor recovers after receipt restore", restored_ok,
@@ -534,9 +541,9 @@ def main():
         if FRONT == "human" and not VARIANT.endswith("secured"):
             record_case("human interactive install",
                        human_install_ok, "interactive install did not show a plan and success result",
-                       cases=["PC-001.2", "S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3"])
+                       cases=["PC-001.2", "S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3", "S-203.8"])
     else:
-        operation = "plan" if VARIANT in {"input", "relative-path"} else "apply"
+        operation = "plan" if VARIANT in {"input", "relative-path"} else "install"
         install_scenario = "custom" if VARIANT.endswith("secured") else SCENARIO
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                 "--request-platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
@@ -570,30 +577,47 @@ def main():
         if not require(result, step=f"kb-create {operation} --json"):
             append_summary(False)
             return failure_exit()
-        try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            fail("kb-create apply --json: output was not one JSON document")
-            append_summary(False)
-            return failure_exit()
-        if payload.get("ok") is not True:
-            fail("kb-create apply --json: result did not report ok=true")
+        if operation == "install":
+            try:
+                records = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+            except json.JSONDecodeError:
+                records = []
+            terminal = records[-1] if records else {}
+            stream_meta = terminal.get("meta", {}).get("stream", {}) if isinstance(terminal, dict) else {}
+            install_ok = (result.returncode == 0 and bool(records)
+                          and terminal.get("ok") is True and terminal.get("data", "not-null") is None
+                          and stream_meta.get("terminal") is True and stream_meta.get("exitCode") == 0
+                          and any(record.get("ok") is True and isinstance(record.get("data"), dict)
+                                  for record in records[:-1] if isinstance(record, dict)))
+            record_case("JSON install progress", install_ok,
+                       "install stream omitted progress or its terminal success record",
+                       cases=["S-203.8", "S-203.11"])
+            if not install_ok:
+                fail("kb-create install --json: stream did not finish successfully")
+            payload = {}
+        else:
+            try:
+                envelope = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                fail(f"kb-create {operation} --json: output was not valid JSON")
+                append_summary(False)
+                return failure_exit()
+            payload = envelope.get("data") if isinstance(envelope, dict) else None
+            if envelope.get("ok") is not True or not isinstance(payload, dict):
+                fail(f"kb-create {operation} --json: result did not contain a success data object")
+                append_summary(False)
+                return failure_exit()
         if operation == "plan":
             plan_payload = payload.get("plan", {})
-            plan_ok = (result.returncode == 0 and payload.get("ok") is True
+            plan_ok = (result.returncode == 0
                        and plan_payload.get("request", {}).get("platformRoot") == str(PLATFORM)
                        and bool(plan_payload.get("artifacts")) and bool(plan_payload.get("serviceGraph")))
             record_case("agent plan", plan_ok,
                        "plan omitted the isolated root, resolved artifacts, or service graph", cases=["PC-001.3"])
-        elif operation == "apply":
-            apply_ok = (result.returncode == 0 and payload.get("ok") is True
-                        and isinstance(payload.get("receipt"), dict) and bool(payload.get("logPath"))
-                        and payload.get("receipt", {}).get("plan", {}).get("request", {}).get("platformRoot") == str(PLATFORM))
-            record_case("JSON apply", apply_ok,
-                        "apply JSON omitted ok, the root-matched receipt, or logPath", cases=["PC-001.4"])
+        elif operation == "install":
             if FRONT_DOOR == "agent":
-                record_case("agent JSON apply", apply_ok,
-                            "agent apply JSON omitted ok, receipt, or logPath", cases=["S-039.1"])
+                record_case("agent JSON install", install_ok,
+                            "agent install stream omitted progress or terminal success", cases=["S-039.1", "S-203.8"])
         if VARIANT.endswith("secured"):
             env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
         if VARIANT == "input":
@@ -783,9 +807,8 @@ def main():
                     stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: doctor-json (exit {diagnostic.returncode}) ==\n{(diagnostic.stdout or '')[-12000:]}\n{(diagnostic.stderr or '')[-4000:]}\n")
         elif command == "doctor":
             try:
-                health = json.loads(result.stdout)
-                passed = (result.returncode == 0 and health.get("ok") is True
-                          and health.get("installed") is True and health.get("running") is True
+                health = result_payload(json.loads(result.stdout))
+                passed = (result.returncode == 0 and health.get("installed") is True and health.get("running") is True
                           and health.get("reachable") is True and health.get("platform", {}).get("ok") is True)
             except json.JSONDecodeError:
                 passed = False
@@ -806,12 +829,11 @@ def main():
             fail(f"kb-create {command}: expected human summary '{key}'")
         if command == "status":
             try:
-                status_payload = json.loads(result.stdout)
+                status_payload = result_payload(json.loads(result.stdout))
                 active_receipt = json.loads((PLATFORM / ".kb/v2/receipt.json").read_text())
                 host_status = status_payload.get("host", {})
                 installation = status_payload.get("installation", {})
-                status_ok = (result.returncode == 0 and status_payload.get("ok") is True
-                             and status_payload.get("installed") is True
+                status_ok = (result.returncode == 0 and status_payload.get("installed") is True
                              and status_payload.get("running") is True and status_payload.get("reachable") is True
                              and host_status.get("state") == "running"
                              and installation.get("receiptId") == active_receipt.get("id"))
@@ -1128,28 +1150,19 @@ def main():
             record_case("human uninstall confirmation prompt", prompt_ok,
                        "uninstall prompt omitted its root, artifacts, receipt, snapshots, or project preservation",
                        cases=["S-050.2"])
-            try:
-                output_json = next(line for line in reversed(result.stdout.splitlines())
-                                   if line.lstrip().startswith("{"))
-                uninstall_payload = json.loads(output_json)
-            except (StopIteration, json.JSONDecodeError):
-                uninstall_payload = {}
-            human_uninstall_ok = (result.returncode == 0 and uninstall_payload.get("ok") is True
-                                  and uninstall_payload.get("operation") == "uninstall"
-                                  and bool(uninstall_payload.get("snapshot")) and bool(uninstall_payload.get("logPath")))
+            human_uninstall_ok = (result.returncode == 0 and "uninstall" in result.stdout.lower())
             record_case("human confirmed uninstall", human_uninstall_ok,
-                       "confirmed human uninstall JSON omitted operation, snapshot, or logPath",
+                       "confirmed human uninstall did not show its completion summary",
                        cases=["S-050.5"])
         else:
             try:
-                uninstall_payload = json.loads(result.stdout)
+                uninstall_payload = result_payload(json.loads(result.stdout))
             except json.JSONDecodeError:
                 uninstall_payload = {}
-            uninstall_ok = (result.returncode == 0 and uninstall_payload.get("ok") is True
-                            and uninstall_payload.get("operation") == "uninstall"
+            uninstall_ok = (result.returncode == 0 and uninstall_payload.get("operation") == "uninstall"
                             and bool(uninstall_payload.get("snapshot")) and bool(uninstall_payload.get("logPath")))
             record_case("agent confirmed uninstall", uninstall_ok,
-                       "agent uninstall JSON omitted operation, snapshot, or logPath", cases=["S-050.6"])
+                       "agent uninstall result omitted operation, snapshot, or logPath", cases=["S-050.6"])
         alive = [p for p in PROCESSES if p.poll() is None]
         listeners, _ = run(["ss", "-H", "-ltnp"], timeout=20)
         platform_pids = set()

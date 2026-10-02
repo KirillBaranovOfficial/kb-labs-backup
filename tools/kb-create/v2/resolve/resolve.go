@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"maps"
 	"runtime"
 	"sort"
@@ -69,11 +70,11 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if source.Compatibility != nil {
 		if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, "", "", "", request.Policy); err != nil {
 			if request.Policy == contracts.PolicyStrict && sdkVersion != "" {
-				failure := &contracts.LauncherError{
-					Code: contracts.CodeIncompatibleComponents, Stage: contracts.StageResolve,
+				failure := &diag.Diag{
+					Code:    contracts.CodeIncompatibleComponents,
 					Message: fmt.Sprintf("strict policy requires an exact compatibility-matrix relation for platform %s and SDK %s; declared SDK range is %s", platform.Version, sdkVersion, platform.SDKRange),
 					Hint:    "Use an exact platform/SDK pair from the release matrix or choose --policy compatible.",
-					Details: map[string]string{"component": "SDK", "version": sdkVersion, "range": platform.SDKRange, "policy": string(request.Policy)},
+					Meta:    map[string]any{"component": "SDK", "version": sdkVersion, "range": platform.SDKRange, "policy": string(request.Policy)},
 				}
 				return contracts.ResolvedInstallPlan{}, failure
 			}
@@ -147,10 +148,10 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	for _, need := range requirements {
 		adapter, found, ambiguous := selectAdapter(source.Adapters, request.Adapters, request.ProviderPreferences[need.Capability], need.Capability)
 		if ambiguous {
-			return contracts.ResolvedInstallPlan{}, launcherError(contracts.CodeProviderAmbiguous, "capability "+need.Capability+" has multiple compatible adapters; specify --provider", map[string]string{"capability": need.Capability})
+			return contracts.ResolvedInstallPlan{}, resolutionDiag(contracts.CodeProviderAmbiguous, "capability "+need.Capability+" has multiple compatible adapters; specify --provider", map[string]string{"capability": need.Capability})
 		}
 		if !found {
-			return contracts.ResolvedInstallPlan{}, launcherError(contracts.CodeProviderUnresolved, "no adapter provides required capability "+need.Capability, map[string]string{"capability": need.Capability, "requiredBy": need.RequiredBy})
+			return contracts.ResolvedInstallPlan{}, resolutionDiag(contracts.CodeProviderUnresolved, "no adapter provides required capability "+need.Capability, map[string]string{"capability": need.Capability, "requiredBy": need.RequiredBy})
 		}
 		if err := compatible(adapter.PlatformRange, platform.Version, "adapter "+adapter.ID+" platform"); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
@@ -399,7 +400,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 		}
 		known[requirement.ID] = true
 		if previous, exists := owners[requirement.ID]; exists && previous != requirement.Path {
-			return nil, launcherError(contracts.CodeConfigRequired, "configuration requirement "+requirement.ID+" is declared with conflicting paths", map[string]string{"requirement": requirement.ID})
+			return nil, resolutionDiag(contracts.CodeConfigRequired, "configuration requirement "+requirement.ID+" is declared with conflicting paths", map[string]string{"requirement": requirement.ID})
 		}
 		owners[requirement.ID] = requirement.Path
 		secrets[requirement.ID] = requirement.Secret
@@ -409,10 +410,10 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 				return nil, fmt.Errorf("secret requirement %s must declare environment variable and target services", requirement.ID)
 			}
 			if supplied {
-				return nil, launcherError(contracts.CodeInputRequired, "secret "+requirement.ID+" must be supplied through the secret store", map[string]string{"requirement": requirement.ID})
+				return nil, resolutionDiag(contracts.CodeInputRequired, "secret "+requirement.ID+" must be supplied through the secret store", map[string]string{"requirement": requirement.ID})
 			}
 			if requirement.Required && !optionalRequirement(requirement) && !contains(request.SecretInputs, requirement.ID) {
-				return nil, launcherError(contracts.CodeInputRequired, "required secret input "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
+				return nil, resolutionDiag(contracts.CodeInputRequired, "required secret input "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
 			}
 			if requirement.Generate || contains(request.SecretInputs, requirement.ID) {
 				result = append(result, contracts.ConfigPatch{Owner: "manifest:" + requirement.ID, Environment: requirement.Env, Services: append([]string(nil), requirement.Services...)})
@@ -423,7 +424,7 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 			value = requirement.Default
 		}
 		if value == "" && requirement.Required && !optionalRequirement(requirement) {
-			return nil, launcherError(contracts.CodeConfigRequired, "required configuration "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
+			return nil, resolutionDiag(contracts.CodeConfigRequired, "required configuration "+requirement.ID+" is missing", map[string]string{"requirement": requirement.ID})
 		}
 		if value != "" {
 			result = append(result, contracts.ConfigPatch{Path: requirement.Path, JSON: value, Owner: "manifest:" + requirement.ID})
@@ -431,12 +432,12 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 	}
 	for id := range request.Values {
 		if !known[id] {
-			return nil, launcherError(contracts.CodeConfigRequired, "configuration "+id+" is not declared by selected manifests", map[string]string{"requirement": id})
+			return nil, resolutionDiag(contracts.CodeConfigRequired, "configuration "+id+" is not declared by selected manifests", map[string]string{"requirement": id})
 		}
 	}
 	for _, id := range request.SecretInputs {
 		if !known[id] || !secrets[id] {
-			return nil, launcherError(contracts.CodeInputRequired, "secret input "+id+" is not declared by selected manifests", map[string]string{"requirement": id})
+			return nil, resolutionDiag(contracts.CodeInputRequired, "secret input "+id+" is not declared by selected manifests", map[string]string{"requirement": id})
 		}
 	}
 	return result, nil
@@ -484,17 +485,26 @@ func incompatible(subject, value, reason string) error {
 	if value != "" {
 		label = subject + " " + value
 	}
-	return launcherError(contracts.CodeIncompatibleComponents, label+" is incompatible: "+reason, map[string]string{"subject": subject, "value": value})
+	return resolutionDiag(contracts.CodeIncompatibleComponents, label+" is incompatible: "+reason, map[string]string{"subject": subject, "value": value})
 }
 func incompatibleRange(component, version, rangeValue string) error {
 	message := component + " " + version + " is incompatible: it does not satisfy declared range " + rangeValue
-	return launcherError(contracts.CodeIncompatibleComponents, message, map[string]string{
+	return resolutionDiag(contracts.CodeIncompatibleComponents, message, map[string]string{
 		"subject": component, "value": version, "component": component,
 		"version": version, "range": rangeValue,
 	})
 }
-func launcherError(code, message string, details map[string]string) error {
-	return &contracts.LauncherError{Code: code, Stage: contracts.StageResolve, Message: message, Hint: "Choose compatible versions or pass an explicit supported provider.", Details: details}
+func resolutionDiag(code, message string, details map[string]string) error {
+	d := diag.New(code, message, diag.WithMeta(stringMap(details)))
+	d.Hint = "Choose compatible versions or pass an explicit supported provider."
+	return d
+}
+func stringMap(values map[string]string) map[string]any {
+	result := make(map[string]any, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
 }
 func hash(plan contracts.ResolvedInstallPlan) string {
 	plan.PlanHash = ""

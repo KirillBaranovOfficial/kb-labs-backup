@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 
 	"github.com/kb-labs/create/v2/contracts"
 )
@@ -53,11 +54,11 @@ type Outcome struct {
 	RecoveryPoint string
 }
 
-// Run executes op around the host. Every error is a *contracts.LauncherError.
+// Run executes op around the host. Every error is a *diag.Diag.
 func Run(ctx context.Context, host Host, op Operation) (Outcome, error) {
 	wasRunning, err := host.Halt(ctx)
 	if err != nil {
-		return Outcome{}, asLauncher(err)
+		return Outcome{}, asDiag(err)
 	}
 	outcome := Outcome{WasRunning: wasRunning}
 	// Undoing a half-done swap must not be cancelled by the interrupt that
@@ -66,12 +67,12 @@ func Run(ctx context.Context, host Host, op Operation) (Outcome, error) {
 	recoveryPoint, changeErr := op.Change(ctx, wasRunning)
 	outcome.RecoveryPoint = recoveryPoint
 	if changeErr != nil {
-		failure := contracts.NewLauncherError(contracts.CodeUpdateApplyFailed,
+		failure := contracts.NewDiag(contracts.CodeUpdateApplyFailed,
 			fmt.Sprintf("The %s could not be applied; the previous version %s was restored.", op.Name, op.PreviousVersion),
 			"Inspect the local log and the diagnostic dossier, fix the reported cause and run the command again.", changeErr)
 		if wasRunning {
 			if resumeErr := host.Resume(recovery); resumeErr != nil {
-				failure.Details = map[string]string{"hostRestart": resumeErr.Error()}
+				failure.Meta = map[string]any{"hostRestart": resumeErr.Error()}
 			}
 		}
 		return outcome, failure
@@ -91,25 +92,25 @@ func Run(ctx context.Context, host Host, op Operation) (Outcome, error) {
 	if again := host.Resume(recovery); again != nil {
 		return outcome, rollbackFailed(op, recoveryPoint, resumeErr, fmt.Errorf("the restored version does not start either: %w", again))
 	}
-	failure := contracts.NewLauncherError(contracts.CodeUpdateHostNotHealthy,
+	failure := contracts.NewDiag(contracts.CodeUpdateHostNotHealthy,
 		fmt.Sprintf("The host did not become healthy after the %s; the previous version %s was restored.", op.Name, op.PreviousVersion),
 		"Read the host log in the launcher state directory and report the correlationId.", resumeErr)
-	failure.Details = map[string]string{"snapshot": recoveryPoint}
+	failure.Meta = map[string]any{"snapshot": recoveryPoint}
 	return outcome, failure
 }
 
-func rollbackFailed(op Operation, recoveryPoint string, cause, restoreErr error) *contracts.LauncherError {
-	failure := contracts.NewLauncherError(contracts.CodeRollbackFailed,
+func rollbackFailed(op Operation, recoveryPoint string, cause, restoreErr error) *diag.Diag {
+	failure := contracts.NewDiag(contracts.CodeRollbackFailed,
 		fmt.Sprintf("The %s left the host down and the rollback did not succeed; the snapshot is at %s.", op.Name, recoveryPoint),
 		"Restore the snapshot manually and report the correlationId.", errors.Join(cause, restoreErr))
-	failure.Details = map[string]string{"snapshot": recoveryPoint}
+	failure.Meta = map[string]any{"snapshot": recoveryPoint}
 	return failure
 }
 
-func asLauncher(err error) *contracts.LauncherError {
-	var typed *contracts.LauncherError
+func asDiag(err error) *diag.Diag {
+	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		return typed
 	}
-	return contracts.NewLauncherError("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err)
+	return contracts.NewDiag("KB_RUNTIME_UNEXPECTED", "The launcher failed to process the request.", "Read the launcher log in the state directory.", err)
 }

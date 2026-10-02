@@ -26,15 +26,15 @@ type Supervisor struct {
 // A second supervisor for the same state home fails with KB_HOST_ALREADY_RUNNING.
 func (s *Supervisor) Run(ctx context.Context) error {
 	if err := s.State.Ensure(); err != nil {
-		return contracts.NewLauncherError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
+		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	if pid, ok := s.livePID(); ok {
-		e := contracts.NewLauncherError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil)
-		e.Details = map[string]string{"pid": strconv.Itoa(pid)}
+		e := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil)
+		e.Meta = map[string]any{"pid": strconv.Itoa(pid)}
 		return e
 	}
 	if err := os.WriteFile(s.State.SupervisorPID(), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
-		return contracts.NewLauncherError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
+		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	defer os.Remove(s.State.SupervisorPID())
 	if _, err := s.Runner.Start(ctx); err != nil {
@@ -43,7 +43,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version}
 	if err := server.Start(); err != nil {
 		_, _ = s.Runner.Stop(context.Background())
-		return contracts.NewLauncherError("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", err)
+		return contracts.NewDiag("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", err)
 	}
 	<-ctx.Done()
 	// Close the channel first so no restart races the shutdown stop.
