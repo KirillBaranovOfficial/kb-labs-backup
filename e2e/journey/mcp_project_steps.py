@@ -324,9 +324,13 @@ def apply_commit_plan(project_id: str, token: str, project_root: str) -> str | N
     return None
 
 
-def project_isolation(project_a: str, project_b: str, token: str) -> str | None:
+def project_isolation(project_a: str, project_b: str, project_b_root: str, token: str) -> str | None:
     if project_a == project_b:
         return "project A and project B must be distinct registered projects"
+    registered_root = Path(project_b_root)
+    if (not registered_root.is_dir() or not registered_root.is_absolute()
+            or str(registered_root.resolve()) != project_b_root):
+        return "project B registry root must be an existing canonical directory"
     status, body, _ = _request(
         f"/api/v1/projects/{project_b}/mcp",
         method="POST",

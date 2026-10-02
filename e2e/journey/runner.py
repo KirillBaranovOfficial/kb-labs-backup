@@ -965,8 +965,13 @@ def main():
         prepare_workflow_fixtures(PROJECT)
         service_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-{mode}.json")
         studio_fixture_file = service_report.with_name("studio-analytics-fixtures.json")
+        project_fixture_file = service_report.with_name(f"project-fixtures-{mode}.json")
         studio_fixture_file.unlink(missing_ok=True)
+        project_fixture_file.unlink(missing_ok=True)
         service_env["KB_JOURNEY_STUDIO_FIXTURE_FILE"] = str(studio_fixture_file)
+        service_env["KB_JOURNEY_PROJECT_FIXTURES_FILE"] = str(project_fixture_file)
+        service_env.pop("KB_JOURNEY_PROJECT_B_ID", None)
+        service_env.pop("KB_JOURNEY_PROJECT_B_ROOT", None)
         result, elapsed = run(["python3", "/opt/kb-journey/service_runner.py", "--mode", mode, "--output", str(service_report)],
                              env=service_env, timeout=900)
         TIMES[f"{mode} service journeys"] = elapsed
@@ -984,6 +989,19 @@ def main():
             # Nothing to merge workflow claims into; the failure above names the cause.
             append_summary(False)
             return failure_exit()
+        try:
+            project_fixtures = json.loads(project_fixture_file.read_text(encoding="utf-8"))
+            project_b_id = project_fixtures.get("projectBId")
+            project_b_root_value = project_fixtures.get("projectBRoot")
+            if (not isinstance(project_b_id, str) or not project_b_id
+                    or not isinstance(project_b_root_value, str)
+                    or not Path(project_b_root_value).is_absolute()
+                    or str(Path(project_b_root_value).resolve()) != project_b_root_value):
+                raise ValueError("registry result omitted a valid project B ID or canonical root")
+        except (OSError, json.JSONDecodeError, AttributeError, ValueError) as error:
+            fail(f"project B fixture handoff failed: {error}; rerun the installed journey to register its isolation project")
+        service_env["KB_JOURNEY_PROJECT_B_ID"] = project_b_id
+        service_env["KB_JOURNEY_PROJECT_B_ROOT"] = project_b_root_value
         workflow_journey = Journey(mode, f"workflow-{mode}")
         def restart_for_workflow_history() -> None:
             restart_host(launcher, env)
@@ -994,8 +1012,8 @@ def main():
             project=PROJECT,
             restart_host=restart_for_workflow_history,
         )
-        project_b_root_value = service_env.get("KB_JOURNEY_PROJECT_B_ROOT", "")
-        project_b_id = service_env.get("KB_JOURNEY_PROJECT_B_ID", "")
+        project_b_root_value = service_env["KB_JOURNEY_PROJECT_B_ROOT"]
+        project_b_id = service_env["KB_JOURNEY_PROJECT_B_ID"]
         if project_b_root_value and project_b_id:
             project_b_fixture_root = Path(project_b_root_value)
             prepare_workflow_fixtures(project_b_fixture_root)
