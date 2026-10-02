@@ -28,6 +28,7 @@ from mcp_project_steps import (
     commit_tool_schema,
     invalid_arguments,
     local_auth,
+    mcp_ux_result_contract,
     project_isolation,
     secured_auth,
     unknown_tool,
@@ -247,6 +248,8 @@ def checks(mode: str):
         yield ("project MCP commit mutation", "mcp", lambda: "BLOCKED: provide KB_JOURNEY_PROJECT_ROOT for the disposable commit fixture")
     yield ("project MCP unknown tool error", "mcp", lambda: unknown_tool(pid, auth_token()))
     yield ("project MCP invalid argument error", "mcp", lambda: invalid_arguments(pid, auth_token()))
+    yield ("MCP UX result contract from live registry", "mcp", lambda: mcp_ux_result_contract(
+        pid, auth_token(), secured=mode == "secured"))
     project_b_id = os.getenv("KB_JOURNEY_PROJECT_B_ID", "")
     if project_b_id:
         yield ("project MCP cross-project isolation", "mcp", lambda: project_isolation(pid, project_b_id, auth_token()))
@@ -359,11 +362,14 @@ def _case_claims(name: str) -> list[str]:
         "project MCP commit mutation": "S-140.2",
         "project MCP unknown tool error": "S-140.3",
         "project MCP invalid argument error": "S-140.4",
+        "MCP UX result contract from live registry": "S-203.2",
         "project MCP cross-project isolation": "S-140.5",
     }
     case_id = case_by_name.get(name)
     if name == "project MCP secured missing and invalid token rejection":
         return ["S-045.5", "S-140.6"]
+    if name == "MCP UX result contract from live registry":
+        return ["S-203.2", "S-203.6"]
     if not case_id:
         return []
     return [case_id]

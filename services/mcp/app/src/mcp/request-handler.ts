@@ -7,9 +7,9 @@
  * the SDK/transport plumbing itself is exercised by the e2e suite.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { createErrorEnvelope, type ICache, type IAnalytics } from '@kb-labs/core-platform';
+import { createErrorEnvelope, type ICache, type IAnalytics, type ILogger } from '@kb-labs/core-platform';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { filterTools, type McpTool } from './tool-builder.js';
 import { callTool, type PlatformResolver } from './tool-router.js';
@@ -19,18 +19,30 @@ import type { McpObservabilityCollector } from '../observability/collector.js';
 /** How long a per-identity tool listing stays cached. */
 export const TOOLS_CACHE_TTL_MS = 60_000;
 
-/** Build a text-only MCP tool result (the only content shape this daemon emits). */
-function textResult(text: string, isError: boolean): CallToolResult {
-  return { content: [{ type: 'text', text }], isError };
+/** Build a successful MCP tool result with shared machine data and readable text. */
+export function mcpToolSuccess(data: string): CallToolResult {
+  return { content: [{ type: 'text', text: data }], structuredContent: { ok: true, data }, isError: false };
 }
 
-function toolError(code: string, details: Record<string, string>): CallToolResult {
-  const envelope = createErrorEnvelope(code, { details });
+function errorResult(envelope: ReturnType<typeof createErrorEnvelope>): CallToolResult {
+  const correlation = envelope.correlationId ? ` (correlationId: ${envelope.correlationId})` : '';
   return {
-    content: [{ type: 'text', text: `${envelope.code}: ${envelope.message} — ${envelope.hint}` }],
-    structuredContent: { ...envelope },
+    content: [{ type: 'text', text: `${envelope.code}: ${envelope.message} — ${envelope.hint}${correlation}` }],
+    structuredContent: { ok: false, error: envelope },
     isError: true,
   };
+}
+
+export function mcpToolError(code: string, details: Record<string, string>): CallToolResult {
+  return errorResult(createErrorEnvelope(code, { details, correlationId: randomUUID() }));
+}
+
+/** Convert an unexpected MCP boundary failure to one safe, correlated result. */
+export function unexpectedMcpResult(error: unknown, logger: ILogger): CallToolResult {
+  const correlationId = randomUUID();
+  const stackError = error instanceof Error ? error : new Error(String(error));
+  logger.error('Unexpected MCP request failure', stackError, { correlationId });
+  return errorResult(createErrorEnvelope('KB_RUNTIME_UNEXPECTED', { correlationId }));
 }
 
 interface JsonSchema {
@@ -38,6 +50,7 @@ interface JsonSchema {
   required?: string[];
   properties?: Record<string, JsonSchema>;
   items?: JsonSchema;
+  additionalProperties?: boolean;
 }
 
 function matchesSchemaType(value: unknown, type: string): boolean {
@@ -70,6 +83,14 @@ function argumentError(schema: JsonSchema, value: unknown, path = ''): { path: s
         if (error) {return error;}
       }
     }
+    if (schema.additionalProperties === false) {
+      const declared = new Set(Object.keys(schema.properties ?? {}));
+      for (const key of Object.keys(objectValue)) {
+        if (!declared.has(key)) {
+          return { path: path ? `${path}.${key}` : key, expected: 'not allowed' };
+        }
+      }
+    }
   }
   if (schema.type === 'array' && Array.isArray(value) && schema.items) {
     for (const [index, item] of value.entries()) {
@@ -78,6 +99,15 @@ function argumentError(schema: JsonSchema, value: unknown, path = ''): { path: s
     }
   }
   return null;
+}
+
+export function validateToolArguments(schema: object, args: Record<string, unknown>): { path: string; expected: string } | null {
+  return argumentError(schema as JsonSchema, args);
+}
+
+export function invalidMcpToolArguments(error: { path: string; expected: string }): CallToolResult {
+  const expected = error.expected === 'required' ? 'a required value' : error.expected;
+  return mcpToolError('KB_RUNTIME_MCP_INVALID_ARGUMENTS', { argument: error.path, expected });
 }
 
 /**
@@ -163,6 +193,8 @@ export interface ExecuteToolCallArgs {
   permits: Permits | null;
   tenantId: string;
   resolvePlatform: PlatformResolver;
+  /** Request logger receives unexpected stacks with their correlation ID. */
+  logger: ILogger;
   /** Platform analytics — emits mcp.tool.call events. Optional for tests. */
   analytics?: IAnalytics | null;
   /** Observability collector — records mcp.tool.call operation. Optional for tests. */
@@ -177,34 +209,28 @@ export interface ExecuteToolCallArgs {
  * Only then is the command run via executeCommandV3.
  */
 export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallToolResult> {
-  const { name, visibleTools, permits, tenantId, resolvePlatform, analytics, collector } = args;
+  const { name, visibleTools, permits, tenantId, resolvePlatform, analytics, collector, logger } = args;
   const t0 = Date.now();
 
   if (!permits) {
-    return toolError('KB_AUTH_REQUIRED', {});
+    return mcpToolError('KB_AUTH_REQUIRED', {});
   }
 
   const tool = visibleTools.find((t) => t.name === name);
   if (!tool) {
-    return toolError('KB_RUNTIME_MCP_UNKNOWN_TOOL', { tool: name });
+    return mcpToolError('KB_RUNTIME_MCP_UNKNOWN_TOOL', { tool: name });
   }
 
   // Authoritative gate — independent of the cached visibility list. When the
   // platform supplies a real policy, a tool that became forbidden after it was
   // cached is rejected here with no server code change.
   if (!permits(tool.operationType, tool.pluginId)) {
-    return toolError('KB_AUTH_FORBIDDEN', {});
+    return mcpToolError('KB_AUTH_FORBIDDEN', {});
   }
 
-  const validationError = argumentError(tool.inputSchema as JsonSchema, args.args);
+  const validationError = validateToolArguments(tool.inputSchema, args.args);
   if (validationError) {
-    const expected = validationError.expected === 'required'
-      ? 'a required value'
-      : validationError.expected;
-    return toolError(
-      'KB_RUNTIME_MCP_INVALID_ARGUMENTS',
-      { argument: validationError.path, expected },
-    );
+    return invalidMcpToolArguments(validationError);
   }
 
   analytics?.track('mcp.tool.call.started', {
@@ -216,7 +242,7 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
   let result: Awaited<ReturnType<typeof callTool>>;
   try {
     result = await callTool(tool, args.args, tenantId, resolvePlatform);
-  } catch {
+  } catch (error) {
     const durationMs = Date.now() - t0;
     collector?.recordOp('mcp.tool.call', durationMs, false);
     analytics?.track('mcp.tool.call.completed', {
@@ -226,10 +252,7 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
       success: false,
       durationMs,
     }).catch(() => {});
-    return toolError(
-      'KB_RUNTIME_MCP_TOOL_FAILED',
-      { tool: name },
-    );
+    return unexpectedMcpResult(error, logger);
   }
 
   const durationMs = Date.now() - t0;
@@ -245,10 +268,10 @@ export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallTo
   }).catch(() => {});
 
   if (!result.success) {
-    return toolError(
+    return mcpToolError(
       'KB_RUNTIME_MCP_TOOL_FAILED',
       { tool: name, exitCode: String(result.exitCode) },
     );
   }
-  return textResult(result.output, false);
+  return mcpToolSuccess(result.output);
 }
