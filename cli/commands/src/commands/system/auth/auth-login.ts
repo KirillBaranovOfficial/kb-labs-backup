@@ -15,7 +15,7 @@
  */
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
-import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { CredentialsManager, readGatewaySuccessData, SessionManager } from '@kb-labs/cli-runtime/gateway';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 type LoginFlags = {
@@ -116,11 +116,11 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
       return { ok: false, error: msg, gatewayUrl, expiresIn: 0 };
     }
 
-    const tokenData = await tokenResponse.json() as {
+    const tokenData = await readGatewaySuccessData<{
       accessToken: string;
       refreshToken: string;
       expiresIn: number;
-    };
+    }>(tokenResponse);
 
     // Fetch profile (handle, namespaceId) via /auth/me
     let handle: string | undefined;
@@ -130,7 +130,7 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
         headers: { Authorization: `Bearer ${tokenData.accessToken}` },
       });
       if (meRes.ok) {
-        const profile = await meRes.json() as { handle?: string; namespaceId?: string };
+        const profile = await readGatewaySuccessData<{ handle?: string; namespaceId?: string }>(meRes);
         handle = profile.handle;
         namespaceId = profile.namespaceId;
       }
@@ -204,12 +204,12 @@ async function humanLogin(
     return { ok: false, error: msg, gatewayUrl, expiresIn: 0 };
   }
 
-  const loginData = await loginResponse.json() as {
+  const loginData = await readGatewaySuccessData<{
     accessToken: string;
     refreshToken: string;
     expiresIn: number;
     tenantId?: string;
-  };
+  }>(loginResponse);
 
   // Fetch profile via /auth/me for parity with the machine branch — non-fatal
   // on failure, the session is still saved without a resolved email/tenantId.
@@ -220,7 +220,7 @@ async function humanLogin(
       headers: { Authorization: `Bearer ${loginData.accessToken}` },
     });
     if (meRes.ok) {
-      const profile = await meRes.json() as { email?: string; tenantId?: string };
+      const profile = await readGatewaySuccessData<{ email?: string; tenantId?: string }>(meRes);
       profileEmail = profile.email ?? profileEmail;
       tenantId = profile.tenantId ?? tenantId;
     }

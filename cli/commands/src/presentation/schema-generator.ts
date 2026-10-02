@@ -39,6 +39,7 @@ export function generateCommandSchema(manifest: CommandManifest): object {
     ...(manifest.operationType ? { operationType: manifest.operationType } : {}),
     type: 'object',
     properties,
+    additionalProperties: false,
     ...(required.length ? { required } : {}),
     examples: manifest.examples ?? [],
   };

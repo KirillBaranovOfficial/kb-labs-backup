@@ -10,6 +10,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createErrorEnvelope, type ICache, type IAnalytics, type ILogger } from '@kb-labs/core-platform';
+import { createUxFailureResult, createUxSuccessResult } from '@kb-labs/core-platform/ux-result';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { filterTools, type McpTool } from './tool-builder.js';
 import { callTool, type PlatformResolver } from './tool-router.js';
@@ -21,14 +22,14 @@ export const TOOLS_CACHE_TTL_MS = 60_000;
 
 /** Build a successful MCP tool result with shared machine data and readable text. */
 export function mcpToolSuccess(data: string): CallToolResult {
-  return { content: [{ type: 'text', text: data }], structuredContent: { ok: true, data }, isError: false };
+  return { content: [{ type: 'text', text: data }], structuredContent: { ...createUxSuccessResult(data) }, isError: false };
 }
 
 function errorResult(envelope: ReturnType<typeof createErrorEnvelope>): CallToolResult {
   const correlation = envelope.correlationId ? ` (correlationId: ${envelope.correlationId})` : '';
   return {
     content: [{ type: 'text', text: `${envelope.code}: ${envelope.message} — ${envelope.hint}${correlation}` }],
-    structuredContent: { ok: false, error: envelope },
+    structuredContent: { ...createUxFailureResult(envelope) },
     isError: true,
   };
 }

@@ -5,7 +5,10 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { errorEnvelopeSchema, type PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { createErrorEnvelope, getCatalogEntry } from '@kb-labs/core-platform';
+import { isErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { createUxFailureResult, createUxSuccessResult, isUxResult } from '@kb-labs/core-platform/ux-result';
+import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
 
 function isPluginErrorEnvelope(err: unknown): err is PluginErrorEnvelope {
   return (
@@ -74,9 +77,26 @@ export function registerEnvelopeMiddleware(
       return payload;
     }
 
-    // If payload is already an envelope (has 'ok' field), return as is
-    if (parsedPayload && typeof parsedPayload === 'object' && 'ok' in parsedPayload) {
+    // Pass through a valid UX result on a successful HTTP response.
+    if (reply.statusCode < 400 && isUxResult(parsedPayload)) {
       return payload;
+    }
+
+    if (reply.statusCode >= 400) {
+      const correlationId = String(request.id || '');
+      const rawError = parsedPayload && typeof parsedPayload === 'object' && 'error' in parsedPayload
+        ? parsedPayload.error
+        : undefined;
+      const typedError = isErrorEnvelope(rawError) ? rawError : undefined;
+      const code = typedError && getCatalogEntry(typedError.code)
+        ? typedError.code
+        : reply.statusCode === 401 ? 'KB_AUTH_REQUIRED'
+          : reply.statusCode === 403 ? 'KB_AUTH_FORBIDDEN'
+            : reply.statusCode === 400 ? 'KB_RUNTIME_INPUT_INVALID' : 'KB_RUNTIME_UNEXPECTED';
+      const error = typedError && getCatalogEntry(typedError.code)
+        ? { ...typedError, correlationId: typedError.correlationId || correlationId }
+        : createErrorEnvelope(code, { correlationId });
+      return JSON.stringify(createUxFailureResult(error));
     }
 
     // Skip raw OpenAPI spec — marked by x-openapi-spec header set in shared-http
@@ -84,9 +104,7 @@ export function registerEnvelopeMiddleware(
       return payload;
     }
 
-    // Wrap all non-streaming responses in envelope
-    // Note: Even 4xx/5xx responses with data should be wrapped with ok: true
-    // (e.g., 503 for health/ready still contains useful data)
+    // Wrap all successful non-streaming responses in the shared envelope.
 
     // Handle empty payloads
     let dataToWrap = parsedPayload;
@@ -96,18 +114,12 @@ export function registerEnvelopeMiddleware(
       dataToWrap = null;
     }
 
-    // For responses with data (including 4xx/5xx with payload), wrap with ok: true
-    // The HTTP status code indicates the result, but envelope.ok indicates successful request processing
-    // Only responses without payload (handled by error handler) should have ok: false
-    const envelope = {
-      ok: true as const,
-      data: dataToWrap,
-      meta: {
+    // Wrap successful route payloads at the final response boundary.
+    const envelope = createUxSuccessResult(dataToWrap, {
         requestId: request.id || '',
         durationMs: reply.elapsedTime || 0,
         apiVersion: config.apiVersion,
-      },
-    };
+      });
 
     // Set Content-Type header if not set
     if (!reply.getHeader('content-type')) {
@@ -128,55 +140,35 @@ export function registerEnvelopeMiddleware(
   // and plain Errors into the canonical ErrorEnvelope { ok: false, error, meta }.
   server.setErrorHandler(async (error: unknown, request, reply) => {
     let statusCode: number;
-    let errorCode: string;
-    let message: string;
-    let details: Record<string, unknown>;
-    let cause: unknown;
-    let traceId: string | undefined;
+    let errorCode: string | undefined;
 
     if (isPluginErrorEnvelope(error)) {
       statusCode = error.http || 500;
-      errorCode = error.code || 'E_PLUGIN';
-      message = error.message || 'Plugin error';
-      details = {
-        ...(error.details ?? {}),
-        pluginId: error.meta.pluginId,
-        pluginVersion: error.meta.pluginVersion,
-        routeOrCommand: error.meta.routeOrCommand,
-        ...(error.trace ? { trace: error.trace } : {}),
-      };
-      cause = undefined;
-      traceId = undefined;
+      errorCode = error.code;
     } else {
-      const err = error as Error & { statusCode?: number; code?: string; details?: unknown; cause?: unknown; traceId?: string };
-      statusCode = err.statusCode || 500;
-      errorCode = err.code || 'E_INTERNAL';
-      message = err.message || 'Internal server error';
-      details = (err.details as Record<string, unknown>) || {};
-      cause = err.cause;
-      traceId = err.traceId;
+      const err = error instanceof Error ? error as Error & { statusCode?: number; code?: string } : undefined;
+      statusCode = err?.statusCode || 500;
+      errorCode = err?.code;
     }
 
-    reply.errorCode = errorCode;
+    const correlationId = String(request.id || '');
+    const code = errorCode && getCatalogEntry(errorCode)
+      ? errorCode
+      : statusCode === 401 ? 'KB_AUTH_REQUIRED'
+        : statusCode === 403 ? 'KB_AUTH_FORBIDDEN'
+          : statusCode === 400 ? 'KB_RUNTIME_INPUT_INVALID' : 'KB_RUNTIME_UNEXPECTED';
+    reply.errorCode = code;
 
     if (request.kbLogger) {
       request.kbLogger.error('Request error', error instanceof Error ? error : new Error(String(error)), {
-        errorCode,
+        errorCode: code,
         statusCode,
+        correlationId,
       });
     }
 
-    const errorEnvelope = errorEnvelopeSchema.parse({
-      ok: false,
-      error: { code: errorCode, message, details, cause, traceId },
-      meta: {
-        requestId: request.id,
-        durationMs: reply.elapsedTime || 0,
-        apiVersion: config.apiVersion,
-      },
-    });
+    const errorEnvelope: ErrorEnvelope = createErrorEnvelope(code, { correlationId });
 
-    reply.status(statusCode).send(errorEnvelope);
+    reply.status(statusCode).send(createUxFailureResult(errorEnvelope));
   });
 }
-

@@ -6,6 +6,7 @@
  */
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
 import { CredentialsManager } from '@kb-labs/cli-runtime/gateway';
 
 type ListFlags = {
@@ -71,7 +72,7 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
       return { ok: false, error: msg };
     }
 
-    const data = await response.json() as { webhooks: WebhookEntry[] };
+    const data = await readGatewaySuccessData<{ webhooks: WebhookEntry[] }>(response);
     const webhooks = data.webhooks ?? [];
 
     if (flags.json) {

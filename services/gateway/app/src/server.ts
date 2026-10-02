@@ -53,6 +53,7 @@ import { HostRegistry } from "./hosts/registry.js";
 import { attachGatewayWs, type SocketWsUpstream } from "./ws/gateway-ws.js";
 import { GatewayObservabilityCollector } from "./observability/collector.js";
 import { randomUUID } from "node:crypto";
+import { registerGatewayUxBoundary } from './ux-boundary.js';
 import { registerInternalRoutes } from "./internal/routes.js";
 import {
   createPressureOnRequest,
@@ -162,6 +163,7 @@ export async function createServer(
         }
       : {}),
   });
+  registerGatewayUxBoundary(app, gatewayLogger);
   if (routeObserver) {
     app.addHook("onRoute", (route) => {
       if (route.url) { routeObserver(route.method, route.url); }
