@@ -202,6 +202,36 @@ describe('commit:generate (adapter errors)', () => {
     });
   });
 
+  // case: S-054.5
+  it('returns one typed missing OpenAI key envelope through the shared result boundary', async () => {
+    vi.mocked(generateCommitPlan).mockRejectedValueOnce(new AdapterCredentialsMissingError(
+      'llm', 'OPENAI_API_KEY', 'platform.adapterOptions.llm.apiKey',
+    ));
+
+    const { ui, captured } = createCapturedUI();
+    const ctx = createMockContext({
+      ui,
+      cwd: '/project',
+      platformConfig: { platform: { adapters: { llm: '@kb-labs/adapters-openai' } } },
+    });
+    const result = await generateCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
+
+    expect(result.ok).toBe(false);
+    expect(captured.json).toHaveLength(1);
+    expect(captured.json[0]).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_ADAPTER_CREDENTIALS_MISSING',
+        message: expect.stringContaining('OPENAI_API_KEY'),
+        hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"),
+      },
+    });
+    expect(captured.json[0]).toMatchObject({ error: { hint: expect.stringContaining('No request was sent') } });
+    expect(JSON.stringify(captured.json[0])).not.toContain('test-secret-value');
+    expect(captured.errors).toHaveLength(0);
+    expect(captured.infos).toHaveLength(0);
+  });
+
   // case: S-054.8
   it('returns a typed missing OpenAI key envelope in JSON mode when OpenAI is bound', async () => {
     vi.mocked(generateCommitPlan).mockRejectedValueOnce(new AdapterCredentialsMissingError(
@@ -222,7 +252,7 @@ describe('commit:generate (adapter errors)', () => {
       error: {
         code: 'KB_ADAPTER_CREDENTIALS_MISSING',
         message: expect.stringContaining('OPENAI_API_KEY'),
-        hint: expect.stringContaining("kb config set platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"),
+        hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"),
       },
     });
     expect(captured.json[0]).toMatchObject({ error: { hint: expect.stringContaining('No request was sent') } });

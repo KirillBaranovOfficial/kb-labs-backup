@@ -236,7 +236,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"id": run_id, "status": "success"}}), "")
                 if args[:2] == ["commit", "generate"]:
                     error = {"code": "KB_ADAPTER_CREDENTIALS_MISSING", "message": "Adapter llm is missing OPENAI_API_KEY.",
-                             "hint": "Set OPENAI_API_KEY or run kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env. No request was sent."}
+                             "hint": "Set OPENAI_API_KEY or run `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env`. No request was sent."}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["mind", "search"]:
                     error = {"code": "KB_ADAPTER_NOT_CONFIGURED", "details": {"service": "vectorStore"},
