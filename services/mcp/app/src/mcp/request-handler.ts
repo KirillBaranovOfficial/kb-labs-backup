@@ -34,7 +34,10 @@ function errorResult(envelope: ReturnType<typeof createErrorEnvelope>): CallTool
 }
 
 export function mcpToolError(code: string, details: Record<string, string>): CallToolResult {
-  return errorResult(createErrorEnvelope(code, { details, correlationId: randomUUID() }));
+  const templateDetails = code === 'KB_AUTH_REQUIRED'
+    ? { gatewayUrl: '<url>', ...details }
+    : details;
+  return errorResult(createErrorEnvelope(code, { details: templateDetails, correlationId: randomUUID() }));
 }
 
 /** Convert an unexpected MCP boundary failure to one safe, correlated result. */

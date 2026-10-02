@@ -1,6 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { ICache } from '@kb-labs/core-platform';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { sendAuthError } from './error-response.js';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
 import type { JwtConfig } from '@kb-labs/gateway-auth';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
@@ -144,7 +144,7 @@ export function createAuthMiddleware(
     }
     if (routePath.startsWith('/internal/')) {
       if (options.internalSecret && request.headers['x-internal-secret'] === options.internalSecret) { return; }
-      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
+      return sendAuthError(reply, 401);
     }
     // These routes are admitted only from webhook manifest declarations. The
     // registered platform handler verifies the declaration's auth before dispatch.
@@ -165,10 +165,10 @@ export function createAuthMiddleware(
     if (request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') { return; }
     if (!token) {
       if (registryPublicRead) { return; }
-      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
+      return sendAuthError(reply, 401);
     }
     const authContext = await resolveToken(token, cache, jwtConfig).catch(() => null);
-    if (!authContext) { return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') }); }
+    if (!authContext) { return sendAuthError(reply, 401); }
     request.authContext = authContext;
     attachGatewayIdentity(request, options.internalSecret);
   };

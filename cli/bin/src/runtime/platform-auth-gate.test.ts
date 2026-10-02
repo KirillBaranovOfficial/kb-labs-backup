@@ -12,7 +12,7 @@ describe('platform authentication gate', () => {
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
       message: 'Authentication is required.',
-      hint: 'Run "kb auth login".',
+      hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
     } });
     expect(handler).not.toHaveBeenCalled();
   });
@@ -26,9 +26,21 @@ describe('platform authentication gate', () => {
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
       message: 'Authentication is required.',
-      hint: 'Run "kb auth login".',
+      hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
     } });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  // case: S-031.4
+  it('uses the configured Gateway URL in the login recovery command', async () => {
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'secured', commandPath: 'auth tokens', commandKind: 'system', hasAuth: false,
+      gatewayUrl: 'https://gateway.example.test',
+    }, async () => 0);
+    expect(result).toMatchObject({ error: {
+      code: 'KB_AUTH_REQUIRED',
+      hint: 'Run "kb auth login --gateway-url https://gateway.example.test --email <email> --password <password>".',
+    } });
   });
 
   // case: S-041.8

@@ -34,6 +34,8 @@ export function mcpUnauthenticatedResponse(): {
 } {
   return {
     statusCode: 401,
-    body: { ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', { correlationId: randomUUID() }) },
+    body: { ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', {
+      details: { gatewayUrl: '<url>' }, correlationId: randomUUID(),
+    }) },
   };
 }

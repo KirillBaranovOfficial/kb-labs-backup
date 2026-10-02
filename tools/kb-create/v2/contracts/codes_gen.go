@@ -5,6 +5,7 @@ package contracts
 var launcherCodes = map[string]CodeInfo{
 	"KB_ADAPTER_CREDENTIALS_MISSING":         {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_ADAPTER_NOT_CONFIGURED":              {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
+	"KB_ADAPTER_NOT_INSTALLED":               {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_ADAPTER_PROJECT_SCOPE":               {Area: ErrorArea("plugin"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_AUTH_CLOCK_SKEW":                     {Area: ErrorArea("auth"), Stage: ErrorStage("run"), Retryable: false},
 	"KB_AUTH_FORBIDDEN":                      {Area: ErrorArea("auth"), Stage: ErrorStage("run"), Retryable: false},
@@ -108,6 +109,7 @@ var launcherCodes = map[string]CodeInfo{
 	"KB_PROJECT_REGISTRY_CORRUPT":            {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: false},
 	"KB_PROJECT_REGISTRY_LOCKED":             {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: true},
 	"KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED": {Area: ErrorArea("project"), Stage: ErrorStage("add-project"), Retryable: false},
+	"KB_PROJECT_RUNTIME_IDENTITY_MISMATCH":   {Area: ErrorArea("project"), Stage: ErrorStage("start"), Retryable: false},
 	"KB_PROJECT_RUNTIME_LIMIT":               {Area: ErrorArea("project"), Stage: ErrorStage("start"), Retryable: false},
 	"KB_PROJECT_RUNTIME_START_FAILED":        {Area: ErrorArea("project"), Stage: ErrorStage("start"), Retryable: true},
 	"KB_PROJECT_UNKNOWN":                     {Area: ErrorArea("project"), Stage: ErrorStage("run"), Retryable: false},

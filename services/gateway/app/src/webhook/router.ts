@@ -28,7 +28,7 @@ import { globalDispatcher } from '../hosts/dispatcher.js';
 import { WebhookSecretStore } from './secret-store.js';
 import { WebhookIdempotencyStore } from './idempotency-store.js';
 import { verifyWebhookAuth, type WebhookAuthRequest } from './auth.js';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { sendAuthError } from '../auth/error-response.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -221,7 +221,7 @@ async function handleWebhook({
 
     const authResult = await verifyWebhookAuth(decl.auth, authReq, secretStore, authBackend, pluginRoot);
     if (!authResult.valid) {
-      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
+      return sendAuthError(reply, 401);
     }
 
     if (!namespaceId) {

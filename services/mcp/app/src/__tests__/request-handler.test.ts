@@ -345,7 +345,7 @@ describe('executeToolCall', () => {
     });
     expect(unauthenticated).toMatchObject({
       isError: true,
-      structuredContent: { ok: false, error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' } },
+      structuredContent: { ok: false, error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".' } },
     });
 
     const forbidden = await executeToolCall({

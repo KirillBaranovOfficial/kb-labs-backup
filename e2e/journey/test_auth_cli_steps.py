@@ -21,15 +21,15 @@ class CliAuthJourneyTests(unittest.TestCase):
             json.dumps({"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED",
                 "message": "Authentication is required.",
-                "hint": 'Run "kb auth login".',
+                "hint": 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
             }}), "",
         )
         assert_platform_auth_required(result, ["config", "show", "--json"])
 
         for error in (
-            {"code": "KB_AUTH_REQUIRED", "message": "Different message.", "hint": 'Run "kb auth login".'},
+            {"code": "KB_AUTH_REQUIRED", "message": "Different message.", "hint": 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".'},
             {"code": "KB_AUTH_REQUIRED", "message": "Authentication is required.", "hint": "Different hint."},
-            {"code": "OTHER_ERROR", "message": "Authentication is required.", "hint": 'Run "kb auth login".'},
+            {"code": "OTHER_ERROR", "message": "Authentication is required.", "hint": 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".'},
         ):
             malformed = subprocess.CompletedProcess(
                 ["kb", "config", "show", "--json"], 1,

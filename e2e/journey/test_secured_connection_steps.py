@@ -30,8 +30,9 @@ class SecuredConnectionContractTests(unittest.TestCase):
             "error": "invalid_password_reset",
             "message": "This reset link is invalid, expired, or already used",
         })
-        validate_case_response("S-005.5", 403,
-                               {"error": "Forbidden", "message": "Permission denied: users:read"})
+        validate_case_response("S-005.5", 403, {"error": {
+            "code": "KB_AUTH_FORBIDDEN", "message": "Permission denied: users:read", "hint": "Ask an administrator",
+        }})
 
 
 if __name__ == "__main__":

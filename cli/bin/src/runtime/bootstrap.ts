@@ -36,7 +36,7 @@ import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, toErrorEnvelope } from "@kb-labs/core-platform";
+import { createContextLogger, getHostServiceAddress, toErrorEnvelope } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
@@ -47,6 +47,14 @@ declare global {
   var __KB_PLATFORM_CONFIG__: PlatformConfig | undefined;
   var __KB_RAW_CONFIG__: Record<string, unknown> | undefined;
   var __KB_EFFECTIVE_CONFIG__: Record<string, unknown> | undefined;
+}
+
+function configuredGatewayUrl(): string | undefined {
+  try {
+    return getHostServiceAddress('gateway');
+  } catch {
+    return undefined;
+  }
 }
 
 type ILogger = PlatformContainer["logger"];
@@ -395,6 +403,7 @@ export async function executeCli(
           commandPath,
           commandKind: 'system',
           hasAuth: accessMode !== 'secured' || await hasUsablePlatformAuth(),
+          gatewayUrl: configuredGatewayUrl(),
         }, async () => {
           const runtime = await runtimeFactory(runtimeInitOptions);
           const v3Context = createSystemCommandContext(cliContext, platform);
@@ -501,6 +510,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
     commandPath,
     commandKind: 'plugin',
     hasAuth: accessMode !== 'secured' || await hasUsablePlatformAuth(),
+    gatewayUrl: configuredGatewayUrl(),
   }, async () => p.runWithMiddleware(async () => {
     if (executionMode !== "in-process") {
       const gatewayClient = await tryResolveGateway();

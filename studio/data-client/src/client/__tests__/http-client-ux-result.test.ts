@@ -43,6 +43,20 @@ describe('Studio API client UX result envelope', () => {
     });
   });
 
+  // case: S-005.5
+  it('maps an authorization denial from the shared envelope without legacy permission fields', async () => {
+    respondWith({ ok: false, error: {
+      code: 'KB_AUTH_FORBIDDEN', area: 'auth', stage: 'run', severity: 'error', retryable: false,
+      message: 'Permission denied: users:read', hint: 'Ask your administrator for the permission needed to perform this operation.',
+      details: { permission: 'users:read' },
+    } });
+
+    await expect(new HttpClient().fetch('/api/v1/auth/users')).rejects.toMatchObject({
+      code: 'KB_AUTH_FORBIDDEN', message: 'Permission denied: users:read',
+      hint: 'Ask your administrator for the permission needed to perform this operation.',
+    });
+  });
+
   // case: S-203.5
   it('maps each invalid shared fixture to a safe typed error', async () => {
     for (const fixture of [invalidFailure, invalidMixedEnvelope, invalidSuccess]) {

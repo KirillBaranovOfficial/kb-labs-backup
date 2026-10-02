@@ -19,6 +19,7 @@ import {
   RefreshRequestSchema,
 } from '@kb-labs/gateway-contracts';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
+import { sendAuthError } from './error-response.js';
 import { COOKIE_REFRESH } from './user-cookies.js';
 
 export interface MachineAuthRoutesUserExt {
@@ -55,16 +56,16 @@ export function registerAuthRoutes(
         PERMISSIONS.MACHINE_REGISTER,
       );
       if (!decision.allow) {
-        return reply.code(403).send({ error: 'Forbidden', message: 'Permission denied', permission: PERMISSIONS.MACHINE_REGISTER });
+        return sendAuthError(reply, 403, PERMISSIONS.MACHINE_REGISTER);
       }
     } else if (machineCtx) {
       // Bearer-authenticated machine — check permissions embedded in JWT.
       if (!machineCtx.permissions.includes(PERMISSIONS.MACHINE_REGISTER)) {
-        return reply.code(403).send({ error: 'Forbidden', message: 'Permission denied', permission: PERMISSIONS.MACHINE_REGISTER });
+        return sendAuthError(reply, 403, PERMISSIONS.MACHINE_REGISTER);
       }
     } else {
       // No auth context at all (should have been caught by middleware, but guard defensively).
-      return reply.code(401).send({ error: 'Unauthorized', message: 'Authentication required' });
+      return sendAuthError(reply, 401, undefined, 'Authentication required');
     }
 
     const parsed = RegisterRequestSchema.safeParse(request.body);
@@ -93,7 +94,7 @@ export function registerAuthRoutes(
 
     const tokens = await authService.issueTokens(parsed.data.clientId, parsed.data.clientSecret);
     if (!tokens) {
-      return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid credentials' });
+      return sendAuthError(reply, 401, undefined, 'Invalid credentials', 'KB_AUTH_INVALID_CREDENTIALS');
     }
 
     return reply.send(tokens);
@@ -119,7 +120,7 @@ export function registerAuthRoutes(
 
     const tokens = await authService.refreshTokens(parsed.data.refreshToken);
     if (!tokens) {
-      return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid or expired refresh token' });
+      return sendAuthError(reply, 401, undefined, 'Invalid or expired refresh token');
     }
 
     return reply.send(tokens);

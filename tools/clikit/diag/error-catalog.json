@@ -468,7 +468,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Authentication is required.",
-      "hint": "Run \"kb auth login\"."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\"."
     },
     {
       "code": "KB_AUTH_INVALID_CREDENTIALS",
@@ -494,7 +494,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
-      "message": "You do not have permission to perform this operation.",
+      "message": "Permission denied: {permission}",
       "hint": "Ask your administrator for the permission needed to perform this operation."
     },
     {
@@ -595,6 +595,15 @@
       "retryable": true,
       "message": "The runtime of project {project} did not start.",
       "hint": "Read the reason in the log and include the correlationId if you report it."
+    },
+    {
+      "code": "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH",
+      "area": "project",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "The project runtime identity {projectId} does not match the registered project path.",
+      "hint": "Run `kb project list` to verify the registered path, then restart the host."
     },
     {
       "code": "KB_PROJECT_RUNTIME_LIMIT",
@@ -939,13 +948,31 @@
       "hint": "Provide a valid value for {path} (see the cause) and retry; \"kb config get {path}\" shows the current one."
     },
     {
+      "code": "KB_PLUGIN_SETTINGS_INVALID",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin setting {path} is invalid.",
+      "hint": "Correct {path} to match the plugin's declared settings schema, then retry."
+    },
+    {
+      "code": "KB_PLUGIN_SETTINGS_SCHEMA_INVALID",
+      "area": "plugin",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The settings schema for plugin {plugin} could not be loaded.",
+      "hint": "Correct the plugin manifest's settings schema, then rerun the config command."
+    },
+    {
       "code": "KB_PLUGIN_NOT_FOUND",
       "area": "plugin",
       "stage": "run",
       "severity": "error",
       "retryable": false,
       "message": "Plugin {plugin} was not found in the registry.",
-      "hint": "Check the exact name with \"kb marketplace search\"."
+      "hint": "kb marketplace search"
     },
     {
       "code": "KB_ADAPTER_NOT_CONFIGURED",
@@ -955,6 +982,15 @@
       "retryable": false,
       "message": "Service {service} is not configured.",
       "hint": "Run `{command}` to bind an installed adapter for this capability."
+    },
+    {
+      "code": "KB_ADAPTER_NOT_INSTALLED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Adapter package {package} is not installed on this platform.",
+      "hint": "kb marketplace install {package} --scope platform"
     },
     {
       "code": "KB_ADAPTER_PROJECT_SCOPE",

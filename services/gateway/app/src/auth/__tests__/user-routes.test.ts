@@ -1195,6 +1195,28 @@ describe('GET /auth/users (admin only)', () => {
     expect(body.users.find((u) => u.userId === 'admin-1')).toHaveProperty('role', 'admin');
   });
 
+  // case: S-005.5
+  it('returns the shared authorization envelope with the missing permission', async () => {
+    const invite = await ctx.invites.createInvite({
+      email: 'member@test.com', tenantId: TENANT_ID, groupId: 'tenant-member',
+      createdBy: 'admin-1', ttlMs: HOUR,
+    });
+    await ctx.app.inject({ method: 'POST', url: '/auth/activate', headers: { host: HOST },
+      payload: { token: invite.activationToken, password: 'MemberPass123!' } });
+    const login = await ctx.app.inject({ method: 'POST', url: '/auth/login/cli', headers: { host: HOST },
+      payload: { email: 'member@test.com', password: 'MemberPass123!' } });
+    const { accessToken } = login.json() as { accessToken: string };
+
+    const response = await ctx.app.inject({ method: 'GET', url: '/auth/users',
+      headers: { host: HOST, authorization: `Bearer ${accessToken}` } });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_FORBIDDEN', message: 'Permission denied: users:read', hint: expect.any(String),
+      details: { permission: 'users:read' },
+    } });
+  });
+
   it('changes a tenant user role and updates permissions on their next request', async () => {
     await ctx.users.create({ userId: 'role-target', tenantId: TENANT_ID, email: 'member@test.com', status: 'active' });
     await ctx.memberships.addMembership({ userId: 'role-target', tenantId: TENANT_ID, groupId: 'tenant-member' });

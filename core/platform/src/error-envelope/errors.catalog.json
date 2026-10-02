@@ -468,7 +468,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Authentication is required.",
-      "hint": "Run \"kb auth login\"."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\"."
     },
     {
       "code": "KB_AUTH_INVALID_CREDENTIALS",
@@ -494,7 +494,7 @@
       "stage": "run",
       "severity": "error",
       "retryable": false,
-      "message": "You do not have permission to perform this operation.",
+      "message": "Permission denied: {permission}",
       "hint": "Ask your administrator for the permission needed to perform this operation."
     },
     {
@@ -972,7 +972,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Plugin {plugin} was not found in the registry.",
-      "hint": "Check the exact name with \"kb marketplace search\"."
+      "hint": "kb marketplace search"
     },
     {
       "code": "KB_ADAPTER_NOT_CONFIGURED",
@@ -982,6 +982,15 @@
       "retryable": false,
       "message": "Service {service} is not configured.",
       "hint": "Run `{command}` to bind an installed adapter for this capability."
+    },
+    {
+      "code": "KB_ADAPTER_NOT_INSTALLED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Adapter package {package} is not installed on this platform.",
+      "hint": "kb marketplace install {package} --scope platform"
     },
     {
       "code": "KB_ADAPTER_PROJECT_SCOPE",

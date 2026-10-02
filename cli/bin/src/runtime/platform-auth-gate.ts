@@ -6,6 +6,7 @@ export interface PlatformAuthGateInput {
   commandPath: string;
   commandKind: 'system' | 'plugin';
   hasAuth: boolean;
+  gatewayUrl?: string;
   help?: boolean;
 }
 
@@ -13,7 +14,9 @@ export function platformAuthFailure(input: PlatformAuthGateInput): ErrorEnvelope
   if (input.accessMode !== 'secured' || (input.help && isPlatformAuthExemptFlag('help')) || isPlatformAuthExempt(input.commandPath, input.commandKind) || input.hasAuth) {
     return null;
   }
-  return createErrorEnvelope('KB_AUTH_REQUIRED');
+  return createErrorEnvelope('KB_AUTH_REQUIRED', {
+    details: { gatewayUrl: input.gatewayUrl || '<url>' },
+  });
 }
 
 export async function dispatchWithPlatformAuthGate<T>(

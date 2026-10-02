@@ -34,7 +34,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                 if not authenticated[0]:
                     return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
                         "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
-                        "hint": 'Run "kb auth login".',
+                        "hint": 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
                     }}))
                 return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"id": "hello"}}))
             if args[:2] == ["auth", "login"]:

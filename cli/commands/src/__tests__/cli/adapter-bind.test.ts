@@ -202,16 +202,19 @@ describe('kb adapter bind', () => {
     expect(outputs[0]).toMatchObject({ ok: true, slot: 'vectorStore', packageId: '@kb-labs/adapters-qdrant' });
   });
 
-  it('gives the exact install command when the adapter is not installed', async () => {
+  // case: S-051.3, S-051.4
+  it('returns the shared adapter install error envelope when the adapter is not installed', async () => {
     const { ctx, outputs } = context();
 
     const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-missing'], { json: true });
 
     expect(code).toBe(1);
     expect(outputs[0]).toMatchObject({
-      ok: false,
-      error: 'Adapter package @kb-labs/adapters-missing is not installed on this platform.',
-      hint: 'Run: kb marketplace install @kb-labs/adapters-missing --scope platform',
+      ok: false, error: {
+        code: 'KB_ADAPTER_NOT_INSTALLED',
+        message: 'Adapter package @kb-labs/adapters-missing is not installed on this platform.',
+        hint: 'kb marketplace install @kb-labs/adapters-missing --scope platform',
+      },
     });
   });
 

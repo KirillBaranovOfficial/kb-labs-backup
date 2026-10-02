@@ -174,7 +174,7 @@ describe('Auth middleware', () => {
   it('returns 401 for protected routes without Authorization', async () => {
     const res = await app.inject({ method: 'GET', url: '/hosts' });
     expect(res.statusCode).toBe(401);
-    expect(res.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' } });
+    expect(res.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".' } });
   });
 
   it('returns 401 for unknown Bearer token (no CLI fallback)', async () => {

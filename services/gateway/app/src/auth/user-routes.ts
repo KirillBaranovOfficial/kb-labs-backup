@@ -56,6 +56,7 @@ import type {
   OAuthStateStore,
 } from '@kb-labs/gateway-auth';
 import { registerOAuthRoutes } from './oauth-routes.js';
+import { sendAuthError } from './error-response.js';
 import { AuthError, verifyCsrfToken } from '@kb-labs/gateway-auth';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import type { UserAuthContext } from './user-auth-middleware.js';
@@ -170,7 +171,7 @@ function getCookies(request: FastifyRequest): Record<string, string | undefined>
 function requireUser(request: FastifyRequest, reply: FastifyReply): UserAuthContext | null {
   const ctx = request.userAuthContext;
   if (!ctx) {
-    void reply.code(401).send({ error: 'Unauthorized', message: 'No active user session' });
+    void sendAuthError(reply, 401, undefined, 'No active user session');
     return null;
   }
   return ctx;
@@ -188,7 +189,7 @@ function checkCsrf(request: FastifyRequest, reply: FastifyReply): boolean {
   const headerVal = request.headers['x-csrf-token'];
   const headerStr = typeof headerVal === 'string' ? headerVal : undefined;
   if (!verifyCsrfToken(cookieVal, headerStr)) {
-    void reply.code(403).send({ error: 'Forbidden', message: 'CSRF token mismatch' });
+    void sendAuthError(reply, 403, undefined, 'CSRF token mismatch');
     return false;
   }
   return true;
@@ -242,7 +243,7 @@ export function createUserRefreshFn(
     } catch (err) {
       if (err instanceof AuthError) {
         clearSessionCookies(reply, cookieOpts);
-        void reply.code(401).send({ error: 'Unauthorized', message: 'Session expired or revoked' });
+        void sendAuthError(reply, 401, undefined, 'Session expired or revoked');
         return true;
       }
       throw err;
@@ -352,7 +353,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     // `--local` installs, where every request runs as this machine context.
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized', message: 'Not authenticated' });
+      return sendAuthError(reply, 401, undefined, 'Not authenticated');
     }
     return reply.send({
       userId: auth.userId,
@@ -522,7 +523,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       });
     } catch (err) {
       if (err instanceof AuthError) {
-        return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid or expired refresh token' });
+        return sendAuthError(reply, 401, undefined, 'Invalid or expired refresh token');
       }
       throw err;
     }
@@ -567,7 +568,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     // Permissions are already embedded in the machine AuthContext.
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized', message: 'No active session' });
+      return sendAuthError(reply, 401, undefined, 'No active session');
     }
     return reply.send({ permissions: auth.permissions });
   });
@@ -736,7 +737,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
     );
 
     if (!decision.allow) {
-      void reply.code(403).send({ error: 'Forbidden', message: 'Permission denied', permission });
+      sendAuthError(reply, 403, permission);
       return false;
     }
     return true;
@@ -840,7 +841,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       { userId: ctx.userId, tenantId: ctx.tenantId, type: 'user' },
       PERMISSIONS.USERS_WRITE,
     )).allow) {
-      return reply.code(403).send({ error: 'Forbidden', message: 'Permission denied', permission: PERMISSIONS.USERS_WRITE });
+      return sendAuthError(reply, 403, PERMISSIONS.USERS_WRITE);
     }
 
     // Allow callers to specify a custom TTL (e.g., short-lived invites for testing
