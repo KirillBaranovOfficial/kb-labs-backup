@@ -272,6 +272,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
         handlerPath,
         cwd,
         input: request.input,
+        environment: request.env,
         adapterMiddlewares,
       });
     } finally {

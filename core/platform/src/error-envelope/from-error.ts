@@ -9,6 +9,7 @@
  */
 
 import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
+import { HostGatewayAddressConfigError } from '../host-service-address.js';
 import { createErrorEnvelope, type CreateEnvelopeOptions } from './catalog.js';
 import type { ErrorEnvelope } from './types.js';
 
@@ -16,6 +17,15 @@ export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'a
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+  if (error instanceof HostGatewayAddressConfigError) {
+    return createErrorEnvelope('KB_CONFIG_INVALID', {
+      ...options,
+      details: { path: error.configPath, field: error.field },
+      cause: error.message,
+      message: `The platform config at "${error.configPath}" is missing a valid "${error.field}" field.`,
+      hint: `Set it with "kb config set --scope platform ${error.field} <port>", then restart the host with "kb-create restart".`,
+    });
+  }
   if (error instanceof PlatformConfigError) {
     const message = error.reason === 'read'
       ? `Platform configuration file "${error.configPath}" cannot be read.`

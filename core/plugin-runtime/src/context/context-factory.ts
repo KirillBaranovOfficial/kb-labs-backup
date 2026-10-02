@@ -70,6 +70,9 @@ export interface CreateContextOptions {
    */
   outdir?: string;
 
+  /** Environment values explicitly supplied for this execution. */
+  environment?: Record<string, string | undefined>;
+
   /**
    * Resolved adapter middlewares from loaded adapter manifests.
    * Applied in slot/priority order before system governance.
@@ -166,6 +169,7 @@ export function createPluginContextV3<TConfig = unknown>(
     permissions: descriptor.permissions,
     cwd,
     outdir,
+    environment: options.environment,
   });
 
   // 5. Apply adapter middlewares + permission governance to platform services.

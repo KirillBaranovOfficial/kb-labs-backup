@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { AdapterUnavailableError } from '@kb-labs/core-platform';
-import { renderUnavailableAdapterError, withPluginRuntimeEnvironment } from './plugin-executor.js';
+import { AdapterUnavailableError, HostGatewayAddressConfigError } from '@kb-labs/core-platform';
+import type { RegisteredCommand } from '@kb-labs/cli-commands';
+
+const { executeCommandV3 } = vi.hoisted(() => ({ executeCommandV3: vi.fn() }));
+vi.mock('@kb-labs/cli-runtime/v3', () => ({ executeCommandV3 }));
+
+import { executePlugin, renderUnavailableAdapterError } from './plugin-executor.js';
 
 describe('plugin executor adapter errors', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -26,28 +28,74 @@ describe('plugin executor adapter errors', () => {
   });
 
   // case: S-010.7
-  it('passes the installed platform gateway address into plugin execution and restores the CLI environment', async () => {
-    const platformRoot = await mkdtemp(path.join(os.tmpdir(), 'cli-plugin-gateway-'));
-    const receiptDir = path.join(platformRoot, '.kb', 'v2');
-    const previous = process.env.KB_GATEWAY_URL;
-    delete process.env.KB_GATEWAY_URL;
-    try {
-      await mkdir(receiptDir, { recursive: true });
-      await writeFile(path.join(receiptDir, 'receipt.json'), JSON.stringify({
-        verification: { hostHealthUrl: 'http://127.0.0.1:43123/health' },
-      }));
+  it('passes the configured gateway address to the plugin backend without changing process.env', async () => {
+    executeCommandV3.mockResolvedValue(0);
+    const previousGatewayUrl = process.env.KB_GATEWAY_URL;
+    const manifestCmd = {
+      pkgRoot: '/platform/plugins/marketplace',
+      manifest: { id: '@kb-labs/marketplace-entry', segments: ['marketplace', 'plugins', 'doctor'] },
+      v3Manifest: {
+        id: '@kb-labs/marketplace-entry',
+        version: '1.0.0',
+        permissions: { env: { read: ['KB_GATEWAY_URL'] } },
+        cli: { commands: [{ path: 'marketplace plugins doctor', handler: 'dist/index.js#doctor' }] },
+      },
+    } as unknown as RegisteredCommand;
+    const context = {
+      cwd: '/project',
+      presenter: {},
+      logger: undefined,
+    } as Parameters<typeof executePlugin>[0]['context'];
+    const platform = {
+      getSocketPath: () => '/tmp/platform.sock',
+    } as unknown as Parameters<typeof executePlugin>[0]['platform'];
 
-      await withPluginRuntimeEnvironment(platformRoot, {}, async () => {
-        expect(process.env.KB_GATEWAY_URL).toBe('http://127.0.0.1:43123');
+    try {
+      const exitCode = await executePlugin({
+        context,
+        platformRoot: '/platform',
+        effectiveConfig: { gateway: { port: 43123 } },
+        netOffset: 200,
+        commandId: 'marketplace:plugins:doctor',
+        argv: [],
+        flags: {},
+        manifestCmd,
+        platform,
       });
-      expect(process.env.KB_GATEWAY_URL).toBeUndefined();
+
+      expect(exitCode).toBe(0);
+      expect(executeCommandV3).toHaveBeenCalledWith(expect.objectContaining({
+        env: { KB_GATEWAY_URL: 'http://127.0.0.1:43323' },
+      }));
+      expect(process.env.KB_GATEWAY_URL).toBe(previousGatewayUrl);
     } finally {
-      if (previous === undefined) {
-        delete process.env.KB_GATEWAY_URL;
-      } else {
-        process.env.KB_GATEWAY_URL = previous;
-      }
-      await rm(platformRoot, { recursive: true, force: true });
+      executeCommandV3.mockReset();
     }
+  });
+
+  // case: S-203.15
+  it('refuses to start a plugin when the effective platform gateway port is missing', async () => {
+    const manifestCmd = {
+      pkgRoot: '/platform/plugins/marketplace',
+      manifest: { id: '@kb-labs/marketplace-entry', segments: ['marketplace', 'plugins', 'doctor'] },
+      v3Manifest: {
+        id: '@kb-labs/marketplace-entry',
+        version: '1.0.0',
+        permissions: { env: { read: ['KB_GATEWAY_URL'] } },
+        cli: { commands: [{ path: 'marketplace plugins doctor', handler: 'dist/index.js#doctor' }] },
+      },
+    } as unknown as RegisteredCommand;
+
+    await expect(executePlugin({
+      context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
+      platformRoot: '/platform',
+      effectiveConfig: {},
+      commandId: 'marketplace:plugins:doctor',
+      argv: [],
+      flags: {},
+      manifestCmd,
+      platform: { getSocketPath: () => '/tmp/platform.sock' } as unknown as Parameters<typeof executePlugin>[0]['platform'],
+    })).rejects.toBeInstanceOf(HostGatewayAddressConfigError);
+    expect(executeCommandV3).not.toHaveBeenCalled();
   });
 });

@@ -234,6 +234,7 @@ describe("kb-host project routing", () => {
     expect(JSON.stringify(runtime)).not.toContain("port");
   });
 
+  // case: S-010.7
   it("passes live host service addresses into the child runtime", async () => {
     const a = await registered();
     const subject = await host();
@@ -245,7 +246,7 @@ describe("kb-host project routing", () => {
     }
     expect(stateUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(stateUrl).not.toBe("http://127.0.0.1:7777");
-    expect(gatewayUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(gatewayUrl).toBe(`http://127.0.0.1:${subject.gatewayPort}`);
     expect(firstLeaseStatus).toBe(404);
   });
 

@@ -20,12 +20,11 @@ import {
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import { setJsonMode } from "@kb-labs/shared-cli-ui";
 import path from "node:path";
-import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import {
   AdapterUnavailableError,
   createContextLogger,
-  getHostServiceAddress,
+  resolveHostGatewayAddress,
 } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
@@ -34,6 +33,8 @@ import { createCLIUIFacade } from "./ui-facade";
 export interface PluginExecutionOptions {
   context: SystemContext;
   platformRoot?: string;
+  effectiveConfig?: Record<string, unknown>;
+  netOffset?: number;
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
@@ -85,6 +86,26 @@ export async function executePlugin(
   const handlerPath = handlerRelativePath.startsWith("dist/")
     ? path.resolve(pluginRoot, handlerRelativePath)
     : path.resolve(pluginRoot, "dist", handlerRelativePath);
+  const permissions = getHandlerPermissions(
+    pluginManifest,
+    "cli",
+    commandPath,
+  );
+
+  // Gateway-aware plugins declare the address in their environment
+  // permissions. Resolve it before the execution error handler so a broken
+  // platform config is rendered through the catalogued CLI path and the
+  // plugin never starts without an address it requires.
+  const gatewayUrl = permissionAllowsEnvironmentVariable(
+    permissions.env?.read,
+    "KB_GATEWAY_URL",
+  )
+    ? resolveHostGatewayAddress(
+        options.platformRoot,
+        options.effectiveConfig,
+        options.netOffset,
+      )
+    : undefined;
 
   try {
     const pluginId = pluginManifest.id || manifestCmd.manifest.id;
@@ -106,11 +127,6 @@ export async function executePlugin(
 
     const platformServices = createPlatformServices(platform);
     const socketPath = platform.getSocketPath();
-    const permissions = getHandlerPermissions(
-      pluginManifest,
-      "cli",
-      commandPath,
-    );
     const quotas = permissions?.quotas;
 
     // Execute plugin. Pass the discovered `pkgRoot` explicitly so project-
@@ -118,10 +134,7 @@ export async function executePlugin(
     // `<projectRoot>/.kb/plugins/<name>/node_modules/`, not under cwd) are
     // resolved correctly by the execution backend.
     try {
-      const exitCode = await withPluginRuntimeEnvironment(
-        options.platformRoot,
-        process.env,
-        () => executeCommandV3({
+      const exitCode = await executeCommandV3({
           pluginId,
           pluginVersion,
           pluginRoot,
@@ -137,8 +150,8 @@ export async function executePlugin(
           permissions,
           quotas,
           configSection: pluginManifest.configSection,
-        }),
-      );
+          ...(gatewayUrl ? { env: { KB_GATEWAY_URL: gatewayUrl } } : {}),
+        });
 
       context.logger?.debug(
         "[plugin-executor] Command executed via platform.executionBackend",
@@ -174,77 +187,15 @@ export async function executePlugin(
   }
 }
 
-/**
- * Resolve the installed platform's public gateway address from its launcher
- * receipt. An explicit environment value remains authoritative for remote
- * platforms and CI. The host receipt stores the health URL for the same
- * public gateway listener that the host advertises to project runtimes.
- */
-export async function resolvePluginRuntimeEnvironment(
-  platformRoot: string | undefined,
-  environment: NodeJS.ProcessEnv,
-): Promise<NodeJS.ProcessEnv> {
-  if (environment.KB_GATEWAY_URL) {
-    return { ...environment };
-  }
-  if (!platformRoot) {
-    return { ...environment };
-  }
-
-  let receipt: unknown;
-  try {
-    receipt = JSON.parse(
-      await readFile(path.join(platformRoot, ".kb", "v2", "receipt.json"), "utf8"),
-    );
-  } catch {
-    return { ...environment };
-  }
-  if (!receipt || typeof receipt !== "object") {
-    return { ...environment };
-  }
-  const verification = (receipt as { verification?: unknown }).verification;
-  if (!verification || typeof verification !== "object") {
-    return { ...environment };
-  }
-  const healthUrl = (verification as { hostHealthUrl?: unknown }).hostHealthUrl;
-  if (typeof healthUrl !== "string") {
-    return { ...environment };
-  }
-
-  let address: string;
-  try {
-    const parsed = new URL(healthUrl);
-    if (parsed.pathname !== "/health") {
-      return { ...environment };
-    }
-    address = getHostServiceAddress("gateway", {
-      KB_GATEWAY_URL: parsed.origin,
-    });
-  } catch {
-    return { ...environment };
-  }
-  return { ...environment, KB_GATEWAY_URL: address };
-}
-
-export async function withPluginRuntimeEnvironment<T>(
-  platformRoot: string | undefined,
-  environment: NodeJS.ProcessEnv,
-  execute: () => Promise<T>,
-): Promise<T> {
-  const resolved = await resolvePluginRuntimeEnvironment(platformRoot, environment);
-  const previousGatewayUrl = process.env.KB_GATEWAY_URL;
-  if (resolved.KB_GATEWAY_URL) {
-    process.env.KB_GATEWAY_URL = resolved.KB_GATEWAY_URL;
-  }
-  try {
-    return await execute();
-  } finally {
-    if (previousGatewayUrl === undefined) {
-      delete process.env.KB_GATEWAY_URL;
-    } else {
-      process.env.KB_GATEWAY_URL = previousGatewayUrl;
-    }
-  }
+function permissionAllowsEnvironmentVariable(
+  patterns: string[] | undefined,
+  variable: string,
+): boolean {
+  return patterns?.some((pattern) =>
+    pattern.endsWith("*")
+      ? variable.startsWith(pattern.slice(0, -1))
+      : pattern === variable,
+  ) ?? false;
 }
 
 export function renderUnavailableAdapterError(
