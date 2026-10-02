@@ -252,7 +252,7 @@
       "severity": "error",
       "retryable": false,
       "message": "The active install receipt could not be read.",
-      "hint": "Run apply first or restore a named snapshot."
+      "hint": "Run `kb-create install` to create the platform, or restore a named snapshot."
     },
     {
       "code": "KB_INSTALL_STATUS_UNHEALTHY",

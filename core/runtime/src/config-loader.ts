@@ -58,7 +58,7 @@ import {
   type FieldMergePolicy,
 } from "@kb-labs/core-config";
 import { DiscoveryManager } from "@kb-labs/core-discovery";
-import { resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
+import { findRegisteredProjectRoot, resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
 import { canonicalizeProjectPath, createProjectRegistry, ProjectRegistryError } from "@kb-labs/core-project-registry";
 import { AdapterProjectScopeError, PlatformConfigError } from "@kb-labs/core-platform";
 
@@ -435,7 +435,8 @@ export async function loadPlatformConfig(
     const registry = createProjectRegistry({ env });
     const registered = await registry.get(options.projectId);
     const requestedPath = await canonicalizeProjectPath(startDir);
-    if (registered.project.path !== requestedPath) {
+    const resolvedProjectRoot = await findRegisteredProjectRoot(startDir, env);
+    if (registered.project.path !== resolvedProjectRoot) {
       throw new ProjectRegistryError(
         'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH',
         `Runtime project ${options.projectId} was started for "${requestedPath}" but the registry maps it to "${registered.project.path}".`,

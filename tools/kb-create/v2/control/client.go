@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"net/http"
 	"os"
@@ -38,8 +39,8 @@ func Connect(state host.State) (*Client, error) {
 	return &Client{File: file, HTTP: &http.Client{Timeout: 60 * time.Second}}, nil
 }
 
-func unavailable(cause error) *contracts.LauncherError {
-	return contracts.NewLauncherError("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", cause)
+func unavailable(cause error) *diag.Diag {
+	return contracts.NewDiag("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", cause)
 }
 
 // Status calls GET /v1/status.

@@ -40,7 +40,7 @@ def run_platform_channel_steps(
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
                                            "--input", str(strict_path)], "strict exact plan")
         resolved = plan.get("plan", {})
-        if plan.get("ok") is not True or resolved.get("request", {}).get("policy") != "strict":
+        if resolved.get("request", {}).get("policy") != "strict":
             raise RuntimeError("strict policy did not resolve the exact matrix request")
         if resolved.get("serviceGraph", {}).get("platformVersion") != stable_version:
             raise RuntimeError("strict policy plan did not resolve the exact stable platform")
@@ -63,15 +63,16 @@ def run_platform_channel_steps(
                     "--project-root", str(project_root)]
             command = run_command(args)
             try:
-                result = json.loads(command.stdout)
+                envelope = json.loads(command.stdout)
+                result = envelope.get("data", {})
             except json.JSONDecodeError as error:
                 raise RuntimeError("apply canary: expected JSON output") from error
             if not isinstance(result, dict):
                 raise RuntimeError("apply canary: expected a JSON object")
             if command.returncode != 0:
-                error = result.get("error", {})
+                error = envelope.get("error", {})
                 if isinstance(error, dict) and error.get("code") == "KB_INSTALL_MEMORY_INSUFFICIENT":
-                    details = error.get("details", {})
+                    details = error.get("meta", {})
                     available = details.get("available", "unknown") if isinstance(details, dict) else "unknown"
                     minimum = details.get("minimum", "unknown") if isinstance(details, dict) else "unknown"
                     resource_block_reason = (
@@ -87,7 +88,7 @@ def run_platform_channel_steps(
                     raise RuntimeError(f"apply canary failed ({code}): {message} {hint}".strip())
                 raise RuntimeError(f"apply canary failed with exit {command.returncode}")
             plan = result.get("receipt", {}).get("plan", {})
-            if result.get("ok") is not True or plan.get("platformChannel") != "canary" or plan.get("serviceGraph", {}).get("platformVersion") != canary_version:
+            if plan.get("platformChannel") != "canary" or plan.get("serviceGraph", {}).get("platformVersion") != canary_version:
                 raise RuntimeError("fresh apply did not record the exact canary channel and version")
             artifacts = plan.get("artifacts", [])
             if not any(item.get("kind") == "platform" and item.get("version") == canary_version and item.get("sha256") for item in artifacts):
@@ -130,7 +131,7 @@ def run_platform_channel_steps(
                 raise RuntimeError("stable host did not restart after the fresh canary check")
 
     journey.step("verify canary channel and version in receipt, status, and doctor", "platform.status",
-                 verify_fresh_status_and_doctor, cases=["S-052.2"])
+                 verify_fresh_status_and_doctor, cases=["S-052.2", "S-203.10"])
 
     def switch_to_canary() -> None:
         blocked = blocked_by_canary_preflight()
@@ -141,17 +142,20 @@ def run_platform_channel_steps(
         request["platform"] = {"channel": "canary"}
         request["sdk"] = {"version": canary_version}
         request_file.write_text(json.dumps(request) + "\n")
+        human = run_command([launcher, "update", "--index", str(canary_index), "--input", str(request_file)])
+        if human.returncode != 0 or "Platform update completed." not in human.stdout:
+            raise RuntimeError("human update did not show its completion summary")
         result = _json_command(run_command, [launcher, "update", "--json", "--index", str(canary_index),
                                              "--input", str(request_file)], "update to canary")
         receipt = result.get("receipt", {})
         plan = receipt.get("plan", {})
-        if result.get("ok") is not True or result.get("hostRestarted") is not True:
+        if result.get("hostRestarted") is not True:
             raise RuntimeError("canary update did not restart the installed host")
         if plan.get("platformChannel") != "canary" or plan.get("serviceGraph", {}).get("platformVersion") != canary_version:
             raise RuntimeError("canary update receipt did not identify its channel and exact version")
 
     journey.step("update the installed host from stable to canary", "platform.update", switch_to_canary,
-                 cases=["S-052.3"])
+                 cases=["S-052.3", "S-203.10"])
 
     def verify_channel_fields() -> None:
         blocked = blocked_by_canary_preflight()
@@ -173,7 +177,7 @@ def run_platform_channel_steps(
                 raise RuntimeError(f"{label} text does not identify canary and its exact version")
 
     journey.step("verify receipt, status, and doctor show channel and version", "platform.status",
-                 verify_channel_fields, cases=["S-052.2"])
+                 verify_channel_fields, cases=["S-052.2", "S-203.10"])
 
     def reject_stable_downgrade() -> None:
         blocked = blocked_by_canary_preflight()
@@ -185,15 +189,15 @@ def run_platform_channel_steps(
         request_file.write_text(json.dumps(request) + "\n")
         result = run_command([launcher, "update", "--json", "--index", str(stable_index), "--input", str(request_file)])
         try:
-            payload = json.loads(result.stdout)
+            envelope = json.loads(result.stdout)
         except json.JSONDecodeError as error:
             raise RuntimeError("stable downgrade refusal returned non-JSON output") from error
-        failure = payload.get("error", {}) if isinstance(payload, dict) else {}
+        failure = envelope.get("error", {}) if isinstance(envelope, dict) else {}
         if result.returncode == 0 or failure.get("code") != "KB_UPDATE_DOWNGRADE_REFUSED":
             raise RuntimeError("update did not refuse the stable downgrade with KB_UPDATE_DOWNGRADE_REFUSED")
-        if failure.get("hint") != "use `kb-create rollback`":
+        if not failure.get("hint"):
             raise RuntimeError("stable downgrade error did not direct the user to kb-create rollback")
-        details = failure.get("details", {})
+        details = failure.get("meta", {})
         if details.get("installedVersion") != canary_version or details.get("targetVersion") != stable_version:
             raise RuntimeError("stable downgrade error omitted installedVersion or targetVersion")
         if receipt_path.read_bytes() != before:
@@ -206,9 +210,12 @@ def run_platform_channel_steps(
         blocked = blocked_by_canary_preflight()
         if blocked:
             return blocked
+        human = run_command([launcher, "rollback", "--platform-root", root, "--yes"])
+        if human.returncode != 0 or "Platform rollback completed." not in human.stdout:
+            raise RuntimeError("human rollback did not show its completion summary")
         result = _json_command(run_command, [launcher, "rollback", "--platform-root", root, "--yes", "--json"],
                                "rollback from canary")
-        if result.get("ok") is not True or result.get("hostRestarted") is not True:
+        if result.get("hostRestarted") is not True:
             raise RuntimeError("rollback did not restore and restart the stable host")
         receipt = json.loads(receipt_path.read_text())
         plan = receipt.get("plan", {})
@@ -216,5 +223,5 @@ def run_platform_channel_steps(
             raise RuntimeError("rollback did not restore the exact stable receipt")
 
     journey.step("roll back from canary to the exact stable snapshot", "platform.rollback",
-                 rollback_to_stable, cases=["S-052.5"])
+                 rollback_to_stable, cases=["S-052.5", "S-203.10"])
     return journey

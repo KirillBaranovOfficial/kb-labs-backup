@@ -26,8 +26,8 @@ A user removes a V2 installation only after a human confirms its scope on a term
 | S-050.2 | In a terminal, run `kb-create uninstall --platform-root "$PLATFORM_ROOT"` | Prompt names the platform root, installed services, active receipt and saved snapshots to remove, and says project files are kept. |
 | S-050.3 | Answer `n` | Exits 1; stdout JSON has `error.code: "KB_INSTALL_OPERATION_CANCELLED"`; the active receipt remains. |
 | S-050.4 | Run `kb-create uninstall --platform-root "$PLATFORM_ROOT" --registry "$REGISTRY" --json` without a TTY | Exits 2; JSON `error.code` is `KB_INSTALL_CONFIRMATION_REQUIRED`, and `error.hint` is exactly ``rerun `kb-create uninstall --platform-root "$PLATFORM_ROOT" --registry $REGISTRY --json --yes````, including the command's surrounding backticks; the active receipt remains. |
-| S-050.5 | In a terminal, rerun `kb-create uninstall --platform-root "$PLATFORM_ROOT"` and answer `y` | Exits 0; stdout is JSON with `ok: true`, `operation: "uninstall"`, snapshot metadata, and `logPath`; the platform root, receipt, and snapshots are removed. |
-| S-050.6 | In an agent invocation, run `kb-create uninstall --platform-root "$PLATFORM_ROOT" --yes --json` | Exits 0; JSON has `ok: true`, `operation: "uninstall"`, snapshot metadata, and `logPath`; platform artifacts are removed. |
+| S-050.5 | In a terminal, rerun `kb-create uninstall --platform-root "$PLATFORM_ROOT"` and answer `y` | Exits 0; human output shows an uninstall completion summary without a raw JSON result; the platform root, receipt, and snapshots are removed. |
+| S-050.6 | In an agent invocation, run `kb-create uninstall --platform-root "$PLATFORM_ROOT" --yes --json` | Exits 0; stdout is `{ "ok": true, "data": ... }`, with `operation: "uninstall"`, snapshot metadata, and `logPath` inside `data`; platform artifacts are removed. |
 | S-050.7 | Inspect the separate project directory after either successful path | The project root still exists and `$PROJECT_ROOT/note.txt` still contains `journey first value`. |
 
 ## Pass criteria

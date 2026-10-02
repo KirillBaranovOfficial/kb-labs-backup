@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"os"
 	"os/signal"
@@ -37,13 +38,13 @@ func installedVersion(platformRoot string) string {
 // refuseRunningHost stops a fresh apply from starting a trial run next to a
 // supervised host: it would fail on the host's port with a misleading message.
 // An installed platform is changed with update, which stops and restarts the host.
-func refuseRunningHost(state host.State) *contracts.LauncherError {
+func refuseRunningHost(state host.State) *diag.Diag {
 	pid, alive := supervisor.LivePID(state)
 	if !alive {
 		return nil
 	}
-	failure := contracts.NewLauncherError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create update\" to change an installed platform, or \"kb-create stop\" before a fresh apply.", nil)
-	failure.Details = map[string]string{"supervisorPid": fmt.Sprint(pid)}
+	failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create update\" to change an installed platform, or \"kb-create stop\" before a fresh apply.", nil)
+	failure.Meta = map[string]any{"supervisorPid": fmt.Sprint(pid)}
 	return failure
 }
 
@@ -86,7 +87,7 @@ func (i invocation) runUpdate(ctx context.Context, output *os.File, plan contrac
 		},
 	})
 	if err != nil {
-		writeLauncherFailure(output, root, correlationID, logPath, asLauncherError(err), &plan)
+		writeDiagnosticFailure(output, root, correlationID, logPath, asDiag(err), &plan)
 		return 1
 	}
 	write(output, map[string]any{"ok": true, "operation": "update", "receipt": updated, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning, "logPath": logPath})
@@ -131,12 +132,12 @@ func (i invocation) runRecovery(output *os.File) int {
 	}
 	state, err := host.StateHome()
 	if err != nil {
-		write(output, map[string]any{"ok": false, "error": asLauncherError(err)})
+		write(output, map[string]any{"ok": false, "error": asDiag(err)})
 		return 2
 	}
 	release, err := state.AcquireOperation(operation)
 	if err != nil {
-		write(output, map[string]any{"ok": false, "error": asLauncherError(err)})
+		write(output, map[string]any{"ok": false, "error": asDiag(err)})
 		return 2
 	}
 	defer release()
@@ -182,7 +183,7 @@ func (i invocation) runRecovery(output *os.File) int {
 	}
 	result, err := swap.Run(ctx, lifecycleHost{command: command, state: state}, op)
 	if err != nil {
-		writeLauncherFailure(output, root, correlationID, transcript.Path(), asLauncherError(err), nil)
+		writeDiagnosticFailure(output, root, correlationID, transcript.Path(), asDiag(err), nil)
 		return 1
 	}
 	if operation == "uninstall" && i.Executable != "" {
@@ -242,10 +243,10 @@ func readConfirmation(input io.Reader) (bool, error) {
 	return false, nil
 }
 
-// writeLauncherFailure emits a typed failure with its diagnostic dossier.
-func writeLauncherFailure(output *os.File, platformRoot, correlationID, logPath string, launcherError *contracts.LauncherError, plan *contracts.ResolvedInstallPlan) {
-	launcherError.CorrelationID = correlationID
-	dossier := diagnostics.Dossier{CorrelationID: correlationID, Error: launcherError, Stage: launcherError.Stage, LogPath: logPath}
+// writeDiagnosticFailure emits a typed failure with its diagnostic dossier.
+func writeDiagnosticFailure(output *os.File, platformRoot, correlationID, logPath string, resolutionDiag *diag.Diag, plan *contracts.ResolvedInstallPlan) {
+	resolutionDiag.CorrelationID = correlationID
+	dossier := diagnostics.Dossier{CorrelationID: correlationID, Error: resolutionDiag, Stage: contracts.StageApply, LogPath: logPath}
 	if plan != nil {
 		dossier.PlanHash, dossier.ReleaseDigest, dossier.ScenarioStateDigest = plan.PlanHash, plan.ReleaseDigest, plan.ScenarioStateDigest
 	}
@@ -254,5 +255,5 @@ func writeLauncherFailure(output *os.File, platformRoot, correlationID, logPath 
 		write(output, failure("KB_INSTALL_DIAGNOSTIC_UNAVAILABLE", "The operation failed and the diagnostic dossier could not be written.", "inspect the local operation log", dossierErr))
 		return
 	}
-	write(output, map[string]any{"ok": false, "error": launcherError, "logPath": logPath, "diagnosticPath": path})
+	write(output, map[string]any{"ok": false, "error": resolutionDiag, "logPath": logPath, "diagnosticPath": path})
 }

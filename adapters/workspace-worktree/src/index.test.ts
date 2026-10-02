@@ -70,6 +70,32 @@ describe('WorktreeWorkspaceAdapter', () => {
     });
   });
 
+  // case: S-198.6
+  it('uses explicit owning project and platform roots for materialization', async () => {
+    const projectRoot = '/consumer/repository';
+    const platformRoot = '/opt/kb-platform';
+    const worktreePath = `${projectRoot}/.worktrees/wt_explicit`;
+    vi.mocked(existsSync).mockImplementation((p) => {
+      if (String(p) === `${projectRoot}/.worktrees`) return true;
+      if (String(p) === worktreePath) return false;
+      if (String(p) === `${platformRoot}/cli/bin/dist`) return true;
+      if (String(p) === `${worktreePath}/cli/bin/dist`) return false;
+      return false;
+    });
+    const adapter = new WorktreeWorkspaceAdapter({ initSubmodules: false, installDeps: false });
+
+    await adapter.materialize({
+      workspaceId: 'wt_explicit',
+      sourceRef: 'main',
+      projectRoot,
+      platformRoot,
+    }).catch(() => {});
+
+    expect(vi.mocked(symlinkSync)).toHaveBeenCalledWith(
+      `${platformRoot}/cli/bin/dist`, `${worktreePath}/cli/bin/dist`, 'dir',
+    );
+  });
+
   describe('symlinkDistFromPlatform', () => {
     beforeEach(() => {
       vi.mocked(existsSync).mockReset();
@@ -95,7 +121,7 @@ describe('WorktreeWorkspaceAdapter', () => {
       });
 
       const adapter = new WorktreeWorkspaceAdapter({
-        workspace: { cwd: repoRoot },
+        workspace: { projectRoot: repoRoot, platformRoot: repoRoot },
         initSubmodules: false,
         installDeps: false,
       });
@@ -137,7 +163,7 @@ describe('WorktreeWorkspaceAdapter', () => {
       });
 
       const adapter = new WorktreeWorkspaceAdapter({
-        workspace: { cwd: repoRoot },
+        workspace: { projectRoot: repoRoot, platformRoot: repoRoot },
         initSubmodules: false,
         installDeps: false,
       });
@@ -160,7 +186,7 @@ describe('WorktreeWorkspaceAdapter', () => {
       });
 
       const adapter = new WorktreeWorkspaceAdapter({
-        workspace: { cwd: repoRoot },
+        workspace: { projectRoot: repoRoot, platformRoot: repoRoot },
         initSubmodules: false,
         installDeps: false,
       });
@@ -195,7 +221,7 @@ describe('WorktreeWorkspaceAdapter', () => {
       });
 
       const adapter = new WorktreeWorkspaceAdapter({
-        workspace: { cwd: repoRoot },
+        workspace: { projectRoot: repoRoot, platformRoot: repoRoot },
         initSubmodules: false,
         installDeps: false,
         toolDistPaths: [],
@@ -222,7 +248,7 @@ describe('WorktreeWorkspaceAdapter', () => {
       });
 
       const adapter = new WorktreeWorkspaceAdapter({
-        workspace: { cwd: repoRoot },
+        workspace: { projectRoot: repoRoot, platformRoot: repoRoot },
         initSubmodules: false,
         installDeps: false,
         toolDistPaths: [],
@@ -246,7 +272,7 @@ describe('WorktreeWorkspaceAdapter', () => {
       });
 
       const adapter = new WorktreeWorkspaceAdapter({
-        workspace: { cwd: repoRoot },
+        workspace: { projectRoot: repoRoot, platformRoot: repoRoot },
         initSubmodules: false,
         installDeps: false,
         toolDistPaths: [],

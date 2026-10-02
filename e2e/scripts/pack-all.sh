@@ -88,6 +88,14 @@ else
   exit 1
 fi
 
+ANALYTICS_FIXTURE_DIR="$REPO_ROOT/e2e/journey/fixtures/analytics-emitter"
+if (cd "$ANALYTICS_FIXTURE_DIR" && pnpm pack --pack-destination "$OUT_DIR" --silent); then
+  PACKED=$((PACKED+1))
+else
+  echo "ERROR: could not pack @kb-labs/e2e-analytics-emitter"
+  exit 1
+fi
+
 echo ""
 echo "==> Done: $PACKED packed, $SKIPPED skipped (private/not-built), $FAILED failed"
 echo "    Output: $OUT_DIR ($(find "$OUT_DIR" -maxdepth 1 -type f -name '*.tgz' 2>/dev/null | wc -l | tr -d ' ') tarballs)"

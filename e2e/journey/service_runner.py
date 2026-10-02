@@ -24,6 +24,8 @@ from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
 from marketplace_steps import _registry_version, _output
 from adapter_defaults_steps import run_adapter_default_steps
+from analytics_steps import run_analytics_and_gateway_steps
+from worktree_steps import run_worktree_steps
 from mcp_project_steps import (
     apply_commit_plan,
     commit_tool_schema,
@@ -378,10 +380,13 @@ def checks(mode: str):
     yield ("MCP UX result contract from live registry", "mcp", lambda: mcp_ux_result_contract(
         pid, auth_token(), secured=mode == "secured"))
     project_b_id = os.getenv("KB_JOURNEY_PROJECT_B_ID", "")
-    if project_b_id:
-        yield ("project MCP cross-project isolation", "mcp", lambda: project_isolation(pid, project_b_id, auth_token()))
+    project_b_root = os.getenv("KB_JOURNEY_PROJECT_B_ROOT", "")
+    if project_b_id and project_b_root:
+        yield ("project MCP cross-project isolation", "mcp",
+               lambda: project_isolation(pid, project_b_id, project_b_root, auth_token()))
     else:
-        yield ("project MCP cross-project isolation", "mcp", lambda: "BLOCKED: provide KB_JOURNEY_PROJECT_B_ID for the isolated second project")
+        yield ("project MCP cross-project isolation", "mcp",
+               lambda: "BLOCKED: register project B and provide KB_JOURNEY_PROJECT_B_ID and KB_JOURNEY_PROJECT_B_ROOT")
     yield ("Studio shell", "studio", lambda: expect("/", {200}, "Studio shell"))
     yield ("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
     yield ("marketplace registry", "marketplace", lambda: expect(f"/api/v1/projects/{pid}/rest/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
@@ -545,6 +550,10 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str) -> 
                  lambda: run_plugin_author_flow(journey, Path(project_root),
                                                 Path.home() / ".local/bin/kb", registry,
                                                 base_env=env))
+    journey.step("worktree workflow identity flow", "workflow",
+                 lambda: run_worktree_steps(journey, Path.home() / ".local/bin/kb",
+                                            platform_root=os.environ.get("KB_PLATFORM_ROOT", str(Path.home() / "kb-platform")),
+                                            env=env))
 
 
 def _find_project_id(payload: object) -> str:
@@ -563,6 +572,28 @@ def _find_project_id(payload: object) -> str:
             if found:
                 return found
     return ""
+
+
+def _find_project_registration(payload: object) -> tuple[str, str]:
+    if isinstance(payload, dict):
+        project = payload.get("project")
+        if isinstance(project, dict):
+            project_id = project.get("id")
+            project_root = project.get("path")
+            if (isinstance(project_id, str) and project_id.startswith("prj_")
+                    and isinstance(project_root, str) and Path(project_root).is_absolute()
+                    and str(Path(project_root).resolve()) == project_root):
+                return project_id, project_root
+        for value in payload.values():
+            found_id, found_root = _find_project_registration(value)
+            if found_id and found_root:
+                return found_id, found_root
+    elif isinstance(payload, list):
+        for value in payload:
+            found_id, found_root = _find_project_registration(value)
+            if found_id and found_root:
+                return found_id, found_root
+    return "", ""
 
 
 def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
@@ -618,7 +649,7 @@ def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
 
 
 def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
-                         runner=run_command) -> str:
+                         runner=run_command) -> tuple[str, str]:
     """Install Commit into project A and register a clean project B for isolation."""
     command_runner = runner
     def runner(command, **kwargs):
@@ -653,15 +684,35 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
         payload = json.loads(raw)
     except json.JSONDecodeError as error:
         raise RuntimeError("registering MCP isolation project B returned invalid JSON") from error
-    project_b_id = _find_project_id(payload)
-    if not project_b_id:
-        raise RuntimeError("registering MCP isolation project B returned no project ID")
+    project_b_id, project_b_root = _find_project_registration(payload)
+    if not project_b_id or not project_b_root:
+        raise RuntimeError("registering MCP isolation project B returned no project ID and canonical path")
     lock_path = project_b / ".kb" / "marketplace.lock"
     if lock_path.exists():
         lock = json.loads(lock_path.read_text())
         if package in lock.get("plugins", {}):
             raise RuntimeError("MCP isolation project B unexpectedly has the Commit plugin installed")
-    return project_b_id
+    return project_b_id, project_b_root
+
+
+def _prepare_and_export_mcp_projects(project_root: str, registry: str, env: dict[str, str],
+                                     runner=run_command) -> tuple[str, str]:
+    project_b_id, project_b_root = prepare_mcp_projects(project_root, registry, env, runner)
+    env["KB_JOURNEY_PROJECT_B_ID"] = project_b_id
+    env["KB_JOURNEY_PROJECT_B_ROOT"] = project_b_root
+    os.environ.update({
+        "KB_JOURNEY_PROJECT_B_ID": project_b_id,
+        "KB_JOURNEY_PROJECT_B_ROOT": project_b_root,
+    })
+    fixture_path = env.get("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
+    if fixture_path:
+        output_path = Path(fixture_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({
+            "projectBId": project_b_id,
+            "projectBRoot": project_b_root,
+        }), encoding="utf-8")
+    return project_b_id, project_b_root
 
 
 def main() -> int:
@@ -685,9 +736,10 @@ def main() -> int:
             journey.step("marketplace flow", "marketplace",
                          lambda: run_marketplace_steps(journey, project_root, registry, env))
             def prepare_projects() -> None:
-                os.environ["KB_JOURNEY_PROJECT_B_ID"] = prepare_mcp_projects(project_root, registry, env)
+                _prepare_and_export_mcp_projects(project_root, registry, env)
             journey.step("prepare MCP project fixtures", "mcp", prepare_projects)
         run_service_steps(journey, checks(args.mode))
+        run_analytics_and_gateway_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""))
         if project_root:
             _run_installed_flows(journey, project_root, registry)
         else:

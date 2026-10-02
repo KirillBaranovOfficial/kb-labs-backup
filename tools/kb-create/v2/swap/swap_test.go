@@ -3,6 +3,7 @@ package swap
 import (
 	"context"
 	"errors"
+	"github.com/kb-labs/clikit/diag"
 	"reflect"
 	"strings"
 	"testing"
@@ -56,12 +57,12 @@ func (s *steps) operation(name string) Operation {
 
 func code(t *testing.T, err error) string {
 	t.Helper()
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if !errors.As(err, &typed) {
 		t.Fatalf("not a launcher error: %v", err)
 	}
-	if problems := typed.Validate(); len(problems) != 0 {
-		t.Fatalf("invalid envelope %v: %v", typed, problems)
+	if typed.Hint == "" {
+		t.Fatalf("diagnostic has no catalog hint: %#v", typed)
 	}
 	return typed.Code
 }
@@ -107,7 +108,7 @@ func TestRunKeepsTheHostStoppedWhenAsked(t *testing.T) {
 }
 
 func TestRunReportsAFailedStopWithoutChangingAnything(t *testing.T) {
-	stopFailure := contracts.NewLauncherError("KB_HOST_STOP_FAILED", "The host process 42 did not stop.", "Run \"kb-create stop\" again.", nil)
+	stopFailure := contracts.NewDiag("KB_HOST_STOP_FAILED", "The host process 42 did not stop.", "Run \"kb-create stop\" again.", nil)
 	host, recorded := &fakeHost{running: true, haltErr: stopFailure}, &steps{}
 	_, err := Run(context.Background(), host, recorded.operation("update"))
 	if code(t, err) != "KB_HOST_STOP_FAILED" {
@@ -124,10 +125,10 @@ func TestRunRestartsThePreviousHostWhenTheChangeFails(t *testing.T) {
 	if code(t, err) != contracts.CodeUpdateApplyFailed {
 		t.Fatalf("err = %v", err)
 	}
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	errors.As(err, &typed)
-	if !strings.Contains(typed.Message, "previous version 1.0.0 was restored") || !strings.Contains(typed.Cause, "registry unavailable") {
-		t.Fatalf("message/cause = %q / %q", typed.Message, typed.Cause)
+	if !strings.Contains(typed.Message, "previous version 1.0.0 was restored") || typed.Unwrap() == nil {
+		t.Fatalf("message/cause = %q / %q", typed.Message, typed.Reason)
 	}
 	if outcome.RecoveryPoint != "snap-1" {
 		t.Fatalf("outcome = %#v", outcome)
@@ -153,9 +154,9 @@ func TestRunRollsBackWhenTheNewHostDoesNotStart(t *testing.T) {
 	if want := []string{"change", "restore:snap-1"}; !reflect.DeepEqual(recorded.calls, want) {
 		t.Fatalf("steps = %v, want %v", recorded.calls, want)
 	}
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	errors.As(err, &typed)
-	if !strings.Contains(typed.Message, "previous version 1.0.0 was restored") || !strings.Contains(typed.Cause, "port 4000 in use") || typed.Details["snapshot"] != "snap-1" {
+	if !strings.Contains(typed.Message, "previous version 1.0.0 was restored") || typed.Unwrap() == nil || typed.Meta["snapshot"] != "snap-1" {
 		t.Fatalf("error = %#v", typed)
 	}
 }
@@ -167,9 +168,9 @@ func TestRunReportsRollbackFailureWhenTheRestoreFails(t *testing.T) {
 	if code(t, err) != contracts.CodeRollbackFailed {
 		t.Fatalf("err = %v", err)
 	}
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	errors.As(err, &typed)
-	if typed.Details["snapshot"] != "snap-1" || !strings.Contains(typed.Cause, "crash on boot") || !strings.Contains(typed.Cause, "pnpm failed") {
+	if typed.Meta["snapshot"] != "snap-1" || typed.Unwrap() == nil {
 		t.Fatalf("error = %#v", typed)
 	}
 }

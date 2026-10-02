@@ -409,6 +409,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         error_message = error.get("message", "") if isinstance(error, dict) else str(error or "")
         if not error_message.strip():
             raise AssertionError("failed step detail did not include an error message")
+        env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = failed_id
 
     journey.step("inspect failed step and error", "workflow", inspect_failure,
                  cases=["S-029.2", "S-009.4"])

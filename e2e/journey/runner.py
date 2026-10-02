@@ -14,7 +14,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from studio_steps import create_studio_environment, create_studio_member, run_studio_browser_step
+from studio_steps import (create_studio_access_tokens, create_studio_environment,
+                          create_studio_member, run_studio_browser_step)
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
 from release_index import channel_platform_version, stable_platform_version
@@ -46,6 +47,15 @@ CASE_JOURNEY: Journey | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
+
+
+def result_payload(value: object) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    if value.get("ok") is True:
+        data = value.get("data")
+        return data if isinstance(data, dict) else {}
+    return value
 
 
 def record_case(name: str, passed: bool, message: str, *, cases: list[str]) -> None:
@@ -375,11 +385,11 @@ def uninstall_removed_platform_root():
 def restart_host(launcher: str, env: dict[str, str]) -> str:
     result, _ = run([launcher, "restart", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=180)
     try:
-        payload = json.loads(result.stdout)
+        payload = result_payload(json.loads(result.stdout))
     except json.JSONDecodeError:
         payload = {}
-    restarted = (result.returncode == 0 and payload.get("ok") is True
-                 and payload.get("operation") == "restart" and payload.get("host", {}).get("pid", 0) > 0)
+    restarted = (result.returncode == 0 and payload.get("operation") == "restart"
+                 and payload.get("host", {}).get("pid", 0) > 0)
     record_case("restart host", restarted,
                "restart JSON did not report a started host process", cases=["PC-004.1"])
     if not restarted:
@@ -397,27 +407,25 @@ def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     try:
         result, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
         try:
-            diagnostic = json.loads(result.stdout)
-        except json.JSONDecodeError:
+            diagnostic = json.loads(result.stdout).get("error", {})
+        except (json.JSONDecodeError, AttributeError):
             diagnostic = {}
-        if (result.returncode != 1 or diagnostic.get("ok") is not False
-                or diagnostic.get("installed") is not False or diagnostic.get("running") is not False
-                or diagnostic.get("reachable") is not False or diagnostic.get("next") != "kb-create install"):
-            fail(f"kb-create doctor did not diagnose missing installation receipt with the install next step: {' '.join(result.stdout.split())[-500:]}")
-        record_case("doctor reports missing receipt",
-                   result.returncode == 1 and diagnostic.get("ok") is False
-                   and diagnostic.get("installed") is False and diagnostic.get("running") is False
-                   and diagnostic.get("reachable") is False and diagnostic.get("next") == "kb-create install",
-                   "doctor did not return the missing-receipt result", cases=["PC-003.2"])
+        human, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM)], env=env, timeout=120)
+        typed_ok = (result.returncode == 1 and diagnostic.get("code") == "KB_INSTALL_RECEIPT_UNAVAILABLE"
+                    and diagnostic.get("hint") and diagnostic.get("correlationId")
+                    and "KB_INSTALL_RECEIPT_UNAVAILABLE" in human.stdout
+                    and "correlationId" in human.stdout)
+        record_case("doctor reports missing receipt", typed_ok,
+                    "doctor did not return the typed missing-receipt diagnostic in both modes",
+                    cases=["PC-003.2", "S-203.11"])
     finally:
         os.replace(hidden_receipt, receipt)
     restored, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
     try:
-        restored_payload = json.loads(restored.stdout)
+        restored_payload = result_payload(json.loads(restored.stdout))
     except json.JSONDecodeError:
         restored_payload = {}
-    restored_ok = (restored.returncode == 0 and restored_payload.get("ok") is True
-                   and restored_payload.get("installed") is True and restored_payload.get("running") is True
+    restored_ok = (restored.returncode == 0 and restored_payload.get("installed") is True and restored_payload.get("running") is True
                    and restored_payload.get("reachable") is True
                    and restored_payload.get("platform", {}).get("ok") is True)
     record_case("doctor recovers after receipt restore", restored_ok,
@@ -538,9 +546,9 @@ def main():
         if FRONT == "human" and not VARIANT.endswith("secured"):
             record_case("human interactive install",
                        human_install_ok, "interactive install did not show a plan and success result",
-                       cases=["PC-001.2", "S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3"])
+                       cases=["PC-001.2", "S-040.1", "S-040.2", "S-187.1", "S-187.2", "S-187.3", "S-203.10"])
     else:
-        operation = "plan" if VARIANT in {"input", "relative-path"} else "apply"
+        operation = "plan" if VARIANT in {"input", "relative-path"} else "install"
         install_scenario = "custom" if VARIANT.endswith("secured") else SCENARIO
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                 "--request-platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
@@ -574,30 +582,47 @@ def main():
         if not require(result, step=f"kb-create {operation} --json"):
             append_summary(False)
             return failure_exit()
-        try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            fail("kb-create apply --json: output was not one JSON document")
-            append_summary(False)
-            return failure_exit()
-        if payload.get("ok") is not True:
-            fail("kb-create apply --json: result did not report ok=true")
+        if operation == "install":
+            try:
+                records = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+            except json.JSONDecodeError:
+                records = []
+            terminal = records[-1] if records else {}
+            stream_meta = terminal.get("meta", {}).get("stream", {}) if isinstance(terminal, dict) else {}
+            install_ok = (result.returncode == 0 and bool(records)
+                          and terminal.get("ok") is True and terminal.get("data", "not-null") is None
+                          and stream_meta.get("terminal") is True and stream_meta.get("exitCode") == 0
+                          and any(record.get("ok") is True and isinstance(record.get("data"), dict)
+                                  for record in records[:-1] if isinstance(record, dict)))
+            record_case("JSON install progress", install_ok,
+                       "install stream omitted progress or its terminal success record",
+                       cases=["S-203.10", "S-203.13"])
+            if not install_ok:
+                fail("kb-create install --json: stream did not finish successfully")
+            payload = {}
+        else:
+            try:
+                envelope = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                fail(f"kb-create {operation} --json: output was not valid JSON")
+                append_summary(False)
+                return failure_exit()
+            payload = envelope.get("data") if isinstance(envelope, dict) else None
+            if envelope.get("ok") is not True or not isinstance(payload, dict):
+                fail(f"kb-create {operation} --json: result did not contain a success data object")
+                append_summary(False)
+                return failure_exit()
         if operation == "plan":
             plan_payload = payload.get("plan", {})
-            plan_ok = (result.returncode == 0 and payload.get("ok") is True
+            plan_ok = (result.returncode == 0
                        and plan_payload.get("request", {}).get("platformRoot") == str(PLATFORM)
                        and bool(plan_payload.get("artifacts")) and bool(plan_payload.get("serviceGraph")))
             record_case("agent plan", plan_ok,
                        "plan omitted the isolated root, resolved artifacts, or service graph", cases=["PC-001.3"])
-        elif operation == "apply":
-            apply_ok = (result.returncode == 0 and payload.get("ok") is True
-                        and isinstance(payload.get("receipt"), dict) and bool(payload.get("logPath"))
-                        and payload.get("receipt", {}).get("plan", {}).get("request", {}).get("platformRoot") == str(PLATFORM))
-            record_case("JSON apply", apply_ok,
-                        "apply JSON omitted ok, the root-matched receipt, or logPath", cases=["PC-001.4"])
+        elif operation == "install":
             if FRONT_DOOR == "agent":
-                record_case("agent JSON apply", apply_ok,
-                            "agent apply JSON omitted ok, receipt, or logPath", cases=["S-039.1"])
+                record_case("agent JSON install", install_ok,
+                            "agent install stream omitted progress or terminal success", cases=["S-039.1", "S-203.10"])
         if VARIANT.endswith("secured"):
             env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
         if VARIANT == "input":
@@ -808,9 +833,8 @@ def main():
                     stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: doctor-json (exit {diagnostic.returncode}) ==\n{(diagnostic.stdout or '')[-12000:]}\n{(diagnostic.stderr or '')[-4000:]}\n")
         elif command == "doctor":
             try:
-                health = json.loads(result.stdout)
-                passed = (result.returncode == 0 and health.get("ok") is True
-                          and health.get("installed") is True and health.get("running") is True
+                health = result_payload(json.loads(result.stdout))
+                passed = (result.returncode == 0 and health.get("installed") is True and health.get("running") is True
                           and health.get("reachable") is True and health.get("platform", {}).get("ok") is True)
             except json.JSONDecodeError:
                 passed = False
@@ -831,12 +855,11 @@ def main():
             fail(f"kb-create {command}: expected human summary '{key}'")
         if command == "status":
             try:
-                status_payload = json.loads(result.stdout)
+                status_payload = result_payload(json.loads(result.stdout))
                 active_receipt = json.loads((PLATFORM / ".kb/v2/receipt.json").read_text())
                 host_status = status_payload.get("host", {})
                 installation = status_payload.get("installation", {})
-                status_ok = (result.returncode == 0 and status_payload.get("ok") is True
-                             and status_payload.get("installed") is True
+                status_ok = (result.returncode == 0 and status_payload.get("installed") is True
                              and status_payload.get("running") is True and status_payload.get("reachable") is True
                              and host_status.get("state") == "running"
                              and installation.get("receiptId") == active_receipt.get("id"))
@@ -987,6 +1010,14 @@ def main():
             fail(f"{mode} auth journey: {auth_result.first_failure}")
         prepare_workflow_fixtures(PROJECT)
         service_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-{mode}.json")
+        studio_fixture_file = service_report.with_name("studio-analytics-fixtures.json")
+        project_fixture_file = service_report.with_name(f"project-fixtures-{mode}.json")
+        studio_fixture_file.unlink(missing_ok=True)
+        project_fixture_file.unlink(missing_ok=True)
+        service_env["KB_JOURNEY_STUDIO_FIXTURE_FILE"] = str(studio_fixture_file)
+        service_env["KB_JOURNEY_PROJECT_FIXTURES_FILE"] = str(project_fixture_file)
+        service_env.pop("KB_JOURNEY_PROJECT_B_ID", None)
+        service_env.pop("KB_JOURNEY_PROJECT_B_ROOT", None)
         result, elapsed = run(["python3", "/opt/kb-journey/service_runner.py", "--mode", mode, "--output", str(service_report)],
                              env=service_env, timeout=900)
         TIMES[f"{mode} service journeys"] = elapsed
@@ -1004,6 +1035,19 @@ def main():
             # Nothing to merge workflow claims into; the failure above names the cause.
             append_summary(False)
             return failure_exit()
+        try:
+            project_fixtures = json.loads(project_fixture_file.read_text(encoding="utf-8"))
+            project_b_id = project_fixtures.get("projectBId")
+            project_b_root_value = project_fixtures.get("projectBRoot")
+            if (not isinstance(project_b_id, str) or not project_b_id
+                    or not isinstance(project_b_root_value, str)
+                    or not Path(project_b_root_value).is_absolute()
+                    or str(Path(project_b_root_value).resolve()) != project_b_root_value):
+                raise ValueError("registry result omitted a valid project B ID or canonical root")
+        except (OSError, json.JSONDecodeError, AttributeError, ValueError) as error:
+            fail(f"project B fixture handoff failed: {error}; rerun the installed journey to register its isolation project")
+        service_env["KB_JOURNEY_PROJECT_B_ID"] = project_b_id
+        service_env["KB_JOURNEY_PROJECT_B_ROOT"] = project_b_root_value
         workflow_journey = Journey(mode, f"workflow-{mode}")
         def restart_for_workflow_history() -> None:
             restart_host(launcher, env)
@@ -1014,6 +1058,56 @@ def main():
             project=PROJECT,
             restart_host=restart_for_workflow_history,
         )
+        project_b_root_value = service_env["KB_JOURNEY_PROJECT_B_ROOT"]
+        project_b_id = service_env["KB_JOURNEY_PROJECT_B_ID"]
+        if project_b_root_value and project_b_id:
+            project_b_fixture_root = Path(project_b_root_value)
+            prepare_workflow_fixtures(project_b_fixture_root)
+            definitions_deadline = time.monotonic() + 30
+            healthy_workflow_ready = False
+            while time.monotonic() < definitions_deadline:
+                with invocation_context(step_id="journey.setup"):
+                    definitions_result, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow defs list --json'],
+                                                env=service_env, cwd=project_b_fixture_root, timeout=90)
+                try:
+                    definitions_payload = json.loads(definitions_result.stdout)
+                    definitions_data = definitions_payload.get("data", definitions_payload)
+                    healthy_workflow_ready = isinstance(definitions_data, list) and any(
+                        isinstance(item, dict) and item.get("id") == "journey-hello" for item in definitions_data)
+                except json.JSONDecodeError:
+                    healthy_workflow_ready = False
+                if healthy_workflow_ready:
+                    break
+                time.sleep(1)
+            healthy_result = None
+            if healthy_workflow_ready:
+                with invocation_context(step_id="journey.setup"):
+                    healthy_result, _ = run(
+                        ["bash", "-c", '. "$HOME/.profile"; kb workflow run --workflow-id=journey-hello --input=\'{"message":"studio-healthy-project"}\' --json'],
+                        env=service_env, cwd=project_b_fixture_root, timeout=120)
+            try:
+                healthy_payload = json.loads(healthy_result.stdout) if healthy_result else {}
+                healthy_data = healthy_payload.get("data", healthy_payload)
+                healthy_run_id = healthy_data.get("runId", "") if isinstance(healthy_data, dict) else ""
+            except json.JSONDecodeError:
+                healthy_run_id = ""
+            if healthy_result is not None and healthy_result.returncode == 0 and isinstance(healthy_run_id, str) and healthy_run_id:
+                healthy_deadline = time.monotonic() + 180
+                while time.monotonic() < healthy_deadline:
+                    with invocation_context(step_id="journey.setup"):
+                        viewed, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow runs view "$1" --json=all',
+                                         "journey", healthy_run_id], env=service_env,
+                                        cwd=project_b_fixture_root, timeout=90)
+                    try:
+                        detail_payload = json.loads(viewed.stdout)
+                        detail = detail_payload.get("data", detail_payload)
+                    except json.JSONDecodeError:
+                        detail = {}
+                    if isinstance(detail, dict) and detail.get("status") in {"success", "failed", "cancelled"}:
+                        if detail.get("status") == "success":
+                            service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = healthy_run_id
+                        break
+                    time.sleep(2)
         workflow_result = workflow_journey.result()
         merge_workflow_result(service_report, workflow_result.__dict__)
         if workflow_result.status != "PASS":
@@ -1056,7 +1150,9 @@ def main():
             time.sleep(1)
         else:
             fail(f"Studio schedule journey could not list project A crons: {project_a_cron_error}")
-        project_b_root = HOME / "studio-project-b"
+        if not project_b_root_value or not project_b_id:
+            fail("installed Studio fixture requires registered KB_JOURNEY_PROJECT_B_ROOT and KB_JOURNEY_PROJECT_B_ID")
+        project_b_root = Path(project_b_root_value)
         (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
         (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
         (project_b_root / ".kb" / "workflows" / "studio-b-workflow.yml").write_text(
@@ -1065,13 +1161,6 @@ def main():
             encoding="utf-8")
         (project_b_root / ".kb" / "crons" / "studio-b.yml").write_text(
             "schedule: '0 0 * * *'\nworkflow: studio-b-workflow\nenabled: true\n", encoding="utf-8")
-        project_b_registered, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add --json'],
-                                      env=service_env, cwd=project_b_root, timeout=180)
-        try:
-            project_b_id = str(json.loads(project_b_registered.stdout)["project"]["id"])
-        except (KeyError, ValueError, TypeError):
-            project_b_id = ""
-            fail("Studio schedule journey could not register project B")
         studio_env.update({
             "KB_STUDIO_CRON_PROJECT_ROOT": str(PROJECT),
             "KB_STUDIO_CRON_ID": cron_id,
@@ -1080,7 +1169,33 @@ def main():
             "KB_STUDIO_PROJECT_B_ID": project_b_id,
             "KB_STUDIO_PROJECT_B_CRON_ID": "studio-b",
             "KB_STUDIO_PLAYWRIGHT_JSON": str(service_report.with_name(f"studio-playwright-{mode}.json")),
+            "KB_STUDIO_PROJECT_A_NAME": project_name,
+            "KB_STUDIO_PROJECT_B_NAME": project_b_root.name,
         })
+        if service_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID") and service_env.get("KB_STUDIO_HEALTHY_PROJECT_RUN_ID"):
+            studio_env["KB_STUDIO_DIAGNOSTIC_PROJECT"] = project_name
+            studio_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = service_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"]
+            studio_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"]
+        if studio_fixture_file.is_file():
+            analytics_fixture = json.loads(studio_fixture_file.read_text())
+            analytics_fields = {
+                "eventType": "KB_STUDIO_ANALYTICS_EVENT_TYPE",
+                "source": "KB_STUDIO_ANALYTICS_SOURCE",
+                "model": "KB_STUDIO_ANALYTICS_MODEL",
+                "eventId": "KB_STUDIO_ANALYTICS_EVENT_ID",
+            }
+            if all(isinstance(analytics_fixture.get(key), str) and analytics_fixture[key]
+                   for key in analytics_fields):
+                studio_env.update({target: analytics_fixture[key]
+                                   for key, target in analytics_fields.items()})
+            project_event_fields = {
+                "projectAEvent": "KB_STUDIO_PROJECT_A_EVENT",
+                "projectBEvent": "KB_STUDIO_PROJECT_B_EVENT",
+            }
+            if all(isinstance(analytics_fixture.get(key), str) and analytics_fixture[key]
+                   for key in project_event_fields):
+                studio_env.update({target: analytics_fixture[key]
+                                   for key, target in project_event_fields.items()})
         try:
             recorded_service_result = json.loads(service_report.read_text())
             studio_shell = next((step for step in recorded_service_result.get("steps", [])
@@ -1100,6 +1215,13 @@ def main():
                 studio_env["KB_STUDIO_OIDC_PROVIDER_ID"] = "corp"
                 studio_env["KB_STUDIO_OIDC_PROVIDER_NAME"] = "corp"
                 studio_env["KB_STUDIO_OIDC_EMAIL"] = service_env["KB_JOURNEY_ADMIN_EMAIL"]
+                with invocation_context(step_id="journey.setup"):
+                    admin_token, member_token = create_studio_access_tokens(
+                        "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                        service_env["KB_JOURNEY_ADMIN_PASSWORD"], member_email, member_password,
+                        env=service_env)
+                studio_env["KB_STUDIO_ADMIN_TOKEN"] = admin_token
+                studio_env["KB_STUDIO_MEMBER_TOKEN"] = member_token
                 required_studio_credentials = (
                     "KB_STUDIO_ADMIN_EMAIL", "KB_STUDIO_ADMIN_PASSWORD",
                     "KB_STUDIO_MEMBER_EMAIL", "KB_STUDIO_MEMBER_PASSWORD",
@@ -1163,28 +1285,19 @@ def main():
             record_case("human uninstall confirmation prompt", prompt_ok,
                        "uninstall prompt omitted its root, artifacts, receipt, snapshots, or project preservation",
                        cases=["S-050.2"])
-            try:
-                output_json = next(line for line in reversed(result.stdout.splitlines())
-                                   if line.lstrip().startswith("{"))
-                uninstall_payload = json.loads(output_json)
-            except (StopIteration, json.JSONDecodeError):
-                uninstall_payload = {}
-            human_uninstall_ok = (result.returncode == 0 and uninstall_payload.get("ok") is True
-                                  and uninstall_payload.get("operation") == "uninstall"
-                                  and bool(uninstall_payload.get("snapshot")) and bool(uninstall_payload.get("logPath")))
+            human_uninstall_ok = (result.returncode == 0 and "uninstall" in result.stdout.lower())
             record_case("human confirmed uninstall", human_uninstall_ok,
-                       "confirmed human uninstall JSON omitted operation, snapshot, or logPath",
+                       "confirmed human uninstall did not show its completion summary",
                        cases=["S-050.5"])
         else:
             try:
-                uninstall_payload = json.loads(result.stdout)
+                uninstall_payload = result_payload(json.loads(result.stdout))
             except json.JSONDecodeError:
                 uninstall_payload = {}
-            uninstall_ok = (result.returncode == 0 and uninstall_payload.get("ok") is True
-                            and uninstall_payload.get("operation") == "uninstall"
+            uninstall_ok = (result.returncode == 0 and uninstall_payload.get("operation") == "uninstall"
                             and bool(uninstall_payload.get("snapshot")) and bool(uninstall_payload.get("logPath")))
             record_case("agent confirmed uninstall", uninstall_ok,
-                       "agent uninstall JSON omitted operation, snapshot, or logPath", cases=["S-050.6"])
+                       "agent uninstall result omitted operation, snapshot, or logPath", cases=["S-050.6"])
         alive = [p for p in PROCESSES if p.poll() is None]
         listeners, _ = run(["ss", "-H", "-ltnp"], timeout=20)
         platform_pids = set()

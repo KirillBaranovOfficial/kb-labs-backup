@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -74,12 +73,8 @@ func Up(l env.Layout, profileName string, p config.Profile, overlayPath string, 
 		return UpResult{}, err
 	}
 
-	// 2. Filtered manifest (subset, no localPath) → install from registry.
-	manifest := filepath.Join(l.Logs, "manifest.json")
-	if err := GenManifest(ws, p.Plugins, p.Services, true, manifest); err != nil {
-		return UpResult{}, err
-	}
-	if err := Install(kbcreate, l, manifest, registry); err != nil {
+	// 2. Install the requested components through kb-create's V2 contract.
+	if err := Install(kbcreate, l, p, registry); err != nil {
 		_ = l.WriteMeta(env.Meta{Profile: profileName, Offset: offset, Status: "broken"})
 		return UpResult{}, err
 	}

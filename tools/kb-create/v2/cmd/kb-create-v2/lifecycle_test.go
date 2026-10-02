@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"net"
 	"os"
 	"path/filepath"
@@ -199,7 +200,7 @@ func (i installation) hostState(t *testing.T) (state string, healthURL string) {
 }
 
 func launcherCode(err error) string {
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		return typed.Code
 	}
@@ -247,13 +248,13 @@ func TestUpdateThatBreaksTheHostRestoresAndRestartsThePreviousVersion(t *testing
 	if launcherCode(err) != contracts.CodeUpdateHostNotHealthy {
 		t.Fatalf("err = %v", err)
 	}
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	errors.As(err, &typed)
 	if !strings.Contains(typed.Message, "previous version 1.0.0 was restored") || outcome.RecoveryPoint == "" {
 		t.Fatalf("error = %#v, outcome = %#v", typed, outcome)
 	}
-	if problems := typed.Validate(); len(problems) != 0 {
-		t.Fatalf("the error must be a valid catalog envelope: %v", problems)
+	if typed.Hint == "" {
+		t.Fatalf("the diagnostic must have a hint: %#v", typed)
 	}
 	// The previous version is what runs again, and what the receipt says.
 	state, healthURL := inst.hostState(t)
@@ -647,10 +648,10 @@ func TestFreshApplyIsRefusedWhileASupervisedHostRuns(t *testing.T) {
 		t.Fatalf("start: %s", raw)
 	}
 	failure := refuseRunningHost(state)
-	if failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Details["supervisorPid"] == "" {
+	if failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["supervisorPid"] == "" {
 		t.Fatalf("failure = %#v", failure)
 	}
-	if problems := failure.Validate(); len(problems) != 0 {
-		t.Fatalf("the refusal must be a valid catalog envelope: %v", problems)
+	if failure.Hint == "" {
+		t.Fatalf("the refusal must have a hint: %#v", failure)
 	}
 }

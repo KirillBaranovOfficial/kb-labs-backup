@@ -3,7 +3,6 @@ package orchestrator
 import (
 	"encoding/json"
 	"os"
-	"strings"
 )
 
 func jsonUnmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
@@ -16,10 +15,3 @@ func copyFile(src, dst string) error {
 	}
 	return os.WriteFile(dst, data, 0o600)
 }
-
-func splitLines(s string) []string {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	return strings.Split(strings.TrimRight(s, "\n"), "\n")
-}
-
-func joinLines(lines []string) string { return strings.Join(lines, "\n") }

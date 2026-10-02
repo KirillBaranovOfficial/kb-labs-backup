@@ -347,7 +347,7 @@ class MarketplaceStepTests(unittest.TestCase):
 
             expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("047", range(1, 4))) for step in steps}
             expected.add("S-010.7")
-            expected.add("S-203.10")
+            expected.add("S-203.14")
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(actual, expected)

@@ -12,7 +12,8 @@
         "severity": "error",
         "retryable": false,
         "message": "Unknown control endpoint.",
-        "hint": "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request."
+        "hint": "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request.",
+        "correlationId": "$string"
       }
     }
   }

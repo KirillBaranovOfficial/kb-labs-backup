@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -18,10 +19,10 @@ func ValidateUpdate(active contracts.InstallReceipt, target contracts.ResolvedIn
 		return updateIncompatible("platform", "", targetVersion, "", "the selected platform version is invalid")
 	}
 	if comparison < 0 {
-		failure := contracts.NewLauncherError(contracts.CodeUpdateDowngradeRefused,
+		failure := contracts.NewDiag(contracts.CodeUpdateDowngradeRefused,
 			fmt.Sprintf("The requested platform version %s is older than installed version %s.", targetVersion, installedVersion),
 			"use `kb-create rollback`", nil)
-		failure.Details = map[string]string{"installedVersion": installedVersion, "targetVersion": targetVersion}
+		failure.Meta = map[string]any{"installedVersion": installedVersion, "targetVersion": targetVersion}
 		return failure
 	}
 	targetSDK := sdkVersion(target, source)
@@ -64,7 +65,7 @@ func sdkVersion(target contracts.ResolvedInstallPlan, source catalog.Catalog) st
 	return ""
 }
 
-func updateIncompatible(kind, id, version, rangeValue, reason string) *contracts.LauncherError {
+func updateIncompatible(kind, id, version, rangeValue, reason string) *diag.Diag {
 	name := kind
 	if id != "" {
 		name += " " + id
@@ -77,7 +78,7 @@ func updateIncompatible(kind, id, version, rangeValue, reason string) *contracts
 	if kind == "adapter" && id != "" {
 		hint = fmt.Sprintf("Update or remove adapter %s first, then rerun `kb-create update`.", id)
 	}
-	failure := contracts.NewLauncherError(contracts.CodeUpdateIncompatible, message, hint, nil)
-	failure.Details = map[string]string{"component": id, "kind": kind, "version": version, "range": rangeValue}
+	failure := contracts.NewDiag(contracts.CodeUpdateIncompatible, message, hint, nil)
+	failure.Meta = map[string]any{"component": id, "kind": kind, "version": version, "range": rangeValue}
 	return failure
 }

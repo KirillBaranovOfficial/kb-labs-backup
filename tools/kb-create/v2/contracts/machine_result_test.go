@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	clikitresult "github.com/kb-labs/clikit/result"
 )
 
 const machineResultDir = "../../../../contracts/ux-result"
@@ -60,16 +62,7 @@ func validateMachineResult(data []byte) error {
 	if len(result.Error) == 0 || len(result.Data) != 0 {
 		return fmt.Errorf("failure result must contain error and omit data")
 	}
-	var envelope LauncherError
-	errorDecoder := json.NewDecoder(bytes.NewReader(result.Error))
-	errorDecoder.DisallowUnknownFields()
-	if err := errorDecoder.Decode(&envelope); err != nil {
-		return err
-	}
-	if problems := envelope.Validate(); len(problems) != 0 {
-		return fmt.Errorf("invalid error envelope: %v", problems)
-	}
-	return nil
+	return clikitresult.ValidateMachineResult(data)
 }
 
 func isJSONObject(data []byte) bool {
@@ -79,7 +72,7 @@ func isJSONObject(data []byte) bool {
 
 // case: S-203.1, S-203.2
 func TestMachineResultSchemaAndSharedFixtures(t *testing.T) {
-	// The fixture tests and Go LauncherError.Validate mirror the schema's
+	// The fixture tests and clikit result validator mirror the schema's
 	// closed success/failure branches and its reference to ErrorEnvelope.
 	var schema struct {
 		OneOf []struct {

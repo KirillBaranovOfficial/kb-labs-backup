@@ -932,6 +932,8 @@ export async function initPlatform(
             if (workspaceProvider) {
               const workspace = await workspaceProvider.materialize({
                 namespace,
+                projectRoot: process.env.KB_PROJECT_ROOT ?? cwd,
+                platformRoot: process.env.KB_PLATFORM_ROOT,
                 sourceRef: cwd,
                 basePath: cwd,
                 metadata: {

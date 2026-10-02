@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"errors"
+	"github.com/kb-labs/clikit/diag"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,7 +32,7 @@ func TestV2CompatibilityFailureIsRejectedBeforeArtifactExecution(t *testing.T) {
 		PlatformRoot: t.TempDir(),
 		Plugins:      []contracts.ComponentRequest{{ID: "future-plugin"}},
 	}, source)
-	var launcherErr *contracts.LauncherError
+	var launcherErr *diag.Diag
 	if !errors.As(err, &launcherErr) || launcherErr.Code != contracts.CodeIncompatibleComponents {
 		t.Fatalf("error = %T %#v, want %s", err, err, contracts.CodeIncompatibleComponents)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"io"
 	"net"
 	"net/http"
@@ -166,7 +167,7 @@ func (r *ProcessRunner) environment() ([]string, error) {
 	return env, nil
 }
 
-func (r *ProcessRunner) startFailed(cause error) *contracts.LauncherError {
+func (r *ProcessRunner) startFailed(cause error) *diag.Diag {
 	return hostError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", cause, map[string]string{"log": r.State.HostLog()})
 }
 

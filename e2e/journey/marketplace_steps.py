@@ -298,7 +298,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         _output(stop, stop_command)
         command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
         try:
-            with invocation_context(step_id="S-203.10"):
+            with invocation_context(step_id="S-203.14"):
                 result = _run(command, cwd=project, env=base_env, runner=runner)
             try:
                 payload = json.loads(result.stdout)
@@ -315,7 +315,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             _output(start, start_command)
 
     journey.step("report catalogued error when the installed host is stopped", "marketplace",
-                 assert_stopped_host_error, cases=["S-203.10"])
+                 assert_stopped_host_error, cases=["S-203.14"])
     if journey.steps[-1].status != "PASS":
         return
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -205,12 +206,18 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def test_project_isolation_checks_catalog_then_typed_unknown_call(self):
         response = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown MCP tool", "Call tools/list to discover tools.")
-        with patch("service_runner.request", side_effect=[
+        with tempfile.TemporaryDirectory() as directory, patch("service_runner.request", side_effect=[
             (200, {"result": {"tools": [{"name": "workflow__workflow_run"}]}}, {}),
             (200, response, {}),
         ]) as request:
-            self.assertIsNone(project_isolation("prj_a", "prj_b", "token"))
+            self.assertIsNone(project_isolation("prj_a", "prj_b", str(Path(directory).resolve()), "token"))
         self.assertEqual(request.call_count, 2)
+
+    def test_project_isolation_requires_the_registered_canonical_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            alias = str(Path(directory) / "missing")
+            failure = project_isolation("prj_a", "prj_b", alias, "token")
+        self.assertEqual(failure, "project B registry root must be an existing canonical directory")
 
     def test_sse_error_response_is_parsed(self):
         from mcp_project_steps import mcp_call

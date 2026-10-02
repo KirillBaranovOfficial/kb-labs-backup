@@ -95,6 +95,9 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 	}
 	var parsed map[string]any
 	_ = json.Unmarshal(stdout.Bytes(), &parsed)
+	if data, ok := parsed["data"].(map[string]any); ok {
+		parsed = data
+	}
 	return parsed, code, stdout.String() + stderr.String()
 }
 
@@ -110,7 +113,7 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	inst := newInstallation(t)
 
 	started, code, raw := inst.run("start", "--json")
-	if code != 0 || started["ok"] != true {
+	if code != 0 {
 		t.Fatalf("start: %d %s", code, raw)
 	}
 	pid := started["host"].(map[string]any)["pid"].(float64)
@@ -132,7 +135,7 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	}
 
 	restarted, code, raw := inst.run("restart", "--json")
-	if code != 0 || restarted["ok"] != true || restarted["host"].(map[string]any)["pid"].(float64) == pid {
+	if code != 0 || restarted["host"].(map[string]any)["pid"].(float64) == pid {
 		t.Fatalf("restart must replace the host process: %d %s", code, raw)
 	}
 
@@ -175,9 +178,11 @@ func TestStatusAndDoctorReportReceiptChannelAndExactVersion(t *testing.T) {
 		t.Fatalf("status text omitted release identity: %s", statusText)
 	}
 
-	doctor, _, doctorOutput := inst.run("doctor", "--json")
-	if doctor["platformChannel"] != "canary" || doctor["platformVersion"] != "3.2.0-canary.4" {
-		t.Fatalf("doctor omitted release identity: %v; output %s", doctor, doctorOutput)
+	doctor, doctorCode, doctorOutput := inst.run("doctor", "--json")
+	doctorError, ok := doctor["error"].(map[string]any)
+	meta, _ := doctorError["details"].(map[string]any)
+	if doctorCode != 1 || !ok || errorCode(doctor) != "KB_INSTALL_STATUS_UNHEALTHY" || meta["platformChannel"] != "canary" || meta["platformVersion"] != "3.2.0-canary.4" {
+		t.Fatalf("doctor omitted typed health failure or release identity: %v; output %s", doctor, doctorOutput)
 	}
 }
 
@@ -209,7 +214,7 @@ func TestStartPrintsHumanTextWithoutJSONFlag(t *testing.T) {
 		t.Fatalf("start: %d %q", code, raw)
 	}
 	_, code, raw = inst.run("start")
-	if code != 1 || !bytes.Contains([]byte(raw), []byte("KB_HOST_ALREADY_RUNNING")) || !bytes.Contains([]byte(raw), []byte("hint:")) {
+	if code != 1 || !bytes.Contains([]byte(raw), []byte("KB_HOST_ALREADY_RUNNING")) || !bytes.Contains([]byte(raw), []byte("next:")) {
 		t.Fatalf("second start: %d %q", code, raw)
 	}
 }

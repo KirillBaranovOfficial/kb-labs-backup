@@ -76,6 +76,29 @@ def create_studio_member(base_url: str, admin_email: str, admin_password: str) -
     return "journey-member@example.test", member_password
 
 
+def create_studio_access_tokens(base_url: str, admin_email: str, admin_password: str,
+                                member_email: str, member_password: str,
+                                *, env: dict[str, str]) -> tuple[str, str]:
+    """Mint real admin and member API tokens for the settings authorization claim."""
+    def login(email: str, password: str) -> str:
+        request = urllib.request.Request(
+            f"{base_url}/auth/login/cli",
+            data=json.dumps({"email": email, "password": password}).encode(),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        status, raw, _ = open_http(urllib.request.urlopen, request, timeout=20, env=env)
+        if status not in {200, 201}:
+            raise RuntimeError(f"POST /auth/login/cli returned HTTP {status} while preparing Studio settings auth")
+        payload = json.loads(raw) if raw else {}
+        token = payload.get("accessToken") or payload.get("token") if isinstance(payload, dict) else ""
+        if not isinstance(token, str) or not token:
+            raise RuntimeError("POST /auth/login/cli returned no access token while preparing Studio settings auth")
+        return token
+
+    return login(admin_email, admin_password), login(member_email, member_password)
+
+
 def record_studio_browser_step(report: Path, mode: str, passed: bool, duration: float, message: str) -> None:
     status = "PASS" if passed else "FAIL"
     _record_step(report, mode, status, duration, message)

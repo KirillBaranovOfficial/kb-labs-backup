@@ -39,7 +39,7 @@ describe('gatewayApiFetch auth mapping', () => {
     });
   });
 
-  // case: S-203.10
+  // case: S-203.14
   it('maps a refused host connection to the catalogued host-unreachable envelope', async () => {
     const cause = Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' });
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed', { cause })));

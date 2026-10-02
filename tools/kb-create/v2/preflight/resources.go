@@ -28,20 +28,20 @@ func CheckInstallResources(platformRoot string) error {
 
 func validateResources(availableMemory, freeDisk uint64) error {
 	if availableMemory < MinimumAvailableMemory {
-		failure := contracts.NewLauncherError(contracts.CodeMemoryInsufficient,
+		failure := contracts.NewDiag(contracts.CodeMemoryInsufficient,
 			fmt.Sprintf("The platform install needs at least %s of available memory; %s is available.", formatMemoryBytes(MinimumAvailableMemory), formatMemoryBytes(availableMemory)),
 			"Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.", nil)
-		failure.Details = map[string]string{
+		failure.Meta = map[string]any{
 			"minimum": formatMemoryBytes(MinimumAvailableMemory), "available": formatMemoryBytes(availableMemory),
 			"minimumBytes": fmt.Sprintf("%d", MinimumAvailableMemory), "availableBytes": fmt.Sprintf("%d", availableMemory),
 		}
 		return failure
 	}
 	if freeDisk < MinimumFreeDisk {
-		failure := contracts.NewLauncherError("KB_INSTALL_NO_DISK_SPACE",
+		failure := contracts.NewDiag("KB_INSTALL_NO_DISK_SPACE",
 			fmt.Sprintf("The platform install needs at least %s of free disk space; %s is available.", formatBytes(MinimumFreeDisk), formatBytes(freeDisk)),
 			"Free disk space or choose another directory with `--platform-root`, then run `kb-create install` again.", nil)
-		failure.Details = map[string]string{"minimum": formatBytes(MinimumFreeDisk), "available": formatBytes(freeDisk)}
+		failure.Meta = map[string]any{"minimum": formatBytes(MinimumFreeDisk), "available": formatBytes(freeDisk)}
 		return failure
 	}
 	return nil

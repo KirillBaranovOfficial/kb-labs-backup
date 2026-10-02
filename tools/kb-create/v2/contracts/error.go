@@ -1,11 +1,6 @@
 package contracts
 
-import (
-	"encoding/json"
-	"fmt"
-	"regexp"
-	"strings"
-)
+import "github.com/kb-labs/clikit/diag"
 
 // ErrorStage is the moment of the user journey in which an error happened.
 // The set is open; the values below are the ones the launcher emits.
@@ -26,37 +21,7 @@ const (
 	StageRollback   ErrorStage = "rollback"
 )
 
-//go:generate go run ./gen
-
-// validStages is the journey vocabulary from error-envelope.schema.json.
-var validStages = map[ErrorStage]bool{StagePreflight: true, StageResolve: true, StageApply: true, StageVerify: true, StageRecover: true, StageStart: true, StageLogin: true, StageAddProject: true, StageRun: true, StageExtend: true, StageUpdate: true, StageRollback: true}
-
-// ErrorArea groups error codes by the part of the product they belong to.
-type ErrorArea string
-
-const (
-	AreaInstall ErrorArea = "install"
-	AreaHost    ErrorArea = "host"
-	AreaAuth    ErrorArea = "auth"
-	AreaProject ErrorArea = "project"
-	AreaConfig  ErrorArea = "config"
-	AreaPlugin  ErrorArea = "plugin"
-	AreaUpdate  ErrorArea = "update"
-	AreaRuntime ErrorArea = "runtime"
-	AreaProduct ErrorArea = "product"
-)
-
-// ErrorSeverity distinguishes a blocking error from a non-blocking warning.
-type ErrorSeverity string
-
-const (
-	SeverityError   ErrorSeverity = "error"
-	SeverityWarning ErrorSeverity = "warning"
-)
-
-// Launcher error codes. The catalog of record is
-// core/platform/src/error-envelope/errors.catalog.json; codes_gen.go
-// is generated from it (go generate) and a test fails when it is stale.
+// Error codes emitted by kb-create's operation layer.
 const (
 	CodeOperationInvalid       = "KB_INSTALL_OPERATION_INVALID"
 	CodeToolchainUnsupported   = "KB_INSTALL_TOOLCHAIN_UNSUPPORTED"
@@ -99,152 +64,32 @@ const (
 	CodeHostStateDirUnwritable = "KB_HOST_STATE_DIR_UNWRITABLE"
 )
 
-// CodeInfo is the catalog data the launcher needs to build an envelope offline.
-// launcherCodes (codes_gen.go) holds every catalog code.
+// CodeInfo is the catalog data kb-create needs to build an envelope offline.
 type CodeInfo struct {
-	Area      ErrorArea
-	Stage     ErrorStage
+	Area      string
+	Stage     string
 	Retryable bool
 }
 
 // LookupCode returns the launcher's catalog data for a code.
 func LookupCode(code string) (CodeInfo, bool) {
-	info, ok := launcherCodes[code]
-	return info, ok
-}
-
-// codePrefixAreas maps the KB_<PREFIX>_ segment of a code to its area.
-// KB_ADAPTER_* is a plugin-area family (see 08-errors.md section 5F).
-var codePrefixAreas = map[string]ErrorArea{
-	"INSTALL":     AreaInstall,
-	"HOST":        AreaHost,
-	"AUTH":        AreaAuth,
-	"PROJECT":     AreaProject,
-	"CONFIG":      AreaConfig,
-	"PLUGIN":      AreaPlugin,
-	"ADAPTER":     AreaPlugin,
-	"UPDATE":      AreaUpdate,
-	"RUNTIME":     AreaRuntime,
-	"DEPLOY":      AreaRuntime,
-	"SERVICE":     AreaRuntime,
-	"ENV":         AreaConfig,
-	"MARKETPLACE": AreaPlugin,
-}
-
-// AreaForCode derives the area from a code: KB_<AREA>_* for platform codes,
-// product for <PLUGIN>_* codes, and empty for an empty code.
-func AreaForCode(code string) ErrorArea {
-	if code == "" {
-		return ""
+	entry, ok := diag.LookupCatalog(code)
+	if !ok {
+		return CodeInfo{}, false
 	}
-	parts := strings.SplitN(code, "_", 3)
-	if parts[0] != "KB" {
-		return AreaProduct
-	}
-	if len(parts) < 3 {
-		return ""
-	}
-	return codePrefixAreas[parts[1]]
+	return CodeInfo{Area: entry.Area, Stage: entry.Stage, Retryable: entry.Retryable}, true
 }
 
-// ErrorAction is a recovery step; Command is copy-ready.
-type ErrorAction struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Command string `json:"command,omitempty"`
-}
-
-// LauncherError is the launcher's side of the unified error envelope
-// (core/platform/src/error-envelope/error-envelope.schema.json, 08-errors.md).
-// It is safe to render for a human, return in JSON/agent protocol and persist
-// in a redacted diagnostic dossier. Cause must never hold secrets.
-type LauncherError struct {
-	Code          string            `json:"code"`
-	Area          ErrorArea         `json:"area"`
-	Stage         ErrorStage        `json:"stage"`
-	Severity      ErrorSeverity     `json:"severity"`
-	Retryable     bool              `json:"retryable"`
-	Message       string            `json:"message"`
-	Cause         string            `json:"cause,omitempty"`
-	Hint          string            `json:"hint"`
-	Actions       []ErrorAction     `json:"actions,omitempty"`
-	Docs          string            `json:"docs,omitempty"`
-	CorrelationID string            `json:"correlationId,omitempty"`
-	Details       map[string]string `json:"details,omitempty"`
-}
-
-// NewLauncherError builds an error for a known launcher code, taking area,
-// stage and retryable from the catalog table. A code the launcher does not
-// know keeps the zero stage, and Validate reports it.
-func NewLauncherError(code, message, hint string, cause error) *LauncherError {
-	result := &LauncherError{Code: code, Message: message, Hint: hint}
-	if info, ok := LookupCode(code); ok {
-		result.Area, result.Stage, result.Retryable = info.Area, info.Stage, info.Retryable
+// NewDiag constructs the shared clikit diagnostic for a kb-create error code.
+// The wrapped cause remains available through Unwrap; callers may add safe
+// machine-envelope cause text explicitly with clikit's WithCause option.
+func NewDiag(code, message, hint string, cause error) *diag.Diag {
+	opts := make([]diag.Opt, 0, 2)
+	if hint != "" {
+		opts = append(opts, diag.WithHint(hint))
 	}
 	if cause != nil {
-		result.Cause = cause.Error()
+		return diag.Wrap(cause, code, message, opts...)
 	}
-	return result.normalized()
-}
-
-func (e *LauncherError) Error() string {
-	if e == nil {
-		return "<nil>"
-	}
-	return fmt.Sprintf("%s: %s", e.Code, e.Message)
-}
-
-// normalized fills the fields that are derivable so every serialised error is
-// a complete envelope: area from the code, severity defaulting to error.
-func (e *LauncherError) normalized() *LauncherError {
-	value := *e
-	if value.Area == "" {
-		value.Area = AreaForCode(value.Code)
-	}
-	if value.Severity == "" {
-		value.Severity = SeverityError
-	}
-	return &value
-}
-
-// MarshalJSON always emits the complete envelope, for values and pointers alike.
-func (e LauncherError) MarshalJSON() ([]byte, error) {
-	type envelope LauncherError
-	return json.Marshal(envelope(*e.normalized()))
-}
-
-var (
-	codePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$`)
-	validAreas  = map[ErrorArea]bool{AreaInstall: true, AreaHost: true, AreaAuth: true, AreaProject: true, AreaConfig: true, AreaPlugin: true, AreaUpdate: true, AreaRuntime: true, AreaProduct: true}
-)
-
-// Validate applies the same rules as error-envelope.schema.json and the TS
-// validateErrorEnvelope, after normalisation. It returns the list of problems.
-func (e *LauncherError) Validate() []string {
-	value := e.normalized()
-	var problems []string
-	if !codePattern.MatchString(value.Code) {
-		problems = append(problems, "code must match ^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$")
-	}
-	if !validAreas[value.Area] {
-		problems = append(problems, "area is not a known area")
-	}
-	if !validStages[value.Stage] {
-		problems = append(problems, "stage is not in the journey vocabulary")
-	}
-	if value.Severity != SeverityError && value.Severity != SeverityWarning {
-		problems = append(problems, "severity must be error or warning")
-	}
-	if value.Message == "" {
-		problems = append(problems, "message must not be empty")
-	}
-	if value.Hint == "" {
-		problems = append(problems, "hint must not be empty")
-	}
-	for index, action := range value.Actions {
-		if action.ID == "" || action.Label == "" {
-			problems = append(problems, fmt.Sprintf("actions[%d] needs non-empty id and label", index))
-		}
-	}
-	return problems
+	return diag.New(code, message, opts...)
 }

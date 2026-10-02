@@ -2,8 +2,8 @@
  * @module @kb-labs/core-platform/error-envelope/validate
  *
  * Dependency-free structural validator for {@link ErrorEnvelope}. It enforces
- * the same rules as `error-envelope.schema.json` and as `LauncherError.Validate`
- * on the Go side; the shared fixtures keep the three in sync.
+ * the same rules as `error-envelope.schema.json`; shared fixtures keep the Go
+ * clikit boundary, TypeScript and Studio in sync.
  */
 
 import { ERROR_AREAS, ERROR_SEVERITIES, ERROR_STAGES, type ErrorEnvelope } from './types.js';

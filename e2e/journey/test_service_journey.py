@@ -18,7 +18,7 @@ from nightly_report import aggregate, fingerprint, load_results, render_summary,
 from entrypoint import run_runner
 from service_runner import (checks, configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
-                            prepare_mcp_projects,
+                            _prepare_and_export_mcp_projects,
                             main as service_main, mcp_probe, run_service_steps)
 from service_steps import Journey, record_runner_failure
 from steps.auth import run_secured_auth_steps
@@ -164,7 +164,7 @@ class ServiceJourneyTests(unittest.TestCase):
             failure = mcp_probe("prj_test", "token")
         self.assertIn("kb-labs-workflow__workflow_run", failure)
 
-    def test_prepare_mcp_projects_installs_commit_and_registers_project_b(self):
+    def test_prepare_mcp_projects_exports_id_and_canonical_root_from_same_registration(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             home = root / "home"
@@ -174,29 +174,45 @@ class ServiceJourneyTests(unittest.TestCase):
             subprocess.run(["git", "init", "-q", str(project_a)], check=True)
             (project_a / "note.txt").write_text("journey note\n")
             subprocess.run(["git", "-C", str(project_a), "add", "note.txt"], check=True)
-            env = {"HOME": str(home)}
+            fixture_file = home / "project-fixtures.json"
+            env = {"HOME": str(home), "KB_JOURNEY_PROJECT_FIXTURES_FILE": str(fixture_file)}
             calls = []
             registered_project_exists = []
+            registered_project_roots = []
 
             def fake_runner(command, **kwargs):
                 calls.append(command)
                 if command[:3] == ["kb", "project", "add"]:
+                    registry_project_root = str(Path(kwargs["cwd"]).resolve())
+                    registered_project_roots.append(registry_project_root)
                     registered_project_exists.append(
-                        Path(kwargs["cwd"]).is_dir() and (Path(kwargs["cwd"]) / ".git").is_dir())
+                        Path(registry_project_root).is_dir() and (Path(registry_project_root) / ".git").is_dir())
                     return subprocess.CompletedProcess(
-                        command, 0, '{"data":{"projectId":"prj_b"}}', "")
+                        command, 0,
+                        json.dumps({"ok": True, "project": {"id": "prj_b", "path": registry_project_root}}), "")
                 return subprocess.CompletedProcess(command, 0, "{}", "")
 
             with patch("service_runner._registry_version", return_value="2.120.1"):
-                project_b_id = prepare_mcp_projects(str(project_a), "http://registry.test", env, fake_runner)
+                with patch.dict(os.environ, {}, clear=False):
+                    project_b_id, project_b_root = _prepare_and_export_mcp_projects(
+                        str(project_a), "http://registry.test", env, fake_runner)
+                    self.assertEqual(os.environ["KB_JOURNEY_PROJECT_B_ID"], project_b_id)
+                    self.assertEqual(os.environ["KB_JOURNEY_PROJECT_B_ROOT"], project_b_root)
             project_id = "prj_" + hashlib.sha256(
                 str(project_a.resolve()).encode("utf-8")).hexdigest()[:16]
             plan_path = home / ".kb" / "state" / project_id / "commit" / "plans" / "root" / "current" / "plan.json"
             plan = json.loads(plan_path.read_text())
+            handoff = json.loads(fixture_file.read_text())
 
         self.assertEqual(project_b_id, "prj_b")
+        self.assertEqual(registered_project_roots, [project_b_root])
+        self.assertEqual(env["KB_JOURNEY_PROJECT_B_ID"], project_b_id)
+        self.assertEqual(env["KB_JOURNEY_PROJECT_B_ROOT"], project_b_root)
+        self.assertEqual(handoff, {"projectBId": project_b_id, "projectBRoot": project_b_root})
         self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"])
-        self.assertEqual(calls[1][0:3], ["kb", "project", "add"])
+        registration_calls = [call for call in calls if call[:3] == ["kb", "project", "add"]]
+        self.assertEqual(len(registration_calls), 1)
+        self.assertEqual(registration_calls[0][0:3], ["kb", "project", "add"])
         self.assertEqual(registered_project_exists, [True])
         self.assertEqual(plan["gitStatus"]["staged"], ["note.txt"])
         self.assertEqual(plan["commits"][0]["files"], ["note.txt"])

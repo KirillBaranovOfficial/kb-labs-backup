@@ -195,9 +195,10 @@ class WorkflowJourneyTests(unittest.TestCase):
             workflow_steps.run_cli = fake_run
             try:
                 journey = Journey("local", "workflow-fixture")
+                journey_env = {"HOME": directory}
                 workflow_steps.run_workflow_journey(
                     journey,
-                    env={"HOME": directory},
+                    env=journey_env,
                     project=project,
                     restart_host=lambda: restart_calls.append("kb-create restart --platform-root <platform>"),
                     clock=lambda: clock[0],
@@ -205,6 +206,8 @@ class WorkflowJourneyTests(unittest.TestCase):
                 )
             finally:
                 workflow_steps.run_cli = old_run_cli
+
+        self.assertEqual(journey_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID"), "failed-run")
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)

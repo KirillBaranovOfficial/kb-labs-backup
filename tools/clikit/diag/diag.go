@@ -9,10 +9,13 @@
 package diag
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"runtime/debug"
@@ -30,8 +33,13 @@ type Diag struct {
 	Reason string `json:"reason,omitempty"`
 	// Hint is the WHAT-TO-DO / WHERE-TO-LOOK from the platform error catalog.
 	Hint string `json:"hint,omitempty"`
+	// Cause is safe explanatory text for machine output. It is not printed by
+	// the human renderer; wrapped Go errors remain available only via Unwrap.
+	Cause string `json:"-"`
 	// Meta carries structured context (paths, hosts, per-action failures, …).
 	Meta          map[string]any `json:"meta,omitempty"`
+	Actions       []Action       `json:"-"`
+	Docs          string         `json:"-"`
 	CorrelationID string         `json:"correlationId,omitempty"`
 
 	// cause is the wrapped error; surfaced via Unwrap, never serialized.
@@ -60,6 +68,13 @@ type Opt func(*Diag)
 // WithReason sets the WHY.
 func WithReason(reason string) Opt { return func(d *Diag) { d.Reason = reason } }
 
+// WithHint preserves a command-specific next step while retaining the
+// catalog's remaining canonical envelope fields.
+func WithHint(hint string) Opt { return func(d *Diag) { d.Hint = hint } }
+
+// WithCause sets a safe cause for the canonical machine error envelope.
+func WithCause(cause string) Opt { return func(d *Diag) { d.Cause = cause } }
+
 // WithMeta merges structured context into Meta.
 func WithMeta(meta map[string]any) Opt {
 	return func(d *Diag) {
@@ -78,11 +93,11 @@ func WithCorrelationID(id string) Opt { return func(d *Diag) { d.CorrelationID =
 // New builds a Diag and uses the platform catalog hint for a known code.
 func New(code, message string, opts ...Opt) *Diag {
 	d := &Diag{Code: code, Message: message}
-	for _, o := range opts {
-		o(d)
-	}
 	if entry, ok := LookupCatalog(code); ok {
 		d.Hint = entry.Hint
+	}
+	for _, o := range opts {
+		o(d)
 	}
 	return d
 }
@@ -119,7 +134,9 @@ func FromErrorWithLogger(err error, logger *slog.Logger) *Diag {
 			return New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", WithCorrelationID(correlationID))
 		}
 		normalized := *typed
-		normalized.Hint = entry.Hint
+		if normalized.Hint == "" {
+			normalized.Hint = entry.Hint
+		}
 		if normalized.CorrelationID == "" {
 			normalized.CorrelationID = newCorrelationID()
 		}
@@ -129,6 +146,57 @@ func FromErrorWithLogger(err error, logger *slog.Logger) *Diag {
 	logger.Error("CLI command failed unexpectedly",
 		"correlationId", correlationID, "error", err.Error(), "stack", string(debug.Stack()))
 	return New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", WithCorrelationID(correlationID))
+}
+
+// MarshalJSON serializes diagnostics through the canonical platform envelope.
+func (d *Diag) MarshalJSON() ([]byte, error) {
+	envelope, err := ToEnvelope(d)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(envelope)
+}
+
+// UnmarshalJSON accepts only the canonical platform error envelope.
+func (d *Diag) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, field := range []string{"code", "area", "stage", "severity", "retryable", "message", "hint"} {
+		if _, exists := fields[field]; !exists {
+			return fmt.Errorf("canonical error envelope is missing required field %q", field)
+		}
+	}
+	var envelope Envelope
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("decode canonical error envelope trailing data: %v", err)
+	}
+	entry, ok := LookupCatalog(envelope.Code)
+	if !ok {
+		return fmt.Errorf("error envelope code %q is absent from the platform catalog", envelope.Code)
+	}
+	if envelope.Area != entry.Area || envelope.Stage != entry.Stage || envelope.Severity != entry.Severity || envelope.Retryable != entry.Retryable {
+		return fmt.Errorf("error envelope metadata for %q does not match the platform catalog", envelope.Code)
+	}
+	if envelope.Message == "" || envelope.Hint == "" {
+		return fmt.Errorf("error envelope message and hint are required")
+	}
+	*d = *New(envelope.Code, envelope.Message, WithHint(envelope.Hint), WithCause(envelope.Cause), WithCorrelationID(envelope.CorrelationID))
+	if len(envelope.Details) > 0 {
+		d.Meta = make(map[string]any, len(envelope.Details))
+		for key, value := range envelope.Details {
+			d.Meta[key] = value
+		}
+	}
+	d.Actions = append([]Action(nil), envelope.Actions...)
+	d.Docs = envelope.Docs
+	return nil
 }
 
 func newCorrelationID() string {
