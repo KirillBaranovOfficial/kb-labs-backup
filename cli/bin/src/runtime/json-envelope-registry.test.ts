@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
     },
   };
   return {
+    loadPlatformConfiguration: vi.fn(),
     initializePlatform: vi.fn(),
     resolveProjectConfig: vi.fn(),
     logger,
@@ -59,6 +60,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('./platform-init.js', () => ({
+  loadPlatformConfiguration: mocks.loadPlatformConfiguration,
   initializePlatform: mocks.initializePlatform,
   resolveProjectConfig: mocks.resolveProjectConfig,
 }));
@@ -139,20 +141,28 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ webhooks: [] }) }) as typeof fetch;
     const projects = await createProjectRegistry({ env: process.env });
     fixtureProjectId = (await projects.add(workspaceRoot)).project.id;
-    mocks.initializePlatform.mockResolvedValue({
+    const platformConfig = {
       platform,
       platformConfig: {},
       rawConfig: {},
+      rawPlatformConfig: {},
       effectiveConfig: {},
       platformRoot: workspaceRoot,
       projectRoot: workspaceRoot,
-    });
+      sameLocation: true,
+      sources: { roots: { platform: 'env', project: 'platform' }, fields: {} },
+    };
+    mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
+    mocks.initializePlatform.mockImplementation(async (config) => ({ ...config, platform }));
     mocks.resolveProjectConfig.mockResolvedValue({
       platformConfig: { adapters: {} },
       rawConfig: { gateway: { access: { mode: 'local' } } },
+      rawPlatformConfig: {},
       effectiveConfig: {},
       platformRoot: workspaceRoot,
       projectRoot: workspaceRoot,
+      sameLocation: true,
+      sources: { roots: { platform: 'env', project: 'registry' }, fields: {} },
     });
     registerBuiltinSystemCommands();
     await registerBuiltinCommands({

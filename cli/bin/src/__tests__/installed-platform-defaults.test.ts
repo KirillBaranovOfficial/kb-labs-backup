@@ -122,6 +122,18 @@ describe('installed platform adapter defaults', () => {
     expect(help.stdout).toContain('KB Labs CLI');
     expect(await readdir(projectRoot)).toEqual([]);
     await expect(access(path.join(projectRoot, '.kb'))).rejects.toThrow();
+    await expect(access(path.join(env.KB_HOME!, 'state'))).rejects.toThrow();
+
+    const version = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), '--version'], {
+      cwd: projectRoot,
+      env,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(version.status, version.stderr || version.stdout).toBe(0);
+    expect(version.stdout.trim()).not.toBe('');
+    await expect(access(path.join(projectRoot, '.kb'))).rejects.toThrow();
+    await expect(access(path.join(env.KB_HOME!, 'state'))).rejects.toThrow();
 
     await createProjectRegistry({ env }).add(projectRoot);
 

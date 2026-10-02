@@ -92,6 +92,8 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                     return f"{args!r} produced no output"
                 if (Path(cwd) / ".kb").exists():
                     return f"{args!r} created .kb in an unregistered directory"
+                if Path(env["KB_HOME"]).exists():
+                    return f"{args!r} created platform state at KB_HOME"
             return None
 
     journey.step(

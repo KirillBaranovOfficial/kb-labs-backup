@@ -6,12 +6,25 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { initializePlatform, hasExplicitDevelopmentMode } from '../platform-init';
+import {
+  initializePlatform as constructPlatform,
+  loadPlatformConfiguration,
+  hasExplicitDevelopmentMode,
+} from '../platform-init';
 import { platform } from '@kb-labs/core-runtime';
 import { mkdir, mkdtemp, realpath, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
+
+async function initializePlatform(
+  cwd: string,
+  moduleUrl?: string,
+  options: { skipAdapterInitialization?: boolean; projectScope?: 'required' | 'platform' } = {},
+) {
+  const config = await loadPlatformConfiguration(cwd, moduleUrl, options.projectScope ?? 'required');
+  return constructPlatform(config, { skipAdapterInitialization: options.skipAdapterInitialization });
+}
 
 describe('Platform Initialization (Real)', () => {
   let testDir: string;

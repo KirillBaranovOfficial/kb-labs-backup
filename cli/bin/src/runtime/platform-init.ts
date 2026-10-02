@@ -11,13 +11,13 @@
 import { createHash } from "node:crypto";
 import {
   initPlatform,
-  loadPlatformConfig,
+  loadPlatformConfig as readPlatformConfig,
   platform,
-  type PlatformConfig,
   type PlatformContainer,
   type PlatformLifecycleContext,
   type PlatformLifecycleHooks,
   type PlatformLifecyclePhase,
+  type LoadPlatformConfigResult,
 } from "@kb-labs/core-runtime";
 import { findRepoRoot } from "@kb-labs/core-sys";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
@@ -94,25 +94,13 @@ function createCLIUIProvider(): (hostType: string) => UIFacade {
   };
 }
 
-export interface PlatformInitResult {
+export interface PlatformInitResult extends LoadPlatformConfigResult {
   /** The initialized platform singleton. */
   platform: PlatformContainer;
-  /** The merged effective platform config. */
-  platformConfig: PlatformConfig;
-  /** Full raw project config (for `useConfig()` access). */
-  rawConfig?: Record<string, unknown>;
-  /** Raw config with `.kb/overlays/` applied — what `useConfig()` should read. */
-  effectiveConfig?: Record<string, unknown>;
-  /** Where the KB Labs platform code lives (node_modules/@kb-labs/*). */
-  platformRoot: string;
-  /** Where the user's `.kb/kb.config.json` lives. */
-  projectRoot: string;
 }
 
-export type ProjectConfigResult = Omit<PlatformInitResult, "platform">;
-
 /**
- * Initialize the platform for the CLI process.
+ * Read platform or project configuration without constructing adapters.
  *
  * @param cwd        Starting directory for project-root discovery
  *                   (typically `process.cwd()`).
@@ -120,13 +108,11 @@ export type ProjectConfigResult = Omit<PlatformInitResult, "platform">;
  *                   the platform installation in installed mode without
  *                   guessing `..` levels. Optional in dev mode.
  */
-export async function initializePlatform(
+export async function loadPlatformConfiguration(
   cwd: string,
   moduleUrl?: string,
-  options: { skipAdapterInitialization?: boolean; projectScope?: 'required' | 'platform' } = {},
-): Promise<PlatformInitResult> {
-  ensureLifecycleHooksRegistered();
-
+  projectScope: 'required' | 'platform' = 'platform',
+): Promise<LoadPlatformConfigResult> {
   // Mirror daemon.ts: derive KB_SOCKET_HASH before config is loaded so
   // ${KB_SOCKET_HASH} placeholders in socket paths resolve without warnings.
   // kb-dev sets it as a real env var for managed services; the CLI derives the
@@ -140,140 +126,79 @@ export async function initializePlatform(
       .slice(0, 8);
   }
 
-  const uiProvider = createCLIUIProvider();
-
-  // Config-load failures propagate to bootstrap for shared-envelope rendering.
-  const loadResult = await loadPlatformConfig({
+  return readPlatformConfig({
     moduleUrl,
     startDir: cwd,
-    projectScope: options.projectScope,
+    projectScope,
   });
+}
 
+/** Initialize the platform's adapters exactly once from an already-resolved scope. */
+export async function initializePlatform(
+  loadResult: LoadPlatformConfigResult,
+  options: { skipAdapterInitialization?: boolean } = {},
+): Promise<PlatformInitResult> {
   const {
-      platformConfig,
-      rawConfig,
-      effectiveConfig,
-      platformRoot,
-      projectRoot,
-      sources,
+    platformConfig,
+    rawConfig,
+    platformRoot,
+    projectRoot,
+    sources,
   } = loadResult;
   if (options.skipAdapterInitialization) {
-      return {
-        platform,
-        platformConfig,
-        rawConfig,
-        effectiveConfig,
-        platformRoot,
-        projectRoot,
-      };
+    return { ...loadResult, platform };
   }
-  try {
-      // User-supplied relative adapter paths are rooted at the project root;
-      // built-in defaults are absolute paths under the platform state home.
-      // Pass platformRoot so initPlatform finds marketplace.lock in the
-      // right place when platform is installed separately from the project.
-      const platformInstance = await initPlatform(
-        platformConfig,
-        projectRoot,
-        uiProvider,
-        platformRoot !== projectRoot ? platformRoot : undefined,
-        {
-          assemblyHook: makeAssemblyHook(() =>
-            process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-          ),
-          workspaceDevelopment: hasExplicitDevelopmentMode(
-            loadResult.sameLocation ? rawConfig : loadResult.rawPlatformConfig,
-          ),
-        },
-      );
+  ensureLifecycleHooksRegistered();
+  const platformInstance = await initPlatform(
+    platformConfig,
+    projectRoot,
+    createCLIUIProvider(),
+    platformRoot !== projectRoot ? platformRoot : undefined,
+    {
+      assemblyHook: makeAssemblyHook(() =>
+        process.env.KB_DEBUG === "true" ? platform.logger : undefined,
+      ),
+      workspaceDevelopment: hasExplicitDevelopmentMode(
+        loadResult.sameLocation ? rawConfig : loadResult.rawPlatformConfig,
+      ),
+    },
+  );
 
-      platformInstance.logger.info("Platform adapters initialized", {
-        layer: "cli",
-        service: LOG_SERVICE,
-        platformRoot,
-        projectRoot,
-        sources,
-        adapters: Object.keys(platformConfig.adapters ?? {}),
-        hasAdapterOptions: !!platformConfig.adapterOptions,
-      });
+  platformInstance.logger.info("Platform adapters initialized", {
+    layer: "cli",
+    service: LOG_SERVICE,
+    platformRoot,
+    projectRoot,
+    sources,
+    adapters: Object.keys(platformConfig.adapters ?? {}),
+    hasAdapterOptions: !!platformConfig.adapterOptions,
+  });
 
-      if (process.env.KB_DEBUG === "true") {
-        platformInstance.logger.debug("kb.diag.config", {
-          event: "kb.diag.config",
-          v: 1,
-          data: {
-            platformConfigPath: sources.platformDefaults,
-            projectConfigPath: sources.projectConfig,
-            overlayPaths: sources.overlays ?? [],
-            fieldSources: sources.fields ?? {},
-            ignoredProjectFields: sources.ignoredProjectFields ?? [],
-          },
-          ts: Date.now(),
-        });
-      }
-
-      return {
-        platform: platformInstance,
-        platformConfig,
-        rawConfig,
-        effectiveConfig,
-        platformRoot,
-        projectRoot,
-      };
-    } catch (error) {
-      // A configured external adapter failed. Retry with no user bindings so
-      // installed manifest defaults remain active while optional capabilities
-      // use their typed unavailable fallback.
-      const fallbackConfig: PlatformConfig = { adapters: {} };
-      const platformInstance = await initPlatform(
-        fallbackConfig,
-        projectRoot,
-        uiProvider,
-        platformRoot,
-        {
-          assemblyHook: makeAssemblyHook(() =>
-            process.env.KB_DEBUG === "true" ? platform.logger : undefined,
-          ),
-        },
-      );
-      platformInstance.logger.warn(
-        "Platform adapters failed; retried with installed local defaults",
-        {
-          layer: "cli",
-          service: LOG_SERVICE,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-      return {
-        platform: platformInstance,
-        platformConfig: fallbackConfig,
-        rawConfig,
-        effectiveConfig,
-        platformRoot,
-        projectRoot,
-      };
+  if (process.env.KB_DEBUG === "true") {
+    platformInstance.logger.debug("kb.diag.config", {
+      event: "kb.diag.config",
+      v: 1,
+      data: {
+        platformConfigPath: sources.platformDefaults,
+        projectConfigPath: sources.projectConfig,
+        overlayPaths: sources.overlays ?? [],
+        fieldSources: sources.fields ?? {},
+        ignoredProjectFields: sources.ignoredProjectFields ?? [],
+      },
+      ts: Date.now(),
+    });
   }
+
+  return { ...loadResult, platform: platformInstance };
 }
 
 /**
- * Resolve the selected project's config and overlays after platform adapters
- * have been initialized. This reuses the single platform container and only
- * returns the project-aware config view for dispatch.
+ * Resolve the selected project's config and overlays before adapter
+ * construction so project-specific default paths use the selected project.
  */
 export async function resolveProjectConfig(
   cwd: string,
   moduleUrl?: string,
-): Promise<ProjectConfigResult> {
-  const loadResult = await loadPlatformConfig({
-    moduleUrl,
-    startDir: cwd,
-    projectScope: "required",
-  });
-  return {
-    platformConfig: loadResult.platformConfig,
-    rawConfig: loadResult.rawConfig,
-    effectiveConfig: loadResult.effectiveConfig,
-    platformRoot: loadResult.platformRoot,
-    projectRoot: loadResult.projectRoot,
-  };
+): Promise<LoadPlatformConfigResult> {
+  return loadPlatformConfiguration(cwd, moduleUrl, 'required');
 }

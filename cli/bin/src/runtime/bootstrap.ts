@@ -31,7 +31,7 @@ import { getDefaultMiddlewares } from "./middlewares";
 import { executePlugin, createSystemCommandContext } from "./plugin-executor";
 import { tryResolveGateway, executeViaGateway } from "./gateway-executor";
 import { loadEnvFile } from "./env-loader";
-import { initializePlatform, resolveProjectConfig } from "./platform-init";
+import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } from "./platform-init";
 import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
@@ -109,16 +109,13 @@ export async function executeCli(
 
   loadEnvFile(cwd);
 
-  let initialized: Awaited<ReturnType<typeof initializePlatform>>;
+  let loadedConfig: Awaited<ReturnType<typeof loadPlatformConfiguration>>;
   try {
-    initialized = await initializePlatform(cwd, options.moduleUrl, {
-      skipAdapterInitialization: global.help && cmdPath.length === 0 && isPlatformAuthExemptFlag('help'),
-      projectScope: "platform",
-    });
+    loadedConfig = await loadPlatformConfiguration(cwd, options.moduleUrl, 'platform');
   } catch (error) {
     return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
   }
-  globalThis.__KB_RAW_CONFIG__ = initialized.rawConfig;
+  globalThis.__KB_RAW_CONFIG__ = loadedConfig.rawConfig;
   const authRoute = registryStore.resolve(cmdPath);
   const authCommandKind = authRoute.type === "system-cmd" ? "system" : "plugin";
   const authCommandPath = authRoute.type === "system-cmd"
@@ -142,13 +139,21 @@ export async function executeCli(
   const projectScope = resolveProjectScope(authRoute, global, cmdPath);
   if (projectScope === "required") {
     try {
-      initialized = {
-        ...initialized,
-        ...await resolveProjectConfig(cwd, options.moduleUrl),
-      };
+      loadedConfig = await resolveProjectConfig(cwd, options.moduleUrl);
     } catch (error) {
       return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
     }
+  }
+
+  const isGlobalHelp = global.help && isPlatformAuthExemptFlag('help') && cmdPath.length === 0;
+  const isGlobalVersion = global.version && isPlatformAuthExemptFlag('version');
+  let initialized: Awaited<ReturnType<typeof initializePlatform>>;
+  try {
+    initialized = await initializePlatform(loadedConfig, {
+      skipAdapterInitialization: Boolean(isGlobalHelp || isGlobalVersion),
+    });
+  } catch (error) {
+    return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
   }
 
   const { platform, platformConfig, rawConfig, effectiveConfig, platformRoot, projectRoot } = initialized;

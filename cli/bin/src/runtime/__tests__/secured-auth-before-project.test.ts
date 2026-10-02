@@ -4,13 +4,19 @@ import os from 'node:os';
 import path from 'node:path';
 
 const mocks = vi.hoisted(() => ({
+  loadPlatformConfiguration: vi.fn(),
+  resolveProjectConfig: vi.fn(),
   initializePlatform: vi.fn(),
   hasUsablePlatformAuth: vi.fn(),
   tryResolveGateway: vi.fn(),
   executeViaGateway: vi.fn(),
 }));
 
-vi.mock('../platform-init.js', () => ({ initializePlatform: mocks.initializePlatform }));
+vi.mock('../platform-init.js', () => ({
+  loadPlatformConfiguration: mocks.loadPlatformConfiguration,
+  resolveProjectConfig: mocks.resolveProjectConfig,
+  initializePlatform: mocks.initializePlatform,
+}));
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({ hasUsablePlatformAuth: mocks.hasUsablePlatformAuth }));
 vi.mock('../gateway-executor.js', () => ({
   tryResolveGateway: mocks.tryResolveGateway,
@@ -48,13 +54,15 @@ describe('secured CLI auth ordering', () => {
     delete process.env.KB_PLATFORM_ROOT;
     delete process.env.KB_NET_OFFSET;
 
-    mocks.initializePlatform.mockResolvedValue({
-      platform: {},
+    mocks.loadPlatformConfiguration.mockResolvedValue({
       platformConfig: {},
       rawConfig: { gateway: { access: { mode: 'secured' } } },
+      rawPlatformConfig: { gateway: { access: { mode: 'secured' } } },
       effectiveConfig: undefined,
       platformRoot: isolatedHome,
       projectRoot: isolatedHome,
+      sameLocation: true,
+      sources: { platform: 'env', project: 'platform', fields: {} },
     });
     mocks.hasUsablePlatformAuth.mockResolvedValue(false);
 
@@ -75,12 +83,13 @@ describe('secured CLI auth ordering', () => {
         hint: 'Run "kb auth login".',
       },
     });
-    expect(mocks.initializePlatform).toHaveBeenCalledTimes(1);
-    expect(mocks.initializePlatform).toHaveBeenCalledWith(
+    expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(
       path.join(isolatedHome, 'unregistered-project'),
       undefined,
-      expect.objectContaining({ projectScope: 'platform' }),
+      'platform',
     );
+    expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
+    expect(mocks.initializePlatform).not.toHaveBeenCalled();
     expect(mocks.tryResolveGateway).not.toHaveBeenCalled();
     expect(mocks.executeViaGateway).not.toHaveBeenCalled();
   });
