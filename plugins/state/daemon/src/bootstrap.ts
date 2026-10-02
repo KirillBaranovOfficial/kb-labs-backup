@@ -23,6 +23,7 @@ export async function setup({
 export async function bootstrap(_cwd: string = process.cwd()): Promise<void> {
   await runService({
     appId: "state-daemon",
+    projectScope: "platform",
     startDir: _cwd,
     portEnvVar: "KB_STATE_DAEMON_PORT",
     defaultHost: "localhost",

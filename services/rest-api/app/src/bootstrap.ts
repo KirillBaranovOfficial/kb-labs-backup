@@ -31,6 +31,7 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET");
   await runService({
     appId: "rest-api",
+    projectScope: "required",
     serviceId: "rest",
     startDir: cwd,
     defaultPort: 5050,

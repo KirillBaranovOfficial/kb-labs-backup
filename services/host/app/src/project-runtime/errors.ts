@@ -22,6 +22,14 @@ export function runtimeStartFailed(
   projectId: string,
   cause: string,
 ): ProjectRuntimeError {
+  if (cause.includes("KB_PROJECT_RUNTIME_IDENTITY_MISMATCH")) {
+    return new ProjectRuntimeError(
+      createErrorEnvelope("KB_PROJECT_RUNTIME_IDENTITY_MISMATCH", {
+        details: { projectId },
+        cause: "the host-passed project identity does not match the project registry",
+      }),
+    );
+  }
   return new ProjectRuntimeError(
     createErrorEnvelope("KB_PROJECT_RUNTIME_START_FAILED", {
       details: { project: projectId },

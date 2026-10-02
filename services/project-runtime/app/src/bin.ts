@@ -3,6 +3,10 @@ import { parseRuntimeArgs, RuntimeArgsError } from "./args.js";
 import { createProjectRuntimeConfig } from "./runtime.js";
 import { runHost } from "@kb-labs/shared-daemon";
 import { watchParent } from "./watchdog.js";
+import {
+  isProjectRegistryError,
+  projectErrorEnvelope,
+} from "@kb-labs/core-project-registry";
 
 async function main(): Promise<void> {
   const args = await parseRuntimeArgs(process.argv.slice(2), process.env);
@@ -34,6 +38,14 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
+  if (isProjectRegistryError(error)) {
+    const envelope = projectErrorEnvelope(error);
+    process.stderr.write(
+      `${envelope.code}: ${envelope.message}\nHint: ${envelope.hint}\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (error instanceof RuntimeArgsError) {
     process.stderr.write(`kb-project-runtime: ${error.message}\n`);
     process.exitCode = 2;

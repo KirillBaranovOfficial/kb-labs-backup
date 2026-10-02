@@ -28,6 +28,7 @@ import { join } from "node:path";
 export async function bootstrap(_cwd: string = process.cwd()): Promise<void> {
   await runService({
     appId: "workflow-daemon",
+    projectScope: "required",
     startDir: _cwd,
     // serviceId in the transport map / devservices is 'workflow' (≠ appId).
     serviceId: "workflow",

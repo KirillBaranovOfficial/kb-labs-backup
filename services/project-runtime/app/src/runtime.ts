@@ -213,6 +213,8 @@ export async function createProjectRuntimeConfig(
 
   return {
     appId: PROJECT_RUNTIME_APP_ID,
+    projectScope: "required",
+    projectId: options.projectId,
     startDir: options.projectRoot,
     moduleUrl: options.moduleUrl,
     platform: { assemblyHook },

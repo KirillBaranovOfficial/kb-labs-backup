@@ -8,6 +8,7 @@ import { createRegistryServer } from "@kb-labs/marketplace-registry-api";
 async function main(): Promise<void> {
   await runService({
     appId: "marketplace-registry",
+    projectScope: "platform",
     defaultPort: 5071,
     portEnvVar: "KB_REGISTRY_PORT",
     // The registry API is an internal Gateway upstream, not an internet edge.

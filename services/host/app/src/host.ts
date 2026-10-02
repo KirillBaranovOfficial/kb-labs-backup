@@ -443,6 +443,7 @@ export async function createHostConfig(
 
   return {
     appId: HOST_APP_ID,
+    projectScope: "platform",
     startDir: options.startDir,
     moduleUrl: options.moduleUrl,
     platform: {

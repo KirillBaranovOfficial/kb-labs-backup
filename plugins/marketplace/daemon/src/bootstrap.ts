@@ -65,6 +65,7 @@ export async function setup({
 export async function bootstrap(_cwd: string = process.cwd()): Promise<void> {
   await runService({
     appId: "marketplace",
+    projectScope: "platform",
     startDir: _cwd,
     defaultPort: 5070,
     portEnvVar: "KB_MARKETPLACE_PORT",
