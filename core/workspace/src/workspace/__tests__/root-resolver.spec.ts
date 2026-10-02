@@ -335,6 +335,26 @@ describe('resolveRoots', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
+  it('resolves platform roots without requiring a registered project', async () => {
+    const platformRoot = path.join(tmpDir, 'platform-only-root')
+    const cwd = path.join(tmpDir, 'unregistered-cwd')
+    mkdirSync(cwd, { recursive: true })
+    mkdirSync(path.join(platformRoot, 'node_modules', '@kb-labs', 'core-runtime'), { recursive: true })
+
+    const result = await resolveRoots({
+      startDir: cwd,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_HOME: path.join(tmpDir, 'empty-home') },
+      projectScope: 'platform',
+    })
+
+    expect(result).toEqual({
+      platformRoot: path.resolve(platformRoot),
+      projectRoot: path.resolve(platformRoot),
+      sameLocation: true,
+      sources: { platform: 'env', project: 'platform' },
+    })
+  })
+
   it('returns sameLocation: true in dev-mode workspace (both resolve to same root)', async () => {
     const workspaceRoot = path.join(tmpDir, 'dev-mode-workspace')
     const nested = path.join(workspaceRoot, 'packages', 'foo')

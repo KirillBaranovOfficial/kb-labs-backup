@@ -1,9 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
 import { loadPlatformConfig } from '../config-loader.js'
+import { createProjectRegistry } from '@kb-labs/core-project-registry'
 
 /**
  * Create a minimal platform installation layout at `<dir>`:
@@ -41,6 +42,13 @@ function makeProjectDir(dir: string, configContents?: unknown): void {
 describe('loadPlatformConfig', () => {
   let tmpDir: string
   let originalCwd: string
+  async function loadConfig(options: Parameters<typeof loadPlatformConfig>[0]) {
+    const env: NodeJS.ProcessEnv = { ...options?.env, KB_HOME: path.join(tmpDir, 'kb-home') }
+    if (env.KB_PLATFORM_ROOT) env.KB_PLATFORM_ROOT = realpathSync(env.KB_PLATFORM_ROOT)
+    const startDir = realpathSync(options?.startDir ?? process.cwd())
+    await createProjectRegistry({ env }).add(startDir)
+    return loadPlatformConfig({ ...options, startDir, env })
+  }
 
   beforeAll(() => {
     originalCwd = process.cwd()
@@ -66,7 +74,7 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    await expect(loadPlatformConfig({
+    await expect(loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
@@ -82,7 +90,7 @@ describe('loadPlatformConfig', () => {
     makePlatformDir(platformRoot)
     makeProjectDir(projectRoot, { adapters: { llm: ['openai'] } })
 
-    await expect(loadPlatformConfig({
+    await expect(loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
@@ -97,7 +105,7 @@ describe('loadPlatformConfig', () => {
       platform: { adapterOptions: { llm: { model: 'project-model' } } },
     })
 
-    await expect(loadPlatformConfig({
+    await expect(loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
@@ -114,7 +122,7 @@ describe('loadPlatformConfig', () => {
     })
     makeProjectDir(projectRoot) // no config
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
@@ -125,7 +133,7 @@ describe('loadPlatformConfig', () => {
 
     expect(result.platformConfig.adapters).toEqual({ cache: 'redis' })
     expect(result.sources.platformDefaults).toBe(
-      path.join(platformRoot, '.kb', 'kb.config.json'),
+      realpathSync(path.join(platformRoot, '.kb', 'kb.config.json')),
     )
     expect(result.sources.projectConfig).toBeUndefined()
   })
@@ -149,7 +157,7 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    await expect(loadPlatformConfig({
+    await expect(loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
@@ -165,7 +173,7 @@ describe('loadPlatformConfig', () => {
     makePlatformDir(platformRoot) // no config
     makeProjectDir(projectRoot) // no config
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
@@ -188,7 +196,7 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: workspaceRoot,
       env: {
         KB_PLATFORM_ROOT: workspaceRoot,
@@ -203,7 +211,7 @@ describe('loadPlatformConfig', () => {
     // don't double-count the same file.
     expect(result.sources.platformDefaults).toBeUndefined()
     expect(result.sources.projectConfig).toBe(
-      path.join(workspaceRoot, '.kb', 'kb.config.json'),
+      realpathSync(path.join(workspaceRoot, '.kb', 'kb.config.json')),
     )
   })
 
@@ -221,7 +229,7 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: workspaceRoot,
       env: {
         KB_PLATFORM_ROOT: workspaceRoot,
@@ -250,7 +258,7 @@ describe('loadPlatformConfig', () => {
       '{ this is not: valid json',
     )
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
@@ -270,7 +278,7 @@ describe('loadPlatformConfig', () => {
     makePlatformDir(platformRoot)
     makeProjectDir(projectRoot, { unrelated: 'data' })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
@@ -297,7 +305,7 @@ describe('loadPlatformConfig', () => {
     // Pre-condition
     delete process.env.KB_TEST_LOADED_VAR
 
-    await loadPlatformConfig({
+    await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
@@ -324,7 +332,7 @@ describe('loadPlatformConfig', () => {
 
     delete process.env.KB_TEST_SHOULD_NOT_LOAD
 
-    await loadPlatformConfig({
+    await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
@@ -349,7 +357,7 @@ describe('loadPlatformConfig', () => {
     delete process.env.MISSING_SECRET_VAR
 
     await expect(
-      loadPlatformConfig({
+      loadConfig({
         startDir: projectRoot,
         env: {
           KB_PLATFORM_ROOT: platformRoot,
@@ -371,7 +379,7 @@ describe('loadPlatformConfig', () => {
 
     delete process.env.MISSING_SECRET_VAR
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
@@ -398,7 +406,7 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: workspaceRoot,
       env: {
         KB_PLATFORM_ROOT: workspaceRoot,

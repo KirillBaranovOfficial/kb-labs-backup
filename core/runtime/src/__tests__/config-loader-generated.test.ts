@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
+import { createProjectRegistry } from '@kb-labs/core-project-registry'
 import { loadPlatformConfig } from '../config-loader.js'
 
 /**
@@ -31,10 +32,13 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  function load(platformRoot: string, projectRoot: string) {
+  async function load(platformRoot: string, projectRoot: string) {
+    const env = { KB_PLATFORM_ROOT: realpathSync(platformRoot), KB_PROJECT_ROOT: realpathSync(projectRoot), KB_HOME: path.join(tmpDir, 'kb-home') }
+    projectRoot = realpathSync(projectRoot)
+    await createProjectRegistry({ env }).add(projectRoot)
     return loadPlatformConfig({
       startDir: projectRoot,
-      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      env,
       loadEnvFile: false,
     })
   }

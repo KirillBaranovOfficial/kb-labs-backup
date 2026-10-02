@@ -1,9 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
 import { AdapterProjectScopeError } from '@kb-labs/core-platform'
+import { createProjectRegistry } from '@kb-labs/core-project-registry'
 import { loadPlatformConfig } from '../config-loader.js'
 
 function makePlatformDir(dir: string, configContents?: unknown): void {
@@ -31,6 +32,14 @@ describe('loadPlatformConfig: overlays', () => {
   let tmpDir: string
   let originalCwd: string
 
+  async function loadConfig(options: Parameters<typeof loadPlatformConfig>[0]) {
+    const env: NodeJS.ProcessEnv = { ...options?.env, KB_HOME: path.join(tmpDir, 'kb-home') }
+    if (env.KB_PLATFORM_ROOT) env.KB_PLATFORM_ROOT = realpathSync(env.KB_PLATFORM_ROOT)
+    const startDir = realpathSync(options?.startDir ?? process.cwd())
+    await createProjectRegistry({ env }).add(startDir)
+    return loadPlatformConfig({ ...options, startDir, env })
+  }
+
   beforeAll(() => {
     originalCwd = process.cwd()
     tmpDir = mkdtempSync(path.join(os.tmpdir(), 'kb-cfg-overlays-'))
@@ -49,7 +58,7 @@ describe('loadPlatformConfig: overlays', () => {
     makePlatformDir(platformRoot, { platform: { adapters: { llm: 'openai' } } })
     makeProjectDir(projectRoot)
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
@@ -66,7 +75,7 @@ describe('loadPlatformConfig: overlays', () => {
     makeProjectDir(projectRoot)
     const overlayPath = writeOverlay(projectRoot, 'pressure__overlay.jsonc', '{ "platform": { "features": { "rerank": true } } }')
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
@@ -74,7 +83,7 @@ describe('loadPlatformConfig: overlays', () => {
 
     expect(result.platformConfig.adapters).toEqual({ llm: 'openai' })
     expect((result.platformConfig.platform as Record<string, unknown>)?.features).toEqual({ rerank: true })
-    expect(result.sources.overlays).toEqual([overlayPath])
+    expect(result.sources.overlays).toEqual([realpathSync(overlayPath)])
   })
 
   it('merges multiple overlays in lexicographic order', async () => {
@@ -85,14 +94,14 @@ describe('loadPlatformConfig: overlays', () => {
     const aPath = writeOverlay(projectRoot, 'a.jsonc', '{ "platform": { "features": { "mode": "first" } } }')
     const bPath = writeOverlay(projectRoot, 'b.jsonc', '{ "platform": { "features": { "mode": "last", "added": true } } }')
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
     })
 
     expect((result.platformConfig.platform as Record<string, unknown>)?.features).toEqual({ mode: 'last', added: true })
-    expect(result.sources.overlays).toEqual([aPath, bPath])
+    expect(result.sources.overlays).toEqual([realpathSync(aPath), realpathSync(bPath)])
   })
 
   it('effectiveConfig applies overlays to product sections; rawConfig stays raw', async () => {
@@ -102,7 +111,7 @@ describe('loadPlatformConfig: overlays', () => {
     makeProjectDir(projectRoot, { mind: { retrieval: { rerank: true } } })
     writeOverlay(projectRoot, 'hyde__overlay.jsonc', '{ "mind": { "retrieval": { "hyde": true } } }')
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
@@ -119,7 +128,7 @@ describe('loadPlatformConfig: overlays', () => {
     makeProjectDir(projectRoot)
     writeOverlay(projectRoot, 'adapter.jsonc', '{ "adapters": { "llm": "anthropic" } }')
 
-    await expect(loadPlatformConfig({
+    await expect(loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
@@ -133,7 +142,7 @@ describe('loadPlatformConfig: overlays', () => {
     makeProjectDir(projectRoot)
     writeOverlay(projectRoot, 'bad.jsonc', '{ "execution": "not-an-object" }')
 
-    await expect(loadPlatformConfig({
+    await expect(loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
@@ -149,7 +158,7 @@ describe('loadPlatformConfig: overlays', () => {
     writeOverlay(projectRoot, 'b-broken.jsonc', '{ this is not valid json')
     writeOverlay(projectRoot, 'c-array.jsonc', '[1, 2, 3]')
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
@@ -165,7 +174,7 @@ describe('loadPlatformConfig: overlays', () => {
     makeProjectDir(projectRoot)
     writeOverlay(projectRoot, 'p.jsonc', '{ "platform": { "features": { "mode": "safe" } } }')
 
-    const result = await loadPlatformConfig({
+    const result = await loadConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,

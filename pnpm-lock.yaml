@@ -1044,6 +1044,9 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../core/project-registry
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
