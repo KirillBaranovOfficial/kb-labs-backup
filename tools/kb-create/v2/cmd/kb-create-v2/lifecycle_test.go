@@ -563,6 +563,7 @@ func recoverInstallation(t *testing.T, withTool bool) (installation, string) {
 	return inst, record
 }
 
+// case: S-100.2
 func TestDoctorRecoverRunsThePlatformRecoveryToolWithTheHostStopped(t *testing.T) {
 	inst, record := recoverInstallation(t, true)
 	request := recoverRequest{Enabled: true, Email: "admin@example.com", Tenant: "acme", Generate: true, Yes: true}
@@ -576,6 +577,29 @@ func TestDoctorRecoverRunsThePlatformRecoveryToolWithTheHostStopped(t *testing.T
 	}
 }
 
+// case: S-100.2
+func TestDoctorRecoverUsesExplicitPlatformRootWithoutARegisteredProject(t *testing.T) {
+	inst, record := recoverInstallation(t, true)
+	isolatedHome := t.TempDir()
+	t.Setenv("HOME", isolatedHome)
+	t.Setenv("KB_HOME", inst.kbHome)
+	t.Setenv("KB_PLATFORM_ROOT", "")
+	t.Setenv("KB_PROJECT_ROOT", "")
+	t.Setenv("KB_PROJECT_ID", "")
+	request := recoverRequest{Enabled: true, Email: "admin@example.com", Tenant: "acme", Generate: true, Yes: true, JSON: true}
+	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: request})
+	if code != 0 || !strings.Contains(raw, "recovered") {
+		t.Fatalf("recover with explicit platform root and no registered project: %d %s", code, raw)
+	}
+	if errorCode(payload) != "" {
+		t.Fatalf("recovery returned an error: %v", payload)
+	}
+	if _, err := os.Stat(record); err != nil {
+		t.Fatalf("platform recovery tool was not run: %v", err)
+	}
+}
+
+// case: S-100.4
 func TestDoctorRecoverRefusesWhileTheHostRuns(t *testing.T) {
 	inst, record := recoverInstallation(t, true)
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
@@ -584,6 +608,10 @@ func TestDoctorRecoverRefusesWhileTheHostRuns(t *testing.T) {
 	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, JSON: true}})
 	if code != 1 || errorCode(payload) != contracts.CodeRecoveryHostRunning {
 		t.Fatalf("recover: %d %s", code, raw)
+	}
+	failure := payload["error"].(map[string]any)
+	if failure["hint"] != "Run \"kb-create stop\", recover, then \"kb-create start\"." {
+		t.Fatalf("running-host recovery hint = %v", failure["hint"])
 	}
 	if _, err := os.Stat(record); !os.IsNotExist(err) {
 		t.Fatal("the recovery tool must not run while the host runs")

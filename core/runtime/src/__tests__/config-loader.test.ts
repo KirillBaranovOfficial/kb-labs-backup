@@ -402,8 +402,8 @@ describe('loadPlatformConfig', () => {
       .toEqual({ plugins: { commit: { scope: { scopes: [{ id: 'legacy' }] } } } })
   })
 
-  // case: S-204.8
-  it('does not apply a project store layer in platform scope', async () => {
+  // case: S-100.2
+  it('loads explicit platform scope without a registered project', async () => {
     const platformRoot = path.join(tmpDir, 'p7-platform-scope-platform')
     const startDir = path.join(tmpDir, 'p7-platform-scope-outside')
     const platformHome = path.join(tmpDir, 'p7-platform-scope-home')
@@ -419,7 +419,6 @@ describe('loadPlatformConfig', () => {
       env: {
         KB_PLATFORM_ROOT: realpathSync(platformRoot),
         KB_HOME: platformHome,
-        KB_PROJECT_ID: 'ambient-project',
       },
       loadEnvFile: false,
     })

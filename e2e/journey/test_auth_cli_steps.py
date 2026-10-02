@@ -105,10 +105,14 @@ class CliAuthJourneyTests(unittest.TestCase):
             nonlocal doctor_calls
             commands.append((args, input_text))
             if args[1] == "doctor":
+                self.assertNotIn("KB_PROJECT_ID", env)
+                self.assertNotIn("KB_PROJECT_ROOT", env)
+                self.assertEqual(args[args.index("--platform-root") + 1], "/isolated/platform")
+            if args[1] == "doctor":
                 doctor_calls += 1
             if args[1] == "doctor" and doctor_calls == 2:
                 return subprocess.CompletedProcess(args, 1,
-                    'Recovery needs the host to be stopped. Run "kb-create stop", recover, then "kb-create start".', ""), 0.0
+                    'KB_INSTALL_RECOVERY_HOST_RUNNING: Recovery needs the host to be stopped. Next: Run "kb-create stop", recover, then "kb-create start".', ""), 0.0
             return subprocess.CompletedProcess(args, 0, "done", ""), 0.0
 
         with patch("steps.auth._login", return_value=("new", "refresh")), \
