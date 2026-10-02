@@ -4,26 +4,7 @@
  */
 
 import type { ResponseInterceptor } from './types';
-
-/**
- * Envelope response structure
- */
-interface EnvelopeResponse<T = unknown> {
-  ok: boolean;
-  data?: T;
-  error?: {
-    code: string;
-    message: string;
-    details?: Record<string, unknown>;
-    cause?: string;
-    traceId?: string;
-  };
-  meta?: {
-    requestId: string;
-    durationMs: number;
-    apiVersion: string;
-  };
-}
+import { isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 
 /**
  * Create envelope unwrap interceptor
@@ -46,12 +27,10 @@ export function createEnvelopeInterceptor(): ResponseInterceptor {
     const clonedResponse = response.clone();
 
     try {
-      const envelope = await clonedResponse.json() as EnvelopeResponse;
+      const envelope: unknown = await clonedResponse.json();
 
-
-      // Check if response is an envelope
-      if (envelope && typeof envelope === 'object' && 'ok' in envelope) {
-        if (envelope.ok === true && 'data' in envelope) {
+      if (isUxResultCandidate(envelope)) {
+        if (isUxResult(envelope) && envelope.ok) {
           // Success envelope: unwrap data
           const unwrappedData = envelope.data;
           
@@ -65,7 +44,7 @@ export function createEnvelopeInterceptor(): ResponseInterceptor {
             statusText: response.statusText,
             headers,
           });
-        } else if (envelope.ok === false && 'error' in envelope) {
+        } else {
           // Error envelope: leave as is for error handler
           return response;
         }
@@ -100,4 +79,3 @@ export function extractEnvelopeMeta(response: Response): {
     return null;
   }
 }
-

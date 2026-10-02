@@ -36,13 +36,13 @@ describe('PageErrorBoundary', () => {
       });
 
       // Simulate error
-      boundary.state = { hasError: true, error: new Error('boom') };
+      boundary.state = { hasError: true, error: new Error('boom'), failure: null };
 
       // Create spy on setState
       const setStateSpy = vi.spyOn(boundary, 'setState');
       boundary.handleRetry();
 
-      expect(setStateSpy).toHaveBeenCalledWith({ hasError: false, error: null });
+      expect(setStateSpy).toHaveBeenCalledWith({ hasError: false, error: null, failure: null });
     });
   });
 
@@ -59,29 +59,37 @@ describe('PageErrorBoundary', () => {
       const error = new Error('crash');
       const errorInfo = { componentStack: 'at Plugin' } as any;
 
-      // Suppress console.error
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      // Suppress structured console diagnostics.
+      const consoleSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
       boundary.componentDidCatch(error, errorInfo);
       consoleSpy.mockRestore();
 
       expect(onError).toHaveBeenCalledWith(error, errorInfo);
     });
 
-    it('logs error to console', () => {
+    it('writes a structured correlated diagnostic without passing the raw error to console.error or console.warn', () => {
       const boundary = new PageErrorBoundary({
         pageId: 'settings',
         pluginId: '@kb-labs/auth',
         children: null,
       });
 
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       boundary.componentDidCatch(new Error('boom'), { componentStack: '' } as any);
 
       expect(consoleSpy).toHaveBeenCalledTimes(1);
-      expect(consoleSpy.mock.calls[0]![0]).toContain('@kb-labs/auth');
-      expect(consoleSpy.mock.calls[0]![0]).toContain('settings');
+      expect(consoleSpy.mock.calls[0]).toHaveLength(1);
+      const log = JSON.parse(String(consoleSpy.mock.calls[0]![0])) as Record<string, unknown>;
+      expect(log.correlationId).toEqual(expect.any(String));
+      expect(log.stack).toContain('boom');
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(consoleWarn).not.toHaveBeenCalled();
       consoleSpy.mockRestore();
+      consoleError.mockRestore();
+      consoleWarn.mockRestore();
     });
   });
 });

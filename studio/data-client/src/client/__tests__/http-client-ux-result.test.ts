@@ -1,0 +1,59 @@
+import axios from 'axios';
+import { afterEach, describe, expect, it } from 'vitest';
+import validSuccess from '../../../../../contracts/ux-result/fixtures/valid/success.json';
+import validFailure from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
+import invalidFailure from '../../../../../contracts/ux-result/fixtures/invalid/failure-missing-hint.json';
+import invalidMixedEnvelope from '../../../../../contracts/ux-result/fixtures/invalid/mixed-success-and-error.json';
+import invalidSuccess from '../../../../../contracts/ux-result/fixtures/invalid/success-missing-data.json';
+import { HttpClient } from '../http-client.js';
+
+const originalAdapter = axios.defaults.adapter;
+
+afterEach(() => {
+  axios.defaults.adapter = originalAdapter;
+});
+
+function respondWith(data: unknown): void {
+  axios.defaults.adapter = async (config) => ({
+    data,
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config,
+  });
+}
+
+describe('Studio API client UX result envelope', () => {
+  // case: S-203.5
+  it('unwraps the shared valid success fixture', async () => {
+    respondWith(validSuccess);
+
+    await expect(new HttpClient().fetch('/fixture')).resolves.toEqual(validSuccess.data);
+  });
+
+  // case: S-203.5
+  it('preserves the typed shared error fields from a valid failure fixture', async () => {
+    respondWith(validFailure);
+
+    await expect(new HttpClient().fetch('/fixture')).rejects.toMatchObject({
+      code: validFailure.error.code,
+      message: validFailure.error.message,
+      hint: validFailure.error.hint,
+      correlationId: validFailure.error.correlationId,
+    });
+  });
+
+  // case: S-203.5
+  it('maps each invalid shared fixture to a safe typed error', async () => {
+    for (const fixture of [invalidFailure, invalidMixedEnvelope, invalidSuccess]) {
+      respondWith(fixture);
+      await expect(new HttpClient().fetch('/fixture')).rejects.toMatchObject({
+        code: 'KB_RUNTIME_UNEXPECTED',
+        message: 'The operation failed unexpectedly.',
+        hint: 'Copy diagnostics and contact support.',
+        correlationId: expect.any(String),
+      });
+    }
+    expect(invalidFailure.error.correlationId).toBe('corr-203-3');
+  });
+});

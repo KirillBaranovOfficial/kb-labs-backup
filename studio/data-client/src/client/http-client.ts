@@ -1,7 +1,8 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse, type AxiosError } from 'axios';
 import type { RequestInterceptor, ResponseInterceptor, ErrorInterceptor } from './types';
 import { KBError } from '../errors/kb-error';
-import { mapFetchError } from './error-mapper';
+import { mapFetchError, mapInvalidResultEnvelope } from './error-mapper';
+import { isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import { ulid } from 'ulid';
 
 export class HttpClient {
@@ -34,14 +35,17 @@ export class HttpClient {
       (response) => {
         const data = response.data;
 
-        // Check if response is an envelope
-        if (data && typeof data === 'object' && 'ok' in data) {
-          if (data.ok === true && 'data' in data) {
+        // Check if response claims to use the shared result envelope.
+        if (isUxResultCandidate(data)) {
+          if (!isUxResult(data)) {
+            return Promise.reject(mapInvalidResultEnvelope(response.status));
+          }
+          if (data.ok) {
             // Success envelope: unwrap and return data
             response.data = data.data;
-          } else if (data.ok === false && 'error' in data) {
+          } else {
             // Error envelope: throw error
-            const error = mapFetchError(data.error, {
+            const error = mapFetchError(data, {
               status: response.status,
               statusText: response.statusText,
             } as Response);
@@ -53,8 +57,12 @@ export class HttpClient {
       },
       (error: AxiosError) => {
         // Transform axios error to KBError
-        const kbError = mapFetchError(error.response?.data, {
-          status: error.response?.status ?? 500,
+        const body = error.response?.data;
+        const status = error.response?.status ?? 500;
+        const kbError = isUxResultCandidate(body) && !isUxResult(body)
+          ? mapInvalidResultEnvelope(status)
+          : mapFetchError(body, {
+          status,
           statusText: error.response?.statusText ?? 'Unknown Error',
         } as Response);
         return Promise.reject(kbError);
@@ -110,4 +118,3 @@ export class HttpClient {
     throw processedError;
   }
 }
-

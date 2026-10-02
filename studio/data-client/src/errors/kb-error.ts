@@ -3,7 +3,9 @@ export class KBError extends Error {
     public code: string,
     override message: string,
     public status?: number,
-    public override cause?: unknown
+    public override cause?: unknown,
+    public hint?: string,
+    public correlationId?: string,
   ) {
     super(message);
     this.name = 'KBError';
@@ -22,4 +24,3 @@ export const errorCodes = {
   RATE_LIMIT: 'RATE_LIMIT',
   TOOL_ERROR: 'TOOL_ERROR',
 } as const;
-

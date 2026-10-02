@@ -24,6 +24,16 @@
       "import": "./dist/adapters/contract/index.js",
       "require": "./dist/adapters/contract/index.cjs"
     },
+    "./error-envelope": {
+      "types": "./dist/error-envelope/index.d.ts",
+      "import": "./dist/error-envelope/index.js",
+      "require": "./dist/error-envelope/index.cjs"
+    },
+    "./ux-result": {
+      "types": "./dist/ux-result/index.d.ts",
+      "import": "./dist/ux-result/index.js",
+      "require": "./dist/ux-result/index.cjs"
+    },
     "./core": {
       "types": "./dist/core/index.d.ts",
       "import": "./dist/core/index.js",
