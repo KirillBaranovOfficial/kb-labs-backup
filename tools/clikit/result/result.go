@@ -4,7 +4,11 @@
 // rendered as pretty human text, full JSON, or a compact agent payload.
 package result
 
-import "github.com/kb-labs/clikit/diag"
+import (
+	"errors"
+
+	"github.com/kb-labs/clikit/diag"
+)
 
 // Status mirrors the platform CommandOutput status union.
 type Status string
@@ -41,6 +45,54 @@ type CommandOutput struct {
 	JSON     any          `json:"json,omitempty"`
 	Agent    any          `json:"agent,omitempty"`
 	Warnings []*diag.Diag `json:"warnings,omitempty"`
+}
+
+// Returned marks a handler value for the shared command boundary to render.
+type Returned struct {
+	Data any
+}
+
+func (r *Returned) Error() string { return "command result" }
+
+// Return hands a value to the shared command boundary without writing it.
+func Return(data any) error { return &Returned{Data: data} }
+
+// ReturnedData extracts a handler value without exposing it as an error.
+func ReturnedData(err error) (any, bool) {
+	var returned *Returned
+	if errors.As(err, &returned) && returned != nil {
+		return returned.Data, true
+	}
+	return nil, false
+}
+
+// Streamed marks a command whose shared stream writer emitted its own terminal
+// record. The dispatcher must not append a second result.
+type Streamed struct {
+	ExitCode int
+}
+
+func (s *Streamed) Error() string { return "stream complete" }
+
+func StreamComplete(exitCode ...int) error {
+	code := diag.ExitOK
+	if len(exitCode) > 0 {
+		code = exitCode[0]
+	}
+	return &Streamed{ExitCode: code}
+}
+
+func IsStreamComplete(err error) bool {
+	var streamed *Streamed
+	return errors.As(err, &streamed)
+}
+
+func StreamExitCode(err error) (int, bool) {
+	var streamed *Streamed
+	if errors.As(err, &streamed) && streamed != nil {
+		return streamed.ExitCode, true
+	}
+	return diag.ExitOK, false
 }
 
 // Success builds a successful CommandOutput.

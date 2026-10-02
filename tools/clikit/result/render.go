@@ -30,9 +30,9 @@ func Render(w io.Writer, out CommandOutput, mode Mode) {
 func RenderDiag(w io.Writer, hw io.Writer, d *diag.Diag, mode Mode) int {
 	switch mode {
 	case ModeJSON:
-		writeJSON(w, map[string]any{"ok": false, "error": errorEnvelope(d)})
+		writeJSON(w, FailureEnvelope(d))
 	case ModeAgent:
-		writeJSON(w, map[string]any{"ok": false, "error": errorEnvelope(d)})
+		writeJSON(w, FailureEnvelope(d))
 	default:
 		writeHumanDiag(hw, d)
 	}
@@ -86,6 +86,11 @@ func errorEnvelope(d *diag.Diag) map[string]any {
 		p["details"] = details
 	}
 	return p
+}
+
+// FailureEnvelope returns the shared machine error envelope for result streams.
+func FailureEnvelope(d *diag.Diag) map[string]any {
+	return map[string]any{"ok": false, "error": errorEnvelope(d)}
 }
 
 func writeJSON(w io.Writer, v any) {

@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"os"
 	"runtime/debug"
-	"strings"
 	"time"
 )
 
@@ -96,14 +95,6 @@ func New(code, message string, opts ...Opt) *Diag {
 	return d
 }
 
-// PlatformCode returns a code safe for the shared machine error contract.
-func PlatformCode(code string) string {
-	if strings.HasPrefix(code, "KB_") {
-		return code
-	}
-	return "KB_RUNTIME_UNEXPECTED"
-}
-
 // Wrap builds a Diag wrapping an underlying error (preserved for Unwrap).
 func Wrap(err error, code, message string, opts ...Opt) *Diag {
 	d := New(code, message, opts...)
@@ -120,9 +111,19 @@ func FromError(err error) *Diag {
 // FromErrorWithLogger normalizes an untyped boundary failure and sends its
 // raw error and stack to the supplied structured logger only.
 func FromErrorWithLogger(err error, logger *slog.Logger) *Diag {
+	if err == nil {
+		return nil
+	}
+	if logger == nil {
+		logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	}
 	var typed *Diag
 	if errors.As(err, &typed) && typed != nil {
-		if PlatformCode(typed.Code) != typed.Code || (typed.Code == "KB_RUNTIME_UNEXPECTED" && typed.CorrelationID == "") {
+		code := PlatformCode(typed.Code)
+		if typed.Code == "KB_RUNTIME_UNEXPECTED" && typed.CorrelationID != "" {
+			return typed
+		}
+		if code == "KB_RUNTIME_UNEXPECTED" {
 			correlationID := newCorrelationID()
 			logger.Error("CLI command failed unexpectedly",
 				"correlationId", correlationID, "error", typed.Error(), "stack", string(debug.Stack()))
@@ -130,7 +131,18 @@ func FromErrorWithLogger(err error, logger *slog.Logger) *Diag {
 				WithHint("Re-run with --debug and include the correlationId in a report."),
 				WithCorrelationID(correlationID))
 		}
-		return typed
+		normalized := *typed
+		normalized.Code = code
+		if normalized.CorrelationID == "" {
+			normalized.CorrelationID = newCorrelationID()
+		}
+		if normalized.Hint == "" {
+			normalized.Hint = HintFor(code)
+			if normalized.Hint == "" {
+				normalized.Hint = "Run the command with --help for the expected input."
+			}
+		}
+		return &normalized
 	}
 	correlationID := newCorrelationID()
 	logger.Error("CLI command failed unexpectedly",

@@ -6,18 +6,15 @@ import "sync"
 // fixed table below and do not depend on per-command registrations.
 
 var (
-	mu        sync.RWMutex
-	hints     = map[string]string{}
-	exitCodes = map[string]int{}
+	mu    sync.RWMutex
+	hints = map[string]string{}
 )
 
 // Shared process exit codes for Go tool CLIs.
 const (
-	ExitOK        = 0
-	ExitError     = 1 // generic failure
-	ExitInput     = 2 // invalid usage or input
-	ExitConfig    = ExitInput
-	ExitForbidden = ExitError
+	ExitOK    = 0
+	ExitError = 1 // generic failure
+	ExitInput = 2 // invalid usage or input
 )
 
 // RegisterHints adds code→hint defaults. Safe to call from multiple inits.
@@ -26,18 +23,6 @@ func RegisterHints(m map[string]string) {
 	defer mu.Unlock()
 	for k, v := range m {
 		hints[k] = v
-	}
-}
-
-// RegisterExitCodes associates typed diagnostics with shared exit meanings.
-// Values outside the shared 1/2 failure table are discarded.
-func RegisterExitCodes(m map[string]int) {
-	mu.Lock()
-	defer mu.Unlock()
-	for code, exitCode := range m {
-		if exitCode == ExitInput || exitCode == ExitError {
-			exitCodes[code] = exitCode
-		}
 	}
 }
 
@@ -55,14 +40,6 @@ func ExitCode(d *Diag) int {
 	}
 	if d.Code == "KB_RUNTIME_INPUT_INVALID" {
 		return ExitInput
-	}
-	mu.RLock()
-	defer mu.RUnlock()
-	if code, ok := d.Meta["exitCode"].(int); ok && (code == ExitInput || code == ExitError) {
-		return code
-	}
-	if code, ok := exitCodes[d.Code]; ok {
-		return code
 	}
 	return ExitError
 }
