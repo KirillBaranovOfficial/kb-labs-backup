@@ -98,6 +98,26 @@ def _entries(payload: dict) -> list[dict]:
     return entries
 
 
+def validate_shared_failure(result: subprocess.CompletedProcess[str], *, json_mode: bool,
+                            code: str, message: str, hint: str) -> None:
+    """Validate the common human or machine failure contract used by S-051."""
+    if result.returncode == 0:
+        raise AssertionError("failing command unexpectedly exited successfully")
+    if json_mode:
+        payload = json.loads(result.stdout)
+        if payload != {"ok": False, "error": payload.get("error")}:
+            raise AssertionError("JSON result does not use the shared {ok:false,error} shape")
+        error = payload.get("error")
+        if not isinstance(error, dict) or (error.get("code"), error.get("message"), error.get("hint")) != (code, message, hint):
+            raise AssertionError(f"JSON failure does not match {code}")
+        return
+    output = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
+    if f"{message} [{code}]" not in output or "Hint:" not in output or hint not in output:
+        raise AssertionError(f"human failure does not match {code}")
+    if "Traceback" in output or output.lstrip().startswith("{"):
+        raise AssertionError("human failure exposed a stack trace or raw JSON")
+
+
 def _platform_snapshot(platform_root: Path) -> tuple[str, tuple[tuple[str, str], ...]]:
     """Capture the sealed receipt and every installed package version."""
     receipt = platform_root / ".kb" / "v2" / "receipt.json"
@@ -134,7 +154,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
                 or not isinstance(failure, dict)
                 or failure.get("code") != "KB_AUTH_REQUIRED"
                 or failure.get("message") != "Authentication is required."
-                or failure.get("hint") != 'Run "kb auth login".'):
+                or failure.get("hint") != f'Run "kb auth login --gateway-url {env.get("KB_JOURNEY_BASE_URL", "<url>")} --email <email> --password <password>".'):
             raise RuntimeError("unauthenticated marketplace list did not return KB_AUTH_REQUIRED with the login hint")
 
     journey.step("secured marketplace requires a saved CLI session", "marketplace",
@@ -188,6 +208,25 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     unrelated_package = "@kb-labs/qa-entry"
     authenticate_secured_marketplace(journey, project, base_env, runner)
     if journey.steps and journey.steps[-1].status != "PASS":
+        return
+
+    def assert_shared_errors() -> None:
+        failures = (
+            (["marketplace", "install", "@kb-labs/not-published"], "KB_PLUGIN_NOT_FOUND",
+             "Plugin @kb-labs/not-published was not found in the registry.", "kb marketplace search"),
+            (["adapter", "bind", "storage", "@kb-labs/adapters-not-installed"], "KB_ADAPTER_NOT_INSTALLED",
+             "Adapter package @kb-labs/adapters-not-installed is not installed on this platform.",
+             "kb marketplace install @kb-labs/adapters-not-installed --scope platform"),
+        )
+        for command, code, message, hint in failures:
+            for json_mode in (False, True):
+                with_flags = [*command, *( ["--json"] if json_mode else [])]
+                with invocation_context(step_id="S-051.2" if code == "KB_PLUGIN_NOT_FOUND" else "S-051.3"):
+                    result = _run(["kb", *with_flags], cwd=project, env=base_env, runner=runner)
+                validate_shared_failure(result, json_mode=json_mode, code=code, message=message, hint=hint)
+    journey.step("marketplace and adapter failures use the shared envelope", "marketplace",
+                 assert_shared_errors, cases=["S-051.2", "S-051.3", "S-051.4"])
+    if journey.steps[-1].status != "PASS":
         return
     with invocation_context(step_id="S-010.1"):
         wait_for_marketplace_ready(project, base_env, runner)

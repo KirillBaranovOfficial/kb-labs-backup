@@ -88,7 +88,7 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
                     raise AssertionError(f"allowlisted {' '.join(command)} failed without a session")
             for command in commands:
                 result = run_cli(command, env=anonymous_env, cwd=project)
-                assert_platform_auth_required(result, command)
+                assert_platform_auth_required(result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
 
         email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
         password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")

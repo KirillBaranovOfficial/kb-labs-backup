@@ -16,6 +16,12 @@ export class GatewayApiError extends Error {
   }
 }
 
+function requiredAuthEnvelope(gatewayUrl?: string): ErrorEnvelope {
+  return createErrorEnvelope('KB_AUTH_REQUIRED', {
+    details: { gatewayUrl: gatewayUrl || '<url>' },
+  });
+}
+
 async function loadAuth(): Promise<AuthState | null> {
   const sessions = new SessionManager();
   const session = await sessions.load();
@@ -55,7 +61,7 @@ function authenticatedUrl(input: string, gatewayUrl: string): URL {
 export async function gatewayApiFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
   let auth: AuthState | null;
   try { auth = await loadAuth(); }
-  catch { throw new GatewayApiError(createErrorEnvelope('KB_AUTH_REQUIRED')); }
+  catch { throw new GatewayApiError(requiredAuthEnvelope()); }
   const send = (current: AuthState | null): Promise<Response> => {
     const target = current ? authenticatedUrl(String(input), current.gatewayUrl) : new URL(String(input));
     const headers = new Headers(init.headers);
@@ -69,11 +75,11 @@ export async function gatewayApiFetch(input: string | URL, init: RequestInit = {
       auth = await auth.refresh();
       response = await send(auth);
     } catch {
-      throw new GatewayApiError(createErrorEnvelope('KB_AUTH_REQUIRED'));
+      throw new GatewayApiError(requiredAuthEnvelope(auth?.gatewayUrl));
     }
   }
   if (response.status === 401) {
-    throw new GatewayApiError(createErrorEnvelope('KB_AUTH_REQUIRED'));
+    throw new GatewayApiError(requiredAuthEnvelope(auth?.gatewayUrl));
   }
   if (response.status === 403) {
     const body = await response.clone().json().catch(() => null) as { permission?: unknown; error?: { code?: unknown } } | null;

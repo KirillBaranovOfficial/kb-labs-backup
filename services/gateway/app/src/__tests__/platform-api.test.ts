@@ -138,7 +138,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     await memberApp.ready();
     const response = await memberApp.inject({ method: 'POST', url: '/platform/v1/documentDatabase/find', payload: { args: ['users', {}] } });
     expect(response.statusCode).toBe(403);
-    expect(response.json().error.code).toBe('PERMISSION_DENIED');
+    expect(response.json().error.code).toBe('KB_AUTH_FORBIDDEN');
     await memberApp.close();
   });
 
@@ -163,7 +163,7 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
       payload: { args: [] },
     });
     expect(res.statusCode).toBe(403);
-    expect(res.json().error.code).toBe('METHOD_NOT_ALLOWED');
+    expect(res.json().error.code).toBe('KB_AUTH_FORBIDDEN');
   });
 
   it('returns 503 when adapter not configured', async () => {

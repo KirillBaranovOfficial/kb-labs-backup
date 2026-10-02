@@ -287,7 +287,7 @@ describe('POST /auth/login', () => {
     expect(names).toContain(COOKIE_CSRF);
   });
 
-  it('returns 401 with { error: "invalid_credentials" } on wrong password (CD-8)', async () => {
+  it('returns the shared credentials envelope on wrong password (CD-8)', async () => {
     const r = await ctx.app.inject({
       method: 'POST',
       url: '/auth/login',
@@ -296,7 +296,7 @@ describe('POST /auth/login', () => {
     });
 
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'invalid_credentials' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 
   it('returns 401 with identical shape on unknown email (CD-8)', async () => {
@@ -308,7 +308,7 @@ describe('POST /auth/login', () => {
     });
 
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'invalid_credentials' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 
   it('returns 400 when email is missing', async () => {
@@ -371,7 +371,7 @@ describe('POST /auth/login/cli', () => {
     expect(r.headers['set-cookie']).toBeUndefined();
   });
 
-  it('returns 401 with { error: "invalid_credentials" } on wrong password (same shape as /auth/login)', async () => {
+  it('returns the shared credentials envelope on CLI wrong password', async () => {
     const r = await ctx.app.inject({
       method: 'POST',
       url: '/auth/login/cli',
@@ -379,7 +379,7 @@ describe('POST /auth/login/cli', () => {
       payload: { email: 'admin@test.com', password: 'WrongPassword99!' },
     });
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'invalid_credentials' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } });
   });
 
   it('returns 400 when email or password is missing', async () => {
@@ -451,7 +451,7 @@ describe('POST /auth/refresh/cli', () => {
       method: 'POST', url: '/auth/refresh/cli', headers: { host: HOST }, payload: { refreshToken: 'not-a-jwt' },
     });
     expect(r.statusCode).toBe(401);
-    expect(r.json()).toMatchObject({ error: 'Unauthorized' });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
   });
 });
 
@@ -1193,6 +1193,28 @@ describe('GET /auth/users (admin only)', () => {
     expect(Array.isArray(body.users)).toBe(true);
     expect(body.users.some((u) => u.userId === 'admin-1')).toBe(true);
     expect(body.users.find((u) => u.userId === 'admin-1')).toHaveProperty('role', 'admin');
+  });
+
+  // case: S-005.5
+  it('returns the shared authorization envelope with the missing permission', async () => {
+    const invite = await ctx.invites.createInvite({
+      email: 'member@test.com', tenantId: TENANT_ID, groupId: 'tenant-member',
+      createdBy: 'admin-1', ttlMs: HOUR,
+    });
+    await ctx.app.inject({ method: 'POST', url: '/auth/activate', headers: { host: HOST },
+      payload: { token: invite.activationToken, password: 'MemberPass123!' } });
+    const login = await ctx.app.inject({ method: 'POST', url: '/auth/login/cli', headers: { host: HOST },
+      payload: { email: 'member@test.com', password: 'MemberPass123!' } });
+    const { accessToken } = login.json() as { accessToken: string };
+
+    const response = await ctx.app.inject({ method: 'GET', url: '/auth/users',
+      headers: { host: HOST, authorization: `Bearer ${accessToken}` } });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_FORBIDDEN', message: 'Permission denied: users:read', hint: expect.any(String),
+      details: { permission: 'users:read' },
+    } });
   });
 
   it('changes a tenant user role and updates permissions on their next request', async () => {

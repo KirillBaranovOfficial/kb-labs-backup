@@ -40,7 +40,7 @@
  */
 
 import type { FastifyRequest, FastifyReply, FastifyError } from 'fastify';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { sendAuthError } from './error-response.js';
 import type { UsersStore, SessionsStore, ApiTokensStore, JwtConfig, TenantResolver, IPolicyDecisionPoint } from '@kb-labs/gateway-auth';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
 import { verifyUserAccessToken } from '@kb-labs/gateway-auth';
@@ -71,7 +71,7 @@ export interface UserAuthMiddlewareDeps {
 }
 
 const sendUnauthorized = (reply: FastifyReply, message: string) =>
-  reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED', { cause: message }) });
+  sendAuthError(reply, 401, undefined, message);
 
 export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
   return async function userAuthMiddleware(

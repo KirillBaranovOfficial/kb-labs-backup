@@ -11,6 +11,7 @@ import {
   type ObservabilityCollectorLike,
 } from '@kb-labs/shared-http';
 import type { ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/core-contracts';
 import { registerRoutes } from './routes/index.js';
 import type { MarketplaceService } from '@kb-labs/marketplace-core';
@@ -112,6 +113,11 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
         }
         if (err instanceof PackageClassificationError || err instanceof PackageMetadataError) {
           const status = err instanceof PackageMetadataError && err.code === 'PACKAGE_NOT_FOUND' ? 404 : 422;
+          if (err instanceof PackageMetadataError && err.code === 'PACKAGE_NOT_FOUND') {
+            return reply.code(status).send({ ok: false, error: createErrorEnvelope('KB_PLUGIN_NOT_FOUND', {
+              details: { plugin: err.packageId },
+            }) });
+          }
           return reply.code(status).send({
             error: err.name,
             code: err.code,

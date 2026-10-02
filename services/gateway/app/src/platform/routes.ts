@@ -12,6 +12,7 @@
 import type { FastifyInstance } from 'fastify';
 import { platform } from '@kb-labs/core-runtime';
 import type { ILogger } from '@kb-labs/core-platform';
+import { sendAuthError } from '../auth/error-response.js';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import {
   PlatformCallRequestSchema,
@@ -93,17 +94,13 @@ export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): v
     async (request, reply) => {
       const auth = request.authContext;
       if (!auth) {
-        return reply.code(401).send({ error: 'Unauthorized' });
+        return sendAuthError(reply, 401);
       }
 
       const { adapter: adapterName, method: methodName } = request.params;
 
       if (auth.type === 'user' && ADMIN_ONLY_ADAPTERS.has(adapterName) && !auth.permissions.includes(PERMISSIONS.PLATFORM_SETTINGS_READ)) {
-        return reply.code(403).send({
-          ok: false,
-          error: { message: 'Permission denied: platform settings are administrator-only', code: 'PERMISSION_DENIED' },
-          durationMs: 0,
-        } satisfies PlatformCallResponse);
+        return sendAuthError(reply, 403, PERMISSIONS.PLATFORM_SETTINGS_READ, undefined, undefined, { durationMs: 0 });
       }
 
       // 1. Check adapter is in allowlist
@@ -118,11 +115,8 @@ export function registerPlatformRoutes(app: FastifyInstance, logger: ILogger): v
 
       // 2. Check method is allowed
       if (!allowedMethods.has(methodName)) {
-        return reply.code(403).send({
-          ok: false,
-          error: { message: `Method "${methodName}" not allowed on adapter "${adapterName}"`, code: 'METHOD_NOT_ALLOWED' },
-          durationMs: 0,
-        } satisfies PlatformCallResponse);
+        return sendAuthError(reply, 403, undefined,
+          `Method "${methodName}" not allowed on adapter "${adapterName}"`, undefined, { durationMs: 0 });
       }
 
       // 3. Resolve adapter instance

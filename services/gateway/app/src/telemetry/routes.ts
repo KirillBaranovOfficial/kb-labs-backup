@@ -8,6 +8,7 @@
 import type { FastifyInstance } from 'fastify';
 import { platform } from '@kb-labs/core-runtime';
 import type { ILogger } from '@kb-labs/core-platform';
+import { sendAuthError } from '../auth/error-response.js';
 import {
   TelemetryIngestRequestSchema,
   type TelemetryIngestResponse,
@@ -21,7 +22,7 @@ export function registerTelemetryRoutes(app: FastifyInstance, logger: ILogger): 
   app.post('/telemetry/v1/ingest', { schema: { tags: ['Telemetry'], summary: 'Ingest telemetry events' } }, async (request, reply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     const parsed = TelemetryIngestRequestSchema.safeParse(request.body);

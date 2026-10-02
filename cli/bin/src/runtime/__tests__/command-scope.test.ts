@@ -24,6 +24,7 @@ describe('bootstrap command scope resolution', () => {
     expect(resolveProjectScope({ type: 'command', command: pluginCommand, rest: [] }, {}, ['demo'])).toBe('required');
     expect(resolveProjectScope({ type: 'not-found', input: [], suggestions: [] }, { help: true }, [])).toBe('platform');
     expect(resolveProjectScope({ type: 'not-found', input: [], suggestions: [] }, { version: true }, [])).toBe('platform');
+    expect(resolveProjectScope({ type: 'not-found', input: ['missing'], suggestions: [] }, {}, ['missing'])).toBe('platform');
   });
 
   it('keeps command-name policy out of bootstrap scope resolution', async () => {

@@ -10,6 +10,9 @@ export function resolveProjectScope(
   if (global.version || (global.help && cmdPath.length === 0)) {
     return 'platform';
   }
+  if (route.type === 'not-found' || route.type === 'ambiguous') {
+    return 'platform';
+  }
   if (route.type === 'system-cmd') {
     return route.cmd.scope === 'platform' ? 'platform' : 'required';
   }

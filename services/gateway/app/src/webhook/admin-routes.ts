@@ -19,6 +19,7 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import { sendAuthError } from '../auth/error-response.js';
 import type { ICache, ILogger } from '@kb-labs/core-platform';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
 import { WebhookSecretStore } from './secret-store.js';
@@ -63,7 +64,7 @@ export function registerWebhookAdminRoutes(
   scope.post('/api/v1/webhooks/provision', async (request, reply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     // Acquire rate-limit token for the FULL duration of the handler so the
@@ -117,7 +118,7 @@ export function registerWebhookAdminRoutes(
   scope.get('/api/v1/webhooks', async (request, reply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     const acquired = await broker.tryAcquire(RL_LIST);
@@ -165,7 +166,7 @@ export function registerWebhookAdminRoutes(
     async (request, reply) => {
       const auth = request.authContext;
       if (!auth) {
-        return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
       }
 
       const acquired = await broker.tryAcquire(RL_REVOKE);
@@ -191,7 +192,7 @@ export function registerWebhookAdminRoutes(
     async (request, reply) => {
       const auth = request.authContext;
       if (!auth) {
-        return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
       }
 
       const acquired = await broker.tryAcquire(RL_REVOKE);

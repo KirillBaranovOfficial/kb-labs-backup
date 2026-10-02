@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   hasUsablePlatformAuth: vi.fn(),
   tryResolveGateway: vi.fn(),
   executeViaGateway: vi.fn(),
+  logger: {
+    trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn(),
+    child() { return this; },
+  },
 }));
 
 vi.mock('../platform-init.js', () => ({
@@ -46,8 +50,8 @@ describe('secured CLI auth ordering', () => {
     vi.clearAllMocks();
   });
 
-  // case: S-010.6, S-041.7
-  it('returns the auth envelope for the exact marketplace call before project resolution or gateway access', async () => {
+  // case: S-041.7
+  it('returns the auth envelope for a project-scoped system command before project resolution', async () => {
     isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-secured-auth-'));
     process.env.HOME = isolatedHome;
     process.env.KB_HOME = path.join(isolatedHome, '.kb');
@@ -68,9 +72,9 @@ describe('secured CLI auth ordering', () => {
 
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const exitCode = await executeCli([
-      'marketplace', 'plugins', 'list', '--scope', 'platform', '--json',
-    ], { cwd: path.join(isolatedHome, 'unregistered-project') });
+    const exitCode = await executeCli(['config', 'show', '--json'], {
+      cwd: path.join(isolatedHome, 'unregistered-project'),
+    });
 
     const records = stdout.mock.calls.map(([record]) => String(record));
     expect(exitCode).toBe(1);
@@ -80,7 +84,7 @@ describe('secured CLI auth ordering', () => {
       error: {
         code: 'KB_AUTH_REQUIRED',
         message: 'Authentication is required.',
-        hint: 'Run "kb auth login".',
+        hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
       },
     });
     expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(
@@ -92,5 +96,38 @@ describe('secured CLI auth ordering', () => {
     expect(mocks.initializePlatform).not.toHaveBeenCalled();
     expect(mocks.tryResolveGateway).not.toHaveBeenCalled();
     expect(mocks.executeViaGateway).not.toHaveBeenCalled();
+  });
+
+  // case: S-203.2
+  it('keeps an unknown command as invalid input in local mode', async () => {
+    isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-secured-unknown-'));
+    process.env.HOME = isolatedHome;
+    process.env.KB_HOME = path.join(isolatedHome, '.kb');
+    delete process.env.KB_PLATFORM_ROOT;
+    delete process.env.KB_NET_OFFSET;
+
+    const rawConfig = { gateway: { access: { mode: 'local' } } };
+    mocks.loadPlatformConfiguration.mockResolvedValue({
+      platformConfig: {}, rawConfig, rawPlatformConfig: rawConfig, effectiveConfig: undefined,
+      platformRoot: isolatedHome, projectRoot: undefined, sameLocation: true,
+      sources: { platform: 'env', project: 'platform', fields: {} },
+    });
+    mocks.initializePlatform.mockResolvedValue({
+      platform: { logger: mocks.logger }, platformConfig: {}, rawConfig, effectiveConfig: rawConfig,
+      platformRoot: isolatedHome, projectRoot: undefined,
+    });
+    mocks.hasUsablePlatformAuth.mockResolvedValue(false);
+
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitCode = await executeCli(['missing-command', '--json'], { cwd: isolatedHome });
+    const records = stdout.mock.calls.map(([record]) => String(record));
+
+    expect(exitCode).toBe(2);
+    expect(JSON.parse(records[0]!)).toMatchObject({
+      ok: false,
+      error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'Unknown command: missing-command' },
+    });
+    expect(mocks.hasUsablePlatformAuth).not.toHaveBeenCalled();
+    expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
   });
 });

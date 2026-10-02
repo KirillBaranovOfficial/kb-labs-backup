@@ -16,7 +16,7 @@ describe('handleError', () => {
     expect(json).toHaveBeenCalledWith({ ok: false, error: envelope });
 
     handleError({ ui: { json, error: output } }, error);
-    expect(output).toHaveBeenCalledWith('KB_AUTH_REQUIRED: Authentication is required.', {
+    expect(output).toHaveBeenCalledWith('Authentication is required. [KB_AUTH_REQUIRED]', {
       hint: 'Run "kb auth login".',
     });
   });
@@ -38,6 +38,6 @@ describe('handleError', () => {
     const output = vi.fn();
     const envelope = { code: 'KB_AUTH_FORBIDDEN', message: 'No permission.', hint: 'Ask an administrator.', details: { permission: 'auth:users:write' } };
     handleError({ ui: { error: output } }, Object.assign(new Error(envelope.message), { envelope }));
-    expect(output).toHaveBeenCalledWith('KB_AUTH_FORBIDDEN: No permission. (permission: auth:users:write)', { hint: 'Ask an administrator.' });
+    expect(output).toHaveBeenCalledWith('No permission. (permission: auth:users:write) [KB_AUTH_FORBIDDEN]', { hint: 'Ask an administrator.' });
   });
 });

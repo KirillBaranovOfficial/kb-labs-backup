@@ -5,6 +5,7 @@
 
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
+import { sendAuthError } from '@kb-labs/shared-http';
 
 type RegistryAuthConfig = {
   token: string;
@@ -68,14 +69,7 @@ export function buildRegistrySseAuthHook(config: RestApiConfig) {
       return;
     }
 
-    reply
-      .code(401)
-      .header('content-type', 'application/json')
-      .send({
-        status: 'unauthorized',
-        reason: 'invalid_token',
-      });
+    sendAuthError(reply, 401, undefined, 'The SSE registry token was invalid.');
   };
 }
-
 

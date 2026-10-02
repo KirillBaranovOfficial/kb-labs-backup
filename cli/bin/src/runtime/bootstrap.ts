@@ -36,7 +36,7 @@ import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, createErrorEnvelope, toErrorEnvelope } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope, getHostServiceAddress, toErrorEnvelope } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
@@ -54,6 +54,14 @@ type ILogger = PlatformContainer["logger"];
 type RuntimeInitOptions = RuntimeSetupOptions;
 type CliRuntimeInstance = Awaited<ReturnType<typeof createCliRuntime>>;
 type CliExecutionContext = CliRuntimeInstance["context"];
+
+function configuredGatewayUrl(): string | undefined {
+  try {
+    return getHostServiceAddress("gateway");
+  } catch {
+    return undefined;
+  }
+}
 
 export function createUnknownCommandError(input: string, suggestions: string[] = []) {
   return createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
@@ -129,6 +137,7 @@ export async function executeCli(
       commandPath: authCommandPath,
       commandKind: authCommandKind,
       hasAuth: accessMode !== 'secured' || await hasUsablePlatformAuth(),
+      gatewayUrl: configuredGatewayUrl(),
       help: global.help,
     }, async () => true);
   if ("error" in authResult) {

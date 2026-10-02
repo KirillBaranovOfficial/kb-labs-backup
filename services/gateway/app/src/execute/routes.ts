@@ -23,6 +23,7 @@ import { executionRegistry } from './execution-registry.js';
 import { subscriptionRegistry } from '../clients/subscription-registry.js';
 import { executeWithRetry } from './retry-executor.js';
 import { CancelledError } from './errors.js';
+import { sendAuthError } from '../auth/error-response.js';
 
 export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): void {
   /**
@@ -32,7 +33,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
   app.post('/api/v1/execute', { schema: { tags: ['Execute'], summary: 'Execute a plugin handler', hide: true } }, async (request: FastifyRequest, reply: FastifyReply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     const parsed = ExecuteRequestSchema.safeParse(request.body);
@@ -205,7 +206,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
   app.post('/api/v1/execute/:executionId/cancel', { schema: { tags: ['Execute'], summary: 'Cancel an active execution' } }, async (request: FastifyRequest, reply: FastifyReply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     const { executionId } = request.params as { executionId: string };
@@ -218,7 +219,7 @@ export function registerExecuteRoutes(app: FastifyInstance, logger: ILogger): vo
     }
 
     if (execution.namespaceId !== auth.namespaceId) {
-      return reply.code(403).send({ error: 'Forbidden — execution belongs to another namespace' });
+      return sendAuthError(reply, 403, undefined, 'Execution belongs to another namespace');
     }
 
     const cancelled = executionRegistry.cancel(executionId, reason);

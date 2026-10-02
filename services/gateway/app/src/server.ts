@@ -34,6 +34,7 @@ import {
 } from "@kb-labs/gateway-auth";
 import { resolveAccess } from "./access.js";
 import { createAuthMiddleware } from "./auth/middleware.js";
+import { sendAuthError } from "./auth/error-response.js";
 import { registerAuthHealthRoute } from "./auth/health-route.js";
 import {
   registerAuthRoutes,
@@ -726,7 +727,7 @@ export async function createServer(
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
-          return reply.code(401).send({ error: "Unauthorized" });
+          return sendAuthError(reply, 401);
         }
         const hosts = await hostRegistry.list(auth.namespaceId);
         return { hosts };
@@ -740,7 +741,7 @@ export async function createServer(
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
-          return reply.code(401).send({ error: "Unauthorized" });
+          return sendAuthError(reply, 401);
         }
         const { hostId } = request.params;
         const host = await hostRegistry.get(hostId, auth.namespaceId);
@@ -758,7 +759,7 @@ export async function createServer(
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
-          return reply.code(401).send({ error: "Unauthorized" });
+          return sendAuthError(reply, 401);
         }
         const { hostId } = request.params;
         const deleted = await hostRegistry.deregister(hostId, auth.namespaceId);

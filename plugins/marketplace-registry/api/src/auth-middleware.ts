@@ -48,7 +48,9 @@ export function createRegistryAuthMiddleware(internalSecret?: string) {
       : undefined;
     if (!internalSecret || suppliedSecret !== internalSecret ||
       (hasIdentity && !identity?.success) || (!hasIdentity && !isPublicCatalogRead(request))) {
-      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED') });
+      return reply.code(401).send({ error: createErrorEnvelope('KB_AUTH_REQUIRED', {
+        details: { gatewayUrl: '<url>' },
+      }) });
     }
 
     if (identity?.success) { request.authContext = identity.data; }

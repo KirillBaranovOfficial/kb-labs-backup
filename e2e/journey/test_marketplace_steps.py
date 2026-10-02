@@ -10,12 +10,29 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
-                               run_marketplace_steps, wait_for_marketplace_ready)
+                               run_marketplace_steps, validate_shared_failure, wait_for_marketplace_ready)
 from service_steps import Journey
 from invocations import invocation_context, open_http, run_command
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_fake_failures_are_rejected_for_both_shared_error_renderings(self):
+        for json_mode in (False, True):
+            with self.subTest(json_mode=json_mode), self.assertRaises(AssertionError):
+                validate_shared_failure(subprocess.CompletedProcess(
+                    ["kb", "marketplace", "install"], 0, "{}", ""), json_mode=json_mode,
+                    code="KB_PLUGIN_NOT_FOUND", message="missing", hint="kb marketplace search")
+
+    def test_shared_error_validator_accepts_json_envelope_and_human_recovery_hint(self):
+        message = "Adapter package x is not installed on this platform."
+        hint = "kb marketplace install x --scope platform"
+        validate_shared_failure(subprocess.CompletedProcess(["kb"], 1, json.dumps({
+            "ok": False, "error": {"code": "KB_ADAPTER_NOT_INSTALLED", "message": message, "hint": hint},
+        }), ""), json_mode=True, code="KB_ADAPTER_NOT_INSTALLED", message=message, hint=hint)
+        validate_shared_failure(subprocess.CompletedProcess(["kb"], 1,
+            f"{message} [KB_ADAPTER_NOT_INSTALLED]\n  Hint:  {hint}\n", ""),
+            json_mode=False, code="KB_ADAPTER_NOT_INSTALLED", message=message, hint=hint)
+
     def test_command_and_http_steps_do_not_bypass_the_invocation_helper(self):
         root = Path(__file__).parent
         guarded = [source for source in root.rglob("*.py")
@@ -187,7 +204,7 @@ class MarketplaceStepTests(unittest.TestCase):
                         "error": {
                             "code": "KB_AUTH_REQUIRED",
                             "message": "Authentication is required.",
-                            "hint": 'Run "kb auth login".',
+                            "hint": 'Run "kb auth login --gateway-url http://gateway.test --email <email> --password <password>".',
                         },
                     }), "")
                 if args[:2] == ["auth", "login"]:
@@ -258,7 +275,25 @@ class MarketplaceStepTests(unittest.TestCase):
 
                 args = command[1:]
                 stdout = "{}"
-                if args[:3] == ["marketplace", "plugins", "doctor"]:
+                if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/not-published":
+                    payload = {"ok": False, "error": {"code": "KB_PLUGIN_NOT_FOUND",
+                        "message": "Plugin @kb-labs/not-published was not found in the registry.",
+                        "hint": "kb marketplace search"}}
+                    if "--json" in args:
+                        return subprocess.CompletedProcess(command, 1, json.dumps(payload), "")
+                    error = payload["error"]
+                    return subprocess.CompletedProcess(command, 1,
+                        f"{error['message']} [{error['code']}]\n  Hint:  {error['hint']}\n", "")
+                elif args[:2] == ["adapter", "bind"] and args[3] == "@kb-labs/adapters-not-installed":
+                    payload = {"ok": False, "error": {"code": "KB_ADAPTER_NOT_INSTALLED",
+                        "message": "Adapter package @kb-labs/adapters-not-installed is not installed on this platform.",
+                        "hint": "kb marketplace install @kb-labs/adapters-not-installed --scope platform"}}
+                    if "--json" in args:
+                        return subprocess.CompletedProcess(command, 1, json.dumps(payload), "")
+                    error = payload["error"]
+                    return subprocess.CompletedProcess(command, 1,
+                        f"{error['message']} [{error['code']}]\n  Hint:  {error['hint']}\n", "")
+                elif args[:3] == ["marketplace", "plugins", "doctor"]:
                     stdout = json.dumps({"ok": True, "total": 0, "issues": []})
                 elif args[:2] == ["marketplace", "install"]:
                     package_id, version = args[2].rsplit("@", 1)
@@ -333,6 +368,7 @@ class MarketplaceStepTests(unittest.TestCase):
             run_marketplace_steps(journey, project, "http://registry.test", env, fake_run)
 
             expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("047", range(1, 4))) for step in steps}
+            expected.update({"S-051.2", "S-051.3", "S-051.4"})
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(actual, expected)

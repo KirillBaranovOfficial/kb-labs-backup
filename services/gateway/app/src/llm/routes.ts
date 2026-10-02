@@ -6,6 +6,7 @@
  * All calls go through the platform LLM chain: QueuedLLM → AnalyticsLLM → LLMRouter → adapter.
  */
 import type { FastifyInstance } from 'fastify';
+import { sendAuthError } from '../auth/error-response.js';
 import { platform } from '@kb-labs/core-runtime';
 import type {
   ILLM,
@@ -57,7 +58,7 @@ export function registerLLMGatewayRoutes(app: FastifyInstance, logger: ILogger):
   app.post('/api/v1/llm/chat/completions', { schema: { tags: ['LLM'], summary: 'OpenAI-compatible chat completions', hide: true } }, async (request, reply) => {
     const auth = request.authContext;
     if (!auth) {
-      return reply.code(401).send({ error: 'Unauthorized' });
+      return sendAuthError(reply, 401);
     }
 
     const parsed = ChatCompletionRequestSchema.safeParse(request.body);

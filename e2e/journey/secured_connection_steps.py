@@ -64,8 +64,10 @@ def validate_case_response(case_id: str, status: int, value: dict, *, expected: 
         and value.get("message") == "This reset link is invalid, expired, or already used",
         "S-005.4": lambda: status == 200 and "projects:read" in value.get("permissions", [])
         and "users:read" not in value.get("permissions", []),
-        "S-005.5": lambda: status == 403 and value.get("error") == "Forbidden"
-        and value.get("message") == "Permission denied: users:read",
+        "S-005.5": lambda: status == 403 and isinstance(value.get("error"), dict)
+        and value["error"].get("code") == "KB_AUTH_FORBIDDEN"
+        and value["error"].get("message") == "Permission denied: users:read"
+        and bool(value["error"].get("hint")),
     }
     if case_id not in contracts:
         raise ValueError(f"no HTTP response contract for {case_id}")

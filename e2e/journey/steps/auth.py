@@ -100,7 +100,8 @@ def _combined(result: subprocess.CompletedProcess[str]) -> str:
     return (result.stdout or "") + (result.stderr or "")
 
 
-def assert_platform_auth_required(result: subprocess.CompletedProcess[str], command: list[str]) -> None:
+def assert_platform_auth_required(result: subprocess.CompletedProcess[str], command: list[str],
+                                  gateway: str = "<url>") -> None:
     """Require the exact anonymous CLI auth envelope promised by S-041.7."""
     try:
         payload = json.loads(result.stdout)
@@ -110,7 +111,7 @@ def assert_platform_auth_required(result: subprocess.CompletedProcess[str], comm
     if (result.returncode == 0 or not isinstance(failure, dict)
             or failure.get("code") != "KB_AUTH_REQUIRED"
             or failure.get("message") != "Authentication is required."
-            or failure.get("hint") != 'Run "kb auth login".'):
+            or failure.get("hint") != f'Run "kb auth login --gateway-url {gateway} --email <email> --password <password>".'):
         raise AssertionError(f"unauthenticated {' '.join(command)} returned an unexpected result: {payload!r}")
 
 

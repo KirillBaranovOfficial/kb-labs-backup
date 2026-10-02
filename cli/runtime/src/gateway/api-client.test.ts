@@ -21,7 +21,7 @@ describe('gatewayApiFetch auth mapping', () => {
   it('maps a 401 to the catalog required-auth envelope', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })));
     await expect(gatewayApiFetch('http://127.0.0.1:4000/api')).rejects.toMatchObject({
-      envelope: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login".' },
+      envelope: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".' },
     });
   });
 
@@ -34,7 +34,7 @@ describe('gatewayApiFetch auth mapping', () => {
       envelope: {
         code: 'KB_AUTH_FORBIDDEN',
         details: { permission: 'users:write' },
-        message: 'You do not have permission to perform this operation.',
+        message: 'Permission denied: users:write',
       },
     });
   });

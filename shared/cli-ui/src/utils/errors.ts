@@ -38,7 +38,11 @@ export function handleError(ctx: ErrorContext, err: unknown, isJson?: boolean): 
       ctx.ui?.json?.({ ok: false, error: typedEnvelope });
     } else {
       const permission = typeof typedEnvelope.details?.permission === 'string' ? typedEnvelope.details.permission : undefined;
-      ctx.ui?.error?.(`${typedEnvelope.code}: ${typedEnvelope.message}${permission ? ` (permission: ${permission})` : ''}`, typedEnvelope.hint ? { hint: typedEnvelope.hint } : undefined);
+      const cause = typeof typedEnvelope.cause === 'string' ? typedEnvelope.cause : undefined;
+      ctx.ui?.error?.(`${typedEnvelope.message}${permission ? ` (permission: ${permission})` : ''} [${typedEnvelope.code}]`, {
+        ...(cause ? { cause } : {}),
+        ...(typedEnvelope.hint ? { hint: typedEnvelope.hint } : {}),
+      });
     }
     return;
   }
@@ -49,9 +53,10 @@ export function handleError(ctx: ErrorContext, err: unknown, isJson?: boolean): 
     const permission = typeof typedEnvelope.details?.permission === 'string'
       ? typedEnvelope.details.permission
       : undefined;
+    const cause = typeof typedEnvelope.cause === 'string' ? typedEnvelope.cause : undefined;
     ctx.ui?.error?.(
-      `${typedEnvelope.code}: ${typedEnvelope.message}${permission ? ` (permission: ${permission})` : ''}`,
-      { hint: typedEnvelope.hint },
+      `${typedEnvelope.message}${permission ? ` (permission: ${permission})` : ''} [${typedEnvelope.code}]`,
+      { ...(cause ? { cause } : {}), hint: typedEnvelope.hint },
     );
   }
 }

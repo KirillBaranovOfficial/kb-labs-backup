@@ -19,7 +19,7 @@ describe("MCP access mode", () => {
         error: {
           code: 'KB_AUTH_REQUIRED',
           message: 'Authentication is required.',
-          hint: 'Run "kb auth login".',
+          hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
           correlationId: expect.any(String),
         },
       },

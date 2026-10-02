@@ -771,7 +771,7 @@ def main():
                     if (result.returncode == 0 or not isinstance(failure, dict)
                             or failure.get("code") != "KB_AUTH_REQUIRED"
                             or failure.get("message") != "Authentication is required."
-                            or failure.get("hint") != 'Run "kb auth login".'):
+                            or failure.get("hint") != 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email> --password <password>".'):
                         raise RuntimeError("saved CLI session did not return KB_AUTH_REQUIRED with the login hint")
 
             platform_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
