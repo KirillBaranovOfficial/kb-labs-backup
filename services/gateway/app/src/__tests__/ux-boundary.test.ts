@@ -14,6 +14,20 @@ describe('Gateway UX boundary', () => {
   });
 
   // case: S-203.1, S-203.2, S-203.3, S-203.6
+  it('leaves a route raw only when its route definition declares ux: raw', async () => {
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as unknown as ILogger;
+    registerGatewayUxBoundary(app, logger);
+    app.get('/raw-response', { config: { ux: 'raw' } }, async () => 'studio shell');
+    await app.ready();
+
+    const response = await app.inject({ method: 'GET', url: '/raw-response' });
+    expect(response.body).toBe('studio shell');
+    expect(response.headers['content-type']).toContain('text/plain');
+  });
+
+  // case: S-203.1, S-203.2, S-203.3, S-203.6
   it('covers each route discovered from the live Fastify registry', async () => {
     const app = Fastify({ logger: false });
     apps.push(app);

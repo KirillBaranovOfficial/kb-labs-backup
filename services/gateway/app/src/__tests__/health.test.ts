@@ -66,6 +66,7 @@ const mockTransport: IServiceTransport = makeTransport();
 async function buildHealthApp(
   config: Partial<GatewayConfig> = {},
   transport?: IServiceTransport,
+  routeObserver?: Parameters<typeof import('../server.js').createServer>[10],
 ) {
   // Dynamically import createServer — it uses the mocked platform
   const { createServer } = await import('../server.js');
@@ -78,7 +79,7 @@ async function buildHealthApp(
   };
 
   const cache = makeCache();
-  return createServer(fullConfig, cache, noopLogger, stubJwtConfig, undefined, transport ?? mockTransport);
+  return createServer(fullConfig, cache, noopLogger, stubJwtConfig, undefined, transport ?? mockTransport, undefined, undefined, undefined, undefined, routeObserver);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -224,6 +225,23 @@ describe('Gateway /health endpoint', () => {
         }),
       }),
     );
+  });
+});
+
+describe('Gateway production route declarations', () => {
+  it('discovers routes from the server registry and requires a schema or explicit raw declaration', async () => {
+    const routes: Array<{ method: string | string[]; url: string; schema?: unknown; config?: unknown }> = [];
+    const app = await buildHealthApp({}, undefined, (route) => routes.push(route));
+    try {
+      expect(routes.length).toBeGreaterThan(0);
+      const missing = routes.filter((route) => {
+        const config = route.config as { ux?: string } | undefined;
+        return route.schema === undefined && config?.ux !== 'raw';
+      });
+      expect(missing).toEqual([]);
+    } finally {
+      await app.close();
+    }
   });
 });
 

@@ -88,7 +88,7 @@ describe('Gateway global auth gate', () => {
       undefined,
       projectRouting,
       undefined,
-      (method, url) => routeInventory.push({ method, url }),
+      ({ method, url }) => routeInventory.push({ method, url }),
     );
     await app.ready();
 

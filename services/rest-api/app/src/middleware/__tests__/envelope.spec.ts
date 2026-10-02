@@ -56,6 +56,19 @@ describe('registerEnvelopeMiddleware', () => {
       expect(typeof body.meta.durationMs).toBe('number');
     });
 
+    it('keeps non-JSON output raw when the route definition declares ux: raw', async () => {
+      app.get('/raw-response', { config: { ux: 'raw' } }, async (_request: FastifyRequest, reply: FastifyReply) => {
+        reply.type('text/plain');
+        return 'health probe';
+      });
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/raw-response' });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toBe('health probe');
+      expect(response.headers['content-type']).toContain('text/plain');
+    });
+
     it('should add x-schema-version header', async () => {
       app.get('/test', async () => ({ value: 42 }));
       await app.ready();
