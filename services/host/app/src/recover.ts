@@ -130,7 +130,7 @@ export interface RecoverResult {
   repairs?: ResetAdminRepair[];
   /** Present only with --generate on a real run. Shown once. */
   generatedPassword?: string;
-  error?: string;
+  error?: { code: string; message: string; hint: string };
 }
 
 async function planRepairs(
@@ -255,28 +255,32 @@ function reportApplied(
  */
 export async function runRecover(args: RecoverArgs, context: RecoverContext): Promise<number> {
   const { out, gateway } = context;
-  const fail = (message: string): number => {
+  const fail = (message: string, hint: string): number => {
     if (args.json) {
-      out.json({ ok: false, error: message } satisfies RecoverResult);
+      out.json({
+        ok: false,
+        error: { code: "KB_INSTALL_RECOVERY_FAILED", message, hint },
+      });
     } else {
-      out.error(message);
+      out.error(`KB_INSTALL_RECOVERY_FAILED: ${message}\nNext: ${hint}`);
     }
     return 1;
   };
 
   const problem = flagProblem(args);
   if (problem) {
-    return fail(problem);
+    return fail(problem, 'Run "kb-create doctor --platform-root <platform-root> --recover --email <email> --tenant <tenant> --password-stdin --yes" with one password source.');
   }
   const identity = resolveIdentity(args, context);
   if (typeof identity === "string") {
-    return fail(identity);
+    return fail(identity, 'Pass --email to "kb-create doctor --platform-root <platform-root> --recover" and retry.');
   }
   const docs = context.documentDatabase;
   if (!docs) {
     return fail(
       "No persistent documentDatabase is configured for this project, so there is no admin account on disk to recover. " +
         "Check `platform.adapters.documentDatabase` in the platform config.",
+      'Run "kb-create doctor --platform-root <platform-root>" to inspect the platform config.',
     );
   }
   const host = gateway.host ?? DEFAULT_GATEWAY_HOST;
@@ -285,6 +289,7 @@ export async function runRecover(args: RecoverArgs, context: RecoverContext): Pr
     return fail(
       `Something is listening on ${host}:${port}, so the host may be running and writing to the database. ` +
         'Run "kb-create stop" first.',
+      'Run "kb-create stop --platform-root <platform-root>", then retry recovery.',
     );
   }
 
@@ -303,14 +308,14 @@ export async function runRecover(args: RecoverArgs, context: RecoverContext): Pr
   const generated = args.generate ? randomBytes(18).toString("base64url") : undefined;
   const password = generated ?? (await context.readStdin());
   if (!password) {
-    return fail("Empty password on stdin.");
+    return fail("Empty password on stdin.", 'Pipe a non-empty password to "kb-create doctor --platform-root <platform-root> --recover --password-stdin --yes".');
   }
   try {
     reportApplied(args, out, await applyRecovery(context, stores, identity, password), generated);
     return 0;
   } catch (error) {
     if (error instanceof ResetAdminError) {
-      return fail(error.message);
+      return fail(error.message, 'Pass a password that meets the configured policy to "kb-create doctor --platform-root <platform-root> --recover --password-stdin --yes".');
     }
     throw error;
   }
