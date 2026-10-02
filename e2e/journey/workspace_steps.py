@@ -22,7 +22,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
             return run_command(["node", str(cli), *args], cwd=repo_root, env=env, timeout=120)
 
         def register_checkout() -> str | None:
-            result = subprocess.run(
+            result = run_command(
                 [
                     "node", "--input-type=module", "-e",
                     "const { createProjectRegistry } = await import(process.argv[1]); "

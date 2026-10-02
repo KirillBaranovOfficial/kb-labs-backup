@@ -48,7 +48,7 @@ def project_plugin_settings_isolation() -> str | None:
         return "BLOCKED: provide KB_JOURNEY_CLI_PATH for project settings checks"
 
     def run_cli(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
+        return run_command(
             [cli, *args], cwd=cwd, env=os.environ.copy(), capture_output=True,
             text=True, check=False, timeout=90,
         )
@@ -79,7 +79,7 @@ def project_plugin_settings_isolation() -> str | None:
         ids: list[str] = []
         for project in projects:
             project.mkdir()
-            initialized = subprocess.run(
+            initialized = run_command(
                 ["git", "init", "--quiet", str(project)], capture_output=True,
                 text=True, check=False, timeout=30,
             )
@@ -140,7 +140,7 @@ def project_plugin_settings_isolation() -> str | None:
             return "Project B's Commit scope selector did not retain only the platform default"
 
         for project in projects:
-            status = subprocess.run(
+            status = run_command(
                 ["git", "status", "--porcelain", "--untracked-files=all"], cwd=project,
                 capture_output=True, text=True, check=False, timeout=30,
             )

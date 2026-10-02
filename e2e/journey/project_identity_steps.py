@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tempfile
 from pathlib import Path
 
 from service_steps import Journey
+from invocations import run_command
 
 
 def run_project_identity_steps(journey: Journey, repo_root: Path) -> None:
@@ -19,7 +19,7 @@ def run_project_identity_steps(journey: Journey, repo_root: Path) -> None:
             env.pop("KB_HOME", None)
             env.pop("KB_PLATFORM_ROOT", None)
             env.pop("KB_NET_OFFSET", None)
-            result = subprocess.run(
+            result = run_command(
                 ["node", str(cli), "project", "show", "--json"],
                 cwd=cwd,
                 env=env,
