@@ -3,9 +3,7 @@ package result
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
@@ -13,51 +11,6 @@ import (
 
 // ValidateFixture checks the shared fixtures using the same envelope shape
 // that Render emits. The shared JSON Schema remains the canonical contract.
-func ValidateFixture(path string) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	return ValidateMachineResult(b)
-}
-
-func ValidateMachineResult(b []byte) error {
-	var env map[string]json.RawMessage
-	if err := json.Unmarshal(b, &env); err != nil {
-		return err
-	}
-	var ok bool
-	if err := json.Unmarshal(env["ok"], &ok); err != nil {
-		return fmt.Errorf("missing boolean ok: %w", err)
-	}
-	if ok {
-		if len(env) < 2 || len(env) > 3 || env["data"] == nil {
-			return fmt.Errorf("success must contain only ok, data, and optional meta")
-		}
-		if _, exists := env["error"]; exists {
-			return fmt.Errorf("success contains error")
-		}
-		return nil
-	}
-	if len(env) != 2 || env["error"] == nil {
-		return fmt.Errorf("failure must contain only ok and error")
-	}
-	var e map[string]json.RawMessage
-	if err := json.Unmarshal(env["error"], &e); err != nil {
-		return err
-	}
-	for _, key := range []string{"code", "message", "hint", "correlationId"} {
-		if e[key] == nil {
-			return fmt.Errorf("failure missing %s", key)
-		}
-	}
-	var code string
-	if err := json.Unmarshal(e["code"], &code); err != nil || !strings.HasPrefix(code, "KB_") {
-		return fmt.Errorf("failure code must be a KB_* string")
-	}
-	return nil
-}
-
 func TestSharedFixturesAndSchema(t *testing.T) {
 	for _, path := range []string{
 		"../../../contracts/ux-result/fixtures/valid/success.json",

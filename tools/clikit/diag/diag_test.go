@@ -32,13 +32,32 @@ func TestFromErrorLogsRawDetailsAndReturnsSafeCorrelatedDiag(t *testing.T) {
 	}
 }
 
-func TestPlatformCodeMapsLegacyCodesToCatalog(t *testing.T) {
-	d := New("ERR_CONFIG_NOT_FOUND", "configuration missing")
-	if d.Code != "ERR_CONFIG_NOT_FOUND" {
-		t.Fatalf("diagnostic code = %q, want original typed code for internal consumers", d.Code)
+func TestKnownLegacyCodesMapToPlatformCatalog(t *testing.T) {
+	cases := map[string]string{
+		"ERR_CONFIG_LOAD":      "KB_CONFIG_LOAD_FAILED",
+		"ERR_WAVE_FAILED":      "KB_DEPLOY_WAVE_FAILED",
+		"ERR_PROFILE_MISMATCH": "KB_ENV_PROFILE_MISMATCH",
+		"ERR_HEALTH_TIMEOUT":   "KB_SERVICE_HEALTH_TIMEOUT",
 	}
-	if code := PlatformCode(d.Code); code != "KB_RUNTIME_UNEXPECTED" {
-		t.Fatalf("platform code = %q, want KB_RUNTIME_UNEXPECTED", code)
+	for legacy, want := range cases {
+		if got := PlatformCode(legacy); got != want {
+			t.Errorf("PlatformCode(%q) = %q, want %q", legacy, got, want)
+		}
+	}
+	if got := PlatformCode("ERR_UNREGISTERED"); got != "KB_RUNTIME_UNEXPECTED" {
+		t.Errorf("unknown legacy code mapped to %q", got)
+	}
+}
+
+func TestTypedFailureGetsCorrelationAtBoundary(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	d := FromErrorWithLogger(New("KB_CONFIG_LOAD_FAILED", "Configuration could not be loaded."), logger)
+	if d.Code != "KB_CONFIG_LOAD_FAILED" || d.CorrelationID == "" {
+		t.Fatalf("diag = %+v, want preserved code and correlation ID", d)
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("known typed failure unexpectedly logged as unknown: %s", logs.String())
 	}
 }
 
