@@ -14,6 +14,13 @@ CLAIM_TAG = re.compile(r"@(S|PC)-(\d+\.\d+)")
 MODES = ("local", "secured")
 
 
+def _yaml_scalar(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
 def load_cases(catalog: Path) -> list[dict]:
     cases = []
     for path in sorted(catalog.glob("*.md")):
@@ -21,14 +28,16 @@ def load_cases(catalog: Path) -> list[dict]:
         if not source.startswith("---\n"):
             continue
         _, frontmatter, body = source.split("---", 2)
-        fields = dict(re.findall(r"^(id|title|status|modes):\s*(.*?)\s*$", frontmatter, re.MULTILINE))
+        fields = dict(re.findall(r"^(id|title|status|release|modes):\s*(.*?)\s*$", frontmatter, re.MULTILINE))
         if "id" not in fields:
             continue
-        modes_match = re.search(r"\[([^]]*)\]", fields.get("modes", ""))
-        modes = [value.strip() for value in modes_match.group(1).split(",") if value.strip()] if modes_match else []
+        modes_match = re.match(r"^\[([^]]*)\]$", fields.get("modes", "").strip())
+        modes = [_yaml_scalar(value) for value in modes_match.group(1).split(",") if _yaml_scalar(value)] if modes_match else []
         steps = sorted(set(CASE_STEP.findall(body)), key=claim_sort_key)
         cases.append({"id": fields["id"], "title": fields.get("title", ""),
-                      "status": fields.get("status", ""), "modes": modes, "claims": steps})
+                      "status": _yaml_scalar(fields.get("status", "")),
+                      "release": _yaml_scalar(fields.get("release", "")) == "true",
+                      "modes": modes, "claims": steps})
     return cases
 
 
@@ -151,17 +160,37 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
                              f"platform-{mode}", f"studio-playwright-{mode}"))
         for path in directory.glob("*.json"))] if directory.is_dir() else []
     rows = []
+    planned_count = 0
+    historical_count = 0
     for case in cases:
         relevant = [mode for mode in modes if mode in case["modes"]]
         if not relevant:
-            status, passing = "Not applicable", []
-        else:
-            status, passing = _status(case["claims"], evidence, relevant)
-        rows.append({**case, "status": status, "passingClaims": passing,
+            continue
+        if case["status"] == "planned":
+            planned_count += 1
+            continue
+        if case["status"] == "historical":
+            historical_count += 1
+            continue
+        if case["status"] != "active":
+            continue
+        status, passing = _status(case["claims"], evidence, relevant)
+        rows.append({**case, "caseStatus": case["status"], "status": status, "passingClaims": passing,
                      "claimedCount": sum(bool(evidence.get(mode, {}).get(claim_id)) for mode in relevant for claim_id in case["claims"]),
                      "claimCount": len(case["claims"])})
-    return {"schema": "kb.journey-case-scoreboard/v1", "modes": modes, "observedModes": observed_modes,
-            "fullyGreen": sum(row["status"] == "Fully green" for row in rows), "cases": rows}
+    release_cases = [row for row in rows if row["release"]]
+    return {
+        "schema": "kb.journey-case-scoreboard/v1",
+        "modes": modes,
+        "observedModes": observed_modes,
+        "releaseCases": {"fullyGreen": sum(row["status"] == "Fully green" for row in release_cases),
+                         "total": len(release_cases)},
+        "activeCases": {"fullyGreen": sum(row["status"] == "Fully green" for row in rows),
+                        "total": len(rows)},
+        "plannedCount": planned_count,
+        "historicalCount": historical_count,
+        "cases": rows,
+    }
 
 
 def render_markdown(scoreboard: dict) -> str:
@@ -169,15 +198,19 @@ def render_markdown(scoreboard: dict) -> str:
     counts = defaultdict(int)
     for case in scoreboard["cases"]:
         counts[case["status"]] += 1
-    applicable = len(scoreboard["cases"]) - counts["Not applicable"]
+    release = scoreboard["releaseCases"]
+    active = scoreboard["activeCases"]
     lines = [f"# Product case scoreboard ({modes})", "",
-             f"Fully green: **{scoreboard['fullyGreen']} / {applicable}** applicable cases.", "",
-             "| Status | Cases |", "|---|---:|"]
-    for label in ("Fully green", "Partial", "Red", "Unclaimed", "Blocked", "Not applicable"):
+             f"Release cases: **{release['fullyGreen']} / {release['total']}** fully green.",
+             f"All active cases: **{active['fullyGreen']} / {active['total']}** fully green.",
+             f"Planned cases: **{scoreboard['plannedCount']}**.",
+             f"Historical cases excluded: **{scoreboard['historicalCount']}**.", "",
+             "Active case statuses:", "", "| Status | Cases |", "|---|---:|"]
+    for label in ("Fully green", "Partial", "Red", "Unclaimed", "Blocked"):
         if counts[label]:
             lines.append(f"| {label} | {counts[label]} |")
-    green_cases = [case for case in scoreboard["cases"] if case["status"] == "Fully green"]
-    lines.extend(["", "Fully green cases: " + (", ".join(case["id"] for case in green_cases) or "none") + "."])
+    green_cases = [case["id"] for case in scoreboard["cases"] if case["status"] == "Fully green"]
+    lines.extend(["", "Fully green cases: " + (", ".join(green_cases) or "none") + "."])
     return "\n".join(lines) + "\n"
 
 
@@ -191,7 +224,13 @@ def write_scoreboards(directory: Path, catalog: Path) -> None:
 
 def _fully_green(data: dict, mode: str) -> set[str]:
     return {case["id"] for case in data.get("cases", []) if case.get("status") == "Fully green"
+            and case.get("release") is True and case.get("caseStatus") == "active"
             and mode in case.get("modes", [])}
+
+
+def _all_active_green(data: dict, mode: str) -> set[str]:
+    return {case["id"] for case in data.get("cases", []) if case.get("status") == "Fully green"
+            and case.get("caseStatus") == "active" and mode in case.get("modes", [])}
 
 
 def render_delta(previous_dir: Path, current_dir: Path) -> str:
@@ -206,10 +245,20 @@ def render_delta(previous_dir: Path, current_dir: Path) -> str:
         current = json.loads(current_path.read_text(encoding="utf-8"))
         if mode not in previous.get("observedModes", []) or mode not in current.get("observedModes", []):
             continue
-        before, after = _fully_green(previous, mode), _fully_green(current, mode)
-        lines.extend(["", f"{mode}: fully green {len(before)} → {len(after)}",
-                      "  Became fully green: " + (", ".join(sorted(after - before)) or "none"),
-                      "  Regressed: " + (", ".join(sorted(before - after)) or "none")])
+        before_release = _fully_green(previous, mode)
+        after_release = _fully_green(current, mode)
+        before_active = _all_active_green(previous, mode)
+        after_active = _all_active_green(current, mode)
+        lines.extend(["", f"{mode} release cases: fully green {previous['releaseCases']['fullyGreen']}/{previous['releaseCases']['total']} → "
+                      f"{current['releaseCases']['fullyGreen']}/{current['releaseCases']['total']}",
+                      "  Became fully green: " + (", ".join(sorted(after_release - before_release)) or "none"),
+                      "  Regressed: " + (", ".join(sorted(before_release - after_release)) or "none"),
+                      f"  All active: fully green {previous['activeCases']['fullyGreen']}/{previous['activeCases']['total']} → "
+                      f"{current['activeCases']['fullyGreen']}/{current['activeCases']['total']}",
+                      "  Became fully green: " + (", ".join(sorted(after_active - before_active)) or "none"),
+                      "  Regressed: " + (", ".join(sorted(before_active - after_active)) or "none"),
+                      f"  Planned cases: {previous['plannedCount']} → {current['plannedCount']}; "
+                      f"historical excluded: {previous['historicalCount']} → {current['historicalCount']}"])
     return "\n".join(lines)
 
 

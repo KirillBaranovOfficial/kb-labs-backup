@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scoreboard import build_scoreboard, render_delta, write_scoreboards
+from scoreboard import build_scoreboard, load_cases, render_delta, write_scoreboards
 
 
 class CaseScoreboardTests(unittest.TestCase):
@@ -15,12 +15,18 @@ class CaseScoreboardTests(unittest.TestCase):
         self.catalog.mkdir()
         self.reports.mkdir()
         (self.catalog / "S-001-demo.md").write_text(
-            "---\nid: S-001\ntitle: Demo\nstatus: active\nmodes: [local, secured]\n---\n"
+            "---\nid: S-001\ntitle: Demo\nstatus: active\nrelease: true\nmodes: [local, secured]\n---\n"
             "| S-001.1 | First | observable result |\n| S-001.2 | Second | observable result |\n",
             encoding="utf-8")
         (self.catalog / "S-002-secured.md").write_text(
-            "---\nid: S-002\ntitle: Secured only\nstatus: active\nmodes: [secured]\n---\n"
+            "---\nid: S-002\ntitle: Secured only\nstatus: active\nrelease: false\nmodes: [secured]\n---\n"
             "| S-002.1 | First | observable result |\n", encoding="utf-8")
+        (self.catalog / "S-003-planned.md").write_text(
+            "---\nid: S-003\ntitle: Planned\nstatus: planned\nrelease: true\nmodes: [local, secured]\n---\n"
+            "| S-003.1 | First | observable result |\n", encoding="utf-8")
+        (self.catalog / "S-004-historical.md").write_text(
+            "---\nid: S-004\ntitle: Historical\nstatus: historical\nrelease: false\nmodes: [local, secured]\n---\n",
+            encoding="utf-8")
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -47,11 +53,28 @@ class CaseScoreboardTests(unittest.TestCase):
         combined_cases = {case["id"]: case for case in combined["cases"]}
 
         self.assertEqual(local_cases["S-001"]["status"], "Fully green")
-        self.assertEqual(local_cases["S-002"]["status"], "Not applicable")
+        self.assertNotIn("S-002", local_cases)
         self.assertEqual(secured_cases["S-001"]["status"], "Partial")
         self.assertEqual(secured_cases["S-002"]["status"], "Red")
         self.assertEqual(combined_cases["S-001"]["status"], "Partial")
         self.assertEqual(combined_cases["S-001"]["claimCount"], 2)
+        self.assertEqual(local["releaseCases"], {"fullyGreen": 1, "total": 1})
+        self.assertEqual(local["activeCases"], {"fullyGreen": 1, "total": 1})
+        self.assertEqual(secured["activeCases"], {"fullyGreen": 0, "total": 2})
+        self.assertEqual(combined["activeCases"], {"fullyGreen": 0, "total": 2})
+        self.assertEqual(local["plannedCount"], 1)
+        self.assertEqual(local["historicalCount"], 1)
+        self.assertNotIn("S-004", {case["id"] for case in local["cases"]})
+
+    def test_reads_status_and_release_fields_from_real_scenarios(self):
+        real_catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
+        cases = {case["id"]: case for case in load_cases(real_catalog)}
+        self.assertEqual(cases["PC-001"]["status"], "active")
+        self.assertIs(cases["PC-001"]["release"], True)
+        self.assertEqual(cases["PC-005"]["status"], "historical")
+        self.assertIs(cases["PC-005"]["release"], False)
+        self.assertEqual(cases["S-034"]["status"], "planned")
+        self.assertIs(cases["S-034"]["release"], False)
 
     def test_playwright_tags_and_skip_are_claimed(self):
         self.write_json("studio-playwright-secured.json", {"suites": [{"specs": [{
@@ -71,6 +94,10 @@ class CaseScoreboardTests(unittest.TestCase):
             self.assertTrue((self.reports / f"{stem}.md").is_file())
         combined = json.loads((self.reports / "case-scoreboard.json").read_text(encoding="utf-8"))
         self.assertEqual(combined["modes"], ["local", "secured"])
+        markdown = (self.reports / "case-scoreboard.md").read_text(encoding="utf-8")
+        self.assertLess(markdown.index("Release cases:"), markdown.index("All active cases:"))
+        self.assertLess(markdown.index("All active cases:"), markdown.index("Planned cases:"))
+        self.assertLess(markdown.index("Planned cases:"), markdown.index("Historical cases excluded:"))
 
     def test_writer_always_emits_both_mode_views_for_a_single_mode_run(self):
         self.write_json("service-local.json", {"case_run": {"mode": "local", "claims": []}, "steps": []})
@@ -86,12 +113,17 @@ class CaseScoreboardTests(unittest.TestCase):
         before.mkdir()
         after.mkdir()
         for directory, green in ((before, "S-001"), (after, "S-002")):
-            data = {"observedModes": ["local"], "cases": [{"id": claim_id, "status": "Fully green" if claim_id == green else "Red",
-                               "modes": ["local"]} for claim_id in ("S-001", "S-002")]}
+            data = {"observedModes": ["local"], "releaseCases": {"fullyGreen": int(green == "S-001"), "total": 1},
+                    "activeCases": {"fullyGreen": 1, "total": 2}, "plannedCount": 1, "historicalCount": 1,
+                    "cases": [{"id": claim_id, "status": "Fully green" if claim_id == green else "Red",
+                               "caseStatus": "active", "release": claim_id == "S-001", "modes": ["local"]}
+                              for claim_id in ("S-001", "S-002")]}
             (directory / "case-scoreboard-local.json").write_text(json.dumps(data), encoding="utf-8")
         delta = render_delta(before, after)
-        self.assertIn("Became fully green: S-002", delta)
+        self.assertIn("local release cases: fully green 1/1 → 0/1", delta)
         self.assertIn("Regressed: S-001", delta)
+        self.assertIn("All active: fully green 1/2 → 1/2", delta)
+        self.assertLess(delta.index("local release cases:"), delta.index("All active:"))
 
 
 if __name__ == "__main__":
