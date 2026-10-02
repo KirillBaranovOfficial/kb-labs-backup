@@ -246,7 +246,7 @@ func TestExecute_HealthGateFailureTriggersAutoRollback(t *testing.T) {
 	}
 }
 
-// A failed wave must produce a structured *diag.Diag (ERR_WAVE_FAILED) whose
+// A failed wave must produce a structured *diag.Diag (KB_DEPLOY_WAVE_FAILED) whose
 // meta carries every per-action failure — not an opaque "wave N failed" string.
 func TestExecute_WaveFailureIsStructuredDiag(t *testing.T) {
 	h1 := &fakeRunner{failOn: "ready '"}
@@ -265,8 +265,8 @@ func TestExecute_WaveFailureIsStructuredDiag(t *testing.T) {
 	if !errors.As(res.Err, &d) {
 		t.Fatalf("res.Err is not a *diag.Diag: %T", res.Err)
 	}
-	if d.Code != "ERR_WAVE_FAILED" {
-		t.Errorf("code = %q, want ERR_WAVE_FAILED", d.Code)
+	if d.Code != "KB_DEPLOY_WAVE_FAILED" {
+		t.Errorf("code = %q, want KB_DEPLOY_WAVE_FAILED", d.Code)
 	}
 	if d.Reason == "" {
 		t.Error("expected a reason summarizing the failures")
@@ -451,15 +451,14 @@ func TestExecute_ConfigDeliveryFailureAbortsBeforeInstall(t *testing.T) {
 	if res.Err == nil {
 		t.Fatal("expected error when config delivery fails")
 	}
-	// The abort must carry a structured diagnostic (ERR_CONFIG_DELIVERY with the
-	// failing host in meta), not degrade to a bare ERR_UNKNOWN. The exit-code
-	// mapping for the code lives in the cmd package (registered there).
+	// The abort must carry a structured diagnostic (KB_DEPLOY_CONFIG_DELIVERY
+	// with the failing host in meta), not degrade to a generic runtime failure.
 	var d *diag.Diag
 	if !errors.As(res.Err, &d) {
 		t.Fatalf("config-delivery abort is not a *diag.Diag: %T", res.Err)
 	}
-	if d.Code != "ERR_CONFIG_DELIVERY" {
-		t.Errorf("code = %q, want ERR_CONFIG_DELIVERY", d.Code)
+	if d.Code != "KB_DEPLOY_CONFIG_DELIVERY" {
+		t.Errorf("code = %q, want KB_DEPLOY_CONFIG_DELIVERY", d.Code)
 	}
 	if d.Meta["host"] == nil {
 		t.Errorf("expected meta.host on the delivery diagnostic, got %v", d.Meta)

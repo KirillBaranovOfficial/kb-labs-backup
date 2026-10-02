@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -43,6 +44,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	result := mgr.Start(cmd.Context(), targets, forceFlag)
 
+	if !result.OK {
+		return commandFailure("kb-dev start")
+	}
 	if jsonMode {
 		return JSONOut(result)
 	}
@@ -77,9 +81,6 @@ func runStart(cmd *cobra.Command, args []string) error {
 		printHighlights(mgr.Config().Services)
 	}
 
-	if !result.OK {
-		return errSilent
-	}
 	return nil
 }
 
@@ -104,9 +105,9 @@ func printHighlights(services map[string]config.Service) {
 	if len(lines) == 0 {
 		return
 	}
-	fmt.Println()
+	clikitcommand.Println()
 	for _, l := range lines {
-		fmt.Println(l)
+		clikitcommand.Println(l)
 	}
-	fmt.Println(dim.Render("  " + strings.Repeat("─", 40)))
+	clikitcommand.Println(dim.Render("  " + strings.Repeat("─", 40)))
 }

@@ -40,7 +40,7 @@ type applyFlow struct {
 // fetchIntegrities resolves the registry content digest for every distinct
 // service package@version in the config, querying it on a target host (the
 // platform registry is often a host-local Verdaccio). The result keys are
-// "<pkg>@<version>". Any failure aborts apply with ERR_REGISTRY_INTEGRITY.
+// "<pkg>@<version>". Any failure aborts apply with KB_MARKETPLACE_REGISTRY_INTEGRITY.
 func fetchIntegrities(cfg *config.Config, hosts map[string]*remote.Host) (map[string]string, error) {
 	registry := ""
 	if cfg.Platform != nil {

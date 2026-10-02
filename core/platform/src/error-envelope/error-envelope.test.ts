@@ -37,6 +37,14 @@ describe('errors.catalog.json lint', () => {
     }
   });
 
+  it('defines the shared CLI command failure code', () => {
+    expect(getCatalogEntry('KB_RUNTIME_COMMAND_FAILED')).toMatchObject({
+      area: 'runtime',
+      stage: 'run',
+      message: 'The command could not complete.',
+    });
+  });
+
   it('only uses KB_ codes whose prefix matches the area (adapter codes belong to plugin)', () => {
     const prefixArea: Record<string, string> = {
       INSTALL: 'install',
@@ -48,6 +56,10 @@ describe('errors.catalog.json lint', () => {
       ADAPTER: 'plugin',
       UPDATE: 'update',
       RUNTIME: 'runtime',
+      DEPLOY: 'runtime',
+      SERVICE: 'runtime',
+      ENV: 'config',
+      MARKETPLACE: 'plugin',
     };
     for (const entry of errorCatalog.codes) {
       const prefix = entry.code.split('_')[1] ?? '';

@@ -2,7 +2,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -53,13 +52,7 @@ func Execute() {
 	if err == nil {
 		return
 	}
-	if err.Error() == "" {
-		os.Exit(1)
-	}
-	var d *diag.Diag
-	if !errors.As(err, &d) {
-		d = diag.Wrap(err, "ERR_UNKNOWN", err.Error())
-	}
+	d := diag.FromError(err)
 	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
 	os.Exit(code)
 }

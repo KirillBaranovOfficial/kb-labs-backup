@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kb-labs/clikit/diag"
 )
 
 // Runner executes shell commands on a host. The SSH-backed implementation
@@ -165,7 +167,7 @@ func (h *Host) ReconcileDevservices() (string, error) {
 // ON THE HOST (via npm view) because the platform registry is frequently a
 // host-local Verdaccio on 127.0.0.1, unreachable from the control machine.
 //
-// A missing/empty digest is a hard error (ERR_REGISTRY_INTEGRITY): during apply
+// A missing/empty digest is a hard error (KB_MARKETPLACE_REGISTRY_INTEGRITY): during apply
 // the package must already be published, so an empty result means the registry
 // is misconfigured or the package is absent — failing fast beats silently
 // reverting to a spec-only id that would re-trigger the skip-on-content-change
@@ -178,15 +180,15 @@ func (h *Host) PackageIntegrity(servicePkg, version, registry string) (string, e
 	}
 	out, err := h.Runner.Run(cmd)
 	if err != nil {
-		return "", fmt.Errorf(
-			"ERR_REGISTRY_INTEGRITY: query integrity for %s on %s: %w (output: %s)",
-			spec, h.Name, err, out)
+		return "", diag.Wrap(err, "KB_MARKETPLACE_REGISTRY_INTEGRITY",
+			"The package integrity could not be verified from the registry.",
+			diag.WithReason(fmt.Sprintf("The registry query for %s on host %s failed.", spec, h.Name)))
 	}
 	integrity := strings.TrimSpace(out)
 	if integrity == "" {
-		return "", fmt.Errorf(
-			"ERR_REGISTRY_INTEGRITY: registry returned no integrity for %s on %s "+
-				"(is it published to %s?)", spec, h.Name, registry)
+		return "", diag.New("KB_MARKETPLACE_REGISTRY_INTEGRITY",
+			"The package integrity could not be verified from the registry.",
+			diag.WithReason(fmt.Sprintf("The registry returned no integrity for %s on host %s.", spec, h.Name)))
 	}
 	return integrity, nil
 }
@@ -347,7 +349,7 @@ type installResultJSON struct {
 // stdout. We therefore scan lines and pick the one that unmarshals into our shape
 // with a non-empty releaseId — a real structured match, not phrase scraping.
 //
-// A missing or empty release-id is a hard error (ERR_INSTALL_NO_RELEASE_ID): far
+// A missing or empty release-id is a hard error (KB_INSTALL_RELEASE_ID_MISSING): far
 // better to fail the action here than to pass an empty id to Swap, which fails
 // obscurely with "releaseID is required".
 func parseInstallJSON(out string) (*InstallResult, error) {
@@ -371,8 +373,8 @@ func parseInstallJSON(out string) (*InstallResult, error) {
 		}
 	}
 	if found == nil {
-		return nil, fmt.Errorf(
-			"ERR_INSTALL_NO_RELEASE_ID: install-service produced no JSON result with a release id")
+		return nil, diag.New("KB_INSTALL_RELEASE_ID_MISSING",
+			"The install result did not include a release identifier.")
 	}
 	return &InstallResult{
 		ReleaseID: found.ReleaseID,

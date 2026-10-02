@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -89,7 +90,7 @@ Examples:
 		o := newOutput()
 
 		if !jsonMode {
-			fmt.Println()
+			clikitcommand.Println()
 			opts.OnResult = func(r engine.TaskResult, done, total int) {
 				printTaskResult(o, r, done, total)
 			}
@@ -103,21 +104,19 @@ Examples:
 		}
 
 		if jsonMode {
-			_ = JSONOut(map[string]any{
-				"ok":      result.OK,
+			if !result.OK {
+				return commandFailure("kb-devkit run")
+			}
+			return JSONOut(map[string]any{
 				"results": result.Results,
 				"summary": result.Summary(),
 				"elapsed": elapsed.String(),
 			})
-			if !result.OK {
-				return errSilent
-			}
-			return nil
 		}
 
 		// Summary line.
 		s := result.Summary()
-		fmt.Printf("\n  %s  %s  %s  — %s\n\n",
+		clikitcommand.Printf("\n  %s  %s  %s  — %s\n\n",
 			o.healthy.Render(fmt.Sprintf("%d passed", s.Passed)),
 			o.dim.Render(fmt.Sprintf("%d cached", s.Cached)),
 			colorCount(s.Failed, o),
@@ -125,7 +124,7 @@ Examples:
 		)
 
 		if !result.OK {
-			return fmt.Errorf("tasks failed")
+			return commandFailure("kb-devkit run")
 		}
 		return nil
 	},
@@ -171,7 +170,7 @@ func printTaskResult(o output, r engine.TaskResult, done, total int) {
 		name = "…" + name[len(name)-41:]
 	}
 
-	fmt.Printf("  %s %s %-42s  %-12s  %-9s  %-7s  %s\n",
+	clikitcommand.Printf("  %s %s %-42s  %-12s  %-9s  %-7s  %s\n",
 		counter,
 		icon,
 		name,
@@ -185,11 +184,11 @@ func printTaskResult(o output, r engine.TaskResult, done, total int) {
 	if !r.OK && !r.Cached {
 		lines, hidden := failureTail(r.Stdout, r.Stderr, failLineLimit())
 		if hidden > 0 {
-			fmt.Printf("           %s\n", o.dim.Render(
+			clikitcommand.Printf("           %s\n", o.dim.Render(
 				fmt.Sprintf("… %d earlier lines hidden (KB_DEVKIT_FAIL_LINES=0 for all)", hidden)))
 		}
 		for _, line := range lines {
-			fmt.Printf("           %s\n", o.dim.Render(line))
+			clikitcommand.Printf("           %s\n", o.dim.Render(line))
 		}
 	}
 }

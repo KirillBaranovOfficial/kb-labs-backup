@@ -98,9 +98,8 @@ func Up(l env.Layout, profileName string, p config.Profile, overlayPath string, 
 	readyRes, _, _ := k.Ready(services)
 	if !readyRes.OK {
 		_ = l.WriteMeta(env.Meta{Profile: profileName, Offset: offset, Status: "broken"})
-		return UpResult{}, diag.New("ERR_HEALTH_TIMEOUT", "services did not become healthy",
-			diag.WithReason(readyRes.failedServices()),
-			diag.WithHint("logs: "+filepath.Join(l.Platform, ".kb", "logs")))
+		return UpResult{}, diag.New("KB_SERVICE_HEALTH_TIMEOUT", "services did not become healthy",
+			diag.WithReason(readyRes.failedServices()))
 	}
 
 	// 4. Apply config overlay (K3), if the profile declares one.

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"path/filepath"
 	"strings"
 
@@ -52,6 +53,9 @@ func runStop(cmd *cobra.Command, args []string) error {
 	cascade := ShouldCascade(cmd, false)
 	result := mgr.Stop(cmd.Context(), targets, cascade, forceFlag)
 
+	if !result.OK {
+		return commandFailure("kb-dev stop")
+	}
 	if jsonMode {
 		return JSONOut(result)
 	}
@@ -130,18 +134,21 @@ func runFleetStop(cmd *cobra.Command, args []string) error {
 		}
 		result.Projects = append(result.Projects, entry)
 	}
+	if !result.OK {
+		return commandFailure("kb-dev stop")
+	}
 	if jsonMode {
 		return JSONOut(result)
 	}
 	for _, item := range result.Projects {
 		if item.Error != "" {
-			fmt.Printf("  %s: %s\n", item.Project, item.Error)
+			clikitcommand.Printf("  %s: %s\n", item.Project, item.Error)
 			continue
 		}
-		fmt.Printf("  %s: %s\n", item.Project, item.Action)
+		clikitcommand.Printf("  %s: %s\n", item.Project, item.Action)
 	}
 	if !result.OK {
-		return errSilent
+		return commandFailure("kb-dev stop")
 	}
 	return nil
 }

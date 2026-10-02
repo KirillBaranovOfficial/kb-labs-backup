@@ -6,6 +6,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
+	clikitresult "github.com/kb-labs/clikit/result"
+	clikitstream "github.com/kb-labs/clikit/stream"
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/kb-labs/devkit/internal/watcher"
 	"github.com/spf13/cobra"
@@ -18,8 +22,21 @@ var watchCmd = &cobra.Command{
 
 In --json mode, emits JSONL events (one JSON object per line) for agent consumption.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		var events *clikitstream.Writer
+		if jsonMode {
+			events = clikitstream.New(clikitcommand.StreamWriter(cmd))
+		}
+		failStream := func(err error) error {
+			d := diag.FromError(err)
+			_ = events.Fail(d)
+			_ = events.Finish(diag.ExitCode(d))
+			return clikitresult.StreamComplete(events.ExitCode())
+		}
 		ws, cfg, err := loadWorkspace()
 		if err != nil {
+			if events != nil {
+				return failStream(err)
+			}
 			return err
 		}
 
@@ -27,6 +44,9 @@ In --json mode, emits JSONL events (one JSON object per line) for agent consumpt
 
 		w, err := watcher.New(ws)
 		if err != nil {
+			if events != nil {
+				return failStream(fmt.Errorf("init watcher: %w", err))
+			}
 			return fmt.Errorf("init watcher: %w", err)
 		}
 
@@ -62,31 +82,37 @@ In --json mode, emits JSONL events (one JSON object per line) for agent consumpt
 					if len(result.Issues) > 0 {
 						eventType = watcher.EventViolation
 					}
-					_ = JSONLOut(map[string]any{
+					if err := events.Event(map[string]any{
 						"event":   eventType,
 						"package": pkg.Name,
 						"file":    event.File,
 						"issues":  result.Issues,
 						"ts":      event.TS,
-					})
+					}); err != nil {
+						return failStream(err)
+					}
 				} else {
 					if len(result.Issues) == 0 {
-						fmt.Printf("%s %s %s\n",
+						clikitcommand.Printf("%s %s %s\n",
 							o.StatusIcon("healthy"),
 							o.label.Render(pkg.Name),
 							o.dim.Render("— no issues"),
 						)
 					} else {
-						fmt.Printf("%s %s\n", o.StatusIcon("error"), o.label.Render(pkg.Name))
+						clikitcommand.Printf("%s %s\n", o.StatusIcon("error"), o.label.Render(pkg.Name))
 						for _, issue := range result.Issues {
-							fmt.Printf("   %s  %s\n", o.SeverityColor(string(issue.Severity)), issue.Message)
+							clikitcommand.Printf("   %s  %s\n", o.SeverityColor(string(issue.Severity)), issue.Message)
 						}
 					}
 				}
 
 			case <-sig:
+				if events != nil {
+					_ = events.Finish(diag.ExitOK)
+					return clikitresult.StreamComplete(events.ExitCode())
+				}
 				if !jsonMode {
-					fmt.Println()
+					clikitcommand.Println()
 					o.Info("Stopped")
 				}
 				return nil

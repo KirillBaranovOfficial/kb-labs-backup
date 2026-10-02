@@ -21,9 +21,8 @@ func (k KBDev) EnsureScenario(scenarioPath string) (kbdevResult, []byte, error) 
 // re-reads the overlay on restart.
 func ApplyConfig(l env.Layout, k KBDev, overlayAbs string, services []string) error {
 	if _, err := os.Stat(overlayAbs); err != nil {
-		return diag.New("ERR_OVERLAY_NOT_FOUND", "config overlay not found",
-			diag.WithReason(overlayAbs),
-			diag.WithHint("check the profile's `config:` path"))
+		return diag.New("KB_CONFIG_OVERLAY_NOT_FOUND", "config overlay not found",
+			diag.WithReason(overlayAbs))
 	}
 
 	base := filepath.Base(overlayAbs)
@@ -43,7 +42,7 @@ func ApplyConfig(l env.Layout, k KBDev, overlayAbs string, services []string) er
 
 	res, out, err := k.EnsureScenario(scenPath)
 	if err != nil || !res.OK {
-		return diag.New("ERR_CONFIG_APPLY_FAILED", "applying config overlay failed",
+		return diag.New("KB_CONFIG_APPLY_FAILED", "applying config overlay failed",
 			diag.WithReason(strings.TrimSpace(string(out))))
 	}
 	return nil

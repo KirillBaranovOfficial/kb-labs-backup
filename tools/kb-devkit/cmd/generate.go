@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"path/filepath"
 	"sort"
 
@@ -51,7 +52,7 @@ Examples:
 				o.Warn("No templates defined. Add a scaffolding.templates section to devkit.yaml.")
 				return nil
 			}
-			fmt.Println("Available templates:")
+			clikitcommand.Println("Available templates:")
 			names := make([]string, 0, len(templates))
 			for k := range templates {
 				names = append(names, k)
@@ -64,7 +65,7 @@ Examples:
 					src = "local"
 				}
 				ref := t.Path + t.Package + t.URL
-				fmt.Printf("  %-20s  source=%-5s  %s\n", name, src, ref)
+				clikitcommand.Printf("  %-20s  source=%-5s  %s\n", name, src, ref)
 			}
 			return nil
 		}
@@ -106,16 +107,16 @@ Examples:
 		}
 
 		if generateDry {
-			fmt.Printf("\n%s\n", o.label.Render(fmt.Sprintf("Dry run — would create %d file(s) in %s", len(files), generateDest)))
+			clikitcommand.Printf("\n%s\n", o.label.Render(fmt.Sprintf("Dry run — would create %d file(s) in %s", len(files), generateDest)))
 		} else {
-			fmt.Printf("\n")
+			clikitcommand.Printf("\n")
 		}
 
 		for _, f := range files {
 			if generateDry {
-				fmt.Printf("  %s %s\n", o.dim.Render("+"), f)
+				clikitcommand.Printf("  %s %s\n", o.dim.Render("+"), f)
 			} else {
-				fmt.Printf("  %s %s\n", o.healthy.Render("+"), f)
+				clikitcommand.Printf("  %s %s\n", o.healthy.Render("+"), f)
 			}
 		}
 

@@ -2,7 +2,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -57,17 +56,13 @@ Examples:
 // Execute is the main entry point called from main.go. Any error returned by a
 // command is rendered as a structured diagnostic (message + reason + hint for
 // humans; {ok:false,error:{…}} for machines) and the process exits with the
-// diagnostic's exit code. Bare errors are wrapped as ERR_UNKNOWN so nothing is
-// ever uncoded.
+// shared diagnostic and exit code. Unknown errors are normalized by clikit.
 func Execute() {
 	_, err := rootCmd.ExecuteC()
 	if err == nil {
 		return
 	}
-	var d *diag.Diag
-	if !errors.As(err, &d) {
-		d = diag.Wrap(err, "ERR_UNKNOWN", err.Error())
-	}
+	d := diag.FromError(err)
 	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
 	os.Exit(code)
 }

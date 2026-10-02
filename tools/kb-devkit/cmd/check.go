@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"os"
+	clikitcommand "github.com/kb-labs/clikit/command"
 
 	"github.com/kb-labs/devkit/internal/checks"
 	"github.com/kb-labs/devkit/internal/config"
@@ -139,11 +139,10 @@ func outputCheckJSON(results map[string]checks.PackageResult, cfg *config.Devkit
 		out.Hint = "run 'kb-devkit fix' to auto-fix issues where possible"
 	}
 
-	_ = JSONOut(out)
 	if !out.OK {
-		return errSilent
+		return commandFailure("kb-devkit check")
 	}
-	return nil
+	return JSONOut(out)
 }
 
 // ─── Human output ─────────────────────────────────────────────────────────────
@@ -182,8 +181,8 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 			state = "error"
 		}
 
-		fmt.Printf("\n%s %s\n", o.StatusIcon(state), o.label.Render(r.Package.Name))
-		fmt.Printf("   %s\n", o.dim.Render(r.Package.RelPath))
+		clikitcommand.Printf("\n%s %s\n", o.StatusIcon(state), o.label.Render(r.Package.Name))
+		clikitcommand.Printf("   %s\n", o.dim.Render(r.Package.RelPath))
 
 		for _, issue := range r.Issues {
 			prefix := o.SeverityColor(string(issue.Severity))
@@ -191,20 +190,19 @@ func outputCheckHuman(results map[string]checks.PackageResult, cfg *config.Devki
 			if issue.File != "" {
 				msg += o.dim.Render(" — " + issue.File)
 			}
-			fmt.Printf("   %s  %s\n", prefix, msg)
+			clikitcommand.Printf("   %s  %s\n", prefix, msg)
 			if issue.Fix != "" {
-				fmt.Printf("          %s\n", o.dim.Render("fix: "+issue.Fix))
+				clikitcommand.Printf("          %s\n", o.dim.Render("fix: "+issue.Fix))
 			}
 		}
 	}
 
-	fmt.Println()
+	clikitcommand.Println()
 	if totalErrors == 0 && totalWarnings == 0 {
 		o.OK(fmt.Sprintf("All %d packages passed", totalPassed))
 		return nil
 	}
 
 	o.Err(fmt.Sprintf("%d error(s), %d warning(s) across %d packages", totalErrors, totalWarnings, len(results)-totalPassed))
-	os.Exit(1)
-	return nil
+	return commandFailure("kb-devkit check")
 }

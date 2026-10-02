@@ -69,8 +69,8 @@ type Pnpm struct {
 // `pnpm approve-builds --all` itself writes) rather than passed as a CLI
 // `--allow-build=` flag: pnpm 11.4.0 (pinned in the E2E image and this
 // repo's own packageManager field) mis-parses a comma-joined value as a
-// single "name@version-union" spec — and therefore fails with
-// ERR_PNPM_INVALID_VERSION_UNION — the moment the list has more than one
+// single "name@version-union" spec — and therefore fails with pnpm's invalid
+// version-union error — the moment the list has more than one
 // entry and includes a scoped package (contains "@"). Confirmed directly
 // against pnpm 11.4.0:
 // the CLI flag breaks on this exact list (comma-joined or repeated), while
