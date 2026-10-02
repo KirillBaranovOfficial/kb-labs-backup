@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { AuthService } from '@kb-labs/gateway-auth';
+import { AuthService, signUserAccessToken } from '@kb-labs/gateway-auth';
 import type { ICache } from '@kb-labs/core-platform';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
 import { extractBearer, loadJwtConfig, resolveAuthContext } from '../mcp/auth.js';
@@ -94,5 +94,15 @@ describe('resolveAuthContext', () => {
   it('returns null when the token is invalid', async () => {
     vi.spyOn(AuthService.prototype, 'verify').mockResolvedValue(null);
     expect(await resolveAuthContext('Bearer bad', mockCache, cfg)).toBeNull();
+  });
+
+  it('accepts a signed user access token issued by secured gateway auth', async () => {
+    const { token } = await signUserAccessToken({
+      userId: 'user-1', tenantId: 'tenant-1', familyId: 'family-1', ttlSec: 300,
+    }, cfg);
+
+    await expect(resolveAuthContext(`Bearer ${token}`, mockCache, cfg)).resolves.toEqual({
+      type: 'user', userId: 'user-1', namespaceId: 'tenant-1', tier: 'free', permissions: [],
+    });
   });
 });

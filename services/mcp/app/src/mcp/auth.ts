@@ -4,7 +4,7 @@
  * routed through the platform PDP.
  */
 
-import { AuthService, type JwtConfig } from '@kb-labs/gateway-auth';
+import { AuthService, verifyUserAccessToken, type JwtConfig } from '@kb-labs/gateway-auth';
 import type { ICache } from '@kb-labs/core-platform';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
 
@@ -59,5 +59,19 @@ export async function resolveAuthContext(
   if (!token) {
     return null;
   }
-  return new AuthService(cache, jwtConfig).verify(token);
+  const machineContext = await new AuthService(cache, jwtConfig).verify(token);
+  if (machineContext) {
+    return machineContext;
+  }
+  const user = await verifyUserAccessToken(token, jwtConfig);
+  if (!user) {
+    return null;
+  }
+  return {
+    type: 'user',
+    userId: user.userId,
+    namespaceId: user.tenantId,
+    tier: 'free',
+    permissions: [],
+  };
 }

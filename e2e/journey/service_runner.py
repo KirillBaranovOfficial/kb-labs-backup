@@ -34,6 +34,7 @@ from mcp_project_steps import (
     secured_auth,
     unknown_tool,
 )
+from platform_state_dump import archive_service_logs
 
 
 BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -700,6 +701,17 @@ def main() -> int:
     except Exception as error:
         journey.step("service runner", "journey.runner", lambda: str(error) or error.__class__.__name__)
     finally:
+        kb_home = Path(os.getenv("KB_HOME", str(Path.home() / ".kb")))
+        def archive_logs() -> None:
+            archive_service_logs(
+                kb_home, Path(args.output).resolve().parent, mode=args.mode, run_id=journey.run_id,
+            )
+
+        journey.step(
+            "archive runtime service logs",
+            "journey.diagnostics",
+            archive_logs,
+        )
         result = journey.write_json(args.output)
     print(json.dumps(result.__dict__, indent=2))
     return 0 if result.status == "PASS" else 1
