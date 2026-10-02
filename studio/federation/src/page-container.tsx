@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, type ComponentType } from 'react';
 import { Spin, ConfigProvider } from 'antd';
-import { loadPageComponent, type PageLoadError } from './widget-loader.js';
+import { loadPageComponent } from './widget-loader.js';
 import { PageErrorBoundary } from './page-error-boundary.js';
 import { PluginErrorUI } from './plugin-error-ui.js';
+import { normalizeStudioFailure, recordStudioFailure, type StudioFailure } from './error-contract.js';
 import { PageContextProvider, type PageContext, getAntDesignTokens, getAntDesignComponents } from '@kb-labs/studio-hooks';
 import { EventBusProvider } from '@kb-labs/studio-event-bus';
 
@@ -40,6 +41,7 @@ export function PageContainer({
 }: PageContainerProps) {
   const [PageComponent, setPageComponent] = useState<ComponentType<unknown> | null>(null);
   const [loadError, setLoadError] = useState<Error | null>(null);
+  const [loadFailure, setLoadFailure] = useState<StudioFailure | null>(null);
   const [loading, setLoading] = useState(true);
   const [retryKey, setRetryKey] = useState(0);
 
@@ -52,6 +54,7 @@ export function PageContainer({
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
+    setLoadFailure(null);
     setPageComponent(null);
 
     loadPageComponent(remoteName, entry, remoteEntryUrl)
@@ -64,12 +67,15 @@ export function PageContainer({
       .catch((err: Error) => {
         if (!cancelled) {
           setLoadError(err);
+          const failure = normalizeStudioFailure(err);
+          setLoadFailure(failure);
+          recordStudioFailure(`Plugin page ${pluginId}/${pageId} failed to load`, failure);
           setLoading(false);
         }
       });
 
     return () => { cancelled = true; };
-  }, [remoteName, entry, retryKey]);
+  }, [remoteName, entry, pageId, pluginId, retryKey]);
 
   const handleRetry = useCallback(() => {
     setRetryKey((k) => k + 1);
@@ -84,15 +90,12 @@ export function PageContainer({
   }
 
   if (loadError) {
-    const mfError = loadError as PageLoadError;
     return (
       <PluginErrorUI
         type="load"
         pluginId={pluginId}
         pageId={pageId}
-        error={loadError}
-        remoteName={mfError.remoteName ?? remoteName}
-        entry={mfError.exposedModule ?? entry}
+        failure={loadFailure ?? normalizeStudioFailure(loadError)}
         onRetry={handleRetry}
       />
     );
