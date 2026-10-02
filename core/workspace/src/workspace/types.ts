@@ -32,6 +32,7 @@ export interface WorkspaceFs {
 
 export type ProjectRootSource =
   | 'registry'
+  | 'platform'
 
 export interface ProjectRootResolution {
   rootDir: string
@@ -122,7 +123,10 @@ export interface ResolvePlatformRootOptions {
 
 export interface ResolveRootsOptions
   extends ResolvePlatformRootOptions,
-    ResolveProjectRootOptions {}
+    ResolveProjectRootOptions {
+  /** Resolve only platform identity; the returned projectRoot aliases platformRoot. */
+  projectScope?: 'required' | 'platform'
+}
 
 export interface RootsResolution {
   /** Where `node_modules/@kb-labs/*` lives. */

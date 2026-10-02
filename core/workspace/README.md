@@ -61,6 +61,16 @@ project-root environment override does not establish membership. If no
 registered project contains the directory, it throws `KB_PROJECT_UNKNOWN`;
 register the directory with `kb project add <path>`.
 
+Platform processes that do not act in a current project can resolve only the
+platform root:
+
+```typescript
+const roots = await resolveRoots({ startDir: process.cwd(), projectScope: 'platform' })
+```
+
+In this mode, `projectRoot` aliases `platformRoot`; no project registry lookup
+is performed.
+
 #### `resolveWorkspaceRoot(options)` — deprecated alias
 
 Resolves through the same project registry as `resolveProjectRoot`.

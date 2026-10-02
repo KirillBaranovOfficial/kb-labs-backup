@@ -122,7 +122,7 @@ export interface PlatformInitResult {
 export async function initializePlatform(
   cwd: string,
   moduleUrl?: string,
-  options: { skipAdapterInitialization?: boolean } = {},
+  options: { skipAdapterInitialization?: boolean; projectScope?: 'required' | 'platform' } = {},
 ): Promise<PlatformInitResult> {
   ensureLifecycleHooksRegistered();
 
@@ -148,6 +148,7 @@ export async function initializePlatform(
     loadResult = await loadPlatformConfig({
       moduleUrl,
       startDir: cwd,
+      projectScope: options.projectScope,
     });
   } catch {
     // Config file missing or unreadable — proceed with full fallback below.

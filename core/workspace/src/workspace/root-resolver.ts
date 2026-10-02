@@ -337,10 +337,17 @@ export async function resolvePlatformRoot(
 export async function resolveRoots(
   options: ResolveRootsOptions = {},
 ): Promise<RootsResolution> {
-  const [platform, project] = await Promise.all([
-    resolvePlatformRoot(options),
-    resolveProjectRoot(options),
-  ])
+  const platform = await resolvePlatformRoot(options)
+  if (options.projectScope === 'platform') {
+    return {
+      platformRoot: platform.rootDir,
+      projectRoot: platform.rootDir,
+      sameLocation: true,
+      sources: { platform: platform.source, project: 'platform' },
+    }
+  }
+
+  const project = await resolveProjectRoot(options)
   const [platformCanonical, projectCanonical] = await Promise.all([
     fsp.realpath(platform.rootDir).catch(() => path.resolve(platform.rootDir)),
     fsp.realpath(project.rootDir).catch(() => path.resolve(project.rootDir)),

@@ -181,6 +181,7 @@ export async function runHost(config: HostConfig): Promise<void> {
     serviceId: config.serviceId ?? config.appId,
     kind: "service",
     startDir: config.startDir,
+    projectScope: "platform",
     moduleUrl: config.moduleUrl,
     assemblyHook: config.platform.assemblyHook,
     failurePolicy: config.platform.failurePolicy,

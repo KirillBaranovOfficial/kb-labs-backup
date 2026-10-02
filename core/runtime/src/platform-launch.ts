@@ -54,6 +54,8 @@ export interface PlatformLaunchOptions {
   kind: PlatformApplicationKind;
   /** Directory used to resolve project and platform roots. */
   startDir?: string;
+  /** Whether startup should resolve a registered current project. */
+  projectScope?: 'required' | 'platform';
   /** Entrypoint import.meta.url, useful in installed mode. */
   moduleUrl?: string;
   /** Load layered .env files before config interpolation. @default true */
@@ -214,6 +216,7 @@ async function launch(
     moduleUrl,
     startDir,
     loadEnvFile: loadEnv,
+    projectScope: options.projectScope,
   });
   publishConfigGlobals(loadResult, storeRawConfig);
 

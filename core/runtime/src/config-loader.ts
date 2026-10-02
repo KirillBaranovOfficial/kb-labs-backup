@@ -81,6 +81,8 @@ const CONFIG_RELATIVE_PATHS = [
 ] as const;
 
 export interface LoadPlatformConfigOptions {
+  /** Load platform configuration without resolving a current project. */
+  projectScope?: 'required' | 'platform';
   /**
    * `import.meta.url` of the calling entrypoint (CLI bin or service entry).
    * Used to locate the installed `node_modules/@kb-labs/*` tree reliably in
@@ -355,12 +357,14 @@ export async function loadPlatformConfig(
     startDir = process.cwd(),
     env = process.env,
     loadEnvFile: shouldLoadEnv = true,
+    projectScope = 'required',
   } = options;
 
   let roots = await resolveRoots({
     moduleUrl,
     startDir,
     env,
+    projectScope,
   });
 
   if (shouldLoadEnv) {
