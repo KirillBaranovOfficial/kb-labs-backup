@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateErrorEnvelope } from '@kb-labs/core-platform';
+import { validateErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import {
   AbortError,
   ConfigError,
