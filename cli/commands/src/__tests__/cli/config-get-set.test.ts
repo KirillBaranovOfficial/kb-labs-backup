@@ -9,13 +9,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
-import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
 import { configGet } from '../../commands/system/config/get.js';
 import { configSet } from '../../commands/system/config/set.js';
 import { configShow } from '../../commands/system/config/show.js';
+import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
 // ── Harness ──────────────────────────────────────────────────────────────────
 
@@ -64,12 +65,47 @@ let tmp: string;
 let kbHome: string;
 let platformRoot: string;
 let projectRoot: string;
+let projectId: string;
 
 async function write(root: string, rel: string, contents: string): Promise<string> {
   const full = path.join(root, rel);
   await fsp.mkdir(path.dirname(full), { recursive: true });
   await fsp.writeFile(full, contents, 'utf8');
   return full;
+}
+
+async function writeCommitSettingsManifest(): Promise<void> {
+  const pluginRoot = path.join(platformRoot, '.kb', 'plugins', 'commit');
+  const packageJson = JSON.stringify({ name: '@kb-labs/commit', version: '0.1.0' });
+  await write(pluginRoot, 'package.json', packageJson);
+  await write(pluginRoot, 'kb.plugin.json', JSON.stringify({
+    schema: 'kb.plugin/3',
+    id: '@kb-labs/commit',
+    version: '0.1.0',
+    configSection: 'commit',
+    settings: {
+      defaults: { enabled: true, label: 'Commit', scope: { default: 'root', scopes: [] }, llm: { enabled: true, temperature: 0.3, maxTokens: 2000 }, storage: { directory: '.kb/commit' }, git: { protectedBranches: ['main'], autoStage: false } },
+      schema: {
+        type: 'object',
+        properties: {
+          enabled: { type: 'boolean' },
+          label: { type: 'string' },
+          scope: { type: 'object', properties: { default: { type: 'string' }, scopes: { type: 'array', items: { type: 'object' } } } },
+          llm: { type: 'object', properties: { enabled: { type: 'boolean' }, temperature: { type: 'number' }, maxTokens: { type: 'integer', minimum: 1 } } },
+          storage: { type: 'object', properties: { directory: { type: 'string' } } },
+          git: { type: 'object', properties: { protectedBranches: { type: 'array' }, autoStage: { type: 'boolean' } } },
+        },
+        additionalProperties: true,
+      },
+    },
+  }));
+  const integrity = `sha256-${createHash('sha256').update(packageJson).digest('base64')}`;
+  await write(platformRoot, '.kb/marketplace.lock', JSON.stringify({
+    schema: 'kb.marketplace/3',
+    plugins: {
+      '@kb-labs/commit': { source: 'platform', version: '0.1.0', integrity, resolvedPath: '.kb/plugins/commit', enabled: true },
+    },
+  }));
 }
 
 const PLATFORM_CONFIG = `{
@@ -96,6 +132,17 @@ async function run(
   return { code, out };
 }
 
+async function runAt(
+  cwd: string,
+  command: { run: (ctx: PluginContextV3, argv: string[], flags: Record<string, unknown>) => Promise<number> },
+  argv: string[],
+  flags: Record<string, unknown> = {},
+): Promise<{ code: number; out: Captured }> {
+  const { ctx, out } = makeCtx(cwd);
+  const code = await command.run(ctx, argv, { json: true, ...flags });
+  return { code, out };
+}
+
 beforeEach(async () => {
   tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'kb-config-cmd-'));
   kbHome = path.join(tmp, 'kb-home');
@@ -106,9 +153,10 @@ beforeEach(async () => {
   projectRoot = await fsp.realpath(projectRoot);
   await write(platformRoot, '.kb/kb.config.jsonc', PLATFORM_CONFIG);
   await write(projectRoot, '.kb/kb.config.jsonc', PROJECT_CONFIG);
+  await writeCommitSettingsManifest();
   vi.stubEnv('KB_PLATFORM_ROOT', platformRoot);
   vi.stubEnv('KB_HOME', kbHome);
-  await createProjectRegistry({ env: process.env }).add(projectRoot);
+  projectId = (await createProjectRegistry({ env: process.env }).add(projectRoot)).project.id;
 });
 
 afterEach(async () => {
@@ -119,29 +167,29 @@ afterEach(async () => {
 
 const PROJECT_FILE = () => path.join(projectRoot, '.kb', 'kb.config.jsonc');
 const PLATFORM_FILE = () => path.join(platformRoot, '.kb', 'kb.config.jsonc');
+const PROJECT_SETTINGS_FILE = () => path.join(kbHome, 'state', projectId, 'config.jsonc');
 
 // ── config set ───────────────────────────────────────────────────────────────
 
 describe('config set', () => {
-  it('writes project-owned settings by default and keeps comments', async () => {
-    const { code, out } = await run(configSet, ['plugins.commit.label', 'My commit']);
+  it('writes project-owned settings to the platform state directory', async () => {
+    const { code, out } = await run(configSet, ['plugins.commit.scope.default', 'My commit']);
 
     expect(code).toBe(0);
     expect(out.json[0]).toMatchObject({
       ok: true,
-      key: 'plugins.commit.label',
+      key: 'plugins.commit.scope.default',
       scope: 'project',
-      file: await fsp.realpath(PROJECT_FILE()),
+      file: PROJECT_SETTINGS_FILE(),
       changed: true,
       dryRun: false,
       value: 'My commit',
     });
-    const written = await fsp.readFile(PROJECT_FILE(), 'utf8');
-    expect(written).toContain('// project settings');
+    const written = await fsp.readFile(String(out.json[0]?.file), 'utf8');
     expect(JSON.parse(written.replace(/\/\/.*$/gm, ''))).toMatchObject({
-      plugins: { commit: { label: 'My commit' } },
+      plugins: { commit: { scope: { default: 'My commit' } } },
     });
-    // The platform file is untouched.
+    expect(await fsp.readFile(PROJECT_FILE(), 'utf8')).toBe(PROJECT_CONFIG);
     expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toBe(PLATFORM_CONFIG);
   });
 
@@ -156,22 +204,48 @@ describe('config set', () => {
     expect(await fsp.readFile(PROJECT_FILE(), 'utf8')).toBe(PROJECT_CONFIG);
   });
 
+  // case: S-204.5
+  it('rejects invalid platform plugin settings before changing the platform file', async () => {
+    const before = await fsp.readFile(PLATFORM_FILE(), 'utf8');
+    const { code, out } = await run(configSet, ['plugins.commit.llm.maxTokens', '0'], { scope: 'platform' });
+
+    expect(code).toBe(1);
+    expect((out.json[0] as { error: { code: string; hint: string } }).error).toMatchObject({
+      code: 'KB_PLUGIN_SETTINGS_INVALID',
+      hint: expect.stringContaining('declared settings schema'),
+    });
+    expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toBe(before);
+  });
+
+  // case: S-204.11
+  it('merges and attributes manifest, platform, then project settings', async () => {
+    const manifestDefault = await run(configGet, ['plugins.commit.llm.maxTokens']);
+    expect(manifestDefault.out.json[0]).toMatchObject({ value: 2000, layer: 'manifest' });
+
+    expect((await run(configSet, ['plugins.commit.llm.maxTokens', '1900'], { scope: 'platform' })).code).toBe(0);
+    expect((await run(configGet, ['plugins.commit.llm.maxTokens'])).out.json[0])
+      .toMatchObject({ value: 1900, layer: 'platform' });
+
+    expect((await run(configSet, ['plugins.commit.llm.maxTokens', '1800'])).code).toBe(0);
+    expect((await run(configGet, ['plugins.commit.llm.maxTokens'])).out.json[0])
+      .toMatchObject({ value: 1800, layer: 'project' });
+    expect((await run(configGet, ['plugins.commit.llm.temperature'])).out.json[0])
+      .toMatchObject({ value: 0.3, layer: 'manifest' });
+  });
+
   it('--dry-run reports the outcome and writes nothing', async () => {
-    const { code, out } = await run(configSet, ['platform.execution.mode', 'worker-pool'], { 'dry-run': true });
+    const { code, out } = await run(configSet, ['plugins.commit.scope.default', 'Dry run'], { 'dry-run': true });
     expect(code).toBe(0);
     expect(out.json[0]).toMatchObject({ ok: true, dryRun: true, changed: true });
-    expect(await fsp.readFile(PROJECT_FILE(), 'utf8')).toBe(PROJECT_CONFIG);
+    await expect(fsp.access(String(out.json[0]?.file))).rejects.toThrow();
   });
 
   it('parses JSON values and lets --string keep the text', async () => {
-    await run(configSet, ['platform.core.jobs.maxConcurrent', '4']);
-    await run(configSet, ['plugins.commit.label', '42'], { string: true });
-    const parsed = JSON.parse((await fsp.readFile(PROJECT_FILE(), 'utf8')).replace(/\/\/.*$/gm, '')) as {
-      platform: { core: { jobs: { maxConcurrent: unknown } } };
-      plugins: { commit: { label: unknown } };
-    };
-    expect(parsed.platform.core.jobs.maxConcurrent).toBe(4);
-    expect(parsed.plugins.commit.label).toBe('42');
+    await run(configSet, ['plugins.commit.llm.maxTokens', '4']);
+    await run(configSet, ['plugins.commit.scope.default', '42'], { string: true });
+    const written = JSON.parse(await fsp.readFile(PROJECT_SETTINGS_FILE(), 'utf8')) as { plugins: { commit: Record<string, unknown> } };
+    expect((written.plugins.commit.llm as Record<string, unknown>).maxTokens).toBe(4);
+    expect((written.plugins.commit.scope as Record<string, unknown>).default).toBe('42');
   });
 
   it('rejects project-scoped adapter settings with a move-to-platform hint', async () => {
@@ -186,20 +260,26 @@ describe('config set', () => {
   });
 
   it('serialises concurrent sets from several commands', async () => {
-    await Promise.all(
-      ['a', 'b', 'c', 'd', 'e'].map((slot) => run(configSet, [`plugins.commit.${slot}Slot`, `pkg-${slot}`])),
-    );
-    const parsed = JSON.parse((await fsp.readFile(PROJECT_FILE(), 'utf8')).replace(/\/\/.*$/gm, '')) as {
-      plugins: { commit: Record<string, string> };
+    await Promise.all([
+      run(configSet, ['plugins.commit.enabled', 'false']),
+      run(configSet, ['plugins.commit.llm.enabled', 'false']),
+      run(configSet, ['plugins.commit.llm.temperature', '0.5']),
+      run(configSet, ['plugins.commit.llm.maxTokens', '1400']),
+      run(configSet, ['plugins.commit.storage.directory', 'tmp/commit']),
+    ]);
+    const parsed = JSON.parse(await fsp.readFile(PROJECT_SETTINGS_FILE(), 'utf8')) as {
+      plugins: { commit: { enabled: boolean; llm: { enabled: boolean; temperature: number; maxTokens: number }; storage: { directory: string } } };
     };
-    for (const slot of ['a', 'b', 'c', 'd', 'e']) {
-      expect(parsed.plugins.commit[`${slot}Slot`]).toBe(`pkg-${slot}`);
-    }
+    expect(parsed.plugins.commit).toMatchObject({
+      enabled: false,
+      llm: { enabled: false, temperature: 0.5, maxTokens: 1400 },
+      storage: { directory: 'tmp/commit' },
+    });
   });
 
   describe('errors use the unified envelope', () => {
     it('unknown key: KB_CONFIG_UNKNOWN_KEY with a "did you mean" hint', async () => {
-      const { code, out } = await run(configSet, ['platform.adaptors.llm', 'x']);
+      const { code, out } = await run(configSet, ['platform.adaptors.llm', 'x'], { scope: 'platform' });
       expect(code).toBe(1);
       const envelope = (out.json[0] as { ok: boolean; error: Record<string, unknown> }).error;
       expect(out.json[0]?.ok).toBe(false);
@@ -233,7 +313,7 @@ describe('config set', () => {
 
     it('human output carries message, cause, hint and the code', async () => {
       const { ctx, out } = makeCtx(projectRoot);
-      const code = await configSet.run(ctx, ['platform.adaptors.llm', 'x'], {});
+      const code = await configSet.run(ctx, ['platform.adaptors.llm', 'x'], { scope: 'platform' });
       expect(code).toBe(1);
       expect(out.json).toEqual([]);
       const text = out.errors.join('\n');
@@ -342,6 +422,41 @@ describe('config set', () => {
 // ── config get ───────────────────────────────────────────────────────────────
 
 describe('config get', () => {
+  // case: S-204.9
+  it('returns KB_PROJECT_UNKNOWN outside the registered project context', async () => {
+    await createProjectRegistry().remove(projectId);
+    const { code, out } = await run(configGet, ['plugins.commit.scope.scopes']);
+    expect(code).toBe(1);
+    expect((out.json[0] as { error: { code: string; hint: string } }).error).toMatchObject({
+      code: 'KB_PROJECT_UNKNOWN',
+      hint: expect.stringContaining('kb project add'),
+    });
+  });
+
+  // case: S-204.8
+  it('reads and writes platform settings outside a registered project without a project layer', async () => {
+    const outsideRoot = path.join(tmp, 'outside-project')
+    await fsp.mkdir(outsideRoot, { recursive: true })
+
+    const written = await runAt(outsideRoot, configSet, ['plugins.commit.scope.scopes', '[]'], { scope: 'platform' })
+    expect(written.code).toBe(0)
+    expect(written.out.json[0]).toMatchObject({ ok: true, scope: 'platform' })
+    expect(await fsp.realpath(String(written.out.json[0]?.file))).toBe(await fsp.realpath(PLATFORM_FILE()))
+    await expect(fsp.access(PROJECT_SETTINGS_FILE())).rejects.toThrow()
+
+    const read = await runAt(outsideRoot, configGet, ['plugins.commit.scope.scopes'], { scope: 'platform' })
+    expect(read.code).toBe(0)
+    expect(read.out.json[0]).toMatchObject({
+      ok: true,
+      scope: 'platform',
+      found: true,
+      value: [],
+      layer: 'platform',
+    })
+    expect(await fsp.realpath(String(read.out.json[0]?.source))).toBe(await fsp.realpath(PLATFORM_FILE()))
+    await expect(fsp.access(PROJECT_SETTINGS_FILE())).rejects.toThrow()
+  });
+
   it('returns the effective value with layer and file provenance', async () => {
     const { code, out } = await run(configGet, ['platform.adapterOptions.llm.defaultModel']);
     expect(code).toBe(0);

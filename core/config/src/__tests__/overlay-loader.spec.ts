@@ -10,9 +10,8 @@ async function makeTmpDir() {
 }
 
 async function writeOverlay(root: string, name: string, contents: string) {
-  const dir = path.join(root, '.kb', 'overlays');
-  await fsp.mkdir(dir, { recursive: true });
-  await fsp.writeFile(path.join(dir, name), contents, 'utf8');
+  await fsp.mkdir(root, { recursive: true });
+  await fsp.writeFile(path.join(root, name), contents, 'utf8');
 }
 
 describe('loadOverlays', () => {
@@ -26,8 +25,8 @@ describe('loadOverlays', () => {
     await fsp.rm(tmp, { recursive: true, force: true });
   });
 
-  it('returns empty when .kb/overlays does not exist', async () => {
-    const res = await loadOverlays(tmp);
+  it('returns empty when the platform overlay directory does not exist', async () => {
+    const res = await loadOverlays(path.join(tmp, 'state', 'prj_test', 'overlays'));
     expect(res.overlays).toEqual([]);
     expect(res.diagnostics).toEqual([]);
   });
@@ -63,7 +62,7 @@ describe('loadOverlays', () => {
 
   it('ignores non-.jsonc files', async () => {
     await writeOverlay(tmp, 'keep.jsonc', '{ "x": 1 }');
-    const overlayDir = path.join(tmp, '.kb', 'overlays');
+    const overlayDir = tmp;
     await fsp.writeFile(path.join(overlayDir, 'README.md'), 'docs');
     await fsp.writeFile(path.join(overlayDir, 'skip.json'), '{"x":2}');
 

@@ -50,3 +50,7 @@ export * from './adapter-schema.js';
 // Config command error mapping (unified envelope, ADR-0049), shared by
 // `kb config get|set` and the host's `/api/v1/adapters` API.
 export * from './error-envelope.js';
+
+// ADR-0052 platform-owned per-project plugin settings store.
+export * from './project-settings-store.js';
+export * from './plugin-settings-schema.js';

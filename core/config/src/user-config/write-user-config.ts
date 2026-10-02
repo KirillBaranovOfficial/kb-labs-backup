@@ -40,7 +40,9 @@ export type ConfigWriteErrorCode =
   | 'KB_CONFIG_UNKNOWN_KEY'
   | 'KB_CONFIG_SECRET_MISSING'
   | 'KB_CONFIG_SECRET_PLAINTEXT'
-  | 'KB_CONFIG_CONFLICT';
+  | 'KB_CONFIG_CONFLICT'
+  | 'KB_PLUGIN_SETTINGS_INVALID'
+  | 'KB_PLUGIN_SETTINGS_SCHEMA_INVALID';
 
 /** A config write was refused. `details` is structured and never contains values. */
 export class ConfigWriteError extends Error {

@@ -3,7 +3,19 @@ import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { loadEffectiveConfig } from '../api/effective-config';
+import { loadEffectiveConfig as resolveEffectiveConfig } from '../api/effective-config';
+
+const TEST_PROJECT_ID = 'prj_effective_test';
+function testStoreRoot(projectRoot: string): string {
+  return path.join(path.dirname(projectRoot), 'platform-state');
+}
+function loadEffectiveConfig(projectRoot: string, options: Parameters<typeof resolveEffectiveConfig>[1] = {}) {
+  return resolveEffectiveConfig(projectRoot, {
+    ...options,
+    projectId: TEST_PROJECT_ID,
+    storeRoot: testStoreRoot(projectRoot),
+  });
+}
 
 // ─── Filesystem helpers ─────────────────────────────────────────────────
 
@@ -22,7 +34,10 @@ async function writeProjectConfig(
   contents: string,
   filename = '.kb/kb.config.json',
 ) {
-  await writeConfigAt(root, filename, contents);
+  void filename;
+  const store = path.join(testStoreRoot(root), 'state', TEST_PROJECT_ID, 'config.jsonc');
+  await fsp.mkdir(path.dirname(store), { recursive: true });
+  await fsp.writeFile(store, contents, 'utf8');
 }
 
 async function writePlatformConfig(
@@ -34,7 +49,7 @@ async function writePlatformConfig(
 }
 
 async function writeOverlay(root: string, name: string, contents: string) {
-  const dir = path.join(root, '.kb', 'overlays');
+  const dir = path.join(testStoreRoot(root), 'state', TEST_PROJECT_ID, 'overlays');
   await fsp.mkdir(dir, { recursive: true });
   await fsp.writeFile(path.join(dir, name), contents, 'utf8');
 }
@@ -186,6 +201,44 @@ describe('loadEffectiveConfig — layer ordering', () => {
   });
 });
 
+describe('loadEffectiveConfig — manifest defaults', () => {
+  const c = makeFixture();
+
+  it('merges manifest defaults, platform values, project values, and overlays in order with provenance', async () => {
+    const manifestPath = path.join(c.platform, 'plugins', 'sample', 'manifest.json');
+    const defaults = [{
+      layer: 'manifest' as const,
+      path: manifestPath,
+      data: { plugins: { sample: { enabled: true, scope: { scopes: [{ id: 'default' }] } } } },
+    }];
+    await writePlatformConfig(c.platform, '{"plugins":{"sample":{"scope":{"scopes":[{"id":"platform"}]}}}}');
+    await writeProjectConfig(c.project, '{"plugins":{"sample":{"scope":{"scopes":[{"id":"project"}]}}}}');
+    await writeOverlay(c.project, 'override.jsonc', '{"plugins":{"sample":{"scope":{"active":"overlay"}}}}');
+
+    const result = await loadEffectiveConfig(c.project, {
+      platformRoot: c.platform,
+      projectId: TEST_PROJECT_ID,
+      storeRoot: testStoreRoot(c.project),
+      pluginDefaults: defaults,
+    });
+
+    expect(result?.data.plugins).toEqual({
+      sample: { enabled: true, scope: { scopes: [{ id: 'project' }], active: 'overlay' } },
+    });
+    expect(result?.provenance['plugins.sample.enabled']).toEqual({ layer: 'manifest', source: manifestPath });
+    expect(result?.provenance['plugins.sample.scope.scopes']).toEqual({
+      layer: 'project',
+      source: path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'config.jsonc'),
+      contributors: [
+        { layer: 'project', source: path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'config.jsonc') },
+        { layer: 'platform', source: path.join(c.platform, '.kb', 'kb.config.json') },
+        { layer: 'manifest', source: manifestPath },
+      ],
+    });
+    expect(result?.provenance['plugins.sample.scope.active']?.layer).toBe('overlay');
+  });
+});
+
 describe('loadEffectiveConfig — deep-merge semantics', () => {
   const c = makeFixture();
 
@@ -206,14 +259,11 @@ describe('loadEffectiveConfig — deep-merge semantics', () => {
     expect(res!.data).toEqual({ existing: 1, new: 2 });
   });
 
-  it('platform↔project arrays CONCATENATE (mergeDefined semantics, same as loadPlatformConfig)', async () => {
-    // Regression: previously loadEffectiveConfig used mergeOverlay (REPLACE)
-    // for the platform↔project layer too, which gave a different shape than
-    // loadPlatformConfig (concat). Both APIs must agree on this step.
-    await writePlatformConfig(c.platform, '{"sources":["a"]}');
-    await writeProjectConfig(c.project, '{"sources":["b"]}');
+  it('project arrays replace platform arrays', async () => {
+    await writePlatformConfig(c.platform, '{"plugins":{"sample":{"sources":["a"]}}}');
+    await writeProjectConfig(c.project, '{"plugins":{"sample":{"sources":["b"]}}}');
     const res = await loadEffectiveConfig(c.project, { platformRoot: c.platform });
-    expect(res!.data.sources).toEqual(['a', 'b']);
+    expect((res!.data.plugins as Record<string, { sources: string[] }>).sample!.sources).toEqual(['b']);
   });
 
   it('rejects project adapter sections when a platform root is configured', async () => {
@@ -223,11 +273,11 @@ describe('loadEffectiveConfig — deep-merge semantics', () => {
       .rejects.toMatchObject({ name: 'AdapterProjectScopeError' });
   });
 
-  it('rejects legacy top-level project adapter sections when a platform root is configured', async () => {
+  it('ignores legacy repository plugin adapter config when a platform root is configured', async () => {
     await writePlatformConfig(c.platform, '{"platform":{"adapters":{"llm":"openai"}}}');
-    await writeProjectConfig(c.project, '{"adapters":{"llm":["openai"]}}');
-    await expect(loadEffectiveConfig(c.project, { platformRoot: c.platform }))
-      .rejects.toMatchObject({ name: 'AdapterProjectScopeError' });
+    await writeConfigAt(c.project, '.kb/kb.config.json', '{"plugins":{"sample":{"adapters":{"llm":["openai"]}}}}');
+    const result = await loadEffectiveConfig(c.project, { platformRoot: c.platform });
+    expect(result!.data).toEqual({ platform: { adapters: { llm: 'openai' } } });
   });
 
   it('overlay arrays REPLACE base arrays by default', async () => {
@@ -238,25 +288,25 @@ describe('loadEffectiveConfig — deep-merge semantics', () => {
   });
 
   it('kb:merge:append concatenates arrays', async () => {
-    await writeProjectConfig(c.project, '{"adapters":{"llm":["openai"]}}');
+    await writeProjectConfig(c.project, '{"plugins":{"sample":{"features":["base"]}}}');
     await writeOverlay(
       c.project,
       'p.jsonc',
-      '{"adapters":{"kb:merge":{"llm":"append"},"llm":["vibeproxy"]}}',
+      '{"plugins":{"sample":{"features":["overlay"],"kb:merge":{"features":"append"}}}}',
     );
     const res = await loadEffectiveConfig(c.project);
-    expect(res!.data).toEqual({ adapters: { llm: ['openai', 'vibeproxy'] } });
+    expect(res!.data).toEqual({ plugins: { sample: { features: ['base', 'overlay'] } } });
   });
 
   it('kb:merge directive key is stripped from the result', async () => {
-    await writeProjectConfig(c.project, '{"adapters":{"llm":["openai"]}}');
+    await writeProjectConfig(c.project, '{"plugins":{"sample":{"adapters":{"llm":["openai"]}}}}');
     await writeOverlay(
       c.project,
       'p.jsonc',
-      '{"adapters":{"kb:merge":{"llm":"append"},"llm":["x"]}}',
+      '{"plugins":{"sample":{"adapters":{"kb:merge":{"llm":"append"},"llm":["x"]}}}}',
     );
     const res = await loadEffectiveConfig(c.project);
-    expect((res!.data.adapters as Record<string, unknown>)['kb:merge']).toBeUndefined();
+    expect((res!.data.plugins as { sample: { adapters: Record<string, unknown> } }).sample.adapters['kb:merge']).toBeUndefined();
   });
 
   it('multiple overlays each append (cumulative)', async () => {
@@ -307,35 +357,17 @@ describe('loadEffectiveConfig — deep-merge semantics', () => {
 describe('loadEffectiveConfig — file format precedence', () => {
   const c = makeFixture();
 
-  it('.kb/kb.config.json wins over .kb/kb.config.jsonc when both exist', async () => {
-    // .kb/kb.config.json is the machine-written / scan-updated authoritative
-    // file; .kb/kb.config.jsonc is the template snapshot. Both are read, the
-    // .json layered on top — same convention kb-create produces.
-    await writeProjectConfig(c.project, '{"src":"jsonc"}', '.kb/kb.config.jsonc');
-    await writeProjectConfig(c.project, '{"src":"json"}', '.kb/kb.config.json');
+  // case: S-204.8
+  it('does not load any repository kb.config file as project settings', async () => {
+    await writeConfigAt(c.project, '.kb/kb.config.json', '{"plugins":{"commit":{"legacy":true}}}');
+    await writeConfigAt(c.project, 'kb.config.jsonc', '{"plugins":{"commit":{"rootLegacy":true}}}');
     const res = await loadEffectiveConfig(c.project);
-    expect(res!.data.src).toBe('json');
-    expect(res!.projectConfigPaths.map((p) => path.basename(p))).toEqual([
-      'kb.config.jsonc',
-      'kb.config.json',
-    ]);
+    expect(res).toBeNull();
+    expect(await fsp.readFile(path.join(c.project, '.kb/kb.config.json'), 'utf8'))
+      .toBe('{"plugins":{"commit":{"legacy":true}}}');
   });
 
-  it('falls through to root-level kb.config.jsonc when .kb/ absent', async () => {
-    await writeProjectConfig(c.project, '{"src":"root"}', 'kb.config.jsonc');
-    const res = await loadEffectiveConfig(c.project);
-    expect(res!.data.src).toBe('root');
-    expect(res!.projectConfigPath).toMatch(/[/\\]kb\.config\.jsonc$/);
-  });
-
-  it('.kb/ files win over root-level files in the same root (precedence)', async () => {
-    await writeProjectConfig(c.project, '{"src":"root"}', 'kb.config.jsonc');
-    await writeProjectConfig(c.project, '{"src":"kb"}', '.kb/kb.config.jsonc');
-    const res = await loadEffectiveConfig(c.project);
-    expect(res!.data.src).toBe('kb');
-  });
-
-  it('parses JSONC with line comments and trailing commas', async () => {
+  it('parses JSONC in the platform-owned project settings document', async () => {
     await writeProjectConfig(
       c.project,
       `{
@@ -344,56 +376,10 @@ describe('loadEffectiveConfig — file format precedence', () => {
           "port": 4000, /* inline */
         },
       }`,
-      '.kb/kb.config.jsonc',
     );
     const res = await loadEffectiveConfig(c.project);
     expect(res!.data).toEqual({ gateway: { port: 4000 } });
     expect(res!.diagnostics).toEqual([]);
-  });
-
-  it('deep-merges BOTH .kb/kb.config.jsonc and .kb/kb.config.json when both exist (.json wins)', async () => {
-    // Regression: kb-create writes both files — `.jsonc` is the human/template
-    // snapshot, `.json` is the scan-updated authoritative version. The loader
-    // must read both and let `.json` override `.jsonc` rather than silently
-    // shadowing one by picking only the first existing file.
-    await writeProjectConfig(
-      c.project,
-      JSON.stringify({
-        gateway: {
-          upstreams: { rest: { url: 'http://rest:5050' } },
-          // template-derived widgets prefix
-          widgets: { prefix: '/plugins' },
-        },
-      }),
-      '.kb/kb.config.jsonc',
-    );
-    await writeProjectConfig(
-      c.project,
-      JSON.stringify({
-        gateway: {
-          // scan-updated widgets prefix overrides template
-          widgets: { prefix: '/api/v1/widgets' },
-          // scan-added new upstream
-          plugins: { url: 'http://plugins:9000' },
-        },
-      }),
-      '.kb/kb.config.json',
-    );
-
-    const res = await loadEffectiveConfig(c.project);
-    expect(res!.data).toEqual({
-      gateway: {
-        upstreams: { rest: { url: 'http://rest:5050' } },
-        widgets: { prefix: '/api/v1/widgets' }, // .json wins
-        plugins: { url: 'http://plugins:9000' }, // added by .json
-      },
-    });
-    expect(res!.projectConfigPaths).toEqual([
-      path.join(c.project, '.kb', 'kb.config.jsonc'),
-      path.join(c.project, '.kb', 'kb.config.json'),
-    ]);
-    // Back-compat alias is the LAST file in the merge order.
-    expect(res!.projectConfigPath).toBe(path.join(c.project, '.kb', 'kb.config.json'));
   });
 
   it('parses JSONC overlays with comments', async () => {
@@ -414,19 +400,15 @@ describe('loadEffectiveConfig — file format precedence', () => {
 describe('loadEffectiveConfig — diagnostics', () => {
   const c = makeFixture();
 
-  it('reports JSON_PARSE_FAILED for malformed project config', async () => {
+  it('rejects a malformed platform-owned project settings document', async () => {
     await writeProjectConfig(c.project, '{ not json');
-    const res = await loadEffectiveConfig(c.project);
-    expect(res).not.toBeNull();
-    expect(res!.diagnostics.some((d) => d.code === 'JSON_PARSE_FAILED')).toBe(true);
-    expect(res!.data).toEqual({});
+    await expect(loadEffectiveConfig(c.project)).rejects.toThrow();
   });
 
-  it('reports CONFIG_NOT_OBJECT when project top-level is an array', async () => {
-    await writeProjectConfig(c.project, '[1,2,3]');
-    const res = await loadEffectiveConfig(c.project);
-    expect(res!.diagnostics.some((d) => d.code === 'CONFIG_NOT_OBJECT')).toBe(true);
-    expect(res!.data).toEqual({});
+  // case: S-204.8
+  it('ignores a non-object legacy repository config file', async () => {
+    await writeConfigAt(c.project, '.kb/kb.config.json', '[1,2,3]');
+    expect(await loadEffectiveConfig(c.project)).toBeNull();
   });
 
   it('reports CONFIG_NOT_OBJECT when platform top-level is an array', async () => {
@@ -464,11 +446,11 @@ describe('loadEffectiveConfig — diagnostics', () => {
 
   it('aggregates diagnostics across multiple layers', async () => {
     await writePlatformConfig(c.platform, '{ bad platform');
-    await writeProjectConfig(c.project, '[1,2]'); // array — CONFIG_NOT_OBJECT
+    await writeOverlay(c.project, 'bad.jsonc', '{ broken');
     const res = await loadEffectiveConfig(c.project, { platformRoot: c.platform });
     const codes = res!.diagnostics.map((d) => d.code);
     expect(codes).toContain('JSON_PARSE_FAILED');
-    expect(codes).toContain('CONFIG_NOT_OBJECT');
+    expect(codes).toContain('JSON_PARSE_FAILED');
   });
 
   it('empty overlay file is reported as JSON_PARSE_FAILED, not silent', async () => {
@@ -489,6 +471,7 @@ describe('loadEffectiveConfig — path resolution & result fields', () => {
     const res = await loadEffectiveConfig(c.project, { platformRoot: c.platform });
     expect(path.isAbsolute(res!.platformConfigPath!)).toBe(true);
     expect(path.isAbsolute(res!.projectConfigPath!)).toBe(true);
+    expect(res!.projectConfigPath).toBe(path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'config.jsonc'));
     expect(res!.overlayPaths.every((p) => path.isAbsolute(p))).toBe(true);
   });
 
@@ -532,23 +515,26 @@ describe('loadEffectiveConfig — path resolution & result fields', () => {
 describe('loadEffectiveConfig — overlay isolation', () => {
   const c = makeFixture();
 
-  it('overlays placed under platformRoot are NOT loaded', async () => {
+  it('repository and platform overlays are NOT loaded', async () => {
     await writePlatformConfig(c.platform, '{"v":"platform"}');
-    // Plant a fake "overlay" under the platform root — must be ignored.
+    // Project overlays now live in platform-owned state; old repository and
+    // platform-root locations are both ignored.
     await fsp.mkdir(path.join(c.platform, '.kb', 'overlays'), { recursive: true });
     await fsp.writeFile(
       path.join(c.platform, '.kb', 'overlays', 'rogue.jsonc'),
       '{"v":"rogue"}',
     );
+    await fsp.mkdir(path.join(c.project, '.kb', 'overlays'), { recursive: true });
+    await fsp.writeFile(path.join(c.project, '.kb', 'overlays', 'legacy.jsonc'), '{"v":"legacy"}');
     await writeProjectConfig(c.project, '{}');
     const res = await loadEffectiveConfig(c.project, { platformRoot: c.platform });
     expect(res!.data.v).toBe('platform');
     expect(res!.overlayPaths).toEqual([]);
   });
 
-  it('non-.jsonc files in overlays/ are ignored', async () => {
+  it('non-.jsonc files in the project store overlays directory are ignored', async () => {
     await writeProjectConfig(c.project, '{"v":"project"}');
-    const overlayDir = path.join(c.project, '.kb', 'overlays');
+    const overlayDir = path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'overlays');
     await fsp.mkdir(overlayDir, { recursive: true });
     await fsp.writeFile(path.join(overlayDir, 'README.md'), '# docs');
     await fsp.writeFile(path.join(overlayDir, 'skip.json'), '{"v":"json"}');
@@ -557,9 +543,9 @@ describe('loadEffectiveConfig — overlay isolation', () => {
     expect(res!.overlayPaths).toEqual([]);
   });
 
-  it('overlays in a subdirectory of .kb/overlays/ are NOT loaded', async () => {
+  it('overlays in subdirectories of the project store are NOT loaded', async () => {
     await writeProjectConfig(c.project, '{"v":"project"}');
-    const nested = path.join(c.project, '.kb', 'overlays', 'nested');
+    const nested = path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'overlays', 'nested');
     await fsp.mkdir(nested, { recursive: true });
     await fsp.writeFile(path.join(nested, 'a.jsonc'), '{"v":"nested"}');
     const res = await loadEffectiveConfig(c.project);

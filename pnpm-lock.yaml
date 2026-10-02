@@ -1113,6 +1113,9 @@ importers:
       '@kb-labs/core-sys':
         specifier: workspace:*
         version: link:../../core/sys
+      '@kb-labs/core-workspace':
+        specifier: workspace:*
+        version: link:../../core/workspace
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts

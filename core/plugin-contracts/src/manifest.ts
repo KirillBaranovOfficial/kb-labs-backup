@@ -698,6 +698,15 @@ export interface ManifestV3 {
    */
   configSection?: string;
 
+  /**
+   * Optional schema and defaults for values stored under `plugins.<configSection>`.
+   * `schema` may be an inline JSON Schema or a SchemaRef resolved by the host.
+   */
+  settings?: {
+    schema: Record<string, unknown> | SchemaRef;
+    defaults?: Record<string, unknown>;
+  };
+
   /** Display metadata */
   display?: DisplayMetadata;
 

@@ -6,13 +6,20 @@
  * the single locked, comment-preserving writer for `set`.
  */
 
+import { DiscoveryManager } from '@kb-labs/core-discovery';
+
 import {
   ConfigWriteError,
+  projectSettingsPath,
   type ConfigLayerName,
   resolveUserConfigFile,
 } from '@kb-labs/core-config';
+import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { loadPlatformConfig } from '@kb-labs/core-runtime';
+import { resolveProjectRoot } from '@kb-labs/core-workspace';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
+import type { ConfigLayerFile } from '@kb-labs/core-config';
+import type { LoadPlatformConfigResult } from '@kb-labs/core-runtime';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 export const CONFIG_SCOPES = ['platform', 'project'] as const;
@@ -21,22 +28,71 @@ export type ConfigScope = (typeof CONFIG_SCOPES)[number];
 export interface ConfigRoots {
   platformRoot: string;
   projectRoot: string;
+  projectId?: string;
   sameLocation: boolean;
 }
 
 /** Resolve the platform and project roots the way every other command does (ADR-0012). */
-export async function resolveConfigRoots(cwd: string): Promise<ConfigRoots> {
+export async function resolveConfigRoots(
+  cwd: string,
+  projectScope: 'required' | 'platform' = 'required',
+): Promise<ConfigRoots> {
+  if (projectScope === 'platform') {
+    const loaded = await loadPlatformConfig({ startDir: cwd, loadEnvFile: false, projectScope: 'platform' });
+    return {
+      platformRoot: loaded.platformRoot,
+      projectRoot: loaded.platformRoot,
+      sameLocation: true,
+    };
+  }
+  const { rootDir: projectRoot } = await resolveProjectRoot({ cwd });
+  const projects = await createProjectRegistry().list();
+  const project = projects.find(({ project }) => project.path === projectRoot)?.project;
+  if (!project) {
+    throw new Error(`Registered project ${projectRoot} disappeared while resolving config roots.`);
+  }
   const loaded = await loadPlatformConfig({ startDir: cwd, loadEnvFile: false });
   return {
     platformRoot: loaded.platformRoot,
-    projectRoot: loaded.projectRoot,
-    sameLocation: loaded.sameLocation,
+    projectRoot: project.path,
+    projectId: project.id,
+    sameLocation: loaded.platformRoot === project.path,
   };
 }
 
 /** The user config file a scope writes to. */
 export async function userConfigFileForScope(roots: ConfigRoots, scope: ConfigScope): Promise<string> {
-  return resolveUserConfigFile(scope === 'platform' ? roots.platformRoot : roots.projectRoot);
+  if (scope === 'project') {
+    if (!roots.projectId) {
+      throw new Error('Project config requires a registered project.');
+    }
+    return projectSettingsPath({ projectId: roots.projectId });
+  }
+  return resolveUserConfigFile(roots.platformRoot);
+}
+
+/** Load an inline JSON Schema declared by the installed plugin for this setting section. */
+export async function pluginSettingsSchemaFor(
+  roots: ConfigRoots,
+  configSection: string,
+): Promise<{ schema: unknown; packageRoot: string } | undefined> {
+  const discovered = await new DiscoveryManager({
+    root: roots.projectRoot,
+    platformRoot: roots.platformRoot,
+  }).discover();
+  const manifest = [...discovered.manifests.values()].find((candidate) => candidate.configSection === configSection);
+  if (!manifest?.settings) return undefined;
+  const plugin = discovered.plugins.find(({ id }) => id === manifest.id);
+  if (!plugin) return undefined;
+  return { schema: manifest.settings.schema, packageRoot: plugin.packageRoot };
+}
+
+export function manifestSettingsLayers(result: LoadPlatformConfigResult): ConfigLayerFile[] {
+  return (result.pluginSettingsDefaults ?? []).map(({ configSection, manifestPath, data }) => ({
+    layer: 'manifest',
+    path: manifestPath,
+    data: { plugins: { [configSection]: data } },
+  }));
 }
 
 /**
