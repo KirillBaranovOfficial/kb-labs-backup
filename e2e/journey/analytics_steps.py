@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from invocations import invocation_context, open_http, run_command
+from invocations import invocation_context, open_http, run_command, run_with_runner
 from service_steps import Journey
 from gateway_steps import run_gateway_steps
 
@@ -37,18 +38,56 @@ def _event_list(body: object) -> list[dict]:
     return [event for event in events if isinstance(event, dict)]
 
 
+def _run_fixture_command(command: list[str], *, step_id: str, runner, cwd: str) -> subprocess.CompletedProcess[str]:
+    with invocation_context(step_id=step_id):
+        return run_with_runner(runner, command, cwd=cwd, env=os.environ.copy(), timeout=180,
+                               capture_output=True, text=True, check=False)
+
+
+def _marker_event(events: list[dict], marker: str) -> dict | None:
+    for event in events:
+        payload = event.get("payload")
+        if isinstance(payload, dict) and payload.get("marker") == marker:
+            return event
+    return None
+
+
+def _emission_succeeded(result: subprocess.CompletedProcess[str] | None, marker: str) -> bool:
+    if result is None or result.returncode != 0:
+        return False
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    data = payload.get("result", payload.get("data", payload))
+    return (isinstance(data, dict) and data.get("type") == "case.analytics.persist"
+            and data.get("marker") == marker)
+
+
 def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
                         opener=urllib.request.urlopen) -> None:
     """Claim event persistence and project API isolation with explicit step IDs."""
-    event_type = f"case.analytics.persist.{journey.run_id}"
+    event_type = "case.analytics.persist"
     source = "case-fixture"
     before = datetime.now(timezone.utc) - timedelta(seconds=2)
-    with invocation_context(step_id="S-191.1"):
-        track_status, track_body = _request("POST", "/platform/v1/analytics/track", token=token,
-                                             payload={"args": [event_type, {"source": source}]}, opener=opener)
+    project_a = os.environ.get("KB_JOURNEY_PROJECT_ROOT", "")
+    project_b = os.environ.get("KB_JOURNEY_PROJECT_B_ROOT", "")
+    fixture_install = _run_fixture_command(
+        ["kb", "marketplace", "install", "@kb-labs/e2e-analytics-emitter", "--scope", "platform", "--json"],
+        step_id="S-191.1", runner=runner, cwd=project_a,
+    ) if project_a else None
+    marker_a = f"{journey.run_id}:project-a"
+    emit_a = _run_fixture_command(["kb", "journey", "analytics", "emit", f"--marker={marker_a}", "--json"],
+                                  step_id="S-191.1", runner=runner, cwd=project_a) if project_a and fixture_install and fixture_install.returncode == 0 else None
+    marker_b = f"{journey.run_id}:project-b"
+    emit_b = _run_fixture_command(["kb", "journey", "analytics", "emit", f"--marker={marker_b}", "--json"],
+                                  step_id="S-191.1", runner=runner, cwd=project_b) if project_b and fixture_install and fixture_install.returncode == 0 else None
     journey.step("track local analytics event", "analytics", lambda: (
-        None if track_status == 200 and isinstance(track_body, dict) and track_body.get("ok") is True
-        else f"platform analytics track returned HTTP {track_status}"
+        None if fixture_install is not None and fixture_install.returncode == 0
+        and _emission_succeeded(emit_a, marker_a) and _emission_succeeded(emit_b, marker_b)
+        else "fixture analytics plugin install and both project invocations must succeed; provide registered project roots"
     ), cases=["S-191.1"])
 
     query_path = ("/api/v1/analytics/events?type=" + event_type + "&source=" + source
@@ -57,8 +96,11 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
     with invocation_context(step_id="S-191.2"):
         status, body = _request("GET", query_path, token=token, opener=opener)
     events = _event_list(body) if status == 200 else []
+    event_a = _marker_event(events, marker_a)
+    event_b = _marker_event(events, marker_b)
     journey.step("query tracked analytics event", "analytics", lambda: (
-        None if status == 200 and any(event.get("type") == event_type for event in events)
+        None if status == 200 and event_a is not None and event_a.get("type") == event_type
+        and event_a.get("id") and event_b is not None and event_b.get("type") == event_type
         else f"analytics query returned HTTP {status} or omitted {event_type}"
     ), cases=["S-191.2"])
 
@@ -72,9 +114,21 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
     after_events = _event_list(after_body) if after_status == 200 else []
     journey.step("analytics event survives restart", "analytics", lambda: (
         None if restarted.returncode == 0 and after_status == 200
-        and any(event.get("type") == event_type for event in after_events)
+        and _marker_event(after_events, marker_a) is not None
         else f"restart exited {restarted.returncode}; post-restart analytics query returned HTTP {after_status}"
     ), cases=["S-191.3"])
+
+    fixture_file = os.environ.get("KB_JOURNEY_STUDIO_FIXTURE_FILE", "")
+    if fixture_file and event_a and event_b:
+        fixture_path = Path(fixture_file)
+        fixture_path.parent.mkdir(parents=True, exist_ok=True)
+        fixture_path.write_text(json.dumps({
+            "eventType": event_type,
+            "source": source,
+            "eventId": str(event_a["id"]),
+            "projectAEvent": marker_a,
+            "projectBEvent": marker_b,
+        }), encoding="utf-8")
 
     projects = [os.environ.get("KB_JOURNEY_PROJECT_ID", ""),
                 os.environ.get("KB_JOURNEY_PROJECT_B_ID", "")]

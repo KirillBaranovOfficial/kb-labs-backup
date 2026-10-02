@@ -14,6 +14,18 @@ services:
       retries: 30
     networks: [journey]
 
+  mock-llm:
+    image: python:3.12.12-alpine
+    command: ["python3", "/fixture/mock_llm_server.py"]
+    volumes:
+      - ./mock_llm_server.py:/fixture/mock_llm_server.py:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8317/healthz', timeout=2)"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+    networks: [journey]
+
   runner:
     build:
       context: ..
@@ -26,6 +38,8 @@ services:
         condition: service_healthy
       verdaccio:
         condition: service_healthy
+      mock-llm:
+        condition: service_healthy
     environment:
       KB_CREATE_DOWNLOAD_BASE_URL: http://origin:8080
       KB_JOURNEY_REGISTRY: http://verdaccio:4873
@@ -33,6 +47,9 @@ services:
       KB_JOURNEY_FRONT_DOOR: ${KB_JOURNEY_FRONT_DOOR:-agent}
       KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}
       KB_JOURNEY_SERVICE_PROFILE: ${KB_JOURNEY_SERVICE_PROFILE:-fast}
+      OPENAI_API_KEY: journey-fake-openai-key
+      VIBEPROXY_API_KEY: journey-fake-vibeproxy-key
+      KB_JOURNEY_LLM_MOCK_BASE_URL: http://mock-llm:8317
       DEBUG: ${DEBUG:-}
       GITHUB_STEP_SUMMARY: /tmp/journey-summary.md
       KB_JOURNEY_SUMMARY: /summary/journey-summary.md

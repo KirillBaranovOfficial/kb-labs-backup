@@ -24,6 +24,7 @@ from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
 from marketplace_steps import _registry_version, _output
 from adapter_defaults_steps import run_adapter_default_steps
+from analytics_steps import run_analytics_and_gateway_steps
 from mcp_project_steps import (
     apply_commit_plan,
     commit_tool_schema,
@@ -666,6 +667,7 @@ def main() -> int:
                 os.environ["KB_JOURNEY_PROJECT_B_ID"] = prepare_mcp_projects(project_root, registry, env)
             journey.step("prepare MCP project fixtures", "mcp", prepare_projects)
         run_service_steps(journey, checks(args.mode))
+        run_analytics_and_gateway_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""))
         if project_root:
             _run_installed_flows(journey, project_root, registry)
         else:

@@ -1,7 +1,10 @@
 import { test, expect } from '@playwright/test'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
-const enabled = process.env.KB_STUDIO_ANALYTICS_JOURNEY === '1'
+
+function hasFixtures(...names: string[]): boolean {
+  return names.every(name => Boolean(process.env[name]))
+}
 
 function requireFixture(name: string): string {
   const value = process.env[name]
@@ -9,8 +12,9 @@ function requireFixture(name: string): string {
   return value
 }
 
+if (hasFixtures('KB_STUDIO_ANALYTICS_EVENT_TYPE', 'KB_STUDIO_ANALYTICS_SOURCE',
+  'KB_STUDIO_ANALYTICS_MODEL', 'KB_STUDIO_ANALYTICS_EVENT_ID', 'KB_STUDIO_PROJECT_ID')) {
 test('Analytics filters and event details @S-121.2 @S-121.3 @S-121.4 @S-121.5', async ({ page }) => {
-  test.skip(!enabled, 'Enabled by the installed analytics journey hook')
   const eventType = requireFixture('KB_STUDIO_ANALYTICS_EVENT_TYPE')
   const source = requireFixture('KB_STUDIO_ANALYTICS_SOURCE')
   const model = requireFixture('KB_STUDIO_ANALYTICS_MODEL')
@@ -58,29 +62,38 @@ test('Analytics filters and event details @S-121.2 @S-121.3 @S-121.4 @S-121.5', 
   await page.locator('.ant-select-selection-item-remove').last().click()
   expect((await allModelsRequest).ok()).toBe(true)
 })
+}
 
-test('Failed workflow is scoped and observability identifies the unhealthy runtime @S-122.1 @S-122.4', async ({ page }) => {
-  test.skip(!enabled, 'Enabled by the installed analytics journey hook')
+if (hasFixtures('KB_STUDIO_DIAGNOSTIC_PROJECT', 'KB_STUDIO_DIAGNOSTIC_RUN_ID',
+  'KB_STUDIO_HEALTHY_PROJECT_RUN_ID')) {
+test('Failed workflow is scoped to its registered project @S-122.1', async ({ page }) => {
   const projectName = requireFixture('KB_STUDIO_DIAGNOSTIC_PROJECT')
   const runId = requireFixture('KB_STUDIO_DIAGNOSTIC_RUN_ID')
   const healthyRunId = requireFixture('KB_STUDIO_HEALTHY_PROJECT_RUN_ID')
-  const unhealthyRuntime = requireFixture('KB_STUDIO_UNHEALTHY_RUNTIME')
-  const healthError = requireFixture('KB_STUDIO_RUNTIME_ERROR')
 
   await page.goto(`${GATEWAY}/workflows/runs`)
   await page.getByRole('combobox', { name: /project/i }).selectOption({ label: projectName })
   const runRow = page.getByRole('row').filter({ hasText: runId })
   await expect(runRow).toContainText('Failed')
   await expect(page.getByRole('row').filter({ hasText: healthyRunId })).toHaveCount(0)
+})
+}
+
+if (hasFixtures('KB_STUDIO_DIAGNOSTIC_PROJECT', 'KB_STUDIO_UNHEALTHY_RUNTIME', 'KB_STUDIO_RUNTIME_ERROR')) {
+test('Observability names the unhealthy runtime @S-122.4', async ({ page }) => {
+  const projectName = requireFixture('KB_STUDIO_DIAGNOSTIC_PROJECT')
+  const unhealthyRuntime = requireFixture('KB_STUDIO_UNHEALTHY_RUNTIME')
+  const healthError = requireFixture('KB_STUDIO_RUNTIME_ERROR')
   await page.goto(`${GATEWAY}/observability/metrics`)
   await expect(page.getByText(unhealthyRuntime, { exact: true })).toBeVisible()
   await expect(page.getByText(/unhealthy|degraded/i)).toBeVisible()
   await expect(page.getByText(healthError, { exact: false })).toBeVisible()
   await expect(page.getByText(projectName, { exact: true })).toBeVisible()
 })
+}
 
+if (hasFixtures('KB_STUDIO_ADMIN_TOKEN', 'KB_STUDIO_MEMBER_TOKEN')) {
 test('Supported platform settings persist and validate @S-183.1 @S-183.2 @S-183.3 @S-183.4 @S-183.5', async ({ page, request }) => {
-  test.skip(!enabled, 'Enabled by the installed analytics journey hook')
   const adminToken = requireFixture('KB_STUDIO_ADMIN_TOKEN')
   const memberToken = requireFixture('KB_STUDIO_MEMBER_TOKEN')
   await page.goto(`${GATEWAY}/settings`)
@@ -107,9 +120,11 @@ test('Supported platform settings persist and validate @S-183.1 @S-183.2 @S-183.
   expect([401, 403]).toContain(mutation.status())
   expect(adminToken).toBeTruthy()
 })
+}
 
+if (hasFixtures('KB_STUDIO_PROJECT_A_NAME', 'KB_STUDIO_PROJECT_B_NAME',
+  'KB_STUDIO_PROJECT_A_EVENT', 'KB_STUDIO_PROJECT_B_EVENT')) {
 test('Project analytics and dashboard remain isolated @S-201.1 @S-201.2 @S-201.4', async ({ page }) => {
-  test.skip(!enabled, 'Enabled by the installed analytics journey hook')
   const aName = requireFixture('KB_STUDIO_PROJECT_A_NAME')
   const bName = requireFixture('KB_STUDIO_PROJECT_B_NAME')
   const aMarker = requireFixture('KB_STUDIO_PROJECT_A_EVENT')
@@ -140,3 +155,4 @@ test('Project analytics and dashboard remain isolated @S-201.1 @S-201.2 @S-201.4
   await expect(page.getByText(aMarker, { exact: false })).toBeVisible()
   await expect(page.getByText(bMarker, { exact: false })).toHaveCount(0)
 })
+}

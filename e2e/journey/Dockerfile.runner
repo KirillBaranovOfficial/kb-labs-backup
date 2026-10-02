@@ -24,6 +24,7 @@ ENV PYTHONPATH="/opt/kb-journey"
 COPY e2e/journey/studio-playwright.config.mjs /opt/kb-studio-playwright/playwright.config.mjs
 COPY e2e/studio/scenarios/default/cases/fresh-host.spec.ts /opt/kb-studio-playwright/fresh-host.spec.ts
 COPY e2e/studio/scenarios/default/cases/studio-first-tier.spec.ts /opt/kb-studio-playwright/studio-first-tier.spec.ts
+COPY e2e/studio/scenarios/default/cases/analytics.spec.ts /opt/kb-studio-playwright/analytics.spec.ts
 COPY e2e/studio/scenarios/default/cases/admin-users.spec.ts /opt/kb-studio-playwright/admin-users.spec.ts
 RUN chmod +x /usr/local/share/kb-create/install.sh /usr/local/bin/kb-journey-runner
 

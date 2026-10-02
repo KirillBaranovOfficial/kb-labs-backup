@@ -160,6 +160,12 @@
       "pkg": "@kb-labs/steward-entry",
       "description": "Project memory and daily review",
       "default": false
+    },
+    {
+      "id": "case-fixture",
+      "pkg": "@kb-labs/e2e-analytics-emitter",
+      "description": "Journey fixture for analytics and LLM provider coverage",
+      "default": false
     }
   ],
   "binaries": [

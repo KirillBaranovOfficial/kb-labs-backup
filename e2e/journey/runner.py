@@ -14,7 +14,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from studio_steps import create_studio_environment, create_studio_member, run_studio_browser_step
+from studio_steps import (create_studio_access_tokens, create_studio_environment,
+                          create_studio_member, run_studio_browser_step)
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
 from release_index import channel_platform_version, stable_platform_version
@@ -963,6 +964,9 @@ def main():
             fail(f"{mode} auth journey: {auth_result.first_failure}")
         prepare_workflow_fixtures(PROJECT)
         service_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-{mode}.json")
+        studio_fixture_file = service_report.with_name("studio-analytics-fixtures.json")
+        studio_fixture_file.unlink(missing_ok=True)
+        service_env["KB_JOURNEY_STUDIO_FIXTURE_FILE"] = str(studio_fixture_file)
         result, elapsed = run(["python3", "/opt/kb-journey/service_runner.py", "--mode", mode, "--output", str(service_report)],
                              env=service_env, timeout=900)
         TIMES[f"{mode} service journeys"] = elapsed
@@ -990,6 +994,56 @@ def main():
             project=PROJECT,
             restart_host=restart_for_workflow_history,
         )
+        project_b_root_value = service_env.get("KB_JOURNEY_PROJECT_B_ROOT", "")
+        project_b_id = service_env.get("KB_JOURNEY_PROJECT_B_ID", "")
+        if project_b_root_value and project_b_id:
+            project_b_fixture_root = Path(project_b_root_value)
+            prepare_workflow_fixtures(project_b_fixture_root)
+            definitions_deadline = time.monotonic() + 30
+            healthy_workflow_ready = False
+            while time.monotonic() < definitions_deadline:
+                with invocation_context(step_id="journey.setup"):
+                    definitions_result, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow defs list --json'],
+                                                env=service_env, cwd=project_b_fixture_root, timeout=90)
+                try:
+                    definitions_payload = json.loads(definitions_result.stdout)
+                    definitions_data = definitions_payload.get("data", definitions_payload)
+                    healthy_workflow_ready = isinstance(definitions_data, list) and any(
+                        isinstance(item, dict) and item.get("id") == "journey-hello" for item in definitions_data)
+                except json.JSONDecodeError:
+                    healthy_workflow_ready = False
+                if healthy_workflow_ready:
+                    break
+                time.sleep(1)
+            healthy_result = None
+            if healthy_workflow_ready:
+                with invocation_context(step_id="journey.setup"):
+                    healthy_result, _ = run(
+                        ["bash", "-c", '. "$HOME/.profile"; kb workflow run --workflow-id=journey-hello --input=\'{"message":"studio-healthy-project"}\' --json'],
+                        env=service_env, cwd=project_b_fixture_root, timeout=120)
+            try:
+                healthy_payload = json.loads(healthy_result.stdout) if healthy_result else {}
+                healthy_data = healthy_payload.get("data", healthy_payload)
+                healthy_run_id = healthy_data.get("runId", "") if isinstance(healthy_data, dict) else ""
+            except json.JSONDecodeError:
+                healthy_run_id = ""
+            if healthy_result is not None and healthy_result.returncode == 0 and isinstance(healthy_run_id, str) and healthy_run_id:
+                healthy_deadline = time.monotonic() + 180
+                while time.monotonic() < healthy_deadline:
+                    with invocation_context(step_id="journey.setup"):
+                        viewed, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow runs view "$1" --json=all',
+                                         "journey", healthy_run_id], env=service_env,
+                                        cwd=project_b_fixture_root, timeout=90)
+                    try:
+                        detail_payload = json.loads(viewed.stdout)
+                        detail = detail_payload.get("data", detail_payload)
+                    except json.JSONDecodeError:
+                        detail = {}
+                    if isinstance(detail, dict) and detail.get("status") in {"success", "failed", "cancelled"}:
+                        if detail.get("status") == "success":
+                            service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = healthy_run_id
+                        break
+                    time.sleep(2)
         workflow_result = workflow_journey.result()
         merge_workflow_result(service_report, workflow_result.__dict__)
         if workflow_result.status != "PASS":
@@ -1032,7 +1086,9 @@ def main():
             time.sleep(1)
         else:
             fail(f"Studio schedule journey could not list project A crons: {project_a_cron_error}")
-        project_b_root = HOME / "studio-project-b"
+        if not project_b_root_value or not project_b_id:
+            fail("installed Studio fixture requires registered KB_JOURNEY_PROJECT_B_ROOT and KB_JOURNEY_PROJECT_B_ID")
+        project_b_root = Path(project_b_root_value)
         (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
         (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
         (project_b_root / ".kb" / "workflows" / "studio-b-workflow.yml").write_text(
@@ -1041,13 +1097,6 @@ def main():
             encoding="utf-8")
         (project_b_root / ".kb" / "crons" / "studio-b.yml").write_text(
             "schedule: '0 0 * * *'\nworkflow: studio-b-workflow\nenabled: true\n", encoding="utf-8")
-        project_b_registered, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add --json'],
-                                      env=service_env, cwd=project_b_root, timeout=180)
-        try:
-            project_b_id = str(json.loads(project_b_registered.stdout)["project"]["id"])
-        except (KeyError, ValueError, TypeError):
-            project_b_id = ""
-            fail("Studio schedule journey could not register project B")
         studio_env.update({
             "KB_STUDIO_CRON_PROJECT_ROOT": str(PROJECT),
             "KB_STUDIO_CRON_ID": cron_id,
@@ -1056,7 +1105,33 @@ def main():
             "KB_STUDIO_PROJECT_B_ID": project_b_id,
             "KB_STUDIO_PROJECT_B_CRON_ID": "studio-b",
             "KB_STUDIO_PLAYWRIGHT_JSON": str(service_report.with_name(f"studio-playwright-{mode}.json")),
+            "KB_STUDIO_PROJECT_A_NAME": project_name,
+            "KB_STUDIO_PROJECT_B_NAME": project_b_root.name,
         })
+        if service_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID") and service_env.get("KB_STUDIO_HEALTHY_PROJECT_RUN_ID"):
+            studio_env["KB_STUDIO_DIAGNOSTIC_PROJECT"] = project_name
+            studio_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = service_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"]
+            studio_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"]
+        if studio_fixture_file.is_file():
+            analytics_fixture = json.loads(studio_fixture_file.read_text())
+            analytics_fields = {
+                "eventType": "KB_STUDIO_ANALYTICS_EVENT_TYPE",
+                "source": "KB_STUDIO_ANALYTICS_SOURCE",
+                "model": "KB_STUDIO_ANALYTICS_MODEL",
+                "eventId": "KB_STUDIO_ANALYTICS_EVENT_ID",
+            }
+            if all(isinstance(analytics_fixture.get(key), str) and analytics_fixture[key]
+                   for key in analytics_fields):
+                studio_env.update({target: analytics_fixture[key]
+                                   for key, target in analytics_fields.items()})
+            project_event_fields = {
+                "projectAEvent": "KB_STUDIO_PROJECT_A_EVENT",
+                "projectBEvent": "KB_STUDIO_PROJECT_B_EVENT",
+            }
+            if all(isinstance(analytics_fixture.get(key), str) and analytics_fixture[key]
+                   for key in project_event_fields):
+                studio_env.update({target: analytics_fixture[key]
+                                   for key, target in project_event_fields.items()})
         try:
             recorded_service_result = json.loads(service_report.read_text())
             studio_shell = next((step for step in recorded_service_result.get("steps", [])
@@ -1072,6 +1147,13 @@ def main():
                         service_env["KB_JOURNEY_ADMIN_PASSWORD"])
                 studio_env["KB_STUDIO_MEMBER_EMAIL"] = member_email
                 studio_env["KB_STUDIO_MEMBER_PASSWORD"] = member_password
+                with invocation_context(step_id="journey.setup"):
+                    admin_token, member_token = create_studio_access_tokens(
+                        "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                        service_env["KB_JOURNEY_ADMIN_PASSWORD"], member_email, member_password,
+                        env=service_env)
+                studio_env["KB_STUDIO_ADMIN_TOKEN"] = admin_token
+                studio_env["KB_STUDIO_MEMBER_TOKEN"] = member_token
                 required_studio_credentials = (
                     "KB_STUDIO_ADMIN_EMAIL", "KB_STUDIO_ADMIN_PASSWORD",
                     "KB_STUDIO_MEMBER_EMAIL", "KB_STUDIO_MEMBER_PASSWORD",
