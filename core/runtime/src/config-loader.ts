@@ -10,17 +10,11 @@
  *    These are *two different logical roots* — see `resolveRoots` docs for
  *    the distinction.
  *
- *  - Load the layers of platform configuration (precedence, low to high,
- *    ADR-0047 / ADR-0012: generated < platform user < project user < overlays):
- *      0. Installer-GENERATED config from `<root>/.kb/generated/*.json|jsonc`
- *         (optional — absent until the installer generates config).
- *      1. Platform defaults from `<platformRoot>/.kb/kb.config.json`
- *         (optional — absent in solo dev mode).
- *      2. Project config from `<projectRoot>/.kb/kb.config.json`
- *         (optional — absent when running outside a project).
+ *  - Load platform-owned config layers (precedence, low to high): plugin
+ *    manifest defaults < generated platform config < platform user config <
+ *    project store < project store overlays.
  *
- *  - Deep-merge the two layers (project overrides platform defaults) using
- *    `mergeDefined` from `@kb-labs/core-config`.
+ *  - Never consult the consumer repository for KB configuration files.
  *
  *  - Optionally load the `.env` file from `projectRoot`.
  *
@@ -53,10 +47,15 @@ import {
   loadGeneratedLayer,
   loadOverlays,
   mergeOverlay,
+  readProjectSettings,
+  projectOverlaysPath,
+  PluginSettingsSchemaLoadError,
+  resolvePluginSettingsValidator,
   validateProductConfig,
   type Diagnostic,
   type FieldMergePolicy,
 } from "@kb-labs/core-config";
+import { DiscoveryManager } from "@kb-labs/core-discovery";
 import { resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
 import { AdapterProjectScopeError } from "@kb-labs/core-platform";
 
@@ -97,6 +96,8 @@ export interface LoadPlatformConfigOptions {
    * Environment variables map. Defaults to `process.env`.
    */
   env?: NodeJS.ProcessEnv;
+  /** Registry-selected project identity, supplied by the platform launcher. */
+  projectId?: string;
   /**
    * When `true` (default), loads `<projectRoot>/.env` into `process.env`
    * before reading config. Does not override variables already set.
@@ -112,8 +113,7 @@ export interface LoadPlatformConfigResult {
    */
   platformConfig: PlatformConfig;
   /**
-   * Raw contents of the *project* config file, if one was found. Used by the
-   * CLI to expose the full user-facing config via `useConfig()`.
+   * Raw contents of the platform config file, if one was found.
    */
   rawConfig?: Record<string, unknown>;
   /**
@@ -128,14 +128,22 @@ export interface LoadPlatformConfigResult {
    */
   rawPlatformConfig?: Record<string, unknown>;
   /**
-   * Effective full config: `rawConfig` with `.kb/overlays/` applied. This is
+   * Effective full config with project settings and platform-owned overlays.
+   * This is
    * what product config (`useConfig()` → getConfig) should read so scenario
    * overlays reach plugin config sections, not just the platform slice.
    */
   effectiveConfig?: Record<string, unknown>;
+  /** Manifest settings defaults in plugin config namespace. */
+  pluginSettingsDefaults?: Array<{
+    pluginId: string;
+    configSection: string;
+    manifestPath: string;
+    data: Record<string, unknown>;
+  }>;
   /** Resolved platform root (where `node_modules/@kb-labs/*` lives). */
   platformRoot: string;
-  /** Resolved project root (where `.kb/kb.config.json` lives). */
+  /** Resolved registered project root. */
   projectRoot: string;
   /** `true` when both roots resolve to the same directory (dev mode). */
   sameLocation: boolean;
@@ -162,7 +170,7 @@ export interface LoadPlatformConfigResult {
     /**
      * Absolute paths of overlay files applied on top of the merged config, in
      * the order they were merged (lexicographic by file name). Empty/omitted
-     * when `.kb/overlays/` is absent.
+     * when the platform-owned project overlay directory is absent.
      */
     overlays?: string[];
     /**
@@ -329,6 +337,44 @@ async function readConfigFile(configPath: string): Promise<{
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
+async function loadPluginSettingsDefaults(roots: RootsResolution): Promise<NonNullable<LoadPlatformConfigResult['pluginSettingsDefaults']>> {
+  const discovery = await new DiscoveryManager({
+    root: roots.projectRoot,
+    platformRoot: roots.platformRoot,
+  }).discover();
+  const packages = new Map(discovery.plugins.map((plugin) => [plugin.id, plugin]));
+  const defaults: NonNullable<LoadPlatformConfigResult['pluginSettingsDefaults']> = [];
+
+  for (const [pluginId, manifest] of discovery.manifests) {
+    if (!manifest.configSection || !manifest.settings) continue;
+    const plugin = packages.get(pluginId);
+    if (!plugin) {
+      throw new PluginSettingsSchemaLoadError(
+        `Plugin "${pluginId}" settings schema has no discovered package location.`,
+        undefined,
+        pluginId,
+      );
+    }
+    const validator = await resolvePluginSettingsValidator(manifest.settings.schema, plugin.packageRoot, pluginId);
+    const data = manifest.settings.defaults ?? {};
+    const validation = validator.validate(data);
+    if (!validation.valid) {
+      throw new PluginSettingsSchemaLoadError(
+        `Plugin "${pluginId}" declares invalid settings defaults: ${validation.cause}`,
+        validation.cause,
+        pluginId,
+      );
+    }
+    defaults.push({
+      pluginId,
+      configSection: manifest.configSection,
+      manifestPath: plugin.manifestPath,
+      data,
+    });
+  }
+  return defaults;
+}
+
 /**
  * Load and merge platform configuration, returning the effective config plus
  * diagnostics about how it was resolved.
@@ -337,10 +383,9 @@ async function readConfigFile(configPath: string): Promise<{
  *   1. Resolve `platformRoot` and `projectRoot` via
  *      `@kb-labs/core-workspace/resolveRoots`.
  *   2. If `loadEnvFile !== false`, load `<projectRoot>/.env`.
- *   3. Read `<platformRoot>/.kb/kb.config.json` → `platformDefaults` (if any).
- *   4. Read `<projectRoot>/.kb/kb.config.json` → `projectConfig` (if any).
- *      When both roots resolve to the same directory (dev mode), the same
- *      file is used for both layers and is read only once.
+ *   3. Read the platform config from `<platformRoot>`.
+ *   4. Read project settings and overlays from `$KB_HOME/state/<projectId>`.
+ *      The consumer repository is not a configuration source.
  *   5. `effective = mergeDefined(platformDefaults ?? {}, projectConfig ?? {})`.
  *
  * The function never throws on missing files or malformed JSON — it silently
@@ -362,6 +407,7 @@ export async function loadPlatformConfig(
     startDir,
     env,
   });
+  const projectId = options.projectId ?? env.KB_PROJECT_ID;
 
   if (shouldLoadEnv) {
     // Precedence is process env > project .env > platform .env. The loader
@@ -377,9 +423,9 @@ export async function loadPlatformConfig(
   // not individual service launchers. It must exist before interpolation.
   ensurePlatformEnvironment(roots.projectRoot, env);
 
-  // Read project config first so we can honor `platform.dir` before picking
-  // the platform-config file.
-  const projectConfigPath = findConfigAtRoot(roots.projectRoot);
+  // Project settings are platform-owned. Only platform-root config files are
+  // read here; repository `.kb/kb.config.*` files are intentionally ignored.
+  const projectConfigPath = findConfigAtRoot(roots.platformRoot);
   let projectPlatformConfig: PlatformConfig | undefined;
   let rawProjectConfig: Record<string, unknown> | undefined;
   let projectConfigSource: string | undefined;
@@ -392,10 +438,7 @@ export async function loadPlatformConfig(
     projectConfigSource = projectConfigPath;
   }
 
-  // Honor `platform.dir` from the project config, if set. This lets a project
-  // declare its own platform workspace instead of using the bootstrap-resolved
-  // one. Guard against self-reference: if the override resolves to the same
-  // path as the project root, we keep the original resolution.
+  // Honor `platform.dir` only from platform-owned config.
   let platformDirOverride: string | undefined;
   // platform.dir may be at projectPlatformConfig.platform.dir (string-shorthand case, where
   // readConfigFile wraps it as { platform: { dir } }), OR at the top level as
@@ -407,8 +450,8 @@ export async function loadPlatformConfig(
       | string
       | undefined);
   if (declaredPlatformDir) {
-    const resolved = expandPlatformDir(declaredPlatformDir, roots.projectRoot);
-    if (path.resolve(resolved) !== path.resolve(roots.projectRoot)) {
+    const resolved = expandPlatformDir(declaredPlatformDir, roots.platformRoot);
+    if (path.resolve(resolved) !== path.resolve(roots.platformRoot)) {
       platformDirOverride = resolved;
       roots = {
         ...roots,
@@ -440,12 +483,11 @@ export async function loadPlatformConfig(
   }
 
   if (samePath && projectConfigData) {
-    // Single file plays both roles (dev mode). Treat its contents as
-    // platform defaults so policy-merge doesn't strip platform-only fields
-    // like `adapters`. Project layer is left undefined — the merge is a
-    // no-op and `sources.projectConfig` is the only reported source.
+    // A development workspace's single config file is platform-owned.
     platformDefaults = projectConfigData.platformSection;
     rawPlatformConfig = projectConfigData.rawConfig;
+    platformDefaultsSource = projectConfigPath;
+    projectConfigSource = undefined;
     projectPlatformConfig = undefined;
   } else if (platformConfigPath) {
     const { platformSection, rawConfig } =
@@ -459,10 +501,7 @@ export async function loadPlatformConfig(
   // is the lowest-precedence baseline, under BOTH user layers. It is folded
   // into the platform defaults so every user value (platform or project) wins
   // over it, and it is absent (no-op) for installs that do not generate config.
-  const generatedLayer = await loadGeneratedLayer([
-    roots.platformRoot,
-    roots.projectRoot,
-  ]);
+  const generatedLayer = await loadGeneratedLayer([roots.platformRoot]);
   if (generatedLayer.files.length > 0) {
     const generatedSection = toPlatformSection(generatedLayer.data);
     if (generatedSection) {
@@ -486,11 +525,20 @@ export async function loadPlatformConfig(
     ...mergeResult.value,
   };
 
-  // Apply overlay layer (`.kb/overlays/*.jsonc`) — the final, highest-priority
-  // layer. Used by e2e scenarios and ad-hoc tweaks; absent in normal projects.
+  // Apply project store overlays as the final, highest-priority layer.
   // Overlay semantics differ from the platform↔project merge: arrays replace
   // by default, with opt-in append via the `kb:merge` directive.
-  const overlayResult = await loadOverlays(roots.projectRoot);
+  const overlayResult = projectId
+    ? await loadOverlays(projectOverlaysPath({ projectId, env }))
+    : { overlays: [], diagnostics: [] };
+  const projectSettings = projectId ? await readProjectSettings({ projectId, env }) : {};
+  const projectPlatformSettings = projectSettings.platform;
+  if (projectSettings.adapters !== undefined || projectSettings.adapterOptions !== undefined ||
+      (projectPlatformSettings !== null && typeof projectPlatformSettings === 'object' && !Array.isArray(projectPlatformSettings) &&
+        ((projectPlatformSettings as Record<string, unknown>).adapters !== undefined ||
+          (projectPlatformSettings as Record<string, unknown>).adapterOptions !== undefined))) {
+    throw new AdapterProjectScopeError();
+  }
   if (overlayResult.overlays.some(overlay =>
     overlay.data.adapters !== undefined || overlay.data.adapterOptions !== undefined)) {
     throw new AdapterProjectScopeError();
@@ -501,28 +549,21 @@ export async function loadPlatformConfig(
     appliedOverlays.push(overlay.path);
   }
 
-  // Effective FULL config = the raw project config with the same overlays
-  // applied. `merged`/`platformConfig` above is the platform slice; product
-  // sections (e.g. `mind`) are read via getConfig() from this full config, so
-  // overlays must reach it too — otherwise scenario overlays only affect
-  // platform fields and plugin config silently ignores them.
-  let effectiveConfig = rawProjectConfig;
-  if (generatedLayer.files.length > 0) {
-    // Generated product sections sit under the user's project config.
-    effectiveConfig = mergeDefined(
-      generatedLayer.data,
-      rawProjectConfig ?? {},
-    );
+  const pluginSettingsDefaults = await loadPluginSettingsDefaults(roots);
+  const defaultsData: Record<string, unknown> = {
+    plugins: Object.fromEntries(pluginSettingsDefaults.map(({ configSection, data }) => [configSection, data])),
+  };
+  // Effective full config applies defaults, generated config, platform config,
+  // project settings, then the platform-owned scenario overlays.
+  let effectiveConfig: Record<string, unknown> = mergeOverlay(
+    defaultsData,
+    mergeOverlay(generatedLayer.data, rawProjectConfig ?? rawPlatformConfig ?? {}),
+  );
+  if (projectId) {
+    effectiveConfig = mergeOverlay(effectiveConfig, projectSettings);
   }
-  if (effectiveConfig && overlayResult.overlays.length > 0) {
-    let acc = effectiveConfig;
-    for (const overlay of overlayResult.overlays) {
-      acc = mergeOverlay(acc as never, overlay.data as never) as Record<
-        string,
-        unknown
-      >;
-    }
-    effectiveConfig = acc;
+  for (const overlay of overlayResult.overlays) {
+    effectiveConfig = mergeOverlay(effectiveConfig, overlay.data);
   }
 
   // Validate the post-overlay structure. Catches gross breakage (overlay sets
@@ -558,6 +599,7 @@ export async function loadPlatformConfig(
     rawConfig: rawProjectConfig,
     rawPlatformConfig,
     effectiveConfig,
+    pluginSettingsDefaults,
     platformRoot: roots.platformRoot,
     projectRoot: roots.projectRoot,
     sameLocation: roots.sameLocation,

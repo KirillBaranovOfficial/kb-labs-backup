@@ -10,6 +10,7 @@
 
 import { createErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { ConfigWriteError } from './user-config/write-user-config.js';
+import { PluginSettingsSchemaLoadError } from './plugin-settings-schema.js';
 
 function unknownKeyEnvelope(error: ConfigWriteError): ErrorEnvelope {
   const suggestion = error.details.suggestion;
@@ -40,10 +41,33 @@ function suggestVariableName(path: string): string {
 
 /** Build the unified envelope for a failed config command. Never contains values. */
 export function configErrorEnvelope(error: unknown): ErrorEnvelope {
+  if (error !== null && typeof error === 'object' &&
+      (error as { code?: unknown }).code === 'KB_PROJECT_UNKNOWN') {
+    const details = (error as { details?: Record<string, string> }).details ?? {};
+    return createErrorEnvelope('KB_PROJECT_UNKNOWN', {
+      details: { path: details.path ?? '' },
+    });
+  }
+  if (error instanceof PluginSettingsSchemaLoadError) {
+    return createErrorEnvelope('KB_PLUGIN_SETTINGS_SCHEMA_INVALID', {
+      details: { plugin: error.plugin },
+      cause: error.detail ?? error.message,
+    });
+  }
   if (!(error instanceof ConfigWriteError)) {
     return toErrorEnvelope(error);
   }
   switch (error.code) {
+    case 'KB_PLUGIN_SETTINGS_INVALID':
+      return createErrorEnvelope('KB_PLUGIN_SETTINGS_INVALID', {
+        details: { path: error.details.path ?? '' },
+        cause: error.details.cause ?? error.message,
+      });
+    case 'KB_PLUGIN_SETTINGS_SCHEMA_INVALID':
+      return createErrorEnvelope('KB_PLUGIN_SETTINGS_SCHEMA_INVALID', {
+        details: { plugin: error.details.plugin ?? 'unknown' },
+        cause: error.details.cause ?? error.message,
+      });
     case 'KB_CONFIG_UNKNOWN_KEY':
       return unknownKeyEnvelope(error);
     case 'KB_CONFIG_SECRET_MISSING':

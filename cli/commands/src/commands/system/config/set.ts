@@ -3,22 +3,27 @@
  *
  * Writes one key into the user config of a scope (`--scope project`, the
  * default, or `platform`), atomically and under a file lock, preserving the
- * comments and layout of the file. The result is validated against the
- * platform config schemas and, for `adapterOptions.<adapter>`, the adapter's
- * manifest `configSchema`. Secrets must be `${ENV_VAR}` references unless
+ * comments and layout of the file. Plugin settings are validated against the
+ * plugin's resolved manifest schema; adapter options use the adapter manifest
+ * `configSchema`. Secrets must be `${ENV_VAR}` references unless
  * `--allow-plain-secret` is given. Generated files (`.kb/generated/`) are never
  * touched.
  */
 
 import {
+  ConfigWriteError,
   configErrorEnvelope,
   createAdapterOptionsValidator,
   loadEffectiveConfig,
   redactValue,
+  mergeOverlay,
+  readProjectSettings,
+  PluginSettingsSchemaLoadError,
+  resolvePluginSettingsValidator,
   setUserConfigValue,
-  type SetUserConfigResult,
+  writeProjectSetting,
 } from '@kb-labs/core-config';
-import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
+import { loadPlatformConfig, PlatformUserConfigSchema } from '@kb-labs/core-runtime';
 import { AdapterProjectScopeError, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
@@ -32,6 +37,8 @@ import {
   resolveConfigRoots,
   userConfigFileForScope,
   valueAtPath,
+  pluginSettingsSchemaFor,
+  manifestSettingsLayers,
   type ConfigScope,
 } from './shared';
 
@@ -68,7 +75,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
   longDescription:
     'Writes one key (dotted path) into the user config file of a scope: project (default) or platform. ' +
     'The value is parsed as JSON when it is valid JSON, otherwise stored as a string (use --string to force ' +
-    'a string). The write is atomic, locked, and validated against the config schemas and the adapter ' +
+    'a string). The write is atomic, locked, and validated against plugin settings schemas or the adapter ' +
     'manifest. Secrets must be ${ENV_VAR} references; use --allow-plain-secret only for throwaway values. ' +
     'Use --dry-run to see the outcome without writing.',
   category: 'config',
@@ -105,33 +112,118 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
       )) {
         throw new AdapterProjectScopeError();
       }
+      if (scope === 'project' && (segments[0] !== 'plugins' || segments.length < 3)) {
+        throw new ConfigWriteError(
+          'KB_CONFIG_INVALID',
+          'Project scope accepts plugin settings under plugins.<configSection>.<key>',
+          { path: key },
+        );
+      }
 
       const roots = await resolveConfigRoots(getContextCwd(ctx));
       const file = await userConfigFileForScope(roots, scope);
-      const effective = await loadEffectiveConfig(roots.projectRoot, {
-        platformRoot: roots.sameLocation ? undefined : roots.platformRoot,
+      const runtimeConfig = await loadPlatformConfig({
+        startDir: getContextCwd(ctx),
+        loadEnvFile: false,
+        projectId: roots.projectId,
       });
-      const effectivePlatform = (effective?.data.platform ?? undefined) as { adapters?: unknown } | undefined;
+      const platform = await loadEffectiveConfig(roots.projectRoot, {
+        platformRoot: roots.platformRoot,
+        projectId: roots.projectId,
+        pluginDefaults: manifestSettingsLayers(runtimeConfig),
+      });
+      const projectSettings = await readProjectSettings({ projectId: roots.projectId });
+      const effectiveData = mergeOverlay(platform?.data ?? {}, projectSettings) as Record<string, unknown>;
+      const platformBaseData = (platform?.layers ?? [])
+        .filter(({ layer }) => layer !== 'project' && layer !== 'overlay')
+        .reduce<Record<string, unknown>>((merged, layer) => mergeOverlay(merged, layer.data), {});
+      const effectivePlatform = (effectiveData.platform ?? undefined) as { adapters?: unknown } | undefined;
       const validate = createAdapterOptionsValidator(segments, {
         platformRoot: roots.platformRoot,
         effectiveAdapters: effectivePlatform?.adapters,
       });
+      const pluginSettings = segments[0] === 'plugins' && segments.length >= 3
+        ? await pluginSettingsSchemaFor(roots, segments[1]!)
+        : undefined;
+      const pluginValidator = pluginSettings
+        ? await resolvePluginSettingsValidator(pluginSettings.schema, pluginSettings.packageRoot, segments[1])
+        : undefined;
+      if (segments[0] === 'plugins' && segments.length >= 3 && !pluginSettings) {
+        throw new PluginSettingsSchemaLoadError(
+          `Plugin settings section "${segments[1]}" has no declared settings schema.`,
+          undefined,
+          segments[1],
+        );
+      }
+      const manifestDefaults = runtimeConfig.pluginSettingsDefaults
+        ?.find(({ configSection }) => configSection === segments[1])?.data ?? {};
+      const platformPluginBaseSettings = segments[0] === 'plugins' && segments[1]
+        ? valueAtPath(platformBaseData, ['plugins', segments[1]]).value
+        : undefined;
+      const validatePluginSettings = scope === 'platform' && pluginValidator
+        ? async (document: Record<string, unknown>) => {
+            const platformSettings = valueAtPath(document, ['plugins', segments[1]!]).value;
+            const projectPluginSettings = valueAtPath(projectSettings, ['plugins', segments[1]!]).value;
+            const effectiveSettings = mergeOverlay(
+              isRecord(platformPluginBaseSettings) ? platformPluginBaseSettings : manifestDefaults,
+              mergeOverlay(
+                isRecord(platformSettings) ? platformSettings : {},
+                isRecord(projectPluginSettings) ? projectPluginSettings : {},
+              ),
+            );
+            const validation = pluginValidator.validate(effectiveSettings);
+            if (!validation.valid) {
+              const settingPath = segments.join('.');
+              throw new ConfigWriteError('KB_PLUGIN_SETTINGS_INVALID', `${settingPath}: ${validation.cause}`, {
+                path: settingPath,
+                cause: validation.cause,
+              });
+            }
+            return [];
+          }
+        : undefined;
+      const platformPluginSettings = segments[0] === 'plugins' && segments[1]
+        ? valueAtPath(effectiveData, ['plugins', segments[1]]).value
+        : undefined;
 
-      const result: SetUserConfigResult = await setUserConfigValue({
-        filePath: file,
-        path: segments,
-        value,
-        schema: PlatformUserConfigSchema,
-        validate,
-        allowPlainSecret: Boolean(flags['allow-plain-secret']),
-        allowMissingEnv: Boolean(flags['allow-missing-env']),
-        dryRun: Boolean(flags['dry-run']),
-      });
+      const result = scope === 'project'
+        ? await writeProjectSetting({
+            projectId: roots.projectId,
+            path: segments,
+            value,
+            dryRun: Boolean(flags['dry-run']),
+            settingsSchema: pluginSettings?.schema,
+            settingsPackageRoot: pluginSettings?.packageRoot,
+            baseSettings: platformPluginBaseSettings && typeof platformPluginBaseSettings === 'object' && !Array.isArray(platformPluginBaseSettings)
+              ? platformPluginBaseSettings as Record<string, unknown>
+              : manifestDefaults,
+          }).then((written) => ({
+            filePath: written.filePath,
+            previousValue: written.previousValue,
+            changed: written.changed,
+            dryRun: written.dryRun,
+            created: written.created,
+          }))
+        : await setUserConfigValue({
+            filePath: file,
+            path: segments,
+            value,
+            schema: PlatformUserConfigSchema,
+            validate: validatePluginSettings ?? validate,
+            allowPlainSecret: Boolean(flags['allow-plain-secret']),
+            allowMissingEnv: Boolean(flags['allow-missing-env']),
+            dryRun: Boolean(flags['dry-run']),
+          });
 
       // A value written to a lower layer can still be shadowed by a higher one.
       const rank: Record<string, number> = { generated: 0, platform: 1, project: 2, overlay: 3 };
       let shadowedBy: ConfigSetResult['shadowedBy'];
-      for (const layer of [...(effective?.layers ?? [])].reverse()) {
+      const layers = [...(platform?.layers ?? []), {
+        layer: 'project' as const,
+        path: file,
+        data: projectSettings,
+      }];
+      for (const layer of [...layers].reverse()) {
         if (layer.path === file) {
           break;
         }
@@ -198,3 +290,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
     ctx.ui.success(title, { sections: [{ header: 'Config', items }] });
   },
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}

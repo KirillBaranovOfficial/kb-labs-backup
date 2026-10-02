@@ -5,14 +5,11 @@
  *
  * Precedence, lowest to highest — a higher layer wins per key:
  *
- *   1. `generated`  `<root>/.kb/generated/*.json|jsonc`  written ONLY by the
- *                   installer / host; users never edit it. Files apply in
- *                   lexicographic order; the platform root's generated files
- *                   first, then the project root's.
- *   2. `platform`   platform-scope user config, `<platformRoot>/.kb/kb.config.*`
- *   3. `project`    project-scope user config, `<projectRoot>/.kb/kb.config.*`
- *                   (project wins over platform, ADR-0012)
- *   4. `overlay`    `<projectRoot>/.kb/overlays/*.jsonc` scenario overlays
+ *   1. `manifest`   plugin settings defaults from the plugin manifest
+ *   2. `generated`  `<platformRoot>/.kb/generated/*.json|jsonc`
+ *   3. `platform`   `<platformRoot>/.kb/kb.config.*`
+ *   4. `project`    `$KB_HOME/state/<projectId>/config.jsonc`
+ *   5. `overlay`    `$KB_HOME/state/<projectId>/overlays/*.jsonc`
  *
  * The user config files are written ONLY by `setUserConfigValue` and
  * `unsetUserConfigValue`. One writer per file.
@@ -24,10 +21,10 @@ import path from 'node:path';
 import { mergeDefined, readJsonWithDiagnostics } from '../runtime/runtime.js';
 import type { Diagnostic } from '../types/index.js';
 
-export type ConfigLayerName = 'generated' | 'platform' | 'project' | 'overlay';
+export type ConfigLayerName = 'manifest' | 'generated' | 'platform' | 'project' | 'overlay';
 
 /** Layer names ordered from the lowest to the highest precedence. */
-export const CONFIG_LAYER_ORDER: readonly ConfigLayerName[] = ['generated', 'platform', 'project', 'overlay'];
+export const CONFIG_LAYER_ORDER: readonly ConfigLayerName[] = ['manifest', 'generated', 'platform', 'project', 'overlay'];
 
 /** Directory (relative to a root) that holds installer-written config. */
 export const GENERATED_CONFIG_DIR = path.join('.kb', 'generated');
