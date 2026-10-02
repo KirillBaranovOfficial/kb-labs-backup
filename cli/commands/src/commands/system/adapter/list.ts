@@ -48,6 +48,7 @@ function packageRoot(spec: string): string {
 export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; description?: string } }, ListResult>({
   name: 'list',
   scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description: 'List effective platform adapters',
   longDescription: 'Shows platform bindings, installed defaults, and built-in fallbacks without contacting adapter services.',
   category: 'adapter',

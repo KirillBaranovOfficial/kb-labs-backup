@@ -211,6 +211,7 @@ export function createCompletionCommand(registry: TrieBackedRegistry) {
   return defineSystemCommand({
     name: 'completion',
     scope: 'platform',
+  jsonTest: { safeArgs: ["bash"] },
     description: 'Generate or install shell completion',
     longDescription:
       'Print a shell completion script or bake a static one into your shell profile.\n\n' +
@@ -219,7 +220,9 @@ export function createCompletionCommand(registry: TrieBackedRegistry) {
       '  kb completion zsh       # print dynamic zsh script\n' +
       '  kb completion bash      # print dynamic bash script\n' +
       '  kb completion fish      # print dynamic fish script',
-    flags: {},
+    flags: {
+      json: { type: 'boolean', description: 'Output machine-readable JSON' },
+    },
 
     async handler(_ctx, argv) {
       const arg = argv[0];
@@ -263,9 +266,13 @@ export function createCompletionCommand(registry: TrieBackedRegistry) {
       return { ok: true, status: 'success', script, shell: arg } as CompletionResult;
     },
 
-    formatter(result) {
+    formatter(result, ctx, flags) {
       if ('script' in result) {
-        process.stdout.write(result.script + '\n');
+        if (flags.json) {
+          ctx.ui?.json({ script: result.script, shell: result.shell });
+        } else {
+          process.stdout.write(result.script + '\n');
+        }
         return;
       }
       const r = result as InstallResult;

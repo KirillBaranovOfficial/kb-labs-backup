@@ -129,7 +129,9 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         except json.JSONDecodeError as error:
             raise RuntimeError("unauthenticated marketplace list did not return JSON") from error
         failure = payload.get("error") if isinstance(payload, dict) else None
-        if (result.returncode == 0 or not isinstance(failure, dict)
+        if (result.returncode == 0 or not isinstance(payload, dict)
+                or set(payload) != {"ok", "error"} or payload.get("ok") is not False
+                or not isinstance(failure, dict)
                 or failure.get("code") != "KB_AUTH_REQUIRED"
                 or failure.get("message") != "Authentication is required."
                 or failure.get("hint") != 'Run "kb auth login".'):

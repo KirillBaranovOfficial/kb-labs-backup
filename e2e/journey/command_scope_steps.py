@@ -38,20 +38,20 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
             code, added = invoke(["project", "add", project, "--json"])
             if code != 0 or added.get("ok") is not True:
                 return f"platform-scoped project add failed outside registry: {added}"
-            project_id = added.get("project", {}).get("id")
+            project_id = added.get("data", {}).get("project", {}).get("id")
             if not project_id:
                 return f"project add did not return an ID: {added}"
 
             code, listed = invoke(["project", "list", "--json"])
             if code != 0 or listed.get("ok") is not True:
                 return f"platform-scoped project list failed outside registry: {listed}"
-            if not any(row.get("id") == project_id for row in listed.get("projects", [])):
+            if not any(row.get("id") == project_id for row in listed.get("data", {}).get("projects", [])):
                 return f"project list omitted the registered project: {listed}"
 
             code, shown = invoke(["project", "show", project_id, "--json"])
             if code != 0 or shown.get("ok") is not True:
                 return f"platform-scoped project show failed outside registry: {shown}"
-            if shown.get("project", {}).get("id") != project_id:
+            if shown.get("data", {}).get("project", {}).get("id") != project_id:
                 return f"project show resolved the wrong explicit reference: {shown}"
 
             code, unknown = invoke(["config", "show", "--json"])
@@ -92,6 +92,8 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                     return f"{args!r} produced no output"
                 if (Path(cwd) / ".kb").exists():
                     return f"{args!r} created .kb in an unregistered directory"
+                if Path(env["KB_HOME"]).exists():
+                    return f"{args!r} created platform state at KB_HOME"
             return None
 
     journey.step(
@@ -124,7 +126,8 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                 except json.JSONDecodeError:
                     return f"platform command {args!r} did not return JSON: {result.stderr or result.stdout}"
                 if args[0] == "hello":
-                    if payload.get("message") != "Hello World" or payload.get("status") != "ready":
+                    data = payload.get("data", {})
+                    if data.get("message") != "Hello World" or data.get("status") != "ready":
                         return f"platform command {args!r} returned unexpected greeting: {payload}"
                 elif payload.get("ok") is not True:
                     return f"platform command {args!r} returned failure: {payload}"
@@ -166,7 +169,7 @@ def run_config_failure_steps(journey: Journey, repo_root: Path) -> None:
             code, added = invoke(["project", "add", str(project), "--json"])
             if code != 0 or added.get("ok") is not True:
                 return f"could not register config fixture: {added}"
-            state = Path(env["KB_HOME"]) / "state" / added["project"]["id"]
+            state = Path(env["KB_HOME"]) / "state" / added["data"]["project"]["id"]
             settings = state / "config.jsonc"
 
             def expect_failure(target: Path, expected_hint: str, contents: str | None = None, directory: bool = False) -> str | None:

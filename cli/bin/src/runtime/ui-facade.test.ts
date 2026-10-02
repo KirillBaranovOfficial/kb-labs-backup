@@ -19,4 +19,21 @@ describe('CLI UI adapter errors', () => {
     );
     expect(errorOutput.mock.calls[0]?.[0]).not.toContain(' at ');
   });
+
+  it('keeps diagnostics on stderr and writes one success envelope in JSON mode', () => {
+    process.env.KB_OUTPUT_MODE = 'json';
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const ui = createCLIUIFacade();
+
+    ui.warn('configuration warning');
+    ui.json({ plugins: [] });
+
+    expect(stderr).toHaveBeenCalledOnce();
+    expect(stdout).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
+      ok: true,
+      data: { plugins: [] },
+    });
+  });
 });

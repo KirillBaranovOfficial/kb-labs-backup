@@ -103,6 +103,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
     const command = defineSystemCommand({
       name: 'test',
       scope: 'project',
+      jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
       description: 'Test',
       flags: {},
       handler,
@@ -140,6 +141,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
     const command = defineSystemCommand({
       name: 'test',
       scope: 'project',
+      jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
       description: 'Test',
       flags: {},
       handler,
@@ -181,6 +183,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
     const command = defineSystemCommand({
       name: 'test',
       scope: 'project',
+      jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
       description: 'Test',
       flags: {},
       handler,
@@ -218,6 +221,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
     const command = defineSystemCommand({
       name: 'test',
       scope: 'project',
+      jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
       description: 'Test',
       flags: {},
       handler,
@@ -245,6 +249,7 @@ describe('PluginContextV3 Structure Snapshot', () => {
     const command = defineSystemCommand({
       name: 'test',
       scope: 'project',
+      jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
       description: 'Test',
       flags: {},
       handler,

@@ -20,6 +20,7 @@ type RevokeResult = CommandResult;
 export const webhookRevoke = defineSystemCommand<RevokeFlags, RevokeResult>({
   name: 'revoke',
   scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command revokes a webhook secret." },
   description: 'Revoke a provisioned webhook secret',
   longDescription:
     'Deletes the webhook secret for a plugin+event combination. ' +

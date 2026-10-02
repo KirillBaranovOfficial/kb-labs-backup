@@ -13,6 +13,7 @@ import {
 } from './index';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { formatError } from './errors/index';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 /**
  * Flag definition for Command interface
@@ -33,6 +34,8 @@ interface FlagDefinition {
 export interface Command {
   name: string;
   scope: 'platform' | 'project';
+  /** Registry test fixture for the command's safe JSON success path. */
+  jsonTest: SystemCommandJsonTest;
   describe: string;
   longDescription?: string;
   category?: string;
@@ -40,6 +43,61 @@ export interface Command {
   flags?: FlagDefinition[];
   examples?: string[];
   run: (ctx: PluginContextV3, argv: string[], flags: Record<string, unknown>) => Promise<number>;
+}
+
+export type SystemCommandJsonTest =
+  | { safeArgs: readonly string[] }
+  | { noSafeValidPath: string };
+
+const GLOBAL_FLAG_NAMES = new Set([
+  'debug', 'dryRun', 'dry-run', 'help', 'json', 'logLevel', 'mock', 'noColor',
+  'profile', 'profilesDir', 'quiet', 'recordMocks', 'saveSnapshot', 'verbose',
+  'version',
+]);
+
+function validateSystemFlags(
+  commandName: string,
+  rawFlags: Record<string, unknown>,
+  schema: FlagSchemaDefinition,
+): void {
+  const schemaNames = new Set(Object.keys(schema));
+  for (const flagName of Object.keys(schema)) {
+    schemaNames.add(flagName.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase()));
+  }
+  for (const flagName of Object.keys(rawFlags)) {
+    const normalizedName = flagName.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+    if (schemaNames.has(flagName) || schemaNames.has(normalizedName) || GLOBAL_FLAG_NAMES.has(flagName)) continue;
+    throw new FlagValidationError(
+      flagName,
+      `Unknown flag: --${flagName}`,
+      rawFlags[flagName],
+      schema,
+      commandName,
+    );
+  }
+}
+
+function renderSystemFlagError(
+  error: unknown,
+  commandName: string,
+  ctx: PluginContextV3,
+  jsonMode: boolean,
+  showStack: boolean,
+): void {
+  const formatted = formatError(error, { showStack, jsonMode });
+  if (jsonMode && error instanceof FlagValidationError) {
+    ctx.ui?.json({
+      ok: false,
+      error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+        cause: error.message,
+        details: { command: commandName, flag: error.flag },
+      }),
+    });
+  } else if (jsonMode) {
+    ctx.ui?.json(formatted.json);
+  } else {
+    ctx.ui?.error(formatted.message);
+  }
 }
 
 /**
@@ -95,6 +153,8 @@ export interface SystemCommandConfig<
   name: string;
   /** Startup scope required before command execution. */
   scope: 'platform' | 'project';
+  /** Registry test fixture or explicit reason this command has no safe valid path. */
+  jsonTest: SystemCommandJsonTest;
   /** Command description (required for system commands) */
   description: string;
   /** Long description for help */
@@ -251,12 +311,13 @@ export function defineSystemCommand<
 >(
   config: SystemCommandConfig<TFlags, TResult, TArgv>
 ): Command {
-  const { name, scope, description, longDescription, category, aliases, examples, flags, handler, formatter } = config;
+  const { name, scope, jsonTest, description, longDescription, category, aliases, examples, flags, handler, formatter } = config;
 
   // Return command with direct handler (no wrapping needed - system commands don't use V3 defineCommand)
   return {
     name,
     scope,
+    jsonTest,
     describe: description,
     longDescription,
     category: category || 'system',
@@ -269,12 +330,13 @@ export function defineSystemCommand<
       // Log command start
       ctx.platform?.logger?.info?.(`Command ${name} started`);
 
-      // Validate flags only if schema is defined
+      // Validate command flags and reject unknown flags before running handlers.
       let validatedFlags: InferFlags<TFlags>;
 
       if (flags) {
         const flagSchema = defineFlags(flags);
         try {
+          validateSystemFlags(name, rawFlags, flags);
           validatedFlags = await validateFlags(rawFlags, flagSchema) as InferFlags<TFlags>;
         } catch (error) {
           // Enhance validation error with command name
@@ -283,20 +345,19 @@ export function defineSystemCommand<
           }
 
           // Show stack trace only in debug mode
-          const showStack = Boolean(rawFlags.debug);
-          const formatted = formatError(error, { showStack, jsonMode });
+          renderSystemFlagError(error, name, ctx, jsonMode, Boolean(rawFlags.debug));
 
-          if (jsonMode) {
-            ctx.ui?.json(formatted.json);
-          } else {
-            ctx.ui?.error(formatted.message);
-          }
-
-          // Return specific exit code for validation errors
-          return 3; // EXIT_CODES.INVALID_FLAGS
+          // An undeclared option is invalid CLI usage, matching the shared
+          // CLI usage exit code.
+          return error instanceof FlagValidationError && error.message.startsWith('Unknown flag:') ? 2 : 3;
         }
       } else {
-        // No schema defined - pass raw flags as-is
+        try {
+          validateSystemFlags(name, rawFlags, {});
+        } catch (error) {
+          renderSystemFlagError(error, name, ctx, jsonMode, Boolean(rawFlags.debug));
+          return 2;
+        }
         validatedFlags = rawFlags as InferFlags<TFlags>;
       }
 

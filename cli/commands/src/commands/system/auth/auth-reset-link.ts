@@ -15,6 +15,7 @@ type ResetLinkFlags = { 'user-id': { type: 'string'; description: string }; json
 export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult & { resetUrl?: string }>({
   name: 'reset-link',
   scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command requests an account reset link." },
   description: 'Create an admin password reset link for a user',
   longDescription: 'Creates a one-time password reset link that expires after 24 hours. Share it with the user out of band.',
   category: 'auth',

@@ -14,6 +14,7 @@ type LogoutFlags = {
 export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
   name: 'logout',
   scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command revokes an authentication session." },
   description: 'Remove stored Gateway credentials',
   longDescription: 'Revokes saved Gateway refresh tokens, then deletes ~/.kb/credentials.json and ~/.kb/session.json.',
   category: 'auth',

@@ -27,6 +27,7 @@ export type ProjectRemoveResult = CommandResult & {
 export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResult>({
   name: 'remove',
   scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command changes the machine project registry." },
   description: 'Unregister a project (files are not deleted)',
   longDescription:
     'Removes a project from the registry by id, name or path. The folder, its .kb/ and its runtime ' +

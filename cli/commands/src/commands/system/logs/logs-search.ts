@@ -40,6 +40,7 @@ type LogSearchResult = CommandResult & {
 export const logsSearch = defineSystemCommand<Flags, LogSearchResult>({
   name: "search",
   scope: 'platform',
+  jsonTest: { safeArgs: ["registry-fixture-query"] },
   description: "Full-text search across logs",
   category: "logs",
   examples: generateExamples("logs search", "kb", [

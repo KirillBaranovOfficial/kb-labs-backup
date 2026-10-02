@@ -24,6 +24,7 @@ type DocsGenerateResult = CommandResult & {
 export const docsGenerateCliReference = defineSystemCommand<GenerateCliReferenceFlags, DocsGenerateResult>({
   name: 'generate-cli-reference',
   scope: 'project',
+  jsonTest: { noSafeValidPath: "This command writes generated documentation." },
   description: 'Generate CLI reference documentation from command registry',
   category: 'docs',
   examples: generateExamples('generate-cli-reference', 'docs', [

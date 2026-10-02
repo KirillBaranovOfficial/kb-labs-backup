@@ -67,6 +67,7 @@ describe('installed platform adapter defaults', () => {
   });
 
   // case: S-054.12, S-054.17
+  // case: S-203.1
   it('runs adapter list with the sealed release config and installed adapter lock', async () => {
     const workspaceRoot = path.resolve(process.cwd(), '../..');
     tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-installed-defaults-'));
@@ -121,6 +122,18 @@ describe('installed platform adapter defaults', () => {
     expect(help.stdout).toContain('KB Labs CLI');
     expect(await readdir(projectRoot)).toEqual([]);
     await expect(access(path.join(projectRoot, '.kb'))).rejects.toThrow();
+    await expect(access(path.join(env.KB_HOME!, 'state'))).rejects.toThrow();
+
+    const version = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), '--version'], {
+      cwd: projectRoot,
+      env,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(version.status, version.stderr || version.stdout).toBe(0);
+    expect(version.stdout.trim()).not.toBe('');
+    await expect(access(path.join(projectRoot, '.kb'))).rejects.toThrow();
+    await expect(access(path.join(env.KB_HOME!, 'state'))).rejects.toThrow();
 
     await createProjectRegistry({ env }).add(projectRoot);
 
@@ -132,16 +145,17 @@ describe('installed platform adapter defaults', () => {
     });
 
     expect(command.status, command.stderr || command.stdout).toBe(0);
-    const payload = JSON.parse(command.stdout) as { adapters?: Array<{ slot: string; mode: string; implementation: string; baseDir?: string }> };
-    expect(payload.adapters?.find(row => row.slot === 'kvStore')).toMatchObject({
+    const payload = JSON.parse(command.stdout) as { ok?: boolean; data?: { adapters?: Array<{ slot: string; mode: string; implementation: string; baseDir?: string }> } };
+    expect(payload.ok).toBe(true);
+    expect(payload.data?.adapters?.find(row => row.slot === 'kvStore')).toMatchObject({
       mode: 'real', implementation: '@kb-labs/adapters-sqlite/kv',
     });
-    const storage = payload.adapters?.find(row => row.slot === 'storage');
+    const storage = payload.data?.adapters?.find(row => row.slot === 'storage');
     expect(storage).toMatchObject({ mode: 'real', implementation: '@kb-labs/adapters-fs' });
     const stateRoot = path.join(env.KB_HOME!, 'state');
     expect(path.relative(stateRoot, storage?.baseDir ?? '')).toMatch(/^prj_[0-9a-f]{16}\/storage$/);
     expect(path.relative(projectRoot, storage?.baseDir ?? '').startsWith('..')).toBe(true);
-    expect(payload.adapters?.find(row => row.slot === 'llm')).toMatchObject({
+    expect(payload.data?.adapters?.find(row => row.slot === 'llm')).toMatchObject({
       mode: 'real', implementation: '@kb-labs/adapters-openai',
       credentialsStatus: 'missing', missingCredentials: ['OPENAI_API_KEY'],
     });

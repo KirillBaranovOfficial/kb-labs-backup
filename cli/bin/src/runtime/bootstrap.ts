@@ -31,17 +31,17 @@ import { getDefaultMiddlewares } from "./middlewares";
 import { executePlugin, createSystemCommandContext } from "./plugin-executor";
 import { tryResolveGateway, executeViaGateway } from "./gateway-executor";
 import { loadEnvFile } from "./env-loader";
-import { initializePlatform } from "./platform-init";
+import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } from "./platform-init";
 import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, toErrorEnvelope } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope, toErrorEnvelope } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
 import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
-import { resolveProjectScope } from './command-scope';
+import { resolveProjectScope } from "./command-scope";
 
 declare global {
   var __KB_PLATFORM_CONFIG__: PlatformConfig | undefined;
@@ -55,6 +55,16 @@ type RuntimeInitOptions = RuntimeSetupOptions;
 type CliRuntimeInstance = Awaited<ReturnType<typeof createCliRuntime>>;
 type CliExecutionContext = CliRuntimeInstance["context"];
 
+export function createUnknownCommandError(input: string, suggestions: string[] = []) {
+  return createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
+    message: `Unknown command: ${input}`,
+    hint: "Check the command name or run \"kb --help\" to list available commands.",
+    details: {
+      command: input,
+      ...(suggestions.length > 0 ? { suggestions: suggestions.join(", ") } : {}),
+    },
+  });
+}
 export interface CliRuntimeOptions {
   env?: NodeJS.ProcessEnv;
   version?: string;
@@ -89,32 +99,63 @@ export async function executeCli(
   const { cmdPath, rest, global, flagsObj } = parse(argv);
   const registryStore = options.registry ?? registry;
   registerBuiltinSystemCommands();
-  const projectScope = resolveProjectScope(registryStore.resolve(cmdPath), global, cmdPath);
-
   const jsonPresenterFactory = options.createJsonPresenter ?? createJsonPresenter;
   const textPresenterFactory = options.createTextPresenter ?? createTextPresenter;
 
+  // Logger destinations are selected while platform adapters are created.
+  // Establish the CLI boundary before initialization for programmatic callers too.
+  process.env.KB_LOG_STREAM = "stderr";
+  if (global.json) { process.env.KB_OUTPUT_MODE = "json"; }
+
   loadEnvFile(cwd);
 
+  let loadedConfig: Awaited<ReturnType<typeof loadPlatformConfiguration>>;
+  try {
+    loadedConfig = await loadPlatformConfiguration(cwd, options.moduleUrl, 'platform');
+  } catch (error) {
+    return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
+  }
+  globalThis.__KB_RAW_CONFIG__ = loadedConfig.rawConfig;
+  const authRoute = registryStore.resolve(cmdPath);
+  const authCommandKind = authRoute.type === "system-cmd" ? "system" : "plugin";
+  const authCommandPath = authRoute.type === "system-cmd"
+    ? authRoute.cmd.category ? `${authRoute.cmd.category} ${authRoute.cmd.name}` : authRoute.cmd.name
+    : cmdPath.join(" ");
+  const accessMode = resolveCliAccessMode();
+  const authResult = global.version && isPlatformAuthExemptFlag("version")
+    ? { value: true }
+    : await dispatchWithPlatformAuthGate({
+      accessMode,
+      commandPath: authCommandPath,
+      commandKind: authCommandKind,
+      hasAuth: accessMode !== 'secured' || await hasUsablePlatformAuth(),
+      help: global.help,
+    }, async () => true);
+  if ("error" in authResult) {
+    const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
+    return reportGateResult(authResult, global.json, presenter);
+  }
+
+  const projectScope = resolveProjectScope(authRoute, global, cmdPath);
+  if (projectScope === "required") {
+    try {
+      loadedConfig = await resolveProjectConfig(cwd, options.moduleUrl);
+    } catch (error) {
+      return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
+    }
+  }
+
+  const isGlobalHelp = global.help && isPlatformAuthExemptFlag('help') && cmdPath.length === 0;
+  const isGlobalVersion = global.version && isPlatformAuthExemptFlag('version');
   let initialized: Awaited<ReturnType<typeof initializePlatform>>;
   try {
-    initialized = await initializePlatform(cwd, options.moduleUrl, {
-      skipAdapterInitialization: global.help && cmdPath.length === 0 && isPlatformAuthExemptFlag('help'),
-      projectScope,
+    initialized = await initializePlatform(loadedConfig, {
+      skipAdapterInitialization: Boolean(isGlobalHelp || isGlobalVersion),
     });
   } catch (error) {
-    const envelope = isProjectRegistryError(error)
-      ? projectErrorEnvelope(error)
-      : toErrorEnvelope(error);
-    const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
-    if (global.json) {
-      presenter.json({ ok: false, error: envelope });
-    } else {
-      presenter.error(`${envelope.message} [${envelope.code}]`);
-      presenter.write(`Hint: ${envelope.hint}\n`);
-    }
-    return 1;
+    return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
   }
+
   const { platform, platformConfig, rawConfig, effectiveConfig, platformRoot, projectRoot } = initialized;
 
   if (platformRoot) {
@@ -166,7 +207,7 @@ export async function executeCli(
 
   // ── Handle --version early ─────────────────────────────────────────────────
   if (global.version && isPlatformAuthExemptFlag('version')) {
-    const presenter = textPresenterFactory(global.quiet);
+    const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
     if (global.json) {
       presenter.json({ ok: true, version });
     } else {
@@ -177,19 +218,19 @@ export async function executeCli(
 
   // ── Handle --help with no command → global help ────────────────────────────
   if (global.help && isPlatformAuthExemptFlag('help') && cmdPath.length === 0) {
-    const presenter = textPresenterFactory(global.quiet);
+    const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
     if (global.json) {
       presenter.json({
         ok: false,
-        error: {
-          code: "CMD_NOT_FOUND",
-          message: "Use text mode for help display",
-        },
+        error: createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
+          message: "Help is only available in text mode.",
+          hint: "Run \"kb --help\" without --json to list commands.",
+        }),
       });
     } else {
       presenter.write(renderGlobalHelp(registryStore));
     }
-    return 0;
+    return global.json ? 2 : 0;
   }
 
   // ── Handle __complete (shell tab completion) ───────────────────────────────
@@ -270,18 +311,11 @@ export async function executeCli(
       const input = routeResult.input.join(" ") || "(none)";
       const diagCmd = `kb diag --command "${input}"`;
       const diagHint = `\nTip: run  ${diagCmd}  to diagnose`;
+      const unknownCommand = createUnknownCommandError(input, routeResult.suggestions);
       if (routeResult.suggestions.length > 0) {
         const sugs = routeResult.suggestions.map((s) => `  kb ${s}`).join("\n");
         if (global.json) {
-          presenter.json({
-            ok: false,
-            error: {
-              code: "CMD_NOT_FOUND",
-              message: `Unknown command: ${input}`,
-              suggestions: routeResult.suggestions,
-              diagCommand: diagCmd,
-            },
-          });
+          presenter.json({ ok: false, error: unknownCommand });
         } else {
           presenter.error(
             `Unknown command: ${input}\nDid you mean:\n${sugs}${diagHint}`,
@@ -289,19 +323,12 @@ export async function executeCli(
         }
       } else {
         if (global.json) {
-          presenter.json({
-            ok: false,
-            error: {
-              code: "CMD_NOT_FOUND",
-              message: `Unknown command: ${input}`,
-              diagCommand: diagCmd,
-            },
-          });
+          presenter.json({ ok: false, error: unknownCommand });
         } else {
           presenter.error(`Unknown command: ${input}${diagHint}`);
         }
       }
-      return 1;
+      return 2;
     }
 
     case "ambiguous": {
@@ -311,16 +338,16 @@ export async function executeCli(
       if (global.json) {
         presenter.json({
           ok: false,
-          error: {
-            code: "CMD_AMBIGUOUS",
-            message: "Ambiguous command",
-            candidates: routeResult.candidates,
-          },
+          error: createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
+            message: "The command name is ambiguous.",
+            hint: `Choose one of: ${routeResult.candidates.map((candidate) => `kb ${candidate}`).join(", ")}`,
+            details: { candidates: routeResult.candidates.join(", ") },
+          }),
         });
       } else {
         presenter.error(`Ambiguous command. Did you mean:\n${candidates}`);
       }
-      return 1;
+      return 2;
     }
 
     case "group": {
@@ -383,30 +410,24 @@ export async function executeCli(
             lines.push(`  --${f.name}  ${f.description ?? ""}`);
           }
         }
-        presenter.write(lines.join("\n"));
+        if (global.json) {
+          presenter.json({ ok: true, help: lines.join("\n") });
+        } else {
+          presenter.write(lines.join("\n"));
+        }
         return 0;
       }
 
       try {
-        const commandPath = cmd.category ? `${cmd.category} ${cmd.name}` : cmd.name;
-        const accessMode = resolveCliAccessMode();
-        const gated = await dispatchWithPlatformAuthGate({
-          accessMode,
-          commandPath,
-          commandKind: 'system',
-          hasAuth: accessMode !== 'secured' || await hasUsablePlatformAuth(),
-        }, async () => {
-          const runtime = await runtimeFactory(runtimeInitOptions);
-          const v3Context = createSystemCommandContext(cliContext, platform);
-          return runtime.middleware.execute(cliContext, async () => {
-            const code = await cmd.run(v3Context, actualRest, {
-              ...global,
-              ...flagsObj,
-            });
-            return typeof code === "number" ? code : 0;
+        const runtime = await runtimeFactory(runtimeInitOptions);
+        const v3Context = createSystemCommandContext(cliContext, platform);
+        return runtime.middleware.execute(cliContext, async () => {
+          const code = await cmd.run(v3Context, actualRest, {
+            ...global,
+            ...flagsObj,
           });
+          return typeof code === "number" ? code : 0;
         });
-        return reportGateResult(gated, global.json, presenter);
       } catch (error: unknown) {
         return handleExecutionError(error, presenter);
       }
@@ -417,10 +438,12 @@ export async function executeCli(
       const actualRest = routeResult.rest;
 
       if (flagsObj["schema"] && manifestCmd.manifest.operationType) {
-        process.stdout.write(
-          JSON.stringify(generateCommandSchema(manifestCmd.manifest), null, 2) +
-            "\n",
-        );
+        const schema = generateCommandSchema(manifestCmd.manifest);
+        if (global.json) {
+          presenter.json({ ok: true, schema });
+        } else {
+          process.stdout.write(JSON.stringify(schema, null, 2) + "\n");
+        }
         return 0;
       }
 
@@ -495,13 +518,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
     rawConfig?.execution as Record<string, unknown> | undefined
   )?.mode;
 
-  const accessMode = resolveCliAccessMode();
-  const gated = await dispatchWithPlatformAuthGate({
-    accessMode,
-    commandPath,
-    commandKind: 'plugin',
-    hasAuth: accessMode !== 'secured' || await hasUsablePlatformAuth(),
-  }, async () => p.runWithMiddleware(async () => {
+  return p.runWithMiddleware(async () => {
     if (executionMode !== "in-process") {
       const gatewayClient = await tryResolveGateway();
       if (gatewayClient) {
@@ -530,8 +547,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
     throw new Error(
       `Plugin command "${commandPath}" is not available for execution. Ensure the command has a handler in its manifest.`,
     );
-  }));
-  return reportGateResult(gated, p.global.json, p.presenter);
+  });
 }
 
 function resolveCliAccessMode(): unknown {
@@ -555,6 +571,25 @@ function reportGateResult<T>(
     return 1;
   }
   return gated.value;
+}
+
+function reportInitializationError(
+  error: unknown,
+  global: ReturnType<typeof parseArgs>["global"],
+  jsonPresenterFactory: typeof createJsonPresenter,
+  textPresenterFactory: typeof createTextPresenter,
+): number {
+  const envelope = isProjectRegistryError(error)
+    ? projectErrorEnvelope(error)
+    : toErrorEnvelope(error);
+  const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
+  if (global.json) {
+    presenter.json({ ok: false, error: envelope });
+  } else {
+    presenter.error(`${envelope.message} [${envelope.code}]`);
+    presenter.write(`Hint: ${envelope.hint}\n`);
+  }
+  return 1;
 }
 
 type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "silent";

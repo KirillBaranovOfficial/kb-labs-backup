@@ -36,6 +36,7 @@ function makeSystemCmd(name: string, aliases: string[] = []): SystemCommand {
   return {
     name,
     scope: 'project',
+    jsonTest: { noSafeValidPath: 'Registry fixture command.' },
     describe: `System command: ${name}`,
     category: 'system',
     aliases,

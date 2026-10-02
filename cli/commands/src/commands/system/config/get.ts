@@ -84,6 +84,7 @@ function provenanceFor(
 export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
   name: 'get',
   scope: 'project',
+  jsonTest: { safeArgs: ["platform.adapters"] },
   description: 'Read a configuration value and show which layer it came from',
   longDescription:
     'Reads one key (dotted path, for example platform.adapters.llm). By default the effective value is ' +

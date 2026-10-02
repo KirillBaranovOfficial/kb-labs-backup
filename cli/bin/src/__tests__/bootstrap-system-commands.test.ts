@@ -70,8 +70,9 @@ describe('Bootstrap System Commands', () => {
 
     // Create a mock system command
     mockSystemCommand = {
-      name: 'test-system',
+        name: 'test-system',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Test command has no production handler.' },
       describe: 'Test system command',
       category: 'system',
       aliases: [],
@@ -238,6 +239,7 @@ describe('Bootstrap System Commands', () => {
       const exitingCommand: Command = {
         name: 'test-exit',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Test command only verifies exit propagation.' },
         describe: 'Test exit codes',
         category: 'system',
         aliases: [],
@@ -291,6 +293,7 @@ describe('Bootstrap System Commands', () => {
       const errorCommand: Command = {
         name: 'test-error',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Test command only verifies error propagation.' },
         describe: 'Test error handling',
         category: 'system',
         aliases: [],
@@ -404,6 +407,7 @@ describe('Bootstrap System Commands', () => {
       const helperCommand: Command = {
         name: 'test-helpers',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Test command only verifies context fields.' },
         describe: 'Test PluginContextV3',
         category: 'system',
         aliases: [],
@@ -464,6 +468,7 @@ describe('Bootstrap System Commands', () => {
       const validationCommand: Command = {
         name: 'test-validation',
         scope: 'project',
+        jsonTest: { noSafeValidPath: 'Test command only verifies context fields.' },
         describe: 'Validate PluginContextV3 fields',
         category: 'system',
         aliases: [],

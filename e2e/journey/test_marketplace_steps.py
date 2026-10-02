@@ -208,6 +208,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(journey.result().case_run["claims"], [
                 {"claimId": "S-041.7", "kind": "journey", "status": "PASS"},
             ])
+            self.assertIn(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "auth", "login", "--gateway-url", "http://gateway.test",
                            "--email", "admin@example.test", "--password", "fixture-password", "--json"), calls)
             self.assertIn(("kb", "auth", "status", "--json"), calls)

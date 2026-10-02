@@ -26,6 +26,7 @@ type BindResult = CommandResult & {
 export const adapterBind = defineSystemCommand<Flags, BindResult>({
   name: 'bind',
   scope: 'platform',
+  jsonTest: { noSafeValidPath: "This command changes the platform adapter binding." },
   description: 'Bind an installed adapter to a platform slot',
   longDescription:
     'Writes platform.adapters.<slot> in the platform configuration. The adapter package must first be installed in the platform.',

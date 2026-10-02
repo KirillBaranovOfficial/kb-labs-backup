@@ -44,6 +44,7 @@ type Result = CommandResult & {
 export const logsStats = defineSystemCommand<Flags, Result>({
   name: "stats",
   scope: 'platform',
+  jsonTest: { safeArgs: [] },
   description: "Show log storage statistics and capabilities",
   category: "logs",
   examples: generateExamples("logs stats", "kb", [
