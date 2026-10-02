@@ -35,7 +35,7 @@ import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope } from "@kb-labs/core-platform";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
 import { isPlatformAuthExempt, isPlatformAuthExemptFlag } from "./platform-auth-policy";
@@ -52,13 +52,37 @@ type RuntimeInitOptions = RuntimeSetupOptions;
 type CliRuntimeInstance = Awaited<ReturnType<typeof createCliRuntime>>;
 type CliExecutionContext = CliRuntimeInstance["context"];
 
+export function resolveCliProjectScope(input: {
+  cmdPath: string[];
+  rest: string[];
+  global: { help?: boolean; version?: boolean };
+  flagsObj: Record<string, unknown>;
+}): "platform" | "required" {
+  return usesPlatformScope(input.cmdPath, input.rest, input.flagsObj, input.global)
+    ? "platform"
+    : "required";
+}
+
+export function createUnknownCommandError(input: string, suggestions: string[] = []) {
+  return createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
+    message: `Unknown command: ${input}`,
+    hint: "Check the command name or run \"kb --help\" to list available commands.",
+    details: {
+      command: input,
+      ...(suggestions.length > 0 ? { suggestions: suggestions.join(", ") } : {}),
+    },
+  });
+}
+
 function usesPlatformScope(
   cmdPath: string[],
   rest: string[],
+  flagsObj: Record<string, unknown>,
   global: { help?: boolean; version?: boolean },
 ): boolean {
   if ((global.help && cmdPath.length === 0) || global.version) { return true; }
   if (isPlatformAuthExempt(cmdPath.join(" "), "system")) { return true; }
+  if (flagsObj.scope === "platform") { return true; }
   if (cmdPath[0] !== "project") { return false; }
   if (["add", "list", "remove"].includes(cmdPath[1] ?? "")) { return true; }
   return cmdPath[1] === "show" && rest.some((argument) => !argument.startsWith("-"));
@@ -96,7 +120,12 @@ export async function executeCli(
   const cwd = options.cwd ?? process.cwd();
   const parse = options.parseArgs ?? parseArgs;
   const { cmdPath, rest, global, flagsObj } = parse(argv);
-  const projectScope = usesPlatformScope(cmdPath, rest, global) ? "platform" : "required";
+  const projectScope = resolveCliProjectScope({ cmdPath, rest, global, flagsObj });
+
+  // Logger destinations are selected while platform adapters are created.
+  // Establish the CLI boundary before initialization for programmatic callers too.
+  process.env.KB_LOG_STREAM = "stderr";
+  if (global.json) { process.env.KB_OUTPUT_MODE = "json"; }
 
   loadEnvFile(cwd);
 
@@ -166,7 +195,7 @@ export async function executeCli(
 
   // ── Handle --version early ─────────────────────────────────────────────────
   if (global.version && isPlatformAuthExemptFlag('version')) {
-    const presenter = textPresenterFactory(global.quiet);
+    const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
     if (global.json) {
       presenter.json({ ok: true, version });
     } else {
@@ -177,19 +206,19 @@ export async function executeCli(
 
   // ── Handle --help with no command → global help ────────────────────────────
   if (global.help && isPlatformAuthExemptFlag('help') && cmdPath.length === 0) {
-    const presenter = textPresenterFactory(global.quiet);
+    const presenter = global.json ? jsonPresenterFactory() : textPresenterFactory(global.quiet);
     if (global.json) {
       presenter.json({
         ok: false,
-        error: {
-          code: "CMD_NOT_FOUND",
-          message: "Use text mode for help display",
-        },
+        error: createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
+          message: "Help is only available in text mode.",
+          hint: "Run \"kb --help\" without --json to list commands.",
+        }),
       });
     } else {
       presenter.write(renderGlobalHelp(registryStore));
     }
-    return 0;
+    return global.json ? 2 : 0;
   }
 
   // ── Handle __complete (shell tab completion) ───────────────────────────────
@@ -270,18 +299,11 @@ export async function executeCli(
       const input = routeResult.input.join(" ") || "(none)";
       const diagCmd = `kb diag --command "${input}"`;
       const diagHint = `\nTip: run  ${diagCmd}  to diagnose`;
+      const unknownCommand = createUnknownCommandError(input, routeResult.suggestions);
       if (routeResult.suggestions.length > 0) {
         const sugs = routeResult.suggestions.map((s) => `  kb ${s}`).join("\n");
         if (global.json) {
-          presenter.json({
-            ok: false,
-            error: {
-              code: "CMD_NOT_FOUND",
-              message: `Unknown command: ${input}`,
-              suggestions: routeResult.suggestions,
-              diagCommand: diagCmd,
-            },
-          });
+          presenter.json({ ok: false, error: unknownCommand });
         } else {
           presenter.error(
             `Unknown command: ${input}\nDid you mean:\n${sugs}${diagHint}`,
@@ -289,19 +311,12 @@ export async function executeCli(
         }
       } else {
         if (global.json) {
-          presenter.json({
-            ok: false,
-            error: {
-              code: "CMD_NOT_FOUND",
-              message: `Unknown command: ${input}`,
-              diagCommand: diagCmd,
-            },
-          });
+          presenter.json({ ok: false, error: unknownCommand });
         } else {
           presenter.error(`Unknown command: ${input}${diagHint}`);
         }
       }
-      return 1;
+      return 2;
     }
 
     case "ambiguous": {
@@ -311,16 +326,16 @@ export async function executeCli(
       if (global.json) {
         presenter.json({
           ok: false,
-          error: {
-            code: "CMD_AMBIGUOUS",
-            message: "Ambiguous command",
-            candidates: routeResult.candidates,
-          },
+          error: createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
+            message: "The command name is ambiguous.",
+            hint: `Choose one of: ${routeResult.candidates.map((candidate) => `kb ${candidate}`).join(", ")}`,
+            details: { candidates: routeResult.candidates.join(", ") },
+          }),
         });
       } else {
         presenter.error(`Ambiguous command. Did you mean:\n${candidates}`);
       }
-      return 1;
+      return 2;
     }
 
     case "group": {
@@ -383,7 +398,11 @@ export async function executeCli(
             lines.push(`  --${f.name}  ${f.description ?? ""}`);
           }
         }
-        presenter.write(lines.join("\n"));
+        if (global.json) {
+          presenter.json({ ok: true, help: lines.join("\n") });
+        } else {
+          presenter.write(lines.join("\n"));
+        }
         return 0;
       }
 
@@ -417,10 +436,12 @@ export async function executeCli(
       const actualRest = routeResult.rest;
 
       if (flagsObj["schema"] && manifestCmd.manifest.operationType) {
-        process.stdout.write(
-          JSON.stringify(generateCommandSchema(manifestCmd.manifest), null, 2) +
-            "\n",
-        );
+        const schema = generateCommandSchema(manifestCmd.manifest);
+        if (global.json) {
+          presenter.json({ ok: true, schema });
+        } else {
+          process.stdout.write(JSON.stringify(schema, null, 2) + "\n");
+        }
         return 0;
       }
 

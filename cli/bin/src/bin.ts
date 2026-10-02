@@ -36,10 +36,8 @@ if (!process.env.LOG_LEVEL && !process.env.KB_LOG_LEVEL) {
   process.env.KB_LOG_LEVEL = resolveBootstrapLogLevel(rawCliArgs) ?? 'silent';
 }
 
-// CLI diagnostics belong on stderr. Command results and UI stay on stdout.
-if (!process.env.KB_LOG_STREAM) {
-  process.env.KB_LOG_STREAM = 'stderr';
-}
+// CLI diagnostics belong on stderr. Command results stay on stdout.
+process.env.KB_LOG_STREAM = 'stderr';
 
 // Check for --json flag BEFORE imports to ensure auto-init uses correct mode
 // This prevents ConsoleSink from being created when user wants JSON output

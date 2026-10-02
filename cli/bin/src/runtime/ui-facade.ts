@@ -8,6 +8,7 @@
 import { sideBorderBox, sideBorderChain, safeColors, safeSymbols, formatTable, logLine, confirm as promptConfirm, text as promptText, select as promptSelect, multiSelect as promptMultiSelect } from '@kb-labs/shared-cli-ui';
 import type { UIFacade, UILogEntry, MessageOptions, Spinner, SelectChoice, MultiSelectChoice, TableColumn, ChainItem } from '@kb-labs/plugin-contracts';
 import { AdapterUnavailableError, toErrorEnvelope } from '@kb-labs/core-platform';
+import { normalizeJsonResult } from '@kb-labs/cli-runtime';
 
 // Workspace root — used to shorten absolute paths in stack traces
 const WORKSPACE_ROOT = process.cwd();
@@ -44,13 +45,26 @@ interface PresenterDelegate {
 }
 
 export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
+  const jsonMode = () => process.env.KB_OUTPUT_MODE === 'json';
+  const writeOutput = (value: string) => {
+    const output = value.endsWith('\n') ? value : `${value}\n`;
+    if (jsonMode()) {
+      process.stderr.write(output);
+    } else {
+      process.stdout.write(output);
+    }
+  };
+  const writeResult = (value: unknown, pretty = false) => {
+    const envelope = normalizeJsonResult(value);
+    console.log(pretty ? JSON.stringify(envelope, null, 2) : JSON.stringify(envelope));
+  };
+
   return {
     colors: safeColors,
     symbols: safeSymbols,
 
     write: (text: string) => {
-      const output = text.endsWith('\n') ? text : text + '\n';
-      process.stdout.write(output);
+      writeOutput(text);
     },
 
     info: (msg: string, options?: MessageOptions) => {
@@ -62,7 +76,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
         timing: options?.timing,
         summary: options?.summary,
       });
-      console.log(boxOutput);
+      writeOutput(boxOutput);
     },
 
     success: (msg: string, options?: MessageOptions) => {
@@ -74,7 +88,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
         timing: options?.timing,
         summary: options?.summary,
       });
-      console.log(boxOutput);
+      writeOutput(boxOutput);
     },
 
     warn: (msg: string, options?: MessageOptions) => {
@@ -86,15 +100,15 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
         timing: options?.timing,
         summary: options?.summary,
       });
-      console.log(boxOutput);
+      writeOutput(boxOutput);
     },
 
     error: (err: Error | string, options?: MessageOptions) => {
       if (err instanceof AdapterUnavailableError && err.reason === 'not-configured') {
         const envelope = toErrorEnvelope(err);
         const command = envelope.actions?.[0]?.command;
-        if (process.env.KB_OUTPUT_MODE === 'json') {
-          console.log(JSON.stringify({ ok: false, error: envelope }));
+        if (jsonMode()) {
+          writeResult({ ok: false, error: envelope });
         } else {
           console.error(command
             ? `${envelope.message} Configure it with: ${command}`
@@ -104,6 +118,10 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
       }
 
       const message = err instanceof Error ? err.message : err;
+      if (jsonMode()) {
+        writeResult({ ok: false, error: toErrorEnvelope(err) });
+        return;
+      }
       const sections: Array<{ header?: string; items: Array<string | { text: string; dim?: boolean }> }> = [
         { items: [message] },
       ];
@@ -179,21 +197,19 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
         rows,
         { separator: '' },
       );
-      for (const line of lines) {
-        console.log(`  ${line}`);
-      }
+      for (const line of lines) { writeOutput(`  ${line}`); }
     },
 
     json: (data: unknown, options?: { pretty?: boolean }) => {
-      console.log(options?.pretty ? JSON.stringify(data, null, 2) : JSON.stringify(data));
+      writeResult(data, options?.pretty);
     },
 
     newline: () => {
-      console.log();
+      writeOutput('');
     },
 
     divider: () => {
-      console.log('─'.repeat(process.stdout.columns || 80));
+      writeOutput('─'.repeat(process.stdout.columns || 80));
     },
 
     box: (content: string, title?: string) => {
@@ -202,7 +218,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
         sections: [{ items: content.split('\n') }],
         status: 'info',
       });
-      console.log(boxOutput);
+      writeOutput(boxOutput);
     },
 
     sideBox: (options) => {
@@ -213,7 +229,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
         timing: options.timing,
         summary: options.summary,
       });
-      console.log(boxOutput);
+      writeOutput(boxOutput);
     },
 
     chain: (items: ChainItem[]) => {
@@ -226,7 +242,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
           timing: item.timing,
         })),
       );
-      console.log(chainOutput);
+      writeOutput(chainOutput);
     },
 
     confirm: async (message: string, options?) => {
@@ -246,7 +262,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
     },
 
     log: (entry: UILogEntry) => {
-      process.stdout.write(logLine(entry.level as 'info' | 'warn' | 'error' | 'debug', entry.message) + '\n');
+      writeOutput(logLine(entry.level as 'info' | 'warn' | 'error' | 'debug', entry.message));
     },
   };
 }
