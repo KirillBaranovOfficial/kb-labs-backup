@@ -132,9 +132,9 @@ func Install(kbcreateBin string, l env.Layout, manifest, registry string) error 
 	cmd.Stderr = logFile
 
 	if err := cmd.Run(); err != nil {
-		return diag.New("KB_INSTALL_FAILED", "platform install failed",
+		return diag.New("KB_INSTALL_OPERATION_FAILED", "platform install failed",
 			diag.WithReason(tailFile(logPath, 20)),
-			diag.WithHint("full log: "+logPath))
+		)
 	}
 	return nil
 }

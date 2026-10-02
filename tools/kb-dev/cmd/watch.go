@@ -73,8 +73,7 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 		case event := <-mgr.Events():
 			if jsonMode {
 				if event.Error != "" {
-					d := diag.FromError(diag.New("KB_SERVICE_UNAVAILABLE", "A watched service failed.",
-						diag.WithHint("Run `kb-dev status` to inspect the service.")))
+					d := diag.FromError(diag.New("KB_SERVICE_UNAVAILABLE", "A watched service failed."))
 					if err := events.Fail(d); err != nil {
 						return failStream(err)
 					}
@@ -159,8 +158,7 @@ func runFleetWatch(cmd *cobra.Command, stream *clikitstream.Writer) error {
 		if jsonMode {
 			value := fleetWatchEvent{Project: tagged.project, Event: tagged.event}
 			if tagged.event.Error != "" {
-				d := diag.FromError(diag.New("KB_SERVICE_UNAVAILABLE", "A watched service failed.",
-					diag.WithHint("Run `kb-dev status` to inspect the service.")))
+				d := diag.FromError(diag.New("KB_SERVICE_UNAVAILABLE", "A watched service failed."))
 				if err := stream.Fail(d); err != nil {
 					return failStream(err)
 				}

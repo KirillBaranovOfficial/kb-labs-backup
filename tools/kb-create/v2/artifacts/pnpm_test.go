@@ -145,7 +145,7 @@ func (run runnerFunc) Run(ctx context.Context, output io.Writer, name string, ar
 
 // Regression coverage for the mechanism, not just its absence from the pnpm
 // invocation: pnpm 11.4.0 mis-parses a comma-joined --allow-build value as a
-// single "name@version-union" spec (ERR_PNPM_INVALID_VERSION_UNION) the
+// single "name@version-union" spec (pnpm's invalid version-union error) the
 // moment the list mixes scoped packages with others
 // — confirmed directly against that pnpm version. The fix moves the
 // approval list into pnpm-workspace.yaml's `allowBuilds` map instead, which

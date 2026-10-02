@@ -54,7 +54,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 
 	flow, err := loadFlow()
 	if err != nil {
-		return diag.Wrap(err, codeConfigLoad, "failed to load deploy configuration",
+		return diag.Wrap(err, "KB_CONFIG_LOAD_FAILED", "failed to load deploy configuration",
 			diag.WithReason(err.Error()))
 	}
 	defer flow.CloseAll()
@@ -99,7 +99,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 	resolver := func(name string) (*remote.Host, error) {
 		h, ok := hosts[name]
 		if !ok {
-			return nil, diag.New(codeHostUndefined,
+			return nil, diag.New("KB_DEPLOY_HOST_UNDEFINED",
 				fmt.Sprintf("no SSH connection for host %q", name))
 		}
 		return h, nil
@@ -121,7 +121,7 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return res.Err
 	}
 	if err := writeLock(flow.Cfg, flow.CfgPath, flow.Plan, flow.Configs); err != nil {
-		return diag.Wrap(err, codeWriteLock, "apply succeeded but writing the lock failed",
+		return diag.Wrap(err, "KB_DEPLOY_LOCK_WRITE_FAILED", "apply succeeded but writing the lock failed",
 			diag.WithReason(err.Error()))
 	}
 	emit(cmd, result.Success("apply successful; lock updated", planData), mode)

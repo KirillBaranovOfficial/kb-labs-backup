@@ -116,15 +116,19 @@ func LookupCode(code string) (CodeInfo, bool) {
 // codePrefixAreas maps the KB_<PREFIX>_ segment of a code to its area.
 // KB_ADAPTER_* is a plugin-area family (see 08-errors.md section 5F).
 var codePrefixAreas = map[string]ErrorArea{
-	"INSTALL": AreaInstall,
-	"HOST":    AreaHost,
-	"AUTH":    AreaAuth,
-	"PROJECT": AreaProject,
-	"CONFIG":  AreaConfig,
-	"PLUGIN":  AreaPlugin,
-	"ADAPTER": AreaPlugin,
-	"UPDATE":  AreaUpdate,
-	"RUNTIME": AreaRuntime,
+	"INSTALL":     AreaInstall,
+	"HOST":        AreaHost,
+	"AUTH":        AreaAuth,
+	"PROJECT":     AreaProject,
+	"CONFIG":      AreaConfig,
+	"PLUGIN":      AreaPlugin,
+	"ADAPTER":     AreaPlugin,
+	"UPDATE":      AreaUpdate,
+	"RUNTIME":     AreaRuntime,
+	"DEPLOY":      AreaRuntime,
+	"SERVICE":     AreaRuntime,
+	"ENV":         AreaConfig,
+	"MARKETPLACE": AreaPlugin,
 }
 
 // AreaForCode derives the area from a code: KB_<AREA>_* for platform codes,
