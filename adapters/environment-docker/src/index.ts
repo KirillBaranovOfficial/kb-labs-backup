@@ -359,7 +359,7 @@ export class DockerEnvironmentAdapter implements IEnvironmentProvider {
 
     const { signAccessToken } = await import('@kb-labs/gateway-auth');
     const { token } = await signAccessToken(
-      { hostId: environmentId, namespaceId, type: 'machine' as const, tier: 'free' as const },
+      { hostId: environmentId, namespaceId, type: 'machine_access' as const, tier: 'free' as const },
       { secret: this.gateway.jwtSecret },
     );
 
