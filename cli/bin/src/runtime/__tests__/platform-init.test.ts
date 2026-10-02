@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { initializePlatform, hasExplicitDevelopmentMode } from '../platform-init';
 import { platform } from '@kb-labs/core-runtime';
-import { mkdir, realpath, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
@@ -182,6 +182,18 @@ describe('Platform Initialization (Real)', () => {
       } finally {
         if (originalPlatformRoot === undefined) delete process.env.KB_PLATFORM_ROOT;
         else process.env.KB_PLATFORM_ROOT = originalPlatformRoot;
+      }
+    });
+
+    it('preserves unknown-project errors for project-scoped startup', async () => {
+      const unregistered = await mkdtemp(join(tmpdir(), 'kb-unregistered-'));
+      try {
+        await expect(initializePlatform(unregistered, undefined, {
+          skipAdapterInitialization: true,
+          projectScope: 'required',
+        })).rejects.toMatchObject({ code: 'KB_PROJECT_UNKNOWN' });
+      } finally {
+        await rm(unregistered, { recursive: true, force: true });
       }
     });
 
