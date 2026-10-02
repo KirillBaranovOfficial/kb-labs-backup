@@ -40,7 +40,7 @@ import { resolveAuthContext } from './mcp/auth.js';
 import { toIdentity, actionForOperation, type Permits } from './mcp/authz.js';
 import { createToolRegistry, validateManifests } from './mcp/tool-builder.js';
 import { type PlatformResolver } from './mcp/tool-router.js';
-import { resolveVisibleTools, executeToolCall } from './mcp/request-handler.js';
+import { resolveVisibleTools, executeToolCall, invalidMcpToolArguments, mcpToolError, mcpToolSuccess, unexpectedMcpResult, validateToolArguments } from './mcp/request-handler.js';
 import { McpObservabilityCollector } from './observability/collector.js';
 import type { ToolBuildDiagnostic } from './mcp/tool-builder.js';
 import { isMcpCorsPreflight, mcpCorsPreflightResponse, mcpUnauthenticatedResponse, rejectsUnauthenticatedRequest, type McpAuthMode } from './mcp/auth-mode.js';
@@ -52,7 +52,7 @@ const DIAGNOSTICS_TOOL = {
   name: 'kb-labs__mcp_diagnostics',
   description:
     'List plugin commands that failed to load as MCP tools (malformed manifests), with the reason for each.',
-  inputSchema: { type: 'object' as const, properties: {} },
+  inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
 };
 
 function renderManifestDiagnostics(diagnostics: ToolBuildDiagnostic[]): string {
@@ -249,9 +249,16 @@ export class McpDaemonServer {
       mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
         if (params.name === DIAGNOSTICS_TOOL.name) {
           if (!permits) {
-            return { content: [{ type: 'text' as const, text: `Not authorized: ${params.name}` }], isError: true };
+            return mcpToolError('KB_AUTH_REQUIRED', { tool: params.name });
           }
-          return { content: [{ type: 'text' as const, text: renderManifestDiagnostics(this.collector.getManifestDiagnostics()) }], isError: false };
+          const validationError = validateToolArguments(
+            DIAGNOSTICS_TOOL.inputSchema,
+            (params.arguments ?? {}) as Record<string, unknown>,
+          );
+          if (validationError) {
+            return invalidMcpToolArguments(validationError);
+          }
+          return mcpToolSuccess(renderManifestDiagnostics(this.collector.getManifestDiagnostics()));
         }
         return executeToolCall({
           name: params.name,
@@ -262,6 +269,7 @@ export class McpDaemonServer {
           resolvePlatform: this.resolvePlatform,
           analytics: this.opts.platform.analytics,
           collector: this.collector,
+          logger: reqLogger,
         });
       });
 
@@ -272,9 +280,9 @@ export class McpDaemonServer {
         await mcp.connect(transport);
         await transport.handleRequest(request.raw, reply.raw, request.body);
       } catch (error) {
-        reqLogger.error('MCP request handling failed', error as Error);
+        const failure = unexpectedMcpResult(error, reqLogger);
         if (!reply.raw.headersSent) {
-          reply.code(500).send({ error: 'internal_error' });
+          reply.code(500).send(failure.structuredContent);
         }
       } finally {
         // Closing may reject if the transport is already torn down — swallow it
