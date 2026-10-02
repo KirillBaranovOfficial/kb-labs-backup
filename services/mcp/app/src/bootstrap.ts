@@ -35,6 +35,7 @@ export async function setupProjectMcp(ctx: ServiceContext): Promise<() => Promis
 export async function bootstrap(): Promise<void> {
   await runService({
     appId: "mcp-daemon",
+    projectScope: "required",
     defaultPort: 7779,
     portEnvVar: "KB_MCP_DAEMON_PORT",
     // 0.0.0.0 for Docker/dev compat, matching every other daemon in the

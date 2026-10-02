@@ -863,9 +863,6 @@ def main():
             "        with:\n          command: echo hello-workflow\n",
             encoding="utf-8",
         )
-        lint, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow lint --json'], env=env, cwd=PROJECT, timeout=120)
-        if lint.returncode != 0:
-            fail(f"workflow fixture lint: `kb workflow lint --json` exited {lint.returncode}; {' '.join(lint.stdout.split())[-500:]}")
         project_add, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add "$1" --json', "journey", str(PROJECT)],
                              env=env, cwd=PROJECT, timeout=90)
         try:
@@ -878,6 +875,9 @@ def main():
             fail("project registration did not return a project ID")
         service_env["KB_JOURNEY_PROJECT_ID"] = project_id
         service_env["KB_JOURNEY_PROJECT_ROOT"] = str(PROJECT)
+        lint, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow lint --json'], env=service_env, cwd=PROJECT, timeout=120)
+        if lint.returncode != 0:
+            fail(f"workflow fixture lint: `kb workflow lint --json` exited {lint.returncode}; {' '.join(lint.stdout.split())[-500:]}")
         auth_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-auth-{mode}.json")
         auth_journey = Journey(mode, f"auth-{mode}")
 

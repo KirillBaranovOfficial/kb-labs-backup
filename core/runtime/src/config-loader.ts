@@ -59,6 +59,7 @@ import {
 } from "@kb-labs/core-config";
 import { DiscoveryManager } from "@kb-labs/core-discovery";
 import { resolveRoots, type RootsResolution } from "@kb-labs/core-workspace";
+import { canonicalizeProjectPath, createProjectRegistry, ProjectRegistryError } from "@kb-labs/core-project-registry";
 import { AdapterProjectScopeError, PlatformConfigError } from "@kb-labs/core-platform";
 
 import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
@@ -429,6 +430,23 @@ export async function loadPlatformConfig(
     loadEnvFile: shouldLoadEnv = true,
     projectScope = 'required',
   } = options;
+
+  if (projectScope === 'required' && options.projectId) {
+    const registry = createProjectRegistry({ env });
+    const registered = await registry.get(options.projectId);
+    const requestedPath = await canonicalizeProjectPath(startDir);
+    if (registered.project.path !== requestedPath) {
+      throw new ProjectRegistryError(
+        'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH',
+        `Runtime project ${options.projectId} was started for "${requestedPath}" but the registry maps it to "${registered.project.path}".`,
+        {
+          projectId: options.projectId,
+          projectPath: requestedPath,
+          registeredPath: registered.project.path,
+        },
+      );
+    }
+  }
 
   let roots = await resolveRoots({
     moduleUrl,

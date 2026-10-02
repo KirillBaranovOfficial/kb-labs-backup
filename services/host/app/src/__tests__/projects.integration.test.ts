@@ -6,7 +6,8 @@
 
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
@@ -20,9 +21,11 @@ import {
   type TestProject,
 } from "./testkit.js";
 import type { HostOptions } from "../host.js";
+import { createChildProcessLauncher } from "../project-runtime/launcher.js";
+import type { RuntimeLauncher, RuntimeProject } from "../project-runtime/manager.js";
 
 interface ErrorBody {
-  error: { code: string; message: string; hint: string; details?: Record<string, string> };
+  error: { code: string; message: string; hint: string; cause?: string; details?: Record<string, string> };
 }
 
 interface HealthBody {
@@ -37,6 +40,11 @@ interface ReadyBody {
   ready: boolean;
   components: Record<string, { ready: boolean; status?: string }>;
 }
+
+const PROJECT_RUNTIME_ENTRY = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../../project-runtime/app/dist/bin.js",
+);
 
 describe("kb-host project routing", () => {
   let kbHome: string;
@@ -110,6 +118,85 @@ describe("kb-host project routing", () => {
     expect(fromAAgain.pid).toBe(fromA.pid);
     // The service path after the project id reaches the runtime unchanged.
     expect(fromA.path).toBe("/rest/whoami");
+  });
+
+  it("starts the registered project's real runtime and serves its REST health route", async () => {
+    const project = await registered();
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = kbHome;
+    try {
+      const probe = createChildProcessLauncher({
+        entry: PROJECT_RUNTIME_ENTRY,
+        stopTimeoutMs: 1500,
+      });
+      const launcher: RuntimeLauncher = {
+        launch: (runtimeProject) => createChildProcessLauncher({
+          entry: PROJECT_RUNTIME_ENTRY,
+          env: { KB_PLATFORM_ROOT: runtimeProject.root },
+          stopTimeoutMs: 1500,
+        }).launch(runtimeProject),
+        probe: probe.probe,
+      };
+      running = await startTestHost(
+        { host: {} },
+        {
+          projectRegistry: registry,
+          projectRuntime: {
+            launcher,
+            startTimeoutMs: 10_000,
+          },
+        },
+      );
+
+      const response = await running.fetchGateway(
+        `/api/v1/projects/${project.id}/rest/api/v1/health`,
+      );
+      const body = await response.json();
+      if (response.status !== 200) {
+        throw new Error(String((body as ErrorBody).error.message) + " | " +
+          String((body as ErrorBody).error.hint) + " | " +
+          String((body as ErrorBody).error.cause).slice(-900));
+      }
+      expect(body).toEqual(expect.any(Object));
+      const health = (await (await running.fetchGateway("/health")).json()) as HealthBody;
+      expect(health.projectRuntimes.runtimes).toContainEqual(
+        expect.objectContaining({ projectId: project.id, state: "ready" }),
+      );
+    } finally {
+      await running?.stop().catch(() => undefined);
+      running = undefined;
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
+  // case: S-124.12
+  it("returns the runtime's typed project identity mismatch without exposing a stack", async () => {
+    const project = await registered();
+    const launcher: RuntimeLauncher = {
+      async launch(_runtimeProject: RuntimeProject) {
+        return {
+          pid: undefined,
+          address: { host: "127.0.0.1", port: 1 },
+          token: "test-runtime-token",
+          exited: Promise.resolve({ code: 1, signal: null }),
+          stop: async () => undefined,
+          outputTail: () => "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH: registry path mismatch",
+        };
+      },
+      probe: async () => false,
+    };
+    const subject = await host({}, { launcher });
+
+    const response = await subject.fetchGateway(
+      `/api/v1/projects/${project.id}/rest/api/v1/health`,
+    );
+    expect(response.status).toBe(502);
+    const body = (await response.json()) as ErrorBody;
+    expect(body.error.code).toBe("KB_PROJECT_RUNTIME_IDENTITY_MISMATCH");
+    expect(body.error.hint).toContain("kb project list");
+    expect(JSON.stringify(body)).not.toContain("Error:");
+    expect(JSON.stringify(body)).not.toContain("at ");
   });
 
   it("forwards method, query and body, and sets the runtime headers itself", async () => {

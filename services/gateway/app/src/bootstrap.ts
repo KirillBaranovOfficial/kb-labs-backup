@@ -56,6 +56,7 @@ export async function bootstrap(
   requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET");
   await runService({
     appId: "gateway",
+    projectScope: "required",
     startDir: repoRoot,
     defaultPort: 4000,
     portEnvVar: "GATEWAY_PORT",

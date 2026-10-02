@@ -81,6 +81,7 @@ export class ProjectRoutingError extends Error {
 const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   KB_PROJECT_UNKNOWN: 404,
   KB_PROJECT_RUNTIME_LIMIT: 503,
+  KB_PROJECT_RUNTIME_IDENTITY_MISMATCH: 502,
   KB_PROJECT_RUNTIME_START_FAILED: 502,
 };
 

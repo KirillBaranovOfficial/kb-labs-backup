@@ -597,6 +597,15 @@
       "hint": "Read the reason in the log and include the correlationId if you report it."
     },
     {
+      "code": "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH",
+      "area": "project",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "The project runtime identity {projectId} does not match the registered project path.",
+      "hint": "Run `kb project list` to verify the registered path, then restart the host."
+    },
+    {
       "code": "KB_PROJECT_RUNTIME_LIMIT",
       "area": "project",
       "stage": "start",
