@@ -2,10 +2,10 @@ package host
 
 import (
 	"errors"
+	"github.com/kb-labs/clikit/diag"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -42,7 +42,7 @@ func TestStateHomeDefaultsToTheUserHome(t *testing.T) {
 }
 
 func operationCode(err error) string {
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		return typed.Code
 	}
@@ -59,10 +59,10 @@ func TestOperationLockAdmitsOneLauncherAtATime(t *testing.T) {
 	if operationCode(err) != contracts.CodeOperationInProgress {
 		t.Fatalf("second operation: %v", err)
 	}
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	errors.As(err, &typed)
-	if typed.Details["pid"] != strconv.Itoa(os.Getpid()) || problemsOf(typed) != "" {
-		t.Fatalf("error = %#v (%s)", typed, problemsOf(typed))
+	if typed.Meta["pid"] != strconv.Itoa(os.Getpid()) || typed.Hint == "" {
+		t.Fatalf("error = %#v (%s)", typed, typed.Hint)
 	}
 	release()
 	release() // releasing twice must not fail or remove another holder's lock
@@ -72,8 +72,6 @@ func TestOperationLockAdmitsOneLauncherAtATime(t *testing.T) {
 	}
 	again()
 }
-
-func problemsOf(err *contracts.LauncherError) string { return strings.Join(err.Validate(), "; ") }
 
 func TestOperationLockIsTakenOverWhenItsHolderIsGone(t *testing.T) {
 	state := State{Dir: t.TempDir()}

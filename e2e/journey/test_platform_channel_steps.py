@@ -32,45 +32,49 @@ class PlatformChannelStepsTest(unittest.TestCase):
     def fake_kb(self, args: list[str]) -> subprocess.CompletedProcess:
         self.commands.append(args)
         if args[1] == "plan":
-            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "plan": {
+            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"plan": {
                 "request": {"policy": "strict"}, "serviceGraph": {"platformVersion": "3.0.0"},
-                "artifacts": [{"kind": "sdk", "version": "3.0.0"}]}}), "")
+                "artifacts": [{"kind": "sdk", "version": "3.0.0"}]}}}), "")
         if args[1] in {"stop", "start", "uninstall"}:
-            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True}), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}), "")
         if args[1] == "apply":
             if self.fail_canary_preflight:
                 return subprocess.CompletedProcess(args, 2, json.dumps({"ok": False, "error": {
                     "code": "KB_INSTALL_MEMORY_INSUFFICIENT",
                     "message": "The platform install needs at least 1228.80 MiB of available memory; 1200.00 MiB is available.",
                     "hint": "Close memory-heavy applications or increase the machine memory, then run `kb-create install` again.",
-                    "details": {"minimum": "1228.80 MiB", "available": "1200.00 MiB"},
+                    "meta": {"minimum": "1228.80 MiB", "available": "1200.00 MiB"}, "correlationId": "c-memory",
                 }}), "")
             self.fresh_root.joinpath(".kb/v2").mkdir(parents=True, exist_ok=True)
             plan = {"platformChannel": "canary", "serviceGraph": {"platformVersion": "3.0.2-canary.1"},
                     "artifacts": [{"kind": "platform", "version": "3.0.2-canary.1", "sha256": "platform"},
                                   {"kind": "sdk", "version": "3.0.2-canary.1", "sha256": "sdk"}]}
             self.fresh_root.joinpath(".kb/v2/receipt.json").write_text(json.dumps({"plan": plan}))
-            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "receipt": {"plan": plan}}), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"receipt": {"plan": plan}}}), "")
         if args[1] == "update" and str(self.root / "canary-index.json") in args:
             self._write_receipt("3.0.2-canary.1", "canary")
-            output = {"ok": True, "hostRestarted": True, "receipt": {"plan": {
-                "platformChannel": "canary", "serviceGraph": {"platformVersion": "3.0.2-canary.1"}}}}
+            if "--json" not in args:
+                return subprocess.CompletedProcess(args, 0, "Platform update completed.\n", "")
+            output = {"ok": True, "data": {"hostRestarted": True, "receipt": {"plan": {
+                "platformChannel": "canary", "serviceGraph": {"platformVersion": "3.0.2-canary.1"}}}}}
             return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
         if args[1] == "update":
             output = {"ok": False, "error": {"code": "KB_UPDATE_DOWNGRADE_REFUSED",
                                                "hint": "use `kb-create rollback`",
-                                               "details": {"installedVersion": "3.0.2-canary.1", "targetVersion": "3.0.0"}}}
+                                               "meta": {"installedVersion": "3.0.2-canary.1", "targetVersion": "3.0.0"}, "correlationId": "c-down"}}
             return subprocess.CompletedProcess(args, 2, json.dumps(output), "")
         if args[1] in {"status", "doctor"} and "--json" in args:
-            output = {"ok": True, "platformChannel": "canary", "platformVersion": "3.0.2-canary.1"}
+            output = {"ok": True, "data": {"platformChannel": "canary", "platformVersion": "3.0.2-canary.1"}}
             if args[1] == "status":
-                output["installation"] = {"platformChannel": "canary", "platformVersion": "3.0.2-canary.1"}
+                output["data"]["installation"] = {"platformChannel": "canary", "platformVersion": "3.0.2-canary.1"}
             return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
         if args[1] in {"status", "doctor"}:
             return subprocess.CompletedProcess(args, 0, "Platform channel: canary\nPlatform version: 3.0.2-canary.1\n", "")
         if args[1] == "rollback":
             self._write_receipt("3.0.0", "stable")
-            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "hostRestarted": True}), "")
+            if "--json" not in args:
+                return subprocess.CompletedProcess(args, 0, "Platform rollback completed.\n", "")
+            return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"hostRestarted": True}}), "")
         return subprocess.CompletedProcess(args, 2, "unexpected fake command", "")
 
     def test_canary_update_status_downgrade_refusal_and_rollback_claim_steps(self):
@@ -83,13 +87,17 @@ class PlatformChannelStepsTest(unittest.TestCase):
         ).result()
         self.assertEqual(result.status, "PASS")
         self.assertEqual({claim["claimId"] for claim in result.case_run["claims"]},
-                         {f"S-052.{step}" for step in range(1, 6)} | {"S-053.1"})
+                         {f"S-052.{step}" for step in range(1, 6)} | {"S-053.1", "S-203.10"})
         self.assertEqual([command[1] for command in self.commands], [
             "plan", "stop", "apply", "status", "doctor", "status", "doctor", "uninstall", "start",
-            "update", "status", "doctor", "status", "doctor", "update", "rollback",
+            "update", "update", "status", "doctor", "status", "doctor", "update", "rollback", "rollback",
         ])
         self.assertIn("--platform-channel", self.commands[2])
         self.assertIn("--yes", self.commands[-1])
+        self.assertNotIn("--json", self.commands[9])
+        self.assertIn("--json", self.commands[10])
+        self.assertNotIn("--json", self.commands[-2])
+        self.assertIn("--json", self.commands[-1])
 
     def test_insufficient_canary_preflight_blocks_dependent_claims_with_resource_reason(self):
         self.fail_canary_preflight = True

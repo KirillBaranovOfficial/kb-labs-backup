@@ -3,6 +3,7 @@ package journey_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/kb-labs/clikit/diag"
 	"strings"
 	"testing"
 
@@ -89,7 +90,7 @@ func installIndex(data []byte, launcher string) error {
 
 func requireCode(t *testing.T, err error, code string) {
 	t.Helper()
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if !errors.As(err, &typed) {
 		t.Fatalf("expected typed launcher error %s, got %v", code, err)
 	}

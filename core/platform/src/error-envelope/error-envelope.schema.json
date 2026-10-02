@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://kblabs.ru/schemas/error-envelope.schema.json",
   "title": "KB Labs error envelope",
-  "description": "One error contract shared by the Go launcher (LauncherError), the TS platform and Studio. See docs/architecture/target/08-errors.md section 2.",
+  "description": "One error contract shared by Go CLIs through clikit, the TS platform and Studio. See docs/architecture/target/08-errors.md section 2.",
   "type": "object",
   "additionalProperties": false,
   "required": ["code", "area", "stage", "severity", "retryable", "message", "hint"],

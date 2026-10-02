@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"strconv"
 	"strings"
 
@@ -25,10 +26,10 @@ func CheckSchema(schema string) error {
 			return nil
 		}
 	}
-	err := contracts.NewLauncherError(contracts.CodeIndexSchemaUnsupported,
+	err := contracts.NewDiag(contracts.CodeIndexSchemaUnsupported,
 		fmt.Sprintf("The release index uses schema %q, which this launcher does not support (supported: %s).", schema, strings.Join(SupportedSchemas, ", ")),
 		"Update the launcher (kb-create update, or download the current launcher) and retry.", nil)
-	err.Details = map[string]string{"schema": schema, "supported": strings.Join(SupportedSchemas, ",")}
+	err.Meta = map[string]any{"schema": schema, "supported": strings.Join(SupportedSchemas, ",")}
 	return err
 }
 
@@ -47,11 +48,11 @@ func peekSchema(data []byte) (string, error) {
 // wrapIndexError keeps a typed launcher error intact so its code reaches the
 // user; any other failure becomes a generic invalid-index error.
 func wrapIndexError(prefix string, err error) error {
-	var typed *contracts.LauncherError
+	var typed *diag.Diag
 	if errors.As(err, &typed) {
 		return typed
 	}
-	return contracts.NewLauncherError(contracts.CodeReleaseIndexInvalid, "The release index is corrupted or invalid.", indexInvalidHint, fmt.Errorf("%s: %w", prefix, err))
+	return contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index is corrupted or invalid.", indexInvalidHint, fmt.Errorf("%s: %w", prefix, err))
 }
 
 // CheckLauncher enforces the platform's optional minLauncherVersion. An empty
@@ -63,17 +64,17 @@ func CheckLauncher(platform PlatformBundle, launcherVersion string) error {
 	}
 	minimum, ok := parseSemver(platform.MinLauncherVersion)
 	if !ok {
-		return contracts.NewLauncherError(contracts.CodeReleaseIndexInvalid,
+		return contracts.NewDiag(contracts.CodeReleaseIndexInvalid,
 			fmt.Sprintf("Platform %s declares an invalid minLauncherVersion %q.", platform.Version, platform.MinLauncherVersion), indexInvalidHint, nil)
 	}
 	current, ok := parseSemver(launcherVersion)
 	if !ok || compareSemver(current, minimum) >= 0 {
 		return nil
 	}
-	err := contracts.NewLauncherError(contracts.CodeLauncherTooOld,
+	err := contracts.NewDiag(contracts.CodeLauncherTooOld,
 		fmt.Sprintf("Platform %s requires launcher %s or newer, but this is %s.", platform.Version, platform.MinLauncherVersion, launcherVersion),
 		"Run kb-create update, or download the current launcher, then retry.", nil)
-	err.Details = map[string]string{"platform": platform.Version, "minLauncherVersion": platform.MinLauncherVersion, "launcher": launcherVersion}
+	err.Meta = map[string]any{"platform": platform.Version, "minLauncherVersion": platform.MinLauncherVersion, "launcher": launcherVersion}
 	return err
 }
 

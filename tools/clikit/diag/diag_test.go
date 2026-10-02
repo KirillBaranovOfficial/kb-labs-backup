@@ -2,6 +2,7 @@ package diag
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -13,6 +14,42 @@ func TestNewUsesCatalogHint(t *testing.T) {
 	entry, ok := LookupCatalog(d.Code)
 	if !ok || d.Hint != entry.Hint {
 		t.Fatalf("diagnostic = %+v, want the platform catalog hint", d)
+	}
+}
+
+func TestWithHintSurvivesBoundaryNormalization(t *testing.T) {
+	const want = "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request."
+	d := FromErrorWithLogger(New("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", WithHint(want)), slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)))
+	if d.Hint != want {
+		t.Fatalf("normalized hint = %q, want the specific next step %q", d.Hint, want)
+	}
+}
+
+func TestDiagnosticJSONUsesCanonicalEnvelopeAndAcceptsNoPrivateShape(t *testing.T) {
+	const hint = "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request."
+	original := New("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", WithHint(hint), WithCause("safe detail"), WithCorrelationID("corr-test"))
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"code", "area", "stage", "severity", "retryable", "message", "hint", "cause", "correlationId"} {
+		if _, exists := fields[field]; !exists {
+			t.Errorf("canonical field %q missing from %s", field, data)
+		}
+	}
+	var decoded Diag
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("canonical envelope did not decode: %v", err)
+	}
+	if decoded.Hint != hint || decoded.Cause != "safe detail" || decoded.CorrelationID != "corr-test" {
+		t.Fatalf("decoded diagnostic = %+v", decoded)
+	}
+	if err := json.Unmarshal([]byte(`{"code":"KB_RUNTIME_INPUT_INVALID","message":"old private shape","reason":"old","meta":{}}`), &decoded); err == nil {
+		t.Fatal("private diagnostic JSON shape was accepted")
 	}
 }
 

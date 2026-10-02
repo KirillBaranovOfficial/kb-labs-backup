@@ -291,7 +291,7 @@ func Verify(source Catalog) error {
 		return err
 	}
 	if !strings.EqualFold(expected, actual) {
-		return contracts.NewLauncherError(contracts.CodeReleaseIndexInvalid, "The release index digest does not match its content.", indexInvalidHint, nil)
+		return contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index digest does not match its content.", indexInvalidHint, nil)
 	}
 	return nil
 }

@@ -6,9 +6,9 @@
 package control
 
 import (
+	"github.com/kb-labs/clikit/diag"
 	"time"
 
-	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 )
 
@@ -81,6 +81,6 @@ type UpdateRequestResponse struct {
 
 // ErrorResponse wraps the unified error envelope.
 type ErrorResponse struct {
-	OK    bool                     `json:"ok"`
-	Error *contracts.LauncherError `json:"error"`
+	OK    bool       `json:"ok"`
+	Error *diag.Diag `json:"error"`
 }

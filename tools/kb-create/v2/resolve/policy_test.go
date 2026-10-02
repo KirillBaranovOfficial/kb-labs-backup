@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"github.com/kb-labs/clikit/diag"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
@@ -27,7 +28,7 @@ func TestStrictRequiresExactMatrixRelationAndCompatibleUsesMatrixRange(t *testin
 	request := contracts.InstallRequest{PlatformRoot: "/tmp/kb-policy", Platform: contracts.VersionSelector{Version: "3.2.0"}, SDK: contracts.VersionSelector{Version: "3.2.0"}, Policy: contracts.PolicyStrict}
 	if _, err := Plan(request, policyCatalog()); err == nil {
 		t.Fatal("strict policy accepted an SDK without an exact matrix relation")
-	} else if launcherErr, ok := err.(*contracts.LauncherError); !ok || launcherErr.Code != contracts.CodeIncompatibleComponents || launcherErr.Details["component"] != "SDK" || launcherErr.Details["version"] != "3.2.0" || launcherErr.Details["range"] != ">=3.0.0 <4.0.0" || launcherErr.Hint != "Use an exact platform/SDK pair from the release matrix or choose --policy compatible." {
+	} else if launcherErr, ok := err.(*diag.Diag); !ok || launcherErr.Code != contracts.CodeIncompatibleComponents || launcherErr.Meta["component"] != "SDK" || launcherErr.Meta["version"] != "3.2.0" || launcherErr.Meta["range"] != ">=3.0.0 <4.0.0" || launcherErr.Hint != "Use an exact platform/SDK pair from the release matrix or choose --policy compatible." {
 		t.Fatalf("strict matrix error = %#v", err)
 	}
 	request.Policy = contracts.PolicyCompatible
@@ -54,12 +55,12 @@ func TestCompatiblePolicyUsesPrereleaseAwareComparatorRanges(t *testing.T) {
 
 func TestIncompatibleComponentErrorExposesRangeAndRemediationHint(t *testing.T) {
 	err := compatible("=3.2.0", "3.3.0", "adapter fixture-adapter platform")
-	launcherErr, ok := err.(*contracts.LauncherError)
+	launcherErr, ok := err.(*diag.Diag)
 	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents {
 		t.Fatalf("component error = %#v", err)
 	}
-	if launcherErr.Details["component"] != "adapter fixture-adapter platform" || launcherErr.Details["range"] != "=3.2.0" || launcherErr.Details["version"] != "3.3.0" {
-		t.Fatalf("component error details = %#v", launcherErr.Details)
+	if launcherErr.Meta["component"] != "adapter fixture-adapter platform" || launcherErr.Meta["range"] != "=3.2.0" || launcherErr.Meta["version"] != "3.3.0" {
+		t.Fatalf("component error details = %#v", launcherErr.Meta)
 	}
 	if launcherErr.Hint != "Choose compatible versions or pass an explicit supported provider." {
 		t.Fatalf("component error hint = %q", launcherErr.Hint)
@@ -73,13 +74,13 @@ func TestUpdateValidationRefusesDowngradeAndNamesInstalledPluginRange(t *testing
 	}}
 	target := contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{PlatformVersion: "3.1.0"}}
 	err := ValidateUpdate(active, target, policyCatalog())
-	if launcherErr, ok := err.(*contracts.LauncherError); !ok || launcherErr.Code != "KB_UPDATE_DOWNGRADE_REFUSED" || launcherErr.Hint != "use `kb-create rollback`" {
+	if launcherErr, ok := err.(*diag.Diag); !ok || launcherErr.Code != "KB_UPDATE_DOWNGRADE_REFUSED" || launcherErr.Hint != "use `kb-create rollback`" {
 		t.Fatalf("downgrade error = %#v", err)
 	}
 	target.ServiceGraph.PlatformVersion = "3.3.0"
 	err = ValidateUpdate(active, target, policyCatalog())
-	launcherErr, ok := err.(*contracts.LauncherError)
-	if !ok || launcherErr.Code != "KB_UPDATE_INCOMPATIBLE" || launcherErr.Details["component"] != "fixture-compat" || launcherErr.Details["range"] != "=3.2.0" {
+	launcherErr, ok := err.(*diag.Diag)
+	if !ok || launcherErr.Code != "KB_UPDATE_INCOMPATIBLE" || launcherErr.Meta["component"] != "fixture-compat" || launcherErr.Meta["range"] != "=3.2.0" {
 		t.Fatalf("component compatibility error = %#v", err)
 	}
 	if launcherErr.Hint != "Update or remove plugin fixture-compat first, then rerun `kb-create update`." {

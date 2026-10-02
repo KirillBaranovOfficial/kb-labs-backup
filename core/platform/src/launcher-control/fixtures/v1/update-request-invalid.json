@@ -13,7 +13,8 @@
         "retryable": false,
         "message": "The update request is not valid.",
         "cause": "$string",
-        "hint": "Send exactly one of an exact version or a channel (stable, canary, experimental)."
+        "hint": "Send exactly one of an exact version or a channel (stable, canary, experimental).",
+        "correlationId": "$string"
       }
     }
   }

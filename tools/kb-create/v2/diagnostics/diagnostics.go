@@ -5,6 +5,7 @@ package diagnostics
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/kb-labs/clikit/diag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,20 +14,20 @@ import (
 )
 
 type Dossier struct {
-	CorrelationID       string                   `json:"correlationId"`
-	Error               *contracts.LauncherError `json:"error"`
-	PlanHash            string                   `json:"planHash"`
-	ReleaseDigest       string                   `json:"releaseDigest,omitempty"`
-	ScenarioStateDigest string                   `json:"scenarioStateDigest,omitempty"`
-	ReceiptID           string                   `json:"receiptId,omitempty"`
-	SnapshotID          string                   `json:"snapshotId,omitempty"`
-	Stage               contracts.ErrorStage     `json:"stage"`
-	Toolchain           map[string]string        `json:"toolchain,omitempty"`
-	ConfigHashes        map[string]string        `json:"configHashes,omitempty"`
-	ServiceGraph        []string                 `json:"serviceGraph,omitempty"`
-	Journal             []string                 `json:"journal,omitempty"`
-	Logs                []string                 `json:"logs,omitempty"`
-	LogPath             string                   `json:"logPath,omitempty"`
+	CorrelationID       string               `json:"correlationId"`
+	Error               *diag.Diag           `json:"error"`
+	PlanHash            string               `json:"planHash"`
+	ReleaseDigest       string               `json:"releaseDigest,omitempty"`
+	ScenarioStateDigest string               `json:"scenarioStateDigest,omitempty"`
+	ReceiptID           string               `json:"receiptId,omitempty"`
+	SnapshotID          string               `json:"snapshotId,omitempty"`
+	Stage               contracts.ErrorStage `json:"stage"`
+	Toolchain           map[string]string    `json:"toolchain,omitempty"`
+	ConfigHashes        map[string]string    `json:"configHashes,omitempty"`
+	ServiceGraph        []string             `json:"serviceGraph,omitempty"`
+	Journal             []string             `json:"journal,omitempty"`
+	Logs                []string             `json:"logs,omitempty"`
+	LogPath             string               `json:"logPath,omitempty"`
 }
 
 func Redact(value string, secrets []string) string {
@@ -43,9 +44,11 @@ func Write(platformRoot string, dossier Dossier, secrets []string) (string, erro
 		return "", fmt.Errorf("diagnostic correlation ID is required")
 	}
 	if dossier.Error != nil {
-		dossier.Error.Cause = Redact(dossier.Error.Cause, secrets)
-		for key, value := range dossier.Error.Details {
-			dossier.Error.Details[key] = Redact(value, secrets)
+		dossier.Error.Reason = Redact(dossier.Error.Reason, secrets)
+		for key, value := range dossier.Error.Meta {
+			if text, ok := value.(string); ok {
+				dossier.Error.Meta[key] = Redact(text, secrets)
+			}
 		}
 	}
 	for i := range dossier.Journal {

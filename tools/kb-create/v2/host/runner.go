@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"github.com/kb-labs/clikit/diag"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -47,7 +48,7 @@ type Status struct {
 }
 
 // Runner starts, stops and inspects the platform host. Errors are
-// *contracts.LauncherError with KB_HOST_* codes.
+// *diag.Diag with KB_HOST_* codes.
 type Runner interface {
 	Name() string
 	Start(ctx context.Context) (Info, error)
@@ -93,13 +94,16 @@ func (p Prober) Probe(ctx context.Context, declared contracts.HostSpec) error {
 	return err
 }
 
-func specInvalid(cause error) *contracts.LauncherError {
-	return contracts.NewLauncherError(contracts.CodeHostSpecInvalid, "The host specification in the installation receipt is invalid: "+cause.Error()+".", "Reinstall the platform with \"kb-create apply\".", cause)
+func specInvalid(cause error) *diag.Diag {
+	return contracts.NewDiag(contracts.CodeHostSpecInvalid, "The host specification in the installation receipt is invalid: "+cause.Error()+".", "Reinstall the platform with \"kb-create apply\".", cause)
 }
 
-func hostError(code, message, hint string, cause error, details map[string]string) *contracts.LauncherError {
-	e := contracts.NewLauncherError(code, message, hint, cause)
-	e.Details = details
+func hostError(code, message, hint string, cause error, details map[string]string) *diag.Diag {
+	e := contracts.NewDiag(code, message, hint, cause)
+	e.Meta = make(map[string]any, len(details))
+	for key, value := range details {
+		e.Meta[key] = value
+	}
 	return e
 }
 

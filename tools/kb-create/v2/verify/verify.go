@@ -23,10 +23,10 @@ func Run(plan contracts.ResolvedInstallPlan, now time.Time) (contracts.Verificat
 		return contracts.Verification{}, fmt.Errorf("read runtime config: %w", err)
 	}
 	if plan.Host == nil {
-		return contracts.Verification{}, contracts.NewLauncherError(contracts.CodeHostSpecInvalid, "The resolved plan declares no host.", "Reinstall the platform with \"kb-create apply\".", nil)
+		return contracts.Verification{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "The resolved plan declares no host.", "Reinstall the platform with \"kb-create apply\".", nil)
 	}
 	if err := plan.Host.Validate(); err != nil {
-		return contracts.Verification{}, contracts.NewLauncherError(contracts.CodeHostSpecInvalid, "The host specification is invalid: "+err.Error()+".", "Reinstall the platform with \"kb-create apply\".", err)
+		return contracts.Verification{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "The host specification is invalid: "+err.Error()+".", "Reinstall the platform with \"kb-create apply\".", err)
 	}
 	return contracts.Verification{ConfigSHA256: digest(config), HostHealthURL: plan.Host.HealthURL, ReadinessCheckedAt: now.UTC()}, nil
 }
