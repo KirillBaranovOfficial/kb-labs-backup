@@ -1,3 +1,5 @@
+import { toPluginErrorEnvelope } from '@kb-labs/plugin-contracts';
+
 interface ErrorContext {
   ui?: {
     json?: (data: unknown) => void;
@@ -40,25 +42,17 @@ export function handleError(ctx: ErrorContext, err: unknown, isJson?: boolean): 
     }
     return;
   }
-  const message = err instanceof Error ? err.message : String(err);
-  const typed = err !== null && typeof err === 'object' && 'code' in err
-    && typeof err.code === 'string'
-    ? {
-        code: err.code,
-        hint: 'hint' in err && typeof err.hint === 'string' ? err.hint : undefined,
-      }
-    : undefined;
+  const typedEnvelope = toPluginErrorEnvelope(err);
   if (isJson) {
-    ctx.ui?.json?.({
-      ok: false,
-      error: {
-        code: typed?.code ?? 'INTERNAL_ERROR',
-        message,
-        ...(typed?.hint ? { hint: typed.hint } : {}),
-      },
-    });
+    ctx.ui?.json?.({ ok: false, error: typedEnvelope });
   } else {
-    ctx.ui?.error?.(message, typed?.hint ? { hint: typed.hint } : undefined);
+    const permission = typeof typedEnvelope.details?.permission === 'string'
+      ? typedEnvelope.details.permission
+      : undefined;
+    ctx.ui?.error?.(
+      `${typedEnvelope.code}: ${typedEnvelope.message}${permission ? ` (permission: ${permission})` : ''}`,
+      { hint: typedEnvelope.hint },
+    );
   }
 }
 
