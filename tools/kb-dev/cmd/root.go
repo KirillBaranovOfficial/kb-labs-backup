@@ -2,11 +2,11 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/dev/internal/config"
@@ -72,25 +72,21 @@ Examples:
 }
 
 // Execute is the main entry point called from main.go. Any error bubbling up to
-// the root is rendered as a structured diagnostic (message+reason+hint for
-// humans; {ok:false,error:{…}} for machines) and the process exits with the
-// diagnostic's exit code. Bare errors are wrapped as ERR_UNKNOWN.
+// the root is normalized and rendered once through clikit.
 //
-// Commands that already emitted their own envelope return the errSilent
+// Commands that already emitted command-specific output return the errSilent
 // sentinel (empty message); Execute then exits without re-rendering.
 func Execute() {
+	clikitcommand.InstallInputBoundary(rootCmd)
 	_, err := rootCmd.ExecuteC()
 	if err == nil {
 		return
 	}
 	if err.Error() == "" {
-		// errSilent: the command already printed its own output.
+		// errSilent: retain the handler's failure exit without duplicate output.
 		os.Exit(1)
 	}
-	var d *diag.Diag
-	if !errors.As(err, &d) {
-		d = diag.Wrap(err, "ERR_UNKNOWN", err.Error())
-	}
+	d := diag.FromError(err)
 	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
 	os.Exit(code)
 }

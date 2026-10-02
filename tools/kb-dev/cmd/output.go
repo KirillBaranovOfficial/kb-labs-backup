@@ -1,12 +1,12 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/kb-labs/clikit/result"
 )
 
 // output provides unified CLI formatting with lipgloss.
@@ -115,9 +115,8 @@ func Pad(s string, width int) string {
 
 // JSONOut writes a value as JSON to stdout and returns any marshaling error.
 func JSONOut(v any) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
+	result.Render(os.Stdout, result.Success("", v), result.ModeJSON)
+	return nil
 }
 
 func color(enabled bool, ansi string) lipgloss.TerminalColor {

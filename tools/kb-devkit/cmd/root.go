@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/result"
 )
@@ -71,9 +72,10 @@ Examples:
 // Execute is the main entry point called from main.go. Errors bubbling up to
 // the root are rendered as structured diagnostics (message+reason+hint for
 // humans; {ok:false,error:{…}} for machines) and the process exits with the
-// diagnostic's exit code. Bare errors are wrapped as ERR_UNKNOWN; the errSilent
-// sentinel (empty message) means the command already printed its own output.
+// diagnostic's shared exit code. The errSilent sentinel means a command
+// already wrote command-specific output and prevents duplicate rendering.
 func Execute() {
+	clikitcommand.InstallInputBoundary(rootCmd)
 	_, err := rootCmd.ExecuteC()
 	if err == nil {
 		return
@@ -81,10 +83,7 @@ func Execute() {
 	if err.Error() == "" {
 		os.Exit(1)
 	}
-	var d *diag.Diag
-	if !errors.As(err, &d) {
-		d = diag.Wrap(err, "ERR_UNKNOWN", err.Error())
-	}
+	d := diag.FromError(err)
 	code := result.RenderDiag(os.Stdout, os.Stderr, d, outputMode())
 	os.Exit(code)
 }

@@ -8,10 +8,22 @@
 // any error path unchanged; the top-level handler renders it per output mode.
 package diag
 
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"runtime/debug"
+	"strings"
+	"time"
+)
+
 // Diag is a structured diagnostic. The zero value is not useful — construct
 // with New or Wrap.
 type Diag struct {
-	// Code is a stable, ERR_-prefixed identifier (e.g. "ERR_MANIFEST_MISSING").
+	// Code is a stable KB_* platform error identifier.
 	Code string `json:"code"`
 	// Message is the human-readable WHAT (one line, no trailing punctuation).
 	Message string `json:"message"`
@@ -21,7 +33,8 @@ type Diag struct {
 	// for Code when not set explicitly.
 	Hint string `json:"hint,omitempty"`
 	// Meta carries structured context (paths, hosts, per-action failures, …).
-	Meta map[string]any `json:"meta,omitempty"`
+	Meta          map[string]any `json:"meta,omitempty"`
+	CorrelationID string         `json:"correlationId,omitempty"`
 
 	// cause is the wrapped error; surfaced via Unwrap, never serialized.
 	cause error
@@ -64,6 +77,9 @@ func WithMeta(meta map[string]any) Opt {
 	}
 }
 
+// WithCorrelationID attaches the ID that joins a safe result to its log entry.
+func WithCorrelationID(id string) Opt { return func(d *Diag) { d.CorrelationID = id } }
+
 // New builds a Diag. If no explicit hint is given, the registered hint for
 // code (if any) is used.
 func New(code, message string, opts ...Opt) *Diag {
@@ -74,7 +90,18 @@ func New(code, message string, opts ...Opt) *Diag {
 	if d.Hint == "" {
 		d.Hint = HintFor(code)
 	}
+	if d.Hint == "" {
+		d.Hint = "Run the command with --help for the expected input."
+	}
 	return d
+}
+
+// PlatformCode returns a code safe for the shared machine error contract.
+func PlatformCode(code string) string {
+	if strings.HasPrefix(code, "KB_") {
+		return code
+	}
+	return "KB_RUNTIME_UNEXPECTED"
 }
 
 // Wrap builds a Diag wrapping an underlying error (preserved for Unwrap).
@@ -82,4 +109,41 @@ func Wrap(err error, code, message string, opts ...Opt) *Diag {
 	d := New(code, message, opts...)
 	d.cause = err
 	return d
+}
+
+// FromError converts an untyped failure at a CLI boundary into a safe
+// platform error and writes its stack only to the structured log.
+func FromError(err error) *Diag {
+	return FromErrorWithLogger(err, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+}
+
+// FromErrorWithLogger normalizes an untyped boundary failure and sends its
+// raw error and stack to the supplied structured logger only.
+func FromErrorWithLogger(err error, logger *slog.Logger) *Diag {
+	var typed *Diag
+	if errors.As(err, &typed) && typed != nil {
+		if PlatformCode(typed.Code) != typed.Code || (typed.Code == "KB_RUNTIME_UNEXPECTED" && typed.CorrelationID == "") {
+			correlationID := newCorrelationID()
+			logger.Error("CLI command failed unexpectedly",
+				"correlationId", correlationID, "error", typed.Error(), "stack", string(debug.Stack()))
+			return New("KB_RUNTIME_UNEXPECTED", "The operation failed.",
+				WithHint("Re-run with --debug and include the correlationId in a report."),
+				WithCorrelationID(correlationID))
+		}
+		return typed
+	}
+	correlationID := newCorrelationID()
+	logger.Error("CLI command failed unexpectedly",
+		"correlationId", correlationID, "error", err.Error(), "stack", string(debug.Stack()))
+	return New("KB_RUNTIME_UNEXPECTED", "The operation failed.",
+		WithHint("Re-run with --debug and include the correlationId in a report."),
+		WithCorrelationID(correlationID))
+}
+
+func newCorrelationID() string {
+	var rawID [16]byte
+	if _, err := rand.Read(rawID[:]); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(rawID[:])
 }

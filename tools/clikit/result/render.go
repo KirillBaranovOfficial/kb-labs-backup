@@ -8,20 +8,16 @@ import (
 	"github.com/kb-labs/clikit/diag"
 )
 
-// Render writes a successful/warning CommandOutput to w in the given mode.
+// Render writes a successful CommandOutput to w in the given mode.
 //
 //   - ModeHuman: the pre-rendered Human string.
-//   - ModeJSON:  the full JSON payload (plus warnings, if any).
+//   - ModeJSON:  the shared {ok,data} machine envelope.
 //   - ModeAgent: the compact Agent payload, falling back to JSON.
 func Render(w io.Writer, out CommandOutput, mode Mode) {
 	switch mode {
 	case ModeJSON:
 		writeJSON(w, jsonEnvelope(out))
 	case ModeAgent:
-		if out.Agent != nil {
-			writeJSON(w, out.Agent)
-			return
-		}
 		writeJSON(w, jsonEnvelope(out))
 	default:
 		fmt.Fprintln(w, out.Human)
@@ -34,17 +30,9 @@ func Render(w io.Writer, out CommandOutput, mode Mode) {
 func RenderDiag(w io.Writer, hw io.Writer, d *diag.Diag, mode Mode) int {
 	switch mode {
 	case ModeJSON:
-		writeJSON(w, map[string]any{
-			"ok":     false,
-			"status": string(StatusError),
-			"error":  diagPayload(d, true),
-		})
+		writeJSON(w, map[string]any{"ok": false, "error": errorEnvelope(d)})
 	case ModeAgent:
-		writeJSON(w, map[string]any{
-			"ok":     false,
-			"status": string(StatusError),
-			"error":  diagPayload(d, false),
-		})
+		writeJSON(w, map[string]any{"ok": false, "error": errorEnvelope(d)})
 	default:
 		writeHumanDiag(hw, d)
 	}
@@ -54,40 +42,48 @@ func RenderDiag(w io.Writer, hw io.Writer, d *diag.Diag, mode Mode) int {
 // jsonEnvelope is the machine shape for a CommandOutput.
 func jsonEnvelope(out CommandOutput) map[string]any {
 	env := map[string]any{
-		"ok":     out.Ok,
-		"status": string(out.Status),
-	}
-	if out.JSON != nil {
-		env["data"] = out.JSON
+		"ok":   out.Ok,
+		"data": out.JSON,
 	}
 	if len(out.Warnings) > 0 {
-		ws := make([]map[string]any, 0, len(out.Warnings))
-		for _, w := range out.Warnings {
-			ws = append(ws, diagPayload(w, true))
+		warnings := make([]map[string]any, 0, len(out.Warnings))
+		for _, warning := range out.Warnings {
+			if warning != nil {
+				warnings = append(warnings, errorEnvelope(warning))
+			}
 		}
-		env["warnings"] = ws
+		if len(warnings) > 0 {
+			env["meta"] = map[string]any{"warnings": warnings}
+		}
 	}
 	return env
 }
 
-// diagPayload renders a Diag to a map. withMeta=false yields the compact agent
-// form (code/message/reason/hint only).
-func diagPayload(d *diag.Diag, withMeta bool) map[string]any {
+func errorEnvelope(d *diag.Diag) map[string]any {
 	if d == nil {
 		return nil
 	}
 	p := map[string]any{
-		"code":    d.Code,
-		"message": d.Message,
+		"code":      diag.PlatformCode(d.Code),
+		"area":      "runtime",
+		"stage":     "run",
+		"severity":  "error",
+		"retryable": false,
+		"message":   d.Message,
+		"hint":      d.Hint,
 	}
 	if d.Reason != "" {
-		p["reason"] = d.Reason
+		p["cause"] = d.Reason
 	}
-	if d.Hint != "" {
-		p["hint"] = d.Hint
+	if d.CorrelationID != "" {
+		p["correlationId"] = d.CorrelationID
 	}
-	if withMeta && len(d.Meta) > 0 {
-		p["meta"] = d.Meta
+	if len(d.Meta) > 0 {
+		details := make(map[string]string, len(d.Meta))
+		for key, value := range d.Meta {
+			details[key] = fmt.Sprint(value)
+		}
+		p["details"] = details
 	}
 	return p
 }

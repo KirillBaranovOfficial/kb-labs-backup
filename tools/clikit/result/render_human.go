@@ -24,7 +24,10 @@ func writeHumanDiag(w io.Writer, d *diag.Diag) {
 		o.Detail("why:  " + d.Reason)
 	}
 	if d.Hint != "" {
-		o.Detail("hint: " + d.Hint)
+		o.Detail("next: " + d.Hint)
+	}
+	if d.CorrelationID != "" {
+		o.Detail("correlationId: " + d.CorrelationID)
 	}
 }
 

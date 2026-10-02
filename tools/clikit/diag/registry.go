@@ -2,9 +2,8 @@ package diag
 
 import "sync"
 
-// Each tool registers its ERR_-prefixed codes once at startup (init), mirroring
-// the platform's ERROR_HINTS map (core/config/src/errors/kb-error.ts). The
-// registry maps a code to its default hint and exit code.
+// Hint registry for known platform error codes. Process exits use the shared
+// fixed table below and do not depend on per-command registrations.
 
 var (
 	mu        sync.RWMutex
@@ -12,12 +11,13 @@ var (
 	exitCodes = map[string]int{}
 )
 
-// Conventional process exit codes (mirrors the platform's getExitCode).
+// Shared process exit codes for Go tool CLIs.
 const (
 	ExitOK        = 0
 	ExitError     = 1 // generic failure
-	ExitConfig    = 2 // configuration / validation failure
-	ExitForbidden = 3 // permission / policy / rolled-back
+	ExitInput     = 2 // invalid usage or input
+	ExitConfig    = ExitInput
+	ExitForbidden = ExitError
 )
 
 // RegisterHints adds code→hint defaults. Safe to call from multiple inits.
@@ -29,12 +29,15 @@ func RegisterHints(m map[string]string) {
 	}
 }
 
-// RegisterExitCodes adds code→exit-code overrides (default is ExitError).
+// RegisterExitCodes associates typed diagnostics with shared exit meanings.
+// Values outside the shared 1/2 failure table are discarded.
 func RegisterExitCodes(m map[string]int) {
 	mu.Lock()
 	defer mu.Unlock()
-	for k, v := range m {
-		exitCodes[k] = v
+	for code, exitCode := range m {
+		if exitCode == ExitInput || exitCode == ExitError {
+			exitCodes[code] = exitCode
+		}
 	}
 }
 
@@ -45,40 +48,21 @@ func HintFor(code string) string {
 	return hints[code]
 }
 
-// ExitCode resolves a Diag to a process exit code. Precedence:
-//  1. an explicit Meta["exitCode"] int on the Diag,
-//  2. the registered exit code for Diag.Code,
-//  3. ExitError (1).
-//
-// A nil Diag is ExitOK.
+// ExitCode maps the shared CLI error categories to the shared process table.
 func ExitCode(d *Diag) int {
 	if d == nil {
 		return ExitOK
 	}
-	if d.Meta != nil {
-		if ec, ok := d.Meta["exitCode"]; ok {
-			if n, ok := toInt(ec); ok {
-				return n
-			}
-		}
+	if d.Code == "KB_RUNTIME_INPUT_INVALID" {
+		return ExitInput
 	}
 	mu.RLock()
 	defer mu.RUnlock()
-	if n, ok := exitCodes[d.Code]; ok {
-		return n
+	if code, ok := d.Meta["exitCode"].(int); ok && (code == ExitInput || code == ExitError) {
+		return code
+	}
+	if code, ok := exitCodes[d.Code]; ok {
+		return code
 	}
 	return ExitError
-}
-
-func toInt(v any) (int, bool) {
-	switch n := v.(type) {
-	case int:
-		return n, true
-	case int64:
-		return int(n), true
-	case float64:
-		return int(n), true
-	default:
-		return 0, false
-	}
 }
