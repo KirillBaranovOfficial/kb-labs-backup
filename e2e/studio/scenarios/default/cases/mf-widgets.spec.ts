@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
 import { GATEWAY, REST } from '@kb-labs/e2e-shared/urls.js'
 
 /**
@@ -25,7 +25,7 @@ type StudioEntry = {
 }
 
 async function getStudioRegistry(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
 ): Promise<StudioEntry[]> {
   // REST API exposes the studio registry used by the shell to init MF
   const res = await request.get(`${REST}/api/v1/studio/registry`)

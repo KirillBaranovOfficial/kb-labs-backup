@@ -26,6 +26,8 @@ services:
         condition: service_healthy
       verdaccio:
         condition: service_healthy
+      idp-stub:
+        condition: service_healthy
     environment:
       KB_CREATE_DOWNLOAD_BASE_URL: http://origin:8080
       KB_JOURNEY_REGISTRY: http://verdaccio:4873
@@ -33,13 +35,45 @@ services:
       KB_JOURNEY_FRONT_DOOR: ${KB_JOURNEY_FRONT_DOOR:-agent}
       KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}
       KB_JOURNEY_SERVICE_PROFILE: ${KB_JOURNEY_SERVICE_PROFILE:-fast}
+      OIDC_CORP_CLIENT_SECRET: journey-oidc-client-secret
+      OIDC_CORP_ISSUER: https://idp-stub:9443
+      NODE_EXTRA_CA_CERTS: /e2e-oidc-certs/ca.crt
       DEBUG: ${DEBUG:-}
       GITHUB_STEP_SUMMARY: /tmp/journey-summary.md
       KB_JOURNEY_SUMMARY: /summary/journey-summary.md
     volumes:
       - ../.journey/reports:/summary
+      - ./oidc-idp/certs:/e2e-oidc-certs:ro
     networks: [journey]
     init: true
+
+  idp-stub:
+    image: kb-e2e-oidc-idp:1.0.0
+    build:
+      context: ./oidc-idp
+      dockerfile: Dockerfile
+    environment:
+      IDP_ISSUER: https://idp-stub:9443
+      IDP_CLIENT_ID: kb-gateway
+      IDP_CLIENT_SECRET: journey-oidc-client-secret
+      IDP_PORT: "9443"
+      IDP_HOST: 0.0.0.0
+      IDP_TLS_KEY: /certs/server.key
+      IDP_TLS_CERT: /certs/server.crt
+      IDP_ALLOWED_REDIRECT_PREFIXES: http://127.0.0.1:4000/
+    volumes:
+      - ./oidc-idp/certs:/certs:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - require('https').get({host:'127.0.0.1',port:9443,path:'/.well-known/openid-configuration',rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks: [journey]
 
   verdaccio:
     extends:

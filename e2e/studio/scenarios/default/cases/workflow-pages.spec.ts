@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
 
 /**
@@ -15,7 +15,7 @@ import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 async function studioIsUp(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
 ): Promise<boolean> {
   try {
     const res = await request.get(`${GATEWAY}/`, { timeout: 3000 });
@@ -26,7 +26,7 @@ async function studioIsUp(
 }
 
 async function workflowIsUp(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
 ): Promise<boolean> {
   try {
     const res = await request.get(`${WORKFLOW}/health`, { timeout: 3000 });
