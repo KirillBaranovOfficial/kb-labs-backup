@@ -58,6 +58,7 @@ describe("runHost", () => {
   function makeConfig(modules: HostConfig["modules"]): HostConfig {
     return {
       appId: "kb-host",
+      projectScope: "platform",
       platform: { assemblyHook: vi.fn() },
       modules,
     };
@@ -106,9 +107,28 @@ describe("runHost", () => {
         applicationId: "kb-host",
         serviceId: "kb-host",
         kind: "service",
+        projectScope: "platform",
       }),
     );
     expect(order).toEqual(["setup:a", "setup:b"]);
+  });
+
+  // case: S-124.10
+  it("launches with the scope and explicit project identity declared by the process", async () => {
+    const config: HostConfig = {
+      ...makeConfig([module("a", 9001)]),
+      projectScope: "required",
+      projectId: "prj_1234567890123456",
+    };
+
+    await runHost(config);
+
+    expect(mocks.launchPlatform).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectScope: "required",
+        projectId: "prj_1234567890123456",
+      }),
+    );
   });
 
   it("gives each module its own resolved port and the shared roots", async () => {

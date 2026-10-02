@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createChildProcessLauncher } from "../project-runtime/launcher.js";
-import { ProjectRuntimeError } from "../project-runtime/errors.js";
+import { ProjectRuntimeError, runtimeStartFailed } from "../project-runtime/errors.js";
 import {
   ProjectRuntimeManager,
   type ProjectRuntimeManagerOptions,
@@ -50,6 +50,17 @@ async function expectRuntimeError(
 }
 
 describe("ProjectRuntimeManager (real child processes, fake runtime script)", () => {
+  // case: S-124.11
+  it("preserves a typed project identity mismatch for the host response", () => {
+    const failure = runtimeStartFailed(
+      "prj_1234567890123456",
+      "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH: registry path mismatch",
+    );
+
+    expect(failure.envelope.code).toBe("KB_PROJECT_RUNTIME_IDENTITY_MISMATCH");
+    expect(failure.envelope.hint).toContain("kb project list");
+  });
+
   const projects: TestProject[] = [];
   const managers: ProjectRuntimeManager[] = [];
 

@@ -342,6 +342,27 @@ describe('loadPlatformConfig', () => {
     expect(result.projectRoot).toBe(result.platformRoot)
   })
 
+  // case: S-124.11
+  it('rejects an explicit project id when its registered path differs from the runtime path', async () => {
+    const platformHome = path.join(tmpDir, 'runtime-identity-home')
+    const registeredRoot = path.join(tmpDir, 'runtime-identity-registered')
+    const requestedRoot = path.join(tmpDir, 'runtime-identity-requested')
+    makeProjectDir(registeredRoot)
+    makeProjectDir(requestedRoot)
+    const env = { KB_HOME: platformHome }
+    const registered = await createProjectRegistry({ env }).add(realpathSync(registeredRoot))
+
+    await expect(loadPlatformConfig({
+      startDir: requestedRoot,
+      projectScope: 'required',
+      projectId: registered.project.id,
+      env,
+      loadEnvFile: false,
+    })).rejects.toMatchObject({
+      code: 'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH',
+    })
+  })
+
   it('loads .env file from projectRoot when loadEnvFile is true', async () => {
     const platformRoot = path.join(tmpDir, 'p8-platform')
     const projectRoot = path.join(tmpDir, 'p8-project')

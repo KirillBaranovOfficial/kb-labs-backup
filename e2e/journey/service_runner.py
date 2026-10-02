@@ -330,6 +330,26 @@ def checks(mode: str):
     else:
         project = lambda: expect(f"/api/v1/projects/{PROJECT_ID}", {200}, "project registry lookup", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
     yield ("project registration", "projects", project)
+    def project_runtime_identity() -> str | None:
+        if not PROJECT_ID:
+            return "BLOCKED: project runtime identity needs KB_JOURNEY_PROJECT_ID from project registration"
+        health_status, health_body, _ = request("/health", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+        runtimes = health_body.get("projectRuntimes", {}).get("runtimes", []) if isinstance(health_body, dict) else []
+        if health_status != 200 or not any(
+            isinstance(runtime, dict)
+            and runtime.get("projectId") == PROJECT_ID
+            and runtime.get("state") == "ready"
+            for runtime in runtimes
+        ):
+            return f"host health did not list registered project {PROJECT_ID} as a ready runtime"
+        path = f"/api/v1/projects/{PROJECT_ID}/rest/api/v1/health"
+        status, body, _ = request(path, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+        if status != 200:
+            return f"registered project runtime REST health returned HTTP {status} at {path}"
+        if not isinstance(body, dict):
+            return "registered project runtime REST health returned no JSON object"
+        return None
+    yield ("registered project runtime identity", "projects", project_runtime_identity)
     yield ("project plugin settings isolation and clean repositories", "projects",
            project_plugin_settings_isolation)
     pid = PROJECT_ID or "{projectId}"
@@ -459,6 +479,8 @@ def mcp_diagnostics(project_id: str, token: str) -> str | None:
 def _case_claims(name: str) -> list[str]:
     if name in {"gateway readiness", "workflow health"}:
         return ["PC-002.3"]
+    if name == "registered project runtime identity":
+        return ["PC-002.6", "S-124.10"]
     case_by_name = {
         "project plugin settings isolation and clean repositories": "S-204.1",
         "project-scoped MCP initialize": "S-045.1",

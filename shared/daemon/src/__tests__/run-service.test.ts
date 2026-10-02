@@ -16,6 +16,7 @@ const originalOn = process.on.bind(process);
 function makeConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
   return {
     appId: "test-service",
+    projectScope: "required",
     defaultPort: 9999,
     portEnvVar: "TEST_SERVICE_PORT",
     defaultHost: "127.0.0.1",
