@@ -6,7 +6,11 @@ import {
   type PlatformRuntime,
   type PlatformUiProvider,
 } from "@kb-labs/core-runtime";
-import type { IContextLogger, IServiceTransport } from "@kb-labs/core-platform";
+import {
+  resolveServiceListenAddress,
+  type IContextLogger,
+  type IServiceTransport,
+} from "@kb-labs/core-platform";
 
 export interface ServiceContext {
   platform: PlatformContainer;
@@ -108,34 +112,18 @@ function resolveNetwork(
   platform: PlatformContainer,
   netOffset: number,
 ): { port: number; host: string } {
-  const serviceId = module.serviceId ?? module.id;
   const transport = platform.getAdapter<IServiceTransport>("serviceTransport");
-  const address = transport?.listenAddress?.(serviceId);
-  const port =
-    address && "port" in address
-      ? address.port
-      : (() => {
-          const configuredPort = module.portEnvVar
-            ? process.env[module.portEnvVar]
-            : undefined;
-          const fallbackPort = configuredPort
-            ? parseInt(configuredPort, 10)
-            : module.defaultPort;
-          if (fallbackPort === undefined) {
-            throw new Error(
-              `Service transport has no listen address for "${serviceId}" and no port was configured.`,
-            );
-          }
-          return fallbackPort + netOffset;
-        })();
-
-  const transportHost = address && "host" in address ? address.host : undefined;
-  const host =
-    module.hostEnvVar && process.env[module.hostEnvVar]
-      ? process.env[module.hostEnvVar]!
-      : (transportHost ?? module.defaultHost ?? "0.0.0.0");
-
-  return { port, host };
+  return resolveServiceListenAddress(
+    transport,
+    {
+      serviceId: module.serviceId ?? module.id,
+      ...(module.portEnvVar ? { portEnvValue: process.env[module.portEnvVar] } : {}),
+      ...(module.defaultPort !== undefined ? { defaultPort: module.defaultPort } : {}),
+      ...(module.hostEnvVar ? { hostEnvValue: process.env[module.hostEnvVar] } : {}),
+      ...(module.defaultHost ? { defaultHost: module.defaultHost } : {}),
+    },
+    netOffset,
+  );
 }
 
 interface StartedModule {

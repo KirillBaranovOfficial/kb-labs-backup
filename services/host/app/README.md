@@ -12,9 +12,11 @@ composable yet and still runs standalone.
 
 ## What it does
 
-- **One external port.** The gateway listens on `gateway.port + KB_NET_OFFSET`
-  (default 4000). Marketplace and state bind ephemeral `127.0.0.1` ports chosen
-  by the host before the platform launches.
+- **One external port.** The gateway bind address comes from the platform's
+  `serviceTransport.listenAddress("gateway")` when present; otherwise
+  `GATEWAY_PORT` or the service default (4000) is shifted by `KB_NET_OFFSET`.
+  Marketplace and state bind ephemeral `127.0.0.1` ports chosen by the host
+  before the platform launches.
 - **Generated topology (B8).** The host builds the `serviceTransport` services
   map for the modules it runs and installs it in-process during platform
   assembly, and adds the gateway routes `/api/v1/marketplace` and

@@ -219,9 +219,9 @@ class MarketplaceStepTests(unittest.TestCase):
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             platform_root = home / "kb-platform"
-            platform_config = platform_root / ".kb" / "kb.config.json"
+            platform_config = platform_root / ".kb" / "kb.config.jsonc"
             platform_config.parent.mkdir(parents=True)
-            platform_config.write_text(json.dumps({"gateway": {"port": 43123}}))
+            platform_config.write_text(json.dumps({"gateway": {"access": {"mode": "local"}}}))
             receipt = platform_root / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text('{"version":"2.120.1"}\n')
@@ -232,7 +232,6 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_PLATFORM_ROOT": str(platform_root)}
             calls: list[tuple[str, ...]] = []
             host_running = True
-            doctor_invocations = 0
 
             def lock(path: Path, *, platform: bool = False) -> dict:
                 lock_file = path / ".kb" / "marketplace.lock"
@@ -249,7 +248,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 lock_file.write_text(json.dumps(value))
 
             def fake_run(command, *, cwd, env, capture_output, text, timeout):
-                nonlocal host_running, doctor_invocations
+                nonlocal host_running
                 calls.append(tuple(command))
                 cwd_path = Path(cwd)
                 if command[0] == "kb-create":
@@ -267,16 +266,6 @@ class MarketplaceStepTests(unittest.TestCase):
                 args = command[1:]
                 stdout = "{}"
                 if args[:3] == ["marketplace", "plugins", "doctor"]:
-                    doctor_invocations += 1
-                    if host_running and doctor_invocations >= 4:
-                        return subprocess.CompletedProcess(command, 1, json.dumps({
-                            "ok": False,
-                            "error": {
-                                "code": "KB_CONFIG_INVALID",
-                                "message": f'The platform config at "{platform_root}/.kb/kb.config.json" is missing a valid "gateway.port" field.',
-                                "hint": 'Set it with "kb config set --scope platform gateway.port <port>", then restart the host with "kb-create restart".',
-                            },
-                        }), "")
                     if host_running:
                         stdout = json.dumps({"ok": True, "total": 0, "issues": []})
                     else:
@@ -372,6 +361,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertNotIn(("npm", "view", "@kb-labs/adapters-fs", "version", "--json", "--registry=http://registry.test"), calls)
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs@2.107.0", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "qa", "cases", "list", "--json"), calls)
+            self.assertNotIn("port", json.loads(platform_config.read_text())["gateway"])
             self.assertFalse(any(item.name.startswith("kb-marketplace-project-b-") for item in home.iterdir()))
 
 

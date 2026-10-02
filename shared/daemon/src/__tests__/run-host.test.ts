@@ -219,8 +219,8 @@ describe("runHost", () => {
     expect(signalListeners).toHaveLength(0);
   });
 
-  it("uses the module serviceId for the transport lookup and falls back to the module id", async () => {
-    const listenAddress = vi.fn().mockReturnValue({ port: 4321, host: "10.0.0.5" });
+  it("binds to the shared service transport address using the module serviceId", async () => {
+    const listenAddress = vi.fn().mockReturnValue({ port: 43323, host: "127.0.0.1" });
     mocks.launchPlatform.mockResolvedValueOnce({
       platform: { getAdapter: vi.fn().mockReturnValue({ listenAddress }) },
       logger,
@@ -238,5 +238,9 @@ describe("runHost", () => {
 
     expect(listenAddress).toHaveBeenNthCalledWith(1, "custom");
     expect(listenAddress).toHaveBeenNthCalledWith(2, "b");
+    expect(named.setup).toHaveBeenCalledWith(expect.objectContaining({
+      port: 43323,
+      host: "127.0.0.1",
+    }));
   });
 });

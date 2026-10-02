@@ -319,51 +319,21 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     if journey.steps[-1].status != "PASS":
         return
 
-    def assert_missing_gateway_config_error() -> None:
-        config_paths = []
-        for root in (platform_root, project):
-            candidates = [root / ".kb" / "kb.config.jsonc", root / ".kb" / "kb.config.json"]
-            existing = [candidate for candidate in candidates if candidate.exists()]
-            config_paths.extend(existing or [candidates[-1]])
-        originals: dict[Path, str | None] = {}
-        try:
-            for config_path in config_paths:
-                originals[config_path] = config_path.read_text() if config_path.exists() else None
-                value = json.loads(originals[config_path] or "{}")
-                if isinstance(value, dict):
-                    gateway = value.get("gateway")
-                    if isinstance(gateway, dict):
-                        gateway.pop("port", None)
-                    config_path.parent.mkdir(parents=True, exist_ok=True)
-                    config_path.write_text(json.dumps(value, indent=2) + "\n")
+    def assert_default_gateway_config() -> None:
+        config_path = platform_root / ".kb" / "kb.config.jsonc"
+        config = json.loads(config_path.read_text())
+        gateway = config.get("gateway")
+        if not isinstance(gateway, dict) or "port" in gateway:
+            raise RuntimeError("fresh platform fixture must leave gateway.port at its service default")
+        command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+        with invocation_context(step_id="S-203.15"):
+            result = _run(command, cwd=project, env=base_env, runner=runner)
+        payload = _json(result, command)
+        if payload.get("ok") is not True:
+            raise RuntimeError("gateway-backed CLI plugin command failed with the default gateway port")
 
-            command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
-            with invocation_context(step_id="S-203.15"):
-                result = _run(command, cwd=project, env=base_env, runner=runner)
-            try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError as error:
-                raise RuntimeError("gateway-backed plugin command did not return a JSON config error") from error
-            failure = payload.get("error") if isinstance(payload, dict) else None
-            if (result.returncode != 1 or not isinstance(failure, dict)
-                    or failure.get("code") != "KB_CONFIG_INVALID"
-                    or "kb-platform/.kb/kb.config.json" not in failure.get("message", "")
-                    or "gateway.port" not in failure.get("message", "")
-                    or "kb config set --scope platform gateway.port <port>" not in failure.get("hint", "")
-                    or "kb-create restart" not in failure.get("hint", "")):
-                raise RuntimeError(
-                    "missing gateway port returned an unexpected config error: "
-                    f"exit={result.returncode}, payload={payload!r}"
-                )
-        finally:
-            for config_path, original in originals.items():
-                if original is None:
-                    config_path.unlink(missing_ok=True)
-                else:
-                    config_path.write_text(original)
-
-    journey.step("report catalogued config error when gateway port is missing", "marketplace",
-                 assert_missing_gateway_config_error, cases=["S-203.15"])
+    journey.step("resolve the default gateway address for CLI plugins", "marketplace",
+                 assert_default_gateway_config, cases=["S-203.15"])
     if journey.steps[-1].status != "PASS":
         return
 

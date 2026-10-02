@@ -84,26 +84,26 @@ describe("gateway listen port", () => {
     });
   });
 
-  it("listens on config.port + ctx.netOffset", async () => {
-    await setup(makeContext({ netOffset: 10 }));
+  it("listens on the launcher-resolved port including its network offset", async () => {
+    await setup(makeContext({ port: 4010, netOffset: 10 }));
 
     expect(mocks.listen).toHaveBeenCalledWith({
-      port: 4331,
+      port: 4010,
       host: "127.0.0.1",
     });
   });
 
-  it("ignores ctx.port: config.port wins over the launcher-resolved port", async () => {
+  it("uses the launcher-resolved port instead of config.port", async () => {
     await setup(makeContext({ port: 9999, netOffset: 10 }));
 
     expect(mocks.listen).toHaveBeenCalledWith(
-      expect.objectContaining({ port: 4331 }),
+      expect.objectContaining({ port: 9999 }),
     );
   });
 
   it("passes the effective listen port to createServer", async () => {
-    await setup(makeContext({ netOffset: 10 }));
+    await setup(makeContext({ port: 4010, netOffset: 10 }));
 
-    expect(mocks.createServer.mock.calls[0]![0]).toMatchObject({ port: 4331 });
+    expect(mocks.createServer.mock.calls[0]![0]).toMatchObject({ port: 4010 });
   });
 });

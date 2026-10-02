@@ -462,8 +462,6 @@ export async function executeCli(
           flagsObj,
           cliContext,
           platform,
-          platformRoot,
-          effectiveConfig: effectiveConfig ?? rawConfig,
           netOffset: Number(env.KB_NET_OFFSET) || 0,
           presenter,
           runWithMiddleware: async (run) => {
@@ -485,8 +483,6 @@ interface DispatchPluginParams {
   flagsObj: ReturnType<typeof parseArgs>["flagsObj"];
   cliContext: CliExecutionContext;
   platform: PlatformContainer;
-  platformRoot?: string;
-  effectiveConfig?: Record<string, unknown>;
   netOffset: number;
   presenter: Presenter;
   runWithMiddleware: (run: () => Promise<number>) => Promise<number>;
@@ -522,8 +518,6 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
 
     const pluginExitCode = await executePlugin({
       context: p.cliContext,
-      platformRoot: p.platformRoot,
-      effectiveConfig: p.effectiveConfig,
       netOffset: p.netOffset,
       commandId,
       argv: p.actualRest,

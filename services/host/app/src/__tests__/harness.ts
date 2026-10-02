@@ -19,6 +19,8 @@ export interface HostFixtureConfig {
   host?: Record<string, unknown>;
   /** Extra `gateway` keys; `port` defaults to a reserved random port. */
   gateway?: Record<string, unknown>;
+  /** Leave gateway.port absent and use the Gateway service's default port. */
+  defaultGatewayPort?: boolean;
   /** Extra `platform` keys (adapters, adapterOptions). */
   platform?: Record<string, unknown>;
 }
@@ -68,7 +70,11 @@ async function writeProject(
     join(projectRoot, ".kb", "kb.config.json"),
     JSON.stringify({
       platform: { adapters: {}, ...config.platform },
-      gateway: { port: gatewayPort, host: "127.0.0.1", ...config.gateway },
+      gateway: {
+        ...(!config.defaultGatewayPort ? { port: gatewayPort } : {}),
+        host: "127.0.0.1",
+        ...config.gateway,
+      },
       ...(config.host ? { host: config.host } : {}),
     }),
   );
@@ -89,6 +95,8 @@ function isolateEnvironment(home: string): () => void {
     "KB_PROJECT_ROOT",
     "KB_PLATFORM_ROOT",
     "KB_STATE_DAEMON_URL",
+    "GATEWAY_PORT",
+    "GATEWAY_HOST",
   ] as const;
   const saved = new Map(keys.map((key) => [key, process.env[key]]));
   process.env.HOME = home;
@@ -117,6 +125,11 @@ export async function startTestHost(
   const gatewayPort = await reservePort();
   const projectRoot = await writeProject(config, gatewayPort);
   const restoreEnv = isolateEnvironment(projectRoot);
+  if (config.defaultGatewayPort) {
+    process.env.KB_NET_OFFSET = String(gatewayPort - 4000);
+  } else {
+    process.env.GATEWAY_PORT = String(gatewayPort);
+  }
   // Treat the isolated fixture as the platform root. Host startup is a
   // platform operation and must not resolve a registered project from cwd.
   process.env.KB_PLATFORM_ROOT = projectRoot;

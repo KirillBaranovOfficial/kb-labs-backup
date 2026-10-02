@@ -24,16 +24,15 @@ import { randomUUID } from "node:crypto";
 import {
   AdapterUnavailableError,
   createContextLogger,
-  resolveHostGatewayAddress,
+  resolveServiceListenAddress,
 } from "@kb-labs/core-platform";
+import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
 import { createCLIUIFacade } from "./ui-facade";
 
 export interface PluginExecutionOptions {
   context: SystemContext;
-  platformRoot?: string;
-  effectiveConfig?: Record<string, unknown>;
   netOffset?: number;
   commandId: string;
   argv: string[];
@@ -93,18 +92,26 @@ export async function executePlugin(
   );
 
   // Gateway-aware plugins declare the address in their environment
-  // permissions. Resolve it before the execution error handler so a broken
-  // platform config is rendered through the catalogued CLI path and the
-  // plugin never starts without an address it requires.
+  // permissions. Resolve it from the same transport and module defaults used
+  // by the daemon to bind the gateway listener.
   const gatewayUrl = permissionAllowsEnvironmentVariable(
     permissions.env?.read,
     "KB_GATEWAY_URL",
   )
-    ? resolveHostGatewayAddress(
-        options.platformRoot,
-        options.effectiveConfig,
-        options.netOffset,
-      )
+    ? (() => {
+        const address = resolveServiceListenAddress(
+          platform.getAdapter<IServiceTransport>("serviceTransport"),
+          {
+            serviceId: "gateway",
+            portEnvValue: process.env.GATEWAY_PORT,
+            defaultPort: 4000,
+            hostEnvValue: process.env.GATEWAY_HOST,
+            defaultHost: "0.0.0.0",
+          },
+          options.netOffset ?? 0,
+        );
+        return `http://127.0.0.1:${address.port}`;
+      })()
     : undefined;
 
   try {

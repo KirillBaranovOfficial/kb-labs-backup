@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AdapterUnavailableError, HostGatewayAddressConfigError } from '@kb-labs/core-platform';
+import { AdapterUnavailableError } from '@kb-labs/core-platform';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 
 const { executeCommandV3 } = vi.hoisted(() => ({ executeCommandV3: vi.fn() }));
@@ -48,13 +48,12 @@ describe('plugin executor adapter errors', () => {
     } as Parameters<typeof executePlugin>[0]['context'];
     const platform = {
       getSocketPath: () => '/tmp/platform.sock',
+      getAdapter: () => ({ listenAddress: () => ({ host: '127.0.0.1', port: 43323 }) }),
     } as unknown as Parameters<typeof executePlugin>[0]['platform'];
 
     try {
       const exitCode = await executePlugin({
         context,
-        platformRoot: '/platform',
-        effectiveConfig: { gateway: { port: 43123 } },
         netOffset: 200,
         commandId: 'marketplace:plugins:doctor',
         argv: [],
@@ -74,7 +73,10 @@ describe('plugin executor adapter errors', () => {
   });
 
   // case: S-203.15
-  it('refuses to start a plugin when the effective platform gateway port is missing', async () => {
+  it('resolves the default gateway address when fresh platform config omits gateway.port', async () => {
+    executeCommandV3.mockResolvedValue(0);
+    const previousGatewayPort = process.env.GATEWAY_PORT;
+    delete process.env.GATEWAY_PORT;
     const manifestCmd = {
       pkgRoot: '/platform/plugins/marketplace',
       manifest: { id: '@kb-labs/marketplace-entry', segments: ['marketplace', 'plugins', 'doctor'] },
@@ -86,16 +88,28 @@ describe('plugin executor adapter errors', () => {
       },
     } as unknown as RegisteredCommand;
 
-    await expect(executePlugin({
-      context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
-      platformRoot: '/platform',
-      effectiveConfig: {},
-      commandId: 'marketplace:plugins:doctor',
-      argv: [],
-      flags: {},
-      manifestCmd,
-      platform: { getSocketPath: () => '/tmp/platform.sock' } as unknown as Parameters<typeof executePlugin>[0]['platform'],
-    })).rejects.toBeInstanceOf(HostGatewayAddressConfigError);
-    expect(executeCommandV3).not.toHaveBeenCalled();
+    try {
+      const exitCode = await executePlugin({
+        context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
+        commandId: 'marketplace:plugins:doctor',
+        argv: [],
+        flags: {},
+        manifestCmd,
+        netOffset: 200,
+        platform: {
+          getSocketPath: () => '/tmp/platform.sock',
+          getAdapter: () => ({ listenAddress: () => undefined }),
+        } as unknown as Parameters<typeof executePlugin>[0]['platform'],
+      });
+
+      expect(exitCode).toBe(0);
+      expect(executeCommandV3).toHaveBeenCalledWith(expect.objectContaining({
+        env: { KB_GATEWAY_URL: 'http://127.0.0.1:4200' },
+      }));
+    } finally {
+      if (previousGatewayPort === undefined) delete process.env.GATEWAY_PORT;
+      else process.env.GATEWAY_PORT = previousGatewayPort;
+      executeCommandV3.mockReset();
+    }
   });
 });

@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { getHostServiceAddress, HostServiceAddressError } from './host-service-address.js';
-import { resolveHostGatewayAddress } from './host-service-address.js';
-import { toErrorEnvelope } from './error-envelope/index.js';
 
 describe('getHostServiceAddress', () => {
   it.each([
@@ -23,28 +21,6 @@ describe('getHostServiceAddress', () => {
         code: 'KB_HOST_SERVICE_ADDRESS_MISSING',
         hint: expect.stringContaining('kb-create start'),
       });
-    }
-  });
-
-  // case: S-010.7
-  it('resolves the configured public gateway address with the local network offset', () => {
-    expect(resolveHostGatewayAddress('/opt/kb-platform', {
-      gateway: { port: 43123 },
-    }, 200)).toBe('http://127.0.0.1:43323');
-  });
-
-  // case: S-203.15
-  it('reports the missing platform gateway port with a catalogued config hint', () => {
-    try {
-      resolveHostGatewayAddress('/opt/kb-platform', {}, 0);
-      throw new Error('expected missing gateway config failure');
-    } catch (error) {
-      expect(toErrorEnvelope(error)).toMatchObject({
-        code: 'KB_CONFIG_INVALID',
-        message: expect.stringContaining('/opt/kb-platform/.kb/kb.config.json'),
-        hint: expect.stringContaining('kb config set --scope platform gateway.port'),
-      });
-      expect(toErrorEnvelope(error).message).toContain('gateway.port');
     }
   });
 });

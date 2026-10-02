@@ -26,15 +26,12 @@
 
 export { AdapterUnavailableError, AdapterCredentialsMissingError, AdapterProjectScopeError, PlatformConfigError } from "./errors.js";
 export { getHostServiceAddress, HostServiceAddressError } from "./host-service-address.js";
-export {
-  resolveHostGatewayAddress,
-  HostGatewayAddressConfigError,
-} from "./host-service-address.js";
+export type { HostServiceEnvironment, HostServiceId } from "./host-service-address.js";
+export { resolveServiceListenAddress } from "./service-listen-address.js";
 export type {
-  HostGatewayConfig,
-  HostServiceEnvironment,
-  HostServiceId,
-} from "./host-service-address.js";
+  ResolvedServiceListenAddress,
+  ServiceNetworkSettings,
+} from "./service-listen-address.js";
 export * from "./error-envelope/index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════

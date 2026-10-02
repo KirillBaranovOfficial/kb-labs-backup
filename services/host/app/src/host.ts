@@ -5,7 +5,7 @@
  *
  * It composes the gateway, the marketplace service and the state daemon as
  * {@link HostModule}s of `runHost`. Only the gateway listens on a public
- * address (`gateway.port + KB_NET_OFFSET`); marketplace and state bind
+ * address (service transport, `GATEWAY_PORT`, or module default plus offset); marketplace and state bind
  * ephemeral loopback ports that the host resolves itself and injects in-process
  * into the gateway's service transport, so no module addresses are written in
  * config. See ADR-0043 and docs/architecture/target/04-topology.md.
@@ -14,7 +14,10 @@
 import { createRequire } from "node:module";
 import { loadEffectiveConfig } from "@kb-labs/core-config";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
-import { resolveHostGatewayAddress, type IServiceTransport } from "@kb-labs/core-platform";
+import {
+  resolveServiceListenAddress,
+  type IServiceTransport,
+} from "@kb-labs/core-platform";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import type { PlatformAssemblyHook } from "@kb-labs/core-runtime";
 import {
@@ -280,11 +283,18 @@ export async function createHostConfig(
             gatewayConfig,
             { auth: settings.auth, upstreams },
           );
-          gatewayAddress = resolveHostGatewayAddress(
-            ctx.platformRoot,
-            effective?.data,
+          const listenAddress = resolveServiceListenAddress(
+            ctx.platform.getAdapter<IServiceTransport>("serviceTransport"),
+            {
+              serviceId: "gateway",
+              portEnvValue: process.env.GATEWAY_PORT,
+              defaultPort: 4000,
+              hostEnvValue: process.env.GATEWAY_HOST,
+              defaultHost: "0.0.0.0",
+            },
             ctx.netOffset,
           );
+          gatewayAddress = `http://${INTERNAL_BIND_HOST}:${listenAddress.port}`;
         }
         return { settings, upstreams, gatewayAddress };
       } catch (error) {
