@@ -144,6 +144,8 @@ export class InProcessBackend implements ExecutionBackend {
           workspaceDescriptor = await workspaceProvider.materialize({
             sourceRef: requestToExecute.pluginRoot,
             basePath: requestToExecute.pluginRoot,
+            projectRoot: process.env.KB_PROJECT_ROOT,
+            platformRoot: process.env.KB_PLATFORM_ROOT,
             metadata: { executionId: requestToExecute.executionId },
           });
           if (workspaceDescriptor.rootPath) {

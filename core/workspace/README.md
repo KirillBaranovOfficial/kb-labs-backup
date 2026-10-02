@@ -56,10 +56,18 @@ Priority chain:
 
 Finds the deepest registered project containing the current working directory.
 The resolver reads `<KB_HOME>/projects.json` (`~/.kb/projects.json` by
-default). A repository `.kb` directory, Git boundary, package marker, or
-project-root environment override does not establish membership. If no
-registered project contains the directory, it throws `KB_PROJECT_UNKNOWN`;
-register the directory with `kb project add <path>`.
+default). A Git worktree with a standard main checkout `<main>/.git` common
+directory maps its current path back into the main checkout, then resolves the
+deepest registered project containing that mapped path. This also supports a
+project registered at a subdirectory of the main checkout; paths elsewhere in
+the worktree do not resolve to that subdirectory. Bare repositories and
+worktrees with nonstandard common-directory layouts do not resolve through
+this mapping. A Git boundary, repository `.kb` directory, package marker, or
+project-root environment override alone does not establish membership. An
+unregistered repository or worktree throws `KB_PROJECT_UNKNOWN`; register its
+project directory with `kb project add <path>`. Resolution results include
+both the registered project root and the directory used for lookup, which may
+be the worktree path.
 
 Platform processes that do not act in a current project can resolve only the
 platform root:

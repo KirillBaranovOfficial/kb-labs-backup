@@ -71,6 +71,7 @@ describe('SandboxRunner — builtin:shell KB_WORKSPACE_ROOT routing', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       cliApi: mockCliApi as any,
       workspaceRoot: '/main/workspace',
+      platformRoot: '/opt/kb-platform',
     })
 
     await runner.execute(makeRequest())
@@ -80,7 +81,7 @@ describe('SandboxRunner — builtin:shell KB_WORKSPACE_ROOT routing', () => {
     // Worktree path must be forwarded to the shell step env
     expect(env?.['KB_WORKSPACE_ROOT']).toBe('/private/tmp/kb-worktrees/wt_abc123')
     // Platform root is separate — always the main workspace
-    expect(env?.['KB_PLATFORM_ROOT']).toBe('/main/workspace')
+    expect(env?.['KB_PLATFORM_ROOT']).toBe('/opt/kb-platform')
   })
 
   it('falls back to request.workspace when context.env has no KB_WORKSPACE_ROOT', async () => {

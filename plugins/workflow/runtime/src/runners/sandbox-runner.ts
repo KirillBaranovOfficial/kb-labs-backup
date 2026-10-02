@@ -70,6 +70,9 @@ export interface SandboxRunnerOptions {
    */
   workspaceRoot?: string
 
+  /** Installed KB Labs platform root, separate from the project workspace. */
+  platformRoot?: string
+
   /**
    * Default timeout for plugin execution (ms).
    * Default: 120000 (2 minutes)
@@ -102,6 +105,7 @@ export class SandboxRunner implements Runner {
   private readonly backend: ExecutionBackend
   private readonly cliApi: IEntityRegistry
   private readonly workspaceRoot: string
+  private readonly platformRoot?: string
   private readonly defaultTimeout: number
   private readonly analytics?: IAnalytics
   private readonly logger?: ILogger
@@ -110,6 +114,7 @@ export class SandboxRunner implements Runner {
     this.backend = options.backend
     this.cliApi = options.cliApi
     this.workspaceRoot = options.workspaceRoot ?? process.cwd()
+    this.platformRoot = options.platformRoot ?? process.env.KB_PLATFORM_ROOT
     this.defaultTimeout = options.defaultTimeout ?? 120000 // 2 minutes
     this.analytics = options.analytics
   }
@@ -472,6 +477,7 @@ export class SandboxRunner implements Runner {
       return this.resolveBuiltinShell(
         spec,
         request.context.env['KB_WORKSPACE_ROOT'] ?? request.workspace,
+        request.context.env,
       )
     }
 
@@ -611,6 +617,7 @@ export class SandboxRunner implements Runner {
   private async resolveBuiltinShell(
     spec: StepSpec,
     workspace?: string,
+    env: Record<string, string> = {},
   ): Promise<PluginCommandResolution> {
     // Use import.meta.resolve to find @kb-labs/workflow-steps package
     // This supports ES module exports properly
@@ -638,9 +645,10 @@ export class SandboxRunner implements Runner {
     const shellInput = {
       command,
       env: {
-        KB_PLATFORM_ROOT: this.workspaceRoot,
-        ...(workspace ? { KB_WORKSPACE_ROOT: workspace } : {}),
         ...(typeof withBlock.env === 'object' ? (withBlock.env as Record<string, string>) : {}),
+        ...env,
+        ...(this.platformRoot ? { KB_PLATFORM_ROOT: this.platformRoot } : {}),
+        ...(workspace ? { KB_WORKSPACE_ROOT: workspace } : {}),
       },
       // with.timeout takes precedence; fall back to spec.timeoutMs so that the YAML-level
       // timeoutMs (e.g. 3600000 for claude-agent steps) also caps the shell process.

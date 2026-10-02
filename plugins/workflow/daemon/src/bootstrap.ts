@@ -244,6 +244,9 @@ export async function setup({
     analytics: platform.analytics,
     platform,
     workspaceRoot,
+    platformRoot,
+    projectRoot,
+    projectId: process.env.KB_PROJECT_ID,
     concurrency: parseInt(process.env.WORKFLOW_CONCURRENCY ?? "5", 10),
     debugMode,
   });
