@@ -117,6 +117,7 @@ function resolveNetwork(
     transport,
     {
       serviceId: module.serviceId ?? module.id,
+      ...(module.portEnvVar ? { portEnvVar: module.portEnvVar } : {}),
       ...(module.portEnvVar ? { portEnvValue: process.env[module.portEnvVar] } : {}),
       ...(module.defaultPort !== undefined ? { defaultPort: module.defaultPort } : {}),
       ...(module.hostEnvVar ? { hostEnvValue: process.env[module.hostEnvVar] } : {}),

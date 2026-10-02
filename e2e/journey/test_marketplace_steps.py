@@ -266,6 +266,15 @@ class MarketplaceStepTests(unittest.TestCase):
                 args = command[1:]
                 stdout = "{}"
                 if args[:3] == ["marketplace", "plugins", "doctor"]:
+                    if env.get("GATEWAY_PORT") == "not-a-port":
+                        return subprocess.CompletedProcess(command, 1, json.dumps({
+                            "ok": False,
+                            "error": {
+                                "code": "KB_CONFIG_INVALID",
+                                "message": 'Environment variable "GATEWAY_PORT" must be an integer from 1 through 65535.',
+                                "hint": 'Run "unset GATEWAY_PORT", then retry the command to use the service default port.',
+                            },
+                        }), "")
                     if host_running:
                         stdout = json.dumps({"ok": True, "total": 0, "issues": []})
                     else:
@@ -352,6 +361,7 @@ class MarketplaceStepTests(unittest.TestCase):
             expected.add("S-010.7")
             expected.add("S-203.14")
             expected.add("S-203.15")
+            expected.add("S-203.16")
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(actual, expected)
@@ -361,6 +371,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertNotIn(("npm", "view", "@kb-labs/adapters-fs", "version", "--json", "--registry=http://registry.test"), calls)
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs@2.107.0", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "qa", "cases", "list", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"), calls)
             self.assertNotIn("port", json.loads(platform_config.read_text())["gateway"])
             self.assertFalse(any(item.name.startswith("kb-marketplace-project-b-") for item in home.iterdir()))
 

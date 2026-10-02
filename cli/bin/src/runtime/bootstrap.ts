@@ -3,8 +3,6 @@ import {
   createTextPresenter,
   createContext,
   parseArgs,
-  CliError,
-  mapCliErrorToExitCode,
   type ExecutionLimits,
 } from "@kb-labs/cli-runtime";
 import {
@@ -42,6 +40,7 @@ import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
 import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
 import { resolveProjectScope } from './command-scope';
+import { handleExecutionError } from './execution-error';
 
 declare global {
   var __KB_PLATFORM_CONFIG__: PlatformConfig | undefined;
@@ -628,31 +627,4 @@ function createCliLogger(
     debugMode: Boolean(global.debug),
   });
   return logger;
-}
-
-function handleExecutionError(error: unknown, presenter: Presenter): number {
-  if (error instanceof CliError) {
-    const exitCode = mapCliErrorToExitCode(error.code);
-    if (presenter.isJSON && typeof presenter.json === "function") {
-      presenter.json({
-        ok: false,
-        error: {
-          code: error.code,
-          message: error.message,
-          ...(error.details != null && { details: error.details }),
-        },
-      });
-    } else if (typeof presenter.error === "function") {
-      presenter.error(`${error.code}: ${error.message}`);
-    }
-    return exitCode;
-  }
-
-  const message = error instanceof Error ? error.message : String(error);
-  if (presenter.isJSON && typeof presenter.json === "function") {
-    presenter.json({ ok: false, error: { message } });
-  } else if (typeof presenter.error === "function") {
-    presenter.error(message);
-  }
-  return 1;
 }

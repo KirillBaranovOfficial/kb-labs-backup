@@ -112,4 +112,40 @@ describe('plugin executor adapter errors', () => {
       executeCommandV3.mockReset();
     }
   });
+
+  // case: S-203.16
+  it('rejects an invalid GATEWAY_PORT before starting the plugin', async () => {
+    const previousGatewayPort = process.env.GATEWAY_PORT;
+    process.env.GATEWAY_PORT = '4000oops';
+    const manifestCmd = {
+      pkgRoot: '/platform/plugins/marketplace',
+      manifest: { id: '@kb-labs/marketplace-entry', segments: ['marketplace', 'plugins', 'doctor'] },
+      v3Manifest: {
+        id: '@kb-labs/marketplace-entry',
+        version: '1.0.0',
+        permissions: { env: { read: ['KB_GATEWAY_URL'] } },
+        cli: { commands: [{ path: 'marketplace plugins doctor', handler: 'dist/index.js#doctor' }] },
+      },
+    } as unknown as RegisteredCommand;
+
+    try {
+      await expect(executePlugin({
+        context: { cwd: '/project', presenter: {} } as Parameters<typeof executePlugin>[0]['context'],
+        commandId: 'marketplace:plugins:doctor',
+        argv: [],
+        flags: {},
+        manifestCmd,
+        netOffset: 0,
+        platform: {
+          getSocketPath: () => '/tmp/platform.sock',
+          getAdapter: () => ({ listenAddress: () => undefined }),
+        } as unknown as Parameters<typeof executePlugin>[0]['platform'],
+      })).rejects.toMatchObject({ name: 'ServicePortConfigError', envVar: 'GATEWAY_PORT' });
+      expect(executeCommandV3).not.toHaveBeenCalled();
+    } finally {
+      if (previousGatewayPort === undefined) delete process.env.GATEWAY_PORT;
+      else process.env.GATEWAY_PORT = previousGatewayPort;
+      executeCommandV3.mockReset();
+    }
+  });
 });

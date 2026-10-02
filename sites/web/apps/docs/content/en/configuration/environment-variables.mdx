@@ -68,7 +68,8 @@ Used by the REST API rate-limit middleware and metrics collector ([`rest-api/src
 |---|---|---|
 | `GATEWAY_JWT_SECRET` | HMAC signing key for all gateway-issued JWTs. **Required in production.** When unset, the gateway logs a warning and falls back to an insecure default. | (insecure dev default) |
 | `GATEWAY_INTERNAL_SECRET` | Required shared secret for gateway-to-service authentication. kb-create generates and preserves it for local and secured installs; container and team deployments must provide it through their secret manager. | No default |
-| `PORT` | HTTP port the gateway listens on. | `4000` |
+| `GATEWAY_PORT` | HTTP port the gateway listens on. Must be an integer from 1 through 65535. Invalid values produce `KB_CONFIG_INVALID`; run `unset GATEWAY_PORT` to use the default. | `4000` |
+| `GATEWAY_HOST` | Host address the gateway binds to when no service transport address is configured. | `0.0.0.0` |
 
 See [`gateway-app/src/bootstrap.ts`](plugins/gateway/app/src/bootstrap.ts) and [Gateway → Authentication](/gateway/authentication).
 
@@ -82,7 +83,7 @@ Each long-running service reads its own port env var plus `NODE_ENV`:
 | Workflow daemon | `PORT` | 7778 |
 | Marketplace | `KB_MARKETPLACE_PORT` / `PORT` | 5070 |
 | Marketplace bind | `KB_MARKETPLACE_HOST` | `0.0.0.0` |
-| Gateway | `PORT` | 4000 |
+| Gateway | `GATEWAY_PORT` | 4000 |
 | State daemon | `KB_STATE_DAEMON_PORT` | Host allocates a loopback port; set explicitly only when running the daemon outside the host. |
 | State daemon bind | `KB_STATE_DAEMON_HOST` | `localhost` |
 | Studio | `PORT` | 3000 |

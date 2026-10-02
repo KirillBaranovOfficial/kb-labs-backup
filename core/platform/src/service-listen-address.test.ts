@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { resolveServiceListenAddress } from './service-listen-address.js';
+import { toErrorEnvelope } from './error-envelope/index.js';
+import {
+  GATEWAY_SERVICE_NETWORK,
+  resolveServiceListenAddress,
+} from './service-listen-address.js';
 
 describe('resolveServiceListenAddress', () => {
+  it('exports the gateway service network settings shared by all address consumers', () => {
+    expect(GATEWAY_SERVICE_NETWORK).toEqual({
+      serviceId: 'gateway',
+      portEnvVar: 'GATEWAY_PORT',
+      defaultPort: 4000,
+      hostEnvVar: 'GATEWAY_HOST',
+      defaultHost: '0.0.0.0',
+    });
+  });
+
   // case: S-010.7
   it('uses the service transport listen address without applying the offset twice', () => {
     expect(resolveServiceListenAddress({
@@ -32,5 +46,48 @@ describe('resolveServiceListenAddress', () => {
       hostEnvValue: '127.0.0.1',
       defaultHost: '0.0.0.0',
     }, 200)).toEqual({ host: '127.0.0.1', port: 4700 });
+  });
+
+  // case: S-203.16
+  it('rejects malformed and out-of-range GATEWAY_PORT values with a catalogued config error', () => {
+    for (const value of ['4000oops', '4000.5', '0', '65536', '-1']) {
+      let failure: unknown;
+      try {
+        resolveServiceListenAddress(undefined, {
+          serviceId: GATEWAY_SERVICE_NETWORK.serviceId,
+          portEnvVar: GATEWAY_SERVICE_NETWORK.portEnvVar,
+          portEnvValue: value,
+          defaultPort: GATEWAY_SERVICE_NETWORK.defaultPort,
+        }, 0);
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(toErrorEnvelope(failure)).toMatchObject({
+        code: 'KB_CONFIG_INVALID',
+        message: expect.stringContaining('GATEWAY_PORT'),
+        hint: 'Run "unset GATEWAY_PORT", then retry the command to use the service default port.',
+      });
+    }
+  });
+
+  // case: S-203.16
+  it('rejects an offset that would put the resolved listener outside the valid port range', () => {
+    let failure: unknown;
+    try {
+      resolveServiceListenAddress(undefined, {
+        serviceId: 'gateway',
+        portEnvVar: 'GATEWAY_PORT',
+        portEnvValue: '65530',
+        defaultPort: 4000,
+      }, 10);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(toErrorEnvelope(failure)).toMatchObject({
+      code: 'KB_CONFIG_INVALID',
+      message: expect.stringContaining('GATEWAY_PORT'),
+    });
   });
 });

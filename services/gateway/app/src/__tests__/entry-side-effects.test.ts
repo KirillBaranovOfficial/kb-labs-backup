@@ -30,9 +30,12 @@ describe("gateway entrypoints", () => {
     expect(runService).toHaveBeenCalledWith(
       expect.objectContaining({
         appId: "gateway",
+        serviceId: "gateway",
         startDir: "/some/root",
         defaultPort: 4000,
         portEnvVar: "GATEWAY_PORT",
+        defaultHost: "0.0.0.0",
+        hostEnvVar: "GATEWAY_HOST",
         setup,
       }),
     );

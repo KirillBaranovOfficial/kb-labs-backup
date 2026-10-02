@@ -1,8 +1,19 @@
 import type { IServiceTransport } from './adapters/service-transport.js';
+import { ServicePortConfigError } from './errors.js';
+
+/** Canonical listener settings for the Gateway service across all launchers. */
+export const GATEWAY_SERVICE_NETWORK = {
+  serviceId: 'gateway',
+  portEnvVar: 'GATEWAY_PORT',
+  defaultPort: 4000,
+  hostEnvVar: 'GATEWAY_HOST',
+  defaultHost: '0.0.0.0',
+} as const;
 
 /** Network inputs needed by both the daemon binder and address consumers. */
 export interface ServiceNetworkSettings {
   serviceId: string;
+  portEnvVar?: string;
   portEnvValue?: string;
   defaultPort?: number;
   hostEnvValue?: string;
@@ -34,12 +45,31 @@ export function resolveServiceListenAddress(
 }
 
 function resolveConfiguredPort(settings: ServiceNetworkSettings, netOffset: number): number {
+  const envVar = settings.portEnvVar ?? `service.${settings.serviceId}.port`;
   const configuredPort = settings.portEnvValue;
-  const port = configuredPort ? parseInt(configuredPort, 10) : settings.defaultPort;
+  let port: number | undefined;
+  if (configuredPort !== undefined) {
+    if (!/^\d+$/.test(configuredPort)) {
+      throw new ServicePortConfigError(envVar, 'must be an integer from 1 through 65535');
+    }
+    port = Number(configuredPort);
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {
+      throw new ServicePortConfigError(envVar, 'must be an integer from 1 through 65535');
+    }
+  } else {
+    port = settings.defaultPort;
+  }
   if (port === undefined) {
     throw new Error(
       `Service transport has no listen address for "${settings.serviceId}" and no port was configured.`,
     );
   }
-  return port + netOffset;
+  const resolvedPort = port + netOffset;
+  if (!Number.isSafeInteger(resolvedPort) || resolvedPort < 1 || resolvedPort > 65535) {
+    throw new ServicePortConfigError(
+      envVar,
+      `must resolve to an integer from 1 through 65535 after applying the network offset (resolved ${resolvedPort})`,
+    );
+  }
+  return resolvedPort;
 }

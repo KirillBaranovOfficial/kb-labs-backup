@@ -99,3 +99,17 @@ export class PlatformConfigError extends Error {
     Object.setPrototypeOf(this, PlatformConfigError.prototype);
   }
 }
+
+/** A service port environment setting is not a valid TCP port. */
+export class ServicePortConfigError extends Error {
+  public readonly envVar: string;
+  public readonly reason: string;
+
+  constructor(envVar: string, reason: string) {
+    super(`Environment variable "${envVar}" ${reason}.`);
+    this.name = 'ServicePortConfigError';
+    this.envVar = envVar;
+    this.reason = reason;
+    Object.setPrototypeOf(this, ServicePortConfigError.prototype);
+  }
+}

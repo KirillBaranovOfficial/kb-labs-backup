@@ -1,4 +1,5 @@
 import {
+  GATEWAY_SERVICE_NETWORK,
   logDiagnosticEvent,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
@@ -56,12 +57,9 @@ export async function bootstrap(
   requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET");
   await runService({
     appId: "gateway",
+    ...GATEWAY_SERVICE_NETWORK,
     projectScope: "required",
     startDir: repoRoot,
-    defaultPort: 4000,
-    portEnvVar: "GATEWAY_PORT",
-    defaultHost: "0.0.0.0",
-    hostEnvVar: "GATEWAY_HOST",
     platform: {
       assemblyHook: makeAssemblyHook(),
     },

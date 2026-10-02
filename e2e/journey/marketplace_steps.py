@@ -337,6 +337,28 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     if journey.steps[-1].status != "PASS":
         return
 
+    def assert_invalid_gateway_port_error() -> None:
+        invalid_env = {**base_env, "GATEWAY_PORT": "not-a-port"}
+        command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+        with invocation_context(step_id="S-203.16"):
+            result = _run(command, cwd=project, env=invalid_env, runner=runner)
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("invalid gateway port did not return a JSON config error") from error
+        failure = payload.get("error") if isinstance(payload, dict) else None
+        if (result.returncode != 1 or not isinstance(failure, dict)
+                or failure.get("code") != "KB_CONFIG_INVALID"
+                or "GATEWAY_PORT" not in failure.get("message", "")
+                or "integer from 1 through 65535" not in failure.get("message", "")
+                or failure.get("hint") != 'Run "unset GATEWAY_PORT", then retry the command to use the service default port.'):
+            raise RuntimeError(f"invalid gateway port returned an unexpected config error: {payload!r}")
+
+    journey.step("report a catalogued config error for an invalid gateway port", "marketplace",
+                 assert_invalid_gateway_port_error, cases=["S-203.16"])
+    if journey.steps[-1].status != "PASS":
+        return
+
     def assert_reinstall_idempotent() -> None:
         _output(cli(install_commit), install_commit)
         lock = json.loads(lock_file.read_text())

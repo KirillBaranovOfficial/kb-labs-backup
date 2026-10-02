@@ -15,6 +15,7 @@ import { createRequire } from "node:module";
 import { loadEffectiveConfig } from "@kb-labs/core-config";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import {
+  GATEWAY_SERVICE_NETWORK,
   resolveServiceListenAddress,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
@@ -286,11 +287,12 @@ export async function createHostConfig(
           const listenAddress = resolveServiceListenAddress(
             ctx.platform.getAdapter<IServiceTransport>("serviceTransport"),
             {
-              serviceId: "gateway",
-              portEnvValue: process.env.GATEWAY_PORT,
-              defaultPort: 4000,
-              hostEnvValue: process.env.GATEWAY_HOST,
-              defaultHost: "0.0.0.0",
+              serviceId: GATEWAY_SERVICE_NETWORK.serviceId,
+              portEnvVar: GATEWAY_SERVICE_NETWORK.portEnvVar,
+              portEnvValue: process.env[GATEWAY_SERVICE_NETWORK.portEnvVar],
+              hostEnvValue: process.env[GATEWAY_SERVICE_NETWORK.hostEnvVar],
+              defaultPort: GATEWAY_SERVICE_NETWORK.defaultPort,
+              defaultHost: GATEWAY_SERVICE_NETWORK.defaultHost,
             },
             ctx.netOffset,
           );
@@ -341,11 +343,8 @@ export async function createHostConfig(
   );
 
   const gateway: HostModule = defineHostModule({
-    id: "gateway",
-    defaultPort: 4000,
-    portEnvVar: "GATEWAY_PORT",
-    defaultHost: "0.0.0.0",
-    hostEnvVar: "GATEWAY_HOST",
+    ...GATEWAY_SERVICE_NETWORK,
+    id: GATEWAY_SERVICE_NETWORK.serviceId,
     setup: async (ctx) => {
       const { settings, upstreams, gatewayAddress } = await prepare(ctx);
       if (!isSelected(settings, "gateway")) {
