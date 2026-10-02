@@ -14,6 +14,7 @@ import Database from 'better-sqlite3';
 import { join, isAbsolute, dirname } from 'node:path';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { mkdirSync } from 'node:fs';
+import { AdapterUnavailableError } from '@kb-labs/sdk';
 import type {
   IAnalytics,
   IDisposable,
@@ -171,20 +172,42 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
     // Open database — better-sqlite3 is synchronous
     this.db = new Database(this.dbPath);
 
-    // WAL mode: multiple readers + one writer, no exclusive lock
-    this.db.pragma('journal_mode = WAL');
-    this.db.pragma('busy_timeout = 5000');
-    this.db.pragma('synchronous = NORMAL');
+    try {
+      // WAL mode: multiple readers + one writer, no exclusive lock
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('busy_timeout = 5000');
+      this.db.pragma('synchronous = NORMAL');
 
-    // Setup schema
-    this.db.exec(CREATE_EVENTS_TABLE);
-    for (const idx of CREATE_INDEXES) {
-      this.db.exec(idx);
+      // Setup schema
+      this.db.exec(CREATE_EVENTS_TABLE);
+      for (const idx of CREATE_INDEXES) {
+        this.db.exec(idx);
+      }
+    } catch (error) {
+      try {
+        this.db.close();
+      } catch {
+        // better-sqlite3 can leave a connection unusable after a failed open.
+      }
+      if (isCorruptDatabaseError(error)) {
+        const command = 'kb-create stop --platform-root "$PLATFORM_ROOT"';
+        throw new AdapterUnavailableError(
+          'analytics',
+          'load-failed',
+          `Analytics SQLite file is not a valid database: ${this.dbPath}`,
+          error,
+          {
+            userMessage: `Analytics database ${this.dbPath} is not a valid SQLite database.`,
+            hint: `Stop the host with \`${command}\`, restore a valid backup to this path, then run \`kb-create start --platform-root "$PLATFORM_ROOT"\`.`,
+            action: { id: 'stop-host', label: 'Stop the host', command },
+          },
+        );
+      }
+      throw error;
     }
 
-    // Ensure clean shutdown — checkpoint WAL and close connection.
-    // Without this, process.exit() leaves WAL in inconsistent state
-    // causing "database disk image is malformed" for other processes.
+    // Platform shutdown closes this adapter after service teardown. Process
+    // listeners remain a final cleanup path for one-shot runtimes.
     this._onExit = () => this.close();
     process.on('exit', this._onExit);
     process.on('SIGINT', this._onExit);
@@ -401,6 +424,11 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
   async getDlqStatus(): Promise<DlqStatus | null> {
     return null;
   }
+}
+
+function isCorruptDatabaseError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {return false;}
+  return error.code === 'SQLITE_NOTADB' || error.code === 'SQLITE_CORRUPT';
 }
 
 // ─── SQL helpers ──────────────────────────────────────────────────────────────
