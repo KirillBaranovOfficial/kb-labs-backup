@@ -1,6 +1,7 @@
 import { KBError, errorCodes } from '../errors/kb-error';
 import type { ResponseError } from './types';
 import type { ErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { ulid } from 'ulid';
 
 /**
  * Error envelope structure
@@ -49,6 +50,29 @@ export function mapFetchError(error: unknown, response?: Response): KBError {
   }
 
   const parsedBody = error;
+  if (isSharedFailureEnvelope(parsedBody)) {
+    return new KBError(
+      parsedBody.error.code,
+      parsedBody.error.message,
+      response.status,
+      undefined,
+      parsedBody.error.hint,
+      parsedBody.error.correlationId,
+    );
+  }
+
+  if (isFailureEnvelopeCandidate(parsedBody)) {
+    const details = parsedBody.error;
+    return new KBError(
+      'KB_RUNTIME_UNEXPECTED',
+      'The operation failed unexpectedly.',
+      response.status,
+      undefined,
+      'Copy diagnostics and contact support.',
+      typeof details.correlationId === 'string' ? details.correlationId : undefined,
+    );
+  }
+
   const errorEnvelope =
     parsedBody && typeof parsedBody === 'object' && isErrorEnvelopeResponse(parsedBody)
       ? (parsedBody as ErrorEnvelopeResponse)
@@ -88,6 +112,45 @@ export function mapFetchError(error: unknown, response?: Response): KBError {
   return new KBError(errorCodes.NETWORK_ERROR, errorMessage || httpError.statusText || 'Request failed', statusCode, httpError);
 }
 
+function isSharedFailureEnvelope(value: unknown): value is {
+  ok: false;
+  error: { code: string; message: string; hint: string; correlationId?: string };
+} {
+  if (!isFailureEnvelopeCandidate(value)) { return false; }
+  const error = value.error;
+  return Object.keys(value).every((key) => key === 'ok' || key === 'error') &&
+    typeof error.code === 'string' && /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(error.code) &&
+    typeof error.message === 'string' && error.message.length > 0 &&
+    typeof error.area === 'string' && typeof error.stage === 'string' &&
+    (error.severity === 'error' || error.severity === 'warning') &&
+    typeof error.retryable === 'boolean' && typeof error.hint === 'string' && error.hint.length > 0;
+}
+
+function isFailureEnvelopeCandidate(value: unknown): value is {
+  ok: false;
+  error: Record<string, unknown>;
+} {
+  return typeof value === 'object' && value !== null &&
+    'ok' in value && value.ok === false &&
+    'error' in value && typeof value.error === 'object' && value.error !== null;
+}
+
+export function mapInvalidResultEnvelope(value: unknown, status: number): KBError {
+  const nestedError = isRecord(value) && isRecord(value.error) ? value.error : undefined;
+  return new KBError(
+    'KB_RUNTIME_UNEXPECTED',
+    'The operation failed unexpectedly.',
+    status,
+    undefined,
+    'Copy diagnostics and contact support.',
+    typeof nestedError?.correlationId === 'string' ? nestedError.correlationId : `studio-${ulid()}`,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * Map error envelope to KBError
  */
@@ -125,4 +188,3 @@ export function mapErrorEnvelope(envelope: ErrorEnvelope): KBError {
 
   return new KBError(errorCodes.SERVER_ERROR, envelope.error.message, 500, httpError);
 }
-
