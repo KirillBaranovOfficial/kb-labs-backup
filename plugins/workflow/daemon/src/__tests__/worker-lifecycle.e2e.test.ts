@@ -11,7 +11,7 @@ vi.mock('@kb-labs/workflow-runtime', () => ({
   },
 }));
 
-import { createWorkflowWorker } from '../worker.js';
+import { buildWorkflowStepEnvironment, createWorkflowWorker } from '../worker.js';
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -27,6 +27,23 @@ describe('workflow worker lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRunnerExecute.mockResolvedValue({ status: 'success', outputs: { ok: true } });
+  });
+
+  // case: S-198.6
+  it('passes platform, project and worktree roots to workflow steps', () => {
+    expect(buildWorkflowStepEnvironment({
+      platformRoot: '/opt/kb-platform',
+      projectRoot: '/home/user/repository',
+      projectId: 'project-123',
+      workspaceRoot: '/home/user/repository/.worktrees/run-1',
+      runEnv: { KB_PLATFORM_ROOT: '/wrong', CUSTOM: 'value' },
+    })).toEqual({
+      KB_PLATFORM_ROOT: '/opt/kb-platform',
+      KB_PROJECT_ROOT: '/home/user/repository',
+      KB_PROJECT_ID: 'project-123',
+      KB_WORKSPACE_ROOT: '/home/user/repository/.worktrees/run-1',
+      CUSTOM: 'value',
+    });
   });
 
   it('processes a job with steps and delegates execution to runner', async () => {

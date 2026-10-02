@@ -28,6 +28,9 @@ definitions, executions, history, and logs scoped to each project.
 | S-198.2 | Inspect each run's detail and step logs using `kb workflow runs view <run-id>` | The run output and captured logs contain only that project's fixture data and are stored in that project's runtime history. |
 | S-198.3 | Create and enable a cron in Project A, then inspect `kb workflow crons list --json` from both project roots | Project A lists the enabled cron; Project B does not list it. Each cron targets a workflow in its own project. |
 | S-198.4 | Advance the scheduler through Project A's due time and inspect both project histories and Studio's selected-project Crons and Runs views | Exactly the Project A scheduled run appears in A's history and views; B shows no cron or run from A. Logs are available only while viewing A. |
+| S-198.5 | Run a workflow that provisions an isolated git worktree, then run an installed plugin command from that worktree | The command resolves the owning registered project ID while its cwd remains the worktree path. |
+| S-198.6 | From a workflow step in the worktree, run `kb project show --json` and a platform CLI command | `KB_PLATFORM_ROOT` points to the installed platform, `KB_WORKSPACE_ROOT` points to the worktree, and the command resolves the owning project ID. |
+| S-198.7 | Register a repository, add a git worktree outside its directory, and run a plugin command there; then run the same command from a worktree of an unregistered repository | The registered repository's worktree resolves to its owning project. The unregistered worktree returns `KB_PROJECT_UNKNOWN` with a `kb project add <path>` hint. |
 
 ## Dependencies
 

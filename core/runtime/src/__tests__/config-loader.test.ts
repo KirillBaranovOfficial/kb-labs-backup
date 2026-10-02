@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -446,6 +447,38 @@ describe('loadPlatformConfig', () => {
       loadEnvFile: false,
     })).rejects.toMatchObject({
       code: 'KB_PROJECT_RUNTIME_IDENTITY_MISMATCH',
+    })
+  })
+
+  // case: S-198.5
+  it('accepts an explicit project id when the runtime path is one of its git worktrees', async () => {
+    const platformHome = path.join(tmpDir, 'runtime-worktree-home')
+    const registeredRoot = path.join(tmpDir, 'runtime-worktree-registered')
+    const externalParent = path.join(tmpDir, 'runtime-worktree-parent')
+    const worktreeRoot = path.join(externalParent, 'checkout')
+    mkdirSync(registeredRoot, { recursive: true })
+    mkdirSync(externalParent, { recursive: true })
+    execFileSync('git', ['init', '-b', 'main'], { cwd: registeredRoot })
+    execFileSync('git', ['config', 'user.email', 'test@example.test'], { cwd: registeredRoot })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: registeredRoot })
+    writeFileSync(path.join(registeredRoot, 'README.md'), 'fixture\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: registeredRoot })
+    execFileSync('git', ['commit', '-m', 'fixture'], { cwd: registeredRoot })
+    execFileSync('git', ['worktree', 'add', '--detach', worktreeRoot, 'main'], { cwd: registeredRoot })
+    const env = { KB_HOME: platformHome }
+    const registered = await createProjectRegistry({ env }).add(realpathSync(registeredRoot))
+
+    const loaded = await loadPlatformConfig({
+      startDir: worktreeRoot,
+      projectScope: 'required',
+      projectId: registered.project.id,
+      env,
+      loadEnvFile: false,
+    })
+    expect(loaded.projectRoot).toBe(realpathSync(registeredRoot))
+    expect(loaded.sources.roots).toMatchObject({
+      project: 'worktree',
+      projectStartDir: path.resolve(worktreeRoot),
     })
   })
 

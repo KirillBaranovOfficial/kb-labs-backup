@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
@@ -49,7 +50,53 @@ describe('resolveProjectRoot', () => {
     await createProjectRegistry({ root: home }).add(project)
 
     const result = await resolveProjectRoot({ startDir: nested, env: { KB_HOME: home } })
-    expect(result).toEqual({ rootDir: realpathSync(project), source: 'registry' })
+    expect(result).toEqual({ rootDir: realpathSync(project), source: 'registry', cwdDir: path.resolve(nested) })
+  })
+
+  // case: S-198.7
+  it('resolves a git worktree outside the registered project to its owning project', async () => {
+    const project = path.join(tmpDir, 'registered-git-project')
+    const worktreeParent = path.join(tmpDir, 'external-worktrees')
+    const worktree = path.join(worktreeParent, 'feature')
+    const home = path.join(tmpDir, 'registered-git-home')
+    mkdirSync(project, { recursive: true })
+    mkdirSync(worktreeParent, { recursive: true })
+    execFileSync('git', ['init', '-b', 'main'], { cwd: project })
+    execFileSync('git', ['config', 'user.email', 'test@example.test'], { cwd: project })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: project })
+    writeFileSync(path.join(project, 'README.md'), 'fixture\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: project })
+    execFileSync('git', ['commit', '-m', 'fixture'], { cwd: project })
+    execFileSync('git', ['worktree', 'add', '--detach', worktree, 'main'], { cwd: project })
+    await createProjectRegistry({ root: home }).add(realpathSync(project))
+
+    const result = await resolveProjectRoot({ startDir: worktree, env: { KB_HOME: home } })
+    expect(result).toEqual({ rootDir: realpathSync(project), source: 'worktree', cwdDir: path.resolve(worktree) })
+    const roots = await resolveRoots({
+      startDir: worktree,
+      env: { KB_HOME: home, KB_PLATFORM_ROOT: path.join(tmpDir, 'worktree-platform') },
+    })
+    expect(roots.projectRoot).toBe(realpathSync(project))
+    expect(roots.projectStartDir).toBe(path.resolve(worktree))
+    expect(roots.sources).toMatchObject({ project: 'worktree', projectStartDir: path.resolve(worktree) })
+  })
+
+  // case: S-198.7
+  it('does not resolve an unregistered repository worktree by common dir', async () => {
+    const repo = path.join(tmpDir, 'unregistered-git-project')
+    const worktree = path.join(tmpDir, 'unregistered-git-worktree')
+    const home = path.join(tmpDir, 'empty-git-home')
+    mkdirSync(repo, { recursive: true })
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.test'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
+    writeFileSync(path.join(repo, 'README.md'), 'fixture\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: repo })
+    execFileSync('git', ['commit', '-m', 'fixture'], { cwd: repo })
+    execFileSync('git', ['worktree', 'add', '--detach', worktree, 'main'], { cwd: repo })
+
+    await expect(resolveProjectRoot({ startDir: worktree, env: { KB_HOME: home } }))
+      .rejects.toMatchObject({ code: 'KB_PROJECT_UNKNOWN' })
   })
 
   it('ignores .kb and repository markers for project identity', async () => {
@@ -351,7 +398,8 @@ describe('resolveRoots', () => {
       platformRoot: path.resolve(platformRoot),
       projectRoot: path.resolve(platformRoot),
       sameLocation: true,
-      sources: { platform: 'env', project: 'platform' },
+      projectStartDir: path.resolve(cwd),
+      sources: { platform: 'env', project: 'platform', projectStartDir: path.resolve(cwd) },
     })
   })
 

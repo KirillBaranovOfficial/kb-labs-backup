@@ -61,6 +61,9 @@ export interface CreateWorkflowWorkerOptions {
   logger: ILogger;
   platform: Platform;
   workspaceRoot: string;
+  platformRoot?: string;
+  projectRoot?: string;
+  projectId?: string;
   concurrency?: number;
   /** Default timeout for step execution (ms). Default: 120000 (2 minutes) */
   defaultTimeout?: number;
@@ -71,6 +74,22 @@ export interface CreateWorkflowWorkerOptions {
    * Defaults to WORKFLOW_DEBUG env var. Pass true to force-enable.
    */
   debugMode?: boolean;
+}
+
+export function buildWorkflowStepEnvironment(input: {
+  platformRoot?: string;
+  projectRoot?: string;
+  projectId?: string;
+  workspaceRoot: string;
+  runEnv?: Record<string, string>;
+}): Record<string, string> {
+  return {
+    ...input.runEnv,
+    ...(input.platformRoot ? { KB_PLATFORM_ROOT: input.platformRoot } : {}),
+    ...(input.projectRoot ? { KB_PROJECT_ROOT: input.projectRoot } : {}),
+    ...(input.projectId ? { KB_PROJECT_ID: input.projectId } : {}),
+    KB_WORKSPACE_ROOT: input.workspaceRoot,
+  };
 }
 
 export interface WorkflowWorker {
@@ -100,6 +119,9 @@ export async function createWorkflowWorker(
     logger,
     platform,
     workspaceRoot,
+    platformRoot = process.env["KB_PLATFORM_ROOT"],
+    projectRoot = process.env["KB_PROJECT_ROOT"] ?? workspaceRoot,
+    projectId = process.env["KB_PROJECT_ID"],
     concurrency = 5,
     defaultTimeout = 120000,
     analytics,
@@ -113,8 +135,8 @@ export async function createWorkflowWorker(
     typeof (wsProvider as { startupCleanup?: () => Promise<void> })
       .startupCleanup === "function"
   ) {
-    (wsProvider as unknown as { startupCleanup: () => Promise<void> })
-      .startupCleanup()
+    (wsProvider as unknown as { startupCleanup: (projectRoot?: string) => Promise<void> })
+      .startupCleanup(process.env["KB_PROJECT_ROOT"] ?? workspaceRoot)
       .catch(() => {});
   }
 
@@ -146,6 +168,7 @@ export async function createWorkflowWorker(
     backend: executionBackend as unknown as ExecutionBackend,
     cliApi,
     workspaceRoot,
+    platformRoot,
     defaultTimeout,
   });
 
@@ -349,6 +372,8 @@ export async function createWorkflowWorker(
         // Deterministic workspaceId per run — retries reuse the same worktree
         const ws = await wsProvider.materialize({
           workspaceId: wsId,
+          projectRoot,
+          platformRoot,
           metadata: { runId: run.id, jobId: job.id },
           onProgress: (event) => {
             jobLogger.info(`[workspace] ${event.stage}: ${event.message}`, {
@@ -850,11 +875,13 @@ export async function createWorkflowWorker(
                 // KB_PLATFORM_ROOT: where platform code (dist/, node_modules) lives.
                 // Shell steps can use this to reference platform commands when the
                 // worktree doesn't have compiled dist/ directories.
-                KB_PLATFORM_ROOT: workspaceRoot,
-                // KB_WORKSPACE_ROOT: the worktree (or project dir when no worktree is used).
-                // Scripts cd into this path before invoking agents or running git commands.
-                KB_WORKSPACE_ROOT: runWorkspace,
-                ...(freshRun?.env || {}),
+                ...buildWorkflowStepEnvironment({
+                  platformRoot,
+                  projectRoot,
+                  projectId,
+                  workspaceRoot: runWorkspace,
+                  runEnv: freshRun?.env,
+                }),
               },
               // Secrets resolution not yet implemented: run.secrets contains names only.
               // When a platform secrets store is available, resolve names → values here.

@@ -1,5 +1,7 @@
 import path from 'node:path'
 import { promises as fsp } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
 import { findRepoRoot } from '@kb-labs/core-sys'
@@ -30,6 +32,7 @@ const PLATFORM_PACKAGE_MARKERS = [
   '@kb-labs/cli-bin',
   '@kb-labs/core-runtime',
 ] as const
+const execFileAsync = promisify(execFile)
 
 const defaultFs: WorkspaceFs = {
   async exists(target: string): Promise<boolean> {
@@ -46,13 +49,36 @@ const defaultFs: WorkspaceFs = {
 // Project root (previously "workspace root")
 // ──────────────────────────────────────────────────────────────────────────
 
-/** Return the deepest registered project containing `startDir`. */
+async function gitCommonDir(startDir: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
+      cwd: startDir,
+      timeout: 5_000,
+    })
+    return fsp.realpath(stdout.trim())
+  } catch {
+    return undefined
+  }
+}
+
+/** Return the deepest registered project containing `startDir`, or its git worktree owner. */
 export async function findRegisteredProjectRoot(
   startDir: string,
   env: Record<string, string | undefined> = process.env,
 ): Promise<string | undefined> {
-  const view = await findProjectContainingPath(createProjectRegistry({ env }), startDir)
-  return view?.project.path
+  const registry = createProjectRegistry({ env })
+  const containing = await findProjectContainingPath(registry, startDir)
+  if (containing) return containing.project.path
+
+  const cwdCommonDir = await gitCommonDir(startDir)
+  if (!cwdCommonDir) return undefined
+  const projects = await registry.list()
+  for (const project of projects) {
+    // eslint-disable-next-line no-await-in-loop -- registry order must not override the common-dir match
+    const registeredCommonDir = await gitCommonDir(project.project.path)
+    if (registeredCommonDir === cwdCommonDir) return project.project.path
+  }
+  return undefined
 }
 
 /**
@@ -73,7 +99,8 @@ export async function resolveProjectRoot(
       { path: current },
     )
   }
-  return { rootDir, source: 'registry' }
+  const direct = await findProjectContainingPath(createProjectRegistry({ env }), current)
+  return { rootDir, source: direct ? 'registry' : 'worktree', cwdDir: current }
 }
 
 /**
@@ -342,8 +369,13 @@ export async function resolveRoots(
     return {
       platformRoot: platform.rootDir,
       projectRoot: platform.rootDir,
+      projectStartDir: path.resolve(options.cwd ?? options.startDir ?? process.cwd()),
       sameLocation: true,
-      sources: { platform: platform.source, project: 'platform' },
+      sources: {
+        platform: platform.source,
+        project: 'platform',
+        projectStartDir: path.resolve(options.cwd ?? options.startDir ?? process.cwd()),
+      },
     }
   }
 
@@ -356,10 +388,12 @@ export async function resolveRoots(
   return {
     platformRoot: platform.rootDir,
     projectRoot: project.rootDir,
+    projectStartDir: project.cwdDir,
     sameLocation: platformCanonical === projectCanonical,
     sources: {
       platform: platform.source,
       project: project.source,
+      projectStartDir: project.cwdDir,
     },
   }
 }

@@ -35,6 +35,10 @@ export interface WorkspaceProgressEvent {
 }
 
 export interface MaterializeWorkspaceRequest {
+  /** Owning registered project path; required by project-backed workspace providers. */
+  projectRoot?: string;
+  /** Platform installation path used for tool binaries inside worktrees. */
+  platformRoot?: string;
   workspaceId?: string;
   tenantId?: string;
   namespace?: string;

@@ -24,6 +24,7 @@ from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
 from marketplace_steps import _registry_version, _output
 from adapter_defaults_steps import run_adapter_default_steps
+from worktree_steps import run_worktree_steps
 from mcp_project_steps import (
     apply_commit_plan,
     commit_tool_schema,
@@ -545,6 +546,10 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str) -> 
                  lambda: run_plugin_author_flow(journey, Path(project_root),
                                                 Path.home() / ".local/bin/kb", registry,
                                                 base_env=env))
+    journey.step("worktree workflow identity flow", "workflow",
+                 lambda: run_worktree_steps(journey, Path.home() / ".local/bin/kb",
+                                            platform_root=os.environ.get("KB_PLATFORM_ROOT", str(Path.home() / "kb-platform")),
+                                            env=env))
 
 
 def _find_project_id(payload: object) -> str:

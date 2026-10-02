@@ -32,11 +32,14 @@ export interface WorkspaceFs {
 
 export type ProjectRootSource =
   | 'registry'
+  | 'worktree'
   | 'platform'
 
 export interface ProjectRootResolution {
   rootDir: string
   source: ProjectRootSource
+  /** Canonical directory used for discovery; may be a worktree of rootDir. */
+  cwdDir: string
 }
 
 export interface ResolveProjectRootOptions {
@@ -133,6 +136,8 @@ export interface RootsResolution {
   platformRoot: string
   /** Where `.kb/kb.config.json` and per-project state live. */
   projectRoot: string
+  /** Directory used to discover the registered project, including a worktree path. */
+  projectStartDir: string
   /**
    * `true` when both roots resolve to the same physical directory — this is
    * the normal case in the KB Labs monorepo dev mode.
@@ -142,5 +147,6 @@ export interface RootsResolution {
   sources: {
     platform: PlatformRootSource
     project: ProjectRootSource
+    projectStartDir: string
   }
 }
