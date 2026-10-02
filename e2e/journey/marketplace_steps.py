@@ -282,6 +282,43 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     if journey.steps[-1].status != "PASS":
         return
 
+    gateway_doctor = ["marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+    def assert_cli_plugin_gateway() -> None:
+        payload = _json(cli(gateway_doctor), gateway_doctor)
+        if payload.get("ok") is not True:
+            raise RuntimeError("installed CLI plugin command did not return a successful gateway result")
+    journey.step("invoke gateway-backed plugin command through installed CLI", "marketplace",
+                 assert_cli_plugin_gateway, cases=["S-010.7"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_stopped_host_error() -> None:
+        stop_command = ["kb-create", "stop", "--platform-root", str(platform_root), "--json"]
+        stop = _run(stop_command, cwd=platform_root, env=base_env, runner=runner)
+        _output(stop, stop_command)
+        command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+        try:
+            with invocation_context(step_id="S-203.10"):
+                result = _run(command, cwd=project, env=base_env, runner=runner)
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                raise RuntimeError("gateway-backed plugin command did not return a JSON error envelope") from error
+            failure = payload.get("error") if isinstance(payload, dict) else None
+            if (result.returncode != 1 or not isinstance(failure, dict)
+                    or failure.get("code") != "KB_HOST_UNREACHABLE"
+                    or failure.get("hint") != 'Run "kb-create start", or "kb-create doctor" if the host should already be running.'):
+                raise RuntimeError(f"stopped host returned an unexpected gateway error: {payload!r}")
+        finally:
+            start_command = ["kb-create", "start", "--platform-root", str(platform_root), "--json"]
+            start = _run(start_command, cwd=platform_root, env=base_env, runner=runner)
+            _output(start, start_command)
+
+    journey.step("report catalogued error when the installed host is stopped", "marketplace",
+                 assert_stopped_host_error, cases=["S-203.10"])
+    if journey.steps[-1].status != "PASS":
+        return
+
     def assert_reinstall_idempotent() -> None:
         _output(cli(install_commit), install_commit)
         lock = json.loads(lock_file.read_text())

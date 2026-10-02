@@ -19,7 +19,7 @@ class MarketplaceHttpError extends Error {
     this.name = 'MarketplaceHttpError';
     this.envelope = {
       ...error,
-      code: typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR',
+      code: typeof error.code === 'string' ? error.code : 'KB_RUNTIME_UNEXPECTED',
       message,
       hint: typeof error.hint === 'string'
         ? error.hint
@@ -87,7 +87,7 @@ async function readMarketplaceError(response: Response): Promise<Record<string, 
   const error = isRecord(body) && isRecord(body.error) ? body.error : body;
   if (isRecord(error)) { return error; }
   return {
-    code: 'INTERNAL_ERROR',
+    code: 'KB_RUNTIME_UNEXPECTED',
     message: `Marketplace request failed with HTTP ${response.status}`,
     hint: 'Check the installed platform with "kb-create status" and retry the command.',
   };

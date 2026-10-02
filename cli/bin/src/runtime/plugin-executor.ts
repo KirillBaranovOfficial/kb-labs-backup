@@ -20,14 +20,20 @@ import {
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import { setJsonMode } from "@kb-labs/shared-cli-ui";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { AdapterUnavailableError, createContextLogger } from "@kb-labs/core-platform";
+import {
+  AdapterUnavailableError,
+  createContextLogger,
+  getHostServiceAddress,
+} from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
 import { createCLIUIFacade } from "./ui-facade";
 
 export interface PluginExecutionOptions {
   context: SystemContext;
+  platformRoot?: string;
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
@@ -112,23 +118,27 @@ export async function executePlugin(
     // `<projectRoot>/.kb/plugins/<name>/node_modules/`, not under cwd) are
     // resolved correctly by the execution backend.
     try {
-      const exitCode = await executeCommandV3({
-        pluginId,
-        pluginVersion,
-        pluginRoot,
-        handlerPath,
-        argv,
-        flags,
-        ui,
-        platform: platformServices,
-        platformContainer: platform,
-        socketPath,
-        cwd: context.cwd || process.cwd(),
-        devMode: process.env.NODE_ENV === "development",
-        permissions,
-        quotas,
-        configSection: pluginManifest.configSection,
-      });
+      const exitCode = await withPluginRuntimeEnvironment(
+        options.platformRoot,
+        process.env,
+        () => executeCommandV3({
+          pluginId,
+          pluginVersion,
+          pluginRoot,
+          handlerPath,
+          argv,
+          flags,
+          ui,
+          platform: platformServices,
+          platformContainer: platform,
+          socketPath,
+          cwd: context.cwd || process.cwd(),
+          devMode: process.env.NODE_ENV === "development",
+          permissions,
+          quotas,
+          configSection: pluginManifest.configSection,
+        }),
+      );
 
       context.logger?.debug(
         "[plugin-executor] Command executed via platform.executionBackend",
@@ -161,6 +171,79 @@ export async function executePlugin(
       return 1;
     }
     return undefined;
+  }
+}
+
+/**
+ * Resolve the installed platform's public gateway address from its launcher
+ * receipt. An explicit environment value remains authoritative for remote
+ * platforms and CI. The host receipt stores the health URL for the same
+ * public gateway listener that the host advertises to project runtimes.
+ */
+export async function resolvePluginRuntimeEnvironment(
+  platformRoot: string | undefined,
+  environment: NodeJS.ProcessEnv,
+): Promise<NodeJS.ProcessEnv> {
+  if (environment.KB_GATEWAY_URL) {
+    return { ...environment };
+  }
+  if (!platformRoot) {
+    return { ...environment };
+  }
+
+  let receipt: unknown;
+  try {
+    receipt = JSON.parse(
+      await readFile(path.join(platformRoot, ".kb", "v2", "receipt.json"), "utf8"),
+    );
+  } catch {
+    return { ...environment };
+  }
+  if (!receipt || typeof receipt !== "object") {
+    return { ...environment };
+  }
+  const verification = (receipt as { verification?: unknown }).verification;
+  if (!verification || typeof verification !== "object") {
+    return { ...environment };
+  }
+  const healthUrl = (verification as { hostHealthUrl?: unknown }).hostHealthUrl;
+  if (typeof healthUrl !== "string") {
+    return { ...environment };
+  }
+
+  let address: string;
+  try {
+    const parsed = new URL(healthUrl);
+    if (parsed.pathname !== "/health") {
+      return { ...environment };
+    }
+    address = getHostServiceAddress("gateway", {
+      KB_GATEWAY_URL: parsed.origin,
+    });
+  } catch {
+    return { ...environment };
+  }
+  return { ...environment, KB_GATEWAY_URL: address };
+}
+
+export async function withPluginRuntimeEnvironment<T>(
+  platformRoot: string | undefined,
+  environment: NodeJS.ProcessEnv,
+  execute: () => Promise<T>,
+): Promise<T> {
+  const resolved = await resolvePluginRuntimeEnvironment(platformRoot, environment);
+  const previousGatewayUrl = process.env.KB_GATEWAY_URL;
+  if (resolved.KB_GATEWAY_URL) {
+    process.env.KB_GATEWAY_URL = resolved.KB_GATEWAY_URL;
+  }
+  try {
+    return await execute();
+  } finally {
+    if (previousGatewayUrl === undefined) {
+      delete process.env.KB_GATEWAY_URL;
+    } else {
+      process.env.KB_GATEWAY_URL = previousGatewayUrl;
+    }
   }
 }
 

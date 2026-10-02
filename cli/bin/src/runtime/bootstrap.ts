@@ -462,6 +462,7 @@ export async function executeCli(
           flagsObj,
           cliContext,
           platform,
+          platformRoot,
           presenter,
           runWithMiddleware: async (run) => {
             const runtime = await runtimeFactory(runtimeInitOptions);
@@ -482,6 +483,7 @@ interface DispatchPluginParams {
   flagsObj: ReturnType<typeof parseArgs>["flagsObj"];
   cliContext: CliExecutionContext;
   platform: PlatformContainer;
+  platformRoot?: string;
   presenter: Presenter;
   runWithMiddleware: (run: () => Promise<number>) => Promise<number>;
 }
@@ -516,6 +518,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
 
     const pluginExitCode = await executePlugin({
       context: p.cliContext,
+      platformRoot: p.platformRoot,
       commandId,
       argv: p.actualRest,
       flags: { ...p.global, ...p.flagsObj },

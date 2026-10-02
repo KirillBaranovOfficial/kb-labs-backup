@@ -1,5 +1,5 @@
-import { defineCommand, validationError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
-import { handleMarketplaceError } from '../../errors.js';
+import { defineCommand, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+
 import { post } from '../../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../../scope.js';
 
@@ -43,7 +43,7 @@ export default defineCommand<unknown, UnlinkInput, { packageId: string; scope: s
         if (err instanceof CliScopeError) {
           validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleMarketplaceError(ctx, err, flags.json);
+          handleError(ctx, err, flags.json);
         }
         return { ok: false, error: err instanceof Error ? err.message : String(err), result: { packageId: '', scope: '' } };
       }
@@ -57,7 +57,7 @@ export default defineCommand<unknown, UnlinkInput, { packageId: string; scope: s
         }
         return { ok: true, result: { packageId, scope: scopeCtx.scope } };
       } catch (err) {
-        handleMarketplaceError(ctx, err, flags.json);
+        handleError(ctx, err, flags.json);
         return { ok: false, error: err instanceof Error ? err.message : String(err), result: { packageId: '', scope: '' } };
       }
     },

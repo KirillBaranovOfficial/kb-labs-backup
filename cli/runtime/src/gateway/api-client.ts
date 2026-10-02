@@ -1,4 +1,5 @@
 import { createErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { randomUUID } from 'node:crypto';
 import { CredentialsManager } from './credentials.js';
 import { SessionManager } from './session.js';
 import type { GatewayCredentials, SessionCredentials } from './types.js';
@@ -60,7 +61,15 @@ export async function gatewayApiFetch(input: string | URL, init: RequestInit = {
     const target = current ? authenticatedUrl(String(input), current.gatewayUrl) : new URL(String(input));
     const headers = new Headers(init.headers);
     if (current) { headers.set('Authorization', `Bearer ${current.accessToken}`); }
-    return fetch(target, { ...init, headers });
+    return fetch(target, { ...init, headers }).catch((error: unknown) => {
+      if (isConnectionFailure(error)) {
+        throw new GatewayApiError(createErrorEnvelope('KB_HOST_UNREACHABLE', {
+          details: { address: target.origin },
+          correlationId: randomUUID(),
+        }));
+      }
+      throw error;
+    });
   };
 
   let response = await send(auth);
@@ -86,4 +95,19 @@ export async function gatewayApiFetch(input: string | URL, init: RequestInit = {
     }));
   }
   return response;
+}
+
+function isConnectionFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const cause = 'cause' in error ? error.cause : undefined;
+  const code = cause && typeof cause === 'object' && 'code' in cause
+    ? cause.code
+    : undefined;
+  return code === 'ECONNREFUSED'
+    || code === 'ECONNRESET'
+    || code === 'EHOSTUNREACH'
+    || code === 'ENETUNREACH'
+    || code === 'ETIMEDOUT';
 }

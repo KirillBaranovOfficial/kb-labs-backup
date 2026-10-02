@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { handleMarketplaceError } from '../errors.js';
+import { handleError } from '@kb-labs/sdk';
 
 describe('marketplace CLI errors', () => {
   // case: S-041.7
@@ -7,7 +7,7 @@ describe('marketplace CLI errors', () => {
     const json = vi.fn();
     const ctx = { ui: { json } };
 
-    handleMarketplaceError(ctx, {
+    handleError(ctx, {
       envelope: {
         code: 'KB_AUTH_REQUIRED', area: 'auth', stage: 'run', severity: 'error', retryable: false,
         message: 'Authentication is required.', hint: 'Run "kb auth login".',

@@ -228,6 +228,7 @@ class MarketplaceStepTests(unittest.TestCase):
             env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
                    "KB_JOURNEY_PLATFORM_ROOT": str(platform_root)}
             calls: list[tuple[str, ...]] = []
+            host_running = True
 
             def lock(path: Path, *, platform: bool = False) -> dict:
                 lock_file = path / ".kb" / "marketplace.lock"
@@ -244,8 +245,12 @@ class MarketplaceStepTests(unittest.TestCase):
                 lock_file.write_text(json.dumps(value))
 
             def fake_run(command, *, cwd, env, capture_output, text, timeout):
+                nonlocal host_running
                 calls.append(tuple(command))
                 cwd_path = Path(cwd)
+                if command[0] == "kb-create":
+                    host_running = command[1] == "start"
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if command[0] == "npm":
                     package_id = command[2]
                     versions = {
@@ -258,7 +263,16 @@ class MarketplaceStepTests(unittest.TestCase):
                 args = command[1:]
                 stdout = "{}"
                 if args[:3] == ["marketplace", "plugins", "doctor"]:
-                    stdout = json.dumps({"ok": True, "total": 0, "issues": []})
+                    if host_running:
+                        stdout = json.dumps({"ok": True, "total": 0, "issues": []})
+                    else:
+                        return subprocess.CompletedProcess(command, 1, json.dumps({
+                            "ok": False,
+                            "error": {
+                                "code": "KB_HOST_UNREACHABLE",
+                                "hint": 'Run "kb-create start", or "kb-create doctor" if the host should already be running.',
+                            },
+                        }), "")
                 elif args[:2] == ["marketplace", "install"]:
                     package_id, version = args[2].rsplit("@", 1)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
@@ -332,6 +346,8 @@ class MarketplaceStepTests(unittest.TestCase):
             run_marketplace_steps(journey, project, "http://registry.test", env, fake_run)
 
             expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("047", range(1, 4))) for step in steps}
+            expected.add("S-010.7")
+            expected.add("S-203.10")
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(actual, expected)

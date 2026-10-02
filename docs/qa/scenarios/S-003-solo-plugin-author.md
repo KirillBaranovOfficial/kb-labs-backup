@@ -30,3 +30,4 @@ A plugin author scaffolds a plugin, builds it, links it into a project with the 
 | S-003.5 | Change the greeting in the generated core source, rebuild with `pnpm -w build`, and run `kb demo hello` again | The command prints the edited greeting, showing the author loop works without publishing. |
 | S-003.6 | Run `kb marketplace plugins unlink demo` | `demo` is removed from the project plugin list and `.kb/marketplace.lock`. |
 | S-003.7 | From the registered plugin workspace, run `kb docs generate-cli-reference --output docs/CLI-REFERENCE.md` | The command writes the generated CLI reference into that project. Running it outside a registered project fails before writing, because its default and requested output paths are project files. |
+| S-003.8 | Run `kb marketplace link --link /path/to/plugin` | CLI rejects the absolute path with a clear validation message that `--link` must be relative to the selected scope directory; it does not call the marketplace. |

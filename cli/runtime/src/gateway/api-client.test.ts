@@ -38,4 +38,18 @@ describe('gatewayApiFetch auth mapping', () => {
       },
     });
   });
+
+  // case: S-203.10
+  it('maps a refused host connection to the catalogued host-unreachable envelope', async () => {
+    const cause = Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed', { cause })));
+    await expect(gatewayApiFetch('http://127.0.0.1:43123/api')).rejects.toMatchObject({
+      envelope: {
+        code: 'KB_HOST_UNREACHABLE',
+        message: 'The KB Labs host is not running: cannot connect to http://127.0.0.1:43123.',
+        hint: 'Run "kb-create start", or "kb-create doctor" if the host should already be running.',
+        correlationId: expect.any(String),
+      },
+    });
+  });
 });
