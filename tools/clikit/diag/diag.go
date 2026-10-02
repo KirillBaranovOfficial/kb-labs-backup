@@ -28,8 +28,7 @@ type Diag struct {
 	Message string `json:"message"`
 	// Reason is the WHY — the underlying cause, in plain language.
 	Reason string `json:"reason,omitempty"`
-	// Hint is the WHAT-TO-DO / WHERE-TO-LOOK. Defaults to the registered hint
-	// for Code when not set explicitly.
+	// Hint is the WHAT-TO-DO / WHERE-TO-LOOK from the platform error catalog.
 	Hint string `json:"hint,omitempty"`
 	// Meta carries structured context (paths, hosts, per-action failures, …).
 	Meta          map[string]any `json:"meta,omitempty"`
@@ -61,9 +60,6 @@ type Opt func(*Diag)
 // WithReason sets the WHY.
 func WithReason(reason string) Opt { return func(d *Diag) { d.Reason = reason } }
 
-// WithHint sets an explicit hint, overriding the registry default.
-func WithHint(hint string) Opt { return func(d *Diag) { d.Hint = hint } }
-
 // WithMeta merges structured context into Meta.
 func WithMeta(meta map[string]any) Opt {
 	return func(d *Diag) {
@@ -79,18 +75,14 @@ func WithMeta(meta map[string]any) Opt {
 // WithCorrelationID attaches the ID that joins a safe result to its log entry.
 func WithCorrelationID(id string) Opt { return func(d *Diag) { d.CorrelationID = id } }
 
-// New builds a Diag. If no explicit hint is given, the registered hint for
-// code (if any) is used.
+// New builds a Diag and uses the platform catalog hint for a known code.
 func New(code, message string, opts ...Opt) *Diag {
 	d := &Diag{Code: code, Message: message}
 	for _, o := range opts {
 		o(d)
 	}
-	if d.Hint == "" {
-		d.Hint = HintFor(code)
-	}
-	if d.Hint == "" {
-		d.Hint = "Run the command with --help for the expected input."
+	if entry, ok := LookupCatalog(code); ok {
+		d.Hint = entry.Hint
 	}
 	return d
 }
@@ -119,37 +111,24 @@ func FromErrorWithLogger(err error, logger *slog.Logger) *Diag {
 	}
 	var typed *Diag
 	if errors.As(err, &typed) && typed != nil {
-		code := PlatformCode(typed.Code)
-		if typed.Code == "KB_RUNTIME_UNEXPECTED" && typed.CorrelationID != "" {
-			return typed
-		}
-		if code == "KB_RUNTIME_UNEXPECTED" {
+		entry, known := LookupCatalog(typed.Code)
+		if !known {
 			correlationID := newCorrelationID()
 			logger.Error("CLI command failed unexpectedly",
 				"correlationId", correlationID, "error", typed.Error(), "stack", string(debug.Stack()))
-			return New("KB_RUNTIME_UNEXPECTED", "The operation failed.",
-				WithHint("Re-run with --debug and include the correlationId in a report."),
-				WithCorrelationID(correlationID))
+			return New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", WithCorrelationID(correlationID))
 		}
 		normalized := *typed
-		normalized.Code = code
+		normalized.Hint = entry.Hint
 		if normalized.CorrelationID == "" {
 			normalized.CorrelationID = newCorrelationID()
-		}
-		if normalized.Hint == "" {
-			normalized.Hint = HintFor(code)
-			if normalized.Hint == "" {
-				normalized.Hint = "Run the command with --help for the expected input."
-			}
 		}
 		return &normalized
 	}
 	correlationID := newCorrelationID()
 	logger.Error("CLI command failed unexpectedly",
 		"correlationId", correlationID, "error", err.Error(), "stack", string(debug.Stack()))
-	return New("KB_RUNTIME_UNEXPECTED", "The operation failed.",
-		WithHint("Re-run with --debug and include the correlationId in a report."),
-		WithCorrelationID(correlationID))
+	return New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", WithCorrelationID(correlationID))
 }
 
 func newCorrelationID() string {

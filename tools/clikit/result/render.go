@@ -63,14 +63,20 @@ func errorEnvelope(d *diag.Diag) map[string]any {
 	if d == nil {
 		return nil
 	}
+	d = diag.FromError(d)
+	catalog, ok := diag.LookupCatalog(d.Code)
+	if !ok {
+		d = diag.FromError(fmt.Errorf("normalized diagnostic code %q has no catalog entry", d.Code))
+		catalog, _ = diag.LookupCatalog(d.Code)
+	}
 	p := map[string]any{
-		"code":      diag.PlatformCode(d.Code),
-		"area":      "runtime",
-		"stage":     "run",
-		"severity":  "error",
-		"retryable": false,
+		"code":      catalog.Code,
+		"area":      catalog.Area,
+		"stage":     catalog.Stage,
+		"severity":  catalog.Severity,
+		"retryable": catalog.Retryable,
 		"message":   d.Message,
-		"hint":      d.Hint,
+		"hint":      catalog.Hint,
 	}
 	if d.Reason != "" {
 		p["cause"] = d.Reason

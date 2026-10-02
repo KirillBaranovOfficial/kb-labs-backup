@@ -1000,6 +1000,141 @@
       "retryable": false,
       "message": "An unexpected error occurred.",
       "hint": "Re-run with --debug and include the correlationId in a report."
+    },
+    {
+      "code": "KB_CONFIG_LOAD_FAILED",
+      "area": "config",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The deployment configuration could not be loaded.",
+      "hint": "Check the path passed to `kb-deploy --config` and verify the file is readable."
+    },
+    {
+      "code": "KB_CONFIG_APPLY_FAILED",
+      "area": "config",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": false,
+      "message": "The configuration overlay could not be applied.",
+      "hint": "Check the overlay path and the `kb-env` operation log, then retry the profile operation."
+    },
+    {
+      "code": "KB_CONFIG_OVERLAY_NOT_FOUND",
+      "area": "config",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The configuration overlay does not exist.",
+      "hint": "Check the profile's `config:` path, then rerun `kb-env up <profile> --fresh`."
+    },
+    {
+      "code": "KB_DEPLOY_CONFIG_DELIVERY",
+      "area": "runtime",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": true,
+      "message": "Configuration could not be delivered to every deployment host.",
+      "hint": "Check SSH connectivity and host disk space, then retry `kb-deploy apply`."
+    },
+    {
+      "code": "KB_DEPLOY_HOST_UNDEFINED",
+      "area": "runtime",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The deployment plan references an undefined host.",
+      "hint": "Add the referenced host to `hosts:` in the deployment configuration, then rerun `kb-deploy plan`."
+    },
+    {
+      "code": "KB_DEPLOY_LOCK_WRITE_FAILED",
+      "area": "runtime",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": true,
+      "message": "The deployment completed, but its state lock could not be written.",
+      "hint": "Check write permission beside the deployment manifest, then verify the result with `kb-deploy status`."
+    },
+    {
+      "code": "KB_DEPLOY_WAVE_FAILED",
+      "area": "runtime",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": true,
+      "message": "A deployment wave did not complete.",
+      "hint": "Inspect the reported service failures, fix their cause, then rerun `kb-deploy apply`."
+    },
+    {
+      "code": "KB_ENV_PROFILE_MISMATCH",
+      "area": "config",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": false,
+      "message": "The live environment cannot switch to a profile with a different plugin set.",
+      "hint": "Run `kb-env up <profile> --fresh` to install the requested plugin set."
+    },
+    {
+      "code": "KB_INSTALL_MANIFEST_PROJECTION_INVALID",
+      "area": "install",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "message": "The installation manifest contains fields that cannot be projected.",
+      "hint": "Correct the reported manifest fields, then rerun `kb-create doctor`."
+    },
+    {
+      "code": "KB_INSTALL_CONFIRMATION_REQUIRED",
+      "area": "install",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "This operation requires explicit confirmation.",
+      "hint": "Run the command in an interactive terminal and confirm the operation when prompted."
+    },
+    {
+      "code": "KB_INSTALL_OPERATION_CANCELLED",
+      "area": "install",
+      "stage": "apply",
+      "severity": "error",
+      "retryable": false,
+      "message": "The operation was cancelled.",
+      "hint": "Rerun the command and confirm when prompted to continue."
+    },
+    {
+      "code": "KB_MARKETPLACE_REGISTRY_INTEGRITY",
+      "area": "plugin",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The package integrity could not be verified from the registry.",
+      "hint": "Publish the package to the configured registry and verify its integrity metadata before retrying deployment."
+    },
+    {
+      "code": "KB_INSTALL_RELEASE_ID_MISSING",
+      "area": "install",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "message": "The install result did not include a release identifier.",
+      "hint": "Inspect the remote install log and correct the install failure before retrying."
+    },
+    {
+      "code": "KB_SERVICE_HEALTH_TIMEOUT",
+      "area": "runtime",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": true,
+      "message": "Services did not become healthy before the readiness timeout.",
+      "hint": "Run `kb-env status` and inspect service logs, then retry after correcting the failure."
+    },
+    {
+      "code": "KB_SERVICE_UNAVAILABLE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "A monitored service reported a failure.",
+      "hint": "Run `kb-dev status` to inspect the service and its health checks."
     }
   ]
 }

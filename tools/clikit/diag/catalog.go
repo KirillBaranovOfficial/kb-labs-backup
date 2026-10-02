@@ -1,32 +1,45 @@
 package diag
 
-// legacyCodes maps the retired Go tool error identifiers into the platform
-// catalog. Callers should emit the stable code directly.
-var legacyCodes = map[string]string{
-	"ERR_CONFIG_LOAD":           "KB_CONFIG_LOAD_FAILED",
-	"ERR_CONFIG_INVALID":        "KB_CONFIG_INVALID",
-	"ERR_CONFIG_DELIVERY":       "KB_DEPLOY_CONFIG_DELIVERY",
-	"ERR_HOST_UNDEFINED":        "KB_DEPLOY_HOST_UNDEFINED",
-	"ERR_WRITE_LOCK":            "KB_DEPLOY_LOCK_WRITE_FAILED",
-	"ERR_WAVE_FAILED":           "KB_DEPLOY_WAVE_FAILED",
-	"ERR_PROFILE_MISMATCH":      "KB_ENV_PROFILE_MISMATCH",
-	"ERR_CONFIG_APPLY_FAILED":   "KB_CONFIG_APPLY_FAILED",
-	"ERR_OVERLAY_NOT_FOUND":     "KB_CONFIG_OVERLAY_NOT_FOUND",
-	"ERR_INSTALL_FAILED":        "KB_INSTALL_FAILED",
-	"ERR_HEALTH_TIMEOUT":        "KB_SERVICE_HEALTH_TIMEOUT",
-	"ERR_CONFIG_NOT_FOUND":      "KB_CONFIG_NOT_FOUND",
-	"ERR_REGISTRY_INTEGRITY":    "KB_MARKETPLACE_REGISTRY_INTEGRITY",
-	"ERR_INSTALL_NO_RELEASE_ID": "KB_INSTALL_RELEASE_ID_MISSING",
+import (
+	_ "embed"
+	"encoding/json"
+)
+
+// CatalogEntry is the platform-owned metadata used to render a typed error.
+type CatalogEntry struct {
+	Code      string `json:"code"`
+	Area      string `json:"area"`
+	Stage     string `json:"stage"`
+	Severity  string `json:"severity"`
+	Retryable bool   `json:"retryable"`
+	Message   string `json:"message"`
+	Hint      string `json:"hint"`
 }
 
-// PlatformCode returns the stable catalog code for a known legacy identifier.
-// Unknown identifiers become the generic unexpected code at the boundary.
-func PlatformCode(code string) string {
-	if mapped, ok := legacyCodes[code]; ok {
-		return mapped
+// error-catalog.json is kept byte-for-byte in sync with the platform source
+// catalog by TestGoErrorCodesExistInPlatformCatalog.
+//
+//go:embed error-catalog.json
+var embeddedCatalog []byte
+
+var catalogEntries = loadCatalog(embeddedCatalog)
+
+func loadCatalog(content []byte) map[string]CatalogEntry {
+	var catalog struct {
+		Codes []CatalogEntry `json:"codes"`
 	}
-	if len(code) > 3 && code[:3] == "KB_" {
-		return code
+	if err := json.Unmarshal(content, &catalog); err != nil {
+		panic("clikit: embedded platform error catalog is invalid: " + err.Error())
 	}
-	return "KB_RUNTIME_UNEXPECTED"
+	entries := make(map[string]CatalogEntry, len(catalog.Codes))
+	for _, entry := range catalog.Codes {
+		entries[entry.Code] = entry
+	}
+	return entries
+}
+
+// LookupCatalog returns platform metadata for a typed error code.
+func LookupCatalog(code string) (CatalogEntry, bool) {
+	entry, ok := catalogEntries[code]
+	return entry, ok
 }
