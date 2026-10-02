@@ -30,6 +30,7 @@ several repositories on one platform.
 | S-199.3 | Call `tools/list` at `/api/v1/projects/<A_ID>/mcp` and `/api/v1/projects/<B_ID>/mcp` | Each project endpoint lists tools for that project's installed plugins; an A-only tool is absent from B's catalog. |
 | S-199.4 | Call an A-only MCP tool through A, then call the same tool through B | A executes against A's repository and returns its result; B returns the typed unknown-tool result, and neither call reads or changes the other repository. |
 | S-199.5 | Repeat the two `tools/list` calls in secured mode without a token and with a valid member token | Missing credentials return HTTP 401 without a catalog; a valid member token returns only the requested project's catalog, subject to the platform's project-access policy. |
+| S-199.6 | From Project A and Project B, run `kb mcp config codex --json` | Each result contains the corresponding registered project ID and project MCP endpoint. The command requires a project because the URL and config are project-specific. |
 
 ## Dependencies
 

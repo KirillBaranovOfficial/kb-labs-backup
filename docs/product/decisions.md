@@ -269,3 +269,27 @@ does not own service artifacts.
 
 Cases: S-194. This is a proposal only; confirm the command and secured-mode
 authorization surface before implementation.
+
+### 2026-10-02: CLI config absence is valid; present broken config is an error
+
+Platform and project config layers are optional. An installed platform can use
+its built-in adapter manifests when it has no user-written platform config, and
+a source checkout can omit `platform.mode`; absence does not imply malformed
+configuration or trigger a setup error. When a config file is present but
+cannot be read, parsed, or validated, CLI startup returns a shared typed config
+error before running a command. It must not silently replace that configuration
+with NoOp adapters. Adapter initialization degradation remains governed by
+S-054.2 and is not covered by this config-load decision.
+
+System logs query platform and host records without project registration.
+Project-specific workflow log views remain scoped to their selected project.
+`mcp config` stays project-scoped because its URL and result contain the
+registered project identity. `docs generate-cli-reference` stays
+project-scoped because it writes documentation into the project tree. The
+simple `hello` command is platform-scoped because it reads no project state and
+writes no project files. `config get`, `config set`, and `config show` remain
+project-scoped while g50 resolves platform/project config targeting; a future
+platform-target mode should be explicit rather than inferred from cwd.
+
+Cases: PC-002.7, S-003.7, S-054.2, S-054.18, S-199.6, S-201.1–S-201.2,
+S-203.7–S-203.8.
