@@ -1,7 +1,6 @@
 package diag
 
 import (
-	"bytes"
 	"encoding/json"
 	"go/ast"
 	"go/parser"
@@ -27,9 +26,6 @@ func TestGoErrorCodesExistInPlatformCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(content, embeddedCatalog) {
-		t.Fatal("clikit embedded error catalog is stale; copy core/platform/src/error-envelope/errors.catalog.json")
-	}
 	var catalog struct {
 		Codes []struct {
 			Code      string `json:"code"`
@@ -53,6 +49,9 @@ func TestGoErrorCodesExistInPlatformCatalog(t *testing.T) {
 		if embedded, ok := LookupCatalog(entry.Code); !ok || embedded != CatalogEntry(entry) {
 			t.Errorf("clikit metadata for %s differs from the platform catalog", entry.Code)
 		}
+	}
+	if len(catalogEntries) != len(entries) {
+		t.Fatalf("generated Go catalog has %d entries; platform catalog has %d", len(catalogEntries), len(entries))
 	}
 
 	toolsDir := filepath.Join(root, "tools")
@@ -91,9 +90,6 @@ func TestGoErrorCodesExistInPlatformCatalog(t *testing.T) {
 			case *ast.KeyValueExpr:
 				if key, ok := typed.Key.(*ast.Ident); ok && key.Name == "Code" {
 					add(typed.Value)
-				}
-				if strings.HasSuffix(path, filepath.Join("contracts", "codes_gen.go")) {
-					add(typed.Key)
 				}
 			case *ast.ValueSpec:
 				for i, name := range typed.Names {

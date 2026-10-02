@@ -11,7 +11,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/kb-labs/create/v2/contracts/internal/catalogen"
+	"github.com/kb-labs/clikit/diag"
 )
 
 // The envelope schema, the error catalog and the shared fixtures live next to
@@ -149,29 +149,6 @@ func TestLauncherErrorDerivesAreaWithoutExplicitField(t *testing.T) {
 	}
 }
 
-// TestGeneratedCodeTableIsFresh fails when codes_gen.go was not regenerated
-// after errors.catalog.json changed (run `go generate ./contracts`).
-func TestGeneratedCodeTableIsFresh(t *testing.T) {
-	data, err := os.ReadFile(catalogen.CatalogPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := catalogen.Render(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	have, err := os.ReadFile("codes_gen.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(want, have) {
-		t.Fatal("codes_gen.go is stale: run `go generate ./contracts` from tools/kb-create/v2")
-	}
-	if len(launcherCodes) != len(loadCatalog(t).Codes) {
-		t.Fatal("launcherCodes does not cover the catalog")
-	}
-}
-
 func TestCatalogCodesAreUniqueAndHaveHints(t *testing.T) {
 	catalog := loadCatalog(t)
 	seen := map[string]bool{}
@@ -190,11 +167,14 @@ func TestCatalogCodesAreUniqueAndHaveHints(t *testing.T) {
 		if AreaForCode(entry.Code) != entry.Area {
 			t.Fatalf("%s: area %s does not match its code prefix", entry.Code, entry.Area)
 		}
+		if shared, ok := diag.LookupCatalog(entry.Code); !ok || shared.Area != string(entry.Area) || shared.Stage != string(entry.Stage) || shared.Severity != string(entry.Severity) || shared.Retryable != entry.Retryable || shared.Message != entry.Message || shared.Hint != entry.Hint {
+			t.Fatalf("%s differs from shared clikit catalog: %+v", entry.Code, shared)
+		}
 	}
 }
 
 // TestEmittedCodesAreKnown makes sure no launcher source uses a KB_INSTALL_
-// literal that the code table (and therefore the catalog) does not know.
+// literal that the shared platform catalog does not know.
 func TestEmittedCodesAreKnown(t *testing.T) {
 	literal := regexp.MustCompile(`"(KB_INSTALL_[A-Z_]+)"`)
 	for _, source := range []string{"../cmd/kb-create-v2/main.go", "../cmd/kb-create-release-index/main.go"} {
@@ -204,13 +184,13 @@ func TestEmittedCodesAreKnown(t *testing.T) {
 		}
 		for _, match := range literal.FindAllSubmatch(data, -1) {
 			if _, ok := LookupCode(string(match[1])); !ok {
-				t.Fatalf("%s uses unknown code %s; add it to the catalog and launcherCodes", source, match[1])
+				t.Fatalf("%s uses unknown code %s; add it to the platform catalog", source, match[1])
 			}
 		}
 	}
 	for _, code := range []string{CodeIncompatibleComponents, CodeProviderUnresolved, CodeProviderAmbiguous, CodeInputRequired, CodeConfigRequired, CodeArtifactMismatch, CodeServiceGraphMismatch} {
 		if _, ok := LookupCode(code); !ok {
-			t.Fatalf("%s missing from launcher table", code)
+			t.Fatalf("%s missing from shared catalog", code)
 		}
 	}
 }
