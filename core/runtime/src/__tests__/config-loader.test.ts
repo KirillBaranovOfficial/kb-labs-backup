@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -56,7 +56,8 @@ describe('loadPlatformConfig', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('rejects project adapter bindings even when platform has none', async () => {
+  // case: S-048.1
+  it('ignores repository configuration, including project adapter bindings', async () => {
     const platformRoot = path.join(tmpDir, 'p1-platform')
     const projectRoot = path.join(tmpDir, 'p1-project')
     makePlatformDir(platformRoot) // no config
@@ -66,30 +67,32 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    await expect(loadPlatformConfig({
+    const result = await loadPlatformConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
         KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
-    })).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
+    })
+    expect(result.platformConfig).toEqual({ adapters: {} })
   })
 
-  it('rejects legacy top-level project adapter sections with the typed scope error', async () => {
+  it('ignores legacy top-level repository adapter sections', async () => {
     const platformRoot = path.join(tmpDir, 'p1-legacy-platform')
     const projectRoot = path.join(tmpDir, 'p1-legacy-project')
     makePlatformDir(platformRoot)
     makeProjectDir(projectRoot, { adapters: { llm: ['openai'] } })
 
-    await expect(loadPlatformConfig({
+    const result = await loadPlatformConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
-    })).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
+    })
+    expect(result.platformConfig).toEqual({ adapters: {} })
   })
 
-  it('rejects project adapter bindings and options with an actionable typed error', async () => {
+  it('keeps platform defaults when repository adapter options are present', async () => {
     const platformRoot = path.join(tmpDir, 'p-platform-only')
     const projectRoot = path.join(tmpDir, 'p-project-only')
     makePlatformDir(platformRoot, { platform: { adapters: { llm: 'openai' } } })
@@ -97,11 +100,12 @@ describe('loadPlatformConfig', () => {
       platform: { adapterOptions: { llm: { model: 'project-model' } } },
     })
 
-    await expect(loadPlatformConfig({
+    const result = await loadPlatformConfig({
       startDir: projectRoot,
       env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
       loadEnvFile: false,
-    })).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
+    })
+    expect(result.platformConfig.adapters).toEqual({ llm: 'openai' })
   })
 
   it('loads only platform defaults when project has no config', async () => {
@@ -130,7 +134,7 @@ describe('loadPlatformConfig', () => {
     expect(result.sources.projectConfig).toBeUndefined()
   })
 
-  it('rejects project adapter bindings instead of merging them with platform config', async () => {
+  it('does not merge repository adapter bindings into platform config', async () => {
     const platformRoot = path.join(tmpDir, 'p3-platform')
     const projectRoot = path.join(tmpDir, 'p3-project')
     makePlatformDir(platformRoot, {
@@ -149,14 +153,15 @@ describe('loadPlatformConfig', () => {
       },
     })
 
-    await expect(loadPlatformConfig({
+    const result = await loadPlatformConfig({
       startDir: projectRoot,
       env: {
         KB_PLATFORM_ROOT: platformRoot,
         KB_PROJECT_ROOT: projectRoot,
       },
       loadEnvFile: false,
-    })).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
+    })
+    expect(result.platformConfig.adapters).toEqual({ llm: 'openai', cache: 'redis' })
   })
 
   it('returns empty-adapters base when neither layer exists', async () => {
@@ -199,12 +204,10 @@ describe('loadPlatformConfig', () => {
 
     expect(result.sameLocation).toBe(true)
     expect(result.platformConfig.adapters).toEqual({ llm: 'workspace-llm' })
-    // Only project config reported; platformDefaults left undefined so we
-    // don't double-count the same file.
-    expect(result.sources.platformDefaults).toBeUndefined()
-    expect(result.sources.projectConfig).toBe(
+    expect(result.sources.platformDefaults).toBe(
       path.join(workspaceRoot, '.kb', 'kb.config.json'),
     )
+    expect(result.sources.projectConfig).toBeUndefined()
   })
 
   it('reports no ignored fields when platformRoot === projectRoot, even for platform-only fields', async () => {
@@ -280,8 +283,36 @@ describe('loadPlatformConfig', () => {
     })
 
     expect(result.platformConfig).toEqual({ adapters: {} })
-    // rawConfig is preserved so callers can still inspect non-platform fields
-    expect(result.rawConfig).toEqual({ unrelated: 'data' })
+    expect(result.rawConfig).toBeUndefined()
+  })
+
+  // case: S-204.8
+  it('loads plugin overrides by registered project ID and ignores repository config', async () => {
+    const platformRoot = path.join(tmpDir, 'p7-settings-platform')
+    const projectRoot = path.join(tmpDir, 'p7-settings-project')
+    const platformHome = path.join(tmpDir, 'p7-settings-home')
+    makePlatformDir(platformRoot, { plugins: { commit: { scope: { scopes: [{ id: 'shared' }] } } } })
+    makeProjectDir(projectRoot, { plugins: { commit: { scope: { scopes: [{ id: 'legacy' }] } } } })
+    const stateDir = path.join(platformHome, 'state', 'prj_settings')
+    mkdirSync(stateDir, { recursive: true })
+    writeFileSync(path.join(stateDir, 'config.jsonc'), JSON.stringify({
+      plugins: { commit: { scope: { scopes: [{ id: 'project' }] } } },
+    }))
+
+    const result = await loadPlatformConfig({
+      startDir: projectRoot,
+      env: {
+        KB_PLATFORM_ROOT: platformRoot,
+        KB_PROJECT_ROOT: projectRoot,
+        KB_HOME: platformHome,
+      },
+      projectId: 'prj_settings',
+      loadEnvFile: false,
+    })
+
+    expect(result.effectiveConfig?.plugins).toEqual({ commit: { scope: { scopes: [{ id: 'project' }] } } })
+    expect(JSON.parse(readFileSync(path.join(projectRoot, '.kb', 'kb.config.json'), 'utf8')))
+      .toEqual({ plugins: { commit: { scope: { scopes: [{ id: 'legacy' }] } } } })
   })
 
   it('loads .env file from projectRoot when loadEnvFile is true', async () => {

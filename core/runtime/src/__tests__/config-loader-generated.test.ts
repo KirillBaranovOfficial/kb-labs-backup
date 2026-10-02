@@ -5,6 +5,8 @@ import os from 'node:os'
 
 import { loadPlatformConfig } from '../config-loader.js'
 
+let tmpDir: string
+
 /**
  * ADR-0047 layering in `loadPlatformConfig`:
  * generated (.kb/generated) < platform user config < project user config.
@@ -20,9 +22,15 @@ function makePlatformDir(dir: string): void {
   mkdirSync(path.join(dir, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true })
 }
 
-describe('loadPlatformConfig generated layer (ADR-0047)', () => {
-  let tmpDir: string
+function writeProjectSettings(root: string, contents: unknown): void {
+  const home = path.join(tmpDir, 'kb-home')
+  const projectId = path.basename(root)
+  const dir = path.join(home, 'state', projectId)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(path.join(dir, 'config.jsonc'), JSON.stringify(contents))
+}
 
+describe('loadPlatformConfig generated layer (ADR-0047)', () => {
   beforeAll(() => {
     tmpDir = mkdtempSync(path.join(os.tmpdir(), 'kb-cfg-gen-'))
   })
@@ -32,14 +40,16 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
   })
 
   function load(platformRoot: string, projectRoot: string) {
+    const projectId = path.basename(projectRoot)
     return loadPlatformConfig({
       startDir: projectRoot,
-      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot },
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot, KB_HOME: path.join(tmpDir, 'kb-home') },
+      projectId,
       loadEnvFile: false,
     })
   }
 
-  it('rejects project adapter overrides above generated and platform settings', async () => {
+  it('rejects project store adapter overrides above generated and platform settings', async () => {
     const platformRoot = path.join(tmpDir, 'a-platform')
     const projectRoot = path.join(tmpDir, 'a-project')
     makePlatformDir(platformRoot)
@@ -53,22 +63,22 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     write(platformRoot, '.kb/kb.config.json', {
       platform: { adapters: { llm: 'platform-llm', cache: 'platform-cache' } },
     })
-    write(projectRoot, '.kb/kb.config.json', { platform: { adapters: { llm: 'project-llm' } } })
+    writeProjectSettings(projectRoot, { platform: { adapters: { llm: 'project-llm' } } })
 
     await expect(load(platformRoot, projectRoot)).rejects.toMatchObject({ name: 'AdapterProjectScopeError' })
   })
 
-  it('generated product sections sit under the project config in effectiveConfig', async () => {
+  it('generated sections and project store settings are present in effectiveConfig', async () => {
     const platformRoot = path.join(tmpDir, 'b-platform')
     const projectRoot = path.join(tmpDir, 'b-project')
     makePlatformDir(platformRoot)
     write(platformRoot, '.kb/generated/gateway.json', { gateway: { port: 4000, host: '127.0.0.1' } })
-    write(projectRoot, '.kb/kb.config.json', { gateway: { host: '0.0.0.0' } })
+    write(projectRoot, '.kb/kb.config.json', { gateway: { host: 'legacy-repository-value' } })
+    writeProjectSettings(projectRoot, { plugins: { sample: { enabled: true } } })
 
     const result = await load(platformRoot, projectRoot)
-    expect(result.effectiveConfig).toEqual({ gateway: { port: 4000, host: '0.0.0.0' } })
-    // The raw project file is reported untouched.
-    expect(result.rawConfig).toEqual({ gateway: { host: '0.0.0.0' } })
+    expect(result.effectiveConfig).toEqual({ gateway: { port: 4000, host: '127.0.0.1' }, plugins: { sample: { enabled: true } } })
+    expect(result.rawConfig).toBeUndefined()
   })
 
   it('keeps working, with no generated source reported, when .kb/generated is absent', async () => {

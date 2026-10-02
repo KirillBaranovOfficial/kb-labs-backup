@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import urllib.error
 import urllib.request
@@ -94,6 +95,38 @@ def project_plugin_settings_isolation() -> str | None:
             cleanup.callback(remove_project, project, identifier)
 
         scopes = '[{"id":"journey-shared","label":"Shared","path":"."}]'
+        manifest_default = run_cli(projects[0], "config", "get", "plugins.commit.llm.maxTokens", "--json")
+        try:
+            default_payload = json.loads(manifest_default.stdout)
+        except json.JSONDecodeError:
+            return "config get did not return JSON for the manifest default"
+        if (manifest_default.returncode != 0 or not isinstance(default_payload, dict)
+                or default_payload.get("value") != 2000 or default_payload.get("layer") != "manifest"):
+            return "config get did not return the Commit manifest default with manifest provenance"
+        platform_tokens = run_cli(projects[0], "config", "set", "--scope", "platform",
+                                  "plugins.commit.llm.maxTokens", "1900", "--json")
+        if platform_tokens.returncode != 0:
+            return f"could not set the platform Commit token default: {(platform_tokens.stderr or platform_tokens.stdout).strip()}"
+        platform_token_read = run_cli(projects[1], "config", "get", "plugins.commit.llm.maxTokens", "--json")
+        try:
+            platform_token_payload = json.loads(platform_token_read.stdout)
+        except json.JSONDecodeError:
+            return "config get did not return JSON for the platform setting"
+        if (platform_token_read.returncode != 0 or not isinstance(platform_token_payload, dict)
+                or platform_token_payload.get("value") != 1900 or platform_token_payload.get("layer") != "platform"):
+            return "the platform token setting did not override the Commit manifest default"
+        project_tokens = run_cli(projects[0], "config", "set", "plugins.commit.llm.maxTokens", "1800", "--json")
+        if project_tokens.returncode != 0:
+            return f"could not set Project A's token override: {(project_tokens.stderr or project_tokens.stdout).strip()}"
+        project_token_read = run_cli(projects[0], "config", "get", "plugins.commit.llm.maxTokens", "--json")
+        try:
+            project_token_payload = json.loads(project_token_read.stdout)
+        except json.JSONDecodeError:
+            return "config get did not return JSON for the project setting"
+        if (project_token_read.returncode != 0 or not isinstance(project_token_payload, dict)
+                or project_token_payload.get("value") != 1800 or project_token_payload.get("layer") != "project"):
+            return "the project token setting did not override the platform Commit default"
+
         platform_default = run_cli(projects[0], "config", "set", "--scope", "platform",
                                    "plugins.commit.scope.scopes", scopes, "--json")
         if platform_default.returncode != 0:
@@ -104,7 +137,64 @@ def project_plugin_settings_isolation() -> str | None:
         if configured.returncode != 0:
             return f"could not set Project A's Commit override: {(configured.stderr or configured.stdout).strip()}"
 
+        def effective_scopes(project: Path) -> tuple[object, str | None, str | None, str | None]:
+            result = run_cli(project, "config", "get", "plugins.commit.scope.scopes", "--json")
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                return None, None, None, f"config get returned invalid JSON in {project.name}"
+            if result.returncode != 0 or not isinstance(payload, dict) or payload.get("ok") is not True:
+                return None, None, None, f"config get failed in {project.name}: {(result.stderr or result.stdout).strip()}"
+            return payload.get("value"), payload.get("layer"), payload.get("source"), None
+
+        a_value, a_layer, _, error = effective_scopes(projects[0])
+        if error:
+            return error
+        b_value, b_layer, _, error = effective_scopes(projects[1])
+        if error:
+            return error
+        if not isinstance(a_value, list) or a_value[0].get("id") != "journey-a" or a_layer != "project":
+            return "Project A config get did not return its project value and provenance"
+        if not isinstance(b_value, list) or b_value[0].get("id") != "journey-shared" or b_layer != "platform":
+            return "Project B config get did not return the inherited platform value and provenance"
+
+        # Legacy repository config and overlays are deliberately ignored; scenario overlays live in platform state.
+        legacy_dir = projects[0] / ".kb"
+        legacy_dir.mkdir()
+        legacy_file = legacy_dir / "kb.config.json"
+        legacy_file.write_text(json.dumps({"plugins": {"commit": {"scope": {"scopes": [
+            {"id": "legacy-repository", "label": "Legacy", "path": "."},
+        ]}}}}) + "\n")
+        repository_overlay_dir = legacy_dir / "overlays"
+        repository_overlay_dir.mkdir()
+        repository_overlay_file = repository_overlay_dir / "conflict.jsonc"
+        repository_overlay_file.write_text(json.dumps({"plugins": {"commit": {"scope": {"scopes": [
+            {"id": "legacy-overlay", "label": "Legacy overlay", "path": "."},
+        ]}}}}) + "\n")
+        legacy_value, _, _, error = effective_scopes(projects[0])
+        if error:
+            return error
+        if not isinstance(legacy_value, list) or legacy_value[0].get("id") != "journey-a":
+            return "config get read the legacy repository config instead of platform-owned project settings"
+        if json.loads(legacy_file.read_text())["plugins"]["commit"]["scope"]["scopes"][0]["id"] != "legacy-repository":
+            return "config get modified the legacy repository config"
+        if json.loads(repository_overlay_file.read_text())["plugins"]["commit"]["scope"]["scopes"][0]["id"] != "legacy-overlay":
+            return "config get modified the repository overlay"
+
+        outside = run_cli(root, "config", "get", "plugins.commit.scope.scopes", "--json")
+        try:
+            outside_payload = json.loads(outside.stdout)
+        except json.JSONDecodeError:
+            return "config get outside registered projects returned invalid JSON"
+        outside_error = outside_payload.get("error") if isinstance(outside_payload, dict) else None
+        if (outside.returncode == 0 or not isinstance(outside_error, dict)
+                or outside_error.get("code") != "KB_PROJECT_UNKNOWN"
+                or not isinstance(outside_error.get("hint"), str)
+                or "kb project add" not in outside_error["hint"]):
+            return "config get outside registered projects did not return KB_PROJECT_UNKNOWN with the registration hint"
+
         for project in projects:
+            shutil.rmtree(project / ".kb", ignore_errors=True)
             files = sorted(path.name for path in project.iterdir() if path.name != ".git")
             if files:
                 return f"configuring Commit settings created repository files in {project.name}: {', '.join(files)}"
@@ -354,6 +444,7 @@ def _case_claims(name: str) -> list[str]:
     if name in {"gateway readiness", "workflow health"}:
         return ["PC-002.3"]
     case_by_name = {
+        "project plugin settings isolation and clean repositories": "S-204.1",
         "project-scoped MCP initialize": "S-045.1",
         "project-scoped MCP tools/list": "S-045.2",
         "project-scoped MCP diagnostics": "S-045.3",
@@ -370,6 +461,8 @@ def _case_claims(name: str) -> list[str]:
         return ["S-045.5", "S-140.6"]
     if not case_id:
         return []
+    if name == "project plugin settings isolation and clean repositories":
+        return ["S-204.1", "S-204.2", "S-204.7", "S-204.8", "S-204.9"]
     return [case_id]
 
 
