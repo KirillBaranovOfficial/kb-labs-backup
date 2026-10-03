@@ -2,15 +2,45 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from platform_state_dump import MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDumpOnce, dump_platform_state
+from platform_state_dump import (MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDumpOnce,
+                                 archive_service_logs, dump_platform_state)
 
 
 class PlatformStateDumpTests(unittest.TestCase):
+    def test_service_log_archive_finds_each_runtime_log_in_both_modes(self):
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="journey-service-logs-") as temporary:
+                root = Path(temporary)
+                kb_home = root / "home" / ".kb"
+                database = kb_home / "state" / "prj_test" / "database" / "kb.sqlite"
+                database.parent.mkdir(parents=True)
+                with sqlite3.connect(database) as connection:
+                    connection.execute("CREATE TABLE doc_logs (id TEXT, data TEXT, created_at INT, updated_at INT)")
+                    services = {
+                        "host": {"serviceId": "kb-host", "component": "host-server"},
+                        "gateway": {"serviceId": "kb-host", "component": "gateway-bootstrap"},
+                        "project-runtime": {"serviceId": "kb-host", "component": "project-runtime"},
+                        "workflow-daemon": {"serviceId": "workflow-daemon", "appId": "workflow-daemon"},
+                    }
+                    for index, (service, service_fields) in enumerate(services.items()):
+                        data = {"logId": f"log-{service}", "timestamp": "2026-10-02T00:00:00Z",
+                                "level": "error", "message": f"failure from {service}",
+                                "source": "platform", "fields": {**service_fields, "token": "secret-value"}}
+                        connection.execute("INSERT INTO doc_logs VALUES (?, ?, ?, ?)",
+                                           (f"log-{index}", json.dumps(data), index, index))
+                destination = archive_service_logs(kb_home, root / "reports", mode=mode, run_id="run-1")
+                for service in ("host", "gateway", "project-runtime", "workflow-daemon"):
+                    archived = list(destination.rglob(f"{service}.jsonl"))
+                    self.assertEqual(len(archived), 1)
+                    self.assertIn(f"failure from {service}", archived[0].read_text())
+                    self.assertNotIn("secret-value", archived[0].read_text())
+
     def test_dump_once_then_continue_to_uninstall(self):
         dump_guard = PlatformStateDumpOnce()
         events = []

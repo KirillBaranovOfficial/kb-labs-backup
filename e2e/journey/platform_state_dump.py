@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Mapping
@@ -16,6 +17,7 @@ MAX_FILE_BYTES = 1024 * 1024
 TAIL_LINES = 400
 SECRET_KEY = re.compile(r"(?i)(password|token|secret|apiKey|key)")
 UNKNOWN_COMMAND = re.compile(r"Unknown command:\s*([^\n\r]+)")
+SERVICE_LOG_BUDGET = 2 * 1024 * 1024
 
 
 class PlatformStateDumpOnce:
@@ -83,6 +85,67 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
         return target.stat().st_size
     except OSError:
         return 0
+
+
+def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, mode: str,
+                         run_id: str) -> Path:
+    """Copy bounded structured service logs from installed runtime state to the run report."""
+    home = Path(kb_home)
+    destination = Path(reports_dir) / f"service-logs-{mode}-{run_id}"
+    destination.mkdir(parents=True, exist_ok=True)
+    used = 0
+    for database in sorted(home.glob("state/*/database/kb.sqlite")):
+        try:
+            connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=1)
+            try:
+                rows = connection.execute(
+                    "SELECT id, data FROM doc_logs ORDER BY updated_at DESC LIMIT 400"
+                ).fetchall()
+            finally:
+                connection.close()
+        except sqlite3.Error:
+            continue
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row_id, serialized in rows:
+            try:
+                record = json.loads(serialized)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict):
+                continue
+            fields = record.get("fields")
+            fields = fields if isinstance(fields, dict) else {}
+            service = str(fields.get("serviceId") or fields.get("service_id") or record.get("source", ""))
+            app_id = str(fields.get("appId") or fields.get("app_id") or "")
+            component = str(fields.get("component") or "")
+            application_id = str(fields.get("applicationId") or fields.get("application_id") or "")
+            normalized = f"{service} {app_id} {component} {application_id} {record.get('source', '')}".lower()
+            category = next((candidate for needle, candidate in (
+                ("workflow", "workflow-daemon"), ("project-runtime", "project-runtime"),
+                ("gateway", "gateway"), ("host", "host"),
+            ) if needle in normalized), None)
+            if category is None:
+                continue
+            record.setdefault("logId", row_id)
+            grouped.setdefault(category, []).append(_redact_json(record))
+        for category, records in grouped.items():
+            target = destination / database.parents[1].name / f"{category}.jsonl"
+            encoded_records = []
+            category_bytes = 0
+            for record in records:
+                line = (json.dumps(record, separators=(",", ":")) + "\n").encode()
+                if used + category_bytes + len(line) > SERVICE_LOG_BUDGET:
+                    break
+                encoded_records.append(line)
+                category_bytes += len(line)
+            encoded = b"".join(encoded_records)
+            if encoded:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(encoded)
+                used += len(encoded)
+            if used >= SERVICE_LOG_BUDGET:
+                return destination
+    return destination
 
 
 def _command(output: Path, label: str, args: list[str], *, env: Mapping[str, str], cwd: Path,

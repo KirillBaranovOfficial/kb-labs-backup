@@ -4,6 +4,9 @@ import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { ManifestV3, CliCommandDecl } from '@kb-labs/plugin-contracts';
 import type { Permits } from '../mcp/authz.js';
+import { createPermits } from '../mcp/authz.js';
+import type { Policy } from '@kb-labs/core-policy';
+import type { AuthContext } from '@kb-labs/gateway-contracts';
 import type { McpTool } from '../mcp/tool-builder.js';
 import { callOutput } from '../mcp/output-capture.js';
 import resultSchema from '../../../../../contracts/ux-result/machine-result.schema.json';
@@ -357,6 +360,39 @@ describe('executeToolCall', () => {
       isError: true,
       structuredContent: { ok: false, error: { code: 'KB_AUTH_FORBIDDEN' } },
     });
+  });
+
+  // PDP seam only: production MCP has no permission-gated tools yet (see HANDOFF product question).
+  it('allows a permission-gated MCP tool for an admin and returns KB_AUTH_FORBIDDEN for a member', async () => {
+    executeCommandV3.mockResolvedValue(0);
+    const policy: Policy = {
+      schemaVersion: '1.0',
+      default: 'deny',
+      rules: [{ action: 'mcp.read', resource: 'mind', allow: ['users:write'] }],
+    };
+    const admin: AuthContext = {
+      type: 'user', userId: 'admin-1', namespaceId: 'tenant-1', tier: 'free', permissions: ['users:write'],
+    };
+    const member: AuthContext = {
+      type: 'user', userId: 'member-1', namespaceId: 'tenant-1', tier: 'free', permissions: ['plugins:read'],
+    };
+
+    const allowed = await executeToolCall({
+      name: tool.name, args: {}, visibleTools: [tool], permits: createPermits(policy, admin), tenantId: 'tenant-1',
+      resolvePlatform, logger: requestLogger,
+    });
+    expect(allowed.isError).toBe(false);
+    expect(executeCommandV3).toHaveBeenCalledTimes(1);
+
+    const denied = await executeToolCall({
+      name: tool.name, args: {}, visibleTools: [tool], permits: createPermits(policy, member), tenantId: 'tenant-1',
+      resolvePlatform, logger: requestLogger,
+    });
+    expect(denied).toMatchObject({
+      isError: true,
+      structuredContent: { ok: false, error: { code: 'KB_AUTH_FORBIDDEN' } },
+    });
+    expect(executeCommandV3).toHaveBeenCalledTimes(1);
   });
 
   it('emits analytics events for tool calls', async () => {

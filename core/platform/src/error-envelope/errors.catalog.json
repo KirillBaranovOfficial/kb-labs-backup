@@ -1029,6 +1029,24 @@
       "hint": "Resolve the reported command failure, then run the command again."
     },
     {
+      "code": "KB_HOST_SERVICE_ADDRESS_MISSING",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": true,
+      "message": "The host {service} address was not passed to this runtime.",
+      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime."
+    },
+    {
+      "code": "KB_HOST_SERVICE_ADDRESS_INVALID",
+      "area": "host",
+      "stage": "start",
+      "severity": "error",
+      "retryable": true,
+      "message": "The host {service} address passed to this runtime is not a valid HTTP URL.",
+      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime."
+    },
+    {
       "code": "KB_RUNTIME_UNEXPECTED",
       "area": "runtime",
       "stage": "run",

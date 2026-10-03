@@ -6,7 +6,7 @@
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
@@ -45,6 +45,16 @@ const PROJECT_RUNTIME_ENTRY = join(
   dirname(fileURLToPath(import.meta.url)),
   "../../../../project-runtime/app/dist/bin.js",
 );
+
+function cookieHeader(response: Response): string {
+  return response.headers.getSetCookie().map((cookie) => cookie.split(";", 1)[0]).join("; ");
+}
+
+function csrfCookie(response: Response): string {
+  const csrf = cookieHeader(response).split("; ").find((cookie) => cookie.startsWith("kb_csrf="));
+  if (!csrf) { throw new Error("Auth route did not set a CSRF cookie"); }
+  return decodeURIComponent(csrf.slice("kb_csrf=".length));
+}
 
 describe("kb-host project routing", () => {
   let kbHome: string;
@@ -121,8 +131,52 @@ describe("kb-host project routing", () => {
     expect(fromA.path).toBe("/rest/whoami");
   });
 
-  it("starts the registered project's real runtime and serves its REST health route", async () => {
+  // case: S-124.13
+  it("starts the registered project's runtime on an installed layout and serves its REST health route", async () => {
     const project = await registered();
+    const installedPlatformRoot = join(kbHome, "installed-platform");
+    await mkdir(join(installedPlatformRoot, ".kb"), { recursive: true });
+    const workspaceRoot = join(process.cwd(), "../../..");
+    const installedAdapters = {
+      storage: "@kb-labs/adapters-fs",
+      cache: "@kb-labs/adapters-state-broker",
+      eventBus: "@kb-labs/adapters-eventbus-cache",
+      documentDatabase: "@kb-labs/adapters-sqlite",
+      kvStore: "@kb-labs/adapters-sqlite/kv",
+      logger: "@kb-labs/adapters-pino",
+      logRingBuffer: "@kb-labs/adapters-log-ringbuffer",
+      logPersistence: "@kb-labs/adapters-log-document",
+      analytics: "@kb-labs/adapters-analytics-sqlite",
+      serviceTransport: "@kb-labs/adapters-service-transport-http",
+    };
+    await writeFile(join(installedPlatformRoot, ".kb", "kb.config.json"), JSON.stringify({
+      platform: {
+        adapters: installedAdapters,
+        adapterOptions: {
+          storage: { baseDir: ".kb/data" },
+          documentDatabase: { filename: ".kb/database/kb.sqlite" },
+          kvStore: { filename: ".kb/database/kb.sqlite" },
+          analytics: { filename: ".kb/analytics/analytics.sqlite" },
+          serviceTransport: { services: {} },
+        },
+      },
+    }));
+    const packages = [...new Set(Object.values(installedAdapters).map((value) => value.split("/").slice(0, 2).join("/")))];
+    const lockedAdapters = Object.fromEntries(packages.map((packageName) => {
+      const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
+      return [packageName, {
+        version: "2.120.1",
+        integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        resolvedPath: relative(installedPlatformRoot, packagePath),
+        source: "platform",
+        enabled: true,
+      }];
+    }));
+    await writeFile(join(installedPlatformRoot, ".kb", "marketplace.lock"), JSON.stringify({
+      schema: "kb.marketplace/3",
+      plugins: {},
+      adapters: lockedAdapters,
+    }));
     const previousKbHome = process.env.KB_HOME;
     process.env.KB_HOME = kbHome;
     try {
@@ -133,7 +187,12 @@ describe("kb-host project routing", () => {
       const launcher: RuntimeLauncher = {
         launch: (runtimeProject) => createChildProcessLauncher({
           entry: PROJECT_RUNTIME_ENTRY,
-          env: { KB_PLATFORM_ROOT: runtimeProject.root },
+          env: {
+            KB_PLATFORM_ROOT: installedPlatformRoot,
+            KB_MCP_AUTH_MODE: "local",
+            KB_GATEWAY_URL: `http://127.0.0.1:${running!.gatewayPort}`,
+            KB_STATE_DAEMON_URL: running!.internalUrl("state-daemon"),
+          },
           stopTimeoutMs: 1500,
         }).launch(runtimeProject),
         probe: probe.probe,
@@ -168,6 +227,269 @@ describe("kb-host project routing", () => {
       running = undefined;
       if (previousKbHome === undefined) delete process.env.KB_HOME;
       else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
+  // case: S-045.6, S-045.7, S-045.8, S-140.7
+  it("forwards a real secured user access token to the project MCP runtime", async () => {
+    const project = await registered();
+    const savedEnv = new Map([
+      "GATEWAY_JWT_SECRET", "GATEWAY_INTERNAL_SECRET", "GATEWAY_BOOTSTRAP_ADMIN_EMAIL", "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
+      "GATEWAY_BOOTSTRAP_TENANT_ID", "KB_HOME",
+    ].map((key) => [key, process.env[key]]));
+    const email = "admin@example.test";
+    const password = "JourneyTestPassw0rd!";
+    process.env.GATEWAY_JWT_SECRET = "g71-secured-integration-secret-with-at-least-32-characters";
+    process.env.GATEWAY_INTERNAL_SECRET = "g71-internal-channel-secret-for-mcp-runtime";
+    process.env.GATEWAY_BOOTSTRAP_ADMIN_EMAIL = email;
+    process.env.GATEWAY_BOOTSTRAP_ADMIN_PASSWORD = password;
+    process.env.GATEWAY_BOOTSTRAP_TENANT_ID = "tenant-g71";
+    process.env.KB_HOME = kbHome;
+    let runtimeBaseUrl: string | undefined;
+    let runtimeToken: string | undefined;
+    try {
+      const installedPlatformRoot = join(kbHome, "installed-platform");
+      await mkdir(join(installedPlatformRoot, ".kb"), { recursive: true });
+      const workspaceRoot = join(process.cwd(), "../../..");
+      const installedAdapters = {
+        storage: "@kb-labs/adapters-fs",
+        cache: "@kb-labs/adapters-state-broker",
+        eventBus: "@kb-labs/adapters-eventbus-cache",
+        documentDatabase: "@kb-labs/adapters-sqlite",
+        kvStore: "@kb-labs/adapters-sqlite/kv",
+        logger: "@kb-labs/adapters-pino",
+        logRingBuffer: "@kb-labs/adapters-log-ringbuffer",
+        logPersistence: "@kb-labs/adapters-log-document",
+        analytics: "@kb-labs/adapters-analytics-sqlite",
+        serviceTransport: "@kb-labs/adapters-service-transport-http",
+      };
+      await writeFile(join(installedPlatformRoot, ".kb", "kb.config.json"), JSON.stringify({
+        platform: {
+          adapters: installedAdapters,
+          adapterOptions: {
+            storage: { baseDir: ".kb/data" },
+            documentDatabase: { filename: ".kb/database/kb.sqlite" },
+            kvStore: { filename: ".kb/database/kb.sqlite" },
+            analytics: { filename: ".kb/analytics/analytics.sqlite" },
+            serviceTransport: { services: {} },
+          },
+        },
+      }));
+      const packages = [...new Set(Object.values(installedAdapters).map((value) => value.split("/").slice(0, 2).join("/")))];
+      const lockedAdapters = Object.fromEntries(packages.map((packageName) => {
+        const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
+        return [packageName, {
+          version: "2.120.1",
+          integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+          resolvedPath: relative(installedPlatformRoot, packagePath),
+          source: "platform",
+          enabled: true,
+        }];
+      }));
+      await writeFile(join(installedPlatformRoot, ".kb", "marketplace.lock"), JSON.stringify({
+        schema: "kb.marketplace/3", plugins: {}, adapters: lockedAdapters,
+      }));
+      running = await startTestHost({
+        host: { auth: "on" },
+        gateway: {
+          auth: {
+            bootstrap: { adminEmail: email, tenantId: "tenant-g71" },
+            bcryptCost: 4,
+            cookieSecure: false,
+            passwordPolicy: { hibpEnabled: false },
+          },
+        },
+      }, {
+        projectRegistry: registry,
+        projectRuntime: {
+          entry: PROJECT_RUNTIME_ENTRY,
+          startTimeoutMs: 15_000,
+          launcher: {
+            launch: async (runtimeProject) => {
+              const runtime = await createChildProcessLauncher({
+                entry: PROJECT_RUNTIME_ENTRY,
+                env: {
+                  KB_PLATFORM_ROOT: installedPlatformRoot,
+                  KB_MCP_AUTH_MODE: "secured",
+                  KB_GATEWAY_URL: `http://127.0.0.1:${running!.gatewayPort}`,
+                  KB_STATE_DAEMON_URL: running!.internalUrl("state-daemon"),
+                },
+                stopTimeoutMs: 1500,
+              }).launch(runtimeProject);
+              runtimeBaseUrl = `http://${runtime.address.host}:${runtime.address.port}`;
+              runtimeToken = runtime.token;
+              return runtime;
+            },
+            probe: createChildProcessLauncher({ entry: PROJECT_RUNTIME_ENTRY }).probe,
+          },
+        },
+      });
+
+      const login = await running.fetchGateway("/auth/login/cli", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      expect(login.status).toBe(200);
+      const session = await login.json() as { accessToken: string };
+      expect(session.accessToken).toBeTruthy();
+      const profile = await running.fetchGateway("/auth/me", {
+        headers: { authorization: `Bearer ${session.accessToken}` },
+      });
+      expect(profile.status).toBe(200);
+
+      const machineRegistration = await running.fetchGateway("/auth/register", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.accessToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ name: "mcp-machine", capabilities: [] }),
+      });
+      expect(machineRegistration.status).toBe(200);
+      const machineCredentials = await machineRegistration.json() as { clientId: string; clientSecret: string };
+      const machineLogin = await running.fetchGateway("/auth/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(machineCredentials),
+      });
+      expect(machineLogin.status).toBe(200);
+      const machineTokens = await machineLogin.json() as { accessToken: string };
+      const machineMcp = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${machineTokens.accessToken}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }),
+      });
+      expect(machineMcp.status).toBe(200);
+      expect(await machineMcp.text()).toContain("kb-labs__mcp_diagnostics");
+
+      const mcpResponse = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.accessToken}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      });
+      expect(mcpResponse.status).toBe(200);
+      const text = await mcpResponse.text();
+      const data = text.split("\n").find((line) => line.startsWith("data: "))?.slice(6);
+      expect(data).toBeTruthy();
+      expect(JSON.parse(data!).result.tools).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "kb-labs__mcp_diagnostics" }),
+      ]));
+
+      if (!runtimeBaseUrl || !runtimeToken) { throw new Error("Project runtime did not expose its internal address"); }
+      for (const internalSecret of [undefined, "forged-internal-secret"]) {
+        const forged = await fetch(`${runtimeBaseUrl}/mcp`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-kb-runtime-token": runtimeToken,
+            "x-kb-auth-type": "user",
+            "x-kb-auth-user-id": "forged-admin",
+            "x-kb-auth-namespace-id": "tenant-g71",
+            "x-kb-auth-tier": "enterprise",
+            "x-kb-auth-permissions": '["users:write"]',
+            ...(internalSecret ? { "x-internal-secret": internalSecret } : {}),
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} }),
+        });
+        expect(forged.status).toBe(401);
+        const forgedBody = await forged.json() as { error: { code: string } };
+        expect(forgedBody.error.code).toBe("KB_AUTH_REQUIRED");
+      }
+
+      const adminBrowserLogin = await running.fetchGateway("/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      expect(adminBrowserLogin.status).toBe(200);
+      const adminCookie = cookieHeader(adminBrowserLogin);
+      const invite = await running.fetchGateway("/auth/invites", {
+        method: "POST",
+        headers: { cookie: adminCookie, "x-csrf-token": csrfCookie(adminBrowserLogin), "content-type": "application/json" },
+        body: JSON.stringify({ email: "member@example.test", role: "member" }),
+      });
+      expect(invite.status).toBe(201);
+      const inviteBody = await invite.json() as { activationUrl: string };
+      const activationToken = decodeURIComponent(new URL(inviteBody.activationUrl).pathname.split("/").at(-1)!);
+      const activation = await running.fetchGateway("/auth/activate", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: activationToken, password: "MemberPassw0rd!" }),
+      });
+      expect(activation.status).toBe(200);
+      const memberCookie = cookieHeader(activation);
+      const memberProfile = await running.fetchGateway("/auth/me", { headers: { cookie: memberCookie } });
+      expect(memberProfile.status).toBe(200);
+      const memberId = (await memberProfile.json() as { userId: string }).userId;
+      const memberMcp = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
+        method: "POST",
+        headers: { cookie: memberCookie, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} }),
+      });
+      expect(memberMcp.status).toBe(200);
+      expect(await memberMcp.text()).toContain("kb-labs__mcp_diagnostics");
+      const disabled = await running.fetchGateway(`/auth/users/${memberId}/disable`, {
+        method: "POST",
+        headers: { cookie: adminCookie, "x-csrf-token": csrfCookie(adminBrowserLogin) },
+      });
+      expect(disabled.status).toBe(200);
+      const disabledMcp = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
+        method: "POST",
+        headers: { cookie: memberCookie, "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 6, method: "tools/list", params: {} }),
+      });
+      expect(disabledMcp.status).toBe(401);
+      expect((await disabledMcp.json() as ErrorBody).error.code).toBe("KB_AUTH_REQUIRED");
+
+      const revokeLogin = await running.fetchGateway("/auth/login", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      expect(revokeLogin.status).toBe(200);
+      const revokeCookie = cookieHeader(revokeLogin);
+      const sessions = await running.fetchGateway("/auth/sessions", { headers: { cookie: revokeCookie } });
+      expect(sessions.status).toBe(200);
+      const sessionFamily = (await sessions.json() as { sessions: Array<{ familyId: string; isCurrent: boolean }> })
+        .sessions.find((session) => session.isCurrent);
+      if (!sessionFamily) { throw new Error("Authenticated session family was not listed"); }
+      const revoke = await running.fetchGateway(`/auth/sessions/${sessionFamily.familyId}/revoke`, {
+        method: "POST", headers: { cookie: revokeCookie, "x-csrf-token": csrfCookie(revokeLogin) },
+      });
+      expect(revoke.status).toBe(200);
+      const revokedMcp = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
+        method: "POST",
+        headers: { cookie: revokeCookie, "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list", params: {} }),
+      });
+      expect(revokedMcp.status).toBe(401);
+      expect((await revokedMcp.json() as ErrorBody).error.code).toBe("KB_AUTH_REQUIRED");
+
+      for (const token of [undefined, "invalid-token"]) {
+        const headers: Record<string, string> = { "content-type": "application/json" };
+        if (token !== undefined) headers.authorization = `Bearer ${token}`;
+        const denied = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
+          method: "POST", headers,
+          body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+        });
+        expect(denied.status).toBe(401);
+        const deniedBody = await denied.json() as { error: { code: string } };
+        expect(deniedBody.error.code).toBe("KB_AUTH_REQUIRED");
+      }
+    } finally {
+      await running?.stop().catch(() => undefined);
+      running = undefined;
+      for (const [key, value] of savedEnv) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 

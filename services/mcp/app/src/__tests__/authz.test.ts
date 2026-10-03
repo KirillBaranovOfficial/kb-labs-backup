@@ -31,7 +31,14 @@ describe('actionForOperation', () => {
 
 describe('toIdentity', () => {
   it('maps userId to user and type+tier to roles', () => {
-    expect(toIdentity(auth)).toEqual({ user: 'host-1', roles: ['machine', 'pro'] });
+    expect(toIdentity(auth)).toEqual({ user: 'host-1', roles: ['machine', 'pro', 'host:connect'] });
+  });
+
+  it('preserves gateway-resolved permissions for policy checks', () => {
+    const admin: AuthContext = {
+      type: 'user', userId: 'admin-1', namespaceId: 'tenant-1', tier: 'free', permissions: ['users:write'],
+    };
+    expect(toIdentity(admin)).toEqual({ user: 'admin-1', roles: ['user', 'free', 'users:write'] });
   });
 });
 
@@ -47,5 +54,21 @@ describe('createPermits', () => {
     const permits = createPermits(DENY_ALL, auth);
     expect(permits('read', 'mind')).toBe(false);
     expect(permits('mutate', 'workflow')).toBe(false);
+  });
+
+  it('allows the admin permission-gated MCP tool and denies a tenant member', () => {
+    const policy: Policy = {
+      schemaVersion: '1.0',
+      default: 'deny',
+      rules: [{ action: 'mcp.write', resource: 'admin-tools', allow: ['users:write'] }],
+    };
+    const admin: AuthContext = {
+      type: 'user', userId: 'admin-1', namespaceId: 'tenant-1', tier: 'free', permissions: ['users:write'],
+    };
+    const member: AuthContext = {
+      type: 'user', userId: 'member-1', namespaceId: 'tenant-1', tier: 'free', permissions: ['plugins:read'],
+    };
+    expect(createPermits(policy, admin)('write', 'admin-tools')).toBe(true);
+    expect(createPermits(policy, member)('write', 'admin-tools')).toBe(false);
   });
 });

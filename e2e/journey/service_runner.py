@@ -36,6 +36,7 @@ from mcp_project_steps import (
     secured_auth,
     unknown_tool,
 )
+from platform_state_dump import archive_service_logs
 
 
 BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -481,11 +482,11 @@ def mcp_diagnostics(project_id: str, token: str) -> str | None:
     return None
 
 
-def _case_claims(name: str) -> list[str]:
+def _case_claims(name: str, mode: str = "local") -> list[str]:
     if name in {"gateway readiness", "workflow health"}:
         return ["PC-002.3"]
     if name == "registered project runtime identity":
-        return ["PC-002.8", "S-124.11"]
+        return ["PC-002.8", "S-124.11", "S-124.13"]
     case_by_name = {
         "project plugin settings isolation and clean repositories": "S-204.1",
         "project-scoped MCP initialize": "S-045.1",
@@ -504,7 +505,10 @@ def _case_claims(name: str) -> list[str]:
     if name == "project MCP secured missing and invalid token rejection":
         return ["S-045.5", "S-140.6"]
     if name == "MCP UX result contract from live registry":
-        return ["S-203.2", "S-203.6"]
+        claims = ["S-203.2", "S-203.6"]
+        if mode == "secured":
+            return [*claims, "S-045.6", "S-140.7"]
+        return claims
     if not case_id:
         return []
     if name == "project plugin settings isolation and clean repositories":
@@ -512,10 +516,10 @@ def _case_claims(name: str) -> list[str]:
     return [case_id]
 
 
-def run_service_steps(journey: Journey, steps) -> None:
+def run_service_steps(journey: Journey, steps, mode: str = "local") -> None:
     """Run capability checks through Journey so raised checks are recorded."""
     for name, capability, check in steps:
-        journey.step(name, capability, check, cases=_case_claims(name))
+        journey.step(name, capability, check, cases=_case_claims(name, mode))
 
 
 def configure_installed_cli_path() -> None:
@@ -738,7 +742,7 @@ def main() -> int:
             def prepare_projects() -> None:
                 _prepare_and_export_mcp_projects(project_root, registry, env)
             journey.step("prepare MCP project fixtures", "mcp", prepare_projects)
-        run_service_steps(journey, checks(args.mode))
+        run_service_steps(journey, checks(args.mode), args.mode)
         run_analytics_and_gateway_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""))
         if project_root:
             _run_installed_flows(journey, project_root, registry)
@@ -749,6 +753,17 @@ def main() -> int:
     except Exception as error:
         journey.step("service runner", "journey.runner", lambda: str(error) or error.__class__.__name__)
     finally:
+        kb_home = Path(os.getenv("KB_HOME", str(Path.home() / ".kb")))
+        def archive_logs() -> None:
+            archive_service_logs(
+                kb_home, Path(args.output).resolve().parent, mode=args.mode, run_id=journey.run_id,
+            )
+
+        journey.step(
+            "archive runtime service logs",
+            "journey.diagnostics",
+            archive_logs,
+        )
         result = journey.write_json(args.output)
     print(json.dumps(result.__dict__, indent=2))
     return 0 if result.status == "PASS" else 1

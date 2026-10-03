@@ -9,6 +9,7 @@
  */
 
 import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError, ServicePortConfigError } from '../errors.js';
+import { HostServiceAddressError } from '../host-service-address.js';
 import { createErrorEnvelope, type CreateEnvelopeOptions } from './catalog.js';
 import type { ErrorEnvelope } from './types.js';
 
@@ -24,6 +25,17 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
       message: error.message,
       hint: `Run "unset ${error.envVar}", then retry the command to use the service default port.`,
     });
+  }
+  if (error instanceof HostServiceAddressError) {
+    return createErrorEnvelope(
+      error.reason === 'missing' ? 'KB_HOST_SERVICE_ADDRESS_MISSING' : 'KB_HOST_SERVICE_ADDRESS_INVALID',
+      {
+        ...options,
+        cause: error.message,
+        details: { service: error.service },
+        hint: error.hint,
+      },
+    );
   }
   if (error instanceof PlatformConfigError) {
     const message = error.reason === 'read'

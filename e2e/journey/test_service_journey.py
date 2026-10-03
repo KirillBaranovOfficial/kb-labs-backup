@@ -94,20 +94,26 @@ class ServiceJourneyTests(unittest.TestCase):
             self.assertEqual(os.environ["PATH"].split(os.pathsep)[0], str(Path(directory) / ".local" / "bin"))
 
     def test_runner_writes_result_json_when_orchestration_raises(self):
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "service-local.json"
-            stdout = io.StringIO()
-            with patch("service_runner.checks", side_effect=RuntimeError("simulated orchestration error")), \
-                    patch("sys.argv", ["service_runner.py", "--mode", "local", "--output", str(output)]), \
-                    redirect_stdout(stdout):
-                status = service_main()
-            result = json.loads(output.read_text())
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / f"service-{mode}.json"
+                stdout = io.StringIO()
+                with patch("service_runner.archive_service_logs") as archive, \
+                        patch("service_runner.checks", side_effect=RuntimeError("simulated orchestration error")), \
+                        patch("sys.argv", ["service_runner.py", "--mode", mode, "--output", str(output)]), \
+                        redirect_stdout(stdout):
+                    status = service_main()
+                result = json.loads(output.read_text())
 
-        self.assertEqual(status, 1)
-        self.assertEqual(result["steps"][0]["name"], "service runner")
-        self.assertEqual(result["steps"][0]["status"], "FAIL")
-        self.assertEqual(result["steps"][0]["message"], "simulated orchestration error")
-        self.assertNotIn("Traceback", stdout.getvalue())
+                self.assertEqual(status, 1)
+                runner_step = next(step for step in result["steps"] if step["name"] == "service runner")
+                self.assertEqual(runner_step["status"], "FAIL")
+                self.assertEqual(runner_step["message"], "simulated orchestration error")
+                self.assertEqual(result["steps"][-1]["name"], "archive runtime service logs")
+                self.assertEqual(result["steps"][-1]["status"], "PASS")
+                archive.assert_called_once()
+                self.assertEqual(archive.call_args.kwargs["mode"], mode)
+                self.assertNotIn("Traceback", stdout.getvalue())
 
     def test_pre_service_failure_is_saved_with_step_and_message(self):
         with tempfile.TemporaryDirectory() as directory:
