@@ -332,7 +332,7 @@ describe("kb-host project routing", () => {
         body: JSON.stringify({ email, password }),
       });
       expect(login.status).toBe(200);
-      const session = await login.json() as { accessToken: string };
+      const session = await readUxSuccessResult<{ accessToken: string }>(login);
       expect(session.accessToken).toBeTruthy();
       const profile = await running.fetchGateway("/auth/me", {
         headers: { authorization: `Bearer ${session.accessToken}` },
@@ -348,14 +348,14 @@ describe("kb-host project routing", () => {
         body: JSON.stringify({ name: "mcp-machine", capabilities: [] }),
       });
       expect(machineRegistration.status).toBe(200);
-      const machineCredentials = await machineRegistration.json() as { clientId: string; clientSecret: string };
+      const machineCredentials = await readUxSuccessResult<{ clientId: string; clientSecret: string }>(machineRegistration);
       const machineLogin = await running.fetchGateway("/auth/token", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(machineCredentials),
+        body: JSON.stringify({ clientId: machineCredentials.clientId, clientSecret: machineCredentials.clientSecret }),
       });
       expect(machineLogin.status).toBe(200);
-      const machineTokens = await machineLogin.json() as { accessToken: string };
+      const machineTokens = await readUxSuccessResult<{ accessToken: string }>(machineLogin);
       const machineMcp = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
         method: "POST",
         headers: {
@@ -419,7 +419,7 @@ describe("kb-host project routing", () => {
         body: JSON.stringify({ email: "member@example.test", role: "member" }),
       });
       expect(invite.status).toBe(201);
-      const inviteBody = await invite.json() as { activationUrl: string };
+      const inviteBody = await readUxSuccessResult<{ activationUrl: string }>(invite);
       const activationToken = decodeURIComponent(new URL(inviteBody.activationUrl).pathname.split("/").at(-1)!);
       const activation = await running.fetchGateway("/auth/activate", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -429,7 +429,7 @@ describe("kb-host project routing", () => {
       const memberCookie = cookieHeader(activation);
       const memberProfile = await running.fetchGateway("/auth/me", { headers: { cookie: memberCookie } });
       expect(memberProfile.status).toBe(200);
-      const memberId = (await memberProfile.json() as { userId: string }).userId;
+      const memberId = (await readUxSuccessResult<{ userId: string }>(memberProfile)).userId;
       const memberMcp = await running.fetchGateway(`/api/v1/projects/${project.id}/mcp`, {
         method: "POST",
         headers: { cookie: memberCookie, "content-type": "application/json", accept: "application/json, text/event-stream" },
@@ -458,7 +458,7 @@ describe("kb-host project routing", () => {
       const revokeCookie = cookieHeader(revokeLogin);
       const sessions = await running.fetchGateway("/auth/sessions", { headers: { cookie: revokeCookie } });
       expect(sessions.status).toBe(200);
-      const sessionFamily = (await sessions.json() as { sessions: Array<{ familyId: string; isCurrent: boolean }> })
+      const sessionFamily = (await readUxSuccessResult<{ sessions: Array<{ familyId: string; isCurrent: boolean }> }>(sessions))
         .sessions.find((session) => session.isCurrent);
       if (!sessionFamily) { throw new Error("Authenticated session family was not listed"); }
       const revoke = await running.fetchGateway(`/auth/sessions/${sessionFamily.familyId}/revoke`, {
