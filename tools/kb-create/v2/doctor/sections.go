@@ -2,8 +2,6 @@ package doctor
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
@@ -189,9 +188,6 @@ func healthReportedSlot(slot string) bool {
 	}
 }
 
-// errNotJSON marks a 2xx answer whose body is not the JSON document asked for.
-var errNotJSON = errors.New("the answer is not JSON")
-
 func getJSON(ctx context.Context, client *http.Client, target string, out any) (int, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
@@ -209,8 +205,8 @@ func getJSON(ctx context.Context, client *http.Client, target string, out any) (
 	if response.StatusCode != http.StatusOK {
 		return response.StatusCode, nil
 	}
-	if err := json.Unmarshal(data, out); err != nil {
-		return response.StatusCode, errNotJSON
+	if err := result.DecodeSuccessResult(data, out); err != nil {
+		return response.StatusCode, err
 	}
 	return response.StatusCode, nil
 }
@@ -231,9 +227,6 @@ func healthChecks(ctx context.Context, client *http.Client, healthURL string) []
 		} `json:"projectRuntimes"`
 	}
 	status, err := getJSON(ctx, client, healthURL, &document)
-	if errors.Is(err, errNotJSON) {
-		return []Check{{ID: "health", OK: true, Detail: "The host answers its health check; it reports no upstream detail."}}
-	}
 	if err != nil || status != http.StatusOK {
 		return []Check{{ID: "health", Detail: "The health document cannot be read.", Hint: "Run \"kb-create restart\"; read the host log if it persists."}}
 	}
@@ -286,8 +279,11 @@ func authChecks(ctx context.Context, client *http.Client, healthURL string) []Ch
 		} `json:"issues"`
 	}
 	status, err := getJSON(ctx, client, parsed.String(), &readiness)
-	if err != nil || status != http.StatusOK {
+	if status != http.StatusOK {
 		return nil
+	}
+	if err != nil {
+		return []Check{{ID: "auth", Detail: "Auth readiness returned an invalid result envelope.", Hint: "Run \"kb-create restart\"; read the host log if it persists."}}
 	}
 	checks := make([]Check, 0, len(readiness.Issues)+1)
 	for _, issue := range readiness.Issues {

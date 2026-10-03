@@ -1,13 +1,13 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
 import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
 import { registerAgent, issueToken } from '@kb-labs/e2e-shared/auth.js'
 
 async function registerHostForAgent(
-  request: Parameters<Parameters<typeof test>[1]>[0]['request'],
+  request: APIRequestContext,
   name: string,
 ): Promise<{ hostId: string; token: string }> {
   const creds = await registerAgent(request, `e2e-agent-${name}`)
-  const namespaceId: string = (creds as Record<string, string>).namespaceId ?? 'e2e'
+  const namespaceId = 'e2e'
   const tokens = await issueToken(request, creds)
 
   const regRes = await request.post(`${GATEWAY}/hosts/register`, {
@@ -21,8 +21,8 @@ async function registerHostForAgent(
 }
 
 test('GW-H-01: POST /hosts/register returns hostId and machineToken', async ({ request }) => {
-  const creds = await registerAgent(request, 'e2e-agent-h01')
-  const namespaceId: string = (creds as Record<string, string>).namespaceId ?? 'e2e'
+  await registerAgent(request, 'e2e-agent-h01')
+  const namespaceId = 'e2e'
 
   const res = await request.post(`${GATEWAY}/hosts/register`, {
     data: { name: 'e2e-host-reg', namespaceId, capabilities: [], workspacePaths: [] },

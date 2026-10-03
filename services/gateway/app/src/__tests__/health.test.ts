@@ -115,6 +115,7 @@ async function buildHealthApp(
   config: Partial<GatewayConfig> = {},
   transport?: IServiceTransport,
   routeObserver?: Parameters<typeof import('../server.js').createServer>[10],
+  projectRouting?: Parameters<typeof import('../server.js').createServer>[8],
 ) {
   // Dynamically import createServer — it uses the mocked platform
   const { createServer } = await import('../server.js');
@@ -127,7 +128,7 @@ async function buildHealthApp(
   };
 
   const cache = makeCache();
-  return createServer(fullConfig, cache, noopLogger, stubJwtConfig, undefined, transport ?? mockTransport, undefined, undefined, undefined, undefined, routeObserver);
+  return createServer(fullConfig, cache, noopLogger, stubJwtConfig, undefined, transport ?? mockTransport, undefined, undefined, projectRouting, undefined, routeObserver);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -206,6 +207,32 @@ describe('Gateway /health endpoint', () => {
     expect(body.uptime).toBeGreaterThanOrEqual(0);
     expect(typeof body.timestamp).toBe('string');
     expect(new Date(body.timestamp).getTime()).toBeGreaterThan(0);
+  });
+
+  // case: S-203.1
+  it('preserves the public project runtime status in the UX health payload', async () => {
+    mockAdapters = { llm: { complete: vi.fn() } };
+    const projectRuntimes = {
+      limit: 4,
+      active: 1,
+      runtimes: [{
+        projectId: 'prj_project1',
+        state: 'ready',
+        lastUsedAt: '2026-10-03T12:00:00.000Z',
+        inflight: 2,
+        restarts: 0,
+        keptRunningSchedules: 1,
+      }],
+    };
+    app = await buildHealthApp({}, undefined, undefined, {
+      acquire: async () => ({ host: '127.0.0.1', port: 1234, headers: {}, release: () => undefined }),
+      status: () => projectRuntimes,
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/health' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.projectRuntimes).toEqual(projectRuntimes);
   });
 
   it('reports adapter latency', async () => {

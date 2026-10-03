@@ -26,11 +26,11 @@ export class HttpSystemSource implements SystemDataSource {
   constructor(private client: HttpClient) {}
 
   async getPlatformHealth(): Promise<PlatformHealthSnapshot> {
-    return this.client.fetch<PlatformHealthSnapshot>('/health', { baseURL: '/api' });
+    return this.client.fetchUx<PlatformHealthSnapshot>('/health', { baseURL: '/api' });
   }
 
   async getHealth(): Promise<HealthStatus> {
-    const snapshot = await this.client.fetch<ServiceObservabilityHealth>('/observability/health', { baseURL: '/api' });
+    const snapshot = await this.client.fetchUx<ServiceObservabilityHealth>('/observability/health', { baseURL: '/api' });
     const degraded = snapshot.status === 'degraded' || snapshot.state === 'partial_observability';
 
     return {
@@ -63,13 +63,9 @@ export class HttpSystemSource implements SystemDataSource {
    */
   async getReady(): Promise<ReadyResponse | NotReadyResponse> {
     try {
-      return await this.client.fetch<ReadyResponse>('/ready', { baseURL: '/api' });
+      return await this.client.fetchUx<ReadyResponse>('/ready', { baseURL: '/api' });
     } catch (error) {
       if (error instanceof KBError && error.status === 503) {
-        const payload = (error.cause as { data?: unknown } | undefined)?.data;
-        if (payload && typeof payload === 'object' && 'ready' in payload) {
-          return payload as NotReadyResponse;
-        }
         return {
           ready: false,
           reason: 'unknown',

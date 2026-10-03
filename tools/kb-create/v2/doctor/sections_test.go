@@ -112,7 +112,7 @@ func gatewayDouble(t *testing.T, health, auth string) host.Status {
 		case "/health":
 			_, _ = w.Write([]byte(health))
 		case "/health/adapters":
-			_, _ = w.Write([]byte(`[{"slot":"storage","mode":"real","implementation":"@kb-labs/adapters-fs"},{"slot":"cache","mode":"inmemory","implementation":"StateBroker"}]`))
+			_, _ = w.Write([]byte(`{"ok":true,"data":[{"slot":"storage","mode":"real","implementation":"@kb-labs/adapters-fs"},{"slot":"cache","mode":"inmemory","implementation":"StateBroker"}]}`))
 		case "/health/auth":
 			if auth == "" {
 				http.NotFound(w, r)
@@ -128,7 +128,7 @@ func gatewayDouble(t *testing.T, health, auth string) host.Status {
 }
 
 func TestPlatformSectionReportsPerSlotAdapterModeAndImplementation(t *testing.T) {
-	status := gatewayDouble(t, `{"upstreams":{}}`, "")
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{}}}`, "")
 	section := InspectPlatform(context.Background(), status, nil, nil)
 	encoded, err := json.Marshal(section)
 	if err != nil {
@@ -158,7 +158,7 @@ func TestPlatformSectionReportsPerSlotAdapterModeAndImplementation(t *testing.T)
 
 // case: S-054.10
 func TestPlatformSectionRejectsInMemoryFallbackWhenPersistentProviderIsBound(t *testing.T) {
-	status := gatewayDouble(t, `{"upstreams":{}}`, "")
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{}}}`, "")
 	section := InspectPlatform(context.Background(), status, nil, []contracts.ProviderBinding{{
 		Capability: "cache", Package: "@kb-labs/adapters-state-broker",
 	}})
@@ -170,8 +170,8 @@ func TestPlatformSectionRejectsInMemoryFallbackWhenPersistentProviderIsBound(t *
 
 func TestPlatformSectionReadsUpstreamsAdaptersAndSignInReadiness(t *testing.T) {
 	status := gatewayDouble(t,
-		`{"upstreams":{"marketplace":{"status":"up"},"state":{"status":"down"}},"adapters":{"cache":{"available":true},"llm":{"available":false}}}`,
-		`{"ok":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in","hint":"kb-create doctor --recover"}]}`)
+		`{"ok":true,"data":{"upstreams":{"marketplace":{"status":"up"},"state":{"status":"down"}},"adapters":{"cache":{"available":true},"llm":{"available":false}}}}`,
+		`{"ok":true,"data":{"ok":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in","hint":"kb-create doctor --recover"}]}}`)
 	section := InspectPlatform(context.Background(), status, nil, nil)
 	if section.OK {
 		t.Fatalf("section = %+v", section)
@@ -187,7 +187,7 @@ func TestPlatformSectionReadsUpstreamsAdaptersAndSignInReadiness(t *testing.T) {
 }
 
 func TestPlatformSectionIsHealthyWhenEverythingReportsUp(t *testing.T) {
-	status := gatewayDouble(t, `{"upstreams":{"state":{"status":"up"}},"projectRuntimes":{"active":0,"limit":4}}`, `{"ok":true,"issues":[]}`)
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{"state":{"status":"up"}},"projectRuntimes":{"active":0,"limit":4}}}`, `{"ok":true,"data":{"ok":true,"issues":[]}}`)
 	if section := InspectPlatform(context.Background(), status, nil, nil); !section.OK {
 		t.Fatalf("section = %+v", section)
 	} else if check(t, section, "project-runtimes").Detail != "Project runtimes start on demand; 0 of 4 active." {
@@ -196,8 +196,8 @@ func TestPlatformSectionIsHealthyWhenEverythingReportsUp(t *testing.T) {
 }
 
 func TestPlatformSectionDoesNotRequireAdminWhenAuthIsDisabled(t *testing.T) {
-	status := gatewayDouble(t, `{"upstreams":{"marketplace":{"status":"up"}}}`,
-		`{"ok":true,"authEnabled":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in"},{"code":"jwt_secret_default","severity":"error","message":"shared secret"}]}`)
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{"marketplace":{"status":"up"}}}}`,
+		`{"ok":true,"data":{"ok":true,"authEnabled":false,"issues":[{"code":"no_active_admin","severity":"error","message":"nobody can log in"},{"code":"jwt_secret_default","severity":"error","message":"shared secret"}]}}`)
 	section := InspectPlatform(context.Background(), status, nil, nil)
 	for _, item := range section.Checks {
 		if item.ID == "auth:no_active_admin" {
@@ -209,11 +209,29 @@ func TestPlatformSectionDoesNotRequireAdminWhenAuthIsDisabled(t *testing.T) {
 	}
 }
 
-func TestPlatformSectionToleratesAHostWithoutStructuredHealth(t *testing.T) {
+func TestPlatformSectionRejectsAHealthBodyWithoutTheUxEnvelope(t *testing.T) {
 	status := gatewayDouble(t, `ok`, "")
 	section := InspectPlatform(context.Background(), status, nil, nil)
-	if !section.OK || !check(t, section, "health").OK {
+	if section.OK || check(t, section, "health").OK {
 		t.Fatalf("section = %+v", section)
+	}
+}
+
+// case: S-203.1
+func TestPlatformSectionRejectsRawHealthJSON(t *testing.T) {
+	status := gatewayDouble(t, `{"upstreams":{"state":{"status":"up"}}}`, "")
+	section := InspectPlatform(context.Background(), status, nil, nil)
+	if section.OK || check(t, section, "health").OK {
+		t.Fatalf("raw health JSON must not be treated as a successful response: %+v", section)
+	}
+}
+
+// case: S-203.1
+func TestPlatformSectionRejectsRawAuthReadinessJSON(t *testing.T) {
+	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{}}}`, `{"ok":true,"authEnabled":true,"issues":[]}`)
+	section := InspectPlatform(context.Background(), status, nil, nil)
+	if section.OK || check(t, section, "auth").OK {
+		t.Fatalf("raw auth readiness JSON must fail its check: %+v", section)
 	}
 }
 

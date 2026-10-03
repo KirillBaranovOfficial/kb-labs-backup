@@ -22,6 +22,15 @@ _STEP_ID: ContextVar[str] = ContextVar("journey_step_id", default="journey.setup
 _REPORT_ROOT: ContextVar[Path | None] = ContextVar("journey_report_root", default=None)
 
 
+def decode_ux_success_result(value: Any) -> Any:
+    """Validate a shared success envelope and return its payload."""
+    if (not isinstance(value, dict) or value.get("ok") is not True
+            or "data" not in value or set(value) - {"ok", "data", "meta"}
+            or ("meta" in value and not isinstance(value["meta"], dict))):
+        raise ValueError("HTTP response is not a valid UX success envelope")
+    return value["data"]
+
+
 def invocation_context(*, step_id: str | None = None, report_root: str | Path | None = None):
     """Set the current case step and invocation destination for a scope."""
     class Context:

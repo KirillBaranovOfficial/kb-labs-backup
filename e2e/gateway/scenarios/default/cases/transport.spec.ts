@@ -16,6 +16,7 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import { GATEWAY } from '@kb-labs/e2e-shared/urls.js';
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js';
+import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,7 +128,7 @@ test('TR-06: gateway /health reports upstream services as reachable via transpor
   const res = await request.get(`${GATEWAY}/health`);
 
   expect(res.status()).toBe(200);
-  const body = await res.json();
+  const body = decodeUxSuccessResult<{ upstreams: Record<string, { status: string }> }>(await res.json());
 
   // Should have an upstreams section (populated by IServiceTransport health probes).
   // When REST API is up, at minimum one upstream must be reported.
@@ -135,7 +136,7 @@ test('TR-06: gateway /health reports upstream services as reachable via transpor
   expect(typeof body.upstreams).toBe('object');
 
   // At least one upstream should be 'up' in normal operation.
-  const upstream = Object.values(body.upstreams as Record<string, { status: string }>) as Array<{ status: string }>;
+  const upstream = Object.values(body.upstreams);
   const upCount = upstream.filter(u => u.status === 'up').length;
   expect(upCount).toBeGreaterThanOrEqual(1);
 });

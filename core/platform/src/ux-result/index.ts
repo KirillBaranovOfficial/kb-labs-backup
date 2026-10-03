@@ -62,3 +62,11 @@ export function validateUxResult(value: unknown): string[] {
 export function isUxResult<T = unknown>(value: unknown): value is UxResult<T> {
   return validateUxResult(value).length === 0;
 }
+
+/** Validate a machine result and return its success payload. */
+export function decodeUxSuccessResult<T = unknown>(value: unknown): T {
+  if (!isUxResult<T>(value) || !value.ok) {
+    throw new Error('Gateway returned a response that is not a valid UX success envelope.');
+  }
+  return value.data;
+}

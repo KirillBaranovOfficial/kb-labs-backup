@@ -540,7 +540,7 @@ export async function createServer(
 
     scope.get(
       "/health",
-      { schema: { tags: ["System"], summary: "Gateway health check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] }, version: { type: 'string' }, uptime: { type: 'number' }, timestamp: { type: 'string', format: 'date-time' }, adapters: { type: 'object', additionalProperties: { type: 'object', properties: { available: { type: 'boolean' }, latencyMs: { type: 'number' } }, required: ['available'] } }, upstreams: { type: 'object', additionalProperties: { type: 'object', properties: { status: { type: 'string' }, latencyMs: { type: 'number' } }, required: ['status'] } }, projectRuntimes: { type: 'object' } }, required: ['status', 'version', 'uptime', 'timestamp', 'adapters', 'upstreams'] } } } },
+      { schema: { tags: ["System"], summary: "Gateway health check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] }, version: { type: 'string' }, uptime: { type: 'number' }, timestamp: { type: 'string', format: 'date-time' }, adapters: { type: 'object', additionalProperties: { type: 'object', properties: { available: { type: 'boolean' }, latencyMs: { type: 'number' } }, required: ['available'] } }, upstreams: { type: 'object', additionalProperties: { type: 'object', properties: { status: { type: 'string' }, latencyMs: { type: 'number' } }, required: ['status'] } }, projectRuntimes: { type: 'object', properties: { limit: { type: 'number' }, active: { type: 'number' }, runtimes: { type: 'array', items: { type: 'object', properties: { projectId: { type: 'string' }, state: { type: 'string' }, lastUsedAt: { type: 'string', format: 'date-time' }, inflight: { type: 'number' }, restarts: { type: 'number' }, keptRunningSchedules: { type: 'number' } }, required: ['projectId', 'state', 'lastUsedAt', 'inflight', 'restarts'], additionalProperties: false } } }, required: ['limit', 'active', 'runtimes'], additionalProperties: false } }, required: ['status', 'version', 'uptime', 'timestamp', 'adapters', 'upstreams'] } } } },
       async () => {
         const snapshot = await collectHealthSnapshot();
         // Runtime state changes faster than the cached snapshot lives: read it live.
@@ -570,9 +570,41 @@ export async function createServer(
       registerAuthHealthRoute(scope, userAuth.authReadiness);
     }
 
+    const readyResponseSchema = {
+      type: "object",
+      properties: {
+        schema: { type: "string", const: "kb.ready/1" },
+        ts: { type: "string", format: "date-time" },
+        ready: { type: "boolean" },
+        status: { type: "string", enum: ["ready", "degraded", "initializing"] },
+        reason: { type: "string" },
+        components: {
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            properties: {
+              ready: { type: "boolean" },
+              status: { type: "string" },
+            },
+            required: ["ready"],
+          },
+        },
+      },
+      required: ["schema", "ts", "ready", "status", "reason", "components"],
+      additionalProperties: false,
+    };
+
     scope.get(
       "/ready",
-      { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["System"], summary: "Gateway readiness check", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object' }, 503: { type: 'object' } } } },
+      {
+        config: { uxFixture: { validResult: "error-envelope" } },
+        schema: {
+          tags: ["System"],
+          summary: "Gateway readiness check",
+          querystring: { type: "object", properties: {}, additionalProperties: false },
+          response: { 200: readyResponseSchema, 503: readyResponseSchema },
+        },
+      },
       async (_request, reply) => {
         const health = await collectHealthSnapshot();
         const upstreams =

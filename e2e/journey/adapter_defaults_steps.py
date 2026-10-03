@@ -15,7 +15,7 @@ from typing import Callable
 
 from service_steps import Journey
 from marketplace_steps import _platform_snapshot
-from invocations import open_http, run_command, run_with_runner
+from invocations import decode_ux_success_result, open_http, run_command, run_with_runner
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -265,7 +265,10 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             urllib.request.urlopen, health_request, timeout=10, env=base_env)
         if health_status != 200:
             raise RuntimeError(f"GET {health_request.full_url} returned HTTP {health_status}")
-        runtime_adapters = json.loads(health_body)
+        try:
+            runtime_adapters = decode_ux_success_result(json.loads(health_body))
+        except (json.JSONDecodeError, ValueError) as error:
+            raise RuntimeError(f"GET /health/adapters returned an invalid UX result envelope: {error}") from error
         if not isinstance(runtime_adapters, list):
             raise RuntimeError("GET /health/adapters returned no adapter list")
         expected_adapters = {row.get("slot"): row for row in runtime_adapters if isinstance(row, dict)}

@@ -290,7 +290,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         for row in runtime_adapters]
 
             with patch("adapter_defaults_steps.urllib.request.urlopen",
-                       side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(health_adapters()).encode())):
+                       side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps({"ok": True, "data": health_adapters()}).encode())):
                 run_adapter_default_steps(journey, project_a, env, fake_run)
 
             expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {f"S-048.{number}" for number in range(1, 7)}

@@ -240,10 +240,10 @@ class ServiceJourneyTests(unittest.TestCase):
             self.assertIn("did not report", mcp_diagnostics("prj_test", "token"))
 
     def test_health_claim_requires_json_object(self):
-        with patch("service_runner.request", return_value=(200, {"ready": True}, {})):
+        with patch("service_runner.request", return_value=(200, {"ok": True, "data": {"ready": True}}, {})):
             self.assertIsNone(expect_json("/ready", "gateway readiness"))
-        with patch("service_runner.request", return_value=(200, "ready", {})):
-            self.assertIn("without a JSON object", expect_json("/ready", "gateway readiness"))
+        with patch("service_runner.request", return_value=(200, {"ready": True}, {})):
+            self.assertIn("invalid UX result envelope", expect_json("/ready", "gateway readiness"))
 
     # case: S-041.4
     def test_secured_auth_journey_preserves_session_until_logout_after_restart(self):
