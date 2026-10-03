@@ -57,6 +57,7 @@ export interface RunInProcessOptions {
   signal?: AbortSignal;
   cwd: string;
   outdir?: string;
+  environment?: Record<string, string | undefined>;
   /** Resolved adapter middlewares to apply before governance. */
   adapterMiddlewares?: LoadedMiddleware[];
 }
@@ -71,6 +72,7 @@ export interface RunInSubprocessOptions {
   signal?: AbortSignal;
   cwd: string;
   outdir?: string;
+  environment?: Record<string, string | undefined>;
   onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
 }
 
@@ -85,7 +87,7 @@ export interface RunInSubprocessOptions {
 export async function runInProcess<T = unknown>(
   options: RunInProcessOptions
 ): Promise<RunResult<T>> {
-  const { descriptor, platform, ui, pluginInvoker, eventEmitter, handlerPath, input, signal, cwd, outdir, adapterMiddlewares } = options;
+  const { descriptor, platform, ui, pluginInvoker, eventEmitter, handlerPath, input, signal, cwd, outdir, environment, adapterMiddlewares } = options;
   const startTime = Date.now();
 
   // Create context
@@ -98,6 +100,7 @@ export async function runInProcess<T = unknown>(
     eventEmitter,
     cwd,
     outdir,
+    environment,
     adapterMiddlewares,
   });
 
@@ -234,6 +237,7 @@ export async function runInSubprocess<T = unknown>(
       stdio: ['inherit', 'pipe', 'pipe', 'ipc'],
       env: {
         ...process.env,
+        ...options.environment,
         NODE_ENV: process.env.NODE_ENV,
         KB_SOCKET_PATH: socketPath,
         KB_PLATFORM_SOCKET_TOKEN: platformAuthToken,

@@ -1,5 +1,5 @@
-import { defineCommand, validationError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
-import { handleMarketplaceError } from '../../errors.js';
+import { defineCommand, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+
 import { get } from '../../http.js';
 import { resolveCliQueryScope, CliScopeError } from '../../scope.js';
 
@@ -39,7 +39,7 @@ export default defineCommand<unknown, ListInput, ListResultData>({
         if (err instanceof CliScopeError) {
           validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleMarketplaceError(ctx, err, flags.json);
+          handleError(ctx, err, flags.json);
         }
         return { ok: false, error: err instanceof Error ? err.message : String(err), result: { entries: [], total: 0 } };
       }
@@ -71,7 +71,7 @@ export default defineCommand<unknown, ListInput, ListResultData>({
 
         return { ok: true, result: data };
       } catch (err) {
-        handleMarketplaceError(ctx, err, flags.json);
+        handleError(ctx, err, flags.json);
         return { ok: false, error: err instanceof Error ? err.message : String(err), result: { entries: [], total: 0 } };
       }
     },

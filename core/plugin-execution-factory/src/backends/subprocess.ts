@@ -350,6 +350,7 @@ export class SubprocessBackend implements ExecutionBackend {
           handlerPath,
           exportName: requestToExecute.exportName,
           input: requestToExecute.input,
+          environment: requestToExecute.env,
           timeoutMs,
           signal: options?.signal,
           cwd: lease.cwd,

@@ -17,6 +17,8 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 
 export interface ExecuteCommandV3Options {
+  /** Explicit plugin environment values for this invocation. */
+  env?: Record<string, string | undefined>;
   /**
    * Plugin ID (e.g., "@kb-labs/my-plugin")
    */
@@ -211,6 +213,7 @@ export async function executeCommandV3(
       pluginRoot,
       handlerRef: handlerPath,
       input,
+      env: options.env,
       timeoutMs: quotas?.timeoutMs,
       // Pass cwd so worker-pool backend sets ctx.cwd to the invocation directory,
       // not the platform installation directory (worker-script.ts reads workspace.cwd)

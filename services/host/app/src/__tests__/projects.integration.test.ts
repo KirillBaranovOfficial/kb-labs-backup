@@ -4,14 +4,14 @@
  * runtime script standing in for `kb-project-runtime`.
  */
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
-import { startTestHost, type RunningHost } from "./harness.js";
+import { startTestHost, type HostFixtureConfig, type RunningHost } from "./harness.js";
 import {
   FAKE_RUNTIME_ENTRY,
   isAlive,
@@ -76,9 +76,10 @@ describe("kb-host project routing", () => {
   async function host(
     hostSection: Record<string, unknown> = {},
     options: HostOptions["projectRuntime"] = {},
+    fixture: Omit<HostFixtureConfig, "host"> = {},
   ): Promise<RunningHost> {
     running = await startTestHost(
-      { host: hostSection },
+      { host: hostSection, ...fixture },
       {
         projectRegistry: registry,
         projectRuntime: { entry: FAKE_RUNTIME_ENTRY, stopTimeoutMs: 1500, ...options },
@@ -234,6 +235,7 @@ describe("kb-host project routing", () => {
     expect(JSON.stringify(runtime)).not.toContain("port");
   });
 
+  // case: S-010.7
   it("passes live host service addresses into the child runtime", async () => {
     const a = await registered();
     const subject = await host();
@@ -245,8 +247,21 @@ describe("kb-host project routing", () => {
     }
     expect(stateUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(stateUrl).not.toBe("http://127.0.0.1:7777");
-    expect(gatewayUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(gatewayUrl).toBe(`http://127.0.0.1:${subject.gatewayPort}`);
     expect(firstLeaseStatus).toBe(404);
+  });
+
+  // case: S-203.15
+  it("uses the default gateway listener address when gateway.port is absent", async () => {
+    const project = await registered();
+    const subject = await host({}, {}, { defaultGatewayPort: true });
+    const platformConfig = JSON.parse(
+      await readFile(`${subject.projectRoot}/.kb/kb.config.json`, "utf8"),
+    ) as { gateway?: Record<string, unknown> };
+    expect(platformConfig.gateway).not.toHaveProperty("port");
+
+    const runtime = await reply(subject, project.id, "/rest/__host-services");
+    expect(runtime.gatewayUrl).toBe(`http://127.0.0.1:${subject.gatewayPort}`);
   });
 
   it("answers KB_PROJECT_UNKNOWN for an id that is not in the registry, without starting anything", async () => {

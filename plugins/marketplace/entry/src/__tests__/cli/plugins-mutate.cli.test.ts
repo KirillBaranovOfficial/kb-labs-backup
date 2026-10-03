@@ -104,6 +104,7 @@ describe('marketplace:link', () => {
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
+  // case: S-003.8
   it('rejects absolute paths before calling the marketplace', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
@@ -112,7 +113,7 @@ describe('marketplace:link', () => {
 
     expect(result.ok).toBe(false);
     expect(mockedPost).not.toHaveBeenCalled();
-    expect(captured.errors[0]).toContain('relative');
+    expect(captured.errors[0]).toContain('The --link path must be relative to the selected scope directory.');
   });
 });
 

@@ -15,17 +15,18 @@ export interface CreateRuntimeAPIOptions {
   permissions: PermissionSpec;
   cwd: string;
   outdir?: string;
+  environment?: Record<string, string | undefined>;
 }
 
 /**
  * Create the complete RuntimeAPI with all shims
  */
 export function createRuntimeAPI(options: CreateRuntimeAPIOptions): RuntimeAPI {
-  const { permissions, cwd, outdir } = options;
+  const { permissions, cwd, outdir, environment } = options;
 
   return {
     fs: createFSShim({ permissions, cwd, outdir }),
     fetch: createFetchShim({ permissions }),
-    env: createEnvShim({ permissions }),
+    env: createEnvShim({ permissions, environment }),
   };
 }

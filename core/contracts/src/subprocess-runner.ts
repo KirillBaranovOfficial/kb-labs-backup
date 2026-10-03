@@ -32,6 +32,9 @@ export interface SubprocessRunOptions {
   /** Input data for handler */
   input: unknown;
 
+  /** Explicit environment values for this execution. */
+  environment?: Record<string, string | undefined>;
+
   /** Timeout in milliseconds */
   timeoutMs?: number;
 

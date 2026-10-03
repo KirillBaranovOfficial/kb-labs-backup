@@ -5,7 +5,7 @@
  *
  * It composes the gateway, the marketplace service and the state daemon as
  * {@link HostModule}s of `runHost`. Only the gateway listens on a public
- * address (`gateway.port + KB_NET_OFFSET`); marketplace and state bind
+ * address (service transport, `GATEWAY_PORT`, or module default plus offset); marketplace and state bind
  * ephemeral loopback ports that the host resolves itself and injects in-process
  * into the gateway's service transport, so no module addresses are written in
  * config. See ADR-0043 and docs/architecture/target/04-topology.md.
@@ -14,7 +14,11 @@
 import { createRequire } from "node:module";
 import { loadEffectiveConfig } from "@kb-labs/core-config";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
-import type { IServiceTransport } from "@kb-labs/core-platform";
+import {
+  GATEWAY_SERVICE_NETWORK,
+  resolveServiceListenAddress,
+  type IServiceTransport,
+} from "@kb-labs/core-platform";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import type { PlatformAssemblyHook } from "@kb-labs/core-runtime";
 import {
@@ -98,6 +102,7 @@ const INTERNAL_MODULES: readonly InternalModuleSpec[] = [
 interface PreparedHost {
   settings: HostSettings;
   upstreams: GatewayUpstreams;
+  gatewayAddress?: string;
 }
 
 function isSelected(settings: HostSettings, id: HostModuleId): boolean {
@@ -271,14 +276,29 @@ export async function createHostConfig(
           (effective?.data as { host?: unknown } | undefined)?.host,
         );
         const upstreams = generatedUpstreams(settings);
+        let gatewayAddress: string | undefined;
         if (isSelected(settings, "gateway")) {
+          const gatewayConfig = await loadGatewayConfig(ctx.projectRoot, ctx.platformRoot);
           // Dry run: refuse an unsafe exposure before any module binds a port.
           applyHostGatewayPolicy(
-            await loadGatewayConfig(ctx.projectRoot, ctx.platformRoot),
+            gatewayConfig,
             { auth: settings.auth, upstreams },
           );
+          const listenAddress = resolveServiceListenAddress(
+            ctx.platform.getAdapter<IServiceTransport>("serviceTransport"),
+            {
+              serviceId: GATEWAY_SERVICE_NETWORK.serviceId,
+              portEnvVar: GATEWAY_SERVICE_NETWORK.portEnvVar,
+              portEnvValue: process.env[GATEWAY_SERVICE_NETWORK.portEnvVar],
+              hostEnvValue: process.env[GATEWAY_SERVICE_NETWORK.hostEnvVar],
+              defaultPort: GATEWAY_SERVICE_NETWORK.defaultPort,
+              defaultHost: GATEWAY_SERVICE_NETWORK.defaultHost,
+            },
+            ctx.netOffset,
+          );
+          gatewayAddress = `http://${INTERNAL_BIND_HOST}:${listenAddress.port}`;
         }
-        return { settings, upstreams };
+        return { settings, upstreams, gatewayAddress };
       } catch (error) {
         resolveHook.deregister();
         resolveHook = undefined;
@@ -323,13 +343,10 @@ export async function createHostConfig(
   );
 
   const gateway: HostModule = defineHostModule({
-    id: "gateway",
-    defaultPort: 4000,
-    portEnvVar: "GATEWAY_PORT",
-    defaultHost: "0.0.0.0",
-    hostEnvVar: "GATEWAY_HOST",
+    ...GATEWAY_SERVICE_NETWORK,
+    id: GATEWAY_SERVICE_NETWORK.serviceId,
     setup: async (ctx) => {
-      const { settings, upstreams } = await prepare(ctx);
+      const { settings, upstreams, gatewayAddress } = await prepare(ctx);
       if (!isSelected(settings, "gateway")) {
         ctx.logger.info("Module disabled by host.modules", {
           moduleId: "gateway",
@@ -348,7 +365,7 @@ export async function createHostConfig(
             KB_PLATFORM_ROOT: ctx.platformRoot,
             KB_MCP_AUTH_MODE: settings.auth === "off" ? "local" : "secured",
             KB_STATE_DAEMON_URL: stateDaemonUrl,
-            KB_GATEWAY_URL: `http://${INTERNAL_BIND_HOST}:${ctx.port}`,
+            KB_GATEWAY_URL: gatewayAddress,
           },
           ...(overrides.stopTimeoutMs !== undefined
             ? { stopTimeoutMs: overrides.stopTimeoutMs }

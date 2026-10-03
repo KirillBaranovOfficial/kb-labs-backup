@@ -243,6 +243,7 @@ export class InProcessBackend implements ExecutionBackend {
         eventEmitter,
         handlerPath,
         input: requestToExecute.input,
+        environment: requestToExecute.env,
         signal: options?.signal,
         cwd: lease.cwd,           // From WorkspaceLease
         outdir: undefined,        // Optional, defaults to cwd/.kb/output

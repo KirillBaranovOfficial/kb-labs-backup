@@ -1,4 +1,5 @@
 import {
+  GATEWAY_SERVICE_NETWORK,
   logDiagnosticEvent,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
@@ -56,12 +57,9 @@ export async function bootstrap(
   requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET");
   await runService({
     appId: "gateway",
+    ...GATEWAY_SERVICE_NETWORK,
     projectScope: "required",
     startDir: repoRoot,
-    defaultPort: 4000,
-    portEnvVar: "GATEWAY_PORT",
-    defaultHost: "0.0.0.0",
-    hostEnvVar: "GATEWAY_HOST",
     platform: {
       assemblyHook: makeAssemblyHook(),
     },
@@ -72,9 +70,10 @@ export async function bootstrap(
 /**
  * Gateway service body. Importable and side-effect-free: it only starts work
  * when called with a resolved {@link ServiceContext}. The gateway is the
- * network's edge (not a target in the transport map), so it listens on
- * `config.port + ctx.netOffset`; the offset is resolved once by the launcher
- * and the gateway never reads KB_NET_OFFSET itself.
+ * network's edge (not a target in the transport map), so it listens on the
+ * port resolved by `@kb-labs/shared-daemon` from the service transport or the
+ * module's port environment/default plus the one network offset. The gateway
+ * never resolves KB_NET_OFFSET itself.
  */
 export async function setup(
   ctx: ServiceContext,
@@ -111,7 +110,7 @@ export async function startGateway(
     platform,
     projectRoot,
     platformRoot,
-    netOffset,
+    port: listenPort,
     logger: serviceLogger,
   }: ServiceContext,
   options: GatewayEmbedOptions,
@@ -132,7 +131,6 @@ export async function startGateway(
     ? options.configure(loadedConfig)
     : loadedConfig;
   const access = resolveAccess(config);
-  const listenPort = config.port + netOffset;
   logger.info("Gateway config loaded", {
     port: listenPort,
     upstreams: Object.keys(config.upstreams),

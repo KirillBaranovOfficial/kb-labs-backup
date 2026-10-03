@@ -8,7 +8,7 @@
  * `@kb-labs/plugin-contracts`; both delegate here for the rest.
  */
 
-import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
+import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError, ServicePortConfigError } from '../errors.js';
 import { createErrorEnvelope, type CreateEnvelopeOptions } from './catalog.js';
 import type { ErrorEnvelope } from './types.js';
 
@@ -16,6 +16,15 @@ export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'a
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+  if (error instanceof ServicePortConfigError) {
+    return createErrorEnvelope('KB_CONFIG_INVALID', {
+      ...options,
+      details: { path: error.envVar },
+      cause: error.message,
+      message: error.message,
+      hint: `Run "unset ${error.envVar}", then retry the command to use the service default port.`,
+    });
+  }
   if (error instanceof PlatformConfigError) {
     const message = error.reason === 'read'
       ? `Platform configuration file "${error.configPath}" cannot be read.`

@@ -169,6 +169,13 @@ describe('kb adapter list', () => {
 });
 
 describe('kb adapter bind', () => {
+  // case: S-048.1
+  it('declares bind, list, and unbind as platform-scoped commands', () => {
+    expect(adapterBind.scope).toBe('platform');
+    expect(adapterList.scope).toBe('platform');
+    expect(adapterUnbind.scope).toBe('platform');
+  });
+
   it('binds an installed adapter in platform config', async () => {
     await writeMarketplaceLock(platformRoot, {
       schema: 'kb.marketplace/3',

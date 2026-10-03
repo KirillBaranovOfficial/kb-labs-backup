@@ -237,6 +237,9 @@ class MarketplaceStepTests(unittest.TestCase):
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             platform_root = home / "kb-platform"
+            platform_config = platform_root / ".kb" / "kb.config.jsonc"
+            platform_config.parent.mkdir(parents=True)
+            platform_config.write_text(json.dumps({"gateway": {"access": {"mode": "local"}}}))
             receipt = platform_root / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
             receipt.write_text('{"version":"2.120.1"}\n')
@@ -246,6 +249,7 @@ class MarketplaceStepTests(unittest.TestCase):
             env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
                    "KB_JOURNEY_PLATFORM_ROOT": str(platform_root)}
             calls: list[tuple[str, ...]] = []
+            host_running = True
 
             def lock(path: Path, *, platform: bool = False) -> dict:
                 lock_file = path / ".kb" / "marketplace.lock"
@@ -262,8 +266,12 @@ class MarketplaceStepTests(unittest.TestCase):
                 lock_file.write_text(json.dumps(value))
 
             def fake_run(command, *, cwd, env, capture_output, text, timeout):
+                nonlocal host_running
                 calls.append(tuple(command))
                 cwd_path = Path(cwd)
+                if command[0] == "kb-create":
+                    host_running = command[1] == "start"
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if command[0] == "npm":
                     package_id = command[2]
                     versions = {
@@ -294,7 +302,25 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 1,
                         f"{error['message']} [{error['code']}]\n  Hint:  {error['hint']}\n", "")
                 elif args[:3] == ["marketplace", "plugins", "doctor"]:
-                    stdout = json.dumps({"ok": True, "total": 0, "issues": []})
+                    if env.get("GATEWAY_PORT") == "not-a-port":
+                        return subprocess.CompletedProcess(command, 1, json.dumps({
+                            "ok": False,
+                            "error": {
+                                "code": "KB_CONFIG_INVALID",
+                                "message": 'Environment variable "GATEWAY_PORT" must be an integer from 1 through 65535.',
+                                "hint": 'Run "unset GATEWAY_PORT", then retry the command to use the service default port.',
+                            },
+                        }), "")
+                    if host_running:
+                        stdout = json.dumps({"ok": True, "data": {"total": 0, "issues": []}})
+                    else:
+                        return subprocess.CompletedProcess(command, 1, json.dumps({
+                            "ok": False,
+                            "error": {
+                                "code": "KB_HOST_UNREACHABLE",
+                                "hint": 'Run "kb-create start", or "kb-create doctor" if the host should already be running.',
+                            },
+                        }), "")
                 elif args[:2] == ["marketplace", "install"]:
                     package_id, version = args[2].rsplit("@", 1)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
@@ -368,7 +394,11 @@ class MarketplaceStepTests(unittest.TestCase):
             run_marketplace_steps(journey, project, "http://registry.test", env, fake_run)
 
             expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("047", range(1, 4))) for step in steps}
-            expected.update({"S-051.2", "S-051.3", "S-051.4"})
+            expected.update({
+                "S-010.7",
+                "S-051.2", "S-051.3", "S-051.4",
+                "S-203.14", "S-203.15", "S-203.16",
+            })
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(actual, expected)
@@ -378,6 +408,8 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertNotIn(("npm", "view", "@kb-labs/adapters-fs", "version", "--json", "--registry=http://registry.test"), calls)
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs@2.107.0", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "qa", "cases", "list", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"), calls)
+            self.assertNotIn("port", json.loads(platform_config.read_text())["gateway"])
             self.assertFalse(any(item.name.startswith("kb-marketplace-project-b-") for item in home.iterdir()))
 
 

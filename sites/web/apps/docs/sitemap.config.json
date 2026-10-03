@@ -174,7 +174,7 @@
         { "slug": "configuration/kb-config",             "type": "hybrid", "owners": ["core/config/**", "core/runtime/src/config.ts", "core/runtime/src/config-schemas.ts", "core/runtime/src/adapters/config-adapter.ts"] },
         { "slug": "configuration/dev-config",            "type": "hybrid", "owners": ["infra/devkit/**", "tools/kb-devkit/**", "shared/daemon/src/daemon.ts", "services/host/app/src/host.ts"] },
         { "slug": "configuration/profiles",              "type": "manual", "owners": ["core/config/**", "core/runtime/src/adapters/config-adapter.ts"] },
-        { "slug": "configuration/environment-variables", "type": "manual", "owners": ["core/config/**", "core/platform/src/host-service-address.ts", "services/host/app/src/host.ts", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "plugins/marketplace-registry/app/src/bootstrap.ts"] }
+        { "slug": "configuration/environment-variables", "type": "manual", "owners": ["core/config/**", "core/platform/src/host-service-address.ts", "core/platform/src/service-listen-address.ts", "shared/daemon/src/daemon.ts", "cli/bin/src/runtime/plugin-executor.ts", "services/host/app/src/host.ts", "services/gateway/app/kb-create.requirements.json", "services/gateway/app/src/bootstrap.ts", "services/rest-api/app/src/bootstrap.ts", "plugins/marketplace-registry/app/src/bootstrap.ts"] }
       ]
     },
 

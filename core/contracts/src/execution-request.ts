@@ -118,6 +118,9 @@ export interface ExecutionRequest<TDescriptor = unknown> {
   /** Input payload for handler */
   input: unknown;
 
+  /** Explicit environment values for this execution. */
+  env?: Record<string, string | undefined>;
+
   /** Workspace strategy (default local) */
   workspace?: WorkspaceConfig;
 

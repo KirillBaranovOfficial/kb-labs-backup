@@ -10,6 +10,13 @@ const originalEnv = { ...process.env };
 
 // Mock all heavy bootstrap deps before importing bootstrap
 vi.mock("@kb-labs/core-platform", () => ({
+  GATEWAY_SERVICE_NETWORK: {
+    serviceId: "gateway",
+    portEnvVar: "GATEWAY_PORT",
+    defaultPort: 4000,
+    hostEnvVar: "GATEWAY_HOST",
+    defaultHost: "0.0.0.0",
+  },
   logDiagnosticEvent: vi.fn(),
 }));
 

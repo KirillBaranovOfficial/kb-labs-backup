@@ -21,13 +21,20 @@ import type { PlatformContainer } from "@kb-labs/core-runtime";
 import { setJsonMode } from "@kb-labs/shared-cli-ui";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { AdapterUnavailableError, createContextLogger } from "@kb-labs/core-platform";
+import {
+  AdapterUnavailableError,
+  createContextLogger,
+  GATEWAY_SERVICE_NETWORK,
+  resolveServiceListenAddress,
+} from "@kb-labs/core-platform";
+import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
 import { createCLIUIFacade } from "./ui-facade";
 
 export interface PluginExecutionOptions {
   context: SystemContext;
+  netOffset?: number;
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
@@ -79,6 +86,35 @@ export async function executePlugin(
   const handlerPath = handlerRelativePath.startsWith("dist/")
     ? path.resolve(pluginRoot, handlerRelativePath)
     : path.resolve(pluginRoot, "dist", handlerRelativePath);
+  const permissions = getHandlerPermissions(
+    pluginManifest,
+    "cli",
+    commandPath,
+  );
+
+  // Gateway-aware plugins declare the address in their environment
+  // permissions. Resolve it from the same transport and module defaults used
+  // by the daemon to bind the gateway listener.
+  const gatewayUrl = permissionAllowsEnvironmentVariable(
+    permissions.env?.read,
+    "KB_GATEWAY_URL",
+  )
+    ? (() => {
+        const address = resolveServiceListenAddress(
+          platform.getAdapter<IServiceTransport>("serviceTransport"),
+          {
+            serviceId: GATEWAY_SERVICE_NETWORK.serviceId,
+            portEnvVar: GATEWAY_SERVICE_NETWORK.portEnvVar,
+            portEnvValue: process.env[GATEWAY_SERVICE_NETWORK.portEnvVar],
+            defaultPort: GATEWAY_SERVICE_NETWORK.defaultPort,
+            hostEnvValue: process.env[GATEWAY_SERVICE_NETWORK.hostEnvVar],
+            defaultHost: GATEWAY_SERVICE_NETWORK.defaultHost,
+          },
+          options.netOffset ?? 0,
+        );
+        return `http://127.0.0.1:${address.port}`;
+      })()
+    : undefined;
 
   try {
     const pluginId = pluginManifest.id || manifestCmd.manifest.id;
@@ -100,11 +136,6 @@ export async function executePlugin(
 
     const platformServices = createPlatformServices(platform);
     const socketPath = platform.getSocketPath();
-    const permissions = getHandlerPermissions(
-      pluginManifest,
-      "cli",
-      commandPath,
-    );
     const quotas = permissions?.quotas;
 
     // Execute plugin. Pass the discovered `pkgRoot` explicitly so project-
@@ -113,22 +144,23 @@ export async function executePlugin(
     // resolved correctly by the execution backend.
     try {
       const exitCode = await executeCommandV3({
-        pluginId,
-        pluginVersion,
-        pluginRoot,
-        handlerPath,
-        argv,
-        flags,
-        ui,
-        platform: platformServices,
-        platformContainer: platform,
-        socketPath,
-        cwd: context.cwd || process.cwd(),
-        devMode: process.env.NODE_ENV === "development",
-        permissions,
-        quotas,
-        configSection: pluginManifest.configSection,
-      });
+          pluginId,
+          pluginVersion,
+          pluginRoot,
+          handlerPath,
+          argv,
+          flags,
+          ui,
+          platform: platformServices,
+          platformContainer: platform,
+          socketPath,
+          cwd: context.cwd || process.cwd(),
+          devMode: process.env.NODE_ENV === "development",
+          permissions,
+          quotas,
+          configSection: pluginManifest.configSection,
+          ...(gatewayUrl ? { env: { KB_GATEWAY_URL: gatewayUrl } } : {}),
+        });
 
       context.logger?.debug(
         "[plugin-executor] Command executed via platform.executionBackend",
@@ -162,6 +194,17 @@ export async function executePlugin(
     }
     return undefined;
   }
+}
+
+function permissionAllowsEnvironmentVariable(
+  patterns: string[] | undefined,
+  variable: string,
+): boolean {
+  return patterns?.some((pattern) =>
+    pattern.endsWith("*")
+      ? variable.startsWith(pattern.slice(0, -1))
+      : pattern === variable,
+  ) ?? false;
 }
 
 export function renderUnavailableAdapterError(

@@ -11,7 +11,6 @@ vi.mock('@kb-labs/sdk', () => ({
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({ gatewayApiFetch }));
 
 import { get } from '../http.js';
-import { handleMarketplaceError } from '../errors.js';
 
 describe('marketplace shared gateway client', () => {
   afterEach(() => { gatewayApiFetch.mockReset(); });
@@ -40,19 +39,6 @@ describe('marketplace shared gateway client', () => {
         hint: 'Install it with kb marketplace install <package>.',
       },
     });
-  });
-
-  it('prints the marketplace catalog envelope in JSON mode', async () => {
-    const envelope = {
-      code: 'MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING',
-      message: "The installed platform is missing kb-create's sealed artifact overrides. No package was installed.",
-      hint: 'Run "kb-create update --platform-root /tmp/platform" and retry the install.',
-    };
-    gatewayApiFetch.mockResolvedValue(new Response(JSON.stringify({ ok: false, error: envelope }), { status: 409 }));
-    const json = vi.fn();
-    await get('/packages').catch(error => handleMarketplaceError({ ui: { json } }, error, true));
-
-    expect(json).toHaveBeenCalledWith({ ok: false, error: envelope });
   });
 
   it('points timeout recovery at the installed platform commands', async () => {

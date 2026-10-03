@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { handleMarketplaceError } from '../errors.js';
+import { handleError } from '@kb-labs/sdk';
 
 describe('marketplace CLI errors', () => {
   it.each([
@@ -11,10 +11,10 @@ describe('marketplace CLI errors', () => {
     const envelope = { code, message, hint };
     const error = { envelope };
 
-    handleMarketplaceError({ ui: { json, error: output } }, error, true);
+    handleError({ ui: { json, error: output } }, error, true);
     expect(json).toHaveBeenCalledWith({ ok: false, error: envelope });
 
-    handleMarketplaceError({ ui: { json, error: output } }, error);
+    handleError({ ui: { json, error: output } }, error);
     expect(output).toHaveBeenCalledWith(`${message} [${code}]`, { hint });
   });
 
@@ -23,7 +23,7 @@ describe('marketplace CLI errors', () => {
     const json = vi.fn();
     const ctx = { ui: { json } };
 
-    handleMarketplaceError(ctx, {
+    handleError(ctx, {
       envelope: {
         code: 'KB_AUTH_REQUIRED', area: 'auth', stage: 'run', severity: 'error', retryable: false,
         message: 'Authentication is required.', hint: 'Run "kb auth login".',

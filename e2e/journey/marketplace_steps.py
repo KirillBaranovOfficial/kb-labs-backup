@@ -323,6 +323,83 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     if journey.steps[-1].status != "PASS":
         return
 
+    gateway_doctor = ["marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+    def assert_cli_plugin_gateway() -> None:
+        payload = _json(cli(gateway_doctor), gateway_doctor)
+        if payload.get("ok") is not True:
+            raise RuntimeError("installed CLI plugin command did not return a successful gateway result")
+    journey.step("invoke gateway-backed plugin command through installed CLI", "marketplace",
+                 assert_cli_plugin_gateway, cases=["S-010.7"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_stopped_host_error() -> None:
+        stop_command = ["kb-create", "stop", "--platform-root", str(platform_root), "--json"]
+        stop = _run(stop_command, cwd=platform_root, env=base_env, runner=runner)
+        _output(stop, stop_command)
+        command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+        try:
+            with invocation_context(step_id="S-203.14"):
+                result = _run(command, cwd=project, env=base_env, runner=runner)
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                raise RuntimeError("gateway-backed plugin command did not return a JSON error envelope") from error
+            failure = payload.get("error") if isinstance(payload, dict) else None
+            if (result.returncode != 1 or not isinstance(failure, dict)
+                    or failure.get("code") != "KB_HOST_UNREACHABLE"
+                    or failure.get("hint") != 'Run "kb-create start", or "kb-create doctor" if the host should already be running.'):
+                raise RuntimeError(f"stopped host returned an unexpected gateway error: {payload!r}")
+        finally:
+            start_command = ["kb-create", "start", "--platform-root", str(platform_root), "--json"]
+            start = _run(start_command, cwd=platform_root, env=base_env, runner=runner)
+            _output(start, start_command)
+
+    journey.step("report catalogued error when the installed host is stopped", "marketplace",
+                 assert_stopped_host_error, cases=["S-203.14"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_default_gateway_config() -> None:
+        config_path = platform_root / ".kb" / "kb.config.jsonc"
+        config = json.loads(config_path.read_text())
+        gateway = config.get("gateway")
+        if not isinstance(gateway, dict) or "port" in gateway:
+            raise RuntimeError("fresh platform fixture must leave gateway.port at its service default")
+        command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+        with invocation_context(step_id="S-203.15"):
+            result = _run(command, cwd=project, env=base_env, runner=runner)
+        payload = _json(result, command)
+        if payload.get("ok") is not True:
+            raise RuntimeError("gateway-backed CLI plugin command failed with the default gateway port")
+
+    journey.step("resolve the default gateway address for CLI plugins", "marketplace",
+                 assert_default_gateway_config, cases=["S-203.15"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_invalid_gateway_port_error() -> None:
+        invalid_env = {**base_env, "GATEWAY_PORT": "not-a-port"}
+        command = ["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+        with invocation_context(step_id="S-203.16"):
+            result = _run(command, cwd=project, env=invalid_env, runner=runner)
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("invalid gateway port did not return a JSON config error") from error
+        failure = payload.get("error") if isinstance(payload, dict) else None
+        if (result.returncode != 1 or not isinstance(failure, dict)
+                or failure.get("code") != "KB_CONFIG_INVALID"
+                or "GATEWAY_PORT" not in failure.get("message", "")
+                or "integer from 1 through 65535" not in failure.get("message", "")
+                or failure.get("hint") != 'Run "unset GATEWAY_PORT", then retry the command to use the service default port.'):
+            raise RuntimeError(f"invalid gateway port returned an unexpected config error: {payload!r}")
+
+    journey.step("report a catalogued config error for an invalid gateway port", "marketplace",
+                 assert_invalid_gateway_port_error, cases=["S-203.16"])
+    if journey.steps[-1].status != "PASS":
+        return
+
     def assert_reinstall_idempotent() -> None:
         _output(cli(install_commit), install_commit)
         lock = json.loads(lock_file.read_text())
