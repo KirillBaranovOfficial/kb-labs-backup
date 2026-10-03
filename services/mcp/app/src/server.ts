@@ -13,11 +13,10 @@
  * Design notes:
  *  - The entity registry is initialized ONCE at start() and reused for every
  *    request; only the cheap, pure filterTools() runs per request.
- *  - This endpoint sits in front of the gateway's auth scope (the gateway proxies
- *    it as a dumb upstream), so the daemon validates the Bearer token itself via
- *    the shared GATEWAY_JWT_SECRET — exactly mirroring the gateway's AuthService.
- *  - Anonymous callers (no/invalid token) get an empty tool list and can never
- *    reach callTool/executeCommandV3.
+ *  - The gateway resolves the bearer token, current user/session state, tenant,
+ *    and permissions before proxying. It forwards AuthContext over the internal
+ *    secret channel; the runtime verifies that channel and consumes that context.
+ *  - Anonymous callers are rejected in secured mode before tool dispatch.
  *  - tenantId flows end-to-end from AuthContext.namespaceId into executeCommandV3
  *    via the resolvePlatform seam — ready for per-tenant isolation without code
  *    changes here.
@@ -32,11 +31,10 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { can, type Policy, type Identity } from '@kb-labs/core-policy';
 import type { ICache, ILogger } from '@kb-labs/core-platform';
-import type { JwtConfig } from '@kb-labs/gateway-auth';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { createDaemonServer, getListenOptions, type ObservabilityCollectorLike } from '@kb-labs/shared-http';
-import { resolveAuthContext } from './mcp/auth.js';
+import { readForwardedIdentity } from '@kb-labs/gateway-contracts';
 import { toIdentity, actionForOperation, type Permits } from './mcp/authz.js';
 import { createToolRegistry, validateManifests } from './mcp/tool-builder.js';
 import { type PlatformResolver } from './mcp/tool-router.js';
@@ -75,7 +73,6 @@ export interface McpDaemonServerOptions {
   projectRoot: string;
   /** Platform installation root (installed mode); merges platform-level plugins. */
   platformRoot?: string;
-  jwtConfig: JwtConfig;
   /** Authorization policy. Permit-all default until the platform supplies a real one. */
   policy: Policy;
   /** Project runtime exposes MCP at its project-scoped root path. */
@@ -164,7 +161,7 @@ export class McpDaemonServer {
   }
 
   private async registerMcpRoutes(server: FastifyInstance): Promise<void> {
-    const { cache, logger, jwtConfig } = this.opts;
+    const { cache, logger } = this.opts;
 
     // ── Diagnostics ──────────────────────────────────────────────────────
     // Same visibility as /health — no per-tenant data, just which manifest
@@ -189,12 +186,12 @@ export class McpDaemonServer {
 
       const reqLogger = request.kbLogger ?? logger;
 
-      // 1. Verify the gateway token. Local mode permits tokenless requests;
-      // secured mode rejects absent or invalid tokens with HTTP 401.
+      // 1. Accept only the gateway-resolved identity on the authenticated
+      // internal channel. Local mode permits tokenless requests; secured mode
+      // rejects absent or invalid internal identity with HTTP 401.
       const authHeader = request.headers.authorization;
-      const authCtx = await resolveAuthContext(authHeader, cache, jwtConfig).catch(
-        () => null,
-      );
+      const forwardedIdentity = readForwardedIdentity(request.headers, process.env.GATEWAY_INTERNAL_SECRET);
+      const authCtx = forwardedIdentity.kind === 'identity' ? forwardedIdentity.auth : null;
       if (rejectsUnauthenticatedRequest(this.opts.authMode ?? 'secured', Boolean(authCtx))) {
         const unauthenticated = mcpUnauthenticatedResponse();
         return reply.code(unauthenticated.statusCode).send(unauthenticated.body);

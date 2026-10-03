@@ -2,7 +2,6 @@ import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { resolvePolicy } from "@kb-labs/core-policy";
 import { noopUI } from "@kb-labs/plugin-contracts";
 import { runService } from "@kb-labs/shared-daemon";
-import { loadJwtConfig } from "./mcp/auth.js";
 import { callOutput } from "./mcp/output-capture.js";
 import { createBufferedUI } from "./mcp/ui.js";
 import { McpDaemonServer } from "./server.js";
@@ -23,7 +22,6 @@ export async function setupProjectMcp(ctx: ServiceContext): Promise<() => Promis
     resolvePlatform: () => ctx.platform,
     projectRoot: ctx.projectRoot,
     platformRoot: ctx.platformRoot,
-    jwtConfig: loadJwtConfig(),
     policy,
     endpointPath: "/",
     authMode,
@@ -82,7 +80,6 @@ export async function bootstrap(): Promise<void> {
         resolvePlatform: () => platform,
         projectRoot,
         platformRoot,
-        jwtConfig: loadJwtConfig(),
         policy,
       });
 

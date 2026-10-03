@@ -1,7 +1,12 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { ICache } from '@kb-labs/core-platform';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
-import type { AuthContext } from '@kb-labs/gateway-contracts';
+import {
+  forwardedIdentityHeaders,
+  readForwardedIdentity,
+  stripForwardedIdentityHeaders,
+  type AuthContext,
+} from '@kb-labs/gateway-contracts';
 import type { JwtConfig } from '@kb-labs/gateway-auth';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
@@ -90,27 +95,6 @@ function sendCorsPreflight(request: FastifyRequest, reply: FastifyReply): Fastif
   return reply.code(204).send();
 }
 
-const FORWARDED_IDENTITY_HEADERS = [
-  'x-kb-auth-type', 'x-kb-auth-user-id', 'x-kb-auth-namespace-id', 'x-kb-auth-tier', 'x-kb-auth-permissions',
-] as const;
-
-function removeClientIdentityHeaders(request: FastifyRequest): void {
-  delete request.headers['x-internal-secret'];
-  for (const name of FORWARDED_IDENTITY_HEADERS) { delete request.headers[name]; }
-}
-
-function attachGatewayIdentity(request: FastifyRequest, internalSecret?: string): void {
-  const auth = request.authContext;
-  if (!internalSecret) { return; }
-  request.headers['x-internal-secret'] = internalSecret;
-  if (!auth) { return; }
-  request.headers['x-kb-auth-type'] = auth.type;
-  request.headers['x-kb-auth-user-id'] = auth.userId;
-  request.headers['x-kb-auth-namespace-id'] = auth.namespaceId;
-  request.headers['x-kb-auth-tier'] = auth.tier;
-  request.headers['x-kb-auth-permissions'] = JSON.stringify(auth.permissions);
-}
-
 declare module 'fastify' {
   interface FastifyRequest { authContext?: AuthContext; }
 }
@@ -132,10 +116,10 @@ export function createAuthMiddleware(
       }),
     });
     if (isCorsPreflight(request)) { sendCorsPreflight(request, reply); return; }
-    if (!request.url.startsWith('/internal/')) { removeClientIdentityHeaders(request); }
+    if (!request.url.startsWith('/internal/')) { stripForwardedIdentityHeaders(request.headers); }
     if (!authEnabled) {
       request.authContext = LOCAL_ADMIN_CONTEXT;
-      attachGatewayIdentity(request, options.internalSecret);
+      Object.assign(request.headers, forwardedIdentityHeaders(request.authContext, options.internalSecret));
       return;
     }
 
@@ -146,11 +130,11 @@ export function createAuthMiddleware(
     if (!registryPublicRead && options.studioEnabled && ['GET', 'HEAD'].includes(request.method) && isStudioFallbackRoute(routePath)) { return; }
     const optionalRegistryToken = (request.query as Record<string, string | undefined>)['access_token'];
     if (registryPublicRead && !extractBearerToken(request.headers.authorization) && !optionalRegistryToken && !request.headers.cookie) {
-      attachGatewayIdentity(request, options.internalSecret);
+      Object.assign(request.headers, forwardedIdentityHeaders(request.authContext, options.internalSecret));
       return;
     }
     if (routePath.startsWith('/internal/')) {
-      if (options.internalSecret && request.headers['x-internal-secret'] === options.internalSecret) { return; }
+      if (readForwardedIdentity(request.headers, options.internalSecret).kind !== 'rejected') { return; }
       return unauthorized();
     }
     // These routes are admitted only from webhook manifest declarations. The
@@ -161,7 +145,7 @@ export function createAuthMiddleware(
       await userAuth(request, reply);
       if (reply.sent) { return; }
       if (request.userAuthContext?.source === 'cookie' || request.userAuthContext?.source === 'bearer' || request.userAuthContext?.source === 'api-token') {
-        attachGatewayIdentity(request, options.internalSecret);
+        Object.assign(request.headers, forwardedIdentityHeaders(request.authContext, options.internalSecret));
         return;
       }
     }
@@ -177,6 +161,6 @@ export function createAuthMiddleware(
     const authContext = await resolveToken(token, cache, jwtConfig).catch(() => null);
     if (!authContext) { return unauthorized(); }
     request.authContext = authContext;
-    attachGatewayIdentity(request, options.internalSecret);
+    Object.assign(request.headers, forwardedIdentityHeaders(request.authContext, options.internalSecret));
   };
 }
