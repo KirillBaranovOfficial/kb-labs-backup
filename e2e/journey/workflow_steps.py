@@ -5,12 +5,15 @@ import json
 import subprocess
 import tempfile
 import time
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
 from invocations import run_command
+from invocations import invocation_context, run_pty_command
 
 
 def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120):
@@ -35,13 +38,325 @@ def _json_cli(args: list[str], *, env: dict[str, str], cwd: Path) -> object:
         raise AssertionError(f"`kb {' '.join(args)}` did not return JSON: {' '.join(result.stdout.split())[-500:]}") from error
     if not isinstance(payload, dict) or payload.get("ok") is not True:
         raise AssertionError(f"`kb {' '.join(args)}` returned an unsuccessful result: {payload!r}")
-    return payload.get("data")
+    if "data" not in payload:
+        raise AssertionError(f"`kb {' '.join(args)}` JSON envelope is missing required `data`")
+    return payload["data"]
+
+
+def _case_cli(step_id: str, args: list[str], *, env: dict[str, str], cwd: Path,
+              timeout: int = 120):
+    """Run a case command with evidence attached to its exact scenario step."""
+    with invocation_context(step_id=step_id):
+        return run_cli(args, env=env, cwd=cwd, timeout=timeout)
+
+
+def _case_json_cli(step_id: str, args: list[str], *, env: dict[str, str], cwd: Path) -> object:
+    result = _case_cli(step_id, args, env=env, cwd=cwd)
+    if result.returncode:
+        raise AssertionError(f"`kb {' '.join(args)}` exited {result.returncode}: {' '.join(result.stdout.split())[-500:]}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise AssertionError(f"`kb {' '.join(args)}` did not return JSON: {' '.join(result.stdout.split())[-500:]}") from error
+    command = f"kb {' '.join(args)}"
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        raise AssertionError(f"`kb {' '.join(args)}` returned an unsuccessful result: {payload!r}")
+    if "data" not in payload:
+        raise AssertionError(f"`{command}` JSON envelope is missing required `data`")
+    return payload["data"]
+
+
+def _contract_object(value: object, command: str) -> dict:
+    if not isinstance(value, dict):
+        raise AssertionError(f"`{command}` JSON contract expected `data` to be an object; got {type(value).__name__}")
+    return value
+
+
+def _contract_string(record: dict, key: str, command: str) -> str:
+    value = record.get(key)
+    if not isinstance(value, str) or not value:
+        raise AssertionError(f"`{command}` JSON contract requires non-empty string `{key}`")
+    return value
+
+
+def _contract_status(record: dict, command: str) -> str:
+    status = _contract_string(record, "status", command)
+    if status not in {"queued", "running", "success", "failed", "cancelled"}:
+        raise AssertionError(
+            f"`{command}` JSON contract violation: `status` must be queued|running|success|failed|cancelled; "
+            f"got {status!r}")
+    return status
+
+
+def _workflow_run_list_data(value: object, command: str = "kb workflow runs list --json") -> list[dict]:
+    if not isinstance(value, list):
+        raise AssertionError(f"`{command}` JSON contract expected envelope `data` to be an array of WorkflowRunSummary")
+    runs = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise AssertionError(f"`{command}` JSON contract requires `data[{index}]` to be a WorkflowRunSummary object")
+        _contract_string(item, "id", command)
+        _contract_string(item, "name", command)
+        _contract_status(item, command)
+        runs.append(item)
+    return runs
+
+
+def _workflow_run_detail_data(value: object, command: str = "kb workflow runs view --json=all") -> dict:
+    detail = _contract_object(value, command)
+    _contract_string(detail, "id", command)
+    _contract_string(detail, "name", command)
+    _contract_status(detail, command)
+    return detail
+
+
+def _workflow_run_jobs(detail: dict, command: str) -> list[dict]:
+    jobs = detail.get("jobs")
+    if not isinstance(jobs, list):
+        raise AssertionError(f"`{command}` JSON contract requires `data.jobs` to be an array for this case")
+    checked = []
+    for index, job in enumerate(jobs):
+        if not isinstance(job, dict):
+            raise AssertionError(f"`{command}` JSON contract requires `data.jobs[{index}]` to be an object")
+        steps = job.get("steps")
+        if not isinstance(steps, list):
+            raise AssertionError(f"`{command}` JSON contract requires `data.jobs[{index}].steps` to be an array")
+        for step_index, step in enumerate(steps):
+            if not isinstance(step, dict):
+                raise AssertionError(
+                    f"`{command}` JSON contract requires `data.jobs[{index}].steps[{step_index}]` to be an object")
+        checked.append(job)
+    return checked
+
+
+def _workflow_run_start_data(value: object, command: str = "kb workflow run --json") -> dict:
+    result = _contract_object(value, command)
+    _contract_string(result, "runId", command)
+    _contract_string(result, "status", command)
+    return result
+
+
+def _workflow_rerun_data(value: object, command: str = "kb workflow runs rerun --json") -> dict:
+    result = _contract_object(value, command)
+    _contract_string(result, "runId", command)
+    _contract_string(result, "status", command)
+    return result
+
+
+def _workflow_error_data(value: object, command: str) -> dict:
+    envelope = _contract_object(value, command)
+    if envelope.get("ok") is not False:
+        raise AssertionError(f"`{command}` JSON contract requires top-level `ok: false` for an error")
+    error = _contract_object(envelope.get("error"), command)
+    _contract_string(error, "code", command)
+    _contract_string(error, "message", command)
+    _contract_string(error, "hint", command)
+    return error
+
+
+def _workflow_cron_list_data(value: object, command: str = "kb workflow crons list --json") -> dict:
+    result = _contract_object(value, command)
+    crons = result.get("crons")
+    errors = result.get("errors")
+    if not isinstance(crons, list):
+        raise AssertionError(f"`{command}` JSON contract requires `data.crons` to be an array")
+    if not isinstance(errors, list):
+        raise AssertionError(f"`{command}` JSON contract requires `data.errors` to be an array")
+    for index, cron in enumerate(crons):
+        if not isinstance(cron, dict):
+            raise AssertionError(f"`{command}` JSON contract requires `data.crons[{index}]` to be an object")
+        _contract_string(cron, "id", command)
+        _contract_string(cron, "source", command)
+        _contract_string(cron, "schedule", command)
+        target = cron.get("target")
+        if not isinstance(target, dict):
+            raise AssertionError(f"`{command}` JSON contract requires `data.crons[{index}].target` to be an object")
+        if set(target) == {"workflow"}:
+            _contract_string(target, "workflow", command)
+        elif set(target) == {"handler"}:
+            _contract_string(target, "handler", command)
+        else:
+            raise AssertionError(
+                f"`{command}` JSON contract requires `data.crons[{index}].target` to contain exactly `workflow` or `handler`")
+        if not isinstance(cron.get("enabled"), bool):
+            raise AssertionError(f"`{command}` JSON contract requires `data.crons[{index}].enabled` to be a boolean")
+    for index, error in enumerate(errors):
+        if not isinstance(error, dict):
+            raise AssertionError(f"`{command}` JSON contract requires `data.errors[{index}]` to be an object")
+        _contract_string(error, "file", command)
+        _contract_string(error, "reason", command)
+    return result
+
+
+def _workflow_definition_list_data(value: object, command: str = "kb workflow defs list --json") -> list[dict]:
+    if not isinstance(value, list):
+        raise AssertionError(f"`{command}` JSON contract expected envelope `data` to be an array of WorkflowInfo")
+    workflows = []
+    for index, workflow in enumerate(value):
+        if not isinstance(workflow, dict):
+            raise AssertionError(f"`{command}` JSON contract requires `data[{index}]` to be a WorkflowInfo object")
+        _contract_string(workflow, "id", command)
+        _contract_string(workflow, "name", command)
+        _contract_string(workflow, "source", command)
+        workflows.append(workflow)
+    return workflows
+
+
+def _workflow_logs_data(value: object, command: str = "kb workflow runs logs --json") -> list[dict]:
+    result = _contract_object(value, command)
+    logs = result.get("logs")
+    if not isinstance(logs, list):
+        raise AssertionError(f"`{command}` JSON contract requires `data.logs` to be an array")
+    checked = []
+    for index, entry in enumerate(logs):
+        if not isinstance(entry, dict):
+            raise AssertionError(f"`{command}` JSON contract requires `data.logs[{index}]` to be an object")
+        _contract_string(entry, "level", command)
+        _contract_string(entry, "message", command)
+        _contract_string(entry, "timestamp", command)
+        checked.append(entry)
+    return checked
+
+
+def _solo_workflow_case(journey: Journey, *, env: dict[str, str], project: Path,
+                        clock: Callable[[], float], sleep: Callable[[float], None]) -> None:
+    def initialize() -> None:
+        result = _case_cli("S-002.1", ["workflow", "init"], env=env, cwd=project)
+        expected = ("Created .kb/workflows/hello.yml" in result.stdout
+                    and "Next: kb workflow lint && kb workflow run --workflow-id=hello" in result.stdout)
+        definition = project / ".kb" / "workflows" / "hello.yml"
+        if result.returncode or not expected or not definition.is_file():
+            raise AssertionError(f"workflow init did not create the documented hello workflow: {result.stdout!r}")
+        content = definition.read_text(encoding="utf-8")
+        if "manual: true" not in content or "echo hello-workflow" not in content:
+            raise AssertionError("workflow init created a hello workflow with unexpected trigger or command")
+
+    journey.step("initialize solo project workflow", "workflow", initialize, cases=["S-002.1"])
+
+    def lint() -> None:
+        result = _case_cli("S-002.2", ["workflow", "lint"], env=env, cwd=project)
+        if result.returncode or ".kb/workflows/hello.yml" not in result.stdout or "valid" not in result.stdout.lower():
+            raise AssertionError(f"workflow lint did not report hello.yml valid: {result.stdout!r}")
+
+    journey.step("lint solo project workflow", "workflow", lint, cases=["S-002.2"])
+
+    run_id = ""
+
+    def start() -> None:
+        nonlocal run_id
+        run_id = _run_id(_case_json_cli("S-002.3", ["workflow", "run", "--workflow-id=hello", "--json"],
+                                        env=env, cwd=project))
+
+    journey.step("start solo project workflow", "workflow", start, cases=["S-002.3"])
+
+    def inspect() -> None:
+        with invocation_context(step_id="S-002.4"):
+            detail = _terminal_run(run_id, env=env, cwd=project, clock=clock, sleep=sleep)
+        steps = [step for job in _workflow_run_jobs(detail, "kb workflow runs view --json=all")
+                 for step in job["steps"]]
+        output = "\n".join(str(step.get("output", "")) + " " +
+                             json.dumps(step.get("outputs", {}), sort_keys=True) for step in steps)
+        if detail.get("status") != "success" or "hello-workflow" not in output:
+            raise AssertionError(f"hello workflow detail omitted success or its output: {detail!r}")
+
+    journey.step("inspect solo project workflow result", "workflow", inspect, cases=["S-002.4"])
+
+    def listed() -> None:
+        data = _case_json_cli("S-002.5", ["workflow", "runs", "list", "--workflow=hello", "--json"],
+                              env=env, cwd=project)
+        runs = _workflow_run_list_data(data, "kb workflow runs list --workflow=hello --json")
+        if not any(run.get("id") == run_id and run.get("workflowId") == "hello"
+                   and run.get("status") == "success" for run in runs):
+            if any(run.get("id") == run_id and "workflowId" not in run for run in runs):
+                raise AssertionError(
+                    "`kb workflow runs list --workflow=hello --json` JSON contract violation: "
+                    "case S-002.5 requires `data[].workflowId`, but the command result omits it")
+            raise AssertionError(f"workflow list omitted the successful hello run {run_id}")
+
+    journey.step("find solo project workflow in history", "workflow", listed, cases=["S-002.5"])
+
+    def unknown() -> None:
+        result = _case_cli("S-002.6", ["workflow", "runs", "view", "journey-run-does-not-exist"],
+                           env=env, cwd=project)
+        message = result.stdout.lower()
+        if (result.returncode == 0 or "not found" not in message or "stack trace" in message
+                or "workflow runs list" not in message):
+            raise AssertionError(f"unknown workflow run did not return a helpful not-found error: {result.stdout!r}")
+
+    journey.step("report unknown workflow run", "workflow", unknown, cases=["S-002.6"])
+
+
+def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
+                      clock: Callable[[], float], sleep: Callable[[float], None]) -> None:
+    marker = project / ".kb" / "workflow-cancel-release"
+    marker.unlink(missing_ok=True)
+    definition = project / ".kb" / "workflows" / "journey-cancel.yml"
+    definition.write_text(
+        "name: journey-cancel\nversion: 1.0.0\non:\n  manual: true\njobs:\n  wait:\n    runsOn: local\n    steps:\n"
+        "      - name: Wait for cancellation\n        id: wait\n        uses: builtin:shell\n        with:\n"
+        f"          command: 'while [ ! -f {marker} ]; do sleep 0.1; done'\n",
+        encoding="utf-8")
+
+    run_id = [""]
+
+    def start() -> None:
+        run_id[0] = _run_id(_case_json_cli("S-008.1", ["workflow", "run", "--workflow-id=journey-cancel", "--json"],
+                                           env=env, cwd=project))
+        deadline = clock() + 30
+        detail = None
+        while clock() < deadline:
+            detail = _case_json_cli("S-008.1", ["workflow", "runs", "view", run_id[0], "--json=status"],
+                                    env=env, cwd=project)
+            detail = _contract_object(detail, "kb workflow runs view --json=status")
+            status = _contract_status(detail, "kb workflow runs view --json=status")
+            if status == "running":
+                return
+            sleep(0.2)
+        raise AssertionError(f"workflow run did not become active after it returned: {detail!r}")
+
+    journey.step("start active workflow for cancellation", "workflow", start, cases=["S-008.1"])
+
+    def cancel() -> None:
+        result = _case_cli("S-008.2", ["workflow", "runs", "cancel", run_id[0]], env=env, cwd=project)
+        if result.returncode or run_id[0] not in result.stdout or "cancellation" not in result.stdout.lower():
+            raise AssertionError(f"workflow cancellation was not confirmed: {result.stdout!r}")
+
+    journey.step("request workflow cancellation", "workflow", cancel, cases=["S-008.2"])
+
+    def verify_cancelled() -> None:
+        deadline = clock() + 30
+        detail = None
+        while clock() < deadline:
+            detail = _case_json_cli("S-008.3", ["workflow", "runs", "view", run_id[0], "--json=status"],
+                                    env=env, cwd=project)
+            detail = _contract_object(detail, "kb workflow runs view --json=status")
+            status = _contract_status(detail, "kb workflow runs view --json=status")
+            if status == "cancelled":
+                return
+            sleep(1)
+        raise AssertionError(f"workflow run did not become cancelled: {detail!r}")
+
+    journey.step("verify cancelled workflow status", "workflow", verify_cancelled, cases=["S-008.3"])
+
+    def reject_repeat_cancel() -> None:
+        result = _case_cli("S-008.4", ["workflow", "runs", "cancel", run_id[0]], env=env, cwd=project)
+        if result.returncode == 0 or "finished" not in result.stdout.lower():
+            raise AssertionError(f"repeat cancellation was not refused as already finished: {result.stdout!r}")
+        detail = _case_json_cli("S-008.4", ["workflow", "runs", "view", run_id[0], "--json=status"],
+                                env=env, cwd=project)
+        detail = _contract_object(detail, "kb workflow runs view --json=status")
+        if _contract_status(detail, "kb workflow runs view --json=status") != "cancelled":
+            raise AssertionError(f"repeat cancellation changed the terminal status: {detail!r}")
+
+    journey.step("reject cancellation after workflow finished", "workflow", reject_repeat_cancel,
+                 cases=["S-008.4"])
+    marker.touch()
+    definition.unlink(missing_ok=True)
+
 
 
 def _run_id(result: object) -> str:
-    if not isinstance(result, dict) or not isinstance(result.get("runId"), str):
-        raise AssertionError(f"workflow run response did not contain a run ID: {result!r}")
-    return result["runId"]
+    return _contract_string(_workflow_run_start_data(result), "runId", "kb workflow run --json")
 
 
 def _terminal_run(run_id: str, *, env: dict[str, str], cwd: Path,
@@ -50,10 +365,19 @@ def _terminal_run(run_id: str, *, env: dict[str, str], cwd: Path,
     deadline = clock() + timeout_seconds
     while clock() < deadline:
         detail = _json_cli(["workflow", "runs", "view", run_id, "--json=all"], env=env, cwd=cwd)
-        if isinstance(detail, dict) and detail.get("status") in {"success", "failed", "cancelled"}:
+        detail = _workflow_run_detail_data(detail)
+        if detail["status"] in {"success", "failed", "cancelled"}:
             return detail
         sleep(2)
     raise AssertionError(f"workflow run {run_id} did not reach a terminal status within {timeout_seconds}s")
+
+
+def _case_terminal_run(step_id: str, run_id: str, *, env: dict[str, str], cwd: Path,
+                       timeout_seconds: int = 180, clock: Callable[[], float] = time.monotonic,
+                       sleep: Callable[[float], None] = time.sleep) -> dict:
+    with invocation_context(step_id=step_id):
+        return _terminal_run(run_id, env=env, cwd=cwd, timeout_seconds=timeout_seconds,
+                             clock=clock, sleep=sleep)
 
 
 def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
@@ -115,21 +439,13 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
 
 def _logs(run_id: str, *, env: dict[str, str], cwd: Path) -> str:
     result = _json_cli(["workflow", "runs", "logs", run_id, "--json"], env=env, cwd=cwd)
-    logs = result.get("logs") if isinstance(result, dict) else None
-    if not isinstance(logs, list):
-        raise AssertionError(f"workflow logs response did not contain logs: {result!r}")
-    return "\n".join(str(item.get("message", "")) for item in logs if isinstance(item, dict))
+    logs = _workflow_logs_data(result)
+    return "\n".join(item["message"] for item in logs)
 
 
 def _write_workflows(project: Path) -> None:
     workflows = project / ".kb" / "workflows"
     workflows.mkdir(parents=True, exist_ok=True)
-    (workflows / "hello.yml").write_text(
-        "name: hello\nversion: 1.0.0\non:\n  manual: true\njobs:\n  hello:\n    runsOn: local\n    steps:\n"
-        "      - name: Say hello\n        id: hello\n        uses: builtin:shell\n"
-        "        with:\n          command: echo hello-workflow\n",
-        encoding="utf-8",
-    )
     (workflows / "journey-hello.yml").write_text(
         "name: journey-hello\nversion: 1.0.0\n"
         "inputs:\n  message:\n    type: string\n    required: true\n"
@@ -170,15 +486,206 @@ def prepare_workflow_fixtures(project: Path) -> None:
     (crons / "journey-cron.yml").write_text(_schedule_yaml(False), encoding="utf-8")
 
 
+def _live_progress_case(journey: Journey, *, env: dict[str, str], project: Path) -> None:
+    gates = [project / ".kb" / "workflow-progress-first", project / ".kb" / "workflow-progress-second"]
+    for gate in gates:
+        gate.unlink(missing_ok=True)
+    definition = project / ".kb" / "workflows" / "journey-progress.yml"
+    definition.write_text(
+        "name: journey-progress\nversion: 1.0.0\non:\n  manual: true\njobs:\n  progress:\n    runsOn: local\n    steps:\n"
+        f"      - name: First visible step\n        id: first-id\n        uses: builtin:shell\n        with:\n          command: 'while [ ! -f {gates[0]} ]; do sleep 0.1; done; echo first-finished'\n"
+        f"      - name: Second visible step\n        id: second-i\n        uses: builtin:shell\n        with:\n          command: 'while [ ! -f {gates[1]} ]; do sleep 0.1; done; echo second-finished'\n",
+        encoding="utf-8")
+    run_id = [""]
+
+    def start() -> None:
+        run_id[0] = _run_id(_case_json_cli("S-027.1", ["workflow", "run", "--workflow-id=journey-progress", "--json"],
+                                           env=env, cwd=project))
+    journey.step("start live progress workflow", "workflow", start, cases=["S-027.1"])
+
+    cli_path = env.get("KB_JOURNEY_CLI_PATH")
+    command = ([cli_path, "workflow", "runs", "watch", run_id[0]] if cli_path else
+               ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"',
+                "kb", "workflow", "runs", "watch", run_id[0]])
+    seen: set[str] = set()
+    watched = [None]
+
+    def release_step(transcript: str) -> None:
+        for index, step_id in enumerate(("first-id", "second-i")):
+            if step_id in transcript:
+                seen.add(step_id)
+                gates[index].touch(exist_ok=True)
+
+    def watch() -> None:
+        with invocation_context(step_id="S-027.2"):
+            result, _ = run_pty_command(command, cwd=project, env=env, timeout=120,
+                                        on_output=release_step)
+        watched[0] = result
+        if (result.returncode or seen != {"first-id", "second-i"} or run_id[0] not in result.stdout
+                or any(f"step.started step:{step_id}" not in result.stdout
+                       or f"step.succeeded step:{step_id}" not in result.stdout
+                       for step_id in ("first-id", "second-i"))):
+            raise AssertionError(f"watch did not observe both active steps: {result.stdout!r}")
+    journey.step("watch live workflow progress", "workflow", watch, cases=["S-027.2"])
+
+    def terminal() -> None:
+        result = watched[0]
+        if result is None or result.returncode != 0 or "run.finished" not in result.stdout or "SUCCESS" not in result.stdout:
+            raise AssertionError(f"watch omitted successful terminal event: {getattr(result, 'stdout', '')!r}")
+        detail = _case_terminal_run("S-027.3", run_id[0], env=env, cwd=project)
+        if detail.get("status") != "success":
+            raise AssertionError(f"watched workflow ended {detail.get('status')!r}")
+    journey.step("verify live workflow terminal result", "workflow", terminal, cases=["S-027.3"])
+    definition.unlink(missing_ok=True)
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"healthy")
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
+def _real_work_case(journey: Journey, *, env: dict[str, str], project: Path,
+                    clock: Callable[[], float], sleep: Callable[[float], None]) -> None:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    marker = project / ".kb" / "workflow-marker"
+    marker.unlink(missing_ok=True)
+    definition = project / ".kb" / "workflows" / "real-work.yml"
+    port = server.server_address[1]
+    definition.write_text(
+        "name: real-work\nversion: 1.0.0\non:\n  manual: true\njobs:\n  work:\n    runsOn: local\n    steps:\n"
+        "      - name: Write marker\n        id: write-marker\n        uses: builtin:shell\n        with:\n"
+        "          command: 'printf done > .kb/workflow-marker'\n",
+        encoding="utf-8")
+    try:
+        for step_id in ("S-028.1", "S-028.2"):
+            def lint(claim_id: str = step_id) -> None:
+                result = _case_cli(claim_id, ["workflow", "lint"], env=env, cwd=project)
+                if result.returncode or "real-work.yml" not in result.stdout or "valid" not in result.stdout.lower():
+                    raise AssertionError(f"workflow lint rejected real-work.yml: {result.stdout!r}")
+            journey.step("lint real-work workflow", "workflow", lint, cases=[step_id])
+            if step_id == "S-028.1":
+                with definition.open("a", encoding="utf-8") as stream:
+                    stream.write(
+                        "      - name: Check local health\n        id: check-health\n        uses: builtin:shell\n        with:\n"
+                        f"          command: 'curl -fsS http://127.0.0.1:{port}/health'\n")
+
+        def execute() -> None:
+            data = _case_json_cli("S-028.3", ["workflow", "run", "--workflow-id=real-work", "--json"],
+                                  env=env, cwd=project)
+            run_id = _run_id(data)
+            detail = _case_terminal_run("S-028.3", run_id, env=env, cwd=project, clock=clock, sleep=sleep)
+            with invocation_context(step_id="S-028.3"):
+                logs = _logs(run_id, env=env, cwd=project)
+            steps = [step for job in _workflow_run_jobs(detail, "kb workflow runs view --json=all")
+                     for step in job["steps"]]
+            if (detail.get("status") != "success" or not marker.is_file()
+                    or marker.read_text(encoding="utf-8") != "done" or "healthy" not in logs
+                    or {step.get("spec", {}).get("id") for step in steps} != {"write-marker", "check-health"}
+                    or any(step.get("status") != "success" for step in steps)):
+                raise AssertionError(f"real-work output was incomplete: {detail!r}; {logs!r}")
+        journey.step("run real shell work and inspect outputs", "workflow", execute, cases=["S-028.3"])
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        definition.unlink(missing_ok=True)
+
+
+def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
+                clock: Callable[[], float], sleep: Callable[[float], None]) -> None:
+    definition = project / ".kb" / "workflows" / "journey-rerun.yml"
+    definition.write_text(
+        "name: journey-rerun\nversion: 1.0.0\ninputs:\n  message:\n    type: string\n    required: true\non:\n  manual: true\njobs:\n  rerun:\n    runsOn: local\n    steps:\n"
+        "      - name: Preserve successful output\n        id: succeeds\n        uses: builtin:shell\n        with:\n          command: 'echo ${{ inputs.message }}-preserved'\n"
+        "      - name: Fail for rerun\n        id: fails\n        uses: builtin:shell\n        with:\n          command: 'echo rerun-failure-diagnostic && exit 23'\n",
+        encoding="utf-8")
+    source_id = [""]
+
+    def create_source() -> None:
+        data = _json_cli(["workflow", "run", "--workflow-id=journey-rerun",
+                          '--input={"message":"rerun-input"}', "--json"], env=env, cwd=project)
+        source_id[0] = _run_id(data)
+        source = _terminal_run(source_id[0], env=env, cwd=project, clock=clock, sleep=sleep)
+        if source.get("status") != "failed" or (source.get("inputs") or {}).get("message") != "rerun-input":
+            raise AssertionError(f"rerun source did not fail with resolved input: {source!r}")
+    journey.step("prepare failed workflow run for rerun", "workflow", create_source)
+
+    rerun_ids: list[str] = []
+    def rerun_all() -> None:
+        data = _case_json_cli("S-143.1", ["workflow", "runs", "rerun", source_id[0], "--json"], env=env, cwd=project)
+        outcome = _workflow_rerun_data(data)
+        new_id = outcome["runId"]
+        if new_id == source_id[0] or outcome["status"] not in {"queued", "running"}:
+            raise AssertionError(f"rerun did not return a new active run: {data!r}")
+        rerun_ids.append(new_id)
+    journey.step("rerun all workflow jobs", "workflow", rerun_all, cases=["S-143.1"])
+
+    def inspect() -> None:
+        detail = _case_terminal_run("S-143.2", rerun_ids[0], env=env, cwd=project,
+                                    timeout_seconds=60, clock=clock, sleep=sleep)
+        steps = [step for job in _workflow_run_jobs(detail, "kb workflow runs view --json=all")
+                 for step in job["steps"]]
+        if (detail.get("status") != "failed" or (detail.get("inputs") or {}).get("message") != "rerun-input"
+                or not any(step.get("status") == "success" and step.get("spec", {}).get("id") == "succeeds"
+                           for step in steps)):
+            raise AssertionError(f"rerun did not preserve workflow input and executed jobs: {detail!r}")
+    journey.step("verify rerun result and inputs", "workflow", inspect, cases=["S-143.2"])
+
+    def rerun_failed() -> None:
+        data = _case_json_cli("S-143.3", ["workflow", "runs", "rerun", source_id[0], "--failed-only", "--json"],
+                              env=env, cwd=project)
+        outcome = _workflow_rerun_data(data)
+        new_id = outcome["runId"]
+        if new_id in {source_id[0], rerun_ids[0]} or outcome["status"] not in {"queued", "running"}:
+            raise AssertionError(f"failed-only rerun did not create a new active run: {data!r}")
+        rerun_ids.append(new_id)
+        detail = _case_terminal_run("S-143.3", new_id, env=env, cwd=project,
+                                    timeout_seconds=60, clock=clock, sleep=sleep)
+        steps = [step for job in _workflow_run_jobs(detail, "kb workflow runs view --json=all")
+                 for step in job["steps"]]
+        if (not any(step.get("spec", {}).get("id") == "fails" and step.get("status") == "failed" for step in steps)
+                or not any(step.get("spec", {}).get("id") == "succeeds" and step.get("status") == "success"
+                           for step in steps)):
+            raise AssertionError(f"failed-only rerun did not retain successful outputs and replay failure: {detail!r}")
+    journey.step("rerun failed jobs only", "workflow", rerun_failed, cases=["S-143.3"])
+
+    def unknown_source() -> None:
+        before = _case_json_cli("S-143.4", ["workflow", "runs", "list", "--json"], env=env, cwd=project)
+        before_runs = _workflow_run_list_data(before)
+        result = _case_cli("S-143.4", ["workflow", "runs", "rerun", "run-does-not-exist", "--json"],
+                           env=env, cwd=project)
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise AssertionError(f"unknown rerun did not return its typed error envelope: {result.stdout!r}") from error
+        error = _workflow_error_data(payload, "kb workflow runs rerun run-does-not-exist --json")
+        if (result.returncode == 0 or "run-does-not-exist" not in error["message"]
+                or "list" not in error["hint"].lower()):
+            raise AssertionError(f"unknown run rerun lacked its not-found guidance: {result.stdout!r}")
+        after = _case_json_cli("S-143.4", ["workflow", "runs", "list", "--json"], env=env, cwd=project)
+        after_runs = _workflow_run_list_data(after)
+        if [run["id"] for run in before_runs] != [run["id"] for run in after_runs]:
+            raise AssertionError("unknown rerun created a workflow run")
+    journey.step("report unknown rerun source", "workflow", unknown_source, cases=["S-143.4"])
+    definition.unlink(missing_ok=True)
+
+
 def _wait_for_workflow_fixtures(*, env: dict[str, str], cwd: Path,
                                 clock: Callable[[], float], sleep: Callable[[float], None]) -> None:
     deadline = clock() + 30
     while clock() < deadline:
-        workflows = _json_cli(["workflow", "defs", "list", "--json"], env=env, cwd=cwd)
-        if isinstance(workflows, list):
-            names = {item.get("id") for item in workflows if isinstance(item, dict)}
-            if {"hello", "journey-hello", "journey-fails", "journey-cron-target"}.issubset(names):
-                return
+        workflows = _workflow_definition_list_data(
+            _json_cli(["workflow", "defs", "list", "--json"], env=env, cwd=cwd))
+        names = {item["id"] for item in workflows}
+        if {"hello", "journey-hello", "journey-fails", "journey-cron-target"}.issubset(names):
+            return
         sleep(1)
     raise AssertionError("project workflow catalog did not discover the journey fixtures within 30s")
 
@@ -186,10 +693,7 @@ def _wait_for_workflow_fixtures(*, env: dict[str, str], cwd: Path,
 def _case_runs(*, env: dict[str, str], cwd: Path, workflow: str) -> list[dict]:
     result = _json_cli(["workflow", "runs", "list", f"--workflow={workflow}", "--limit=100", "--json"],
                        env=env, cwd=cwd)
-    runs = result if isinstance(result, list) else result.get("runs", []) if isinstance(result, dict) else []
-    if not isinstance(runs, list):
-        raise AssertionError(f"workflow run history response was malformed: {result!r}")
-    return [run for run in runs if isinstance(run, dict)]
+    return _workflow_run_list_data(result, f"kb workflow runs list --workflow={workflow} --limit=100 --json")
 
 
 def _wait_for_scheduled_run(*, env: dict[str, str], cwd: Path,
@@ -220,12 +724,12 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
         deadline = clock() + 30
         match = None
         while clock() < deadline:
-            data = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
-            crons = data.get("crons", []) if isinstance(data, dict) else []
-            match = next((item for item in crons if isinstance(item, dict) and item.get("id") == "journey-cron"), None)
-            if (match and match.get("source") == "user"
-                    and match.get("target", {}).get("workflow") == "journey-cron-target"
-                    and match.get("enabled") is True
+            data = _case_json_cli("S-044.1", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
+            crons = _workflow_cron_list_data(data)["crons"]
+            match = next((item for item in crons if item["id"] == "journey-cron"), None)
+            if (match and match["source"] == "user"
+                    and match["target"].get("workflow") == "journey-cron-target"
+                    and match["enabled"] is True
                     and match.get("input") == {"message": "journey-cron-fired"}
                     and match.get("nextFireAt")):
                 return
@@ -238,26 +742,30 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
 
     def observe_schedule() -> None:
         nonlocal scheduled_run
-        scheduled_run = _wait_for_scheduled_run(env=env, cwd=cwd, clock=clock, sleep=sleep)
+        with invocation_context(step_id="S-044.2"):
+            scheduled_run = _wait_for_scheduled_run(env=env, cwd=cwd, clock=clock, sleep=sleep)
         if scheduled_run.get("status") != "success":
             raise AssertionError(f"scheduled workflow run ended {scheduled_run.get('status')!r}")
-        if (scheduled_run.get("metadata") or {}).get("cronId") != "journey-cron":
+        metadata = _contract_object(scheduled_run.get("metadata"), "kb workflow runs view --json=all")
+        if metadata.get("cronId") != "journey-cron":
             raise AssertionError("scheduled run metadata did not identify cron journey-cron")
-        run_id = str(scheduled_run.get("id", ""))
-        if "journey-cron-fired" not in _logs(run_id, env=env, cwd=cwd):
+        run_id = _contract_string(scheduled_run, "id", "kb workflow runs view --json=all")
+        with invocation_context(step_id="S-044.2"):
+            logs = _logs(run_id, env=env, cwd=cwd)
+        if "journey-cron-fired" not in logs:
             raise AssertionError("scheduled workflow log did not contain journey-cron-fired")
 
     journey.step("observe scheduled workflow run and log", "workflow", observe_schedule, cases=["S-044.2"])
 
     def disable_and_confirm() -> None:
-        disabled = run_cli(["workflow", "crons", "disable", "journey-cron"], env=env, cwd=cwd)
+        disabled = _case_cli("S-044.3", ["workflow", "crons", "disable", "journey-cron"], env=env, cwd=cwd)
         if disabled.returncode != 0:
             raise AssertionError(f"`kb workflow crons disable journey-cron` failed: {' '.join(disabled.stdout.split())[-500:]}")
         deadline = clock() + 20
         while clock() < deadline:
-            data = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
-            crons = data.get("crons", []) if isinstance(data, dict) else []
-            match = next((item for item in crons if isinstance(item, dict) and item.get("id") == "journey-cron"), None)
+            data = _case_json_cli("S-044.3", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
+            crons = _workflow_cron_list_data(data)["crons"]
+            match = next((item for item in crons if item["id"] == "journey-cron"), None)
             if match is not None and match.get("enabled") is False:
                 break
             sleep(1)
@@ -266,22 +774,24 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
 
         if "enabled: false" not in schedule_file.read_text(encoding="utf-8"):
             raise AssertionError("disable command did not persist enabled: false in the cron file")
-        baseline_ids = {str(run.get("id")) for run in _case_runs(env=env, cwd=cwd, workflow="journey-cron-target")}
+        with invocation_context(step_id="S-044.4"):
+            baseline_ids = {str(run.get("id")) for run in _case_runs(env=env, cwd=cwd, workflow="journey-cron-target")}
         # Observe a complete cron interval after reload to prove the disabled schedule stays quiet.
         sleep(65)
-        later_ids = {str(run.get("id")) for run in _case_runs(env=env, cwd=cwd, workflow="journey-cron-target")}
+        with invocation_context(step_id="S-044.4"):
+            later_ids = {str(run.get("id")) for run in _case_runs(env=env, cwd=cwd, workflow="journey-cron-target")}
         if later_ids != baseline_ids:
             raise AssertionError("workflow cron created another run after its schedule was disabled")
 
     journey.step("disable cron and verify no later run", "workflow", disable_and_confirm, cases=["S-044.3", "S-044.4"])
 
     def enable_again() -> None:
-        result = run_cli(["workflow", "crons", "enable", "journey-cron"], env=env, cwd=cwd)
+        result = _case_cli("S-044.5", ["workflow", "crons", "enable", "journey-cron"], env=env, cwd=cwd)
         if result.returncode != 0 or "enabled: true" not in schedule_file.read_text(encoding="utf-8"):
             raise AssertionError("enable command did not restore enabled: true in the cron file")
-        data = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
-        crons = data.get("crons", []) if isinstance(data, dict) else []
-        if not any(item.get("id") == "journey-cron" and item.get("enabled") is True for item in crons if isinstance(item, dict)):
+        data = _case_json_cli("S-044.5", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
+        crons = _workflow_cron_list_data(data)["crons"]
+        if not any(item["id"] == "journey-cron" and item["enabled"] is True for item in crons):
             raise AssertionError("cron list did not report journey-cron enabled")
 
     journey.step("enable cron again", "workflow", enable_again, cases=["S-044.5"])
@@ -291,9 +801,10 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
         deadline = clock() + 30
         errors = []
         while clock() < deadline:
-            data = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
-            errors = data.get("errors", []) if isinstance(data, dict) else []
-            if any(".kb/crons/journey-cron.yml" in str(error) and "cron" in str(error).lower() for error in errors):
+            data = _case_json_cli("S-044.6", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
+            errors = _workflow_cron_list_data(data)["errors"]
+            if any(".kb/crons/journey-cron.yml" in error["file"] and "cron" in error["reason"].lower()
+                   for error in errors):
                 return
             sleep(1)
         raise AssertionError(f"invalid cron diagnostic omitted its file or reason: {errors!r}")
@@ -305,9 +816,10 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
         deadline = clock() + 30
         errors = []
         while clock() < deadline:
-            data = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
-            errors = data.get("errors", []) if isinstance(data, dict) else []
-            if any(".kb/crons/journey-cron.yml" in str(error) and "missing-workflow" in str(error) for error in errors):
+            data = _case_json_cli("S-044.7", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
+            errors = _workflow_cron_list_data(data)["errors"]
+            if any(".kb/crons/journey-cron.yml" in error["file"] and "missing-workflow" in error["reason"]
+                   for error in errors):
                 return
             sleep(1)
         raise AssertionError(f"unknown workflow diagnostic omitted its file or reason: {errors!r}")
@@ -315,18 +827,18 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
     journey.step("report unknown workflow target", "workflow", unknown_workflow, cases=["S-044.7"])
 
     def refuse_plugin_enable() -> None:
-        listed = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
-        crons = listed.get("crons", []) if isinstance(listed, dict) else []
-        plugin = next((item for item in crons if isinstance(item, dict) and item.get("source") == "plugin"), None)
-        if not plugin or not isinstance(plugin.get("id"), str):
+        listed = _case_json_cli("S-044.8", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
+        crons = _workflow_cron_list_data(listed)["crons"]
+        plugin = next((item for item in crons if item["source"] == "plugin"), None)
+        if plugin is None:
             raise AssertionError("cron list did not include a plugin cron to verify read-only behavior")
         before = {key: plugin.get(key) for key in ("enabled", "schedule", "target", "input")}
-        result = run_cli(["workflow", "crons", "enable", plugin["id"]], env=env, cwd=cwd)
+        result = _case_cli("S-044.8", ["workflow", "crons", "enable", plugin["id"]], env=env, cwd=cwd)
         if result.returncode == 0 or "plugin" not in result.stdout.lower() or "read-only" not in result.stdout.lower():
             raise AssertionError(f"plugin cron enable was not refused with its reason: {result.stdout!r}")
-        after_list = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
-        after_crons = after_list.get("crons", []) if isinstance(after_list, dict) else []
-        after = next((item for item in after_crons if isinstance(item, dict) and item.get("id") == plugin["id"]), None)
+        after_list = _case_json_cli("S-044.8", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
+        after_crons = _workflow_cron_list_data(after_list)["crons"]
+        after = next((item for item in after_crons if item["id"] == plugin["id"]), None)
         if after is None or {key: after.get(key) for key in before} != before:
             raise AssertionError("refused plugin cron enable changed the listed cron")
 
@@ -344,13 +856,14 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         _json_cli(["marketplace", "install", "@kb-labs/steward-entry", "--json"], env=env, cwd=project)
         restart_host()
         data = _json_cli(["workflow", "crons", "list", "--json"], env=env, cwd=project)
-        crons = data.get("crons", []) if isinstance(data, dict) else []
-        if not any(isinstance(item, dict) and item.get("source") == "plugin" for item in crons):
+        crons = _workflow_cron_list_data(data)["crons"]
+        if not any(item["source"] == "plugin" for item in crons):
             raise AssertionError("workflow cron list omitted the cron declared by installed @kb-labs/steward-entry")
 
     if journey.mode == "secured":
         run_secured_cli_auth_step(journey, env=env, project=project)
     journey.step("install plugin cron fixture", "workflow", install_plugin_cron_fixture)
+    _solo_workflow_case(journey, env=env, project=project, clock=clock, sleep=sleep)
     prepare_workflow_fixtures(project)
 
     def discover_fixtures() -> None:
@@ -362,6 +875,11 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         return
     successful_id = ""
     failed_id = ""
+
+    _cancellation_case(journey, env=env, project=project, clock=clock, sleep=sleep)
+    _live_progress_case(journey, env=env, project=project)
+    _real_work_case(journey, env=env, project=project, clock=clock, sleep=sleep)
+    _rerun_case(journey, env=env, project=project, clock=clock, sleep=sleep)
 
     def start_success() -> None:
         nonlocal successful_id
@@ -375,19 +893,28 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
 
     def inspect_success() -> None:
         nonlocal success_detail
-        success_detail = _terminal_run(successful_id, env=env, cwd=project, clock=clock, sleep=sleep)
-        if success_detail.get("status") != "success" or (success_detail.get("inputs") or {}).get("message") != "hello":
+        with invocation_context(step_id="S-056.1"):
+            restart_fixture_detail = _terminal_run(successful_id, env=env, cwd=project, clock=clock, sleep=sleep)
+        with invocation_context(step_id="S-007.2"):
+            success_detail = _terminal_run(successful_id, env=env, cwd=project, clock=clock, sleep=sleep)
+        if (restart_fixture_detail.get("status") != "success"
+                or success_detail.get("status") != "success"
+                or (success_detail.get("inputs") or {}).get("message") != "hello"):
             raise AssertionError(f"run did not complete with the submitted input: {success_detail!r}")
 
     journey.step("verify terminal status and submitted input", "workflow", inspect_success,
                  cases=["S-007.2", "S-056.1", "PC-002.5"])
-    journey.step("verify input appears in workflow log", "workflow",
-                 lambda: None if "hello" in _logs(successful_id, env=env, cwd=project)
-                 else "workflow logs did not contain the submitted value hello", cases=["S-007.3"])
+    def inspect_success_logs() -> None:
+        with invocation_context(step_id="S-007.3"):
+            logs = _logs(successful_id, env=env, cwd=project)
+        if "hello" not in logs:
+            raise AssertionError("workflow logs did not contain the submitted value hello")
+    journey.step("verify input appears in workflow log", "workflow", inspect_success_logs, cases=["S-007.3"])
 
     def start_failure() -> None:
         nonlocal failed_id
-        data = _json_cli(["workflow", "run", "--workflow-id=journey-fails", "--json"], env=env, cwd=project)
+        data = _case_json_cli("S-029.1", ["workflow", "run", "--workflow-id=journey-fails", "--json"],
+                              env=env, cwd=project)
         failed_id = _run_id(data)
 
     journey.step("start failing workflow", "workflow", start_failure, cases=["S-029.1"])
@@ -396,11 +923,12 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
 
     def inspect_failure() -> None:
         nonlocal failed_detail
-        failed_detail = _terminal_run(failed_id, env=env, cwd=project, clock=clock, sleep=sleep)
+        with invocation_context(step_id="S-029.2"):
+            failed_detail = _terminal_run(failed_id, env=env, cwd=project, clock=clock, sleep=sleep)
         if failed_detail.get("status") != "failed":
             raise AssertionError(f"failing workflow ended with {failed_detail.get('status')!r}")
-        jobs = failed_detail.get("jobs", [])
-        steps = [step for job in jobs for step in job.get("steps", [])]
+        steps = [step for job in _workflow_run_jobs(failed_detail, "kb workflow runs view --json=all")
+                 for step in job["steps"]]
         failed = [step for step in steps if step.get("status") == "failed"]
         if (not failed or failed[0].get("name") != "Deliberate failure"
                 or (failed[0].get("spec") or {}).get("id") != "deliberate-failure"):
@@ -412,10 +940,20 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = failed_id
 
     journey.step("inspect failed step and error", "workflow", inspect_failure,
-                 cases=["S-029.2", "S-009.4"])
+                 cases=["S-029.2"])
+
+    def inspect_failure_history() -> None:
+        with invocation_context(step_id="S-009.4"):
+            detail = _terminal_run(failed_id, env=env, cwd=project, clock=clock, sleep=sleep)
+        failed_steps = [step for job in _workflow_run_jobs(detail, "kb workflow runs view --json=all")
+                        for step in job["steps"] if step.get("status") == "failed"]
+        if detail.get("status") != "failed" or not failed_steps or not failed_steps[0].get("error"):
+            raise AssertionError("failed run detail omitted the failure reason and failed step")
+    journey.step("inspect failed run history details", "workflow", inspect_failure_history, cases=["S-009.4"])
 
     def inspect_failure_logs() -> None:
-        logs = _logs(failed_id, env=env, cwd=project)
+        with invocation_context(step_id="S-029.3"):
+            logs = _logs(failed_id, env=env, cwd=project)
         if "journey-failure-diagnostic" not in logs:
             raise AssertionError("failed workflow logs omitted the failing command diagnostic")
         if any(marker in logs.lower() for marker in ("goroutine ", "traceback", "stack trace")):
@@ -425,43 +963,54 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                  cases=["S-029.3"])
 
     def inspect_history() -> None:
-        runs = _case_runs(env=env, cwd=project, workflow="journey-hello")
+        with invocation_context(step_id="S-009.1"):
+            runs = _case_runs(env=env, cwd=project, workflow="journey-hello")
         if not any(run.get("id") == successful_id and run.get("status") == "success" and run.get("createdAt") for run in runs):
             raise AssertionError("workflow history omitted the successful run ID, status, or time")
-        if not any(run.get("id") == failed_id and run.get("status") == "failed" for run in
-                   _case_runs(env=env, cwd=project, workflow="journey-fails")):
+        with invocation_context(step_id="S-009.1"):
+            failed_runs = _case_runs(env=env, cwd=project, workflow="journey-fails")
+        if not any(run.get("id") == failed_id and run.get("status") == "failed" for run in failed_runs):
             raise AssertionError("workflow history omitted the failed run")
 
     journey.step("list recent workflow history", "workflow", inspect_history, cases=["S-009.1"])
-    journey.step("inspect selected successful run", "workflow",
-                 lambda: None if (_terminal_run(successful_id, env=env, cwd=project, clock=clock, sleep=sleep)
-                                  .get("status") == "success") else "selected workflow run was not successful",
-                 cases=["S-009.2"])
-    journey.step("inspect selected successful run logs", "workflow",
-                 lambda: None if "hello" in _logs(successful_id, env=env, cwd=project)
-                 else "selected workflow run logs were empty", cases=["S-009.3"])
+    def inspect_selected_run() -> None:
+        detail = _case_terminal_run("S-009.2", successful_id, env=env, cwd=project, clock=clock, sleep=sleep)
+        if detail.get("status") != "success":
+            raise AssertionError("selected workflow run was not successful")
+    journey.step("inspect selected successful run", "workflow", inspect_selected_run, cases=["S-009.2"])
+
+    def inspect_selected_run_logs() -> None:
+        with invocation_context(step_id="S-009.3"):
+            logs = _logs(successful_id, env=env, cwd=project)
+        if "hello" not in logs:
+            raise AssertionError("selected workflow run logs were empty")
+    journey.step("inspect selected successful run logs", "workflow", inspect_selected_run_logs, cases=["S-009.3"])
 
     def restart_and_verify_project() -> None:
-        restart_host()
-        workflows = _json_cli(["workflow", "defs", "list", "--json"], env=env, cwd=project)
-        if not isinstance(workflows, list) or not any(
-            isinstance(workflow, dict) and workflow.get("id") == "journey-hello" for workflow in workflows
-        ):
+        with invocation_context(step_id="S-056.2"):
+            restart_host()
+            workflows = _case_json_cli("S-056.2", ["workflow", "defs", "list", "--json"], env=env, cwd=project)
+        workflows = _workflow_definition_list_data(workflows)
+        if not any(workflow["id"] == "journey-hello" for workflow in workflows):
             raise AssertionError("registered project workflow was unavailable after host restart")
 
     journey.step("restart host and verify project availability", "platform",
                  restart_and_verify_project, cases=["S-056.2"])
 
     def inspect_history_after_restart() -> None:
-        runs = _json_cli(["workflow", "runs", "list", "--limit=100", "--json"], env=env, cwd=project)
-        all_runs = runs if isinstance(runs, list) else runs.get("runs", []) if isinstance(runs, dict) else []
-        if not any(isinstance(run, dict) and run.get("id") == successful_id and run.get("status") == "success"
-                   for run in all_runs):
+        runs = _case_json_cli("S-056.3", ["workflow", "runs", "list", "--limit=100", "--json"],
+                              env=env, cwd=project)
+        all_runs = _workflow_run_list_data(runs, "kb workflow runs list --limit=100 --json")
+        if not any(run["id"] == successful_id and run["status"] == "success" for run in all_runs):
             raise AssertionError(f"workflow history after host restart omitted successful run {successful_id}")
-        detail = _json_cli(["workflow", "runs", "view", successful_id, "--json=all"], env=env, cwd=project)
-        if not isinstance(detail, dict) or detail.get("status") != "success":
+        detail = _case_json_cli("S-056.3", ["workflow", "runs", "view", successful_id, "--json=all"],
+                                env=env, cwd=project)
+        detail = _workflow_run_detail_data(detail)
+        if detail["status"] != "success":
             raise AssertionError(f"workflow detail after host restart lost terminal status for {successful_id}")
-        if "hello" not in _logs(successful_id, env=env, cwd=project):
+        with invocation_context(step_id="S-056.3"):
+            logs = _logs(successful_id, env=env, cwd=project)
+        if "hello" not in logs:
             raise AssertionError(f"workflow logs after host restart omitted known output for {successful_id}")
 
     journey.step("read workflow history and logs after restart", "workflow",
