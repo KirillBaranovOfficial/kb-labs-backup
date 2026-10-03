@@ -10,12 +10,32 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
-                               run_marketplace_steps, validate_shared_failure, wait_for_marketplace_ready)
+                               run_marketplace_steps, validate_commit_status_response,
+                               validate_shared_failure, validate_unmounted_commit_response,
+                               wait_for_marketplace_ready)
 from service_steps import Journey
 from invocations import invocation_context, open_http, run_command
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_commit_route_http_claims_accept_documented_success_and_not_found(self):
+        response = {"ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED",
+            "message": "An unexpected error occurred.",
+            "hint": "Re-run with --debug and include the correlationId in a report.",
+            "correlationId": "request-fixture"}}
+        validate_commit_status_response(200, {"ok": True, "data": {"scope": "project"}})
+        validate_unmounted_commit_response(404, response)
+
+    def test_commit_route_claims_fail_for_fake_unmounted_and_still_mounted_responses(self):
+        with self.assertRaisesRegex(RuntimeError, "unexpected response: HTTP 404"):
+            validate_commit_status_response(404, {"ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED"}})
+        with self.assertRaisesRegex(RuntimeError, "unexpected gateway failure: HTTP 200"):
+            validate_unmounted_commit_response(200, {"ok": True, "data": {"scope": "project"}})
+        with self.assertRaisesRegex(RuntimeError, "correlationId"):
+            validate_unmounted_commit_response(404, {"ok": False, "error": {
+                "code": "KB_RUNTIME_UNEXPECTED", "message": "An unexpected error occurred.",
+                "hint": "Re-run with --debug and include the correlationId in a report."}})
+
     def test_fake_failures_are_rejected_for_both_shared_error_renderings(self):
         for json_mode in (False, True):
             with self.subTest(json_mode=json_mode), self.assertRaises(AssertionError):
@@ -223,6 +243,7 @@ class MarketplaceStepTests(unittest.TestCase):
 
             self.assertEqual(journey.result().status, "PASS")
             self.assertEqual(journey.result().case_run["claims"], [
+                {"claimId": "S-010.6", "kind": "journey", "status": "PASS"},
                 {"claimId": "S-041.7", "kind": "journey", "status": "PASS"},
             ])
             self.assertIn(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"), calls)
@@ -247,7 +268,10 @@ class MarketplaceStepTests(unittest.TestCase):
             package.parent.mkdir(parents=True)
             package.write_text('{"name":"@kb-labs/workflow-daemon","version":"2.120.1"}\n')
             env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
-                   "KB_JOURNEY_PLATFORM_ROOT": str(platform_root)}
+                   "KB_JOURNEY_PLATFORM_ROOT": str(platform_root),
+                   "KB_JOURNEY_PROJECT_ID": "prj_marketplace_fixture",
+                   "KB_JOURNEY_BASE_URL": "http://gateway.test",
+                   "KB_JOURNEY_SERVICE_TOKEN": "fixture-token"}
             calls: list[tuple[str, ...]] = []
             host_running = True
 
@@ -341,7 +365,43 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:3] == ["marketplace", "plugins", "list"]:
                     value = lock(cwd_path)
                     entries = [{"id": package_id, **entry} for package_id, entry in value["plugins"].items()]
-                    stdout = json.dumps({"entries": entries})
+                    if "--json" in args:
+                        stdout = json.dumps({"entries": entries})
+                    else:
+                        enabled_count = sum(1 for entry in entries if entry.get("enabled", True))
+                        disabled_count = len(entries) - enabled_count
+                        rows = [f"{'✅' if entry.get('enabled', True) else '⏸'} {entry['id']} {entry.get('version', '')}"
+                                for entry in entries]
+                        stdout = (f"{len(entries)} plugins ({enabled_count} enabled, {disabled_count} disabled) — scope=project\n"
+                                  + "\n".join(rows))
+                elif args[:4] in (["marketplace", "plugins", "disable", "@kb-labs/commit"],
+                                  ["marketplace", "plugins", "enable", "@kb-labs/commit"]):
+                    value = lock(cwd_path)
+                    entry = value["plugins"].get("@kb-labs/commit-entry")
+                    if not isinstance(entry, dict):
+                        return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False}), "")
+                    enabled = args[2] == "enable"
+                    entry["enabled"] = enabled
+                    save_lock(cwd_path, value)
+                    stdout = f"{'Enabled' if enabled else 'Disabled'} @kb-labs/commit (project)\n"
+                elif args[:3] == ["marketplace", "plugins", "disable"]:
+                    return subprocess.CompletedProcess(command, 1, "", "Plugin @kb-labs/not-installed was not found.\n")
+                elif args[:3] == ["marketplace", "update", "@kb-labs/commit"]:
+                    value = lock(cwd_path)
+                    entry = value["plugins"]["@kb-labs/commit-entry"]
+                    entry["version"] = "2.120.2"
+                    entry["integrity"] = "sha512-updated-fixture"
+                    entry["resolvedPath"] = "store:@kb-labs/commit-entry@2.120.2"
+                    save_lock(cwd_path, value)
+                    stdout = json.dumps({"scope": "project", "warnings": [],
+                        "installed": [{"id": "@kb-labs/commit", "version": "2.120.2", "primaryKind": "plugin"}]})
+                elif args[:3] == ["marketplace", "update", "@kb-labs/not-published"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"scope": "project",
+                        "warnings": ["Plugin @kb-labs/not-published was not found in the registry."]}), "")
+                elif args[:2] == ["commit", "--help"]:
+                    if lock(cwd_path)["plugins"].get("@kb-labs/commit-entry", {}).get("enabled") is False:
+                        return subprocess.CompletedProcess(command, 1, "", "Command not found: commit")
+                    stdout = "Commands: commit open"
                 elif args[:2] == ["commit", "open"]:
                     value = lock(cwd_path)
                     if "@kb-labs/commit-entry" not in value["plugins"]:
@@ -390,10 +450,38 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command}")
                 return subprocess.CompletedProcess(command, 0, stdout, "")
 
-            journey = Journey("local", "marketplace-fixture")
-            run_marketplace_steps(journey, project, "http://registry.test", env, fake_run)
+            http_calls = []
 
-            expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("047", range(1, 4))) for step in steps}
+            class FakeResponse:
+                headers = {}
+
+                def __init__(self, status, payload):
+                    self.status = status
+                    self.payload = payload
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return None
+
+                def read(self):
+                    return json.dumps(self.payload).encode()
+
+            def fake_http(request, timeout):
+                http_calls.append((request.full_url, request.get_header("Authorization"), timeout))
+                if len(http_calls) == 1:
+                    return FakeResponse(200, {"ok": True, "data": {"scope": "project", "hasPlan": False}})
+                return FakeResponse(404, {"ok": False, "error": {
+                    "code": "KB_RUNTIME_UNEXPECTED",
+                    "message": "An unexpected error occurred.",
+                    "hint": "Re-run with --debug and include the correlationId in a report.",
+                    "correlationId": "request-fixture"}})
+
+            journey = Journey("local", "marketplace-fixture")
+            run_marketplace_steps(journey, project, "http://registry.test", env, fake_run, fake_http)
+
+            expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 4))) for step in steps}
             expected.update({
                 "S-010.7",
                 "S-051.2", "S-051.3", "S-051.4",
@@ -405,6 +493,11 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1",
                            "--scope", "platform", "--json"), calls)
+            self.assertEqual([call[0] for call in http_calls], [
+                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",
+                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",
+            ])
+            self.assertTrue(all(call[1] == "Bearer fixture-token" for call in http_calls))
             self.assertNotIn(("npm", "view", "@kb-labs/adapters-fs", "version", "--json", "--registry=http://registry.test"), calls)
             self.assertNotIn(("kb", "marketplace", "install", "@kb-labs/adapters-fs@2.107.0", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "qa", "cases", "list", "--json"), calls)

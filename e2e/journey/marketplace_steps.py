@@ -6,11 +6,12 @@ import hashlib
 import os
 import subprocess
 import time
+import urllib.request
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
-from invocations import invocation_context, run_command, run_with_runner
+from invocations import invocation_context, open_http, run_command, run_with_runner
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -38,6 +39,23 @@ def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
     if not isinstance(value, dict):
         raise RuntimeError(f"`{' '.join(command)}` returned a non-object JSON value")
     return value
+
+
+def validate_commit_status_response(status: int, payload: object) -> None:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if status != 200 or not isinstance(data, dict) or data.get("scope") != "project":
+        raise RuntimeError(f"Commit status route returned an unexpected response: HTTP {status} {payload!r}")
+
+
+def validate_unmounted_commit_response(status: int, payload: object) -> None:
+    failure = payload.get("error") if isinstance(payload, dict) else None
+    if (status != 404 or not isinstance(payload, dict) or payload.get("ok") is not False
+            or not isinstance(failure, dict)
+            or failure.get("code") != "KB_RUNTIME_UNEXPECTED"
+            or failure.get("message") != "An unexpected error occurred."
+            or failure.get("hint") != "Re-run with --debug and include the correlationId in a report."
+            or not isinstance(failure.get("correlationId"), str) or not failure["correlationId"]):
+        raise RuntimeError(f"unmounted Commit route returned an unexpected gateway failure: HTTP {status} {payload!r}")
 
 
 def _registry_version(package_id: str, registry: str, env: dict[str, str], runner: CommandRunner) -> str:
@@ -141,9 +159,10 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     if journey.mode != "secured":
         return
 
-    def assert_auth_required() -> None:
+    def assert_auth_required(step_id: str) -> None:
         command = ["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"]
-        result = _run(command, cwd=project, env=env, runner=runner)
+        with invocation_context(step_id=step_id):
+            result = _run(command, cwd=project, env=env, runner=runner)
         try:
             payload = json.loads(result.stdout)
         except json.JSONDecodeError as error:
@@ -158,7 +177,12 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
             raise RuntimeError("unauthenticated marketplace list did not return KB_AUTH_REQUIRED with the login hint")
 
     journey.step("secured marketplace requires a saved CLI session", "marketplace",
-                 assert_auth_required, cases=["S-041.7"])
+                 lambda: assert_auth_required("S-041.7"), cases=["S-041.7"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    journey.step("S-010.6 secured marketplace requires the catalogued login error", "marketplace",
+                 lambda: assert_auth_required("S-010.6"), cases=["S-010.6"])
     if journey.steps[-1].status != "PASS":
         return
 
@@ -195,7 +219,8 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
 
 def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: str,
                           env: dict[str, str] | None = None,
-                          runner: CommandRunner = run_command) -> None:
+                          runner: CommandRunner = run_command,
+                          http_opener: Callable[..., object] = urllib.request.urlopen) -> None:
     """Execute S-010 and S-047 in the isolated installed platform."""
     project = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
@@ -287,10 +312,29 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     journey.step(
         "install exact marketplace plugin into the project store", "marketplace",
         install_exact_commit,
-        cases=["S-010.1"],
+        cases=["S-010.1", "S-192.1"],
     )
     if journey.steps[-1].status != "PASS":
         return
+
+    project_id = base_env.get("KB_JOURNEY_PROJECT_ID", "")
+    gateway = base_env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
+    route = f"{gateway}/api/v1/projects/{project_id}/rest/api/v1/plugins/commit/status"
+
+    def assert_commit_status_route() -> None:
+        if not project_id:
+            raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+        headers = {"Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"}
+        request = urllib.request.Request(route, headers=headers)
+        status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("Commit status route did not return JSON") from error
+        validate_commit_status_response(status, payload)
+
+    journey.step("GET the installed project Commit status route", "marketplace",
+                 assert_commit_status_route, cases=["S-192.2"])
 
     listed = ["marketplace", "plugins", "list", "--json"]
     def assert_marketplace_list() -> None:
@@ -412,12 +456,162 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     if journey.steps[-1].status != "PASS":
         return
 
+    def set_plugin_enabled(enabled: bool) -> None:
+        action = "enable" if enabled else "disable"
+        command = ["marketplace", "plugins", action, "@kb-labs/commit"]
+        with invocation_context(step_id="S-011.4" if enabled else "S-011.1"):
+            result = cli(command)
+        expected = f"{'Enabled' if enabled else 'Disabled'} @kb-labs/commit (project)"
+        output = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
+        if result.returncode != 0 or expected not in output:
+            raise RuntimeError(f"{command!r} did not report {expected!r}: {output!r}")
+        entry = json.loads(lock_file.read_text()).get("plugins", {}).get(commit_package)
+        if not isinstance(entry, dict) or entry.get("enabled") is not enabled:
+            raise RuntimeError(f"{commit_package} was not {'enabled' if enabled else 'disabled'} in the project lock")
+
+    def assert_disabled() -> None:
+        set_plugin_enabled(False)
+    journey.step("disable installed Commit plugin", "marketplace", assert_disabled, cases=["S-011.1"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_disabled_list() -> None:
+        command = ["marketplace", "plugins", "list"]
+        with invocation_context(step_id="S-011.2"):
+            result = cli(command)
+        output = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
+        if result.returncode != 0 or "disabled" not in output.lower() or "⏸" not in output:
+            raise RuntimeError(f"marketplace list did not show the disabled count and row marker: {output!r}")
+    journey.step("confirm disabled Commit appears in list", "marketplace", assert_disabled_list, cases=["S-011.2"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_command_hidden() -> None:
+        command = ["commit", "--help"]
+        with invocation_context(step_id="S-011.3"):
+            result = cli(command)
+        if result.returncode == 0:
+            raise RuntimeError("Commit commands remain discoverable while the plugin is disabled")
+    journey.step("confirm disabled Commit commands are unavailable", "marketplace", assert_command_hidden, cases=["S-011.3"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_enabled() -> None:
+        set_plugin_enabled(True)
+    journey.step("enable installed Commit plugin", "marketplace", assert_enabled, cases=["S-011.4"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_enabled_list_and_command() -> None:
+        list_command = ["marketplace", "plugins", "list"]
+        with invocation_context(step_id="S-011.5"):
+            list_result = cli(list_command)
+        output = " ".join(f"{list_result.stdout or ''} {list_result.stderr or ''}".split())
+        if (list_result.returncode != 0 or "enabled" not in output.lower()
+                or "✅" not in output or "commit" not in output.lower()):
+            raise RuntimeError(f"marketplace list did not show enabled Commit: {output!r}")
+        command = ["commit", "--help"]
+        with invocation_context(step_id="S-011.5"):
+            help_result = cli(command)
+        if help_result.returncode != 0:
+            raise RuntimeError("Commit commands remain unavailable after enabling the plugin")
+    journey.step("confirm enabled Commit appears and commands are available", "marketplace",
+                 assert_enabled_list_and_command, cases=["S-011.5"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_missing_disable_preserves_lock() -> None:
+        before_lock = lock_file.read_bytes()
+        command = ["marketplace", "plugins", "disable", "@kb-labs/not-installed"]
+        with invocation_context(step_id="S-011.6"):
+            result = cli(command)
+        output = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split()).lower()
+        if result.returncode == 0 or not any(text in output for text in ("not found", "cannot be found", "not installed")):
+            raise RuntimeError(f"disabling an uninstalled package did not report that it is unavailable: {output!r}")
+        if lock_file.read_bytes() != before_lock:
+            raise RuntimeError("disabling an uninstalled package changed the marketplace lock")
+    journey.step("reject disabling an uninstalled plugin without changing the lock", "marketplace",
+                 assert_missing_disable_preserves_lock, cases=["S-011.6"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def update_commit() -> None:
+        command = ["marketplace", "update", "@kb-labs/commit", "--scope", "project", "--json"]
+        with invocation_context(step_id="S-012.1"):
+            result = cli(command)
+        payload = _json(result, command)
+        if (result.returncode != 0 or payload.get("scope") != "project"
+                or not isinstance(payload.get("installed"), list)
+                or not isinstance(payload.get("warnings"), list)):
+            raise RuntimeError("marketplace update did not report a successful result")
+        installed = payload["installed"]
+        if installed and not any(
+                isinstance(item, dict) and item.get("id") in {commit_package, "@kb-labs/commit"}
+                and isinstance(item.get("version"), str) and item["version"]
+                for item in installed):
+            raise RuntimeError("marketplace update did not report the exact updated Commit version")
+    journey.step("update installed Commit version", "marketplace", update_commit, cases=["S-012.1"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_updated_pin() -> None:
+        command = ["marketplace", "plugins", "list", "--scope", "project", "--json"]
+        with invocation_context(step_id="S-012.2"):
+            payload = _json(cli(command), command)
+        entry = next((item for item in _entries(payload) if item.get("id") == commit_package), None)
+        lock_entry = json.loads(lock_file.read_text()).get("plugins", {}).get(commit_package)
+        if (not isinstance(entry, dict) or not isinstance(lock_entry, dict)
+                or entry.get("version") != lock_entry.get("version") or not lock_entry.get("integrity")):
+            raise RuntimeError("plugin list and marketplace lock do not show the same exact version and integrity")
+    journey.step("verify updated Commit pin in list and lock", "marketplace", assert_updated_pin, cases=["S-012.2"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_updated_command() -> None:
+        command = ["commit", "--help"]
+        with invocation_context(step_id="S-012.3"):
+            result = cli(command)
+        if result.returncode != 0:
+            raise RuntimeError("Commit command group is unavailable after update")
+    journey.step("confirm Commit commands remain available after update", "marketplace",
+                 assert_updated_command, cases=["S-012.3"])
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def assert_unknown_update_preserves_pin() -> None:
+        before = json.loads(lock_file.read_text()).get("plugins", {}).get(commit_package)
+        command = ["marketplace", "update", "@kb-labs/not-published", "--scope", "project", "--json"]
+        with invocation_context(step_id="S-012.4"):
+            result = cli(command)
+        payload = json.loads(result.stdout)
+        after = json.loads(lock_file.read_text()).get("plugins", {}).get(commit_package)
+        warnings = payload.get("warnings") if isinstance(payload, dict) else None
+        if (result.returncode != 0 or not isinstance(warnings, list)
+                or not any("@kb-labs/not-published" in str(warning) for warning in warnings)
+                or before != after):
+            raise RuntimeError("unknown package update did not warn while preserving the Commit pin")
+    journey.step("reject unknown package update and preserve Commit pin", "marketplace",
+                 assert_unknown_update_preserves_pin, cases=["S-012.4"])
+    if journey.steps[-1].status != "PASS":
+        return
+
     uninstall_commit = ["marketplace", "uninstall", commit_package, "--json"]
     def uninstall_target() -> None:
-        _output(cli(uninstall_commit), uninstall_commit)
+        with invocation_context(step_id="S-192.3"):
+            _output(cli(uninstall_commit), uninstall_commit)
+            if not project_id:
+                raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+            request = urllib.request.Request(route, headers={
+                "Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"})
+            status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("unmounted Commit status route did not return a JSON gateway envelope") from error
+        validate_unmounted_commit_response(status, payload)
     journey.step("uninstall target project plugin", "marketplace",
                  uninstall_target,
-                 cases=["S-047.1"])
+                 cases=["S-047.1", "S-192.3"])
     if journey.steps[-1].status != "PASS":
         return
 
