@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { GATEWAY, REST, MARKETPLACE, WORKFLOW, STATE } from '../../fixtures/urls.js'
+import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
 
 const services = [
   { id: 'S-01', name: 'gateway',      url: GATEWAY,     path: '/health' },
@@ -13,9 +14,10 @@ for (const svc of services) {
   test(`${svc.id}: ${svc.name} is healthy`, async ({ request }) => {
     const res = await request.get(`${svc.url}${svc.path}`)
     expect(res.status()).toBe(200)
-    const body = await res.json()
-    // REST API wraps in { ok, data }; others return status directly
-    const status = body.data?.status ?? body.status
+    const payload = await res.json()
+    const status = svc.name === 'gateway' || svc.name === 'rest-api'
+      ? decodeUxSuccessResult<{ status: string }>(payload).status
+      : (payload as { status: string }).status
     expect(status).toMatch(/ok|healthy|ready/)
   })
 }

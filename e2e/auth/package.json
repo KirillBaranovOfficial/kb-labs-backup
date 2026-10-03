@@ -9,6 +9,7 @@
     "e2e:oauth": "playwright test -c playwright.oauth.config.ts"
   },
   "devDependencies": {
+    "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/e2e-shared": "workspace:*",
     "@playwright/test": "^1.52.0",
     "typescript": "^5.4.0"

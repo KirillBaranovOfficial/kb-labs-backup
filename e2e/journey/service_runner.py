@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import Journey
-from invocations import open_http, run_command, run_with_runner
+from invocations import decode_ux_success_result, open_http, run_command, run_with_runner
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
 from marketplace_steps import _registry_version, _output
@@ -281,6 +281,14 @@ def request(path: str, *, method="GET", payload=None, token="", accept="applicat
     return status, parsed, response_headers
 
 
+def request_ux_success(path: str, *, token="") -> tuple[int, object, dict[str, str]]:
+    """Read a Gateway health-style success response through the UX envelope."""
+    status, body, headers = request(path, token=token)
+    if status == 200:
+        body = decode_ux_success_result(body)
+    return status, body, headers
+
+
 def expect(path: str, expected: set[int], capability: str, *, method="GET", payload=None, token=""):
     status, body, _ = request(path, method=method, payload=payload, token=token)
     if status not in expected:
@@ -294,7 +302,10 @@ def expect(path: str, expected: set[int], capability: str, *, method="GET", payl
 
 
 def expect_json(path: str, capability: str, *, token="") -> str | None:
-    status, body, _ = request(path, token=token)
+    try:
+        status, body, _ = request_ux_success(path, token=token)
+    except ValueError as error:
+        return f"{capability} returned an invalid UX result envelope: {error}"
     if status != 200:
         detail = body.get("message", body.get("error", "")) if isinstance(body, dict) else ""
         suffix = f" ({detail})" if detail else ""
@@ -335,7 +346,10 @@ def checks(mode: str):
     def project_runtime_identity() -> str | None:
         if not PROJECT_ID:
             return "BLOCKED: project runtime identity needs KB_JOURNEY_PROJECT_ID from project registration"
-        health_status, health_body, _ = request("/health", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+        try:
+            health_status, health_body, _ = request_ux_success("/health", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+        except ValueError as error:
+            return f"host health returned an invalid UX result envelope: {error}"
         runtimes = health_body.get("projectRuntimes", {}).get("runtimes", []) if isinstance(health_body, dict) else []
         if health_status != 200 or not any(
             isinstance(runtime, dict)
@@ -345,7 +359,10 @@ def checks(mode: str):
         ):
             return f"host health did not list registered project {PROJECT_ID} as a ready runtime"
         path = f"/api/v1/projects/{PROJECT_ID}/rest/api/v1/health"
-        status, body, _ = request(path, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+        try:
+            status, body, _ = request_ux_success(path, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+        except ValueError as error:
+            return f"registered project runtime REST health returned an invalid UX result envelope: {error}"
         if status != 200:
             return f"registered project runtime REST health returned HTTP {status} at {path}"
         if not isinstance(body, dict):

@@ -2,13 +2,13 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/dev/internal/manager"
 )
 
@@ -66,7 +66,7 @@ func fetchAuthReadiness(baseURL string) (*authReadiness, string) {
 		return nil, "failed to read auth readiness response"
 	}
 	var readiness authReadiness
-	if err := json.Unmarshal(body, &readiness); err != nil || readiness.OK == nil {
+	if err := result.DecodeSuccessResult(body, &readiness); err != nil || readiness.OK == nil {
 		return nil, "unexpected /health/auth response — auth check skipped"
 	}
 	return &readiness, ""
@@ -109,6 +109,14 @@ func addAuthChecks(result *manager.DoctorResult, gatewayPort int) string {
 	}
 	readiness, skip := fetchAuthReadiness(fmt.Sprintf("http://localhost:%d", port))
 	if readiness == nil {
+		if strings.Contains(skip, "unexpected /health/auth response") {
+			result.OK = false
+			result.Hint = "Run \"kb-create restart\"; read the host log if it persists."
+			result.Checks = append(result.Checks, manager.DoctorCheck{
+				ID: "auth", OK: false,
+				Detail: "The gateway auth readiness response is not a valid UX result envelope.",
+			})
+		}
 		return skip
 	}
 	checks, hint, ok := authChecks(readiness)

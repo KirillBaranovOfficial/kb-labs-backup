@@ -1,5 +1,19 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
 import { GATEWAY, REST } from '../../fixtures/urls.js'
+import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
+
+interface AdapterStatus {
+  slot: string
+  mode: string
+  implementation: string
+  reason?: string
+  recordedAt: string
+}
+
+async function readAdapterStatuses(request: APIRequestContext): Promise<AdapterStatus[]> {
+  const response = await request.get(`${GATEWAY}/health/adapters`)
+  return decodeUxSuccessResult<AdapterStatus[]>(await response.json())
+}
 
 // Verifies graceful adapter degradation: slots not configured in kb.config.json
 // fall back to InMemory (working) or NoOp (throw AdapterUnavailableError).
@@ -8,28 +22,27 @@ import { GATEWAY, REST } from '../../fixtures/urls.js'
 test('AD-01: GET /health/adapters returns 200 with an array', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const body = await res.json()
-  expect(Array.isArray(body)).toBe(true)
+  const statuses = await readAdapterStatuses(request)
+  expect(Array.isArray(statuses)).toBe(true)
 })
 
 test('AD-02: each adapter status entry has required fields', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: unknown[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   expect(statuses.length).toBeGreaterThan(0)
   for (const entry of statuses) {
-    const s = entry as Record<string, unknown>
-    expect(typeof s['slot']).toBe('string')
-    expect(['real', 'inmemory', 'noop']).toContain(s['mode'])
-    expect(typeof s['implementation']).toBe('string')
-    expect(typeof s['recordedAt']).toBe('string')
+    expect(typeof entry.slot).toBe('string')
+    expect(['real', 'inmemory', 'noop']).toContain(entry.mode)
+    expect(typeof entry.implementation).toBe('string')
+    expect(typeof entry.recordedAt).toBe('string')
   }
 })
 
 test('AD-03: llm slot is noop when not configured', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: { slot: string; mode: string; reason?: string }[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   const llm = statuses.find(s => s.slot === 'llm')
 
   // Skip must come before assertions — otherwise an absent llm entry causes a
@@ -44,7 +57,7 @@ test('AD-03: llm slot is noop when not configured', async ({ request }) => {
 test('AD-04: cache slot is inmemory or real (never noop)', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: { slot: string; mode: string }[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   const cache = statuses.find(s => s.slot === 'cache')
   if (!cache) return
   // cache always has a working fallback — InMemoryCache or a real adapter
@@ -62,7 +75,7 @@ test('AD-05: /health/adapters is public — no auth required', async ({ request 
 test('AD-06: all slots in the registry have a known mode', async ({ request }) => {
   const res = await request.get(`${GATEWAY}/health/adapters`)
   expect(res.status()).toBe(200)
-  const statuses: { slot: string; mode: string }[] = await res.json()
+  const statuses = await readAdapterStatuses(request)
   const validModes = new Set(['real', 'inmemory', 'noop'])
   for (const s of statuses) {
     expect(validModes.has(s.mode),

@@ -13,11 +13,11 @@ afterEach(() => {
   axios.defaults.adapter = originalAdapter;
 });
 
-function respondWith(data: unknown): void {
+function respondWith(data: unknown, status = 200): void {
   axios.defaults.adapter = async (config) => ({
     data,
-    status: 200,
-    statusText: 'OK',
+    status,
+    statusText: status === 200 ? 'OK' : 'Service Unavailable',
     headers: {},
     config,
   });
@@ -29,6 +29,27 @@ describe('Studio API client UX result envelope', () => {
     respondWith(validSuccess);
 
     await expect(new HttpClient().fetch('/fixture')).resolves.toEqual(validSuccess.data);
+  });
+
+  // case: S-203.1
+  it('rejects a raw success body for a route that requires the UX envelope', async () => {
+    respondWith({ status: 'healthy' });
+
+    await expect(new HttpClient().fetchUx('/health')).rejects.toMatchObject({
+      code: 'KB_RUNTIME_UNEXPECTED',
+      correlationId: expect.any(String),
+    });
+  });
+
+  // case: S-203.1
+  it('rejects a raw not-ready error body for a route that requires the UX envelope', async () => {
+    respondWith({ ready: false, reason: 'upstream unavailable' }, 503);
+
+    await expect(new HttpClient().fetchUx('/ready')).rejects.toMatchObject({
+      code: 'KB_RUNTIME_UNEXPECTED',
+      status: 503,
+      correlationId: expect.any(String),
+    });
   });
 
   // case: S-203.5

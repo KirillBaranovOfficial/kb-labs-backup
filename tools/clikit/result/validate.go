@@ -115,3 +115,25 @@ func ValidateMachineResult(content []byte) error {
 	}
 	return nil
 }
+
+// DecodeSuccessResult validates the shared UX-result envelope and decodes its
+// success payload into out. Failure envelopes and unwrapped payloads are errors.
+func DecodeSuccessResult(content []byte, out any) error {
+	if err := ValidateMachineResult(content); err != nil {
+		return fmt.Errorf("invalid UX result envelope: %w", err)
+	}
+	var envelope struct {
+		OK   bool            `json:"ok"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(content, &envelope); err != nil {
+		return fmt.Errorf("invalid UX result envelope: %w", err)
+	}
+	if !envelope.OK {
+		return fmt.Errorf("expected a successful UX result envelope")
+	}
+	if err := json.Unmarshal(envelope.Data, out); err != nil {
+		return fmt.Errorf("invalid UX result data: %w", err)
+	}
+	return nil
+}

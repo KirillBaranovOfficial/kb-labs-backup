@@ -20,6 +20,7 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { GATEWAY } from '../fixtures/auth.js'
+import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
 
 const DIRECT_GATEWAY = process.env.GATEWAY_DIRECT_URL ?? 'http://localhost:4000'
 const COMPOSE_PROJECT = process.env.COMPOSE_PROJECT_NAME ?? 'kb-e2e-auth'
@@ -93,7 +94,7 @@ test('AUTH-41: the local operator sees a healthy install — the bootstrap admin
     test.skip(raw === undefined, 'docker / platform container not reachable from the test runner')
   }
 
-  const readiness = JSON.parse(raw as string) as Readiness
+  const readiness = decodeUxSuccessResult<Readiness>(JSON.parse(raw as string) as unknown)
   expect(readiness.authEnabled).toBe(true)
   // The stack seeds exactly this admin (docker-compose.auth-ci.yml); readiness must agree with login.
   expect(readiness.tenantId).toBe('kb-cloud')

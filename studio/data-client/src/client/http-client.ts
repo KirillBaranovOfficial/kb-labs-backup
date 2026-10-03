@@ -34,6 +34,7 @@ export class HttpClient {
     this.client.interceptors.response.use(
       (response) => {
         const data = response.data;
+        const requireUxResult = (response.config as AxiosRequestConfig & { requireUxResult?: boolean }).requireUxResult === true;
 
         // Check if response claims to use the shared result envelope.
         if (isUxResultCandidate(data)) {
@@ -53,15 +54,22 @@ export class HttpClient {
           }
         }
 
+        if (requireUxResult) {
+          return Promise.reject(mapInvalidResultEnvelope(response.status));
+        }
+
         return response;
       },
       (error: AxiosError) => {
         // Transform axios error to KBError
         const body = error.response?.data;
         const status = error.response?.status ?? 500;
-        const kbError = isUxResultCandidate(body) && !isUxResult(body)
+        const requireUxResult = (error.response?.config as AxiosRequestConfig & { requireUxResult?: boolean } | undefined)?.requireUxResult === true;
+        const kbError = requireUxResult && !isUxResultCandidate(body)
           ? mapInvalidResultEnvelope(status)
-          : mapFetchError(body, {
+          : isUxResultCandidate(body) && !isUxResult(body)
+            ? mapInvalidResultEnvelope(status)
+            : mapFetchError(body, {
           status,
           statusText: error.response?.statusText ?? 'Unknown Error',
         } as Response);
@@ -87,11 +95,21 @@ export class HttpClient {
   }
 
   async fetch<T>(path: string, options: AxiosRequestConfig = {}): Promise<T> {
+    return this.fetchWithUxPolicy<T>(path, options, false);
+  }
+
+  /** Fetch a JSON route that must return a valid shared UX result envelope. */
+  async fetchUx<T>(path: string, options: AxiosRequestConfig = {}): Promise<T> {
+    return this.fetchWithUxPolicy<T>(path, options, true);
+  }
+
+  private async fetchWithUxPolicy<T>(path: string, options: AxiosRequestConfig, requireUxResult: boolean): Promise<T> {
     try {
       // Apply custom request interceptors (if any)
-      const config: AxiosRequestConfig = {
+      const config: AxiosRequestConfig & { requireUxResult?: boolean } = {
         url: path,
         ...options,
+        requireUxResult,
       };
 
       // Note: Custom interceptors work with FetchOptions (headers as Headers object)

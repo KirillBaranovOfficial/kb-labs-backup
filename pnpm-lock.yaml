@@ -2192,6 +2192,9 @@ importers:
 
   e2e/auth:
     devDependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared
@@ -2204,6 +2207,9 @@ importers:
 
   e2e/gateway:
     devDependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared
@@ -2373,6 +2379,9 @@ importers:
 
   e2e/rest-api:
     devDependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@kb-labs/e2e-shared':
         specifier: workspace:*
         version: link:../shared
@@ -2448,6 +2457,9 @@ importers:
 
   e2e/tests:
     devDependencies:
+      '@kb-labs/core-platform':
+        specifier: workspace:*
+        version: link:../../core/platform
       '@playwright/test':
         specifier: ^1.52.0
         version: 1.59.1

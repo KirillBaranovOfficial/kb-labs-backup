@@ -8,7 +8,7 @@ import { HttpAdaptersSource } from '../http-adapters-source';
 describe('host API routing', () => {
   it('requests gateway health through its /api alias', async () => {
     const client = new HttpClient('/api/v1');
-    const fetch = vi.spyOn(client, 'fetch').mockResolvedValueOnce({
+    const fetch = vi.spyOn(client, 'fetchUx').mockResolvedValueOnce({
       schema: 'kb.observability/1',
       contractVersion: '1.0',
       serviceId: 'gateway',

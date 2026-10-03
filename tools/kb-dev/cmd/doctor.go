@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/dev/internal/docker"
 	"github.com/kb-labs/dev/internal/environ"
 	"github.com/kb-labs/dev/internal/manager"
@@ -264,7 +264,7 @@ func fetchAdapterStatuses(gatewayPort int) ([]adapterStatus, string) {
 	}
 
 	var statuses []adapterStatus
-	if err := json.Unmarshal(body, &statuses); err != nil {
+	if err := result.DecodeSuccessResult(body, &statuses); err != nil {
 		return nil, "failed to parse gateway response"
 	}
 

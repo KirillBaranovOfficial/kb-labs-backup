@@ -6,6 +6,7 @@ import {
   startTestHost,
   type RunningHost,
 } from "./harness.js";
+import { readUxSuccessResult } from "./testkit.js";
 
 interface HealthBody {
   upstreams: Record<string, { status: string }>;
@@ -35,7 +36,7 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
 
     const health = await running.fetchGateway("/health");
     expect(health.status).toBe(200);
-    const body = (await health.json()) as HealthBody;
+    const body = await readUxSuccessResult<HealthBody>(health);
     expect(body.upstreams.marketplace?.status).toBe("up");
     expect(body.upstreams.state?.status).toBe("up");
 
@@ -97,9 +98,7 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
   it("runs only the modules listed in host.modules", async () => {
     running = await startTestHost({ host: { modules: ["gateway", "state"] } });
 
-    const health = (await (
-      await running.fetchGateway("/health")
-    ).json()) as HealthBody;
+    const health = await readUxSuccessResult<HealthBody>(await running.fetchGateway("/health"));
     expect(health.upstreams.state?.status).toBe("up");
     expect(health.upstreams.marketplace).toBeUndefined();
 

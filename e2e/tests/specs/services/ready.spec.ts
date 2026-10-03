@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test'
 import { REST, WORKFLOW, STATE, MARKETPLACE } from '../../fixtures/urls.js'
+import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
+
+interface ReadyPayload {
+  ready: boolean
+  status: string
+}
 
 // /ready is deeper than /health — verifies internal components are wired up
 
@@ -7,9 +13,7 @@ import { REST, WORKFLOW, STATE, MARKETPLACE } from '../../fixtures/urls.js'
 test('R-01: rest-api /ready — registry loaded and plugins mounted', async ({ request }) => {
   const res = await request.get(`${REST}/ready`)
   expect(res.status()).toBe(200)
-  const body = await res.json()
-  // REST API wraps responses: { ok: true, data: { ready, status, ... } }
-  const data = body.data ?? body
+  const data = decodeUxSuccessResult<ReadyPayload>(await res.json())
   expect(data.ready).toBe(true)
   expect(data.status).toMatch(/ready|ok/)
 })
@@ -35,8 +39,7 @@ test('R-03: state-daemon /ready — broker ready', async ({ request }) => {
 test('R-04: rest-api /ready — all plugin routes registered', async ({ request }) => {
   const res = await request.get(`${REST}/ready`)
   expect(res.status()).toBe(200)
-  const body = await res.json()
-  const data = body.data ?? body
+  const data = decodeUxSuccessResult<ReadyPayload>(await res.json())
   // If the service reached /ready, all routes are mounted — truthy is sufficient
   expect(data.ready ?? data.status).toBeTruthy()
 })

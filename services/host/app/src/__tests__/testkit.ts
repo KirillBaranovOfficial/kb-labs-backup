@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContextLogger, type IContextLogger } from "@kb-labs/core-platform";
+import { decodeUxSuccessResult } from "@kb-labs/core-platform/ux-result";
 import { NoOpLogger } from "@kb-labs/core-platform/noop";
 import {
   canonicalizeProjectPath,
@@ -30,6 +31,10 @@ export function silentLogger(): IContextLogger {
     instanceId: "test",
     layer: "service",
   });
+}
+
+export async function readUxSuccessResult<T>(response: Response): Promise<T> {
+  return decodeUxSuccessResult<T>(await response.json());
 }
 
 export interface FakeBehavior {

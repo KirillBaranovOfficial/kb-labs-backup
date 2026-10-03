@@ -35,6 +35,27 @@ func TestSharedFixturesAndSchema(t *testing.T) {
 	}
 }
 
+// case: S-203.1
+func TestDecodeSuccessResultRequiresTheSharedEnvelope(t *testing.T) {
+	var payload struct {
+		Status string `json:"status"`
+	}
+	if err := DecodeSuccessResult([]byte(`{"ok":true,"data":{"status":"healthy"}}`), &payload); err != nil {
+		t.Fatalf("DecodeSuccessResult(valid envelope): %v", err)
+	}
+	if payload.Status != "healthy" {
+		t.Fatalf("payload status = %q, want healthy", payload.Status)
+	}
+	for _, body := range []string{
+		`{"status":"healthy"}`,
+		`{"ok":false,"error":{}}`,
+	} {
+		if err := DecodeSuccessResult([]byte(body), &payload); err == nil {
+			t.Errorf("DecodeSuccessResult(%s) succeeded, want envelope error", body)
+		}
+	}
+}
+
 // case: S-203.1, S-203.2
 func TestRenderResultsMatchSharedContract(t *testing.T) {
 	var success bytes.Buffer

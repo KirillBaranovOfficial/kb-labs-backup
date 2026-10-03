@@ -17,6 +17,7 @@ import {
   isAlive,
   makeProject,
   waitFor,
+  readUxSuccessResult,
   type FakeRuntimeReply,
   type TestProject,
 } from "./testkit.js";
@@ -159,7 +160,7 @@ describe("kb-host project routing", () => {
           String((body as ErrorBody).error.cause).slice(-900));
       }
       expect(body).toEqual(expect.any(Object));
-      const health = (await (await running.fetchGateway("/health")).json()) as HealthBody;
+      const health = await readUxSuccessResult<HealthBody>(await running.fetchGateway("/health"));
       expect(health.projectRuntimes.runtimes).toContainEqual(
         expect.objectContaining({ projectId: project.id, state: "ready" }),
       );
@@ -228,7 +229,7 @@ describe("kb-host project routing", () => {
     const a = await registered();
     const subject = await host();
     await reply(subject, a.id, "/rest/whoami");
-    const runtime = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+    const runtime = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
     expect(runtime.projectRuntimes.runtimes).toHaveLength(1);
     // Nothing in the public health payload reveals the runtime's address.
     expect(JSON.stringify(runtime)).not.toMatch(/127\.0\.0\.1:\d+/);
@@ -275,7 +276,7 @@ describe("kb-host project routing", () => {
     const body = (await response.json()) as ErrorBody;
     expect(body.error.code).toBe("KB_PROJECT_UNKNOWN");
     expect(body.error.hint.length).toBeGreaterThan(0);
-    const health = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+    const health = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
     expect(health.projectRuntimes.runtimes).toEqual([]);
   });
 
@@ -323,7 +324,7 @@ describe("kb-host project routing", () => {
       `/api/v1/projects/${a.id}/rest/slow?delay=1500`,
     );
     await waitFor(async () => {
-      const health = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+      const health = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
       return health.projectRuntimes.runtimes[0]?.inflight === 1;
     }, "the slow request to be in flight");
 
@@ -354,7 +355,7 @@ describe("kb-host project routing", () => {
 
     expect(response.status).toBe(401);
     // Public /health still answers, and nothing was started for the anonymous call.
-    const health = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+    const health = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
     expect(health.projectRuntimes.runtimes).toEqual([]);
   });
 
@@ -364,7 +365,7 @@ describe("kb-host project routing", () => {
 
     const before = await subject.fetchGateway("/ready");
     expect(before.status).toBe(200);
-    const beforeBody = (await before.json()) as ReadyBody;
+    const beforeBody = await readUxSuccessResult<ReadyBody>(before);
     expect(beforeBody.ready).toBe(true);
     expect(beforeBody.components.projectRuntimes).toEqual({
       ready: true,
@@ -373,13 +374,13 @@ describe("kb-host project routing", () => {
 
     await reply(subject, a.id, "/rest/whoami");
 
-    const health = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+    const health = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
     expect(health.projectRuntimes.limit).toBe(3);
     expect(health.projectRuntimes.active).toBe(1);
     expect(health.projectRuntimes.runtimes).toEqual([
       expect.objectContaining({ projectId: a.id, state: "ready", inflight: 0 }),
     ]);
-    const after = (await (await subject.fetchGateway("/ready")).json()) as ReadyBody;
+    const after = await readUxSuccessResult<ReadyBody>(await subject.fetchGateway("/ready"));
     expect(after.components.projectRuntimes?.status).toBe("1/3 active");
   });
 
@@ -391,7 +392,7 @@ describe("kb-host project routing", () => {
 
     await waitFor(() => !isAlive(pid), "the idle runtime to stop");
 
-    const health = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+    const health = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
     expect(health.projectRuntimes.runtimes).toEqual([]);
     // The next request starts it again.
     const again = await reply(subject, a.id, "/rest/whoami");
@@ -423,13 +424,13 @@ describe("kb-host project routing", () => {
     const subject = await host({}, { idleTimeoutMs: 30, sweepIntervalMs: 10, startPollMs: 10 });
 
     await waitFor(async () => {
-      const health = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+      const health = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
       return health.projectRuntimes.runtimes.some(
         (runtime) => runtime.projectId === a.id && runtime.state === "ready",
       );
     }, "the scheduled runtime to start during host startup");
 
-    const before = (await (await subject.fetchGateway("/health")).json()) as HealthBody;
+    const before = await readUxSuccessResult<HealthBody>(await subject.fetchGateway("/health"));
     expect(before.projectRuntimes.runtimes[0]).toMatchObject({
       projectId: a.id,
       keptRunningSchedules: 2,
