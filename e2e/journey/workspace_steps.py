@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -14,8 +15,11 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
     cli = repo_root / "cli/bin/dist/bin.js"
     with tempfile.TemporaryDirectory(prefix="kb-workspace-cli-home-") as home:
         env = {**os.environ, "HOME": home}
-        env.pop("KB_PLATFORM_ROOT", None)
-        env.pop("KB_HOME", None)
+        env["KB_PLATFORM_ROOT"] = str(repo_root)
+        kb_home = Path(home) / ".kb"
+        kb_home.mkdir()
+        shutil.copy2(repo_root / ".kb/marketplace.lock", kb_home / "marketplace.lock")
+        env["KB_HOME"] = str(kb_home)
         env.pop("KB_NET_OFFSET", None)
 
         def run(*args: str) -> subprocess.CompletedProcess[str]:

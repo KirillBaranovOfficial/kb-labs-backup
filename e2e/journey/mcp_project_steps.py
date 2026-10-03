@@ -6,7 +6,8 @@ import os
 import re
 from pathlib import Path
 
-from invocations import run_command
+from invocations import invocation_context, run_command
+from service_steps import Journey
 
 
 
@@ -347,3 +348,85 @@ def project_isolation(project_a: str, project_b: str, project_b_root: str, token
     if any(isinstance(tool, dict) and tool.get("name") == "kb-labs-commit__commit_apply" for tool in tools):
         return "project B listed project A's project-scoped commit tool"
     return unknown_tool(project_b, token)
+
+
+def run_agent_session_steps(journey: Journey, project_id: str, token: str,
+                            agent_id: str = "journey-agent") -> None:
+    """Exercise the documented project Agents session REST lifecycle (S-141)."""
+    session_id = ""
+    base = f"/api/v1/projects/{project_id}/rest/v1/plugins/agents/sessions"
+
+    def create() -> str | None:
+        nonlocal session_id
+        with invocation_context(step_id="S-141.1"):
+            status, body, _ = _request(
+                base, method="POST", token=token,
+                payload={"agentId": agent_id, "task": "Summarize the project"},
+            )
+        data = body.get("data", body) if isinstance(body, dict) else {}
+        session = data.get("session", data) if isinstance(data, dict) else {}
+        if status < 200 or status >= 300:
+            return f"agent session creation returned HTTP {status}"
+        if not isinstance(session, dict):
+            return "agent session creation returned no session object"
+        session_id = session.get("id", "")
+        if (not isinstance(session_id, str) or not session_id.strip()
+                or session.get("agentId") != agent_id
+                or session.get("task") != "Summarize the project"
+                or not session.get("status")):
+            return "agent session response omitted its ID, supplied agent/task, or initial status"
+        return None
+
+    journey.step("create project agent session", "agents", create, cases=["S-141.1"])
+
+    def list_sessions() -> str | None:
+        if not session_id:
+            return "agent session list cannot run because session creation failed"
+        with invocation_context(step_id="S-141.2"):
+            status, body, _ = _request(base, token=token)
+        data = body.get("data", body) if isinstance(body, dict) else {}
+        rows = data.get("sessions", []) if isinstance(data, dict) else []
+        total = data.get("total", 0) if isinstance(data, dict) else 0
+        if status != 200 or not isinstance(rows, list):
+            return f"agent session list returned HTTP {status} or no sessions collection"
+        if not any(isinstance(row, dict) and row.get("id") == session_id for row in rows):
+            return "agent session list omitted the created session ID"
+        if not isinstance(total, int) or total < 1:
+            return "agent session list total did not include the created session"
+        return None
+
+    journey.step("list project agent sessions", "agents", list_sessions, cases=["S-141.2"])
+
+    def inspect_session() -> str | None:
+        if not session_id:
+            return "agent session inspection cannot run because session creation failed"
+        for suffix, description in (("", "detail"), ("/turns", "turn history"), ("/plan", "plan")):
+            with invocation_context(step_id="S-141.3"):
+                status, body, _ = _request(f"{base}/{session_id}{suffix}", token=token)
+            data = body.get("data", body) if isinstance(body, dict) else {}
+            if status != 200 or not isinstance(data, dict):
+                return f"agent session {description} returned HTTP {status} or no object"
+            if description == "turn history":
+                turns = data.get("turns", data.get("items"))
+                if not isinstance(turns, list) or (turns and not any(
+                    isinstance(turn, dict) and turn.get("sessionId") == session_id for turn in turns
+                )):
+                    return "agent session turn history did not identify the session or return an empty collection"
+            elif data.get("sessionId", data.get("id")) != session_id:
+                return f"agent session {description} did not identify the created session"
+        return None
+
+    journey.step("inspect project agent session", "agents", inspect_session, cases=["S-141.3"])
+
+    def unknown_session() -> str | None:
+        missing_id = "session-does-not-exist"
+        with invocation_context(step_id="S-141.4"):
+            status, body, _ = _request(f"{base}/{missing_id}", token=token)
+        rendered = json.dumps(body, ensure_ascii=False) if isinstance(body, (dict, list)) else str(body)
+        if status != 404 or missing_id not in rendered:
+            return "unknown agent session response did not return not found naming the session ID"
+        if re.search(r"Traceback|\bat\s+[^\n]+\([^\n]*:\d+:\d+\)|(?:^|\n)(?:Error|TypeError|ReferenceError):|panic:", rendered):
+            return "unknown agent session response exposed a stack trace"
+        return None
+
+    journey.step("reject unknown project agent session", "agents", unknown_session, cases=["S-141.4"])

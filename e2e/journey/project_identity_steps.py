@@ -17,7 +17,7 @@ def run_project_identity_steps(journey: Journey, repo_root: Path) -> None:
                 tempfile.TemporaryDirectory(prefix="kb-project-identity-cwd-") as cwd:
             env = {**os.environ, "HOME": home}
             env.pop("KB_HOME", None)
-            env.pop("KB_PLATFORM_ROOT", None)
+            env["KB_PLATFORM_ROOT"] = str(repo_root)
             env.pop("KB_NET_OFFSET", None)
             result = run_command(
                 ["node", str(cli), "project", "show", "--json"],

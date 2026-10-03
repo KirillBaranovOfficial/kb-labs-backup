@@ -12,7 +12,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_arguments, local_auth,
-                               mcp_ux_result_contract, project_isolation, secured_auth, unknown_tool)
+                               mcp_ux_result_contract, project_isolation, run_agent_session_steps,
+                               secured_auth, unknown_tool)
+from service_steps import Journey
 from service_runner import _case_claims, checks
 
 
@@ -36,6 +38,42 @@ def tool_error(code: str, message: str, hint: str):
 
 
 class ProjectMcpJourneyTests(unittest.TestCase):
+    # case: S-141.1, S-141.2, S-141.3, S-141.4
+    def test_agent_session_steps_reject_fake_failures_then_claim_full_lifecycle(self):
+        journey = Journey("local", "agent-session")
+        failures = iter([
+            (500, {"error": "creation failed"}, {}),
+            (500, {"error": "list failed"}, {}),
+            (500, {"error": "detail failed"}, {}),
+            (200, {"message": "session-does-not-exist"}, {}),
+        ])
+        with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(failures)):
+            run_agent_session_steps(journey, "prj_a", "token")
+        red = journey.result()
+        self.assertEqual(red.status, "FAIL")
+        self.assertEqual({claim["claimId"] for claim in red.case_run["claims"]}, {
+            "S-141.1", "S-141.2", "S-141.3", "S-141.4",
+        })
+
+        session = {"id": "session-1", "agentId": "journey-agent",
+                   "task": "Summarize the project", "status": "pending"}
+        responses = iter([
+            (201, {"data": {"session": session}}, {}),
+            (200, {"data": {"sessions": [session], "total": 1}}, {}),
+            (200, {"data": {"sessionId": "session-1"}}, {}),
+            (200, {"data": {"turns": []}}, {}),
+            (200, {"data": {"sessionId": "session-1", "plan": None}}, {}),
+            (404, {"error": {"message": "session-does-not-exist not found"}}, {}),
+        ])
+        green = Journey("local", "agent-session")
+        with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(responses)):
+            run_agent_session_steps(green, "prj_a", "token")
+        result = green.result()
+        self.assertEqual(result.status, "PASS", result.first_failure)
+        self.assertEqual({claim["claimId"] for claim in result.case_run["claims"]}, {
+            "S-141.1", "S-141.2", "S-141.3", "S-141.4",
+        })
+
     def test_live_registry_ux_step_is_registered_as_s203_claim(self):
         step = "MCP UX result contract from live registry"
         self.assertIn(step, {name for name, _, _ in checks("local")})
