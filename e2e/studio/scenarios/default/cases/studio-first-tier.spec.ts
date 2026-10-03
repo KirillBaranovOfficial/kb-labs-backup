@@ -1,15 +1,31 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 const enabled = process.env.KB_STUDIO_FIRST_TIER_JOURNEY === '1'
+const accessMode = process.env.KB_ACCESS_MODE ?? 'local'
 
-test('S-120.1 and S-020.6: dashboard frame and first-tier navigation', async ({ page }) => {
+async function signInIfSecured(page: import('@playwright/test').Page) {
+  if (accessMode !== 'secured') return
+  const email = process.env.KB_STUDIO_ADMIN_EMAIL
+  const password = process.env.KB_STUDIO_ADMIN_PASSWORD
+  expect(email, 'KB_STUDIO_ADMIN_EMAIL is required in secured mode').toBeTruthy()
+  expect(password, 'KB_STUDIO_ADMIN_PASSWORD is required in secured mode').toBeTruthy()
+  await page.goto(`${GATEWAY}/`)
+  await expect(page).toHaveURL(/\/login$/)
+  await page.getByLabel('Email').fill(email!)
+  await page.getByLabel('Password').fill(password!)
+  await page.getByRole('button', { name: /sign in|log in/i }).click()
+  await expect(page).not.toHaveURL(/\/login$/)
+}
+
+test('dashboard frame and first-tier navigation @S-120.1 @S-020.6', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
+  await signInIfSecured(page)
 
   await page.goto(`${GATEWAY}/`)
   await expect(page.getByText('Intelligence Dashboard', { exact: true })).toBeVisible()
@@ -28,8 +44,9 @@ test('S-120.1 and S-020.6: dashboard frame and first-tier navigation', async ({ 
   }
 })
 
-test('S-046.4-.6 and S-124.7: inspect, register, and safely unregister a project', async ({ page }) => {
+test('inspect, register, and safely unregister a project @S-046.4 @S-124.7', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
+  await signInIfSecured(page)
   const projectPath = await mkdtemp(join(tmpdir(), 'studio-project-case-'))
   const projectName = projectPath.split('/').at(-1)!
 
@@ -56,6 +73,49 @@ test('S-046.4-.6 and S-124.7: inspect, register, and safely unregister a project
     expect(await readdir(join(projectPath, '.kb'))).toEqual([])
   } finally {
     await rm(projectPath, { recursive: true, force: true })
+  }
+})
+
+test('unregister an initialized project without deleting files or runtime state @S-046.5 @S-046.6', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the installed Studio journey hook')
+  await signInIfSecured(page)
+  const projectPath = await mkdtemp(join(tmpdir(), 'studio-initialized-project-case-'))
+  const projectName = projectPath.split('/').at(-1)!
+  const projectMarker = join(projectPath, '.kb', 'preserve-me.txt')
+  const markerContent = 'project configuration remains after unregister\n'
+  let runtimeStateDir: string | undefined
+
+  try {
+    await mkdir(join(projectPath, '.kb'), { recursive: true })
+    writeFileSync(projectMarker, markerContent)
+    await page.goto(`${GATEWAY}/projects`)
+    await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Add project', exact: true }).click()
+    await page.getByLabel('Folder path').fill(projectPath)
+    await page.getByRole('button', { name: 'Register', exact: true }).click()
+    await expect(page.getByText(projectPath, { exact: true })).toBeVisible()
+    await expect(page.getByText(`Registered ${projectPath}`, { exact: true })).toBeVisible()
+
+    const response = await page.request.get(`${GATEWAY}/api/v1/projects`)
+    expect(response.status()).toBe(200)
+    const payload = await response.json() as { data?: Array<{ id: string; path: string; stateDir: string }> }
+    const project = payload.data?.find(entry => entry.path === projectPath)
+    expect(project, 'registered project response must expose its runtime state directory').toBeTruthy()
+    runtimeStateDir = project!.stateDir
+    const stateMarker = join(project!.stateDir, 'studio-journey-state.txt')
+    await mkdir(project!.stateDir, { recursive: true })
+    writeFileSync(stateMarker, 'runtime state remains after unregister\n')
+
+    const row = page.getByRole('row').filter({ hasText: projectName })
+    await row.getByRole('button', { name: 'Remove', exact: true }).click()
+    await page.getByRole('button', { name: 'Unregister', exact: true }).click()
+    await expect(page.getByText(`Unregistered ${projectName}; files were not touched.`, { exact: true })).toBeVisible()
+    await expect(row).toHaveCount(0)
+    expect(readFileSync(projectMarker, 'utf8')).toBe(markerContent)
+    expect(readFileSync(stateMarker, 'utf8')).toBe('runtime state remains after unregister\n')
+  } finally {
+    await rm(projectPath, { recursive: true, force: true })
+    if (runtimeStateDir) await rm(runtimeStateDir, { recursive: true, force: true })
   }
 })
 
@@ -89,8 +149,9 @@ test('S-121.6: unconfigured analytics shows adapter setup guidance', async ({ pa
   await expect(page.getByText('Configure an analytics adapter in kb.config.json', { exact: false })).toBeVisible()
 })
 
-test('S-125.5: unavailable analytics service names its source and recovery command', async ({ page }) => {
+test('unavailable analytics service names its source and recovery command @S-125.5', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
+  await signInIfSecured(page)
   const projectId = process.env.KB_STUDIO_PROJECT_ID
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
   await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
@@ -104,8 +165,9 @@ test('S-125.5: unavailable analytics service names its source and recovery comma
   await expect(page.getByText('kb-create doctor --platform-root <platform-root>', { exact: false })).toBeVisible()
 })
 
-test('S-120.7 and S-125.4: unavailable gateway keeps Dashboard visible with recovery commands', async ({ page }) => {
+test('unavailable gateway keeps Dashboard visible with recovery commands @S-120.7 @S-125.4', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
+  await signInIfSecured(page)
   await page.route('**/api/observability/health', async (route) => {
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'gateway offline' }) })
   })
@@ -175,8 +237,9 @@ test('S-122.5: unavailable observability logs name the source and doctor command
   await expect(page.getByText('kb-create doctor --platform-root <platform-root>', { exact: false })).toBeVisible()
 })
 
-test('S-123.1-.6: install Commit, inspect real changes, generate a plan, and uninstall it', async ({ page }) => {
+test('install Commit, inspect real changes, generate a plan, and uninstall it @S-123.1 @S-123.2 @S-123.3 @S-123.4 @S-123.5 @S-123.6', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
+  await signInIfSecured(page)
   const projectId = process.env.KB_STUDIO_PROJECT_ID
   const projectRoot = process.env.KB_STUDIO_PROJECT_ROOT
   const kb = process.env.KB_STUDIO_KB_BIN

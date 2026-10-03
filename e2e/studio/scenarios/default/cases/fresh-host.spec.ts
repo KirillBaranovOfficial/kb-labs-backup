@@ -17,101 +17,318 @@ async function signIn(page: import('@playwright/test').Page, email: string, pass
   await expect(page).toHaveURL(`${GATEWAY}/`)
 }
 
-test('S-020.1-.7 and S-125.1-.3: fresh host Studio dashboard, navigation, session, and access controls', async ({ page, browser }) => {
+test('registered project exposes its Commit plugin', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the fresh-install journey hook')
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the project registered by the fresh-install journey').toBeTruthy()
-  expect(projectName, 'KB_STUDIO_PROJECT_NAME must identify the project registered by the fresh-install journey').toBeTruthy()
+  await openAdminStudio(page)
+  await page.goto(`${GATEWAY}/plugins`)
+  await expect(page.getByText(/commit/i).first()).toBeVisible()
+})
 
-  await test.step('open Studio in the configured access mode', async () => {
-    if (mode === 'secured') {
-      const email = process.env.KB_STUDIO_ADMIN_EMAIL
-      const password = process.env.KB_STUDIO_ADMIN_PASSWORD
-      expect(email, 'KB_STUDIO_ADMIN_EMAIL is required in secured mode').toBeTruthy()
-      expect(password, 'KB_STUDIO_ADMIN_PASSWORD is required in secured mode').toBeTruthy()
-      expect(await page.context().cookies(GATEWAY)).toEqual([])
-      const anonymousMe = page.waitForResponse(response => response.url() === `${GATEWAY}/api/auth/me`)
-      await page.goto(`${GATEWAY}/`)
-      expect((await anonymousMe).status()).toBe(401)
-      await expect(page).toHaveURL(/\/login$/)
-      await page.getByLabel('Email').fill(email!)
-      await page.getByLabel('Password').fill('incorrect-journey-password')
-      await page.getByRole('button', { name: /sign in|log in/i }).click()
-      await expect(page.getByText('Invalid credentials', { exact: true })).toBeVisible()
-      await signIn(page, email!, password!)
-    } else {
-      await page.goto(`${GATEWAY}/`)
-      await expect(page).not.toHaveURL(/\/login$/)
-    }
-    await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
-  })
-
-  await test.step('show the registered project and healthy gateway', async () => {
-    await page.goto(`${GATEWAY}/projects`)
-    await expect(page.getByText(projectName!, { exact: true })).toBeVisible()
-    await page.goto(`${GATEWAY}/`)
-    await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
-    if (mode === 'secured') {
-      await page.reload()
-      await expect(page.getByText(process.env.KB_STUDIO_ADMIN_EMAIL!, { exact: true }).first()).toBeVisible()
-      await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
-    }
-  })
-
-  await test.step('navigate to first-tier pages from Studio navigation', async () => {
-    await page.goto(`${GATEWAY}/projects`)
-    await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible()
-    await page.goto(`${GATEWAY}/analytics/overview`)
-    await expect(page.getByRole('heading', { name: 'Analytics Overview', exact: true })).toBeVisible()
-    await page.goto(`${GATEWAY}/observability/logs`)
-    await expect(page.getByRole('heading', { name: 'Logs', exact: true })).toBeVisible()
-  })
-
-  await test.step('list the commit plugin for the active project', async () => {
-    const response = await page.request.get(`${GATEWAY}/api/v1/plugins?projectId=${encodeURIComponent(projectId!)}`)
-    expect(response.status()).toBe(200)
-    const payload = await response.json() as { data?: Array<{ id?: string }> }
-    expect(payload.data?.some(plugin => plugin.id?.includes('commit'))).toBe(true)
-    await page.goto(`${GATEWAY}/plugins`)
-    await expect(page.getByText(/commit/i).first()).toBeVisible()
-  })
-
+async function openAdminStudio(page: import('@playwright/test').Page) {
+  await page.goto(`${GATEWAY}/`)
   if (mode === 'secured') {
-    await test.step('logout returns the browser to the login form', async () => {
-      await page.getByRole('button', { name: new RegExp(process.env.KB_STUDIO_ADMIN_EMAIL!, 'i') }).click()
-      await page.getByRole('menuitem', { name: 'Logout', exact: true }).click()
-      await expect(page).toHaveURL(/\/login$/)
-      await page.goto(`${GATEWAY}/`)
-      await expect(page).toHaveURL(/\/login$/)
-    })
-
-    await test.step('[S-108.1] member has no Users or Invites navigation', async () => {
-      const email = process.env.KB_STUDIO_MEMBER_EMAIL
-      const password = process.env.KB_STUDIO_MEMBER_PASSWORD
-      expect(email, 'KB_STUDIO_MEMBER_EMAIL is required in secured mode').toBeTruthy()
-      expect(password, 'KB_STUDIO_MEMBER_PASSWORD is required in secured mode').toBeTruthy()
-      const memberContext = await browser.newContext()
-      const memberPage = await memberContext.newPage()
-      await signIn(memberPage, email!, password!)
-      await expect(memberPage.getByRole('link', { name: 'Settings' })).toHaveCount(0)
-      await expect(memberPage.getByRole('link', { name: 'Users' })).toHaveCount(0)
-      await expect(memberPage.getByRole('link', { name: 'Invites' })).toHaveCount(0)
-      await test.step('[S-108.2] deny direct user and invite administration routes', async () => {
-        await memberPage.goto(`${GATEWAY}/admin/users`)
-        await expect(memberPage.getByTestId('forbidden-page')).toBeVisible()
-        await expect(memberPage.getByText('403 — Forbidden')).toBeVisible()
-        await expect(memberPage.getByText('You do not have permission to view this page.')).toBeVisible()
-        await memberPage.goto(`${GATEWAY}/admin/invites`)
-        await expect(memberPage.getByTestId('forbidden-page')).toBeVisible()
-        await expect(memberPage.getByText('403 — Forbidden')).toBeVisible()
-        await expect(memberPage.getByText('You do not have permission to view this page.')).toBeVisible()
-      })
-      await test.step('[S-108.3] keep member project access', async () => {
-        await memberPage.goto(`${GATEWAY}/projects`)
-        await expect(memberPage.getByText(projectName!, { exact: true })).toBeVisible()
-      })
-      await memberContext.close()
-    })
+    await signIn(page, process.env.KB_STUDIO_ADMIN_EMAIL!, process.env.KB_STUDIO_ADMIN_PASSWORD!)
   }
+}
+
+test('local Studio opens Dashboard @S-020.1 @S-125.1', async ({ page }) => {
+  test.skip(!enabled || mode !== 'local', 'Enabled in the local fresh-host journey')
+  await page.goto(`${GATEWAY}/`)
+  await expect(page).not.toHaveURL(/\/login$/)
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
+  for (const item of ['Dashboard', 'Projects', 'Workflows', 'Marketplace', 'Analytics', 'Observability']) {
+    await expect(page.getByRole('link', { name: item, exact: true })).toBeVisible()
+  }
+})
+
+test('secured anonymous browser receives 401 and login form @S-020.2', async ({ page }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  expect(await page.context().cookies(GATEWAY)).toEqual([])
+  const anonymousMe = page.waitForResponse(response => response.url() === `${GATEWAY}/api/auth/me`)
+  await page.goto(`${GATEWAY}/`)
+  expect((await anonymousMe).status()).toBe(401)
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(page.getByLabel('Email')).toBeVisible()
+  await expect(page.getByLabel('Password')).toBeVisible()
+})
+
+test('secured admin login opens Dashboard @S-020.3 @S-125.3', async ({ page }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  await signIn(page, process.env.KB_STUDIO_ADMIN_EMAIL!, process.env.KB_STUDIO_ADMIN_PASSWORD!)
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Projects', exact: true })).toBeVisible()
+  await expect(page.getByText(process.env.KB_STUDIO_ADMIN_EMAIL!, { exact: true }).first()).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Active project' })).toBeVisible()
+  await expect(page.getByText(projectName!, { exact: true }).first()).toBeVisible()
+})
+
+test('incorrect secured password keeps login visible @S-020.4', async ({ page }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  await page.goto(`${GATEWAY}/`)
+  await expect(page).toHaveURL(/\/login$/)
+  await page.getByLabel('Email').fill(process.env.KB_STUDIO_ADMIN_EMAIL!)
+  await page.getByLabel('Password').fill('incorrect-journey-password')
+  await page.getByRole('button', { name: /sign in|log in/i }).click()
+  await expect(page.getByText('Invalid credentials', { exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/login$/)
+})
+
+test('secured refresh restores the dashboard session @S-020.5', async ({ page }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  await signIn(page, process.env.KB_STUDIO_ADMIN_EMAIL!, process.env.KB_STUDIO_ADMIN_PASSWORD!)
+  await page.reload()
+  await expect(page.getByText(process.env.KB_STUDIO_ADMIN_EMAIL!, { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
+})
+
+test('Studio navigation opens first-tier pages @S-020.6 @S-125.2', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
+  expect(projectName, 'KB_STUDIO_PROJECT_NAME must identify the registered project').toBeTruthy()
+  await page.addInitScript((id) => localStorage.setItem('kb.workflow.projectId', id), projectId)
+  await openAdminStudio(page)
+  for (const [route, heading] of [
+    ['/projects', 'Projects'],
+    ['/p/workflows/definitions', 'Workflow Definitions'],
+    ['/marketplace', 'Marketplace'],
+    ['/analytics/overview', 'Analytics Overview'],
+    ['/observability/logs', 'Logs'],
+  ]) {
+    await page.goto(`${GATEWAY}${route}`)
+    await expect(page.getByRole('heading', { name: heading, exact: true }).first()).toBeVisible()
+    await expect(page.getByText(projectName!, { exact: true }).first()).toBeVisible()
+  }
+})
+
+test('secured logout returns to login @S-020.7', async ({ page }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  await signIn(page, process.env.KB_STUDIO_ADMIN_EMAIL!, process.env.KB_STUDIO_ADMIN_PASSWORD!)
+  await page.getByRole('button', { name: new RegExp(process.env.KB_STUDIO_ADMIN_EMAIL!, 'i') }).click()
+  await page.getByRole('menuitem', { name: 'Logout', exact: true }).click()
+  await expect(page).toHaveURL(/\/login$/)
+  await page.goto(`${GATEWAY}/`)
+  await expect(page).toHaveURL(/\/login$/)
+})
+
+test('member lacks user administration navigation @S-108.1', async ({ browser }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  const context = await browser.newContext()
+  const memberPage = await context.newPage()
+  await signIn(memberPage, process.env.KB_STUDIO_MEMBER_EMAIL!, process.env.KB_STUDIO_MEMBER_PASSWORD!)
+  await expect(memberPage.getByRole('link', { name: 'Settings' })).toHaveCount(0)
+  await expect(memberPage.getByRole('link', { name: 'Users' })).toHaveCount(0)
+  await expect(memberPage.getByRole('link', { name: 'Invites' })).toHaveCount(0)
+  await context.close()
+})
+
+test('member cannot open user or invite administration @S-108.2', async ({ browser }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  const context = await browser.newContext()
+  const memberPage = await context.newPage()
+  await signIn(memberPage, process.env.KB_STUDIO_MEMBER_EMAIL!, process.env.KB_STUDIO_MEMBER_PASSWORD!)
+  for (const route of ['/admin/users', '/admin/invites']) {
+    await memberPage.goto(`${GATEWAY}${route}`)
+    await expect(memberPage.getByTestId('forbidden-page')).toBeVisible()
+    await expect(memberPage.getByText('403 — Forbidden')).toBeVisible()
+    await expect(memberPage.getByText('You do not have permission to view this page.')).toBeVisible()
+  }
+  await context.close()
+})
+
+test('member retains project access @S-108.3', async ({ browser }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  const context = await browser.newContext()
+  const memberPage = await context.newPage()
+  await signIn(memberPage, process.env.KB_STUDIO_MEMBER_EMAIL!, process.env.KB_STUDIO_MEMBER_PASSWORD!)
+  await memberPage.goto(`${GATEWAY}/projects`)
+  await expect(memberPage.getByText(projectName!, { exact: true })).toBeVisible()
+  await context.close()
+})
+
+async function assertSelectedProjectDashboard(page: import('@playwright/test').Page) {
+  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
+  expect(projectName, 'KB_STUDIO_PROJECT_NAME must identify the registered project').toBeTruthy()
+  await page.addInitScript((id) => localStorage.setItem('kb.workflow.projectId', id), projectId)
+  await openAdminStudio(page)
+  await expect(page.getByText(projectName!, { exact: true }).first()).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Intelligence Dashboard', exact: true })).toBeVisible()
+  await expect(page.getByText('Real-time platform observability and performance analytics', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
+  await expect(page.getByText('Gateway health', { exact: true })).toBeVisible()
+  await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
+  await expect(page.getByText(/project activity|recent runs/i)).toHaveCount(0)
+}
+
+test('local selected project keeps dashboard platform scoped @S-120.2', async ({ page }) => {
+  test.skip(!enabled || mode !== 'local', 'Enabled in the local fresh-host journey')
+  await assertSelectedProjectDashboard(page)
+})
+
+test('secured selected project keeps dashboard platform scoped @S-120.4', async ({ page }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  await assertSelectedProjectDashboard(page)
+})
+
+test('dashboard explains degraded and not-ready gateway states @S-120.5', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  let ready = true
+  await page.route('**/api/observability/health', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      status: 'degraded',
+      state: 'partial_observability',
+      observedAt: new Date().toISOString(),
+      checks: [{ id: 'fixture-store', status: 'error', message: 'fixture storage unavailable' }],
+    }),
+  }))
+  await page.route('**/api/ready', route => route.fulfill({
+    status: ready ? 200 : 503,
+    contentType: 'application/json',
+    body: JSON.stringify(ready ? { ready: true } : { ready: false, reason: 'fixture maintenance' }),
+  }))
+  await openAdminStudio(page)
+  await expect(page.getByText('Gateway degraded', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Details' }).click()
+  await expect(page.getByText('fixture-store', { exact: true })).toBeVisible()
+  await expect(page.getByText('fixture storage unavailable', { exact: true })).toBeVisible()
+  await expect(page.getByTitle('Retry')).toBeVisible()
+  await expect(page.getByText('Gateway is ready.', { exact: true })).toBeVisible()
+
+  ready = false
+  await page.reload()
+  await expect(page.getByText('Gateway unavailable', { exact: true })).toBeVisible()
+  await expect(page.getByText('Not ready at /api/ready', { exact: false })).toBeVisible()
+  await expect(page.getByText('fixture maintenance', { exact: true })).toBeVisible()
+  await expect(page.getByText('Gateway is running but not ready.', { exact: true })).toBeVisible()
+})
+
+test('notifications show empty and error log states @S-120.6', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
+  await page.addInitScript((id) => localStorage.setItem('kb.workflow.projectId', id), projectId)
+  let sendError = false
+  await page.route('**/logs/stream**', route => {
+    const event = sendError
+      ? `event: log\ndata: ${JSON.stringify({
+        id: 'fixture-log-1206',
+        time: new Date().toISOString(),
+        level: 'error',
+        msg: 'fixture notification failure',
+        plugin: '@kb-labs/workflow',
+        executionId: '0123456789abcdef',
+      })}\n\n`
+      : ''
+    return route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
+      body: event,
+    })
+  })
+  await openAdminStudio(page)
+  const bell = page.locator('button').filter({ has: page.locator('svg.lucide-bell') })
+  await bell.click()
+  await expect(page.getByText('No critical logs', { exact: true })).toBeVisible()
+
+  sendError = true
+  await page.reload()
+  await bell.click()
+  await expect(page.getByText('ERROR', { exact: true })).toBeVisible()
+  await expect(page.getByText('fixture notification failure', { exact: true })).toBeVisible()
+  await expect(page.getByText('@kb-labs/workflow', { exact: true })).toBeVisible()
+  await expect(page.getByText('exec: 01234567', { exact: true })).toBeVisible()
+  await page.getByText('fixture notification failure', { exact: true }).click()
+  await expect(page).toHaveURL(/\/observability\/logs\/fixture-log-1206$/)
+})
+
+test('project selector scopes plugin attachments @S-046.1 @S-046.2 @S-046.3', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project A').toBeTruthy()
+  const projectBId = process.env.KB_STUDIO_PROJECT_B_ID
+  const projectAName = process.env.KB_STUDIO_PROJECT_A_NAME
+  const projectBName = process.env.KB_STUDIO_PROJECT_B_NAME
+  expect(projectBId, 'KB_STUDIO_PROJECT_B_ID must identify the registered project B').toBeTruthy()
+  expect(projectAName, 'KB_STUDIO_PROJECT_A_NAME must come from real fixture setup').toBeTruthy()
+  expect(projectBName, 'KB_STUDIO_PROJECT_B_NAME must come from real fixture setup').toBeTruthy()
+  await page.addInitScript((id) => localStorage.setItem('kb.workflow.projectId', id), projectId)
+  await openAdminStudio(page)
+  await page.goto(`${GATEWAY}/plugins`)
+  await expect(page.getByRole('heading', { name: 'Plugins', exact: true })).toBeVisible()
+  await expect(page.getByText('@kb-labs/workflow', { exact: true })).toBeVisible()
+  await expect(page.getByText(projectAName!, { exact: true }).first()).toBeVisible()
+  await expect(page.getByRole('row')).toHaveCount(2)
+  await expect(page.getByText(/adapter settings/i)).toHaveCount(0)
+  await page.getByRole('combobox', { name: 'Active project' }).click()
+  await page.getByRole('option', { name: projectBName!, exact: true }).click()
+  await page.goto(`${GATEWAY}/plugins`)
+  await expect(page.getByRole('heading', { name: 'Plugins', exact: true })).toBeVisible()
+  await expect(page.getByText('@kb-labs/commit', { exact: true })).toBeVisible()
+  await expect(page.getByText(projectBName!, { exact: true }).first()).toBeVisible()
+  await expect(page.getByRole('row')).toHaveCount(2)
+  await expect(page.getByText(/adapter settings/i)).toHaveCount(0)
+})
+
+async function openGreetDefinitions(page: import('@playwright/test').Page) {
+  expect(process.env.KB_STUDIO_GREET_WORKFLOW_ID, 'Studio fixture must install greet').toBe('greet')
+  await page.addInitScript((id) => localStorage.setItem('kb.workflow.projectId', id), projectId)
+  await openAdminStudio(page)
+  await page.goto(`${GATEWAY}/p/workflows/definitions`)
+  return page.getByRole('row').filter({ hasText: 'greet' })
+}
+
+test('greet run form identifies required name @S-022.1', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  const row = await openGreetDefinitions(page)
+  await expect(row).toBeVisible()
+  await row.getByRole('button', { name: 'Run' }).click()
+  await expect(page.getByText('Run Workflow: greet', { exact: true })).toBeVisible()
+  await expect(page.getByText('name', { exact: true })).toBeVisible()
+  await expect(page.getByText('*', { exact: true })).toBeVisible()
+})
+
+test('greet run submits Ada and opens a run @S-022.2', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  const row = await openGreetDefinitions(page)
+  await row.getByRole('button', { name: 'Run' }).click()
+  await page.getByLabel('name').fill('Ada')
+  await page.getByRole('button', { name: 'Run', exact: true }).last().click()
+  await expect(page).toHaveURL(/\/p\/workflows\/runs\/.+/, { timeout: 30_000 })
+  await expect(page.getByText(/Run [\w-]{8,}/).first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText(/Queued|Pending|Running|Success/i).first()).toBeVisible()
+})
+
+test('greet details show Ada input and successful output @S-022.3', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  const row = await openGreetDefinitions(page)
+  await row.getByRole('button', { name: 'Run' }).click()
+  await page.getByLabel('name').fill('Ada')
+  await page.getByRole('button', { name: 'Run', exact: true }).last().click()
+  await expect(page).toHaveURL(/\/p\/workflows\/runs\/.+/, { timeout: 30_000 })
+  const runId = new URL(page.url()).pathname.split('/').at(-1)!
+  await expect(page.getByRole('heading', { name: 'greet', exact: true })).toBeVisible()
+  await expect(page.getByText(`Run ${runId.slice(0, 12)}...`, { exact: true })).toBeVisible()
+  await expect(page.getByText('Success', { exact: true })).toBeVisible({ timeout: 60_000 })
+  await page.getByRole('button', { name: 'Engineering', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Inputs', exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: 'Inputs', exact: true }).click()
+  await expect(page.getByText(/name\s*:?\s*Ada/i)).toBeVisible()
+  await expect(page.getByText('Ada', { exact: false }).last()).toBeVisible()
+})
+
+test('greet keeps form open and creates no run with empty name @S-022.4', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the fresh-install journey hook')
+  const row = await openGreetDefinitions(page)
+  await row.getByRole('button', { name: 'Run' }).click()
+  await expect(page.getByText('Run Workflow: greet', { exact: true })).toBeVisible()
+  const runRequests: string[] = []
+  page.on('request', request => {
+    if (request.method() === 'POST' && /workflows\/greet\/runs/.test(request.url())) runRequests.push(request.url())
+  })
+  await page.getByRole('button', { name: 'Run', exact: true }).last().click()
+  await expect(page.getByText('Run Workflow: greet', { exact: true })).toBeVisible()
+  await expect(page.getByText('name', { exact: true })).toBeVisible()
+  expect(runRequests).toHaveLength(0)
 })
 
 async function openCrons(page: import('@playwright/test').Page) {

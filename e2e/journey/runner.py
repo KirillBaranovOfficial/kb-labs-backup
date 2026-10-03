@@ -16,6 +16,7 @@ from pathlib import Path
 
 from studio_steps import (create_studio_access_tokens, create_studio_environment,
                           create_studio_member, run_studio_browser_step)
+from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
 from release_index import channel_platform_version, stable_platform_version
@@ -1172,6 +1173,14 @@ def main():
             "KB_STUDIO_PROJECT_A_NAME": project_name,
             "KB_STUDIO_PROJECT_B_NAME": project_b_root.name,
         })
+        try:
+            studio_env.update(prepare_studio_fixtures(
+                service_env,
+                project_a=PROJECT,
+                project_b=project_b_root,
+            ))
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+            fail(f"Studio fixture setup: {error}")
         if service_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID") and service_env.get("KB_STUDIO_HEALTHY_PROJECT_RUN_ID"):
             studio_env["KB_STUDIO_DIAGNOSTIC_PROJECT"] = project_name
             studio_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = service_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"]
