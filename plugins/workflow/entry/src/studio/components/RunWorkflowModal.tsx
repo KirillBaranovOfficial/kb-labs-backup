@@ -23,6 +23,33 @@ import type { WorkflowInfo } from '@kb-labs/workflow-contracts';
 
 type InputField = NonNullable<WorkflowInfo['inputs']>[string];
 
+export function requiredInputErrors(
+  inputs: Record<string, InputField>,
+  values: Record<string, unknown>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(inputs)
+      .filter(([name, schema]) => {
+        const value = Object.hasOwn(values, name) ? values[name] : schema.default;
+        return schema.required && (
+          value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
+        );
+      })
+      .map(([name]) => [name, `${name} is required`]),
+  );
+}
+
+export function runWithRequiredInputs(
+  workflowId: string,
+  inputs: Record<string, InputField>,
+  values: Record<string, unknown>,
+  onRun: (workflowId: string, values: Record<string, unknown>) => void,
+): Record<string, string> {
+  const errors = requiredInputErrors(inputs, values);
+  if (Object.keys(errors).length === 0) {onRun(workflowId, values)}
+  return errors;
+}
+
 interface RunWorkflowModalBaseProps {
   open: boolean;
   onClose: () => void;
@@ -42,25 +69,29 @@ interface MultiWorkflowProps extends RunWorkflowModalBaseProps {
 
 export type RunWorkflowModalProps = SingleWorkflowProps | MultiWorkflowProps;
 
-function DynamicField({
+export function DynamicField({
   name,
   schema,
   value,
+  error,
   onChange,
 }: {
   name: string;
   schema: InputField;
   value: unknown;
+  error?: string;
   onChange: (val: unknown) => void;
 }) {
+  const inputId = `workflow-input-${name}`;
+  const errorId = `${inputId}-error`;
   const label = (
     <UISpace className="gap-tight" style={{ marginBottom: 4 }}>
-      <UITypographyText className="typo-label">
+      <label className="typo-label" htmlFor={inputId}>
         {name}
         {schema.required && (
-          <span style={{ color: 'var(--color-error)', marginLeft: 2 }}>*</span>
+          <span aria-hidden="true" style={{ color: 'var(--color-error)', marginLeft: 2 }}>*</span>
         )}
-      </UITypographyText>
+      </label>
       {schema.description && (
         <UITypographyText className="typo-caption text-tertiary">
           — {schema.description}
@@ -75,10 +106,14 @@ function DynamicField({
         {label}
         <div>
           <UISwitch
+            id={inputId}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
             checked={value !== undefined ? Boolean(value) : (schema.default as boolean ?? false)}
             onChange={onChange}
           />
         </div>
+        {error && <div id={errorId} role="alert" style={{ color: 'var(--color-error)' }}>{error}</div>}
       </div>
     );
   }
@@ -88,11 +123,15 @@ function DynamicField({
       <div style={{ marginBottom: 16 }}>
         {label}
         <UIInputNumber
+          id={inputId}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
           style={{ width: '100%' }}
           value={value as number | undefined}
           placeholder={schema.default !== undefined ? String(schema.default) : undefined}
           onChange={onChange}
         />
+        {error && <div id={errorId} role="alert" style={{ color: 'var(--color-error)' }}>{error}</div>}
       </div>
     );
   }
@@ -101,10 +140,14 @@ function DynamicField({
     <div style={{ marginBottom: 16 }}>
       {label}
       <UIInput
+        id={inputId}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
         value={value as string | undefined}
         placeholder={schema.default !== undefined ? String(schema.default) : undefined}
         onChange={(val) => onChange(val)}
       />
+      {error && <div id={errorId} role="alert" style={{ color: 'var(--color-error)' }}>{error}</div>}
     </div>
   );
 }
@@ -119,6 +162,7 @@ export function RunWorkflowModal(props: RunWorkflowModalProps) {
   const [jsonValue, setJsonValue] = React.useState('{}');
   const [jsonError, setJsonError] = React.useState<string | null>(null);
   const [fieldValues, setFieldValues] = React.useState<Record<string, unknown>>({});
+  const [requiredErrors, setRequiredErrors] = React.useState<Record<string, string>>({});
 
   // Resolve the active workflow
   const activeWorkflow: WorkflowInfo | null = isMulti
@@ -133,6 +177,7 @@ export function RunWorkflowModal(props: RunWorkflowModalProps) {
     if (open) {
       setJsonValue('{}');
       setJsonError(null);
+      setRequiredErrors({});
       if (!isMulti) {
         setSelectedId(undefined);
       }
@@ -155,6 +200,7 @@ export function RunWorkflowModal(props: RunWorkflowModalProps) {
     if (!isMulti || !selectedId) {return;}
     setJsonValue('{}');
     setJsonError(null);
+    setRequiredErrors({});
     if (inputs) {
       const defaults: Record<string, unknown> = {};
       for (const [key, schema] of Object.entries(inputs)) {
@@ -186,7 +232,9 @@ export function RunWorkflowModal(props: RunWorkflowModalProps) {
   const handleRun = () => {
     if (!activeWorkflow) {return;}
     if (hasSchema) {
-      onRun(activeWorkflow.id, fieldValues);
+      const errors = runWithRequiredInputs(activeWorkflow.id, inputs!, fieldValues, onRun);
+      setRequiredErrors(errors);
+      return;
     } else {
       const trimmed = jsonValue.trim();
       if (!trimmed || trimmed === '{}') {
@@ -266,7 +314,15 @@ export function RunWorkflowModal(props: RunWorkflowModalProps) {
               name={key}
               schema={schema}
               value={fieldValues[key]}
-              onChange={(val) => setFieldValues((prev) => ({ ...prev, [key]: val }))}
+              error={requiredErrors[key]}
+              onChange={(val) => {
+                setFieldValues((prev) => ({ ...prev, [key]: val }));
+                setRequiredErrors((prev) => {
+                  const next = { ...prev };
+                  delete next[key];
+                  return next;
+                });
+              }}
             />
           ))}
         </div>

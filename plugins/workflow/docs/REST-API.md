@@ -78,7 +78,7 @@ If not set, Jobs/Cron APIs will use noop implementations (throw "not available" 
 {
   "id": "run_abc123",
   "type": "pluginId:jobId",
-  "status": "completed",
+  "status": "success",
   "tenantId": "default",
   "createdAt": "2025-01-21T10:00:00Z",
   "startedAt": "2025-01-21T10:00:01Z",
@@ -88,11 +88,13 @@ If not set, Jobs/Cron APIs will use noop implementations (throw "not available" 
 ```
 
 **Status Values:**
-- `pending` - Job queued, not started yet
+- `queued` - Run queued, not started yet
 - `running` - Job currently executing
-- `completed` - Job finished successfully
-- `failed` - Job failed with error
-- `cancelled` - Job was cancelled
+- `success` - Run finished successfully
+- `failed` - Run failed with error
+- `cancelled` - Run was cancelled
+- `skipped` - Run was skipped
+- `dlq` - Run moved to the dead-letter queue
 
 ### Cancel Job
 
@@ -117,7 +119,7 @@ If not set, Jobs/Cron APIs will use noop implementations (throw "not available" 
 
 **Query Parameters:**
 - `type` (optional): Job type pattern (e.g., "plugin:*", "analytics:export")
-- `status` (optional): Filter by status ("pending", "running", "completed", "failed", "cancelled")
+- `status` (optional): Filter by run status ("queued", "running", "success", "failed", "cancelled", "skipped", "dlq")
 - `limit` (optional): Max number of results (default: no limit)
 - `offset` (optional): Pagination offset (default: 0)
 
@@ -128,7 +130,7 @@ If not set, Jobs/Cron APIs will use noop implementations (throw "not available" 
     {
       "id": "run_abc123",
       "type": "pluginId:jobId",
-      "status": "completed",
+      "status": "success",
       "tenantId": "default",
       "createdAt": "2025-01-21T10:00:00Z",
       "startedAt": "2025-01-21T10:00:01Z",

@@ -1,5 +1,6 @@
 import { defineCommand, handleError, type PluginContextV3, type CLIInput, type CommandResult } from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
+import { workflowCommandError } from './errors.js';
 
 export interface CronEnabledFlags { json?: boolean }
 
@@ -13,10 +14,8 @@ export function createCronEnabledCommand(enabled: boolean) {
         const id = input.argv?.[0];
         const outputJson = input.flags?.json ?? false;
         if (!id) {
-          const message = `Missing cron id. Usage: kb workflow crons ${action} <id>`;
-          if (outputJson) { ctx.ui?.json?.({ ok: false, error: message }); }
-          else { ctx.ui?.error?.(message); }
-          return { ok: false, error: message };
+          workflowCommandError(ctx, 'KB_RUNTIME_INPUT_INVALID', 'Missing cron ID.', `Run kb workflow crons ${action} --help to see the required arguments.`, outputJson);
+          return { ok: false, error: 'Command failed' };
         }
         try {
           const result = await new WorkflowDaemonClient().setCronEnabled(id, enabled);
@@ -26,10 +25,8 @@ export function createCronEnabledCommand(enabled: boolean) {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (message.startsWith('CRON_PLUGIN_READ_ONLY:')) {
-            const text = `${message}. Plugin crons are read-only; list schedules with: kb workflow crons list`;
-            if (outputJson) { ctx.ui?.json?.({ ok: false, error: text, code: 'CRON_PLUGIN_READ_ONLY' }); }
-            else { ctx.ui?.error?.(text); }
-            return { ok: false, error: text };
+            workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'Plugin cron schedules are read-only.', 'List available schedules with: kb workflow crons list', outputJson, message);
+            return { ok: false, error: 'Command failed' };
           }
           handleError(ctx, error, outputJson);
           if (!outputJson) { ctx.ui?.warn?.(`Run: kb workflow crons ${action} ${id}`); }

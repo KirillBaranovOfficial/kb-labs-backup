@@ -2,7 +2,8 @@
  * workflow:run command - Run workflow by workflow ID
  */
 
-import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import type { WorkflowRunRequest } from '@kb-labs/workflow-contracts';
 import { WorkflowDaemonClient } from '../http-client.js';
 
@@ -23,7 +24,17 @@ function parseJsonInput(value: string | undefined): unknown {
   if (!value) {
     return undefined;
   }
-  return JSON.parse(value);
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw inputError('The --input value is not valid JSON.', 'Pass valid JSON with `--input`, then retry `kb workflow run`.');
+  }
+}
+
+function inputError(message: string, hint: string): Error & { envelope: ReturnType<typeof createErrorEnvelope> } {
+  const error = new Error(message) as Error & { envelope: ReturnType<typeof createErrorEnvelope> };
+  error.envelope = createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', { message, hint });
+  return error;
 }
 
 function parseIsolation(value: string | undefined): WorkflowRunRequest['isolation'] {
@@ -33,7 +44,7 @@ function parseIsolation(value: string | undefined): WorkflowRunRequest['isolatio
   if (value === 'strict' || value === 'balanced' || value === 'relaxed') {
     return value;
   }
-  throw new Error(`Invalid isolation value: ${value}. Expected strict|balanced|relaxed`);
+  throw inputError(`Invalid isolation value: ${value}. Expected strict|balanced|relaxed.`, 'Use `--isolation=strict`, `--isolation=balanced`, or `--isolation=relaxed`.');
 }
 
 function parseTriggerType(value: string | undefined): WorkflowRunRequest['trigger'] {
@@ -43,7 +54,7 @@ function parseTriggerType(value: string | undefined): WorkflowRunRequest['trigge
   if (value === 'manual') {
     return { type: value };
   }
-  throw new Error(`Invalid trigger type: ${value}. Expected manual`);
+  throw inputError(`Invalid trigger type: ${value}. Expected manual.`, 'Use `--trigger-type=manual`; schedules are created with `kb workflow cron`.');
 }
 
 export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>({
@@ -56,7 +67,7 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
       const workflowId = input.flags['workflow-id'];
 
       if (!workflowId) {
-        validationError(ctx, 'Missing required flag: --workflow-id', 'Usage: kb workflow:run --workflow-id <id>', outputJson);
+        handleError(ctx, inputError('Missing required flag: --workflow-id.', 'Run `kb workflow run --help` to see the required flags.'), outputJson);
         return { ok: false, error: 'Command failed' };
       }
 

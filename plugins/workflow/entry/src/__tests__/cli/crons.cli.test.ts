@@ -45,6 +45,6 @@ describe('workflow crons CLI', () => {
     const { ui, captured } = createCapturedUI();
     const result = await enableCommand.execute(createMockContext({ ui }), mockCLIInput({ argv: ['plugin:qa:cleanup'], flags: { json: true } }));
     expect(result.ok).toBe(false);
-    expect(captured.json[0]).toMatchObject({ ok: false, code: 'CRON_PLUGIN_READ_ONLY' });
+    expect(captured.json[0]).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', hint: expect.any(String) } });
   });
 });

@@ -76,7 +76,7 @@ describe('workflow:runs watch', () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
         ...defaultWorkflowClient,
-        listRuns: async () => [{ id: 'run-latest', name: 'deploy', status: 'running' as const, createdAt: new Date().toISOString() }],
+        listRuns: async () => [{ id: 'run-latest', workflowId: 'deploy', name: 'deploy', status: 'running' as const, createdAt: new Date().toISOString() }],
         getRunEventsUrl: (runId: string) => `http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/api/v1/runs/${runId}/events`,
       });
     });
@@ -138,7 +138,7 @@ describe('workflow:runs watch', () => {
     );
 
     expect(captured.json.length).toBeGreaterThan(0);
-    expect((captured.json[0] as { event: unknown }).event).toBeTruthy();
+    expect((captured.json[0] as { data: { event: unknown } }).data.event).toBeTruthy();
   });
 
   it('CW-05: daemon connection refused — error message, exitCode 1', async () => {

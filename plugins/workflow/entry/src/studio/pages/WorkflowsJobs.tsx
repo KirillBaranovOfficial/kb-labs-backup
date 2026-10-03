@@ -19,11 +19,13 @@ import { UIPage, UIPageHeader } from '@kb-labs/sdk/studio';
 import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker';
 
 const STATUS_COLORS: Record<string, string> = {
-  pending: 'default',
+  queued: 'default',
   running: 'processing',
-  completed: 'success',
+  success: 'success',
   failed: 'error',
   cancelled: 'warning',
+  skipped: 'default',
+  dlq: 'error',
 };
 
 export default function WorkflowsJobs() {
@@ -158,11 +160,13 @@ export default function WorkflowsJobs() {
           value={filters.status}
           onChange={(status) => setFilters({ ...filters, status: status as typeof filters.status })}
           options={[
-            { label: 'Pending', value: 'pending' },
+            { label: 'Queued', value: 'queued' },
             { label: 'Running', value: 'running' },
-            { label: 'Completed', value: 'completed' },
+            { label: 'Success', value: 'success' },
             { label: 'Failed', value: 'failed' },
             { label: 'Cancelled', value: 'cancelled' },
+            { label: 'Skipped', value: 'skipped' },
+            { label: 'Dead letter', value: 'dlq' },
           ]}
         />
         <UISelect

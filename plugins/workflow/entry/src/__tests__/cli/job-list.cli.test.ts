@@ -13,7 +13,7 @@ import type { JobStatusInfo } from '@kb-labs/workflow-contracts';
 const MockedClient = vi.mocked(WorkflowDaemonClient);
 const activeJobs: JobStatusInfo[] = [
   { id: 'job-1', type: 'task', status: 'running', createdAt: '2026-10-01T00:00:00Z' },
-  { id: 'job-2', type: 'task', status: 'pending', createdAt: '2026-10-01T00:00:00Z' },
+  { id: 'job-2', type: 'task', status: 'queued', createdAt: '2026-10-01T00:00:00Z' },
 ];
 
 beforeEach(() => MockedClient.mockReset());

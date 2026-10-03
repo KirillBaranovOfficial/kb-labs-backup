@@ -9,6 +9,7 @@
 import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
 import type { WorkflowRunDetail } from '../http-client.js';
 import { WorkflowDaemonClient } from '../http-client.js';
+import { workflowCommandError } from './errors.js';
 import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 
 interface RunsViewFlags {
@@ -326,9 +327,11 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
           sections,
         });
 
-        return failed
-          ? { ok: false, error: 'Workflow run failed' }
-          : { ok: true };
+        if (failed) {
+          workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', `Workflow run ${runId} failed.`, `Inspect its logs with: kb workflow runs-logs ${runId}`, !!jsonFields, run.result?.error?.message);
+          return { ok: false, error: 'Command failed' };
+        }
+        return { ok: true };
       } catch (error) {
         handleError(ctx, error, !!jsonFields);
         return { ok: false, error: 'Command failed' };

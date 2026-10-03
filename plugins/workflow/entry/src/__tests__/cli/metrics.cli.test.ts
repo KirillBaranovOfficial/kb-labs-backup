@@ -13,8 +13,8 @@ import metricsCommand from '../../commands/metrics.js';
 const MockedClient = vi.mocked(WorkflowDaemonClient);
 
 const sampleMetrics: WorkflowMetricsData = {
-  runs: { total: 42, queued: 2, running: 3, completed: 35, failed: 2, cancelled: 0 },
-  jobs: { total: 120, queued: 5, running: 8, completed: 100, failed: 7 },
+  runs: { total: 42, queued: 2, running: 3, success: 35, failed: 2, cancelled: 0 },
+  jobs: { total: 120, queued: 5, running: 8, success: 100, failed: 7 },
 };
 
 beforeEach(() => {

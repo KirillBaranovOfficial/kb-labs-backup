@@ -154,7 +154,7 @@ export default function WorkflowDefinitionDetail() {
       width: 100,
       fixed: 'right' as const,
       render: (_: unknown, record: WorkflowRunInfo) => {
-        const canCancel = record.status === 'running' || record.status === 'pending';
+        const canCancel = record.status === 'running' || record.status === 'queued';
         if (!canCancel) {return null;}
         return <CancelRunButton projectId={projectId} runId={record.id} onSuccess={() => void refetch()} />;
       },

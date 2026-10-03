@@ -23,6 +23,7 @@ function makeStep(overrides: Record<string, unknown> = {}) {
 function makeRun(stepOverrides: Record<string, unknown> = {}) {
   return {
     id: 'run-123',
+    metadata: { workflowId: 'approval-test' },
     jobs: [
       {
         id: 'run-123:job-a',
@@ -39,8 +40,8 @@ function createWorkflowServer(runOverride?: Record<string, unknown>) {
     getRun: vi.fn(async (id: string) => (id === run.id ? run : null)),
     resolveApproval: vi.fn(async () => {}),
     getMetrics: vi.fn(async () => ({
-      runs: { total: 0, queued: 0, running: 0, completed: 0, failed: 0, cancelled: 0, dlq: 0 },
-      jobs: { total: 0, queued: 0, running: 0, completed: 0, failed: 0 },
+      runs: { total: 0, queued: 0, running: 0, success: 0, failed: 0, cancelled: 0, dlq: 0 },
+      jobs: { total: 0, queued: 0, running: 0, success: 0, failed: 0 },
     })),
   };
 

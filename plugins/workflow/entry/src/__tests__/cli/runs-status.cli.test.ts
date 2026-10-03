@@ -14,6 +14,7 @@ const MockedClient = vi.mocked(WorkflowDaemonClient);
 
 const sampleRun: WorkflowRunDetail = {
   id: 'r-001',
+  workflowId: 'e2e-hello',
   name: 'e2e-hello',
   status: 'success',
   createdAt: new Date().toISOString(),

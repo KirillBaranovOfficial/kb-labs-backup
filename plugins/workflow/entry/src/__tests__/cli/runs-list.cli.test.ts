@@ -13,8 +13,8 @@ import runsListCommand from '../../commands/runs-list.js';
 const MockedClient = vi.mocked(WorkflowDaemonClient);
 
 const sampleRuns: WorkflowRunSummary[] = [
-  { id: 'r-001', name: 'e2e-hello', status: 'success', createdAt: new Date().toISOString(), durationMs: 1200 },
-  { id: 'r-002', name: 'e2e-world', status: 'running', createdAt: new Date().toISOString() },
+  { id: 'r-001', workflowId: 'e2e-hello', name: 'e2e-hello', status: 'success', createdAt: new Date().toISOString(), durationMs: 1200 },
+  { id: 'r-002', workflowId: 'e2e-world', name: 'e2e-world', status: 'running', createdAt: new Date().toISOString() },
 ];
 
 beforeEach(() => {
@@ -38,6 +38,7 @@ describe('workflow:runs list', () => {
     expect(captured.table[0]!.rows.length).toBe(2);
   });
 
+  // case: S-002.5
   it('CL-02: --json returns array of WorkflowRunSummary', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
@@ -54,6 +55,7 @@ describe('workflow:runs list', () => {
     expect(payload.ok).toBe(true);
     expect(Array.isArray(payload.data)).toBe(true);
     expect(payload.data.length).toBe(2);
+    expect(payload.data[0]).toMatchObject({ id: 'r-001', workflowId: 'e2e-hello', status: 'success' });
   });
 
   it('CL-03: --status running filters by status', async () => {
@@ -140,7 +142,7 @@ describe('workflow:runs list', () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
         listRuns: async () => [
-          { id: 'r-future', name: 'future-run', status: 'running', createdAt: futureDate, startedAt: futureDate },
+          { id: 'r-future', workflowId: 'future-run', name: 'future-run', status: 'running', createdAt: futureDate, startedAt: futureDate },
         ],
       });
     });
@@ -177,7 +179,7 @@ describe('workflow:runs list', () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
         listRuns: async () => [
-          { id: 'r-run', name: 'ci', status: 'running', createdAt: new Date().toISOString(), currentStepName: 'build-image' },
+          { id: 'r-run', workflowId: 'ci', name: 'ci', status: 'running', createdAt: new Date().toISOString(), currentStepName: 'build-image' },
         ],
       });
     });
@@ -195,7 +197,7 @@ describe('workflow:runs list', () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
         listRuns: async () => [
-          { id: 'r-done', name: 'ci', status: 'success', createdAt: new Date().toISOString(), currentStepName: undefined },
+          { id: 'r-done', workflowId: 'ci', name: 'ci', status: 'success', createdAt: new Date().toISOString(), currentStepName: undefined },
         ],
       });
     });
@@ -214,7 +216,7 @@ describe('workflow:runs list', () => {
       return makeClient({
         listRuns: async (params: { status?: string; limit?: number; workflowId?: string } = {}) => {
           expect(params.workflowId).toBe('deploy-prod');
-          return [{ id: 'r-dep', name: 'deploy-prod', status: 'success' as const, createdAt: new Date().toISOString() }];
+          return [{ id: 'r-dep', workflowId: 'deploy-prod', name: 'deploy-prod', status: 'success' as const, createdAt: new Date().toISOString() }];
         },
       });
     });
@@ -234,6 +236,7 @@ describe('workflow:runs list', () => {
         listRuns: async () => [
           {
             id: 'r-approval',
+            workflowId: 'deploy',
             name: 'deploy',
             status: 'running' as const,
             createdAt: new Date().toISOString(),
@@ -257,7 +260,7 @@ describe('workflow:runs list', () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
         listRuns: async () => [
-          { id: 'r-003', name: 'instant', status: 'success' as const, createdAt: new Date().toISOString(), durationMs: 0 },
+          { id: 'r-003', workflowId: 'instant', name: 'instant', status: 'success' as const, createdAt: new Date().toISOString(), durationMs: 0 },
         ],
       });
     });

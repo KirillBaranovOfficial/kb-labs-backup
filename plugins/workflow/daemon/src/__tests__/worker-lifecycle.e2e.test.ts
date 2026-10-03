@@ -61,7 +61,7 @@ describe('workflow worker lifecycle', () => {
         attempt: 0,
         steps: [{
           id: 'step-1',
-          status: 'pending',
+          status: 'queued',
           spec: { uses: 'plugin:test/handler', with: { key: 'value' } },
         }],
       }],
@@ -129,6 +129,73 @@ describe('workflow worker lifecycle', () => {
     expect(call.workspace).toBe('/tmp/test-workspace');
   });
 
+  it('persists workflow identity when a worker starts a child workflow', async () => {
+    const runId = 'parent-run';
+    const childRunId = 'child-run';
+    const finished = createDeferred<void>();
+    const parentRun: any = {
+      id: runId,
+      name: 'parent-name-is-not-identity',
+      tenantId: 'default',
+      env: {},
+      metadata: { workflowId: 'parent-workflow' },
+      trigger: { type: 'manual', actor: 'tester' },
+      jobs: [{
+        id: 'parent-job',
+        jobName: 'main',
+        status: 'queued',
+        attempt: 0,
+        steps: [{
+          id: 'child-step',
+          status: 'queued',
+          spec: { uses: 'workflow:workspace:child-workflow', with: { name: 'Ada' } },
+        }],
+      }],
+    };
+    const runFromSpec = vi.fn(async (_spec: unknown, _input: unknown) => ({ id: childRunId, status: 'queued' }));
+    let queueDrained = false;
+    const engine: any = {
+      maxWorkflowDepth: 4,
+      async nextJob() {
+        if (queueDrained) {return null;}
+        queueDrained = true;
+        return { runId, jobId: 'parent-job' };
+      },
+      async getRun(requestedRunId: string) { return requestedRunId === runId ? parentRun : null; },
+      runFromSpec,
+      async markStepWaitingChild(...args: unknown[]) { finished.resolve(); return args; },
+      async reconcileChildInvocation() {},
+      async markJobStarted() {},
+      async markStepStarted() {},
+      async markJobFailed(_runId: string, _jobId: string, error: Error) { finished.reject(error); },
+      getStateStore: vi.fn(() => ({ updateStep: vi.fn(async () => {}) })),
+    };
+    const worker = await createWorkflowWorker({
+      engine,
+      workflowService: { get: vi.fn(async () => ({ input: {
+        name: 'child-workflow', version: '1.0.0', on: { manual: true }, jobs: { main: { runsOn: 'local', steps: [] } },
+      } })) } as any,
+      cliApi: {} as any,
+      logger: mockLogger(),
+      workspaceRoot: '/tmp/test-workspace',
+      platform: {
+        executionBackend: { execute: vi.fn() } as any,
+        hasExecutionBackend: true,
+        getAdapter: vi.fn().mockReturnValue(undefined),
+      },
+      concurrency: 1,
+    });
+
+    const startPromise = worker.start();
+    await finished.promise;
+    await worker.stop();
+    await startPromise;
+
+    expect(runFromSpec).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({
+      metadata: expect.objectContaining({ workflowId: 'child-workflow' }),
+    }));
+  });
+
   it('passes target hint from workflow spec to runner', async () => {
     const runId = `run-target-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
@@ -147,7 +214,7 @@ describe('workflow worker lifecycle', () => {
         target: undefined,
         steps: [{
           id: 'step-1',
-          status: 'pending',
+          status: 'queued',
           spec: { uses: 'plugin:test/handler' },
         }],
       }],
@@ -285,7 +352,7 @@ describe('workflow worker lifecycle', () => {
         attempt: 0,
         steps: [{
           id: 'step-1',
-          status: 'pending',
+          status: 'queued',
           spec: { uses: 'plugin:test/handler' },
         }],
       }],
@@ -369,7 +436,7 @@ describe('workflow worker lifecycle', () => {
         attempt: 0,
         steps: [{
           id: 'step-1',
-          status: 'pending',
+          status: 'queued',
           spec: {
             uses: 'builtin:shell',
             with: { command: 'echo "${{ inputs.title }}"' },
@@ -457,7 +524,7 @@ describe('workflow worker lifecycle', () => {
         attempt: 0,
         steps: [{
           id: 'step-1',
-          status: 'pending',
+          status: 'queued',
           spec: {
             uses: 'builtin:shell',
             with: {
@@ -538,7 +605,7 @@ describe('workflow worker lifecycle', () => {
         attempt: 0,
         steps: [{
           id: 'step-1',
-          status: 'pending',
+          status: 'queued',
           spec: { uses: 'plugin:test/handler', with: { number: '${{ inputs.issueNumber }}' } },
         }],
       }],
@@ -618,12 +685,12 @@ describe('workflow worker lifecycle', () => {
 
     const approvalStep: any = {
       id: 'step-approval',
-      status: 'pending',
+      status: 'queued',
       spec: { id: 'approval', uses: 'builtin:approval', with: { message: 'Approve?' } },
     };
     const actionStep: any = {
       id: 'step-action',
-      status: 'pending',
+      status: 'queued',
       spec: { uses: 'plugin:test/handler', with: {} },
     };
 
@@ -744,8 +811,8 @@ describe('workflow worker lifecycle', () => {
         status: 'queued',
         attempt: 0,
         steps: [
-          { id: 'step-1', status: 'pending', spec: { uses: 'plugin:test/handler', with: {} } },
-          { id: 'step-2', status: 'pending', spec: { uses: 'plugin:test/handler', with: {} } },
+          { id: 'step-1', status: 'queued', spec: { uses: 'plugin:test/handler', with: {} } },
+          { id: 'step-2', status: 'queued', spec: { uses: 'plugin:test/handler', with: {} } },
         ],
       }],
     };
@@ -847,12 +914,12 @@ describe('workflow worker lifecycle', () => {
         steps: [
           {
             id: 'step-1',
-            status: 'pending',
+            status: 'queued',
             spec: { uses: 'plugin:test/handler', with: {} },
           },
           {
             id: 'step-2',
-            status: 'pending',
+            status: 'queued',
             spec: { uses: 'plugin:test/handler', with: {} },
           },
         ],

@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { defineCommand, handleError, type CLIInput, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { workflowCommandError } from './errors.js';
 
 interface InitFlags { json?: boolean; }
 
@@ -38,10 +39,8 @@ export default defineCommand<unknown, CLIInput<InitFlags>, unknown>({
         return { ok: true, result };
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
-          const message = 'Workflow file already exists: .kb/workflows/hello.yml';
-          if (input.flags.json) { ctx.ui?.json?.({ ok: false, error: message }); }
-          else { ctx.ui?.error?.(`${message}. Choose another project or rename the existing file.`); }
-          return { ok: false, error: message };
+          workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow init`.', input.flags.json ?? false);
+          return { ok: false, error: 'Command failed' };
         }
         handleError(ctx, error, input.flags.json ?? false);
         return { ok: false, error: 'Could not create workflow example' };

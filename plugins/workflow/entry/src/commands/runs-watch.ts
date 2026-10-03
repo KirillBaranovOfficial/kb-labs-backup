@@ -6,6 +6,7 @@
 
 import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
+import { workflowCommandError } from './errors.js';
 
 interface RunsWatchFlags {
   'run-id'?: string;
@@ -81,7 +82,7 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
               const event = JSON.parse(raw) as { type: string; runId?: string; jobId?: string; stepId?: string; payload?: Record<string, unknown> };
 
               if (outputJson) {
-                ctx.ui?.json?.({ event });
+                ctx.ui?.json?.({ ok: true, data: { event } });
                 continue;
               }
 
@@ -113,9 +114,11 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
               if (event.type === 'run.finished' || event.type === 'run.failed' || event.type === 'run.cancelled') {
                 const finalStatus = event.payload?.['status'] as string ?? event.type.split('.')[1];
                 ctx.ui?.write?.(`Run ${finalStatus.toUpperCase()}. Use 'kb workflow runs-view ${runId}' for details.`);
-                return finalStatus === 'failed'
-                  ? { ok: false, error: 'Workflow run failed' }
-                  : { ok: true };
+                if (finalStatus !== 'success') {
+                  workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', `Workflow run ${runId} ended with status ${finalStatus}.`, `Inspect the run with: kb workflow runs-view ${runId}`, outputJson);
+                  return { ok: false, error: 'Command failed' };
+                }
+                return { ok: true };
               }
             } catch {
               // Ignore malformed events

@@ -38,7 +38,7 @@ describe('workflow job run', () => {
   it('CJR-01: --handler submits job and prints jobId, exitCode 0', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
-        submitJob: async () => ({ id: 'job-abc', status: 'pending' }),
+        submitJob: async () => ({ id: 'job-abc', status: 'queued' }),
       });
     });
 
@@ -50,10 +50,10 @@ describe('workflow job run', () => {
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
-  it('CJR-02: --json returns { ok: true, data: { id, status } }', async () => {
+  it('CJR-02: --json returns { ok: true, data: { id, status: queued } }', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
-        submitJob: async () => ({ id: 'job-abc', status: 'pending' }),
+        submitJob: async () => ({ id: 'job-abc', status: 'queued' }),
       });
     });
 
@@ -65,6 +65,7 @@ describe('workflow job run', () => {
     const payload = captured.json[0] as { ok: boolean; data: { id: string; status: string } };
     expect(payload.ok).toBe(true);
     expect(payload.data.id).toBe('job-abc');
+    expect(payload.data.status).toBe('queued');
   });
 
   it('CJR-03: --input passes parsed JSON to submitJob', async () => {
@@ -73,7 +74,7 @@ describe('workflow job run', () => {
       return makeClient({
         submitJob: async (params) => {
           capturedPayload = params.input;
-          return { id: 'job-xyz', status: 'pending' };
+          return { id: 'job-xyz', status: 'queued' };
         },
       });
     });
@@ -92,22 +93,25 @@ describe('workflow job run', () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
     const result = await jobRunCommand.execute(ctx, mockCLIInput({
-      flags: { handler: 'foo#default', input: '{not-valid-json' },
+      flags: { handler: 'foo#default', input: '{not-valid-json', json: true },
     }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(captured.json[0]).toMatchObject({
+      ok: false,
+      error: { code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) },
+    });
   });
 
   // case: S-185.3
-  it('CJR-05: --wait polls until completed, returns exitCode 0', async () => {
+  it('CJR-05: --wait returns the final success status in the result envelope', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
-        submitJob: async () => ({ id: 'job-wait', status: 'pending' }),
+        submitJob: async () => ({ id: 'job-wait', status: 'queued' }),
         getJobStatus: async () => ({
           id: 'job-wait',
           type: 'workflow',
-          status: 'completed',
+          status: 'success',
           createdAt: new Date().toISOString(),
         }),
       });
@@ -115,25 +119,53 @@ describe('workflow job run', () => {
 
     vi.useFakeTimers();
 
-    const { ui } = createCapturedUI();
+    const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
     const resultPromise = jobRunCommand.execute(ctx, mockCLIInput({
-      flags: { handler: 'foo#default', wait: true },
+      flags: { handler: 'foo#default', wait: true, json: true },
     }));
 
-    await vi.advanceTimersByTimeAsync(2100);
+    await vi.advanceTimersByTimeAsync(120_000);
     const result = await resultPromise;
 
     expect(result.ok).toBe(true);
+    expect(captured.json[0]).toMatchObject({ ok: true, data: { status: 'success' } });
+  });
+
+  it('CJR-05 failure: --wait reports a catalogued failure envelope', async () => {
+    MockedClient.mockImplementation(function MockedClientImplementation() {
+      return makeClient({
+        submitJob: async () => ({ id: 'job-failed', status: 'queued' }),
+        getJobStatus: async () => ({ id: 'job-failed', type: 'workflow', status: 'failed' }),
+      });
+    });
+
+    vi.useFakeTimers();
+    const { ui, captured } = createCapturedUI();
+    const resultPromise = jobRunCommand.execute(
+      createMockContext({ ui }),
+      mockCLIInput({ flags: { handler: 'foo#default', wait: true, json: true } }),
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    expect(captured.json[0]).toMatchObject({
+      ok: false,
+      error: { code: 'KB_RUNTIME_COMMAND_FAILED', hint: expect.any(String) },
+    });
   });
 
   it('CJR-06: missing --handler returns exitCode 1', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    const result = await jobRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
+    const result = await jobRunCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(captured.json[0]).toMatchObject({
+      ok: false,
+      error: { code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) },
+    });
   });
 
   it('CJR-07: daemon unavailable returns exitCode 1', async () => {
