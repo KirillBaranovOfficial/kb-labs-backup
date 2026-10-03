@@ -1,0 +1,143 @@
+{
+  "schema": "kb.create.release-index/v2",
+  "digest": "62eea315ee502a9cce9064a0eeb9b3c5b514dc73d25998060d5acc9f808fef94",
+  "channels": {
+    "stable": "3.2.0"
+  },
+  "compatibility": {
+    "schema": "kb.release-compatibility/2",
+    "labels": [
+      {
+        "id": "platform@3.2.0",
+        "kind": "platform",
+        "artifactId": "platform",
+        "version": "3.2.0",
+        "requires": [
+          {
+            "label": "sdk@3.0.0",
+            "constraint": "\u003e=3.0.0 \u003c4.0.0"
+          }
+        ],
+        "status": "prepared",
+        "validatedBy": [
+          "installer-journey-fixture"
+        ]
+      },
+      {
+        "id": "sdk@3.0.0",
+        "kind": "sdk",
+        "artifactId": "sdk",
+        "version": "3.0.0",
+        "status": "prepared",
+        "validatedBy": [
+          "installer-journey-fixture"
+        ]
+      },
+      {
+        "id": "sdk@3.2.0",
+        "kind": "sdk",
+        "artifactId": "sdk",
+        "version": "3.2.0",
+        "status": "prepared",
+        "validatedBy": [
+          "installer-journey-fixture"
+        ]
+      },
+      {
+        "id": "sdk@4.0.0",
+        "kind": "sdk",
+        "artifactId": "sdk",
+        "version": "4.0.0",
+        "status": "prepared",
+        "validatedBy": [
+          "installer-journey-fixture"
+        ]
+      }
+    ]
+  },
+  "platforms": [
+    {
+      "id": "platform",
+      "version": "3.2.0",
+      "package": "@kb/fixture-platform",
+      "sha256": "fixture-platform-sha256",
+      "tarball": "https://example.test/fixture-platform.tgz",
+      "sdkRange": "\u003e=3.0.0 \u003c4.0.0",
+      "profiles": {
+        "default": {
+          "platformVersion": "3.2.0",
+          "profile": "",
+          "services": null
+        }
+      },
+      "host": {
+        "command": "node_modules/.bin/kb-host",
+        "healthUrl": "http://127.0.0.1:4000/health"
+      },
+      "binaries": [
+        {
+          "id": "kb-create",
+          "os": "darwin",
+          "arch": "amd64",
+          "url": "https://example.test/kb-create",
+          "sha256": "fixture-binary-sha256",
+          "filename": "kb-create"
+        }
+      ]
+    }
+  ],
+  "sdks": [
+    {
+      "id": "sdk",
+      "version": "3.0.0",
+      "package": "@kb/fixture-sdk",
+      "sha256": "fixture-sdk-3.0.0",
+      "tarball": "https://example.test/fixture-sdk-3.0.0.tgz"
+    },
+    {
+      "id": "sdk",
+      "version": "3.2.0",
+      "package": "@kb/fixture-sdk",
+      "sha256": "fixture-sdk-3.2.0",
+      "tarball": "https://example.test/fixture-sdk-3.2.0.tgz"
+    },
+    {
+      "id": "sdk",
+      "version": "4.0.0",
+      "package": "@kb/fixture-sdk",
+      "sha256": "fixture-sdk-4.0.0",
+      "tarball": "https://example.test/fixture-sdk-4.0.0.tgz"
+    }
+  ],
+  "plugins": [
+    {
+      "id": "fixture-compat",
+      "version": "1.0.0",
+      "package": "@kb/fixture-compat",
+      "sha256": "fixture-compat",
+      "tarball": "https://example.test/fixture-compat-1.0.0.tgz",
+      "platformRange": "\u003c3.2.0"
+    },
+    {
+      "id": "fixture-plugin",
+      "version": "1.0.0",
+      "package": "@kb/fixture-plugin",
+      "sha256": "fixture-plugin",
+      "tarball": "https://example.test/fixture-plugin-1.0.0.tgz",
+      "platformRange": "\u003c3.2.0"
+    }
+  ],
+  "adapters": [
+    {
+      "id": "fixture-adapter",
+      "version": "1.0.0",
+      "package": "@kb/fixture-adapter",
+      "sha256": "fixture-adapter",
+      "tarball": "https://example.test/fixture-adapter-1.0.0.tgz",
+      "platformRange": "\u003c3.2.0",
+      "provides": [
+        "fixtureCapability"
+      ]
+    }
+  ]
+}

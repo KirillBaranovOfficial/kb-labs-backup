@@ -299,10 +299,13 @@ func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int 
 				// credentials. Those cannot block the explicitly requested file
 				// repair, and remain visible in the resulting findings.
 				unresolvedRequiredInput = len(response.Repair.RequiredInput) > 0
-				response.Repair.RequiredInput = nil
+			}
+			repairPlan := response.Repair
+			if projectionRepairRequested {
+				repairPlan.RequiredInput = nil
 			}
 			var fixErr error
-			snapshot, fixErr = runtime.DoctorFix(root, response.Repair, runtime.Dependencies{})
+			snapshot, fixErr = runtime.DoctorFix(root, repairPlan, runtime.Dependencies{})
 			return snapshot.ID, fixErr
 		},
 		Restore: func(_ context.Context, id string) error {
@@ -315,10 +318,11 @@ func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int 
 		return 1
 	}
 	fixOK := !unresolvedRequiredInput
-	write(output, map[string]any{"ok": fixOK, "operation": "doctor-fix", "findings": response.Findings, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning})
-	if !fixOK {
-		return 1
-	}
+	write(output, map[string]any{"ok": fixOK, "operation": "doctor-fix", "findings": response.Findings, "repair": response.Repair, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning})
+	// Safe projection repair is complete even when the repair plan still names
+	// user input. Return through clikit's success boundary so that the structured
+	// repair.requiredInput details remain in data instead of becoming a generic
+	// unhealthy-status error.
 	return 0
 }
 
