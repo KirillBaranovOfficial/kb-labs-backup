@@ -19,6 +19,7 @@ from studio_steps import (create_studio_access_tokens, create_studio_environment
 from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
+from installer_case_steps import run_installer_case_steps, run_uninstall_decline_step
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import Journey, record_runner_failure
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
@@ -883,6 +884,35 @@ def main():
 
     verify_broken_install_doctor(launcher, env)
 
+    if FRONT_DOOR == "agent" and (VARIANT == "default" or VARIANT.endswith("secured")):
+        stable_index = HOME / ".local/share/kb-create/release-index.json"
+        canary_index = HOME / "release-index-canary.json"
+        if not canary_index.is_file():
+            canary_url = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/release-index-canary.json"
+            with invocation_context(step_id="installer.fixture.canary-index"):
+                canary_status, canary_body, _ = open_http(
+                    urllib.request.urlopen, urllib.request.Request(canary_url), timeout=30, env=env)
+            if canary_status != 200:
+                raise RuntimeError(f"GET {canary_url} returned HTTP {canary_status}")
+            canary_index.write_bytes(canary_body)
+        installer_secret = env.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyInstallSecret1!")
+        def installer_command(args: list[str]):
+            installer_env = env.copy()
+            if "--secret-env" in args:
+                installer_env["KB_JOURNEY_ADMIN_PASSWORD"] = installer_secret
+            return run(args, env=installer_env, timeout=1200)[0]
+        installer_case_journey = run_installer_case_steps(
+            mode=mode, launcher=launcher, stable_index=stable_index, canary_index=canary_index,
+            platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command,
+        )
+        installer_case_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
+            f"installer-cases-{mode}.json")
+        installer_case_result = installer_case_journey.write_json(installer_case_report)
+        for step in installer_case_result.steps:
+            CASE_JOURNEY.step(step["name"], step["capability"],
+                              lambda step=step: None if step["status"] == "PASS" else step["message"],
+                              cases=step["cases"])
+
     local_service_journey = FRONT == "agent" and SCENARIO == "explore" and VARIANT == "default"
     secured_service_journey = FRONT == "human" and VARIANT.endswith("secured")
     if BASE_ENV.get("KB_JOURNEY_SERVICE_PROFILE") == "nightly" and (local_service_journey or secured_service_journey):
@@ -1283,6 +1313,19 @@ def main():
     capture_case_failure()
     if FIRST_FAILURE:
         dump_failure_state()
+
+    declined_journey = run_uninstall_decline_step(
+        mode=mode, args=uninstall_args, receipt_path=PLATFORM / ".kb/v2/receipt.json",
+        run_pty=lambda args, on_output: run_pty_command(args, env=env, timeout=120, on_output=on_output),
+    )
+    declined_step = declined_journey.steps[0]
+    CASE_JOURNEY.step(declined_step.name, declined_step.capability,
+                      lambda: None if declined_step.status == "PASS" else declined_step.message,
+                      cases=declined_step.cases)
+    capture_case_failure()
+    if FIRST_FAILURE:
+        dump_failure_state()
+
     if FRONT_DOOR == "human":
         result, _ = run_tty_confirmation(uninstall_args, env=env, timeout=180)
     else:
