@@ -5,24 +5,13 @@
 
 import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
+import type { JobStatusInfo } from '@kb-labs/workflow-contracts';
 
 interface JobsListQuery {
   type?: string;
   status?: string;
   limit?: string;
   offset?: string;
-}
-
-interface JobStatusInfo {
-  id: string;
-  type: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
-  tenantId?: string;
-  createdAt?: string;
-  startedAt?: string;
-  finishedAt?: string;
-  result?: unknown;
-  error?: string;
 }
 
 interface JobListResponse {
@@ -42,6 +31,10 @@ export default defineHandler({
   ): Promise<JobListResponse> {
     const daemonUrl = getWorkflowDaemonUrl();
     const { type, status, limit, offset } = input.query || {};
+    const validStatuses = ['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'dlq'];
+    if (status && !validStatuses.includes(status)) {
+      throw Object.assign(new Error(`Invalid job status: ${status}`), { statusCode: 400, code: 'KB_RUNTIME_INPUT_INVALID' });
+    }
 
     // Build query string
     const params = new URLSearchParams();

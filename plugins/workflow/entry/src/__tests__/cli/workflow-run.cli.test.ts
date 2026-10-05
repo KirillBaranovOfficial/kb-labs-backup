@@ -114,28 +114,32 @@ describe('workflow:run', () => {
   });
 
   it('CR-07: invalid --isolation value returns exitCode 1', async () => {
-    mockRunWorkflow.mockResolvedValue({ runId: 'r-x', status: 'queued' });
-
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
     const result = await workflowRunCommand.execute(
       ctx,
-      mockCLIInput({ flags: { 'workflow-id': 'e2e-hello', isolation: 'invalid-mode' } }),
+      mockCLIInput({ flags: { 'workflow-id': 'e2e-hello', isolation: 'invalid-mode', json: true } }),
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(captured.json[0]).toMatchObject({
+      ok: false,
+      error: { code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) },
+    });
   });
 
   it('rejects cron as a manual trigger type because schedules are cron entities', async () => {
     const { ui, captured } = createCapturedUI();
     const result = await workflowRunCommand.execute(
       createMockContext({ ui }),
-      mockCLIInput({ flags: { 'workflow-id': 'e2e-hello', 'trigger-type': 'cron' } }),
+      mockCLIInput({ flags: { 'workflow-id': 'e2e-hello', 'trigger-type': 'cron', json: true } }),
     );
 
     expect(result.ok).toBe(false);
-    expect([...captured.errors, ...captured.warnings.map(item => item.message)].join(' ')).toContain('Expected manual');
+    expect(captured.json[0]).toMatchObject({
+      ok: false,
+      error: { code: 'KB_RUNTIME_INPUT_INVALID', message: expect.stringContaining('Expected manual'), hint: expect.any(String) },
+    });
     expect(mockRunWorkflow).not.toHaveBeenCalled();
   });
 });

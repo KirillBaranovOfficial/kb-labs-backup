@@ -22,8 +22,8 @@ const GROUPS: { key: string; label: string; statuses: string[]; color: string }[
     color: 'var(--info)',
   },
   {
-    key: 'completed',
-    label: 'Completed',
+    key: 'success',
+    label: 'Success',
     statuses: ['success'],
     color: 'var(--success)',
   },
@@ -36,7 +36,7 @@ const GROUPS: { key: string; label: string; statuses: string[]; color: string }[
   {
     key: 'other',
     label: 'Other',
-    statuses: ['cancelled', 'skipped', 'pending'],
+    statuses: ['cancelled', 'skipped', 'queued'],
     color: 'var(--text-tertiary)',
   },
 ];

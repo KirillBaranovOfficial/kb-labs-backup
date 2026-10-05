@@ -13,6 +13,7 @@ const MockedClient = vi.mocked(WorkflowDaemonClient);
 
 const baseRun = {
   id: 'run-abc',
+  workflowId: 'deploy',
   name: 'deploy',
   status: 'success' as const,
   createdAt: new Date().toISOString(),
@@ -174,7 +175,7 @@ describe('workflow:runs view', () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
       return makeClient({
         ...defaultWorkflowClient,
-        listRuns: async () => [{ id: 'run-latest', name: 'deploy', status: 'success' as const, createdAt: new Date().toISOString() }],
+        listRuns: async () => [{ id: 'run-latest', workflowId: 'deploy', name: 'deploy', status: 'success' as const, createdAt: new Date().toISOString() }],
         getRun: async () => baseRun,
       });
     });

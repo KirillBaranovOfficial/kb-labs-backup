@@ -61,10 +61,11 @@ describe('WorkflowHostService', () => {
     ).rejects.toThrow('Invalid tenant ID format');
   });
 
-  it('maps run to job status response', async () => {
+  it('uses workflow run status in the job status response', async () => {
     const run: WorkflowRun = {
       id: 'run-1',
       name: 'job-mind:rag-query',
+      metadata: { workflowId: 'job-mind:rag-query' },
       version: '1.0.0',
       status: 'success',
       createdAt: new Date().toISOString(),
@@ -80,21 +81,19 @@ describe('WorkflowHostService', () => {
 
     const result = await service.getJob('tenant_1', 'run-1');
     expect(result.id).toBe('run-1');
-    expect(result.status).toBe('completed');
+    expect(result.status).toBe('success');
     expect(result.type).toBe('job-mind:rag-query');
   });
 
-  // BUG-04: `kb workflow runs status --run-id ...` (backed by getRun()) returned
-  // the engine's internal 'success' status verbatim, while the launcher V2 E2E
-  // and the docs poll for a terminal 'completed' — the same status this same
-  // service already returns from getJob/listJobs for the very same run. The
-  // polling loop never exited early and burned all 30 retries.
-  it('getRun maps the engine status to the REST-facing "completed" vocabulary', async () => {
+  // case: S-022.3
+  it('getRun preserves workflow run status and submitted inputs for REST detail', async () => {
     const run: WorkflowRun = {
       id: 'run-1',
       name: 'demo',
+      metadata: { workflowId: 'demo-id' },
       version: '1.0.0',
       status: 'success',
+      inputs: { name: 'Ada' },
       createdAt: new Date().toISOString(),
       queuedAt: new Date().toISOString(),
       jobs: [],
@@ -107,7 +106,27 @@ describe('WorkflowHostService', () => {
     });
 
     const result = await service.getRun('run-1');
-    expect(result?.status).toBe('completed');
+    expect(result).toMatchObject({ workflowId: 'demo-id', status: 'success', inputs: { name: 'Ada' } });
+  });
+
+  it('raises a typed error when a run lacks workflowId metadata', async () => {
+    const service = createService({
+      engine: { getRun: vi.fn(async () => ({ id: 'run-without-workflow-id', name: 'demo' })) },
+    });
+
+    await expect(service.getRun('run-without-workflow-id')).rejects.toMatchObject({
+      code: 'KB_RUNTIME_UNEXPECTED',
+    });
+  });
+
+  it('rejects a run without workflowId when listing user-visible jobs', async () => {
+    const service = createService({
+      engine: { getAllRuns: vi.fn(async () => [{ id: 'run-without-workflow-id', name: 'demo' }]) },
+    });
+
+    await expect(service.listJobs('tenant_1', {})).rejects.toMatchObject({
+      code: 'KB_RUNTIME_UNEXPECTED',
+    });
   });
 
   it('getRunLogs delegates to jobBroker.getRunLogs with stepId filter', async () => {
@@ -167,6 +186,25 @@ describe('WorkflowHostService', () => {
       issueNumber: 29,
       baseBranch: 'main', // default from spec
     });
+    expect(callArg.metadata.workflowId).toBe('wf-1');
+  });
+
+  it.each(['manual', 'api'] as const)('persists workflowId for %s trigger runs', async (triggerType) => {
+    const runFromSpec = vi.fn(async () => ({ id: 'run-1', status: 'queued' }));
+    const service = createService({
+      engine: { runFromSpec },
+      workflowService: {
+        get: vi.fn(async () => ({ id: 'wf-triggered', input: {
+          name: 'triggered', version: '1.0.0', on: { manual: true }, jobs: { main: { runsOn: 'local', steps: [] } },
+        } })),
+      },
+    });
+
+    await service.runWorkflow('wf-triggered', { trigger: { type: triggerType } });
+
+    expect(runFromSpec).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      metadata: expect.objectContaining({ workflowId: 'wf-triggered' }),
+    }));
   });
 
   it('runWorkflow falls back to legacy `input` field (singular)', async () => {
@@ -365,6 +403,7 @@ describe('WorkflowHostService.rerunWorkflow', () => {
     const result = await service.rerunWorkflow('run-src', { failedOnly: false });
 
     expect(result.runId).toBe('run-new');
+    expect((runFromSpec as any).mock.calls[0]?.[1]?.metadata).toMatchObject({ workflowId: 'my-workflow' });
     expect(runFromSpec).toHaveBeenCalledOnce();
     const [specArg] = (runFromSpec as any).mock.calls[0] as [Record<string, unknown>];
     const jobs = specArg['jobs'] as Record<string, unknown>;
@@ -492,6 +531,7 @@ describe('WorkflowHostService.restartRun', () => {
   const makeFinishedRun = (id: string, status: 'failed' | 'success' | 'cancelled') => ({
     id,
     name: 'my-workflow',
+    metadata: { workflowId: 'my-workflow' },
     version: '1.0.0',
     status,
     createdAt: new Date().toISOString(),
@@ -502,7 +542,7 @@ describe('WorkflowHostService.restartRun', () => {
   });
 
   it('RST-HS-01: throws "Cannot restart an active run" when run is running (Bug 1 guard)', async () => {
-    const activeRun = { id: 'run-live', status: 'running' };
+    const activeRun = { id: 'run-live', status: 'running', metadata: { workflowId: 'my-workflow' } };
     const service = createService({
       engine: { getRun: vi.fn(async () => activeRun) },
     });
@@ -513,7 +553,7 @@ describe('WorkflowHostService.restartRun', () => {
   });
 
   it('RST-HS-02: throws "Cannot restart an active run" when run is queued (Bug 1 guard)', async () => {
-    const queuedRun = { id: 'run-queued', status: 'queued' };
+    const queuedRun = { id: 'run-queued', status: 'queued', metadata: { workflowId: 'my-workflow' } };
     const service = createService({
       engine: { getRun: vi.fn(async () => queuedRun) },
     });
@@ -585,6 +625,7 @@ describe('WorkflowHostService.listRuns — hasPendingApproval', () => {
   it('OBS-004: hasPendingApproval is true when a step is waiting_approval', async () => {
     const runWithApproval = {
       id: 'run-approval',
+      metadata: { workflowId: 'task-to-pr' },
       name: 'task-to-pr',
       version: '1.0.0',
       status: 'running',
@@ -620,6 +661,7 @@ describe('WorkflowHostService.listRuns — hasPendingApproval', () => {
   it('OBS-005: hasPendingApproval is false when no steps are waiting_approval', async () => {
     const runNoApproval = {
       id: 'run-clean',
+      metadata: { workflowId: 'task-to-pr' },
       name: 'task-to-pr',
       version: '1.0.0',
       status: 'running',
@@ -654,6 +696,7 @@ describe('WorkflowHostService.listRuns — hasPendingApproval', () => {
   it('OBS-006: currentStepName is the name of the active running step', async () => {
     const run = {
       id: 'run-active',
+      metadata: { workflowId: 'ci' },
       name: 'ci',
       version: '1.0.0',
       status: 'running',
@@ -689,6 +732,7 @@ describe('WorkflowHostService.listRuns — hasPendingApproval', () => {
   it('OBS-007: currentStepName is undefined when all steps are queued (no active step)', async () => {
     const run = {
       id: 'run-queued',
+      metadata: { workflowId: 'ci' },
       name: 'ci',
       version: '1.0.0',
       status: 'running',
@@ -722,6 +766,7 @@ describe('WorkflowHostService.listRuns — hasPendingApproval', () => {
   it('OBS-008: currentStepName is undefined for non-RUNNING runs', async () => {
     const run = {
       id: 'run-done',
+      metadata: { workflowId: 'ci' },
       name: 'ci',
       version: '1.0.0',
       status: 'success',
@@ -752,9 +797,45 @@ describe('WorkflowHostService.listRuns — hasPendingApproval', () => {
     expect(runs[0]?.currentStepName).toBeUndefined();
   });
 
+  // case: S-002.5
+  it('includes workflowId in each run history summary', async () => {
+    const run = {
+      id: 'run-history',
+      name: 'Hello Workflow',
+      version: '1.0.0',
+      status: 'success',
+      createdAt: new Date().toISOString(),
+      queuedAt: new Date().toISOString(),
+      trigger: { type: 'manual' },
+      jobs: [],
+      metadata: { workflowId: 'hello' },
+    };
+
+    const service = createService({ engine: { getAllRuns: vi.fn(async () => [run]) } });
+    const { runs } = await service.listRuns({ workflowId: 'hello' });
+
+    expect(runs[0]).toMatchObject({ id: 'run-history', workflowId: 'hello', status: 'success' });
+  });
+
+  it('uses run status vocabulary when filtering workflow history', async () => {
+    const successRun = {
+      id: 'run-success', name: 'hello', metadata: { workflowId: 'hello' }, version: '1.0.0', status: 'success',
+      createdAt: new Date().toISOString(), queuedAt: new Date().toISOString(),
+      trigger: { type: 'manual' }, jobs: [],
+    };
+    const service = createService({
+      engine: { getAllRuns: vi.fn(async () => [successRun]) },
+      workflowService: { get: vi.fn(async () => ({ name: 'hello' })) },
+    });
+
+    const result = await service.listWorkflowRuns('hello', { status: 'success' });
+    expect(result.runs).toMatchObject([{ id: 'run-success', status: 'success' }]);
+  });
+
   it('OBS-009: parallel jobs — currentStepName shows first active step with overflow count', async () => {
     const run = {
       id: 'run-parallel',
+      metadata: { workflowId: 'ci-parallel' },
       name: 'ci-parallel',
       version: '1.0.0',
       status: 'running',

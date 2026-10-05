@@ -9,6 +9,7 @@
 
 import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
+import { workflowCommandError } from './errors.js';
 import type { RunsApproveFlags } from '../flags.js';
 
 export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
@@ -62,7 +63,7 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
 
           if (pending.length === 0) {
             if (outputJson) {
-              ctx.ui?.json?.({ ok: false, error: 'No pending approvals found for this run' });
+              workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'No pending approvals are available for this run.', `Inspect the run with: kb workflow runs-view ${runId}`, true);
             } else {
               ctx.ui?.error?.('No pending approvals', {
                 title: runId,
@@ -82,7 +83,7 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
           if (pending.length > 1) {
             // Multiple pending — require explicit targeting.
             if (outputJson) {
-              ctx.ui?.json?.({ ok: false, error: 'Multiple pending approvals — specify --job-id and --step-id', pending });
+              workflowCommandError(ctx, 'KB_RUNTIME_INPUT_INVALID', 'Multiple approval steps are waiting.', 'Specify both `--job-id` and `--step-id` to choose one approval.', true);
             } else {
               const items = pending.map(
                 (p, i) =>

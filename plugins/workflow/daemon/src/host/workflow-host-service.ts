@@ -1,5 +1,6 @@
 import type { ILogger } from '@kb-labs/core-platform';
 import type { WorkflowEngine, WorkflowService, WorkflowRuntime } from '@kb-labs/workflow-engine';
+import { requireWorkflowId } from '@kb-labs/workflow-contracts';
 import type {
   CronInfo,
   CronListResponse,
@@ -91,11 +92,12 @@ export class WorkflowHostService {
     if (!run) {
       throw new Error('Job not found');
     }
+    requireWorkflowId(run);
 
     return {
       id: run.id,
       type: run.name,
-      status: mapRunStatusToJobStatus(run.status),
+      status: run.status,
       tenantId: run.tenantId ?? tenantId,
       createdAt: run.createdAt,
       startedAt: run.startedAt,
@@ -130,6 +132,7 @@ export class WorkflowHostService {
     if (!run) {
       throw new Error('Job not found');
     }
+    requireWorkflowId(run);
     return (
       run.jobs?.flatMap((job: JobRun) =>
         job.steps?.map((step: StepRun) => ({
@@ -181,17 +184,20 @@ export class WorkflowHostService {
     const { type, status, limit, offset } = filter;
     const allRuns = (await this.options.engine.getAllRuns()) as WorkflowRun[];
 
-    let jobs: JobStatusInfo[] = allRuns.map((run: WorkflowRun) => ({
-      id: run.id,
-      type: run.name,
-      status: mapRunStatusToJobStatus(run.status),
-      tenantId: run.tenantId ?? tenantId,
-      createdAt: run.createdAt,
-      startedAt: run.startedAt,
-      finishedAt: run.finishedAt,
-      result: run.result,
-      error: run.result?.error?.message,
-    }));
+    let jobs: JobStatusInfo[] = allRuns.map((run: WorkflowRun) => {
+      requireWorkflowId(run);
+      return {
+        id: run.id,
+        type: run.name,
+        status: run.status,
+        tenantId: run.tenantId ?? tenantId,
+        createdAt: run.createdAt,
+        startedAt: run.startedAt,
+        finishedAt: run.finishedAt,
+        result: run.result,
+        error: run.result?.error?.message,
+      };
+    });
 
     if (type) {
       const escaped = type.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
@@ -211,13 +217,16 @@ export class WorkflowHostService {
 
   async listActiveExecutions(): Promise<Array<Record<string, unknown>>> {
     const runs = (await this.options.engine.getActiveExecutions()) as WorkflowRun[];
-    return runs.map((run: WorkflowRun) => ({
-      id: run.id,
-      type: run.name,
-      status: mapRunStatusToJobStatus(run.status),
-      startedAt: run.startedAt,
-      createdAt: run.createdAt,
-    }));
+    return runs.map((run: WorkflowRun) => {
+      requireWorkflowId(run);
+      return {
+        id: run.id,
+        type: run.name,
+        status: run.status,
+        startedAt: run.startedAt,
+        createdAt: run.createdAt,
+      };
+    });
   }
 
   async listWorkflows(options: {
@@ -328,13 +337,11 @@ export class WorkflowHostService {
       throw new Error('Run not found');
     }
 
+    const workflowId = requireWorkflowId(sourceRun);
+
     if (request.failedOnly) {
       return this.rerunFailedOnly(sourceRun.id, sourceRun);
     }
-
-    const workflowId =
-      (sourceRun.metadata as Record<string, unknown> | undefined)?.['workflowId'] as string | undefined
-      ?? sourceRun.name;
 
     const workflowService = this.requireWorkflowService();
     const workflow = await workflowService.get(workflowId);
@@ -444,6 +451,7 @@ export class WorkflowHostService {
     if (!currentRun) {
       throw new Error(`Run not found: ${resolved}`);
     }
+    requireWorkflowId(currentRun as WorkflowRun);
     if (currentRun.status === 'running' || currentRun.status === 'queued') {
       throw new Error(
         `Cannot restart an active run (status: ${currentRun.status}); cancel it first`,
@@ -528,25 +536,10 @@ export class WorkflowHostService {
   ): Promise<WorkflowRunHistoryResponse> {
     const allRuns = (await this.options.engine.getAllRuns()) as WorkflowRun[];
 
-    // Try to resolve workflow name from id for matching
-    let workflowName: string | undefined;
-    if (this.options.workflowService) {
-      const workflow = await this.options.workflowService.get(workflowId);
-      workflowName = workflow?.name;
-    }
+    let runs = allRuns.filter((run) => requireWorkflowId(run) === workflowId);
 
-    let runs = allRuns.filter((run) =>
-      run.name === workflowId ||
-      (workflowName && run.name === workflowName)
-    );
-
-    // Filter against the REST-facing status vocabulary (mapRunStatusToJobStatus),
-    // not the engine's internal 'success'/'skipped'/'dlq' states — filters.status
-    // comes from a query param validated against 'completed' etc. (see
-    // workflow-runs-handler.ts), so comparing it to the raw engine status would
-    // never match.
     if (filters?.status) {
-      runs = runs.filter((run) => mapRunStatusToJobStatus(run.status) === filters.status);
+      runs = runs.filter((run) => run.status === filters.status);
     }
 
     // Sort newest first
@@ -561,7 +554,7 @@ export class WorkflowHostService {
       runs: page.map((run) => ({
         id: run.id,
         workflowId,
-        status: mapRunStatusToJobStatus(run.status) as 'pending' | 'running' | 'completed' | 'failed' | 'cancelled',
+        status: run.status,
         trigger: {
           type: (run.trigger?.type as 'manual' | 'api' | 'cron') ?? 'manual',
           user: run.trigger?.actor,
@@ -600,15 +593,12 @@ export class WorkflowHostService {
     return null;
   }
 
-  async getRun(runId: string): Promise<WorkflowRun | null> {
+  async getRun(runId: string): Promise<(WorkflowRun & { workflowId: string }) | null> {
     const resolved = await this.resolveRunId(runId);
     if (!resolved) { return null; }
     const run = (await this.options.engine.getRun(resolved)) as WorkflowRun | null;
     if (!run) { return null; }
-    // Same REST-facing status mapping as getJob/listJobs/listActiveExecutions
-    // below — `kb workflow runs status` and the launcher V2 E2E both poll
-    // for a terminal 'completed', not the engine's internal 'success'.
-    return { ...run, status: mapRunStatusToJobStatus(run.status) as WorkflowRun['status'] };
+    return { ...run, workflowId: requireWorkflowId(run) };
   }
 
   async listRuns(filters?: {
@@ -616,7 +606,7 @@ export class WorkflowHostService {
     workflowId?: string;
     limit?: number;
     offset?: number;
-  }): Promise<{ runs: Array<WorkflowRun & { hasPendingApproval: boolean; currentStepName?: string }>; total: number }> {
+  }): Promise<{ runs: Array<WorkflowRun & { workflowId: string; hasPendingApproval: boolean; currentStepName?: string }>; total: number }> {
     const allRuns = (await this.options.engine.getAllRuns()) as WorkflowRun[];
 
     let runs = allRuns;
@@ -626,7 +616,7 @@ export class WorkflowHostService {
     }
 
     if (filters?.workflowId) {
-      runs = runs.filter((run) => run.name === filters.workflowId);
+      runs = runs.filter((run) => requireWorkflowId(run) === filters.workflowId);
     }
 
     // Sort newest first
@@ -650,6 +640,7 @@ export class WorkflowHostService {
       }
       return {
         ...run,
+        workflowId: requireWorkflowId(run),
         hasPendingApproval: run.status === 'running' &&
           allSteps.some(s => s.status === 'waiting_approval'),
         currentStepName,
@@ -683,34 +674,6 @@ export class WorkflowHostService {
       throw new Error(CRON_SCHEDULER_NOT_AVAILABLE);
     }
     return this.options.cronScheduler;
-  }
-}
-
-function mapRunStatusToJobStatus(
-  status:
-    | 'queued'
-    | 'running'
-    | 'success'
-    | 'failed'
-    | 'cancelled'
-    | 'skipped'
-    | 'dlq',
-): JobStatus {
-  switch (status) {
-    case 'queued':
-      return 'pending';
-    case 'running':
-      return 'running';
-    case 'success':
-      return 'completed';
-    case 'failed':
-      return 'failed';
-    case 'cancelled':
-      return 'cancelled';
-    case 'skipped':
-      return 'cancelled';
-    case 'dlq':
-      return 'failed';
   }
 }
 

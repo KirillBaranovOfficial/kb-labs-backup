@@ -8,6 +8,7 @@ import { CronExpressionParser } from 'cron-parser';
 import type { ILogger, IAnalytics } from '@kb-labs/core-platform';
 import type { JobBroker } from './job-broker.js';
 import type { WorkflowEngine } from '@kb-labs/workflow-engine';
+import { MissingWorkflowIdError } from '@kb-labs/workflow-contracts';
 import type {
   RegisteredCronJob,
   PluginCronJob,
@@ -251,6 +252,8 @@ export class CronScheduler {
         // User cron job - run workflow directly via WorkflowEngine
         // Create complete WorkflowSpec from user job
         const spec = job.workflowSpec;
+        const workflowId = job.workflowId;
+        if (!workflowId) { throw new MissingWorkflowIdError(job.id); }
 
         this.logger.debug('Running workflow from cron', {
           cronJobId,
@@ -268,6 +271,7 @@ export class CronScheduler {
           inputs: job.workflowInput ?? {},
           env: job.workflowSpec.env ?? {},
           metadata: {
+            workflowId,
             cronId: cronJobId,
             scheduledBy: 'cron',
             scheduledAt: new Date().toISOString(),

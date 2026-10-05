@@ -6,7 +6,7 @@ import type {
   StepRun,
   ExpressionContext,
 } from '@kb-labs/workflow-contracts'
-import { evaluateExpression, resolveExpression } from '@kb-labs/workflow-contracts'
+import { evaluateExpression, requireWorkflowId, resolveExpression } from '@kb-labs/workflow-contracts'
 import {
   EVENT_NAMES,
   WORKFLOW_REDIS_CHANNEL,
@@ -1420,6 +1420,7 @@ export class WorkflowEngine {
 
     // Restore run state
     const restoredRun = snapshot.run
+    requireWorkflowId(restoredRun)
 
     // Restore env if provided
     if (options.env) {
@@ -1588,7 +1589,7 @@ export class WorkflowEngine {
       total: number
       queued: number
       running: number
-      completed: number
+      success: number
       failed: number
       cancelled: number
       dlq: number
@@ -1597,7 +1598,7 @@ export class WorkflowEngine {
       total: number
       queued: number
       running: number
-      completed: number
+      success: number
       failed: number
     }
   }> {
@@ -1609,7 +1610,7 @@ export class WorkflowEngine {
         total: 0,
         queued: 0,
         running: 0,
-        completed: 0,
+        success: 0,
         failed: 0,
         cancelled: 0,
         dlq: 0,
@@ -1618,7 +1619,7 @@ export class WorkflowEngine {
         total: 0,
         queued: 0,
         running: 0,
-        completed: 0,
+        success: 0,
         failed: 0,
       },
     }
@@ -1635,7 +1636,7 @@ export class WorkflowEngine {
       // Count run status
       if (run.status === 'queued') {metrics.runs.queued++}
       else if (run.status === 'running') {metrics.runs.running++}
-      else if (run.status === 'success') {metrics.runs.completed++}
+      else if (run.status === 'success') {metrics.runs.success++}
       else if (run.status === 'failed') {metrics.runs.failed++}
       else if (run.status === 'cancelled') {metrics.runs.cancelled++}
       else if (run.status === 'dlq') {metrics.runs.dlq++}
@@ -1645,7 +1646,7 @@ export class WorkflowEngine {
         metrics.jobs.total++
         if (job.status === 'queued') {metrics.jobs.queued++}
         else if (job.status === 'running') {metrics.jobs.running++}
-        else if (job.status === 'success') {metrics.jobs.completed++}
+        else if (job.status === 'success') {metrics.jobs.success++}
         else if (job.status === 'failed') {metrics.jobs.failed++}
       }
     }

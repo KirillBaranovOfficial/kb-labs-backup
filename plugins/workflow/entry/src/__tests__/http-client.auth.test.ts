@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const gatewayApiFetch = vi.hoisted(() => vi.fn());
-vi.mock('@kb-labs/sdk', () => ({ useEnv: (name: string) => process.env[name] }));
+vi.mock('@kb-labs/sdk', () => ({
+  useEnv: (name: string) => process.env[name],
+  getHostServiceAddress: () => 'http://127.0.0.1:4000',
+}));
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({ gatewayApiFetch }));
 
 import { WorkflowDaemonClient } from '../http-client.js';

@@ -18,6 +18,7 @@ describe('workflow history after daemon restart', () => {
         jobs: { main: { runsOn: 'local', steps: [{ id: 'print', name: 'Print line', uses: 'builtin:shell', with: { command: 'echo persisted-after-restart' } }] } },
       },
       trigger: { type: 'manual' },
+      metadata: { workflowId: 'persisted-workflow' },
     });
     await firstEngine.getStateStore().updateRun(run.id, (draft) => {
       draft.status = 'success';
@@ -40,7 +41,9 @@ describe('workflow history after daemon restart', () => {
     await expect(hostService.listRuns({ workflowId: 'persisted-workflow' })).resolves.toMatchObject({
       total: 1, runs: [{ id: run.id, name: 'persisted-workflow', status: 'success' }],
     });
-    await expect(hostService.getRun(run.id)).resolves.toMatchObject({ id: run.id, status: 'completed' });
+    await expect(hostService.getRun(run.id)).resolves.toMatchObject({
+      id: run.id, workflowId: 'persisted-workflow', status: 'success',
+    });
     await expect(hostService.getRunLogs(run.id)).resolves.toMatchObject([{
       message: 'persisted-after-restart', stepId: run.jobs[0]?.steps[0]?.id,
       stepName: 'Print line', stream: 'stdout',

@@ -560,7 +560,7 @@ describe('WorkflowEngine', () => {
     };
 
     async function createFinishedRun(): Promise<WorkflowRun> {
-      const run = await engine.createRun({ spec: snapshotSpec, trigger: { type: 'manual' } });
+      const run = await engine.createRun({ spec: snapshotSpec, trigger: { type: 'manual' }, metadata: { workflowId: 'snapshot-test' } });
       // Simulate finalizing so snapshot is created
       await engine.finalizeRun(run.id, 'failed', {});
       return (await engine.getRun(run.id))!;
@@ -584,6 +584,7 @@ describe('WorkflowEngine', () => {
       const replayed = await engine.replayRun(original.id);
 
       expect(replayed!.status).toBe('queued');
+      expect(replayed!.metadata?.['workflowId']).toBe('snapshot-test');
       expect(replayed!.startedAt).toBeUndefined();
       expect(replayed!.finishedAt).toBeUndefined();
     });
@@ -678,7 +679,7 @@ describe('WorkflowEngine', () => {
           },
         },
       };
-      const run = await engine.createRun({ spec: multiJobSpec, trigger: { type: 'manual' } });
+      const run = await engine.createRun({ spec: multiJobSpec, trigger: { type: 'manual' }, metadata: { workflowId: 'multi-job-replay' } });
       await engine.finalizeRun(run.id, 'failed', {});
       const original = (await engine.getRun(run.id))!;
 
@@ -717,7 +718,7 @@ describe('WorkflowEngine', () => {
           },
         },
       };
-      const run = await engine.createRun({ spec: multiJobSpec, trigger: { type: 'manual' } });
+      const run = await engine.createRun({ spec: multiJobSpec, trigger: { type: 'manual' }, metadata: { workflowId: 'multi-job-blocking' } });
       await engine.finalizeRun(run.id, 'failed', {});
       const original = (await engine.getRun(run.id))!;
 
@@ -960,13 +961,15 @@ describe('WorkflowEngine', () => {
       'pre-existing behavior (queued jobs were already in cleanupStaleRuns\'s ' +
       'force-fail condition before this rework) — documented here so the ' +
       'exemption\'s exact boundary is explicit rather than assumed.', async () => {
-      const run = await engine.createRun({ spec: approvalSpec, trigger: { type: 'manual' } });
+      const run = await engine.createRun({ spec: approvalSpec, trigger: { type: 'manual' }, metadata: { workflowId: 'approval-flow' } });
       const job = run.jobs[0]!;
       const step = job.steps[0]!;
 
       await engine.markJobStarted(run.id, job.id);
       await engine.markStepWaitingApproval(run.id, job.id, step.id);
       await engine.resolveApproval(run.id, job.id, step.id, 'approve');
+
+      expect((await engine.getRun(run.id))?.metadata?.['workflowId']).toBe('approval-flow');
 
       await engine.cleanupStaleRuns();
 

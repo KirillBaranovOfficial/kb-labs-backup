@@ -28,6 +28,23 @@ import { ViewModeSelector } from '../components/shared/ViewModeSelector'
 const Text = UITypographyText
 const Title = UITitle
 
+export function RunInputs({ inputs }: { inputs?: Record<string, unknown> }) {
+  if (!inputs || Object.keys(inputs).length === 0) {return null}
+  return (
+    <section aria-label="Submitted inputs" style={{ margin: '12px 0 20px' }}>
+      <Title level={4}>Submitted Inputs</Title>
+      <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 12px', margin: 0 }}>
+        {Object.entries(inputs).map(([name, value]) => (
+          <React.Fragment key={name}>
+            <dt style={{ fontWeight: 600 }}>{`${name}:`}</dt>
+            <dd style={{ margin: 0 }}>{typeof value === 'string' ? value : JSON.stringify(value)}</dd>
+          </React.Fragment>
+        ))}
+      </dl>
+    </section>
+  )
+}
+
 // --- GitHub Actions style execution log ---
 
 const STATUS_ICON: Record<string, string> = {
@@ -716,6 +733,8 @@ export default function WorkflowRunDetail() {
               {run.result.summary}
             </Text>
           )}
+
+          <RunInputs inputs={run.inputs} />
 
           {isRunActive && logError && connectionStatus !== 'reconnecting' && (
             <UIAlert variant="warning" message="Reconnecting to event stream…" description="Using polling as fallback" style={{ marginBottom: 12 }} />

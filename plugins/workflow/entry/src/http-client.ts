@@ -11,6 +11,7 @@ import type {
   JobLogsResponse,
   CronListResponse,
   WorkflowInfo,
+  WorkflowRun,
   WorkflowListResponse,
 } from '@kb-labs/workflow-contracts';
 import { getHostServiceAddress, useEnv } from '@kb-labs/sdk';
@@ -21,9 +22,10 @@ import { gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 /** Workflow run summary returned by GET /api/v1/runs */
 export interface WorkflowRunSummary {
   id: string;
+  workflowId: string;
   name: string;
   version?: string;
-  status: 'queued' | 'running' | 'success' | 'failed' | 'cancelled';
+  status: WorkflowRun['status'];
   trigger?: {
     type: string;
     actor?: string;
@@ -83,7 +85,7 @@ export interface WorkflowMetricsData {
     total: number;
     queued: number;
     running: number;
-    completed: number;
+    success: number;
     failed: number;
     cancelled: number;
   };
@@ -91,7 +93,7 @@ export interface WorkflowMetricsData {
     total: number;
     queued: number;
     running: number;
-    completed: number;
+    success: number;
     failed: number;
   };
   [key: string]: unknown;
@@ -285,7 +287,7 @@ export class WorkflowDaemonClient {
     const data = await this.parseJsonResponse<unknown>(response);
     const unwrapped = this.unwrapData<{ jobs?: JobStatusInfo[] }>(data);
     const jobs = unwrapped.jobs ?? [];
-    return jobs.filter((job) => job.status === 'running' || job.status === 'pending');
+    return jobs.filter((job) => job.status === 'running' || job.status === 'queued');
   }
 
   /**
@@ -343,7 +345,7 @@ export class WorkflowDaemonClient {
 
     const payload = await this.parseJsonResponse<unknown>(response);
     const data = this.unwrapData<{ jobId: string }>(payload);
-    return { id: data.jobId, status: 'pending' };
+    return { id: data.jobId, status: 'queued' };
   }
 
   /**

@@ -12,6 +12,7 @@ import type { WorkflowService } from "@kb-labs/workflow-engine";
 import type { IEntityRegistry } from "@kb-labs/core-registry";
 import { logDiagnosticEvent } from "@kb-labs/core-platform";
 import { isTerminal } from "@kb-labs/workflow-constants";
+import { requireWorkflowId } from "@kb-labs/workflow-contracts";
 import type {
   ILogger,
   IAnalytics,
@@ -187,7 +188,7 @@ export async function createWorkflowWorker(
     }
 
     const workflowId = input.workflowRef.slice('workspace:'.length);
-    const parentWorkflowId = (input.parentRun.metadata?.['workflowId'] as string | undefined) ?? input.parentRun.name;
+    const parentWorkflowId = requireWorkflowId(input.parentRun);
     const ancestors = (input.parentRun.metadata?.workflowAncestors as string[] | undefined) ?? [parentWorkflowId];
     if (ancestors.includes(workflowId)) {
       throw new Error(`Child workflow cycle detected: ${[...ancestors, workflowId].join(' -> ')}`);

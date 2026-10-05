@@ -24,9 +24,9 @@ execution result by job ID.
 
 | # | Action | Expected |
 |---|---|---|
-| S-185.1 | Run `kb workflow job run --handler=fixture:background-task --input='{"value":"hello"}' --json` | JSON reports a submitted job with an ID and initial status; the handler receives the parsed input. |
-| S-185.2 | Run `kb workflow job status JOB_ID --json` using the returned ID | JSON reports the job ID, status, handler result or error, and start/finish details once the task completes. |
-| S-185.3 | Run the submission command with `--wait` | The command waits for a terminal job status and reports completion or failure for that job. |
+| S-185.1 | Run `kb workflow job run --handler=fixture:background-task --input='{"value":"hello"}' --json` | JSON reports a submitted job with an ID and initial status `queued`; the handler receives the parsed input. |
+| S-185.2 | Run `kb workflow job status JOB_ID --json` using the returned ID | JSON reports the job ID, a run status (`queued`, `running`, `success`, `failed`, `cancelled`, `skipped`, or `dlq`), handler result or error, and start/finish details once the task completes. |
+| S-185.3 | Run `kb workflow job run --handler=fixture:background-task --input='{"value":"hello"}' --wait --json` | The command waits until a terminal run status. Success returns `{ "ok": true, "data": { "id": "<returned-job-id>", "status": "success" } }`; failure returns `{ "ok": false, "error": <ErrorEnvelope> }` with a catalogued code and hint. |
 | S-185.4 | While the submitted job is active, run `kb workflow job logs JOB_ID --json` | JSON reports the job's log entries. |
 | S-185.5 | While the submitted job is active, run `kb workflow job list --json` | JSON lists the submitted job ID with its current active status. |
 

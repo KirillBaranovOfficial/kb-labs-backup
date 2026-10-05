@@ -443,7 +443,7 @@ function PhaseSection({
 
   const isAllDone = phase.steps.every(s => TERMINAL_STATUSES.has(s.stepRun.status))
   const isActive  = phase.steps.some(s => s.stepRun.status === 'running' || s.stepRun.status === 'waiting_approval')
-  const isPending = phase.steps.every(s => s.stepRun.status === 'queued' || (s.stepRun.status as string) === 'pending')
+  const isPending = phase.steps.every(s => s.stepRun.status === 'queued')
   const failCount = phase.steps.filter(s => s.stepRun.status === 'failed').length
   const doneCount = phase.steps.filter(s => s.stepRun.status === 'success').length
   const totalDuration = phase.steps.reduce((acc, s) => acc + (s.stepRun.durationMs ?? 0), 0)

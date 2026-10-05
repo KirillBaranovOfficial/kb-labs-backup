@@ -69,7 +69,10 @@ export class JobBroker {
     const run = await this.engine.runFromInline(spec, {
       trigger: { type: 'manual' as const },
       env: {},
-      metadata: request.metadata,
+      metadata: {
+        ...request.metadata,
+        workflowId: spec.name,
+      },
     });
 
     this.logger.info('Background job submitted', {

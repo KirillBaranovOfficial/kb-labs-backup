@@ -28,7 +28,7 @@ export default defineCommand<unknown, MetricsInput, unknown>({
             `Total: ${metrics.runs.total}`,
             `Queued: ${metrics.runs.queued}`,
             `Running: ${metrics.runs.running}`,
-            `Completed: ${metrics.runs.completed}`,
+            `Success: ${metrics.runs.success}`,
             `Failed: ${metrics.runs.failed}`,
             `Cancelled: ${metrics.runs.cancelled}`,
           ];
@@ -37,7 +37,7 @@ export default defineCommand<unknown, MetricsInput, unknown>({
             `Total: ${metrics.jobs.total}`,
             `Queued: ${metrics.jobs.queued}`,
             `Running: ${metrics.jobs.running}`,
-            `Completed: ${metrics.jobs.completed}`,
+            `Success: ${metrics.jobs.success}`,
             `Failed: ${metrics.jobs.failed}`,
           ];
 
