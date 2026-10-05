@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -24,6 +26,71 @@ def _data(result: subprocess.CompletedProcess, label: str) -> dict:
         if isinstance(envelope, dict) and envelope.get("ok") is True and isinstance(payload, dict):
             return payload
     raise RuntimeError(f"{label}: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
+
+
+def _payload(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dict]:
+    try:
+        envelope = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{label}: expected JSON output") from error
+    if not isinstance(envelope, dict):
+        raise RuntimeError(f"{label}: expected a JSON object")
+    data = envelope.get("data", envelope)
+    return envelope, data if isinstance(data, dict) else {}
+
+
+def _diagnostic(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dict]:
+    envelope, _ = _payload(result, label)
+    error = envelope.get("error", {})
+    if not isinstance(error, dict):
+        raise RuntimeError(f"{label}: expected a structured error")
+    if "meta" not in error and isinstance(error.get("details"), dict):
+        error["meta"] = error["details"]
+    return envelope, error
+
+
+def _seed_doctor_fixture(source_root: Path, target_root: Path, *, requirement: dict | None = None,
+                         missing_projection: bool = False, receipt_requirement: dict | None = None) -> Path:
+    """Copy a real receipt identity and materialize only its manifest projections."""
+    active = json.loads((source_root / ".kb/v2/receipt.json").read_text())
+    artifacts = active.get("plan", {}).get("artifacts", [])
+    packages = [item for item in artifacts if item.get("kind") != "binary"]
+    if not packages:
+        raise RuntimeError("active receipt has no package artifacts for a doctor fixture")
+    target_root.mkdir(parents=True, exist_ok=True)
+    target_root.joinpath(".kb/v2").mkdir(parents=True, exist_ok=True)
+    target_root.joinpath(".kb/v2/receipt.json").write_text(json.dumps(active, indent=2) + "\n")
+    target_root.joinpath(".kb/kb.config.jsonc").write_text("{}\n")
+    selected = packages[0]
+    if receipt_requirement is not None:
+        selected["config"] = [receipt_requirement]
+        target_root.joinpath(".kb/v2/receipt.json").write_text(json.dumps(active, indent=2) + "\n")
+    for item in packages:
+        package = item["package"]
+        package_root = target_root / "node_modules" / package
+        package_root.mkdir(parents=True, exist_ok=True)
+        (package_root / "package.json").write_text(json.dumps({"name": package, "version": item["version"]}) + "\n")
+        if missing_projection and item is selected:
+            continue
+        manifest = {"schema": "kb.create.artifact-manifest/v2", "id": item["id"],
+                    "package": package, "version": item["version"], "requirements": []}
+        if requirement is not None and item is selected:
+            manifest["requirements"] = [requirement]
+        (package_root / "kb-create.manifest.json").write_text(json.dumps(manifest) + "\n")
+    return selected
+
+
+def _seed_update_fixture(target_root: Path, *, kind: str, component: str) -> Path:
+    target_root.joinpath(".kb/v2").mkdir(parents=True, exist_ok=True)
+    receipt_path = target_root / ".kb/v2/receipt.json"
+    artifact = {"id": component, "kind": kind, "package": f"@kb/{component}", "version": "1.0.0",
+                "sha256": "fixture-artifact", "platformRange": "<3.2.0"}
+    receipt = {"schema": "kb.create.receipt/v2", "id": f"fixture-{kind}",
+               "plan": {"schema": "kb.create.resolved-plan/v2", "artifacts": [artifact],
+                        "serviceGraph": {"platformVersion": "3.0.0"},
+                        "request": {"platformRoot": str(target_root)}}}
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+    return receipt_path
 
 
 def run_uninstall_decline_step(*, mode: str, args: list[str], receipt_path: Path,
@@ -223,11 +290,286 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
                  cases=["S-181.4"])
 
-    journey.step("refuse a strict incompatible plugin request before mutation", "platform.install",
-                 lambda: "BLOCKED: no sealed incompatible plugin fixture is present in the stable release index",
-                 cases=["S-181.5"])
     for generated_root in (apply_root, platform_root.parent / "s181-stable-root",
                            platform_root.parent / "s181-canary-root", secret_root,
                            platform_root.parent / "s181-offline-root"):
         shutil.rmtree(generated_root, ignore_errors=True)
+    for step in run_installer_fixture_steps(mode=mode, launcher=launcher, platform_root=platform_root,
+                                            stable_index=stable_index, run_command=run_command).steps:
+        journey.step(step.name, step.capability,
+                     lambda step=step: None if step.status == "PASS" else step.message,
+                     cases=step.cases)
+    return journey
+
+
+def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path,
+                                stable_index: Path, run_command: CommandRunner) -> Journey:
+    """Exercise isolated doctor, compatibility, and project-install fixtures."""
+    journey = Journey(mode, f"installer-fixtures-{mode}")
+    fixture_dir = Path(__file__).resolve().parents[2] / "e2e/platform/fixtures/installer-cases"
+    host_os = "darwin" if sys.platform == "darwin" else "linux" if sys.platform.startswith("linux") else "unsupported"
+    host_arch = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
+    if host_os == "unsupported":
+        raise RuntimeError("installer compatibility fixtures support only Linux and macOS journey runners")
+    matrix = fixture_dir / f"compatibility-matrix-{host_os}-{host_arch}.json"
+    missing_binary = fixture_dir / f"missing-host-binary-{host_os}-{host_arch}.json"
+    scratch = platform_root.parent / "installer-case-fixtures"
+    scratch.mkdir(parents=True, exist_ok=True)
+
+    def exact_step(step_id: str, action: Callable[[], None], name: str, capability: str = "platform.install") -> None:
+        journey.step(name, capability, action, cases=[step_id])
+
+    def strict_matrix_and_range() -> None:
+        strict = run_command([launcher, "plan", "--json", "--index", str(matrix),
+                              "--platform-version", "3.2.0", "--sdk-version", "3.2.0",
+                              "--policy", "strict", "--request-platform-root", str(scratch / "strict-sdk")])
+        _, error = _diagnostic(strict, "strict SDK matrix plan")
+        meta = error.get("meta", {})
+        if strict.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
+            raise RuntimeError("strict SDK plan did not return KB_INSTALL_INCOMPATIBLE_COMPONENTS")
+        if any(meta.get(key) != value for key, value in (("component", "SDK"), ("version", "3.2.0"),
+                                                          ("range", ">=3.0.0 <4.0.0"), ("policy", "strict"))):
+            raise RuntimeError(f"strict SDK error details are incomplete: {meta}")
+        if error.get("hint") != "Use an exact platform/SDK pair from the release matrix or choose --policy compatible.":
+            raise RuntimeError("strict SDK refusal omitted its exact correction hint")
+        compatible = _data(run_command([launcher, "plan", "--json", "--index", str(matrix),
+                                        "--platform-version", "3.2.0", "--sdk-version", "3.2.0",
+                                        "--policy", "compatible", "--request-platform-root", str(scratch / "compatible-sdk")]),
+                           "compatible SDK matrix plan")
+        if compatible.get("plan", {}).get("serviceGraph", {}).get("platformVersion") != "3.2.0":
+            raise RuntimeError("compatible policy did not resolve the indexed SDK in the declared range")
+
+    exact_step("S-053.2", strict_matrix_and_range, "compare strict and compatible SDK matrix selection")
+
+    def incompatible_adapter() -> None:
+        result = run_command([launcher, "plan", "--json", "--index", str(matrix),
+                              "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
+                              "--adapters", "fixture-adapter@1.0.0", "--policy", "compatible",
+                              "--request-platform-root", str(scratch / "adapter-range")])
+        _, error = _diagnostic(result, "adapter range plan")
+        meta = error.get("meta", {})
+        if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
+            raise RuntimeError("out-of-range adapter plan did not return KB_INSTALL_INCOMPATIBLE_COMPONENTS")
+        if meta.get("component") != "adapter fixture-adapter platform" or meta.get("version") != "3.2.0" or meta.get("range") != "<3.2.0":
+            raise RuntimeError(f"adapter range refusal omitted its component details: {meta}")
+        if error.get("hint") != "Choose compatible versions or pass an explicit supported provider.":
+            raise RuntimeError("adapter range refusal omitted its correction hint")
+
+    exact_step("S-053.4", incompatible_adapter, "refuse an adapter outside its platform range")
+
+    def installed_component_update(kind: str, component: str, claim: str) -> None:
+        root = scratch / f"{claim.replace('.', '-')}-root"
+        receipt_path = _seed_update_fixture(root, kind=kind, component=component)
+        before_receipt = receipt_path.read_bytes()
+        before_files = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        before_directories = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_dir()}
+        result = run_command([launcher, "update", "--json", "--index", str(matrix),
+                              "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
+                              "--policy", "compatible", "--request-platform-root", str(root)])
+        _, error = _diagnostic(result, "installed component update")
+        meta = error.get("meta", {})
+        expected_code = "KB_UPDATE_INCOMPATIBLE"
+        expected_hint = f"Update or remove {kind} {component} first, then rerun `kb-create update`."
+        after_files = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+        after_directories = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_dir()}
+        if result.returncode == 0 or error.get("code") != expected_code or not isinstance(meta, dict):
+            raise RuntimeError(f"incompatible installed {kind} update did not return {expected_code}: {error}")
+        if (meta.get("component") != component or meta.get("kind") != kind or meta.get("version") != "3.2.0"
+                or meta.get("range") != "<3.2.0" or error.get("hint") != expected_hint):
+            raise RuntimeError(f"installed {kind} refusal omitted its range or correction details: {error}")
+        if (receipt_path.read_bytes() != before_receipt or before_files != after_files
+                or before_directories != after_directories):
+            raise RuntimeError(f"incompatible {kind} update mutated the active receipt or install root")
+        shutil.rmtree(root, ignore_errors=True)
+
+    exact_step("S-053.3", lambda: installed_component_update("plugin", "fixture-compat", "S-053.3"),
+               "refuse update beyond an installed plugin range", "platform.update")
+
+    def sdk_and_binary_ranges() -> None:
+        sdk_result = run_command([launcher, "plan", "--json", "--index", str(matrix),
+                                  "--platform-version", "3.2.0", "--sdk-version", "4.0.0",
+                                  "--policy", "compatible", "--request-platform-root", str(scratch / "sdk-outside-range")])
+        _, sdk_error = _diagnostic(sdk_result, "out-of-range SDK plan")
+        sdk_meta = sdk_error.get("meta", {})
+        if sdk_result.returncode == 0 or sdk_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(sdk_meta, dict):
+            raise RuntimeError("out-of-range SDK plan did not fail with the typed incompatibility")
+        if sdk_meta.get("component") != "platform SDK" or sdk_meta.get("version") != "4.0.0" or sdk_meta.get("range") != ">=3.0.0 <4.0.0":
+            raise RuntimeError(f"out-of-range SDK refusal omitted component, version, or range: {sdk_meta}")
+        binary_result = run_command([launcher, "plan", "--json", "--index", str(missing_binary),
+                                     "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
+                                     "--policy", "compatible", "--request-platform-root", str(scratch / "missing-binary")])
+        _, binary_error = _diagnostic(binary_result, "missing binary plan")
+        binary_meta = binary_error.get("meta", {})
+        if binary_result.returncode == 0 or binary_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(binary_meta, dict):
+            raise RuntimeError("missing host binary plan did not fail with the typed incompatibility")
+        if binary_meta.get("subject") != "binary" or not binary_meta.get("value") or not binary_error.get("hint"):
+            raise RuntimeError(f"missing binary error omitted subject, OS/architecture, or hint: {binary_error}")
+
+    exact_step("S-053.5", sdk_and_binary_ranges, "refuse an SDK outside range and a release missing the host binary")
+
+    exact_step("S-053.6", lambda: installed_component_update("adapter", "fixture-adapter", "S-053.6"),
+               "refuse update beyond an installed adapter range", "platform.update")
+
+    def missing_host_binary_before_mutation() -> None:
+        target = scratch / "missing-host-root"
+        before_exists = target.exists()
+        before = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()} if target.exists() else {}
+        result = run_command([launcher, "plan", "--json", "--index", str(missing_binary),
+                              "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
+                              "--policy", "compatible", "--request-platform-root", str(target)])
+        _, error = _diagnostic(result, "missing host binary plan")
+        meta = error.get("meta", {})
+        after = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()} if target.exists() else {}
+        after_exists = target.exists()
+        if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
+            raise RuntimeError("missing host binary did not refuse planning with the typed incompatibility")
+        if meta.get("subject") != "binary" or not meta.get("value") or before != after or before_exists != after_exists:
+            raise RuntimeError("missing binary refusal omitted its subject/value or changed the isolated install root")
+
+    exact_step("S-053.7", missing_host_binary_before_mutation, "refuse planning without the runner binary")
+
+    def incompatible_plugin_request() -> None:
+        result = run_command([launcher, "plan", "--json", "--index", str(matrix),
+                              "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
+                              "--plugins", "fixture-plugin@1.0.0", "--policy", "strict",
+                              "--request-platform-root", str(scratch / "plugin-request")])
+        _, error = _diagnostic(result, "incompatible plugin request")
+        if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or "fixture-plugin" not in str(error):
+            raise RuntimeError(f"strict incompatible plugin request was not refused: {error}")
+        if not error.get("hint"):
+            raise RuntimeError("strict incompatible plugin request omitted its correction hint")
+
+    exact_step("S-181.5", incompatible_plugin_request, "refuse a strict incompatible plugin request before mutation")
+
+    def doctor_finding(*, secret: bool = False) -> None:
+        root = scratch / ("s025-secret" if secret else "s025-required")
+        requirement = {"id": "fixture.required", "path": "/fixture/required", "required": True,
+                       "secret": secret, "hint": "provide the fixture value"}
+        _seed_doctor_fixture(platform_root, root, requirement=requirement)
+        result = run_command([launcher, "doctor", "--platform-root", str(root), "--json"])
+        envelope, payload = _payload(result, "doctor required-input fixture")
+        findings = payload.get("findings", [])
+        finding = next((item for item in findings if isinstance(item, dict) and item.get("path") == "/fixture/required"), None)
+        if (result.returncode != 0 or envelope.get("ok") is not True or payload.get("operation") != "doctor"
+                or payload.get("status") != "unhealthy" or not isinstance(finding, dict)):
+            raise RuntimeError("doctor did not return an unhealthy report for the manifest-declared required input")
+        if not finding.get("component") or not finding.get("code") or not finding.get("hint"):
+            raise RuntimeError(f"doctor finding omitted component, code, or hint: {finding}")
+        if not isinstance(payload.get("installation"), dict):
+            raise RuntimeError("doctor unhealthy result omitted its structured installation report")
+        if secret:
+            fixture_text = result.stdout + "".join(
+                path.read_text(errors="replace") for path in root.rglob("*") if path.is_file())
+            if any(value in fixture_text for value in ("fixture-secret-value", "fixture.required=value")):
+                raise RuntimeError("doctor output or isolated files serialized secret material or its value assignment")
+        shutil.rmtree(root, ignore_errors=True)
+
+    exact_step("S-025.1", lambda: doctor_finding(), "diagnose a missing required non-secret config value")
+    exact_step("S-025.2", lambda: doctor_finding(secret=True), "diagnose missing secret input without exposing a value")
+
+    def doctor_hostspec_invalid() -> None:
+        root = scratch / "s025-hostspec-invalid"
+        _seed_doctor_fixture(platform_root, root)
+        receipt_path = root / ".kb/v2/receipt.json"
+        active = json.loads(receipt_path.read_text())
+        active["plan"]["host"]["command"] = ""
+        receipt_path.write_text(json.dumps(active, indent=2) + "\n")
+        result = run_command([launcher, "doctor", "--platform-root", str(root), "--json"])
+        envelope, payload = _payload(result, "doctor host-spec mismatch")
+        installation = payload.get("installation", {})
+        checks = installation.get("checks", []) if isinstance(installation, dict) else []
+        failed = [item for item in checks if isinstance(item, dict) and item.get("id") == "host-spec" and item.get("ok") is False]
+        if (result.returncode != 0 or envelope.get("ok") is not True
+                or payload.get("operation") != "doctor" or payload.get("status") != "unhealthy"
+                or not failed or failed[0].get("code") != "KB_HOST_SPEC_INVALID"
+                or "command is required" not in str(failed[0].get("detail", ""))
+                or "kb-create apply --platform-root" not in str(failed[0].get("hint", ""))):
+            raise RuntimeError("doctor did not report the invalid receipt host specification as an unhealthy diagnosis")
+        shutil.rmtree(root, ignore_errors=True)
+
+    exact_step("S-025.3", doctor_hostspec_invalid, "diagnose an invalid host specification from the active receipt")
+
+    def doctor_safe_default() -> None:
+        root = scratch / "s025-safe-default"
+        requirement = {"id": "fixture.default", "path": "/fixture/default", "required": True,
+                       "default": "\"manifest-safe-value\"", "hint": "safe default"}
+        _seed_doctor_fixture(platform_root, root, requirement=requirement)
+        result = run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"])
+        payload = _data(result, "doctor safe-default repair")
+        config = (root / ".kb/kb.config.jsonc").read_text()
+        if payload.get("operation") != "doctor-fix" or not payload.get("snapshot", {}).get("id") or "hostRestarted" not in payload:
+            raise RuntimeError("doctor --fix omitted operation, snapshot, or host restart result")
+        if "manifest-safe-value" not in config:
+            raise RuntimeError("doctor --fix did not write the manifest-declared safe default")
+        shutil.rmtree(root, ignore_errors=True)
+
+    exact_step("S-025.4", doctor_safe_default, "apply only a manifest-declared safe default")
+
+    def doctor_required_input_after_projection_repair() -> None:
+        root = scratch / "s025-required-after-fix"
+        requirement = {"id": "fixture.secret", "path": "/fixture/secret", "required": True,
+                       "secret": True, "hint": "supply the secret separately"}
+        _seed_doctor_fixture(platform_root, root, missing_projection=True, receipt_requirement=requirement)
+        result = run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"])
+        envelope, payload = _payload(result, "doctor fix unresolved input")
+        repair = payload.get("repair", {})
+        required = repair.get("requiredInput", []) if isinstance(repair, dict) else []
+        if result.returncode != 0 or envelope.get("ok") is not True or not required:
+            raise RuntimeError("doctor --fix did not preserve unresolved requiredInput in its result")
+        if not any(item.get("path") == "/fixture/secret" for item in required if isinstance(item, dict)):
+            raise RuntimeError(f"doctor --fix returned the wrong required-input finding: {required}")
+        if "fixture-secret-value" in result.stdout:
+            raise RuntimeError("doctor --fix serialized a secret value")
+        shutil.rmtree(root, ignore_errors=True)
+
+    exact_step("S-025.5", doctor_required_input_after_projection_repair, "preserve unresolved user input in doctor-fix JSON")
+
+    def doctor_failure_dossier() -> None:
+        root = scratch / "s025-failure"
+        _seed_doctor_fixture(platform_root, root)
+        result = run_command([launcher, "rollback", "--platform-root", str(root), "--snapshot",
+                              "fixture-missing-snapshot", "--yes", "--json"])
+        envelope, error = _diagnostic(result, "rollback recovery failure")
+        if result.returncode == 0 or envelope.get("ok") is not False:
+            raise RuntimeError("rollback unexpectedly accepted a missing recovery snapshot")
+        if not all(error.get(key) for key in ("code", "stage", "message", "hint")):
+            raise RuntimeError(f"recovery error omitted structured diagnostics: {error}")
+        if not envelope.get("logPath") or not envelope.get("diagnosticPath"):
+            raise RuntimeError("recovery error omitted its log or diagnostic dossier path")
+        dossier = Path(envelope["diagnosticPath"]).read_text()
+        if "fixture-secret-value" in dossier:
+            raise RuntimeError("diagnostic dossier serialized a secret value")
+        shutil.rmtree(root, ignore_errors=True)
+
+    exact_step("S-025.6", doctor_failure_dossier, "inspect structured recovery failure diagnostics", "platform.recovery")
+
+    def install_with_project() -> None:
+        root, project = scratch / "s187-with-project", scratch / "s187-project"
+        project.mkdir(parents=True, exist_ok=True)
+        before = set(project.iterdir())
+        result = run_command([launcher, "install", "--index", str(stable_index),
+                              "--platform-root", str(root), "--project-root", str(project)])
+        canonical = str(project.resolve())
+        if (result.returncode != 0 or "Verification: platform installed at" not in result.stdout
+                or canonical not in result.stdout or not (root / ".kb/v2/receipt.json").is_file()):
+            raise RuntimeError("non-interactive install did not verify and register the canonical project path")
+        if set(project.iterdir()) != before:
+            raise RuntimeError("project registration wrote KB Labs files into the project repository")
+        shutil.rmtree(root, ignore_errors=True)
+
+    exact_step("S-187.4", install_with_project, "install non-interactively and register a project", "platform.install")
+
+    def install_without_project() -> None:
+        root = scratch / "s187-no-project"
+        result = run_command([launcher, "install", "--index", str(stable_index), "--platform-root", str(root)])
+        if result.returncode != 0 or "kb project add <path>" not in result.stdout:
+            raise RuntimeError("install without a project omitted the exact `kb project add <path>` next step")
+        receipt = json.loads((root / ".kb/v2/receipt.json").read_text())
+        if receipt.get("project") or receipt.get("projects"):
+            raise RuntimeError("install without a project unexpectedly registered one")
+        shutil.rmtree(root, ignore_errors=True)
+
+    exact_step("S-187.5", install_without_project, "install without a project and print its registration command", "platform.install")
+
+    shutil.rmtree(scratch, ignore_errors=True)
     return journey

@@ -157,6 +157,7 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	}
 }
 
+// case: S-025.1, S-025.2, S-203.10
 func TestStatusAndDoctorReportReceiptChannelAndExactVersion(t *testing.T) {
 	inst := newInstallation(t)
 	active := contracts.InstallReceipt{ID: "receipt-canary", Plan: contracts.ResolvedInstallPlan{
@@ -179,10 +180,13 @@ func TestStatusAndDoctorReportReceiptChannelAndExactVersion(t *testing.T) {
 	}
 
 	doctor, doctorCode, doctorOutput := inst.run("doctor", "--json")
-	doctorError, ok := doctor["error"].(map[string]any)
-	meta, _ := doctorError["details"].(map[string]any)
-	if doctorCode != 1 || !ok || errorCode(doctor) != "KB_INSTALL_STATUS_UNHEALTHY" || meta["platformChannel"] != "canary" || meta["platformVersion"] != "3.2.0-canary.4" {
-		t.Fatalf("doctor omitted typed health failure or release identity: %v; output %s", doctor, doctorOutput)
+	doctorInstallation, doctorOK := doctor["installation"].(map[string]any)
+	if doctorCode != 0 || !doctorOK || doctor["operation"] != "doctor" || doctor["status"] != "unhealthy" || doctor["platformChannel"] != "canary" || doctor["platformVersion"] != "3.2.0-canary.4" || doctorInstallation["ok"] != false {
+		t.Fatalf("doctor omitted successful unhealthy report or release identity: %v; output %s", doctor, doctorOutput)
+	}
+	_, doctorCode, doctorOutput = inst.run("doctor")
+	if doctorCode != 0 || !strings.Contains(doctorOutput, "Platform diagnosis completed.") || !strings.Contains(doctorOutput, "unhealthy") || !strings.Contains(doctorOutput, "Installation check config") {
+		t.Fatalf("human doctor output omitted report status or installation finding: %d %s", doctorCode, doctorOutput)
 	}
 }
 

@@ -199,7 +199,7 @@ func TestJSONInstallProgressEndsWithTerminalRecord(t *testing.T) {
 	release, err := catalog.Seal(catalog.Catalog{
 		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Compatibility: testCompatibility("2.0.0"),
-		Platforms:     []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHost(), Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}}},
+		Platforms:     []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHostOnFreePort(t), Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}}},
 	})
 	if err != nil {
 		t.Fatal(err)

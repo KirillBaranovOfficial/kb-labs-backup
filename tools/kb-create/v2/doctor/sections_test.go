@@ -30,7 +30,7 @@ func installation(t *testing.T, hostCommand string) (root string, state host.Sta
 	t.Helper()
 	root = t.TempDir()
 	state = host.State{Dir: filepath.Join(t.TempDir(), "launcher")}
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.5.0"}, Host: &contracts.HostSpec{Command: hostCommand, HealthURL: "http://127.0.0.1:4000/health"}}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.5.0", Services: []contracts.Service{{ID: "gateway", Command: "serve", Port: 4000, HealthCheck: "/health", Required: true}}}, Host: &contracts.HostSpec{Command: hostCommand, HealthURL: "http://127.0.0.1:4000/health"}}
 	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +55,24 @@ func TestInstallationSectionReportsACompleteInstallationAsHealthy(t *testing.T) 
 	}
 	if detail := check(t, section, "receipt").Detail; !strings.Contains(detail, "2.5.0") {
 		t.Fatalf("receipt detail = %q", detail)
+	}
+}
+
+// case: S-025.3
+func TestInstallationSectionReportsInvalidReceiptHostSpec(t *testing.T) {
+	root, state := installation(t, "kb-create-test-host")
+	active, err := receipt.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Plan.Host.Command = ""
+	if err := receipt.Write(root, active); err != nil {
+		t.Fatal(err)
+	}
+	section := InspectInstallation(root, state)
+	got := check(t, section, "host-spec")
+	if got.OK || got.Code != contracts.CodeHostSpecInvalid || !strings.Contains(got.Detail, "command is required") || !strings.Contains(got.Hint, "kb-create apply --platform-root") {
+		t.Fatalf("host-spec check = %+v", got)
 	}
 }
 

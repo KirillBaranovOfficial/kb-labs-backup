@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/host"
@@ -352,7 +353,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 
 	// Stopped host: the installation is fine, the platform is not running.
 	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
-	if code != 1 || payload["ok"] != false {
+	if code != 0 || payload["ok"] != false {
 		t.Fatalf("doctor: %d %s", code, raw)
 	}
 	if payload["installation"].(map[string]any)["ok"] != true || payload["platform"].(map[string]any)["ok"] != false {
@@ -373,7 +374,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if textCode := (invocation{Operation: "doctor", PlatformRoot: inst.root}).run(textOutput); textCode != 1 {
+	if textCode := (invocation{Operation: "doctor", PlatformRoot: inst.root}).run(textOutput); textCode != 0 {
 		t.Fatalf("stopped text doctor exit code = %d", textCode)
 	}
 	if err := textOutput.Close(); err != nil {
@@ -402,11 +403,12 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, code, raw = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
-	if code != 1 || payload["installation"].(map[string]any)["ok"] != false || payload["platform"].(map[string]any)["ok"] != true {
+	if code != 0 || payload["installation"].(map[string]any)["ok"] != false || payload["platform"].(map[string]any)["ok"] != true {
 		t.Fatalf("doctor on a broken installation: %d %s", code, raw)
 	}
 }
 
+// case: S-025.4, S-025.5
 func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 	inst := newInstallation(t)
 	if err := os.MkdirAll(filepath.Join(inst.root, ".kb"), 0o750); err != nil {
@@ -420,9 +422,22 @@ func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact := contracts.Artifact{ID: "@kb/plugin", Package: "@kb/plugin", Version: "1.2.3"}
-	active.Plan.Artifacts = []contracts.Artifact{artifact}
+	required := contracts.Artifact{ID: "gateway", Package: "@kb/gateway", Version: "1.2.3", Config: []contracts.ConfigRequirement{{
+		ID: "gateway.bootstrap.password", Path: "/gateway/bootstrap/password", Required: true, Secret: true,
+	}}}
+	active.Plan.Artifacts = []contracts.Artifact{artifact, required}
 	active.Plan.Request.PlatformRoot = inst.root
 	if err := receipt.Write(inst.root, active); err != nil {
+		t.Fatal(err)
+	}
+	requiredRoot := filepath.Join(inst.root, "node_modules", "@kb", "gateway")
+	if err := os.MkdirAll(requiredRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(requiredRoot, "package.json"), []byte(`{"name":"@kb/gateway","version":"1.2.3"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := installed.Write(inst.root, required); err != nil {
 		t.Fatal(err)
 	}
 	packageRoot := filepath.Join(inst.root, "node_modules", "@kb", "plugin")
@@ -448,9 +463,28 @@ func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 		t.Fatalf("plain doctor changed the installed platform: %v", err)
 	}
 
-	_, fixCode, fixOutput := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, DoctorFix: true, JSON: true})
+	var fixStdout, fixStderr bytes.Buffer
+	fixCode := clikitcommand.Execute(newRootCommand(), []string{"doctor", "--fix", "--platform-root", inst.root, "--json"}, &fixStdout, &fixStderr)
+	fixOutput := fixStdout.String()
 	if fixCode != 0 {
-		t.Fatalf("doctor --fix failed: %s", fixOutput)
+		t.Fatalf("doctor --fix should return the successful clikit repair result: %d %s", fixCode, fixOutput)
+	}
+	var response struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Findings []map[string]any `json:"findings"`
+			Repair   struct {
+				RequiredInput []map[string]any `json:"requiredInput"`
+			} `json:"repair"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(fixOutput), &response); err != nil {
+		t.Fatalf("doctor --fix response is not JSON: %v: %s", err, fixOutput)
+	}
+	if !response.OK || len(response.Data.Findings) == 0 || len(response.Data.Repair.RequiredInput) != 1 ||
+		response.Data.Repair.RequiredInput[0]["component"] != "gateway" ||
+		response.Data.Repair.RequiredInput[0]["path"] != "/gateway/bootstrap/password" {
+		t.Fatalf("doctor --fix omitted required input from the result: %#v; output=%s", response, fixOutput)
 	}
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("doctor --fix did not restore the projection: %v", err)
@@ -532,7 +566,7 @@ func TestDoctorOptionalCredentialWarningKeepsFreshInstallHealthy(t *testing.T) {
 	}
 	payload, code, output = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	findings, ok = payload["findings"].([]any)
-	if code == 0 || payload["ok"] != false || !ok || len(findings) != 2 {
+	if code != 0 || payload["ok"] != false || !ok || len(findings) != 2 {
 		t.Fatalf("required platform configuration did not fail doctor: exit=%d %s", code, output)
 	}
 	if findings[1].(map[string]any)["severity"] != doctor.SeverityError {

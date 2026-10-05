@@ -43,10 +43,12 @@ class InstallerCaseStepsTest(unittest.TestCase):
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
             expected = {"PC-001.4", "PC-001.5", "PC-001.8", "S-181.1", "S-181.2",
-                        "S-181.3", "S-181.4", "S-181.5"}
+                        "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
+                        "S-025.3", "S-025.4", "S-025.5", "S-025.6",
+                        "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",
+                        "S-187.4", "S-187.5"}
             self.assertEqual(set(claims), expected)
-            self.assertTrue(all(claims[claim] == "FAIL" for claim in expected - {"S-181.5"}))
-            self.assertEqual(claims["S-181.5"], "BLOCKED")
+            self.assertTrue(all(claims[claim] == "FAIL" for claim in expected))
 
 
 if __name__ == "__main__":

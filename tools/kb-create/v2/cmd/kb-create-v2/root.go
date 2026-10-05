@@ -193,17 +193,6 @@ func runInvocation(cmd *cobra.Command, inv invocation, operation string) error {
 		return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The command result could not be read.")
 	}
 	if exitCode != 0 {
-		if operation == "doctor" && doctorReportedUnhealthy(data) {
-			var report struct {
-				PlatformChannel string `json:"platformChannel"`
-				PlatformVersion string `json:"platformVersion"`
-			}
-			_ = json.Unmarshal(data, &report)
-			return diag.New("KB_INSTALL_STATUS_UNHEALTHY", "The installed platform did not pass doctor checks.", diag.WithMeta(map[string]any{
-				"platformChannel": report.PlatformChannel,
-				"platformVersion": report.PlatformVersion,
-			}))
-		}
 		failure := errorFromOperationResult(data, exitCode)
 		if progressStream != nil {
 			var typed *diag.Diag
@@ -227,7 +216,14 @@ func runInvocation(cmd *cobra.Command, inv invocation, operation string) error {
 		if err := json.Unmarshal(data, &payload); err != nil {
 			return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The command returned an invalid result.")
 		}
-		delete(payload, "ok")
+		if operation == "doctor" && !inv.DoctorFix {
+			payload, err = doctorResultPayload(data)
+			if err != nil {
+				return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The doctor report could not be read.")
+			}
+		} else {
+			delete(payload, "ok")
+		}
 	}
 	if progressStream != nil {
 		if err := progressStream.Finish(diag.ExitOK); err != nil {
@@ -247,12 +243,22 @@ func runInvocation(cmd *cobra.Command, inv invocation, operation string) error {
 	return result.Return(payload)
 }
 
-func doctorReportedUnhealthy(data []byte) bool {
-	var response struct {
-		OK    *bool      `json:"ok"`
-		Error *diag.Diag `json:"error"`
+func doctorResultPayload(data []byte) (map[string]any, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, err
 	}
-	return json.Unmarshal(data, &response) == nil && response.OK != nil && !*response.OK && response.Error == nil
+	healthy, ok := payload["ok"].(bool)
+	if !ok {
+		return nil, errors.New("doctor report has no boolean health result")
+	}
+	delete(payload, "ok")
+	payload["operation"] = "doctor"
+	payload["status"] = "unhealthy"
+	if healthy {
+		payload["status"] = "healthy"
+	}
+	return payload, nil
 }
 
 type streamProgress struct{ writer *stream.Writer }
@@ -323,11 +329,54 @@ func operationHumanSummary(operation string, payload map[string]any) string {
 	switch operation {
 	case "doctor":
 		lines := []string{"Platform diagnosis completed."}
+		if status, _ := payload["status"].(string); status != "" {
+			lines = append(lines, "Status: "+status)
+		}
 		if channel, _ := payload["platformChannel"].(string); channel != "" {
 			lines = append(lines, "Platform channel: "+channel)
 		}
 		if version, _ := payload["platformVersion"].(string); version != "" {
 			lines = append(lines, "Platform version: "+version)
+		}
+		if findings, ok := payload["findings"].([]any); ok {
+			for _, raw := range findings {
+				finding, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				line := "Finding " + stringField(finding, "code")
+				if component := stringField(finding, "component"); component != "" {
+					line += ": package=" + component
+				}
+				if path := stringField(finding, "path"); path != "" {
+					line += " path=" + path
+				}
+				lines = append(lines, line)
+				if hint := stringField(finding, "hint"); hint != "" {
+					lines = append(lines, "Hint: "+hint)
+				}
+			}
+		}
+		for _, sectionName := range []string{"installation", "platform"} {
+			section, _ := payload[sectionName].(map[string]any)
+			checks, _ := section["checks"].([]any)
+			for _, raw := range checks {
+				check, ok := raw.(map[string]any)
+				if !ok || check["ok"] == true {
+					continue
+				}
+				line := strings.ToUpper(sectionName[:1]) + sectionName[1:] + " check " + stringField(check, "id")
+				if code := stringField(check, "code"); code != "" {
+					line += " (" + code + ")"
+				}
+				if detail := stringField(check, "detail"); detail != "" {
+					line += ": " + detail
+				}
+				lines = append(lines, line)
+				if hint := stringField(check, "hint"); hint != "" {
+					lines = append(lines, "Next: "+hint)
+				}
+			}
 		}
 		return strings.Join(lines, "\n")
 	case "update":
@@ -343,6 +392,11 @@ func operationHumanSummary(operation string, payload map[string]any) string {
 	default:
 		return fmt.Sprintf("%s completed.", operation)
 	}
+}
+
+func stringField(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return value
 }
 
 func hostHumanSummary(operation string, payload map[string]any) string {
