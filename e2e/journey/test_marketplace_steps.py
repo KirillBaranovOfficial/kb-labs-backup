@@ -451,6 +451,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, stdout, "")
 
             http_calls = []
+            commit_case_hook_calls = []
 
             class FakeResponse:
                 headers = {}
@@ -478,8 +479,13 @@ class MarketplaceStepTests(unittest.TestCase):
                     "hint": "Re-run with --debug and include the correlationId in a report.",
                     "correlationId": "request-fixture"}})
 
+            def fake_commit_case_hook():
+                self.assertIn("@kb-labs/commit-entry", lock(project)["plugins"])
+                commit_case_hook_calls.append(True)
+
             journey = Journey("local", "marketplace-fixture")
-            run_marketplace_steps(journey, project, "http://registry.test", env, fake_run, fake_http)
+            run_marketplace_steps(journey, project, "http://registry.test", env, fake_run, fake_http,
+                                  commit_case_hook=fake_commit_case_hook)
 
             expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 4))) for step in steps}
             expected.update({
@@ -490,6 +496,7 @@ class MarketplaceStepTests(unittest.TestCase):
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
             self.assertEqual(actual, expected)
+            self.assertEqual(commit_case_hook_calls, [True])
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1",
                            "--scope", "platform", "--json"), calls)

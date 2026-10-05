@@ -7,14 +7,17 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
-from plugin_author_steps import run_plugin_author_flow
+from plugin_author_steps import run_commit_case_steps, run_plugin_author_flow
 from service_steps import Journey
 
 
 FAKE_KB = r'''#!/usr/bin/env python3
 import json
 import os
+import signal
+import subprocess
 import sys
+import tty
 from pathlib import Path
 
 args = sys.argv[1:]
@@ -47,6 +50,61 @@ elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
     print(json.dumps({"entries": entries, "total": len(entries)}))
 elif args[:4] == ["marketplace", "plugins", "unlink", "demo"]:
     lock_path.write_text(json.dumps({"plugins": {}}))
+elif args[:2] == ["marketplace", "install"]:
+    print(json.dumps({"ok": True, "scope": "project"}))
+elif args[:2] == ["marketplace", "uninstall"]:
+    print(json.dumps({"ok": True}))
+elif args[:2] == ["adapter", "list"]:
+    print(json.dumps({"ok": True, "data": {"adapters": [{
+        "slot": "llm", "implementation": "@kb-labs/adapters-openai"
+    }]}}))
+elif args[:3] == ["config", "get", "platform.adapterOptions.llm.baseURL"]:
+    print(json.dumps({"ok": True, "data": {"value": "http://mock-llm:8317/v1"}}))
+elif args[:3] == ["adapter", "unbind", "llm"]:
+    (root / ".kb/llm-unbound").write_text("true")
+    print(json.dumps({"ok": True}))
+elif args[:3] == ["adapter", "bind", "llm"]:
+    (root / ".kb/llm-unbound").unlink(missing_ok=True)
+    print(json.dumps({"ok": True}))
+elif args[:3] == ["commit", "commit", "--dry-run"]:
+    staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root,
+                            capture_output=True, text=True, check=True).stdout
+    if (root / ".kb/llm-unbound").exists():
+        print(json.dumps({"ok": False, "error": {"code": "KB_ADAPTER_UNAVAILABLE",
+            "message": "Adapter llm is not configured.", "hint": "kb adapter bind llm @kb-labs/adapters-openai"}}))
+        raise SystemExit(1)
+    if "s030-cancel.ts" in staged:
+        tty.setraw(sys.stdin.fileno())
+        print("⠋ Analyzing changes...", flush=True)
+        print("⠙ Analyzing with native tools...", flush=True)
+        if sys.stdin.read(1) == "\x03":
+            print("Interrupted")
+            raise SystemExit(130)
+    if "s030-progress.ts" in staged:
+        print("⠋ Analyzing changes...", flush=True)
+        print("⠙ Analyzing with native tools...", flush=True)
+        print("Re-analyzing with diff context (Phase 2)...", flush=True)
+        print("Plan generated", flush=True)
+        raise SystemExit(0)
+    print(json.dumps({"ok": True, "result": {"plan": {"metadata": {"llmUsed": True}}}}))
+    subprocess.run(["git", "commit", "-m", "test(journey): verify deterministic commit fixture response"],
+                   cwd=root, capture_output=True, text=True, check=True)
+elif args[:2] == ["commit", "commit"]:
+    subprocess.run(["git", "commit", "-m", "test(journey): verify deterministic commit fixture response"],
+                   cwd=root, capture_output=True, text=True, check=True)
+    print("Commits created successfully")
+elif args[:3] == ["review", "run", "--mode=heuristic"] and "--json" not in args:
+    print("Files: 1\nFindings: 0\n")
+elif args[:3] == ["review", "run", "--mode=heuristic"]:
+    print(json.dumps({"findings": [{"file": ".kb/journey-commit-cases/s015-review.ts", "line": 1}]}))
+elif args[:2] == ["review", "run"] and "--mode=llm" in args:
+    if (root / ".kb/llm-unbound").exists():
+        print(json.dumps({"ok": False, "error": {"code": "KB_ADAPTER_UNAVAILABLE",
+            "message": "Adapter llm is not configured.", "hint": "kb adapter bind llm @kb-labs/adapters-openai"}}))
+        raise SystemExit(1)
+    print(json.dumps({"findings": []}))
+elif args[:2] == ["review", "run"]:
+    print(json.dumps({"findings": []}))
 elif args == ["--help"]:
     print("Commands: demo")
 elif args == ["demo", "hello"]:
@@ -120,6 +178,37 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         run_plugin_author_flow(journey, self.project, self.kb, "http://verdaccio:4873",
                                command_runner=subprocess.run, base_env=self.env)
         return journey.result()
+
+    # case: S-014.1
+    def test_commit_and_review_case_steps_are_claimed_from_fake_cli_responses(self):
+        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
+            "schema": "kb.marketplace/3",
+            "plugins": {"@kb-labs/commit-entry": {"enabled": True, "version": "2.120.1"}},
+        }))
+        journey = Journey("local", "commit-case-fixture")
+        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                              subprocess.run, self.env)
+        result = journey.result()
+        expected = {
+            *(f"S-014.{step}" for step in range(1, 4)),
+            *(f"S-015.{step}" for step in range(1, 5)),
+            *(f"S-030.{step}" for step in range(1, 5)),
+            *(f"S-160.{step}" for step in range(1, 4)),
+        }
+        claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
+        self.assertTrue(expected.issubset(claims))
+        self.assertEqual({step: claims[step] for step in ("S-014.1", "S-014.2", "S-014.3")}, {
+            "S-014.1": "FAIL", "S-014.2": "PASS", "S-014.3": "PASS",
+        })
+        self.assertEqual({step: claims[step] for step in ("S-015.1", "S-015.2", "S-015.3", "S-015.4")}, {
+            "S-015.1": "PASS", "S-015.2": "PASS", "S-015.3": "PASS", "S-015.4": "PASS",
+        })
+        self.assertEqual({step: claims[step] for step in ("S-160.1", "S-160.2", "S-160.3")}, {
+            "S-160.1": "FAIL", "S-160.2": "PASS", "S-160.3": "PASS",
+        })
+        self.assertEqual({step: claims[step] for step in ("S-030.1", "S-030.2", "S-030.3", "S-030.4")}, {
+            "S-030.1": "PASS", "S-030.2": "PASS", "S-030.3": "PASS", "S-030.4": "PASS",
+        })
 
     # case: S-003.1
     def test_scaffold_link_edit_invoke_and_unlink_records_all_case_steps(self):

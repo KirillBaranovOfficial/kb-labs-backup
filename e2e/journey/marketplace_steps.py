@@ -12,6 +12,7 @@ from typing import Callable
 
 from service_steps import Journey
 from invocations import invocation_context, open_http, run_command, run_with_runner
+from plugin_author_steps import run_commit_case_steps
 
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
@@ -220,7 +221,8 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
 def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: str,
                           env: dict[str, str] | None = None,
                           runner: CommandRunner = run_command,
-                          http_opener: Callable[..., object] = urllib.request.urlopen) -> None:
+                          http_opener: Callable[..., object] = urllib.request.urlopen,
+                          commit_case_hook: Callable[[], None] | None = None) -> None:
     """Execute S-010 and S-047 in the isolated installed platform."""
     project = Path(project_root).resolve()
     base_env = dict(os.environ if env is None else env)
@@ -316,6 +318,14 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     )
     if journey.steps[-1].status != "PASS":
         return
+
+    try:
+        if commit_case_hook is None:
+            run_commit_case_steps(journey, project, Path("kb"), registry, runner, base_env)
+        else:
+            commit_case_hook()
+    except Exception as error:
+        journey.step("prepare Commit case fixture state", "marketplace", lambda: str(error))
 
     project_id = base_env.get("KB_JOURNEY_PROJECT_ID", "")
     gateway = base_env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
