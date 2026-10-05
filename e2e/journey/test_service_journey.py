@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
+from runner import configure_secured_platform
 from service_runner import (checks, configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             _prepare_and_export_mcp_projects,
@@ -141,17 +142,43 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertIn("simulated import failure", result["steps"][0]["message"])
         self.assertNotIn("Traceback", stderr.getvalue())
 
-    def test_runner_crash_is_labeled_separately_from_startup(self):
+    def test_runner_crash_is_labeled_separately_from_startup_and_logs_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             crashing_runner = root / "crashing_runner.py"
             crashing_runner.write_text('def main():\n    raise RuntimeError("simulated run crash")\n')
-            with redirect_stderr(io.StringIO()):
+            stderr = io.StringIO()
+            with patch.dict(os.environ, {"HOME": str(root)}), redirect_stderr(stderr):
                 status = run_runner(crashing_runner, root / "journey-summary.md", "local")
             result = load_results(root)[0]
-        self.assertEqual(status, 1)
-        self.assertEqual(result["steps"][0]["name"], "runner crash")
-        self.assertIn("simulated run crash", result["steps"][0]["message"])
+            self.assertEqual(status, 1)
+            self.assertEqual(result["steps"][0]["name"], "runner crash")
+            self.assertIn("simulated run crash", result["steps"][0]["message"])
+            diagnostics = (root / "journey-diagnostics.log").read_text()
+            self.assertIn("Traceback (most recent call last)", diagnostics)
+            self.assertIn("RuntimeError: simulated run crash", diagnostics)
+            self.assertIn("Journey runner crashed: RuntimeError: simulated run crash", stderr.getvalue())
+
+    def test_secured_pre_project_config_does_not_touch_project_before_setup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            home.mkdir()
+            project = home / "fresh-project"
+            commands = []
+
+            def fake_run(args, *, env, cwd, timeout):
+                commands.append((args, cwd))
+                return subprocess.CompletedProcess(args, 0, "{}", ""), 0.0
+
+            configure_secured_platform(env={"HOME": str(home)}, run_command=fake_run)
+
+        self.assertFalse(project.exists())
+        self.assertEqual(len(commands), 2)
+        self.assertTrue(all(cwd == home for _, cwd in commands))
+        self.assertEqual([args[-2] for args, _ in commands], [
+            "gateway.auth.providers", "gateway.auth.cookieSecure",
+        ])
 
     def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
         import json
