@@ -9,9 +9,14 @@ import {
   UIIcon,
   UIPage,
   UIPageHeader,
+  UIAlert,
 } from '@kb-labs/studio-ui-kit';
 import { useDataSources } from '@/providers/data-sources-provider';
+import { useInstallProjectPlugin, useProjectPlugins, useProjects } from '@kb-labs/studio-data-client';
 import type { PluginManifestEntry } from '@kb-labs/studio-data-client';
+import { KBError } from '@kb-labs/studio-data-client';
+import { ProjectContextSelector } from '@/components/project-context-selector';
+import { useProjectContext } from '@/providers/project-context-provider';
 import { PluginAIAssistantModal } from '../components/plugin-ai-assistant-modal';
 import { PluginStatusStrip } from '../components/plugin-detail/plugin-status-strip';
 import { OverviewTab } from '../components/plugin-detail/overview-tab';
@@ -23,12 +28,19 @@ import { RawManifestDrawer } from '../components/plugin-detail/raw-manifest-draw
 export function PluginDetailPage() {
   const { pluginId: encodedPluginId } = useParams<{ pluginId: string }>();
   const navigate = useNavigate();
-  const { plugins: pluginsSource } = useDataSources();
+  const { plugins: pluginsSource, projectPlugins, projects } = useDataSources();
+  const { projectId } = useProjectContext();
+  const { data: registeredProjects } = useProjects(projects);
+  const { data: installedPlugins, isLoading: installedPluginsLoading } = useProjectPlugins(projectPlugins, projectId);
+  const installProjectPlugin = useInstallProjectPlugin(projectPlugins, projectId);
   const [loading, setLoading] = useState(true);
   const [plugin, setPlugin] = useState<PluginManifestEntry | null>(null);
   const [apiBasePath, setApiBasePath] = useState<string>('');
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [manifestDrawerOpen, setManifestDrawerOpen] = useState(false);
+  const [installPending, setInstallPending] = useState(false);
+  const [installError, setInstallError] = useState<{ message: string; hint?: string } | null>(null);
+  const [installStatus, setInstallStatus] = useState<string | null>(null);
 
   // README state — loaded eagerly, Overview is the default tab
   const [readmeContent, setReadmeContent] = useState<string | null>(null);
@@ -133,6 +145,29 @@ export function PluginDetailPage() {
   const jobs = manifest.jobs?.handlers || [];
   const permissions = manifest.permissions;
   const hasCapabilities = cliCommands.length > 0 || restRoutes.length > 0 || workflowHandlers.length > 0 || jobs.length > 0;
+  const displayName = display?.name || manifest.id;
+  const installed = installedPlugins?.some((entry) => entry.id === plugin.pluginId) ?? false;
+
+  const handleInstall = async () => {
+    if (!projectId || !plugin || installPending || installed) return;
+    const projectName = registeredProjects?.find((entry) => entry.id === projectId)?.name ?? projectId;
+    const spec = `${plugin.pluginId}@${manifest.version}`;
+    setInstallPending(true);
+    setInstallError(null);
+    setInstallStatus(null);
+    try {
+      await installProjectPlugin.mutateAsync(spec);
+      setInstallStatus(`Installed ${displayName} for ${projectName}`);
+    } catch (error) {
+      const message = error instanceof KBError
+        ? error.message
+        : `Could not install ${displayName}.`;
+      const hint = error instanceof KBError ? error.hint : undefined;
+      setInstallError({ message, ...(hint ? { hint } : {}) });
+    } finally {
+      setInstallPending(false);
+    }
+  };
 
   const tabItems: UITabItem[] = [
     {
@@ -199,6 +234,15 @@ export function PluginDetailPage() {
         ]}
         actions={
           <>
+            <ProjectContextSelector ariaLabel="Project" />
+            <UIButton
+              variant="primary"
+              loading={installPending}
+              disabled={!projectId || installedPluginsLoading || installed}
+              onClick={handleInstall}
+            >
+              {installed ? `${displayName} Installed` : `Install ${displayName}`}
+            </UIButton>
             <UIButton
               icon={<UIIcon name="CodeOutlined" />}
               onClick={() => setManifestDrawerOpen(true)}
@@ -224,6 +268,17 @@ export function PluginDetailPage() {
       >
         <PluginStatusStrip plugin={plugin} />
       </UIPageHeader>
+
+      {installStatus && <div role="status" style={{ marginBottom: 16 }}>{installStatus}</div>}
+      {installError && (
+        <UIAlert
+          variant="error"
+          message={installError.message}
+          description={installError.hint}
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
 
       <RawManifestDrawer
         open={manifestDrawerOpen}
