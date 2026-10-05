@@ -121,6 +121,34 @@ def fail(message: str):
         FIRST_FAILURE = message
 
 
+def configure_secured_platform(
+    env: dict[str, str], *, run_command=run,
+) -> tuple[str, subprocess.CompletedProcess] | None:
+    """Set secured gateway options from an existing directory before project setup."""
+    provider_config = json.dumps({
+        "email-password": {"type": "email-password"},
+        "corp": {
+            "type": "oidc",
+            "issuer": "https://idp-stub:9443",
+            "clientId": "kb-gateway",
+            "clientSecretEnv": "OIDC_CORP_CLIENT_SECRET",
+            "scopes": ["openid", "email"],
+            "pkce": True,
+        },
+    })
+    home = Path(env["HOME"])
+    for key, value in (("gateway.auth.providers", provider_config),
+                       ("gateway.auth.cookieSecure", "false")):
+        configured, _ = run_command(
+            ["bash", "-c", '. "$HOME/.profile"; kb config set --scope platform "$1" "$2" --json',
+            "journey", key, value],
+            env=env, cwd=home, timeout=90,
+        )
+        if configured.returncode != 0:
+            return key, configured
+    return None
+
+
 def dump_failure_state() -> None:
     report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
     mode = "secured" if VARIANT.endswith("secured") else "local"
@@ -653,23 +681,10 @@ def main():
         return failure_exit()
 
     if VARIANT.endswith("secured"):
-        provider_config = json.dumps({
-            "email-password": {"type": "email-password"},
-            "corp": {
-                "type": "oidc",
-                "issuer": "https://idp-stub:9443",
-                "clientId": "kb-gateway",
-                "clientSecretEnv": "OIDC_CORP_CLIENT_SECRET",
-                "scopes": ["openid", "email"],
-                "pkce": True,
-            },
-        })
-        for key, value in (("gateway.auth.providers", provider_config),
-                           ("gateway.auth.cookieSecure", "false")):
-            configured, _ = run(
-                ["bash", "-c", '. "$HOME/.profile"; kb config set --scope platform "$1" "$2" --json',
-                 "journey", key, value], env=env, cwd=PROJECT, timeout=90)
-            if not require(configured, step=f"kb config set --scope platform {key}"):
+        configured = configure_secured_platform(env)
+        if configured is not None:
+            key, result = configured
+            if not require(result, step=f"kb config set --scope platform {key}"):
                 append_summary(False)
                 return failure_exit()
 

@@ -6,6 +6,7 @@ import json
 import os
 import runpy
 import sys
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -78,6 +79,14 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
     try:
         return int(namespace["main"]())
     except Exception as error:
+        try:
+            diagnostic = Path(summary_path).with_name("journey-diagnostics.log")
+            with diagnostic.open("a", encoding="utf-8") as stream:
+                stream.write("\n== Journey runner traceback ==\n")
+                stream.writelines(traceback.format_exception(error))
+                stream.write("\n")
+        except OSError as diagnostic_error:
+            print(f"Journey traceback could not be written: {diagnostic_error}", file=sys.stderr)
         try:
             report = Path(summary_path)
             environment = namespace.get("env")
