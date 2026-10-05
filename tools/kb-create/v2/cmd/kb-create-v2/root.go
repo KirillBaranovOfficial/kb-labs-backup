@@ -273,16 +273,42 @@ func (p streamProgress) Emit(event runtime.ProgressEvent) {
 
 func errorFromOperationResult(data []byte, exitCode int) error {
 	var envelope struct {
-		Error *diag.Diag `json:"error"`
+		Error json.RawMessage `json:"error"`
 	}
-	if json.Unmarshal(data, &envelope) == nil && envelope.Error != nil && envelope.Error.Code != "" {
-		result := envelope.Error
-		if exitCode == diag.ExitInput {
-			return diag.New("KB_RUNTIME_INPUT_INVALID", result.Message,
-				diag.WithHint(result.Hint), diag.WithCause(result.Cause),
-				diag.WithCorrelationID(result.CorrelationID), diag.WithMeta(result.Meta))
+	if json.Unmarshal(data, &envelope) == nil && len(envelope.Error) > 0 {
+		var result struct {
+			Code          string         `json:"code"`
+			Message       string         `json:"message"`
+			Hint          string         `json:"hint"`
+			Cause         string         `json:"cause"`
+			CorrelationID string         `json:"correlationId"`
+			Details       map[string]any `json:"details"`
+			Meta          map[string]any `json:"meta"`
 		}
-		return result
+		if json.Unmarshal(envelope.Error, &result) == nil && result.Code != "" {
+			if _, known := diag.LookupCatalog(result.Code); known {
+				var typed diag.Diag
+				if json.Unmarshal(envelope.Error, &typed) == nil {
+					return &typed
+				}
+				meta := result.Details
+				if meta == nil {
+					meta = result.Meta
+				}
+				return diag.New(result.Code, result.Message,
+					diag.WithHint(result.Hint), diag.WithCause(result.Cause),
+					diag.WithCorrelationID(result.CorrelationID), diag.WithMeta(meta))
+			}
+			if exitCode == diag.ExitInput {
+				meta := result.Details
+				if meta == nil {
+					meta = result.Meta
+				}
+				return diag.New("KB_RUNTIME_INPUT_INVALID", result.Message,
+					diag.WithHint(result.Hint), diag.WithCause(result.Cause),
+					diag.WithCorrelationID(result.CorrelationID), diag.WithMeta(meta))
+			}
+		}
 	}
 	if exitCode == diag.ExitInput {
 		return diag.New("KB_RUNTIME_INPUT_INVALID", "The command input is invalid.")

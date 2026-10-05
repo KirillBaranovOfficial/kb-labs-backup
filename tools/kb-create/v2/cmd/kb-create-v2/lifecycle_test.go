@@ -675,14 +675,14 @@ func TestDoctorRecoverPropagatesTheToolsExitStatus(t *testing.T) {
 func TestFreshApplyIsRefusedWhileASupervisedHostRuns(t *testing.T) {
 	inst := newInstallation(t)
 	state := host.State{Dir: inst.state}
-	if failure := refuseRunningHost(state); failure != nil {
+	if failure := refuseRunningHost(state, inst.root); failure != nil {
 		t.Fatalf("nothing runs yet: %v", failure)
 	}
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
-	failure := refuseRunningHost(state)
-	if failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["supervisorPid"] == "" {
+	failure := refuseRunningHost(state, inst.root)
+	if failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" || failure.Meta["pid"] == "" {
 		t.Fatalf("failure = %#v", failure)
 	}
 	if failure.Hint == "" {

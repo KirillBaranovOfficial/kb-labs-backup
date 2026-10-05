@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -38,14 +39,37 @@ func installedVersion(platformRoot string) string {
 // refuseRunningHost stops a fresh apply from starting a trial run next to a
 // supervised host: it would fail on the host's port with a misleading message.
 // An installed platform is changed with update, which stops and restarts the host.
-func refuseRunningHost(state host.State) *diag.Diag {
-	pid, alive := supervisor.LivePID(state)
+func refuseRunningHost(state host.State, platformRoot string) *diag.Diag {
+	record, alive := activeLauncher(state)
 	if !alive {
 		return nil
 	}
+	requested, err := filepath.Abs(platformRoot)
+	if err != nil || record.PlatformRoot != filepath.Clean(requested) {
+		return supervisor.Refusal(record, platformRoot)
+	}
 	failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create update\" to change an installed platform, or \"kb-create stop\" before a fresh apply.", nil)
-	failure.Meta = map[string]any{"supervisorPid": fmt.Sprint(pid)}
+	failure.Meta = map[string]any{"pid": fmt.Sprint(record.PID), "platformRoot": record.PlatformRoot}
 	return failure
+}
+
+func refuseForeignHost(state host.State, platformRoot string) *diag.Diag {
+	record, alive := activeLauncher(state)
+	if !alive {
+		return nil
+	}
+	requested, err := filepath.Abs(platformRoot)
+	if err == nil && record.PlatformRoot == filepath.Clean(requested) {
+		return nil
+	}
+	return supervisor.Refusal(record, platformRoot)
+}
+
+func activeLauncher(state host.State) (supervisor.Record, bool) {
+	if active, ok := host.ActiveHost(state); ok {
+		return supervisor.Record{PID: active.PID, PlatformRoot: active.PlatformRoot}, true
+	}
+	return supervisor.ReadRecord(state)
 }
 
 // snapshotSummary is what the machine output says about a snapshot: never its
@@ -102,6 +126,17 @@ func (i invocation) runRecovery(output *os.File) int {
 	if root == "" {
 		write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil))
 		return 2
+	}
+	if operation == "rollback" {
+		state, stateErr := host.StateHome()
+		if stateErr != nil {
+			write(output, map[string]any{"ok": false, "error": asDiag(stateErr)})
+			return 2
+		}
+		if running := refuseForeignHost(state, root); running != nil {
+			write(output, map[string]any{"ok": false, "error": running})
+			return 2
+		}
 	}
 	if operation == "uninstall" || operation == "rollback" {
 		confirmed, confirmErr := confirmRecovery(i, operation, root, os.Stdin, os.Stdout, term.IsTerminal(os.Stdin.Fd()))

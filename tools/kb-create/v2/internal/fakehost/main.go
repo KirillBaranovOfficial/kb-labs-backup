@@ -52,11 +52,12 @@ func main() {
 			http.Error(w, "unhealthy", http.StatusInternalServerError)
 			return
 		}
-		fmt.Fprint(w, "ok")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"ok":true,"data":{"upstreams":{},"adapters":{}}}`)
 	})
 	mux.HandleFunc("/health/adapters", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `[{"slot":"storage","mode":"real","implementation":"@kb-labs/adapters-fs"}]`)
+		fmt.Fprint(w, `{"ok":true,"data":[{"slot":"storage","mode":"real","implementation":"@kb-labs/adapters-fs"}]}`)
 	})
 	server := &http.Server{Handler: mux}
 	go func() { _ = server.Serve(listener) }()

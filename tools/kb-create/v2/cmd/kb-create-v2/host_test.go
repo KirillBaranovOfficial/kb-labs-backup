@@ -78,7 +78,11 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 	}
 	kbHome := t.TempDir()
 	t.Setenv(host.KBHomeEnv, kbHome)
-	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: filepath.Join(kbHome, "launcher"), port: port}
+	state, err := host.StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port}
 	t.Cleanup(func() { _, _, _ = inst.run("stop", "--json") })
 	return inst
 }
@@ -155,6 +159,106 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	if code != 0 || idle["stopped"].(map[string]any)["wasRunning"] != false {
 		t.Fatalf("stopping an idle host must succeed: %v", idle)
 	}
+}
+
+// case: S-025.7, S-025.8
+func TestOtherPlatformRootCannotObserveOrControlPerUserHost(t *testing.T) {
+	inst := newInstallation(t)
+	if _, code, output := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start A: %d %s", code, output)
+	}
+	receiptAPath := filepath.Join(inst.root, ".kb", "v2", "receipt.json")
+	receiptABefore, err := os.ReadFile(receiptAPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootB := t.TempDir()
+	active, err := receipt.Read(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Plan.Request.PlatformRoot = rootB
+	if err := receipt.Write(rootB, active); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootB, ".kb"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootB, ".kb", "kb.config.jsonc"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fixOutput, err := os.CreateTemp(t.TempDir(), "doctor-fix-cross-root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := (invocation{Operation: "doctor", PlatformRoot: rootB, DoctorFix: true, JSON: true}).run(fixOutput); code != 0 {
+		fixOutput.Close()
+		data, _ := os.ReadFile(fixOutput.Name())
+		t.Fatalf("doctor --fix B: %d %s", code, data)
+	}
+	if err := fixOutput.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fixData, err := os.ReadFile(fixOutput.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixEnvelope struct {
+		Data struct {
+			HostRestarted bool `json:"hostRestarted"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(fixData, &fixEnvelope); err != nil || fixEnvelope.Data.HostRestarted {
+		t.Fatalf("doctor --fix B reported a restart or invalid result: %v %s", err, fixData)
+	}
+	statusB := runForRoot(t, inst, rootB, "status")
+	if statusB["host"].(map[string]any)["state"] != "stopped" {
+		t.Fatalf("status B observed A's host: %#v", statusB)
+	}
+
+	startB := runForRoot(t, inst, rootB, "start")
+	if startB["code"] != float64(1) || startB["error"].(map[string]any)["code"] != "KB_HOST_ALREADY_RUNNING" {
+		t.Fatalf("start B was not refused with a typed error: %#v", startB)
+	}
+	failure := startB["error"].(map[string]any)
+	if !strings.Contains(failure["message"].(string), inst.root) ||
+		!strings.Contains(failure["hint"].(string), "kb-create stop --platform-root "+inst.root) {
+		t.Fatalf("cross-root refusal omitted active root and stop command: %#v", failure)
+	}
+	statusA, code, output := inst.run("status", "--json")
+	if code != 0 || statusA["host"].(map[string]any)["state"] != "running" {
+		t.Fatalf("A was affected by B operations: %d %s", code, output)
+	}
+	if _, code, output = inst.run("restart", "--json"); code != 0 {
+		t.Fatalf("restart A after B operations: %d %s", code, output)
+	}
+	receiptAAfter, err := os.ReadFile(receiptAPath)
+	if err != nil || !bytes.Equal(receiptAAfter, receiptABefore) {
+		t.Fatalf("operations on B changed A's receipt: err=%v", err)
+	}
+}
+
+func runForRoot(t *testing.T, inst installation, root, operation string) map[string]any {
+	t.Helper()
+	command := exec.Command(inst.launcher, operation, "--platform-root", root, "--json")
+	command.Env = append(os.Environ(), "KB_HOME="+inst.kbHome)
+	output, err := command.CombinedOutput()
+	code := 0
+	if exit, ok := err.(*exec.ExitError); ok {
+		code = exit.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(output, &envelope); err != nil {
+		t.Fatalf("%s result is not JSON (exit %d): %v %s", operation, code, err, output)
+	}
+	if data, ok := envelope["data"].(map[string]any); ok {
+		return data
+	}
+	envelope["code"] = float64(code)
+	return envelope
 }
 
 // case: S-025.1, S-025.2, S-203.10

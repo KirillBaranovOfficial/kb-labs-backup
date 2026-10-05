@@ -19,7 +19,7 @@ from studio_steps import (create_studio_access_tokens, create_studio_environment
 from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
-from installer_case_steps import run_installer_case_steps, run_uninstall_decline_step
+from installer_case_steps import run_doctor_root_isolation_step, run_installer_case_steps, run_uninstall_decline_step
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import Journey, record_runner_failure
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
@@ -162,6 +162,22 @@ def dump_failure_state() -> None:
 def failure_exit() -> int:
     dump_failure_state()
     return 1
+
+
+def project_fixture_handoff(path: Path) -> tuple[str, str] | str:
+    """Read and validate the project B fixture contract written by services."""
+    try:
+        fixtures = json.loads(path.read_text(encoding="utf-8"))
+        project_id = fixtures.get("projectBId")
+        root_value = fixtures.get("projectBRoot")
+        if (not isinstance(project_id, str) or not project_id
+                or not isinstance(root_value, str)
+                or not Path(root_value).is_absolute()
+                or str(Path(root_value).resolve()) != root_value):
+            raise ValueError("registry result omitted a valid project B ID or canonical root")
+    except (OSError, json.JSONDecodeError, AttributeError, ValueError) as error:
+        return f"{error}; rerun the installed journey to register its isolation project"
+    return project_id, root_value
 
 
 def capture_case_failure() -> None:
@@ -911,15 +927,39 @@ def main():
                 raise RuntimeError(f"GET {canary_url} returned HTTP {canary_status}")
             canary_index.write_bytes(canary_body)
         installer_secret = env.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyInstallSecret1!")
-        def installer_command(args: list[str]):
+        def root_isolation_command(args: list[str]):
             installer_env = env.copy()
             if "--secret-env" in args:
                 installer_env["KB_JOURNEY_ADMIN_PASSWORD"] = installer_secret
             return run(args, env=installer_env, timeout=1200)[0]
-        installer_case_journey = run_installer_case_steps(
-            mode=mode, launcher=launcher, stable_index=stable_index, canary_index=canary_index,
-            platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command,
+        def installer_command(args: list[str]):
+            installer_env = env.copy()
+            root_flag = next((flag for flag in ("--platform-root", "--request-platform-root") if flag in args), None)
+            if root_flag is not None:
+                fixture_root = Path(args[args.index(root_flag) + 1])
+                installer_env["KB_HOME"] = str(HOME / "installer-fixture-kb-homes" / fixture_root.name)
+            if "--secret-env" in args:
+                installer_env["KB_JOURNEY_ADMIN_PASSWORD"] = installer_secret
+            return run(args, env=installer_env, timeout=1200)[0]
+        root_isolation_journey = run_doctor_root_isolation_step(
+            mode=mode, launcher=launcher, platform_root=PLATFORM, run_command=root_isolation_command,
         )
+        for step in root_isolation_journey.result().steps:
+            CASE_JOURNEY.step(step["name"], step["capability"],
+                              lambda step=step: None if step["status"] == "PASS" else step["message"],
+                              cases=step["cases"])
+        stopped, _ = run([launcher, "stop", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
+        if stopped.returncode != 0:
+            raise RuntimeError(f"could not stop the main host before isolated installer fixtures: {stopped.stderr or stopped.stdout}")
+        try:
+            installer_case_journey = run_installer_case_steps(
+                mode=mode, launcher=launcher, stable_index=stable_index, canary_index=canary_index,
+                platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command,
+            )
+        finally:
+            started, _ = run([launcher, "start", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=180)
+            if started.returncode != 0:
+                raise RuntimeError(f"could not restart the main host after isolated installer fixtures: {started.stderr or started.stdout}")
         installer_case_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
             f"installer-cases-{mode}.json")
         installer_case_result = installer_case_journey.write_json(installer_case_report)
@@ -1081,17 +1121,12 @@ def main():
             # Nothing to merge workflow claims into; the failure above names the cause.
             append_summary(False)
             return failure_exit()
-        try:
-            project_fixtures = json.loads(project_fixture_file.read_text(encoding="utf-8"))
-            project_b_id = project_fixtures.get("projectBId")
-            project_b_root_value = project_fixtures.get("projectBRoot")
-            if (not isinstance(project_b_id, str) or not project_b_id
-                    or not isinstance(project_b_root_value, str)
-                    or not Path(project_b_root_value).is_absolute()
-                    or str(Path(project_b_root_value).resolve()) != project_b_root_value):
-                raise ValueError("registry result omitted a valid project B ID or canonical root")
-        except (OSError, json.JSONDecodeError, AttributeError, ValueError) as error:
-            fail(f"project B fixture handoff failed: {error}; rerun the installed journey to register its isolation project")
+        handoff = project_fixture_handoff(project_fixture_file)
+        if isinstance(handoff, str):
+            fail(f"project B fixture handoff failed: {handoff}")
+            append_summary(False)
+            return failure_exit()
+        project_b_id, project_b_root_value = handoff
         service_env["KB_JOURNEY_PROJECT_B_ID"] = project_b_id
         service_env["KB_JOURNEY_PROJECT_B_ROOT"] = project_b_root_value
         workflow_journey = Journey(mode, f"workflow-{mode}")

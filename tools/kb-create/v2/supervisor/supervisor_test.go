@@ -76,7 +76,7 @@ func TestLivePIDRemovesStalePidFile(t *testing.T) {
 	if err := os.WriteFile(state.SupervisorPID(), []byte(strconv.Itoa(2147483646)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, alive := LivePID(state); alive {
+	if _, alive := LivePID(state, t.TempDir()); alive {
 		t.Fatal("dead pid reported alive")
 	}
 	if _, err := os.Stat(state.SupervisorPID()); !os.IsNotExist(err) {

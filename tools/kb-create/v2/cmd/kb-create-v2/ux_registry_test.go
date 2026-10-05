@@ -274,7 +274,7 @@ func TestJSONInstallFailureEndsWithTerminalRecord(t *testing.T) {
 	if err := json.Unmarshal(lines[0], &failure); err != nil {
 		t.Fatal(err)
 	}
-	if failure.OK || failure.Error.Code != "KB_RUNTIME_INPUT_INVALID" || failure.Error.CorrelationID == "" {
+	if failure.OK || failure.Error.Code != "KB_INSTALL_INPUT_REQUIRED" || failure.Error.CorrelationID == "" {
 		t.Fatalf("typed stream failure = %s", lines[0])
 	}
 	var terminal struct {

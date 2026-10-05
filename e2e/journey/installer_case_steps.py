@@ -5,6 +5,7 @@ import json
 import platform
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -59,12 +60,16 @@ def _seed_doctor_fixture(source_root: Path, target_root: Path, *, requirement: d
         raise RuntimeError("active receipt has no package artifacts for a doctor fixture")
     target_root.mkdir(parents=True, exist_ok=True)
     target_root.joinpath(".kb/v2").mkdir(parents=True, exist_ok=True)
-    target_root.joinpath(".kb/v2/receipt.json").write_text(json.dumps(active, indent=2) + "\n")
     target_root.joinpath(".kb/kb.config.jsonc").write_text("{}\n")
-    selected = packages[0]
-    if receipt_requirement is not None:
-        selected["config"] = [receipt_requirement]
-        target_root.joinpath(".kb/v2/receipt.json").write_text(json.dumps(active, indent=2) + "\n")
+    effective_requirement = receipt_requirement or requirement
+    if effective_requirement is not None:
+        selected = {"id": "journey-doctor-fixture", "kind": "plugin", "package": "@kb-labs/journey-doctor-fixture",
+                    "version": "1.0.0", "config": [effective_requirement]}
+        artifacts.append(selected)
+        packages.append(selected)
+    else:
+        selected = packages[0]
+    target_root.joinpath(".kb/v2/receipt.json").write_text(json.dumps(active, indent=2) + "\n")
     for item in packages:
         package = item["package"]
         package_root = target_root / "node_modules" / package
@@ -74,8 +79,8 @@ def _seed_doctor_fixture(source_root: Path, target_root: Path, *, requirement: d
             continue
         manifest = {"schema": "kb.create.artifact-manifest/v2", "id": item["id"],
                     "package": package, "version": item["version"], "requirements": []}
-        if requirement is not None and item is selected:
-            manifest["requirements"] = [requirement]
+        if effective_requirement is not None and item is selected:
+            manifest["requirements"] = [effective_requirement]
         (package_root / "kb-create.manifest.json").write_text(json.dumps(manifest) + "\n")
     return selected
 
@@ -175,6 +180,30 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     """
     journey = Journey(mode, f"installer-cases-{mode}")
     root = str(platform_root)
+    port_conflict_root = platform_root.parent / "pc001-port-conflict-root"
+
+    def port_conflict_ux() -> None:
+        with socket.socket() as owner:
+            owner.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            owner.bind(("127.0.0.1", 4000))
+            owner.listen(1)
+            result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                  "--request-platform-root", str(port_conflict_root),
+                                  "--service-profile", "default", "--scenario", "commit"])
+        envelope, error = _diagnostic(result, "PC-001 port conflict")
+        details = error.get("details", error.get("meta", {}))
+        if (result.returncode == 0 or envelope.get("ok") is not False
+                or error.get("code") != "KB_INSTALL_PORT_IN_USE"
+                or not isinstance(details, dict)
+                or details.get("port") != "4000" or not details.get("pid") or not details.get("command")
+                or "kb-create apply" not in error.get("hint", "")
+                or str(details["pid"]) not in error.get("hint", "")
+                or str(details["command"]) not in error.get("hint", "")):
+            raise RuntimeError(f"port conflict omitted its catalogued code, owner, or apply hint: {error}")
+
+    journey.step("report the owning process when apply cannot claim a required port", "platform.install",
+                 port_conflict_ux, cases=["PC-001.9"])
+
     # PC-001.4 applies an explicit fresh fixture so the end-to-end installer
     # remains the single main journey install and can continue serving later cases.
     apply_root = platform_root.parent / "pc001-apply-root"
@@ -380,7 +409,6 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         if (receipt_path.read_bytes() != before_receipt or before_files != after_files
                 or before_directories != after_directories):
             raise RuntimeError(f"incompatible {kind} update mutated the active receipt or install root")
-        shutil.rmtree(root, ignore_errors=True)
 
     exact_step("S-053.3", lambda: installed_component_update("plugin", "fixture-compat", "S-053.3"),
                "refuse update beyond an installed plugin range", "platform.update")
@@ -572,4 +600,51 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
     exact_step("S-187.5", install_without_project, "install without a project and print its registration command", "platform.install")
 
     shutil.rmtree(scratch, ignore_errors=True)
+    return journey
+
+
+def run_doctor_root_isolation_step(*, mode: str, launcher: str, platform_root: Path,
+                                   run_command: CommandRunner) -> Journey:
+    """Prove the per-user launcher never controls a different platform root."""
+    journey = Journey(mode, f"doctor-root-isolation-{mode}")
+    root = platform_root.parent / "installer-case-fixtures" / "s025-root-isolation"
+
+    def repair_fixture_without_stopping_main() -> None:
+        requirement = {"id": "fixture.default", "path": "/fixture/default", "required": True,
+                       "default": "\"manifest-safe-value\"", "hint": "safe default"}
+        _seed_doctor_fixture(platform_root, root, requirement=requirement)
+        result = run_command([launcher, "doctor", "--fix", "--platform-root", str(root), "--json"])
+        payload = _data(result, "isolated-root doctor repair")
+        if payload.get("hostRestarted") is not False:
+            raise RuntimeError("doctor --fix treated another platform root's host as the fixture host")
+        fixture_status = _data(run_command([launcher, "status", "--platform-root", str(root), "--json"]),
+                               "isolated platform status")
+        if fixture_status.get("host", {}).get("state") != "stopped":
+            raise RuntimeError("status for platform B reported platform A's host")
+        main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
+                            "main platform status after isolated-root repair")
+        if main_status.get("host", {}).get("state") != "running":
+            raise RuntimeError("repairing an isolated root stopped or replaced the main platform host")
+
+    journey.step("repair an isolated root without stopping the running platform", "platform.install",
+                 repair_fixture_without_stopping_main, cases=["S-025.7"])
+
+    def refuse_start_for_other_root() -> None:
+        result = run_command([launcher, "start", "--platform-root", str(root), "--json"])
+        envelope, error = _diagnostic(result, "cross-root host start")
+        details = error.get("meta", error.get("details", {}))
+        if (result.returncode == 0 or envelope.get("ok") is not False
+                or error.get("code") != "KB_HOST_ALREADY_RUNNING"
+                or str(platform_root.resolve()) not in error.get("message", "")
+                or not isinstance(details, dict) or not details.get("pid")
+                or f"kb-create stop --platform-root {platform_root}" not in error.get("hint", "")):
+            raise RuntimeError(f"cross-root start did not identify the active platform and stop command: {error}")
+        main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
+                            "main status after refused cross-root start")
+        if main_status.get("host", {}).get("state") != "running":
+            raise RuntimeError("refused start for platform B affected platform A")
+        shutil.rmtree(root, ignore_errors=True)
+
+    journey.step("refuse to start a second platform while the user's host is running", "platform.install",
+                 refuse_start_for_other_root, cases=["S-025.8"])
     return journey

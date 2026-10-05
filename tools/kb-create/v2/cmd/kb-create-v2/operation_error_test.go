@@ -33,9 +33,35 @@ func TestOperationResultReadsCanonicalDiagnosticWithoutDroppingFields(t *testing
 	}
 }
 
-func TestOperationResultDoesNotAcceptPrivateDiagnosticJSON(t *testing.T) {
+func TestOperationResultPreservesCataloguedCodeWhenEnvelopeHasExtraFields(t *testing.T) {
 	legacy := []byte(`{"ok":false,"error":{"code":"KB_RUNTIME_INPUT_INVALID","message":"old shape","reason":"private","hint":"retry"}}`)
-	if err := errorFromOperationResult(legacy, diag.ExitError); err == nil || err.Error() != "kb-create command failed unexpectedly" {
-		t.Fatalf("private diagnostic JSON was accepted: %v", err)
+	var got *diag.Diag
+	if err := errorFromOperationResult(legacy, diag.ExitError); !errors.As(err, &got) || got.Code != "KB_RUNTIME_INPUT_INVALID" || got.Message != "old shape" {
+		t.Fatalf("catalogued operation diagnostic was not preserved: %#v", err)
+	}
+}
+
+// case: PC-001.9
+func TestOperationResultPreservesCataloguedInputCodesAndMapsUnknownCodes(t *testing.T) {
+	for _, code := range []string{"KB_INSTALL_PORT_IN_USE", "KB_INSTALL_INPUT_REQUIRED"} {
+		t.Run(code, func(t *testing.T) {
+			original := diag.New(code, "operation validation failed", diag.WithHint("fix the input"), diag.WithMeta(map[string]any{"field": "x"}))
+			data, err := json.Marshal(map[string]any{"ok": false, "error": original})
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed := errorFromOperationResult(data, diag.ExitInput)
+			var got *diag.Diag
+			if !errors.As(parsed, &got) || got.Code != code || got.Meta["field"] != "x" || got.Hint != original.Hint {
+				t.Fatalf("catalogued input diagnostic = %#v, want preserved %#v", parsed, original)
+			}
+		})
+	}
+
+	data := []byte(`{"ok":false,"error":{"code":"KB_PRIVATE_OPERATION_CODE","message":"operation validation failed","hint":"fix the input","meta":{"field":"x"}}}`)
+	parsed := errorFromOperationResult(data, diag.ExitInput)
+	var got *diag.Diag
+	if !errors.As(parsed, &got) || got.Code != "KB_RUNTIME_INPUT_INVALID" || got.Meta["field"] != "x" || got.Hint != "fix the input" {
+		t.Fatalf("uncatalogued input diagnostic = %#v, want generic wrapper", parsed)
 	}
 }
