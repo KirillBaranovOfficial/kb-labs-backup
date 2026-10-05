@@ -116,10 +116,10 @@ export default defineCommand({
         if (!flags.json) { analyzeLoader.fail('Failed to generate commit plan'); }
         if ((err instanceof AdapterUnavailableError && err.reason === 'not-configured') || err instanceof AdapterCredentialsMissingError) {
           handleError(ctx, err, Boolean(flags.json));
-          return { ok: false, error: 'Command failed' };
+          return { ok: false, error: 'Commit plan generation failed. Follow the adapter guidance above, then rerun `kb commit generate`.' };
         }
         handleError(ctx, err, flags.json);
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: 'Could not generate a commit plan. Review the error details above, then rerun `kb commit generate`.' };
       }
 
       // Save plan
@@ -130,7 +130,7 @@ export default defineCommand({
       } catch (err) {
         if (!flags.json) { saveLoader.fail('Failed to save plan'); }
         handleError(ctx, err, flags.json);
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: 'Could not save the commit plan. Check project storage permissions, then rerun `kb commit generate`.' };
       }
       const planPath = getCurrentPlanPath(cwd, effectiveScope);
       if (!flags.json) { saveLoader.succeed('Plan saved'); }

@@ -53,7 +53,7 @@ export default defineCommand({
       if (!plan) {
         loadLoader.fail('No commit plan found');
         validationError(ctx, 'No commit plan found', 'Run `kb commit:generate` first', input.json);
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: 'No commit plan found. Run `kb commit generate` first.' };
       }
 
       if (plan.commits.length === 0) {

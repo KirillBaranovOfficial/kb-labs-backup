@@ -4,7 +4,7 @@ title: Commit plugin — Generate a commit with the deterministic journey LLM
 persona: solo-developer
 area: plugins
 priority: P0
-status: planned
+status: active
 release: true
 modes: [local, secured]
 surfaces: [cli]
@@ -24,6 +24,7 @@ A developer uses the marketplace-installed commit plugin to generate and preview
 
 | # | Action | Expected |
 |---|---|---|
-| S-160.1 | Run `kb commit commit --dry-run` with the deterministic fixture adapter configured | JSON output contains a generated plan with `plan.metadata.llmUsed: true`, and no Git commit is created. |
+| S-160.1 | Run `kb commit commit --dry-run --json` with the deterministic fixture adapter configured | JSON output contains a generated plan with `plan.metadata.llmUsed: true` and `applied: false`; no commit is created and the index and working tree are unchanged. |
 | S-160.2 | Remove the platform LLM adapter binding and run `kb commit commit --dry-run` again | The command returns a typed error naming the missing `llm` capability and includes the `kb adapter bind llm <installed-adapter-package>` next-command hint; it does not silently use a built-in LLM. |
-| S-160.3 | Restore the platform fixture binding and run `kb commit commit` | A commit is created; `git log -1 --format=%s` prints the conventional commit subject returned by the configured fixture. |
+| S-160.3 | Restore the platform fixture binding and run `kb commit commit --json` | JSON output reports `applied: true`; a commit is created and `git log -1 --format=%s` prints the conventional commit subject returned by the configured fixture. |
+| S-160.4 | After S-160.3 leaves the repository clean, run `kb commit commit --json` again | The command succeeds with an empty plan, `applied: false`, and no applied commits; HEAD, index, and working tree remain unchanged. |

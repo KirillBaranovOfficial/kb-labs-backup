@@ -55,7 +55,7 @@ export default defineCommand({
         await clearPlan(cwd, scope);
       } catch (err) {
         handleError(ctx, err);
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: 'Could not clear the commit plan. Check project storage permissions, then rerun `kb commit reset`.' };
       }
 
       ctx.ui?.success?.('Plan Cleared', {

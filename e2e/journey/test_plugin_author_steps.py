@@ -86,13 +86,20 @@ elif args[:3] == ["commit", "commit", "--dry-run"]:
         print("Re-analyzing with diff context (Phase 2)...", flush=True)
         print("Plan generated", flush=True)
         raise SystemExit(0)
-    print(json.dumps({"ok": True, "result": {"plan": {"metadata": {"llmUsed": True}}}}))
-    subprocess.run(["git", "commit", "-m", "test(journey): verify deterministic commit fixture response"],
-                   cwd=root, capture_output=True, text=True, check=True)
+    print(json.dumps({"plan": {"metadata": {"llmUsed": True}}, "applied": False}))
 elif args[:2] == ["commit", "commit"]:
+    changes = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                             cwd=root, capture_output=True, text=True, check=True).stdout
+    if not changes:
+        print(json.dumps({"plan": {"commits": []}, "applied": False, "pushed": False, "commits": []}))
+        raise SystemExit(0)
     subprocess.run(["git", "commit", "-m", "test(journey): verify deterministic commit fixture response"],
                    cwd=root, capture_output=True, text=True, check=True)
-    print("Commits created successfully")
+    if "--json" in args:
+        print(json.dumps({"plan": {"metadata": {"llmUsed": True}}, "applied": True,
+                          "pushed": False, "commits": [{"message": "test(journey): verify deterministic commit fixture response"}]}))
+    else:
+        print("Commits created successfully")
 elif args[:3] == ["review", "run", "--mode=heuristic"] and "--json" not in args:
     print("Files: 1\nFindings: 0\n")
 elif args[:3] == ["review", "run", "--mode=heuristic"]:
@@ -193,19 +200,19 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             *(f"S-014.{step}" for step in range(1, 4)),
             *(f"S-015.{step}" for step in range(1, 5)),
             *(f"S-030.{step}" for step in range(1, 5)),
-            *(f"S-160.{step}" for step in range(1, 4)),
+            *(f"S-160.{step}" for step in range(1, 5)),
         }
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
         self.assertTrue(expected.issubset(claims))
         self.assertEqual({step: claims[step] for step in ("S-014.1", "S-014.2", "S-014.3")}, {
-            "S-014.1": "FAIL", "S-014.2": "PASS", "S-014.3": "PASS",
+            "S-014.1": "PASS", "S-014.2": "PASS", "S-014.3": "PASS",
         })
         self.assertEqual({step: claims[step] for step in ("S-015.1", "S-015.2", "S-015.3", "S-015.4")}, {
             "S-015.1": "PASS", "S-015.2": "PASS", "S-015.3": "PASS", "S-015.4": "PASS",
         })
-        self.assertEqual({step: claims[step] for step in ("S-160.1", "S-160.2", "S-160.3")}, {
-            "S-160.1": "FAIL", "S-160.2": "PASS", "S-160.3": "PASS",
-        })
+        self.assertEqual({step: claims[step] for step in ("S-160.1", "S-160.2", "S-160.3", "S-160.4")}, {
+            "S-160.1": "PASS", "S-160.2": "PASS", "S-160.3": "PASS", "S-160.4": "PASS",
+        }, result.steps)
         self.assertEqual({step: claims[step] for step in ("S-030.1", "S-030.2", "S-030.3", "S-030.4")}, {
             "S-030.1": "PASS", "S-030.2": "PASS", "S-030.3": "PASS", "S-030.4": "PASS",
         })

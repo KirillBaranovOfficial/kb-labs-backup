@@ -85,44 +85,51 @@ function hasConfiguredLLM(config: unknown): boolean {
   return typeof llm === 'string' ? llm.trim().length > 0 : Array.isArray(llm) && llm.length > 0;
 }
 
+function createEmptyCommitPlan(
+  repoRoot: string,
+  gitStatus: CommitRunOutput['plan']['gitStatus'],
+): CommitRunOutput['plan'] {
+  return {
+    schemaVersion: '1.0',
+    createdAt: new Date().toISOString(),
+    repoRoot,
+    gitStatus,
+    commits: [],
+    metadata: { totalFiles: 0, totalCommits: 0, llmUsed: false, escalated: false, tokensUsed: 0 },
+  };
+}
+
+function renderPreview(
+  ctx: PluginContextV3,
+  plan: CommitRunOutput['plan'],
+  effectiveScope: string,
+  outputJson: boolean,
+  startTime: number,
+): RunResult {
+  const output: CommitRunOutput = { plan, applied: false, pushed: false, commits: [] };
+
+  if (outputJson) {
+    ctx.ui?.json?.(output);
+  } else {
+    const items = plan.commits.map(c => `${c.type}${c.scope ? `(${c.scope})` : ''}: ${c.message}`);
+    ctx.ui?.success?.(plan.commits.length === 0 ? 'No changes to commit' : 'Commit plan generated (dry-run)', {
+      title: 'Git Commit',
+      sections: [
+        ...(items.length > 0 ? [{ header: 'Planned Commits', items }] : []),
+        { header: 'Result', items: [items.length === 0 ? 'No commits planned' : `Commits: ${items.length}`, 'Applied: No', `Scope: ${effectiveScope}`] },
+      ],
+      timing: Date.now() - startTime,
+    });
+  }
+
+  return { ok: true, result: output, meta: { timing: Date.now() - startTime } };
+}
+
 export default defineCommand({
   id: 'commit:commit',
   description: 'Generate and apply commits (default flow)',
 
   handler: {
-    async intent(ctx: PluginContextV3, input: CLIInput<CommitFlags>) {
-      const flags = input.flags;
-      const { effectiveScope, scopeCwd, llmComplete, config } = await resolveContext(ctx, flags);
-
-      const status = await getGitStatus(scopeCwd);
-      if (!hasChanges(status)) {
-        return {
-          summary: 'No changes to commit',
-          operations: [],
-        };
-      }
-
-      const plan = await generateCommitPlan({
-        cwd: scopeCwd,
-        llmComplete,
-        config,
-        allowSecrets: flags['allow-secrets'] ?? false,
-        autoConfirm: flags.yes ?? false,
-      });
-
-      return {
-        summary: `Generate and apply ${plan.commits.length} commit(s) in scope "${effectiveScope}"`,
-        operations: plan.commits.map(c => ({
-          type: 'create' as const,
-          resource: 'git-commit',
-          details: {
-            message: `${c.type}${c.scope ? `(${c.scope})` : ''}: ${c.message}`,
-            files: c.files.length,
-          },
-        })),
-      };
-    },
-
     async execute(ctx: PluginContextV3, input: CLIInput<CommitFlags>): Promise<RunResult> {
       const startTime = Date.now();
       const flags = input.flags;
@@ -139,13 +146,15 @@ export default defineCommand({
       } catch (err) {
         statusLoader.fail('Failed to check git status');
         handleError(ctx, err, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return {
+          ok: false,
+          error: 'Could not read Git status. Confirm this path is a Git repository, then rerun `kb commit commit`.',
+        };
       }
 
       if (!hasChanges(status)) {
         statusLoader.stop();
-        ctx.ui?.warn?.('No changes to commit');
-        return { ok: false, error: 'Command failed' };
+        return renderPreview(ctx, createEmptyCommitPlan(scopeCwd, status), effectiveScope, outputJson, startTime);
       }
       statusLoader.succeed('Git status analyzed');
 
@@ -164,8 +173,13 @@ export default defineCommand({
         onResumeProgress: () => analyzeLoader.start(),
       });
 
-      await savePlan(cwd, plan);
       analyzeLoader.succeed(`Generated commit plan with ${plan.commits.length} commit(s)`);
+
+      if (flags['dry-run']) {
+        return renderPreview(ctx, plan, effectiveScope, outputJson, startTime);
+      }
+
+      await savePlan(cwd, plan);
 
       // 3. Apply plan
       const applyLoader = useLoader('Applying commits...');
@@ -182,7 +196,10 @@ export default defineCommand({
             cause: applyResult.errors.join('; '),
           });
         }
-        return { ok: false, error: 'Command failed' };
+        return {
+          ok: false,
+          error: 'Commit plan could not be applied. Review the Git errors above, resolve them, then rerun `kb commit apply`.',
+        };
       }
 
       await saveToHistory(cwd, plan, applyResult);
