@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import urllib.request
 
@@ -85,6 +86,16 @@ def _json_string_field(result: subprocess.CompletedProcess[str] | None, field: s
     return find(payload)
 
 
+def _json_object(result: subprocess.CompletedProcess[str] | None) -> dict[str, object]:
+    if result is None or result.returncode != 0:
+        return {}
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _store_studio_llm_model(model: str | None) -> None:
     fixture_file = os.environ.get("KB_JOURNEY_STUDIO_FIXTURE_FILE", "")
     if not model or not fixture_file:
@@ -108,8 +119,16 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
 
     secret_ref = _cli(["kb", "config", "set", "--scope", "platform",
                        "platform.adapterOptions.llm.apiKey", "${OPENAI_API_KEY}", "--json"], "S-017.2", runner)
+    project_config = Path(os.environ.get("KB_JOURNEY_PROJECT_ROOT", ".")) / ".kb" / "kb.config.jsonc"
+    project_config_before = project_config.read_bytes() if project_config.is_file() else None
     openai_base = _cli(["kb", "config", "set", "--scope", "platform",
                         "platform.adapterOptions.llm.baseURL", f"{mock_base}/v1", "--json"], "S-017.2", runner)
+    base_result = _json_object(openai_base)
+    platform_root = Path(os.environ.get("KB_JOURNEY_PLATFORM_ROOT", str(Path.home() / "kb-platform"))).resolve()
+    expected_platform_config = str(platform_root / ".kb" / "kb.config.jsonc")
+    scope_ok = (base_result.get("file") == expected_platform_config
+                and project_config_before == (project_config.read_bytes() if project_config.is_file() else None)
+                and base_result.get("nextCommand") == f"kb-create restart --platform-root {json.dumps(str(platform_root))}")
     openai_model = _cli(["kb", "config", "set", "--scope", "platform",
                          "platform.adapterOptions.llm.model", "journey-mock-model", "--json"], "S-017.2", runner)
     inspect = _cli(["kb", "config", "get", "platform.adapterOptions.llm.apiKey", "--json"], "S-017.4", runner)
@@ -117,9 +136,14 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
                    and openai_model.returncode == 0 and inspect.returncode == 0
                    and "${OPENAI_API_KEY}" in inspect.stdout
                    and os.environ.get("OPENAI_API_KEY", "") not in inspect.stdout)
-    journey.step("store secret reference without exposing the key", "gateway",
-                 lambda: None if secret_safe else "platform config did not retain the OPENAI_API_KEY reference safely",
-                 cases=["S-017.2", "S-017.4"])
+    journey.step("store platform config without exposing the key or changing project config", "gateway",
+                 lambda: None if secret_safe and scope_ok else "platform config wrote to the wrong file, changed project config, omitted restart guidance, or exposed the OPENAI_API_KEY reference",
+                 cases=["S-017.2", "S-017.4", "S-017.5"])
+
+    restart = _cli(shlex.split(str(base_result.get("nextCommand", "kb-create restart"))), "S-017.5", runner)
+    journey.step("restart the host after changing platform LLM settings", "gateway", lambda: (
+        None if restart.returncode == 0 else "the exact restart command returned by kb config set failed"
+    ), cases=["S-017.5"])
 
     project_a = os.environ.get("KB_JOURNEY_PROJECT_ROOT", "")
     project_b = os.environ.get("KB_JOURNEY_PROJECT_B_ROOT", "")
@@ -153,6 +177,8 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
                      "${VIBEPROXY_API_KEY}", "--json"], "S-018.3", runner)
     vibe_model = _cli(["kb", "config", "set", "--scope", "platform", "platform.adapterOptions.llm.model",
                        "journey-mock-model", "--json"], "S-018.3", runner)
+    vibe_restart = _cli(shlex.split(str(_json_object(vibe_adapter).get("nextCommand", "kb-create restart"))),
+                        "S-018.3", runner)
     vibe_projects = [
         _cli([*fixture_command, f"--marker=provider-vibeproxy-{label}"], "S-018.3", runner, cwd=root)
         for label, root in (("a", project_a), ("b", project_b)) if root
@@ -161,7 +187,7 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
         None if all(project_ids) and len(vibe_projects) == 2
         and all(_json_contains(item, "VIBEPROXY_MOCK_RESPONSE") for item in vibe_projects)
         and all(_json_string_field(item, "stopReason") == "end_turn" for item in vibe_projects)
-        and all(item.returncode == 0 for item in (vibe_adapter, vibe_url, vibe_key, vibe_model))
+        and all(item.returncode == 0 for item in (vibe_adapter, vibe_url, vibe_key, vibe_model, vibe_restart))
         else "both registered projects must return the deterministic VibeProxy Messages API response with stopReason=end_turn"
     ), cases=["S-018.3"])
 
@@ -207,6 +233,47 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
         None if stream_status == 200 and isinstance(stream, str) and "[DONE]" in stream
         else f"LLM stream returned HTTP {stream_status} without SSE chunks and [DONE]"
     ), cases=["S-189.4"])
+
+    with invocation_context(step_id="S-189.5"):
+        error_status, error_stream = _http("/platform/v1/llm/stream", token=token, method="POST",
+                                           payload={"args": ["journey-provider-401"]}, opener=opener)
+        midstream_status, midstream_stream = _http("/platform/v1/llm/stream", token=token, method="POST",
+                                                   payload={"args": ["journey-provider-stream-error"]}, opener=opener)
+        health_status, health = _http("/health", token=token, opener=opener)
+    error_envelope = error_stream.get("error", {}) if isinstance(error_stream, dict) else {}
+    midstream_envelope = {}
+    if isinstance(midstream_stream, str) and "event: error\n" in midstream_stream and "[DONE]" not in midstream_stream:
+        for line in midstream_stream.splitlines():
+            if line.startswith("data: "):
+                try:
+                    event_payload = json.loads(line[6:])
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event_payload, dict) and isinstance(event_payload.get("error"), dict):
+                    midstream_envelope = event_payload["error"]
+                    break
+    midstream_error_event = (midstream_status == 200 and midstream_envelope.get("code") == "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE"
+                   and "kb config get platform.adapterOptions.llm.baseURL --scope platform --json" in midstream_envelope.get("hint", "")
+                   and midstream_envelope.get("message") and midstream_envelope.get("correlationId"))
+    before_headers_error = (error_status == 502 and isinstance(error_envelope, dict)
+                            and error_envelope.get("code") == "KB_CONFIG_LLM_KEY_INVALID"
+                            and "kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'" in error_envelope.get("hint", "")
+                            and error_envelope.get("message") and error_envelope.get("hint")
+                            and error_envelope.get("correlationId"))
+    health_ok = health_status == 200 and isinstance(health, dict)
+    journey.step("keep gateway healthy after an LLM stream failure", "gateway", lambda: (
+        None if before_headers_error and midstream_error_event and health_ok
+        else f"LLM stream failure was not typed or gateway health returned HTTP {health_status}"
+    ), cases=["S-189.5"])
+
+    with invocation_context(step_id="S-189.6"):
+        invalid_status, invalid_body = _http("/platform/v1/llm/stream", token=token, method="POST",
+                                              payload={"args": []}, opener=opener)
+    invalid_error = invalid_body.get("error", {}) if isinstance(invalid_body, dict) else {}
+    journey.step("reject an LLM stream request without a prompt", "gateway", lambda: (
+        None if invalid_status == 400 and invalid_error.get("code") == "KB_RUNTIME_INPUT_INVALID"
+        else f"empty LLM stream args returned HTTP {invalid_status} without KB_RUNTIME_INPUT_INVALID"
+    ), cases=["S-189.6"])
 
     telemetry_source = f"case-fixture-{journey.run_id}"
     telemetry_from = os.environ.get("KB_JOURNEY_STARTED_AT", "")

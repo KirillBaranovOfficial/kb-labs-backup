@@ -167,12 +167,6 @@ export class BulkTransferHelper {
       await BulkTransferHelper.cleanup();
       process.exit(0);
     });
-
-    process.on('uncaughtException', async (error) => {
-      console.error('[BulkTransferHelper] Uncaught exception, cleaning up temp files:', error);
-      await BulkTransferHelper.cleanup();
-      process.exit(1);
-    });
   }
 }
 

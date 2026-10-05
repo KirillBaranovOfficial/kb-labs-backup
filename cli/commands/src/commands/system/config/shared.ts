@@ -16,7 +16,7 @@ import {
 } from '@kb-labs/core-config';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { loadPlatformConfig } from '@kb-labs/core-runtime';
-import { resolveProjectRoot } from '@kb-labs/core-workspace';
+import { resolveProjectRoot, resolveRoots } from '@kb-labs/core-workspace';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import type { ConfigLayerFile } from '@kb-labs/core-config';
 import type { LoadPlatformConfigResult } from '@kb-labs/core-runtime';
@@ -36,12 +36,13 @@ export interface ConfigRoots {
 export async function resolveConfigRoots(
   cwd: string,
   projectScope: 'required' | 'platform' = 'required',
+  moduleUrl = import.meta.url,
 ): Promise<ConfigRoots> {
   if (projectScope === 'platform') {
-    const loaded = await loadPlatformConfig({ startDir: cwd, loadEnvFile: false, projectScope: 'platform' });
+    const roots = await resolveRoots({ moduleUrl, startDir: cwd, projectScope: 'platform' });
     return {
-      platformRoot: loaded.platformRoot,
-      projectRoot: loaded.platformRoot,
+      platformRoot: roots.platformRoot,
+      projectRoot: roots.platformRoot,
       sameLocation: true,
     };
   }
@@ -51,7 +52,7 @@ export async function resolveConfigRoots(
   if (!project) {
     throw new Error(`Registered project ${projectRoot} disappeared while resolving config roots.`);
   }
-  const loaded = await loadPlatformConfig({ startDir: cwd, loadEnvFile: false });
+  const loaded = await loadPlatformConfig({ moduleUrl, startDir: cwd, loadEnvFile: false });
   return {
     platformRoot: loaded.platformRoot,
     projectRoot: project.path,

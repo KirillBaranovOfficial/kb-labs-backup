@@ -157,6 +157,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       }
 
       const runtimeConfig = await loadPlatformConfig({
+        moduleUrl: import.meta.url,
         startDir: getContextCwd(ctx),
         loadEnvFile: false,
         projectId: roots.projectId,
