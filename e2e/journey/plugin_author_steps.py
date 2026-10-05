@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
-from invocations import run_command, run_with_runner
+from invocations import invocation_context, run_command, run_pty_command, run_with_runner
 
 
 PLUGIN_NAME = "demo"
@@ -58,6 +59,320 @@ def _lock_entry(project: Path) -> tuple[dict, dict]:
     if not isinstance(entry, dict):
         raise RuntimeError("project .kb/marketplace.lock does not contain demo")
     return lock, entry
+
+
+def _json_payload(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
+    output = result.stdout or ""
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"`{' '.join(command)}` did not return valid JSON") from error
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"`{' '.join(command)}` did not return a JSON object")
+    return payload
+
+
+def _find_plan(payload: object) -> dict | None:
+    if isinstance(payload, dict):
+        plan = payload.get("plan")
+        if isinstance(plan, dict):
+            return plan
+        for value in payload.values():
+            found = _find_plan(value)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = _find_plan(value)
+            if found is not None:
+                return found
+    return None
+
+
+def _git(args: list[str], *, project: Path, env: dict[str, str]) -> str:
+    command = ["git", *args]
+    with invocation_context():
+        result = run_with_runner(run_command, command, cwd=project, env=env, timeout=60)
+    if result.returncode != 0:
+        detail = " ".join((result.stdout or "").split())
+        raise RuntimeError(f"{' '.join(command)} exited {result.returncode}; {detail or 'no output'}")
+    return result.stdout or ""
+
+
+def _stage_case_file(project: Path, env: dict[str, str], label: str) -> Path:
+    case_dir = project / ".kb" / "journey-commit-cases"
+    case_dir.mkdir(parents=True, exist_ok=True)
+    path = case_dir / f"{label}.ts"
+    path.write_text(f"export const {label.replace('-', '_')} = 'journey fixture';\n", encoding="utf-8")
+    _git(["add", str(path.relative_to(project))], project=project, env=env)
+    return path
+
+
+def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, registry: str,
+                          command_runner: Callable[..., subprocess.CompletedProcess[str]],
+                          env: dict[str, str]) -> None:
+    """Claim Commit generation, Review, and progress behavior in the installed fixture project."""
+    project = project.resolve()
+    env = env.copy()
+    env["NPM_CONFIG_REGISTRY"] = registry
+
+    def cli(args: list[str], *, step_id: str | None = None) -> subprocess.CompletedProcess[str]:
+        command = [str(kb_path), *args]
+        context = invocation_context(step_id=step_id) if step_id else invocation_context()
+        with context:
+            return run_with_runner(command_runner, command, cwd=project, env=env, timeout=180)
+
+    def install_plugins() -> None:
+        lock_path = project / ".kb" / "marketplace.lock"
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("Commit case flow requires the Marketplace-installed project lock") from error
+        plugins = lock.get("plugins") if isinstance(lock, dict) else None
+        commit = plugins.get("@kb-labs/commit-entry") if isinstance(plugins, dict) else None
+        if not isinstance(commit, dict) or commit.get("enabled", True) is not True:
+            raise RuntimeError("Commit case flow requires @kb-labs/commit-entry enabled by the Marketplace flow")
+        package = "@kb-labs/review-entry"
+        result = cli(["marketplace", "install", package, "--json"])
+        if result.returncode != 0:
+            raise RuntimeError(f"marketplace could not install {package}: {(result.stdout + result.stderr)[-800:]}")
+
+    def ensure_git_fixture() -> None:
+        marker = project / ".git"
+        is_new_repo = not marker.exists()
+        if is_new_repo:
+            _git(["init"], project=project, env=env)
+            seed = project / ".kb" / "journey-commit-cases" / "seed.txt"
+            seed.parent.mkdir(parents=True, exist_ok=True)
+            seed.write_text("commit fixture seed\n", encoding="utf-8")
+        _git(["config", "user.name", "Journey Fixture"], project=project, env=env)
+        _git(["config", "user.email", "journey@example.test"], project=project, env=env)
+        if is_new_repo:
+            seed = project / ".kb" / "journey-commit-cases" / "seed.txt"
+            _git(["add", str(seed.relative_to(project))], project=project, env=env)
+            _git(["commit", "-m", "chore: initialize journey fixture"], project=project, env=env)
+
+    prepared = journey.step("prepare Commit and Review case fixtures", "plugin-author",
+                            lambda: (install_plugins(), ensure_git_fixture(), None)[-1])
+    if prepared.status != "PASS":
+        cases = [f"S-014.{step}" for step in range(1, 4)]
+        cases.extend(f"S-015.{step}" for step in range(1, 5))
+        cases.extend(f"S-030.{step}" for step in range(1, 5))
+        cases.extend(f"S-160.{step}" for step in range(1, 4))
+        for case_id in cases:
+            journey.blocked(f"{case_id} Commit and Review flow", "plugin-author",
+                            "blocked because Commit/Review fixture preparation failed", cases=[case_id])
+        return
+
+    _stage_case_file(project, env, "s014-generate")
+    before_s014 = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+
+    def s014_dry_run() -> None:
+        command = ["commit", "commit", "--dry-run", "--json"]
+        result = cli(command, step_id="S-014.1")
+        payload = _json_payload(result, [str(kb_path), *command])
+        plan = _find_plan(payload)
+        after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+        if (result.returncode != 0 or not plan or plan.get("metadata", {}).get("llmUsed") is not True
+                or after != before_s014):
+            raise RuntimeError("S-014.1 expected an LLM plan from --dry-run without creating a Git commit")
+
+    journey.step("generate a real-provider Commit plan without applying it", "plugin-author",
+                 s014_dry_run, cases=["S-014.1"])
+
+    def s014_provider() -> None:
+        adapter_cmd = ["adapter", "list", "--json"]
+        adapters_result = cli(adapter_cmd, step_id="S-014.2")
+        payload = _json_payload(adapters_result, [str(kb_path), *adapter_cmd])
+        raw = json.dumps(payload).lower()
+        if "@kb-labs/adapters-openai" not in raw:
+            raise RuntimeError("S-014.2 could not identify the configured real LLM provider")
+
+    journey.step("identify the selected real LLM provider", "plugin-author", s014_provider, cases=["S-014.2"])
+
+    _stage_case_file(project, env, "s014-apply")
+
+    def s014_apply() -> None:
+        command = ["commit", "commit"]
+        result = cli(command, step_id="S-014.3")
+        subject = _git(["log", "-1", "--format=%s"], project=project, env=env).strip()
+        if result.returncode != 0 or not subject.startswith(("test(", "chore(", "feat(", "fix(")):
+            raise RuntimeError(f"S-014.3 did not create a conventional generated commit: {subject!r}")
+
+    journey.step("apply a generated Commit plan", "plugin-author", s014_apply, cases=["S-014.3"])
+
+    _stage_case_file(project, env, "s015-review")
+
+    def s015_heuristic() -> None:
+        command = ["review", "run", "--mode=heuristic"]
+        result = cli(command, step_id="S-015.1")
+        if result.returncode != 0 or "Files:" not in result.stdout:
+            raise RuntimeError("S-015.1 did not complete and identify the reviewed change set")
+
+    journey.step("review changed files with heuristic mode", "plugin-author", s015_heuristic, cases=["S-015.1"])
+
+    def s015_findings() -> None:
+        command = ["review", "run", "--mode=heuristic", "--json"]
+        result = cli(command, step_id="S-015.2")
+        payload = _json_payload(result, [str(kb_path), *command])
+        findings = payload.get("findings")
+        if not isinstance(findings, list):
+            raise RuntimeError("S-015.2 review JSON contains no findings array")
+        for finding in findings:
+            if (not isinstance(finding, dict) or not isinstance(finding.get("file"), str)
+                    or not isinstance(finding.get("line"), int)):
+                raise RuntimeError("S-015.2 produced a finding without file path and line reference")
+
+    journey.step("inspect heuristic review findings", "plugin-author", s015_findings, cases=["S-015.2"])
+
+    def s015_json() -> None:
+        command = ["review", "run", "--json"]
+        result = cli(command, step_id="S-015.3")
+        payload = _json_payload(result, [str(kb_path), *command])
+        if result.returncode != 0 or not isinstance(payload.get("findings"), list):
+            raise RuntimeError("S-015.3 did not return a valid JSON review result")
+
+    journey.step("return a JSON review result", "plugin-author", s015_json, cases=["S-015.3"])
+
+    def missing_llm_review() -> None:
+        with invocation_context():
+            unbind = run_with_runner(command_runner,
+                [str(kb_path), "adapter", "unbind", "llm", "--scope", "platform", "--json"],
+                cwd=project, env=env, timeout=60)
+        if unbind.returncode != 0:
+            raise RuntimeError("could not remove the platform LLM binding for S-015.4")
+        command = ["review", "run", "--mode=llm", "--json"]
+        result = cli(command, step_id="S-015.4")
+        output = result.stdout + result.stderr
+        if (result.returncode == 0 or "KB_ADAPTER_UNAVAILABLE" not in output
+                or "kb adapter bind llm" not in output):
+            raise RuntimeError(f"S-015.4 did not return the typed missing-LLM guidance: {output[-800:]}")
+        with invocation_context():
+            restore = run_with_runner(command_runner,
+                [str(kb_path), "adapter", "bind", "llm", "@kb-labs/adapters-openai", "--scope", "platform", "--json"],
+                cwd=project, env=env, timeout=60)
+        if restore.returncode != 0:
+            raise RuntimeError("could not restore the platform LLM binding after S-015.4")
+
+    journey.step("report missing LLM capability for deep Review", "plugin-author",
+                 missing_llm_review, cases=["S-015.4"])
+
+    _stage_case_file(project, env, "s160-dry-run")
+    before_s160 = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+
+    def s160_dry_run() -> None:
+        command = ["commit", "commit", "--dry-run"]
+        result = cli(command, step_id="S-160.1")
+        plan = _find_plan(_json_payload(result, [str(kb_path), *command]))
+        after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+        if not plan or plan.get("metadata", {}).get("llmUsed") is not True or after != before_s160:
+            raise RuntimeError("S-160.1 expected JSON with llmUsed=true and no new Git commit from --dry-run")
+
+    journey.step("preview the deterministic fixture Commit plan", "plugin-author",
+                 s160_dry_run, cases=["S-160.1"])
+
+    def s160_missing_llm() -> None:
+        with invocation_context():
+            unbind = run_with_runner(command_runner,
+                [str(kb_path), "adapter", "unbind", "llm", "--scope", "platform", "--json"],
+                cwd=project, env=env, timeout=60)
+        if unbind.returncode != 0:
+            raise RuntimeError("could not remove the platform LLM binding for S-160.2")
+        command = ["commit", "commit", "--dry-run"]
+        result = cli(command, step_id="S-160.2")
+        output = result.stdout + result.stderr
+        if (result.returncode == 0 or "KB_ADAPTER_UNAVAILABLE" not in output
+                or "llm" not in output.lower() or "kb adapter bind llm" not in output):
+            raise RuntimeError(f"S-160.2 did not return the typed missing-LLM guidance: {output[-800:]}")
+        with invocation_context():
+            restore = run_with_runner(command_runner,
+                [str(kb_path), "adapter", "bind", "llm", "@kb-labs/adapters-openai", "--scope", "platform", "--json"],
+                cwd=project, env=env, timeout=60)
+        if restore.returncode != 0:
+            raise RuntimeError("could not restore the deterministic fixture LLM binding after S-160.2")
+
+    journey.step("report missing deterministic LLM capability", "plugin-author",
+                 s160_missing_llm, cases=["S-160.2"])
+
+    _stage_case_file(project, env, "s160-apply")
+
+    def s160_apply() -> None:
+        command = ["commit", "commit"]
+        result = cli(command, step_id="S-160.3")
+        subject = _git(["log", "-1", "--format=%s"], project=project, env=env).strip()
+        if result.returncode != 0 or subject != "test(journey): verify deterministic commit fixture response":
+            raise RuntimeError(f"S-160.3 did not apply the deterministic fixture subject: {subject!r}")
+
+    journey.step("apply the deterministic fixture Commit plan", "plugin-author",
+                 s160_apply, cases=["S-160.3"])
+
+    _stage_case_file(project, env, "s030-progress")
+
+    def s030_progress() -> str:
+        seen: list[str] = []
+        command = [str(kb_path), "commit", "commit", "--dry-run"]
+        with invocation_context(step_id="S-030.1"):
+            result, _ = run_pty_command(command, cwd=project, env=env, timeout=90,
+                                        on_output=lambda output: seen.append(output) or None)
+        text = "".join(seen) or result.stdout
+        phases = [match.start() for match in re.finditer(
+            r"Analyzing changes|Analyzing with native tools|Re-analyzing with diff context|Plan generated|Generated commit plan",
+            text, re.I,
+        )]
+        if result.returncode != 0 or len(phases) < 3 or not re.search(r"[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]", text):
+            raise RuntimeError("S-030.1 did not show active generation progress before a final plan")
+        return text
+
+    progress_text = ""
+    def claim_s030_progress() -> None:
+        nonlocal progress_text
+        progress_text = s030_progress()
+    journey.step("observe Commit generation progress", "plugin-author",
+                 claim_s030_progress, cases=["S-030.1"])
+
+    def s030_phase_update() -> None:
+        if not re.search(r"Re-analyzing with diff context|fetching diff|Phase 2", progress_text, re.I):
+            raise RuntimeError("S-030.2 did not observe a subsequent generation phase while the command ran")
+
+    journey.step("observe a subsequent Commit generation phase", "plugin-author",
+                 s030_phase_update, cases=["S-030.2"])
+
+    _stage_case_file(project, env, "s030-cancel")
+    before_cancel = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+
+    def s030_cancel() -> None:
+        sent_interrupt = False
+        command = [str(kb_path), "commit", "commit", "--dry-run"]
+        def interrupt_on_generation(output: str) -> str | None:
+            nonlocal sent_interrupt
+            if not sent_interrupt and re.search(r"Analyzing with native tools|Re-analyzing with diff context", output, re.I):
+                sent_interrupt = True
+                return "\x03"
+            return None
+        with invocation_context(step_id="S-030.3"):
+            result, _ = run_pty_command(command, cwd=project, env=env, timeout=90,
+                                        on_output=interrupt_on_generation)
+        transcript = result.stdout
+        if not sent_interrupt or result.returncode == 0 or "EPIPE" in transcript:
+            raise RuntimeError("S-030.3 did not interrupt active generation cleanly without worker EPIPE")
+
+    journey.step("interrupt active Commit generation", "plugin-author", s030_cancel, cases=["S-030.3"])
+
+    def s030_history() -> None:
+        after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+        if before_cancel != after:
+            raise RuntimeError("S-030.4 found a Git commit created by the interrupted dry-run")
+
+    journey.step("verify cancellation did not create a commit", "plugin-author",
+                 s030_history, cases=["S-030.4"])
+
+    def cleanup_review_plugin() -> None:
+        command = ["marketplace", "uninstall", "@kb-labs/review-entry", "--json"]
+        result = cli(command)
+        if result.returncode != 0:
+            raise RuntimeError("could not remove the temporary Review plugin fixture")
+
+    journey.step("remove temporary Review plugin fixture", "plugin-author", cleanup_review_plugin)
 
 
 def run_plugin_author_flow(
