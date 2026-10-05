@@ -18,7 +18,7 @@ services:
     image: python:3.12.12-alpine
     command: ["python3", "/fixture/mock_llm_server.py"]
     volumes:
-      - ./mock_llm_server.py:/fixture/mock_llm_server.py:ro
+      - ./journey/mock_llm_server.py:/fixture/mock_llm_server.py:ro
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8317/healthz', timeout=2)"]
       interval: 1s
