@@ -3,6 +3,7 @@
  *
  * Wraps Ant Design Card with additional features.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"title":"Gateway service","subtitle":"Production environment","children":"Healthy · 3 instances","size":"default","bordered":true,"hoverable":true,"loading":false,"status":"success"}
  */
 
 import * as React from 'react';
@@ -12,6 +13,7 @@ import clsx from 'clsx';
 import { UIBox } from '../primitives/UIBox';
 import { UIText } from '../primitives/UIText';
 import styles from './UICard.module.css';
+import type { UICompatibleSize } from './UISize';
 
 const { useToken } = theme;
 
@@ -27,7 +29,7 @@ const variantTokens: Record<UICardVariant, { accent: string }> = {
   info:    { accent: 'var(--info)' },
 };
 
-export interface UICardProps extends Omit<AntCardProps, 'title' | 'bordered'> {
+export interface UICardProps extends Omit<AntCardProps, 'title' | 'bordered' | 'size'> {
   /** Card title */
   title?: React.ReactNode;
   /** Subtitle (below title) */
@@ -39,7 +41,7 @@ export interface UICardProps extends Omit<AntCardProps, 'title' | 'bordered'> {
   /** Card content */
   children: React.ReactNode;
   /** Card size */
-  size?: 'small' | 'default';
+  size?: UICompatibleSize;
   /** Show border — false maps to variant="borderless" */
   bordered?: boolean;
   /** Hoverable effect */
@@ -83,6 +85,8 @@ export function UICard({
 }: UICardProps) {
   const { token } = useToken();
   const vt = variantTokens[status];
+  const isSmall = size === 'sm' || size === 'small';
+  const sizeClass = isSmall ? styles.sizeSm : size === 'lg' || size === 'large' ? styles.sizeLg : undefined;
 
   // Custom title with subtitle
   const cardTitle = (title || subtitle) ? (
@@ -103,13 +107,14 @@ export function UICard({
     <AntCard
       title={cardTitle}
       extra={extra}
-      size={size}
+      size={isSmall ? 'small' : 'default'}
       variant={bordered ? 'outlined' : 'borderless'}
       hoverable={false}
       loading={loading}
       {...rest}
       className={clsx(
         styles.card,
+        sizeClass,
         hoverable && styles.hoverable,
         status !== 'default' && styles.accented,
         rest.className,

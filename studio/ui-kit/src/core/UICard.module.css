@@ -5,6 +5,24 @@
   position: relative;
 }
 
+.sizeSm :global(.ant-card-head) {
+  min-height: 40px;
+  padding-inline: 16px;
+}
+
+.sizeSm :global(.ant-card-body) {
+  padding: 16px;
+}
+
+.sizeLg :global(.ant-card-head) {
+  min-height: 64px;
+  padding-inline: 28px;
+}
+
+.sizeLg :global(.ant-card-body) {
+  padding: 28px;
+}
+
 .card::before {
   content: '';
   position: absolute;

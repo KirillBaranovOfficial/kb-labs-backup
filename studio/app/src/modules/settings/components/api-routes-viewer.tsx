@@ -9,7 +9,7 @@ import {
   UITitle,
   UITypographyParagraph,
   UIAlert,
-  UISpin,
+  UISkeleton,
   UIEmptyState,
   UITooltip,
   UISelect,
@@ -330,9 +330,7 @@ export function ApiRoutesViewer() {
 
       {/* Loading */}
       {loading && !data && (
-        <div style={{ textAlign: 'center', padding: 40 }}>
-          <UISpin size="large" />
-        </div>
+        <UISkeleton active lines={6} style={{ padding: 16 }} />
       )}
 
       {/* Tree View */}

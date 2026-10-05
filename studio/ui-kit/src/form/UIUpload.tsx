@@ -2,6 +2,7 @@
  * UIUpload component - File upload
  *
  * Wraps Ant Design Upload.
+ * @demoArgs {"listType":"text","multiple":true,"disabled":false,"children":"Choose files"}
  */
 
 import * as React from 'react';

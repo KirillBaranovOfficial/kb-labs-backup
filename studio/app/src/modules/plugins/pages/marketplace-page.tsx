@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   UIInputSearch,
-  UISpin,
+  UISkeleton,
   UIEmptyState,
   UIMessage,
   UIButton,
@@ -91,9 +91,7 @@ export function PluginsPage() {
   if (loading) {
     return (
       <UIPage width="full">
-        <div style={{ textAlign: 'center', padding: '80px 0' }}>
-          <UISpin size="large" />
-        </div>
+        <UISkeleton active avatar lines={6} />
       </UIPage>
     );
   }

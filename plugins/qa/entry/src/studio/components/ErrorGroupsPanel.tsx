@@ -11,7 +11,7 @@ import {
   UITypographyText,
   UISpace,
   UIBadge,
-  UISpin,
+  UISkeleton,
   UIIcon,
   useData,
   useTheme,
@@ -39,7 +39,7 @@ export function ErrorGroupsPanel() {
   );
 
   if (isLoading) {
-    return <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />;
+    return <UISkeleton active lines={5} />;
   }
 
   const latestStats = summaryData?.latestStats ?? null;

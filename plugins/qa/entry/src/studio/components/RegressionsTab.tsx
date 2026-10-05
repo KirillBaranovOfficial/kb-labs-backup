@@ -3,7 +3,7 @@
  */
 
 import * as React from 'react';
-import { UIAlert, UICard, UITag, UISpin, UISpace, UIEmptyState, UIIcon, UIFlex, useData, useTheme } from '@kb-labs/sdk/studio';
+import { UIAlert, UICard, UITag, UISkeleton, UISpace, UIEmptyState, UIIcon, UIFlex, useData, useTheme } from '@kb-labs/sdk/studio';
 import type { RegressionDetection } from '@kb-labs/qa-contracts';
 import { QA_BASE_PATH, QA_ROUTES } from '@kb-labs/qa-contracts';
 
@@ -12,7 +12,7 @@ export function RegressionsTab() {
   const { data, isLoading } = useData<RegressionDetection>(`${QA_BASE_PATH}${QA_ROUTES.REGRESSIONS}`);
 
   if (isLoading) {
-    return <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />;
+    return <UISkeleton active lines={5} />;
   }
 
   if (!data) {

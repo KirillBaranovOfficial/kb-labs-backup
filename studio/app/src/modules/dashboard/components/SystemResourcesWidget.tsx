@@ -7,6 +7,7 @@ import {
   UITag,
   UIEmptyState,
   UICard,
+  UISkeleton,
 } from '@kb-labs/studio-ui-kit';
 import {
   CloudServerOutlined,
@@ -70,9 +71,7 @@ export function SystemResourcesWidget() {
       style={{ height: '100%' }}
     >
       {healthQuery.isLoading ? (
-        <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>
-          Loading runtime resources...
-        </div>
+        <UISkeleton active avatar lines={4} style={{ minHeight: 220 }} />
       ) : !snapshot || !resources ? (
         <UIEmptyState
           image={UIEmptyState.PRESENTED_IMAGE_SIMPLE}

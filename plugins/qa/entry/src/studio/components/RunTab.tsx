@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   UIRow, UICol, UICard, UIButton, UITag, UIAlert,
-  UISpace, UIIcon, UIDivider, UITable, UIProgress, UIBadge, UISpin,
+  UISpace, UIIcon, UIDivider, UITable, UIProgress, UIBadge, UISkeleton,
   useMutateData, useData, useTheme, useNotification,
 } from '@kb-labs/sdk/studio';
 import { QA_BASE_PATH, QA_ROUTES } from '@kb-labs/qa-contracts';
@@ -320,7 +320,7 @@ export function RunTab() {
   const { data: tasksData, isLoading } = useData<TasksResponse>(`${QA_BASE_PATH}${QA_ROUTES.TASKS}`);
 
   if (isLoading) {
-    return <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />;
+    return <UISkeleton active lines={5} />;
   }
 
   const availableTasks = tasksData?.tasks ?? [];

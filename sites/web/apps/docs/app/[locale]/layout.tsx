@@ -43,7 +43,7 @@ export const metadata: Metadata = {
   },
 };
 
-const themeScript = `(function(){try{var t=localStorage.getItem('docs-theme')||(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.setAttribute('data-theme',t)}catch(e){}})();`;
+const themeScript = `(function(){try{var m=localStorage.getItem('docs-theme')||'system';if(m!=='light'&&m!=='dark'&&m!=='system')m='system';var t=m==='system'?(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):m;document.documentElement.setAttribute('data-theme-mode',m);document.documentElement.setAttribute('data-theme',t)}catch(e){}})();`;
 
 type Props = {
   children: React.ReactNode;

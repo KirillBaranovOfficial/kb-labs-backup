@@ -17,12 +17,11 @@ import {
   UIAlert,
   UITag,
   UIDivider,
-  UIRow,
-  UICol,
   UIIcon,
 } from '@kb-labs/studio-ui-kit';
 import type { PluginAskResponse } from '@kb-labs/studio-data-client';
 import { UIMarkdownViewer } from '@kb-labs/studio-ui-kit';
+import styles from './plugin-ai-assistant-modal.module.css';
 
 interface PluginAIAssistantModalProps {
   open: boolean;
@@ -99,6 +98,7 @@ export function PluginAIAssistantModal({
 
   return (
     <UIModal
+      description="Ask about this plugin's capabilities, permissions, and configuration."
       title={
         <UISpace>
           <UIIcon name="RobotOutlined" />
@@ -108,6 +108,7 @@ export function PluginAIAssistantModal({
       open={open}
       onCancel={onClose}
       width={800}
+      className={styles.modal}
       footer={[
         <UIButton key="cancel" onClick={onClose}>
           Close
@@ -124,54 +125,48 @@ export function PluginAIAssistantModal({
         </UIButton>,
       ]}
     >
-      <UISpace direction="vertical" style={{ width: '100%' }} size="large">
+      <div className={styles.content}>
         {/* Plugin Preview */}
-        <UICard size="small" style={{ backgroundColor: '#fafafa' }}>
-          <UIRow gutter={16}>
-            <UICol span={12}>
-              <UITypographyText type="secondary">Plugin:</UITypographyText>
-              <div>
-                <UITypographyText strong>{pluginName}</UITypographyText>
-              </div>
-            </UICol>
-            <UICol span={12}>
-              <UITypographyText type="secondary">Plugin ID:</UITypographyText>
-              <div>
-                <UITypographyText code style={{ fontSize: 12 }}>{pluginId}</UITypographyText>
-              </div>
-            </UICol>
-          </UIRow>
+        <UICard size="small" className={styles.contextCard}>
+          <div className={styles.contextDetails}>
+            <div className={styles.contextItem}>
+              <UITypographyText type="secondary">Plugin</UITypographyText>
+              <UITypographyText strong>{pluginName}</UITypographyText>
+            </div>
+            <div className={styles.contextItem}>
+              <UITypographyText type="secondary">Plugin ID</UITypographyText>
+              <UITypographyText code className={styles.pluginId}>{pluginId}</UITypographyText>
+            </div>
+          </div>
         </UICard>
 
         {/* Quick Templates */}
-        <div>
+        <section className={styles.section}>
           <UITypographyText strong>Quick Questions:</UITypographyText>
-          <div style={{ marginTop: 8 }}>
-            <UISpace wrap>
-              {QUESTION_TEMPLATES.map((template) => (
-                <UIButton
-                  key={template.label}
-                  size="small"
-                  onClick={() => handleTemplateClick(template.value)}
-                >
-                  {template.label}
-                </UIButton>
-              ))}
-            </UISpace>
+          <div className={styles.quickQuestions}>
+            {QUESTION_TEMPLATES.map((template) => (
+              <UIButton
+                key={template.label}
+                size="small"
+                onClick={() => handleTemplateClick(template.value)}
+              >
+                {template.label}
+              </UIButton>
+            ))}
           </div>
-        </div>
+        </section>
 
-        <UIDivider style={{ margin: '8px 0' }} />
+        <UIDivider className={styles.divider} />
 
         {/* Custom Question */}
-        <div>
+        <section className={styles.section}>
           <UITypographyText strong>Your Question:</UITypographyText>
           <UIInputTextArea
             value={customQuestion}
             onChange={(e) => setCustomQuestion(e.target.value)}
             placeholder="Ask anything about this plugin... (e.g., 'How do I use this plugin?')"
             rows={3}
-            style={{ marginTop: 8 }}
+            className={styles.questionInput}
             onPressEnter={(e) => {
               if (e.ctrlKey || e.metaKey) {
                 handleSubmit();
@@ -181,7 +176,7 @@ export function PluginAIAssistantModal({
           <UITypographyText type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
             Press Ctrl/Cmd + Enter to ask
           </UITypographyText>
-        </div>
+        </section>
 
         {/* Error Display */}
         {error && (
@@ -197,49 +192,39 @@ export function PluginAIAssistantModal({
 
         {/* Loading State */}
         {loading && (
-          <div style={{ textAlign: 'center', padding: '24px 0' }}>
+          <div className={styles.loading}>
             <UISpin tip="AI is thinking..." size="large" />
           </div>
         )}
 
         {/* Q&A History */}
         {history.length > 0 && !loading && (
-          <div>
+          <section className={styles.section}>
             <UIDivider orientation="left" style={{ margin: '16px 0 8px 0' }}>
               <UITypographyText strong>Conversation History</UITypographyText>
             </UIDivider>
-            <UISpace direction="vertical" style={{ width: '100%' }} size="middle">
+            <div className={styles.historyList}>
               {history.map((item, index) => (
                 <UICard
-                  key={index}
+                  key={`${item.timestamp.getTime()}-${index}`}
                   size="small"
-                  style={{
-                    backgroundColor: '#fafafa',
-                  }}
+                  className={styles.historyCard}
                 >
                   {/* Question */}
-                  <div style={{ marginBottom: 12 }}>
-                    <UISpace style={{ marginBottom: 4 }}>
-                      <UIIcon name="QuestionCircleOutlined" style={{ color: '#1890ff' }} />
+                  <div className={styles.historyQuestion}>
+                    <UISpace>
+                      <UIIcon name="QuestionCircleOutlined" className={styles.questionIcon} />
                       <UITypographyText strong>{item.question}</UITypographyText>
                     </UISpace>
                   </div>
 
                   {/* Answer */}
-                  <div
-                    style={{
-                      background: '#fff',
-                      padding: 12,
-                      borderRadius: 4,
-                      border: '1px solid #e8e8e8',
-                      marginBottom: 8,
-                    }}
-                  >
-                    <UIMarkdownViewer content={item.answer} className="plugin-assistant-markdown" />
+                  <div className={styles.answer}>
+                    <UIMarkdownViewer content={item.answer} className={styles.markdown} />
                   </div>
 
                   {/* Metadata */}
-                  <div style={{ textAlign: 'right' }}>
+                  <div className={styles.metadata}>
                     <UISpace size="small">
                       <UITag icon={<UIIcon name="ClockCircleOutlined" />} color="blue">
                         {item.timestamp.toLocaleTimeString()}
@@ -251,124 +236,20 @@ export function PluginAIAssistantModal({
                   </div>
                 </UICard>
               ))}
-            </UISpace>
-          </div>
+            </div>
+          </section>
         )}
 
         {/* Empty State */}
         {history.length === 0 && !loading && (
-          <div
-            style={{
-              textAlign: 'center',
-              padding: 40,
-              backgroundColor: '#fafafa',
-              borderRadius: 4,
-              border: '1px dashed #d9d9d9',
-            }}
-          >
-            <UIIcon name="RobotOutlined" style={{ fontSize: 48, color: '#d9d9d9', marginBottom: 16 }} />
-            <div style={{ fontSize: 14, color: '#999' }}>
+          <div className={styles.emptyState}>
+            <UIIcon name="RobotOutlined" className={styles.emptyIcon} />
+            <div className={styles.emptyText}>
               Select a quick question or type your own to get started
             </div>
           </div>
         )}
-      </UISpace>
-
-      {/* Custom styles for markdown in modal context */}
-      <style>{`
-        .plugin-assistant-markdown {
-          padding: 0;
-          background: transparent;
-          border-radius: 0;
-        }
-        .plugin-assistant-markdown p {
-          margin: 0 0 8px 0;
-        }
-        .plugin-assistant-markdown p:last-child {
-          margin-bottom: 0;
-        }
-        .plugin-assistant-markdown h1,
-        .plugin-assistant-markdown h2,
-        .plugin-assistant-markdown h3,
-        .plugin-assistant-markdown h4 {
-          margin-top: 12px;
-          margin-bottom: 8px;
-          font-size: 1em;
-          font-weight: 600;
-          border: none;
-          padding: 0;
-        }
-        .plugin-assistant-markdown h1 {
-          font-size: 1.15em;
-        }
-        .plugin-assistant-markdown h2 {
-          font-size: 1.1em;
-        }
-        .plugin-assistant-markdown h3 {
-          font-size: 1.05em;
-        }
-        .plugin-assistant-markdown ul,
-        .plugin-assistant-markdown ol {
-          margin: 8px 0;
-          padding-left: 20px;
-        }
-        .plugin-assistant-markdown li {
-          margin: 4px 0;
-        }
-        .plugin-assistant-markdown code {
-          background: rgba(0, 0, 0, 0.06);
-          padding: 2px 6px;
-          border-radius: 4px;
-          font-size: 0.9em;
-          font-family: 'SF Mono', Menlo, Monaco, Consolas, monospace;
-        }
-        .plugin-assistant-markdown pre {
-          background: #f5f5f5;
-          padding: 12px 16px;
-          border-radius: 6px;
-          margin: 12px 0;
-          overflow-x: auto;
-        }
-        .plugin-assistant-markdown pre code {
-          background: none;
-          padding: 0;
-          font-size: 0.85em;
-        }
-        .plugin-assistant-markdown table {
-          margin: 12px 0;
-          font-size: 0.9em;
-          width: 100%;
-          border-collapse: collapse;
-        }
-        .plugin-assistant-markdown th,
-        .plugin-assistant-markdown td {
-          padding: 8px 12px;
-          border: 1px solid #e8e8e8;
-          text-align: left;
-        }
-        .plugin-assistant-markdown th {
-          background: #fafafa;
-          font-weight: 600;
-        }
-        .plugin-assistant-markdown blockquote {
-          margin: 12px 0;
-          padding: 8px 16px;
-          border-left: 4px solid #1890ff;
-          background: #f6f8fa;
-          border-radius: 0 4px 4px 0;
-        }
-        .plugin-assistant-markdown strong {
-          font-weight: 600;
-        }
-        .plugin-assistant-markdown a {
-          color: #1890ff;
-        }
-        .plugin-assistant-markdown hr {
-          margin: 16px 0;
-          border: none;
-          border-top: 1px solid #e8e8e8;
-        }
-      `}</style>
+      </div>
     </UIModal>
   );
 }

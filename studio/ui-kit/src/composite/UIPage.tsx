@@ -3,6 +3,7 @@
  *
  * Wraps page content with consistent padding and responsive max-width.
  * NO hardcoded colors, uses Ant Design theme.
+ * @demoArgs {"width":"default","variant":"document","children":"Page content goes here"}
  */
 
 import * as React from 'react';

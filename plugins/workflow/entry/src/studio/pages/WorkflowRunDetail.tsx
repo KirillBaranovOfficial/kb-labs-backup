@@ -8,7 +8,7 @@ import { UIPage, UIPageHeader, UIPageSection } from '@kb-labs/sdk/studio'
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  UIButton, UITypographyText,
+  UIButton, UITypographyText, UISkeletonText,
   UITitle, UIAlert, UIList, UIListItem, UIAccordion, UITabs, UIJsonViewer,
 } from '@kb-labs/sdk/studio'
 import type { UIAccordionItem, UITabItem } from '@kb-labs/sdk/studio'
@@ -476,18 +476,12 @@ function JobStepLog({ events, run, onApprove }: JobStepLogProps) {
 
 // ─── Skeleton ──────────────────────────────────────────────────────
 
-const SKEL: React.CSSProperties = {
-  background: 'var(--border-primary)',
-  borderRadius: 4,
-  animation: 'kb-skel-pulse 1.5s ease-in-out infinite',
-}
 function SkeletonBlock({ width, height, style }: { width: number | string; height: number; style?: React.CSSProperties }) {
-  return <div style={{ ...SKEL, width, height, ...style }} />
+  return <UISkeletonText width={width} height={height} style={style} />
 }
 function RunDetailSkeleton() {
   return (
     <>
-      <style>{`@keyframes kb-skel-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }`}</style>
       <div style={{ display: 'flex', gap: 12, padding: '12px 16px', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: 8, marginBottom: 24 }}>
         <SkeletonBlock width={60} height={20} /><SkeletonBlock width={120} height={20} /><SkeletonBlock width={80} height={20} /><SkeletonBlock width={140} height={20} style={{ marginLeft: 'auto' }} />
       </div>

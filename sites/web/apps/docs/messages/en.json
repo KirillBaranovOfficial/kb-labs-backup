@@ -3,7 +3,14 @@
     "search": "Search documentation…",
     "searchKbd": "⌘ K",
     "changelog": "Changelog",
-    "waitlist": "Join waitlist"
+    "waitlist": "Join waitlist",
+    "theme": {
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System",
+      "current": "Theme: {mode}. {next}",
+      "switchTo": "Switch to {mode}"
+    }
   },
   "sidebar": {
     "untranslated": "EN"

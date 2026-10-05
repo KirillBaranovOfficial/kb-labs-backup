@@ -3,12 +3,15 @@
  *
  * Wraps Ant Design Select with enhanced options.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"options":[{"label":"Development","value":"dev"},{"label":"Production","value":"prod"}],"defaultValue":"dev","placeholder":"Select environment","allowClear":true,"showSearch":true,"size":"middle"}
  */
 
 import * as React from 'react';
 import { Select as AntSelect } from 'antd';
 import type { SelectProps as AntSelectProps } from 'antd';
 import { UIFlex } from '../primitives/UIFlex';
+import { toAntSize } from '../core/UISize';
+import type { UICompatibleSize } from '../core/UISize';
 
 export interface UISelectOption {
   /** Option label */
@@ -23,7 +26,7 @@ export interface UISelectOption {
   description?: string;
 }
 
-export interface UISelectProps extends Omit<AntSelectProps, 'options' | 'onChange'> {
+export interface UISelectProps extends Omit<AntSelectProps, 'options' | 'onChange' | 'size'> {
   /** Select options */
   options: UISelectOption[];
   /** Selected value */
@@ -44,6 +47,8 @@ export interface UISelectProps extends Omit<AntSelectProps, 'options' | 'onChang
   mode?: 'multiple' | 'tags';
   /** Change handler (returns value, not event) */
   onChange?: (value: string | number | (string | number)[]) => void;
+  /** Shared size scale. Ant Design values remain accepted as aliases. */
+  size?: UICompatibleSize;
 }
 
 /**
@@ -77,6 +82,7 @@ export function UISelect({
   allowClear,
   showSearch,
   mode,
+  size,
   onChange,
   ...rest
 }: UISelectProps) {
@@ -108,6 +114,7 @@ export function UISelect({
       allowClear={allowClear}
       showSearch={showSearch}
       mode={mode}
+      size={toAntSize(size)}
       onChange={onChange}
       {...rest}
     />

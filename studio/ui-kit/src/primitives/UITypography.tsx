@@ -5,6 +5,7 @@
  * for features like copyable, ellipsis, editable, etc.
  *
  * For simple styled text, use UIText instead (design-token-based).
+ * @demoArgs {"children":"Typography text"}
  */
 
 import * as React from 'react';

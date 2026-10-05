@@ -3,6 +3,7 @@
  *
  * Handles title, description, breadcrumbs, actions, back button, icon, tabs.
  * NO hardcoded colors — all via useToken().
+ * @demoArgs {"title":"Gateway settings","description":"Configure authentication and access"}
  */
 
 import * as React from 'react';

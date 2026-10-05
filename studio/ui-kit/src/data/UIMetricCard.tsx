@@ -3,6 +3,7 @@ import { Card, theme, Tooltip } from 'antd';
 import { UIText } from '../primitives/UIText';
 import { UIFlex } from '../primitives/UIFlex';
 import { UIBox } from '../primitives/UIBox';
+import type { UICompatibleSize } from '../core/UISize';
 
 const { useToken } = theme;
 
@@ -22,7 +23,7 @@ export interface UIMetricCardProps {
   /** Value unit (e.g., '%', 'ms', '$') */
   unit?: string;
   /** Card size */
-  size?: 'small' | 'default';
+  size?: UICompatibleSize;
   /** Show/hide delta */
   showDelta?: boolean;
   /** Loading state */
@@ -42,6 +43,8 @@ export function UIMetricCard({
   loading = false,
 }: UIMetricCardProps) {
   const { token } = useToken();
+  const isSmall = size === 'sm' || size === 'small';
+  const isLarge = size === 'lg' || size === 'large';
 
   const iconBgMap: Record<string, string> = {
     default: token.colorFillSecondary,
@@ -67,7 +70,12 @@ export function UIMetricCard({
   const trendIcon = trend === 'up' ? '↑' : trend === 'down' ? '↓' : '';
 
   return (
-    <Card size={size} loading={loading} style={{ height: '100%' }}>
+    <Card
+      size={isSmall ? 'small' : 'default'}
+      loading={loading}
+      style={{ height: '100%' }}
+      styles={{ body: { padding: isSmall ? 16 : isLarge ? 28 : undefined } }}
+    >
       <UIBox>
         {icon && (
           <div style={{

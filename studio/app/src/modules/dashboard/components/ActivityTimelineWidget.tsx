@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { UICard, UISegmented } from '@kb-labs/studio-ui-kit';
+import { UICard, UISegmented, UISkeletonChart } from '@kb-labs/studio-ui-kit';
 import { UIAreaChart, useChartColors } from '@kb-labs/studio-ui-kit';
 import { useDataSources } from '../../../providers/data-sources-provider';
 import { useMetricsHistory } from '@kb-labs/studio-data-client';
@@ -133,15 +133,7 @@ export function ActivityTimelineWidget() {
       styles={{ body: { padding: '16px' } }}
     >
       {isLoading ? (
-        <div style={{
-          height: 250,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: 'var(--text-tertiary)',
-        }}>
-          Loading metrics...
-        </div>
+        <UISkeletonChart height={250} series={2} label="Loading request metrics" />
       ) : hasError ? (
         <div style={{
           height: 250,

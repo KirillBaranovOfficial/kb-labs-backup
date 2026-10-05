@@ -7,6 +7,7 @@
 export * from './UIInput';
 export * from './UISelect';
 export * from './UIForm';
+export * from './UIFormBuilder';
 export * from './UICheckbox';
 export * from './UISwitch';
 export * from './UIDatePicker';

@@ -1,0 +1,5 @@
+flowchart LR
+  client["CLI / Studio"] --> gateway["Gateway"]
+  gateway --> auth["Authentication"]
+  gateway --> rest["REST API"]
+  gateway --> workflow["Workflow"]

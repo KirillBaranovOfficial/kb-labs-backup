@@ -3,6 +3,7 @@
  *
  * Simplified wrapper around UIFlex for consistent spacing.
  * NO inline styles, uses spacing tokens.
+  * @demoArgs {"direction":"vertical","spacing":16,"align":"stretch","children":"Stacked content"}
  */
 
 import * as React from 'react';

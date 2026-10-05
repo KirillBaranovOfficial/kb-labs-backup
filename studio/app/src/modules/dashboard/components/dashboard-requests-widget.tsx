@@ -2,7 +2,6 @@ import { HolderOutlined } from '@ant-design/icons';
 import { UILineChart } from '@kb-labs/studio-ui-kit';
 import { useHealthStatus } from '@kb-labs/studio-data-client';
 import { useDataSources } from '../../../providers/data-sources-provider';
-import { UISpin } from '@kb-labs/studio-ui-kit';
 import { UICard } from '@kb-labs/studio-ui-kit';
 
 export function DashboardRequestsWidget() {
@@ -45,10 +44,10 @@ export function DashboardRequestsWidget() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <HolderOutlined className="drag-handle" style={{ cursor: 'grab', color: 'var(--text-tertiary)' }} />
           <span>Top Operations</span>
-          {loading && <UISpin size="small" />}
         </div>
       }
       style={{ height: '100%' }}
+      loading={loading}
     >
       {chartData.length > 0 ? (
         <UILineChart {...config} />

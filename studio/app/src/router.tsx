@@ -133,7 +133,6 @@ function LayoutContent() {
             key: route.key,
             label: route.label,
             path: route.path,
-            icon: renderPluginIcon(route.icon),
           })),
         });
       }

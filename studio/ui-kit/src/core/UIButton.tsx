@@ -6,17 +6,25 @@
  *
  * IMPORTANT: This component ensures all SVG icons (lucide-react, etc.)
  * inherit colors correctly in both light and dark themes through CSS.
+  * @demoArgs {"children":"Create project","variant":"primary","size":"md"}
  */
 
 import * as React from 'react';
 import { Button as AntButton, type ButtonProps as AntButtonProps } from 'antd';
 import styles from './UIButton.module.css';
+import { UISpinIndicator } from '../feedback/UISpin';
+import { toAntSize } from './UISize';
+import type { UICompatibleSize } from './UISize';
 
 export type UIButtonVariant = 'primary' | 'default' | 'dashed' | 'text' | 'link';
 
-export interface UIButtonProps extends Omit<AntButtonProps, 'type' | 'variant'> {
+export interface UIButtonProps extends Omit<AntButtonProps, 'type' | 'variant' | 'size'> {
+  /** Button label or content */
+  children?: React.ReactNode;
   /** Button variant (maps to Ant Design 'type' prop) */
   variant?: UIButtonVariant;
+  /** Shared size scale. Ant Design values remain accepted as aliases. */
+  size?: UICompatibleSize;
   /** Additional CSS class */
   className?: string;
 }
@@ -35,14 +43,19 @@ export interface UIButtonProps extends Omit<AntButtonProps, 'type' | 'variant'> 
  * ```
  */
 export const UIButton = React.forwardRef<HTMLButtonElement, UIButtonProps>(
-  function UIButton({ variant = 'default', className, ...rest }, ref) {
+  function UIButton({ variant = 'default', className, loading, size, ...rest }, ref) {
     const combinedClassName = [styles.uiButton, className].filter(Boolean).join(' ');
+    const buttonLoading = loading === true
+      ? { icon: <UISpinIndicator size="small" tone="inherit" /> }
+      : loading;
     return (
       <AntButton
         ref={ref}
         type={variant}
+        size={toAntSize(size)}
         className={combinedClassName}
         {...rest}
+        loading={buttonLoading}
       />
     );
   },

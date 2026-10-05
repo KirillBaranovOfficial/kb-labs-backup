@@ -6,7 +6,7 @@ import { useDataSources } from '../../../providers/data-sources-provider';
 
 export function DashboardPluginsWidget() {
   const sources = useDataSources();
-  const { data: metrics } = usePrometheusMetrics(sources.observability);
+  const { data: metrics, isLoading } = usePrometheusMetrics(sources.observability);
 
   const columns = [
     {
@@ -54,6 +54,7 @@ export function DashboardPluginsWidget() {
       }
       style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
       styles={{ body: { flex: 1, padding: '16px', overflow: 'auto' } }}
+      loading={isLoading}
     >
       <UITable
         columns={columns}

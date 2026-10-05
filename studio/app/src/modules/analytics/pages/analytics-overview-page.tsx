@@ -30,6 +30,7 @@ interface AdapterCardConfig {
   label: string;
   icon: ReactNode;
   color: string;
+  loading: boolean;
   stats: Array<{ title: string; value: number; suffix?: string; precision?: number; prefix?: ReactNode; valueColor?: string }>;
 }
 
@@ -53,11 +54,11 @@ export function AnalyticsOverviewPage() {
   } = useAnalyticsStats(sources.analytics);
 
   // Fetch all adapter stats
-  const { data: llmStats } = useAdaptersLLMUsage(sources.adapters);
-  const { data: embeddingsStats } = useAdaptersEmbeddingsUsage(sources.adapters);
-  const { data: vectorstoreStats } = useAdaptersVectorStoreUsage(sources.adapters);
-  const { data: cacheStats } = useAdaptersCacheUsage(sources.adapters);
-  const { data: storageStats } = useAdaptersStorageUsage(sources.adapters);
+  const { data: llmStats, isLoading: llmLoading } = useAdaptersLLMUsage(sources.adapters);
+  const { data: embeddingsStats, isLoading: embeddingsLoading } = useAdaptersEmbeddingsUsage(sources.adapters);
+  const { data: vectorstoreStats, isLoading: vectorstoreLoading } = useAdaptersVectorStoreUsage(sources.adapters);
+  const { data: cacheStats, isLoading: cacheLoading } = useAdaptersCacheUsage(sources.adapters);
+  const { data: storageStats, isLoading: storageLoading } = useAdaptersStorageUsage(sources.adapters);
 
   // Check if analytics is not configured
   const analyticsNotConfigured =
@@ -112,6 +113,7 @@ export function AnalyticsOverviewPage() {
       label: 'LLM Usage',
       icon: <RobotOutlined />,
       color: 'var(--info)',
+      loading: llmLoading,
       stats: [
         { title: 'Requests', value: llmStats?.totalRequests ?? 0 },
         { title: 'Cost', value: llmStats?.totalCost ?? 0, prefix: <DollarOutlined />, precision: 2 },
@@ -123,6 +125,7 @@ export function AnalyticsOverviewPage() {
       label: 'Embeddings',
       icon: <FileTextOutlined />,
       color: 'var(--success)',
+      loading: embeddingsLoading,
       stats: [
         { title: 'Requests', value: embeddingsStats?.totalRequests ?? 0 },
         { title: 'Text Chars', value: embeddingsStats?.totalTextLength ?? 0 },
@@ -134,6 +137,7 @@ export function AnalyticsOverviewPage() {
       label: 'VectorStore',
       icon: <DatabaseOutlined />,
       color: 'var(--link)',
+      loading: vectorstoreLoading,
       stats: [
         { title: 'Searches', value: vectorstoreStats?.searchQueries ?? 0 },
         { title: 'Avg Score', value: vectorstoreStats?.avgSearchScore ?? 0, precision: 2 },
@@ -145,6 +149,7 @@ export function AnalyticsOverviewPage() {
       label: 'Cache',
       icon: <ThunderboltOutlined />,
       color: 'var(--warning)',
+      loading: cacheLoading,
       stats: [
         {
           title: 'Hit Rate', value: cacheStats?.hitRate ?? 0, suffix: '%', precision: 1,
@@ -159,6 +164,7 @@ export function AnalyticsOverviewPage() {
       label: 'Storage',
       icon: <SaveOutlined />,
       color: 'var(--error)',
+      loading: storageLoading,
       stats: [
         { title: 'Reads', value: storageStats?.readOperations ?? 0 },
         { title: 'Writes', value: storageStats?.writeOperations ?? 0 },
@@ -190,6 +196,7 @@ export function AnalyticsOverviewPage() {
               <UICol key={adapter.key} xs={24} md={12} lg={8}>
                 <UICard
                   title={title}
+                  loading={adapter.loading}
                   extra={<ArrowRightOutlined style={{ color: 'var(--text-tertiary)', fontSize: 13 }} />}
                   hoverable
                   onClick={() => navigate(adapter.path)}

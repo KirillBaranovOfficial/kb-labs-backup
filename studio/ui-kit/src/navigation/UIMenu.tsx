@@ -2,6 +2,7 @@
  * UIMenu component - Navigation menu
  *
  * Wraps Ant Design Menu.
+  * @demoArgs {"mode":"horizontal","selectedKeys":["overview"],"items":[{"key":"overview","label":"Overview"},{"key":"routes","label":"Routes"},{"key":"access","label":"Access"}]}
  */
 
 import * as React from 'react';

@@ -1,6 +1,7 @@
 /**
  * UIDiffViewer — renders unified git diff with line highlighting.
  * Uses design tokens for theming (light/dark compatible).
+ * @demoArgs {"diff":"- const enabled = false;\n+ const enabled = true;","showLineNumbers":true,"maxHeight":320}
  */
 
 import { UITypographyText } from '../primitives';

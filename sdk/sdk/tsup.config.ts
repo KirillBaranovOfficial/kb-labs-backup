@@ -15,6 +15,7 @@ export default defineConfig({
     'types/index': 'src/types/index.ts',
     'testing/index': 'src/testing/index.ts',
     'studio/index': 'src/studio/index.ts',
+    'studio/catalog': 'src/studio/catalog.ts',
     'studio-build/index': 'src/studio-build/index.ts',
     'platform/index': 'src/platform/index.ts',
   },

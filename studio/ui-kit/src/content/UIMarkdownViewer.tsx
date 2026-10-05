@@ -1,3 +1,6 @@
+/**
+ * @demoArgs {"content":"# Architecture note\n\nThe **gateway** validates access tokens before routing requests.\n\n- REST API\n- MCP API"}
+ */
 import * as React from 'react';
 import { theme } from 'antd';
 import { marked } from 'marked';

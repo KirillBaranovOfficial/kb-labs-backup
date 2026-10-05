@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   UITag, UIAlert,
-  UISpin, UISpace, UIIcon,
+  UISkeleton, UISpace, UIIcon,
   useData, useTheme,
 } from '@kb-labs/sdk/studio';
 import { CheckDetailDrawer } from './CheckDetailDrawer';
@@ -27,7 +27,7 @@ export function OverviewTab() {
   const [drawerOpen, setDrawerOpen] = React.useState(false);
 
   if (isLoading) {
-    return <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />;
+    return <UISkeleton active lines={6} />;
   }
 
   if (!summary) {

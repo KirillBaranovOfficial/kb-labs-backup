@@ -3,6 +3,7 @@
  *
  * Shows a checkmark for 1.5s after copying, no toast required.
  * Accepts `value` to copy and optional `label` for accessibility.
+  * @demoArgs {"value":"pnpm kb gateway status","label":"Copy command"}
  */
 
 import * as React from 'react';
@@ -14,8 +15,6 @@ export interface UICopyButtonProps
   extends Omit<UIButtonProps, 'onClick' | 'icon' | 'children' | 'variant'> {
   /** Text to copy */
   value: string;
-  /** Button size */
-  size?: 'small' | 'middle' | 'large';
   /** Show label next to icon */
   label?: string;
 }

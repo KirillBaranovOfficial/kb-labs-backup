@@ -3,10 +3,13 @@
  *
  * Wraps Ant Design Collapse with simplified API.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"items":[{"key":"auth","label":"Authentication","children":"JWT validation and key rotation."},{"key":"routing","label":"Routing","children":"Route requests to registered services."}],"defaultActiveKey":["auth"],"bordered":true,"size":"default"}
  */
 
 import * as React from 'react';
 import { Collapse as AntCollapse } from 'antd';
+import { toAntSize } from '../core/UISize';
+import type { UICompatibleSize } from '../core/UISize';
 
 export interface UIAccordionItem {
   /** Panel key */
@@ -37,7 +40,7 @@ export interface UIAccordionProps {
   /** Ghost style (no border, no background) */
   ghost?: boolean;
   /** Size */
-  size?: 'small' | 'middle' | 'large';
+  size?: UICompatibleSize;
   /** Change handler */
   onChange?: (keys: string | string[]) => void;
   /** Additional CSS class */
@@ -115,7 +118,7 @@ export function UIAccordion({
       accordion={accordion}
       bordered={bordered}
       ghost={ghost}
-      size={size}
+      size={toAntSize(size)}
       onChange={onChange}
       className={className}
       style={style}

@@ -3,6 +3,7 @@
  *
  * Wraps Ant Design Tag with semantic variants.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"variant":"success","children":"Healthy","closable":false}
  */
 
 import * as React from 'react';

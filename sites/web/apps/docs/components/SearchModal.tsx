@@ -28,9 +28,11 @@ export function SearchModal({ onClose, locale }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Result[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const fuseRef = useRef<Fuse<SearchRecord> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const queryRef = useRef('');
 
   // Focus input on mount
   useEffect(() => {
@@ -46,22 +48,6 @@ export function SearchModal({ onClose, locale }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // Load index once
-  useEffect(() => {
-    if (indexCache[locale]) {
-      fuseRef.current = buildFuse(indexCache[locale]);
-      return;
-    }
-    setLoading(true);
-    fetch(`/api/search-index?locale=${locale}`)
-      .then((r) => r.json())
-      .then((data: SearchRecord[]) => {
-        indexCache[locale] = data;
-        fuseRef.current = buildFuse(data);
-      })
-      .finally(() => setLoading(false));
-  }, [locale]);
-
   const search = useCallback((q: string) => {
     if (!fuseRef.current || !q.trim()) {
       setResults([]);
@@ -73,8 +59,40 @@ export function SearchModal({ onClose, locale }: Props) {
     setActiveIdx(0);
   }, []);
 
+  // Load the locale index once and run any query entered while it was loading.
+  useEffect(() => {
+    let cancelled = false;
+    const cached = indexCache[locale];
+    setLoading(true);
+    setLoadError(false);
+
+    const loadIndex = cached
+      ? Promise.resolve(cached)
+      : fetch(`/api/search-index?locale=${encodeURIComponent(locale)}`).then((response) => {
+          if (!response.ok) throw new Error(`Search index request failed (${response.status})`);
+          return response.json() as Promise<SearchRecord[]>;
+        });
+
+    loadIndex
+      .then((data) => {
+        if (!Array.isArray(data)) throw new Error('Search index response is invalid');
+        indexCache[locale] = data;
+        fuseRef.current = buildFuse(data);
+        if (!cancelled) search(queryRef.current);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [locale, search]);
+
   const onQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const q = e.target.value;
+    queryRef.current = q;
     setQuery(q);
     search(q);
   };
@@ -132,11 +150,13 @@ export function SearchModal({ onClose, locale }: Props) {
         <div className={s.results}>
           {loading && <p className={s.hint}>Loading index…</p>}
 
-          {!loading && query && results.length === 0 && (
+          {!loading && loadError && <p className={s.hint}>Search is temporarily unavailable. Please try again.</p>}
+
+          {!loading && !loadError && query && results.length === 0 && (
             <p className={s.hint}>No results for <strong>&quot;{query}&quot;</strong></p>
           )}
 
-          {!loading && !query && (
+          {!loading && !loadError && !query && (
             <p className={s.hint}>Type to search across all documentation pages.</p>
           )}
 

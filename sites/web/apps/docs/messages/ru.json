@@ -3,7 +3,14 @@
     "search": "Поиск по документации…",
     "searchKbd": "⌘ K",
     "changelog": "Changelog",
-    "waitlist": "Присоединиться"
+    "waitlist": "Присоединиться",
+    "theme": {
+      "light": "Светлая",
+      "dark": "Тёмная",
+      "system": "Системная",
+      "current": "Тема: {mode}. {next}",
+      "switchTo": "Переключить на тему «{mode}»"
+    }
   },
   "sidebar": {
     "untranslated": "EN"

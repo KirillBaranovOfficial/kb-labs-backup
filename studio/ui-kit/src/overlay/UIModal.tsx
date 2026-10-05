@@ -3,10 +3,13 @@
  *
  * Wraps Ant Design Modal with simplified API.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"open":true,"title":"Restart gateway?","description":"Active requests may be interrupted.","children":"The service will restart with its current configuration.","width":520,"closable":true,"centered":true,"maskClosable":false,"okText":"Restart","cancelText":"Cancel"}
  */
 
 import * as React from 'react';
 import { Modal as AntModal } from 'antd';
+import clsx from 'clsx';
+import styles from './UIModal.module.css';
 
 export type UIModalWidth = 'small' | 'default' | 'large' | 'full';
 
@@ -15,12 +18,16 @@ export interface UIModalProps {
   open: boolean;
   /** Modal title */
   title?: React.ReactNode;
+  /** Supporting context displayed under the title */
+  description?: React.ReactNode;
   /** Modal content */
   children: React.ReactNode;
   /** Modal width preset */
   width?: UIModalWidth | number;
   /** Show close button */
   closable?: boolean;
+  /** Center modal vertically in the viewport */
+  centered?: boolean;
   /** Mask closable (click outside to close) */
   maskClosable?: boolean;
   /** Show footer */
@@ -81,9 +88,11 @@ export interface UIModalProps {
 export function UIModal({
   open,
   title,
+  description,
   children,
   width = 'default',
   closable = true,
+  centered = true,
   maskClosable = true,
   footer,
   okText,
@@ -95,11 +104,11 @@ export function UIModal({
   className,
   style,
 }: UIModalProps) {
-  const widthMap: Record<UIModalWidth, number> = {
+  const widthMap: Record<UIModalWidth, number | string> = {
     small: 416,
     default: 520,
     large: 800,
-    full: window.innerWidth - 64,
+    full: 'calc(100vw - 64px)',
   };
 
   const modalWidth = typeof width === 'number' ? width : widthMap[width];
@@ -107,9 +116,15 @@ export function UIModal({
   return (
     <AntModal
       open={open}
-      title={title}
+      title={description ? (
+        <div>
+          {title}
+          <div className={styles.description}>{description}</div>
+        </div>
+      ) : title}
       width={modalWidth}
       closable={closable}
+      centered={centered}
       maskClosable={maskClosable}
       footer={footer}
       okText={okText}
@@ -117,7 +132,7 @@ export function UIModal({
       confirmLoading={confirmLoading}
       onOk={onOk}
       onCancel={onCancel || onClose}
-      className={className}
+      className={clsx(styles.modal, className)}
       style={style}
     >
       {children}

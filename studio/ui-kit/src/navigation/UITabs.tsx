@@ -7,11 +7,14 @@
  * syncUrl modes:
  *  - "search" — syncs with ?tab= query param (for pages at a fixed path, e.g. /)
  *  - "path"   — syncs with /:tab path segment via navigate (for pages like /settings/:tab)
+  * @demoArgs {"items":[{"key":"overview","label":"Overview","children":"Service health and summary"},{"key":"routes","label":"Routes","children":"Registered gateway routes"}],"defaultActiveKey":"overview","variant":"line","size":"md"}
  */
 
 import * as React from 'react';
 import { Tabs as AntTabs } from 'antd';
 import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
+import { toAntSize } from '../core/UISize';
+import type { UICompatibleSize } from '../core/UISize';
 
 export interface UITabItem {
   /** Tab key */
@@ -43,10 +46,12 @@ export interface UITabsProps {
   defaultActiveKey?: string;
   /** Tab position */
   tabPosition?: 'top' | 'right' | 'bottom' | 'left';
-  /** Tab type */
+  /** Visual treatment: underline navigation or individually framed tabs. */
+  variant?: 'underline' | 'card';
+  /** @deprecated Use variant="underline" | "card". */
   type?: 'line' | 'card';
   /** Tab size */
-  size?: 'small' | 'middle' | 'large';
+  size?: UICompatibleSize;
   /** Change handler (called in addition to URL sync) */
   onChange?: (activeKey: string) => void;
   /** Tab edit handler (for closable tabs) */
@@ -63,8 +68,9 @@ function UITabsInner({
   activeKey: controlledActiveKey,
   defaultActiveKey,
   tabPosition = 'top',
-  type = 'line',
-  size = 'middle',
+  variant,
+  type,
+  size = 'md',
   onChange,
   onEdit,
   className,
@@ -75,6 +81,7 @@ function UITabsInner({
   const params = useParams<{ tab?: string }>();
 
   const defaultKey = items[0]?.key ?? '';
+  const tabType = variant ? (variant === 'underline' ? 'line' : 'card') : (type ?? 'line');
 
   let activeKey: string | undefined = controlledActiveKey;
 
@@ -123,8 +130,8 @@ function UITabsInner({
       activeKey={activeKey}
       defaultActiveKey={syncUrl ? undefined : defaultActiveKey}
       tabPosition={tabPosition}
-      type={type}
-      size={size}
+      type={tabType}
+      size={toAntSize(size)}
       onChange={handleChange}
       onEdit={handleEdit}
       className={className}

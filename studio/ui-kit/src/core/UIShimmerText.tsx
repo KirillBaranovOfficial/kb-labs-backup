@@ -4,6 +4,7 @@
  * Text stays visible but a highlight sweeps across it — the
  * classic "Cursor / ClickUp / Codex" loading text effect.
  * Pure CSS, zero dependencies, respects dark/light themes.
+ * @demoArgs {"children":"Preparing deployment…","color":"#94a3b8","highlight":"#7aa7ff","duration":"1800ms"}
  */
 
 import * as React from 'react';

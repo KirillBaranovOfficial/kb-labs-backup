@@ -3,6 +3,7 @@
  *
  * Wraps Ant Design Tooltip with simplified API.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"title":"Open gateway settings","placement":"top","children":"Hover for details"}
  */
 
 import * as React from 'react';

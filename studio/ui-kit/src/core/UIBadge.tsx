@@ -3,6 +3,7 @@
  *
  * Uses Ant Design tokens for all colors.
  * NO hardcoded colors, NO inline styles.
+  * @demoArgs {"variant":"success","children":"Healthy"}
  */
 
 import * as React from 'react';

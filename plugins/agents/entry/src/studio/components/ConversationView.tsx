@@ -5,6 +5,7 @@ import {
   useMutateData,
   useData,
   UISpin,
+  UISkeleton,
   UIMarkdownViewer,
   UIModalConfirm,
   UITag,
@@ -31,10 +32,7 @@ export function ConversationView({ turns, isLoading, isError, onRetry, sessionId
 
   if (isLoading) {
     return (
-      <UIFlex justify="center" align="center" style={{ minHeight: 240, gap: 8 }}>
-        <UISpin size="small" />
-        <UITypographyText type="secondary" style={{ fontSize: 13 }}>Loading history...</UITypographyText>
-      </UIFlex>
+      <UISkeleton active lines={5} style={{ minHeight: 240 }} />
     );
   }
 

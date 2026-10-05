@@ -3,6 +3,7 @@
  *
  * Uses tokens from @kb-labs/studio-ui-core for consistent styling.
  * NO inline styles, NO hardcoded colors.
+  * @demoArgs {"size":"sm","weight":"medium","color":"secondary","children":"Last updated 2 minutes ago"}
  */
 
 import * as React from 'react';
@@ -11,7 +12,7 @@ import { typography } from '@kb-labs/studio-ui-core';
 
 const { useToken } = theme;
 
-export type UITextSize = 'xs' | 'sm' | 'base' | 'lg' | 'xl' | '2xl';
+export type UITextSize = 'xs' | 'sm' | 'md' | 'base' | 'lg' | 'xl' | '2xl';
 export type UITextWeight = 'normal' | 'medium' | 'semibold' | 'bold';
 export type UITextColor = 'primary' | 'secondary' | 'success' | 'warning' | 'error' | 'info';
 
@@ -63,8 +64,8 @@ export function UIText({
   };
 
   const baseStyle: React.CSSProperties = {
-    fontSize: typography.fontSize[size][0],
-    lineHeight: typography.fontSize[size][1].lineHeight,
+    fontSize: typography.fontSize[size === 'md' ? 'base' : size][0],
+    lineHeight: typography.fontSize[size === 'md' ? 'base' : size][1].lineHeight,
     fontWeight: typography.fontWeight[weight],
     color: colorMap[color],
   };

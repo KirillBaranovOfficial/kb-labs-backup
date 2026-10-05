@@ -1,0 +1,53 @@
+.modal :global(.ant-modal-content) {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 48px);
+  overflow: hidden;
+}
+
+.modal :global(.ant-modal-header) {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 20px 24px 12px;
+}
+
+.modal :global(.ant-modal-body) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 24px 20px;
+}
+
+.modal :global(.ant-modal-footer) {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 12px 24px 20px;
+  border-top: 1px solid var(--border-primary);
+}
+
+.description {
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+@media (max-width: 576px) {
+  .modal :global(.ant-modal-content) {
+    max-height: calc(100dvh - 24px);
+  }
+
+  .modal :global(.ant-modal-header) {
+    padding: 18px 18px 10px;
+  }
+
+  .modal :global(.ant-modal-body) {
+    padding: 10px 18px 18px;
+  }
+
+  .modal :global(.ant-modal-footer) {
+    padding: 10px 18px 16px;
+  }
+}

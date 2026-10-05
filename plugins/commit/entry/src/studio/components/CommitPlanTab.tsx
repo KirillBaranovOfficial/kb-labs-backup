@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import { theme } from 'antd';
 import {
   useData, useMutateData, useNotification, useTheme, useElapsedTimer,
-  UICard, UIButton, UIEmptyState, UISpin, UIAlert, UITag,
+  UICard, UIButton, UIEmptyState, UISpin, UISkeleton, UIAlert, UITag,
   UITooltip, UIIcon, UISpace, UICheckbox, UIInput, UIDropdown,
   UIPopconfirm, UITypographyText, UIModalConfirm, UIModalError, UIFlex,
   UISkeletonText, UIShimmerText,
@@ -216,7 +216,7 @@ export function CommitPlanTab({ scope }: CommitPlanTabProps) {
     return <UIEmptyState description="Select a repository to continue" />;
   }
   if (statusLoading) {
-    return <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />;
+    return <UISkeleton active lines={6} />;
   }
 
   const statusDot: Record<string, string> = {

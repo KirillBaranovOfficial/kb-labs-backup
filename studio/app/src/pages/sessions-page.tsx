@@ -10,6 +10,7 @@
  */
 
 import * as React from 'react';
+import { UISkeleton } from '@kb-labs/studio-ui-kit';
 import { authClient } from '../auth/shared-client.js';
 
 interface SessionFamily {
@@ -69,7 +70,7 @@ export function SessionsPage() {
         Manage your active sessions across devices.
       </p>
 
-      {loading && <p>Loading sessions…</p>}
+      {loading && <UISkeleton active avatar lines={4} />}
       {error && <p role="alert" style={{ color: 'red' }}>{error}</p>}
 
       {!loading && sessions.length > 0 && (

@@ -73,6 +73,51 @@
   margin-left: 1rem;
 }
 
+.groupItems > li,
+.subItems > li {
+  min-width: 0;
+}
+
+.itemRow {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+.itemRow > .item {
+  flex: 1;
+  min-width: 0;
+}
+
+.itemToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-subtle);
+  cursor: pointer;
+}
+
+.itemToggle:hover {
+  background: color-mix(in oklab, var(--fg) 7%, transparent);
+  color: var(--fg);
+}
+
+.subItems {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  padding-left: 0.45rem;
+  margin: 0.125rem 0 0.25rem 0.8rem;
+  border-left: 1px solid var(--line);
+}
+
 /* ─── Nav item (shared) ──────────────────────────────────────────── */
 .item {
   display: flex;

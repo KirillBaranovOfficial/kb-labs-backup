@@ -10,6 +10,7 @@
 import * as React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { PageContainer } from '@kb-labs/studio-federation';
+import { UISkeleton } from '@kb-labs/studio-ui-kit';
 import { useRegistryV2 } from '../providers/registry-v2-provider';
 import { NotFoundPage } from '../pages/not-found-page';
 
@@ -18,7 +19,9 @@ const P_PREFIX = /^\/p\//;
 export function PluginPageV2() {
   const { registry, loading } = useRegistryV2();
 
-  if (loading) {return null;}
+  if (loading) {
+    return <div style={{ padding: 24 }}><UISkeleton active lines={6} /></div>;
+  }
 
   const allPages = registry.plugins.flatMap((plugin) =>
     plugin.pages.map((page) => ({ plugin, page })),

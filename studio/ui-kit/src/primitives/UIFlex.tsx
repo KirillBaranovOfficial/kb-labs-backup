@@ -2,6 +2,7 @@
  * Flex component - Flexbox layout primitive
  *
  * Uses spacing tokens for gap. NO inline styles for layout.
+  * @demoArgs {"direction":"row","justify":"space-between","align":"center","gap":16,"wrap":true,"children":"Flexible content"}
  */
 
 import * as React from 'react';

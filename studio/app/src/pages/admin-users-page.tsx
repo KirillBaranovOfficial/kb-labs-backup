@@ -8,6 +8,7 @@
  */
 
 import * as React from 'react';
+import { UISkeleton } from '@kb-labs/studio-ui-kit';
 import { RequirePermission } from '@/auth/guards';
 import { authClient } from '../auth/shared-client.js';
 
@@ -52,7 +53,7 @@ function UsersList() {
     <div style={{ maxWidth: '720px', margin: '2rem auto', padding: '0 1rem' }}>
       <h1 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '1.5rem' }}>Users</h1>
 
-      {loading && <p>Loading users…</p>}
+      {loading && <UISkeleton active lines={4} />}
       {error && <p role="alert" style={{ color: 'red' }}>{error}</p>}
 
       {!loading && (

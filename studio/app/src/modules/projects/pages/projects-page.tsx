@@ -15,7 +15,7 @@ import {
   UIPage,
   UIPageHeader,
   UIPopconfirm,
-  UISpin,
+  UISkeleton,
   UITable,
   UITag,
   type UITableColumn,
@@ -119,7 +119,7 @@ export function ProjectsPage() {
         }
       />
       {isLoading ? (
-        <UISpin />
+        <UISkeleton active lines={5} />
       ) : !projects || projects.length === 0 ? (
         <UIEmptyState
           title="No projects registered"

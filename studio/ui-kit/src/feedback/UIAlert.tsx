@@ -3,6 +3,7 @@
  *
  * Wraps Ant Design Alert with semantic variants.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"variant":"info","title":"Configuration saved","message":"Gateway settings are up to date.","showIcon":true,"closable":false}
  */
 
 import * as React from 'react';

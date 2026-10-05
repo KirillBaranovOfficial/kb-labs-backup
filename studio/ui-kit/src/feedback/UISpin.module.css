@@ -1,0 +1,59 @@
+.indicator {
+  display: inline-flex;
+  flex: none;
+  color: var(--link, #0c66ff);
+  line-height: 0;
+  vertical-align: middle;
+}
+
+.indicator svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  overflow: visible;
+  animation: rotate 1.15s linear infinite;
+}
+
+.small svg {
+  width: 14px;
+  height: 14px;
+}
+
+.large svg {
+  width: 24px;
+  height: 24px;
+}
+
+.inherit {
+  color: inherit;
+}
+
+.track,
+.arc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.track {
+  opacity: 0.2;
+}
+
+.arc {
+  stroke-dasharray: 34 66;
+  stroke-linecap: round;
+}
+
+@keyframes rotate {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indicator svg {
+    animation: none;
+  }
+
+  .arc {
+    stroke-dasharray: 26 74;
+  }
+}

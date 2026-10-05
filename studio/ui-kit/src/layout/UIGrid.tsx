@@ -2,6 +2,7 @@
  * UIRow / UICol components - Grid layout
  *
  * Wraps Ant Design Row/Col for responsive grid layouts.
+  * @demoArgs {"gutter":16}
  */
 
 import * as React from 'react';

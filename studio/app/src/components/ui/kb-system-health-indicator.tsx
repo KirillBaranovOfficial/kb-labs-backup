@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Dropdown, Badge, Divider } from 'antd';
-import { Activity, CheckCircle, AlertTriangle, XCircle, Database, Package, Clock } from 'lucide-react';
-import { UIButton } from '@kb-labs/studio-ui-kit';
+import { Activity, CheckCircle, AlertTriangle, XCircle, Database, Package } from 'lucide-react';
+import { UIButton, UISpinIndicator } from '@kb-labs/studio-ui-kit';
 
 export interface SystemHealthData {
   status: 'healthy' | 'degraded' | 'down' | 'unknown';
@@ -178,7 +178,7 @@ export function KBSystemHealthIndicator({
       <UIButton
         variant="text"
         size="small"
-        icon={<Clock size={16} />}
+        icon={<UISpinIndicator size="small" tone="inherit" />}
         style={{ display: 'flex', alignItems: 'center', gap: 6 }}
       >
         Loading...

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, type ComponentType } from 'react';
-import { Spin, ConfigProvider } from 'antd';
+import { ConfigProvider } from 'antd';
+import { UICard, UISkeleton } from '@kb-labs/studio-ui-kit';
 import { loadPageComponent, type PageLoadError } from './widget-loader.js';
 import { PageErrorBoundary } from './page-error-boundary.js';
 import { PluginErrorUI } from './plugin-error-ui.js';
@@ -21,7 +22,7 @@ export interface PageContainerProps {
  * Loads an MF remote page component and wraps it with providers.
  *
  * Lifecycle:
- * 1. Shows loading spinner
+ * 1. Shows the shared Studio page skeleton
  * 2. Loads remote via Module Federation (retries built-in)
  * 3. On load failure → PluginErrorUI (load variant) with retry
  * 4. On runtime crash → PageErrorBoundary catches → PluginErrorUI (crash variant)
@@ -77,8 +78,24 @@ export function PageContainer({
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 320 }}>
-        <Spin size="large" />
+      <div
+        role="status"
+        aria-label={`Loading ${pluginId} page`}
+        style={{ padding: 24, maxWidth: 1440, width: '100%', margin: '0 auto', boxSizing: 'border-box' }}
+      >
+        <div style={{ marginBottom: 24 }}>
+          <UISkeleton active title lines={2} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 16 }}>
+          {[0, 1, 2].map((item) => (
+            <UICard key={item}>
+              <UISkeleton active title={false} lines={2} />
+            </UICard>
+          ))}
+        </div>
+        <UICard>
+          <UISkeleton active title lines={7} />
+        </UICard>
       </div>
     );
   }
