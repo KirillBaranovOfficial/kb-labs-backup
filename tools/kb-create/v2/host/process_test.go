@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,20 +136,61 @@ func TestStartWhileRunningIsAlreadyRunning(t *testing.T) {
 	}
 }
 
+func TestRunnerDoesNotObserveOrStopAHostForAnotherRoot(t *testing.T) {
+	f := newRunner(t, 10, 5)
+	rootA, rootB := filepath.Join(t.TempDir(), "platform-a"), filepath.Join(t.TempDir(), "platform-b")
+	f.runner.PlatformRoot = rootA
+	info, err := f.runner.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := &ProcessRunner{Spec: f.runner.Spec, State: f.runner.State, PlatformRoot: rootB}
+	status, err := other.Status(context.Background())
+	if err != nil || status.State != StateStopped || status.PID != 0 {
+		t.Fatalf("other-root status = %#v, %v; want stopped", status, err)
+	}
+	stopped, err := other.Stop(context.Background())
+	if err != nil || stopped.WasRunning {
+		t.Fatalf("other-root stop = %#v, %v; want no-op", stopped, err)
+	}
+	if !processAlive(info.PID) {
+		t.Fatal("other-root stop signaled the original host")
+	}
+	_, err = other.Start(context.Background())
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_HOST_ALREADY_RUNNING" ||
+		typed.Meta["platformRoot"] != rootA || typed.Meta["pid"] != strconv.Itoa(info.PID) ||
+		!strings.Contains(typed.Hint, "kb-create stop --platform-root "+rootA) {
+		t.Fatalf("other-root start error = %#v; want typed root refusal", err)
+	}
+	status, err = f.runner.Status(context.Background())
+	if err != nil || status.State != StateRunning || status.PID != info.PID {
+		t.Fatalf("original root status after other-root operations = %#v, %v", status, err)
+	}
+	if _, err := f.runner.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPortInUse(t *testing.T) {
 	f := newRunner(t, 10, 5)
+	f.runner.Operation = "apply"
 	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", f.port))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer blocker.Close()
 	plan := contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", f.port)}}
-	if err := CheckPorts(plan); err == nil {
+	if err := CheckPorts(plan, "apply"); err == nil {
 		t.Fatal("expected early port conflict")
 	} else {
 		var typed *diag.Diag
 		if !errors.As(err, &typed) || typed.Code != "KB_INSTALL_PORT_IN_USE" || typed.Meta["port"] != fmt.Sprint(f.port) || typed.Meta["pid"] == "" || typed.Meta["command"] == "" {
 			t.Fatalf("port diagnostic lacks owner details: %#v", err)
+		}
+		if !strings.Contains(typed.Hint, "kb-create apply") ||
+			!strings.Contains(typed.Hint, typed.Meta["pid"].(string)) || !strings.Contains(typed.Hint, typed.Meta["command"].(string)) {
+			t.Fatalf("port hint omits the owning process or attempted command: %#v", err)
 		}
 	}
 	_, err = f.runner.Start(context.Background())
@@ -348,5 +391,19 @@ func TestNewRunnerRejectsAnInstallationWithoutAValidHost(t *testing.T) {
 	}
 	if _, err := NewRunner(t.TempDir(), state); launcherCode(t, err) != "KB_INSTALL_RECEIPT_UNAVAILABLE" {
 		t.Fatalf("a missing receipt must be reported as such: %v", err)
+	}
+}
+
+func TestRootConflictNamesPidWhenRootIsUnknown(t *testing.T) {
+	failure := RootConflict("", 4242)
+	if failure.Code != "KB_HOST_ALREADY_RUNNING" {
+		t.Fatalf("code = %q", failure.Code)
+	}
+	if !strings.Contains(failure.Hint, "Stop process 4242") || strings.Contains(failure.Hint, "--platform-root") {
+		t.Fatalf("hint must name the pid, not an unmatchable stop command: %q", failure.Hint)
+	}
+	known := RootConflict("/opt/kb-a", 7)
+	if !strings.Contains(known.Hint, "kb-create stop --platform-root /opt/kb-a") {
+		t.Fatalf("hint = %q", known.Hint)
 	}
 }

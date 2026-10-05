@@ -21,7 +21,7 @@ func TestStateHomeIsPerUserAndFollowsKBHome(t *testing.T) {
 	if state.Dir != filepath.Join(root, "launcher") {
 		t.Fatalf("state dir = %s", state.Dir)
 	}
-	if state.Control() != filepath.Join(root, "launcher", "control.json") || state.HostPID() != filepath.Join(root, "launcher", "host.pid") {
+	if state.Control() != filepath.Join(state.Dir, "control.json") || state.HostPID() != filepath.Join(state.Dir, "host.pid") {
 		t.Fatalf("state files are not under the launcher home: %s %s", state.Control(), state.HostPID())
 	}
 }
