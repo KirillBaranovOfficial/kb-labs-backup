@@ -36,6 +36,7 @@ import (
 // Check is one named observation.
 type Check struct {
 	ID             string `json:"id"`
+	Code           string `json:"code,omitempty"`
 	OK             bool   `json:"ok"`
 	Detail         string `json:"detail,omitempty"`
 	Hint           string `json:"hint,omitempty"`
@@ -87,10 +88,10 @@ func hostSpecCheck(platformRoot string, active contracts.InstallReceipt) Check {
 	}
 	spec, err := host.NewSpec(platformRoot, *active.Plan.Host)
 	if err != nil {
-		return Check{ID: "host-spec", Detail: "The host specification is invalid: " + err.Error() + ".", Hint: "Reinstall the platform with \"kb-create apply\"."}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host specification is invalid: " + err.Error() + ".", Hint: fmt.Sprintf("Run `kb-create apply --platform-root %q` to regenerate the installed host specification.", platformRoot)}
 	}
 	if _, err := exec.LookPath(spec.Command); err != nil {
-		return Check{ID: "host-spec", Detail: "The host command " + spec.Command + " is not installed.", Hint: "Run \"kb-create apply\" or \"kb-create rollback\" to restore the platform files."}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host command " + spec.Command + " is not installed.", Hint: fmt.Sprintf("Run `kb-create apply --platform-root %q` or `kb-create rollback --platform-root %q` to restore the platform files.", platformRoot, platformRoot)}
 	}
 	return Check{ID: "host-spec", OK: true, Detail: spec.Command}
 }

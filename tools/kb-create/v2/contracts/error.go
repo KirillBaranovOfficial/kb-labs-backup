@@ -47,7 +47,6 @@ const (
 	CodeOperationFailed        = "KB_INSTALL_OPERATION_FAILED"
 	CodeRecoveryFailed         = "KB_INSTALL_RECOVERY_FAILED"
 	CodeReceiptUnavailable     = "KB_INSTALL_RECEIPT_UNAVAILABLE"
-	CodeStatusUnhealthy        = "KB_INSTALL_STATUS_UNHEALTHY"
 	CodeDoctorInputInvalid     = "KB_INSTALL_DOCTOR_INPUT_INVALID"
 	CodeLogUnavailable         = "KB_INSTALL_LOG_UNAVAILABLE"
 	CodeDiagnosticUnavailable  = "KB_INSTALL_DIAGNOSTIC_UNAVAILABLE"

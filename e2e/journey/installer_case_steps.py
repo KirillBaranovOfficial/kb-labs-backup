@@ -61,7 +61,6 @@ def _seed_doctor_fixture(source_root: Path, target_root: Path, *, requirement: d
     target_root.joinpath(".kb/v2").mkdir(parents=True, exist_ok=True)
     target_root.joinpath(".kb/v2/receipt.json").write_text(json.dumps(active, indent=2) + "\n")
     target_root.joinpath(".kb/kb.config.jsonc").write_text("{}\n")
-    target_root.joinpath(".kb/devservices.yaml").write_text("services: {}\n")
     selected = packages[0]
     if receipt_requirement is not None:
         selected["config"] = [receipt_requirement]
@@ -451,10 +450,13 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         envelope, payload = _payload(result, "doctor required-input fixture")
         findings = payload.get("findings", [])
         finding = next((item for item in findings if isinstance(item, dict) and item.get("path") == "/fixture/required"), None)
-        if result.returncode == 0 or envelope.get("ok") is True or not isinstance(finding, dict):
-            raise RuntimeError("doctor did not fail with the manifest-declared required input")
+        if (result.returncode != 0 or envelope.get("ok") is not True or payload.get("operation") != "doctor"
+                or payload.get("status") != "unhealthy" or not isinstance(finding, dict)):
+            raise RuntimeError("doctor did not return an unhealthy report for the manifest-declared required input")
         if not finding.get("component") or not finding.get("code") or not finding.get("hint"):
             raise RuntimeError(f"doctor finding omitted component, code, or hint: {finding}")
+        if not isinstance(payload.get("installation"), dict):
+            raise RuntimeError("doctor unhealthy result omitted its structured installation report")
         if secret:
             fixture_text = result.stdout + "".join(
                 path.read_text(errors="replace") for path in root.rglob("*") if path.is_file())
@@ -465,19 +467,27 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
     exact_step("S-025.1", lambda: doctor_finding(), "diagnose a missing required non-secret config value")
     exact_step("S-025.2", lambda: doctor_finding(secret=True), "diagnose missing secret input without exposing a value")
 
-    def doctor_graph_mismatch() -> None:
-        root = scratch / "s025-graph-mismatch"
+    def doctor_hostspec_invalid() -> None:
+        root = scratch / "s025-hostspec-invalid"
         _seed_doctor_fixture(platform_root, root)
-        (root / ".kb/devservices.yaml").write_text("services:\n  unrelated-service:\n    enabled: true\n")
+        receipt_path = root / ".kb/v2/receipt.json"
+        active = json.loads(receipt_path.read_text())
+        active["plan"]["host"]["command"] = ""
+        receipt_path.write_text(json.dumps(active, indent=2) + "\n")
         result = run_command([launcher, "doctor", "--platform-root", str(root), "--json"])
-        _, payload = _payload(result, "doctor graph mismatch")
-        checks = payload.get("installation", {}).get("checks", [])
-        failed = [item for item in checks if isinstance(item, dict) and item.get("id") in {"host-spec", "devservices"} and item.get("ok") is False]
-        if not failed or not any("graph" in str(item.get("detail", "")).lower() for item in failed):
-            raise RuntimeError("doctor did not identify the devservices/receipt graph mismatch before service commands")
+        envelope, payload = _payload(result, "doctor host-spec mismatch")
+        installation = payload.get("installation", {})
+        checks = installation.get("checks", []) if isinstance(installation, dict) else []
+        failed = [item for item in checks if isinstance(item, dict) and item.get("id") == "host-spec" and item.get("ok") is False]
+        if (result.returncode != 0 or envelope.get("ok") is not True
+                or payload.get("operation") != "doctor" or payload.get("status") != "unhealthy"
+                or not failed or failed[0].get("code") != "KB_HOST_SPEC_INVALID"
+                or "command is required" not in str(failed[0].get("detail", ""))
+                or "kb-create apply --platform-root" not in str(failed[0].get("hint", ""))):
+            raise RuntimeError("doctor did not report the invalid receipt host specification as an unhealthy diagnosis")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("S-025.3", doctor_graph_mismatch, "diagnose a devservices graph that differs from the receipt")
+    exact_step("S-025.3", doctor_hostspec_invalid, "diagnose an invalid host specification from the active receipt")
 
     def doctor_safe_default() -> None:
         root = scratch / "s025-safe-default"

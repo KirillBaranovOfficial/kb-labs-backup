@@ -200,11 +200,31 @@ func (i invocation) runDoctor(output *os.File) int {
 		if response.Platform != nil {
 			writeDoctorPlatformChecks(output, response.Platform.Checks)
 		}
+		if response.Installation != nil {
+			writeDoctorInstallationChecks(output, response.Installation.Checks)
+		}
 	}
-	if !response.OK {
-		return 1
-	}
+	// A completed diagnosis is a successful command result even when it finds
+	// an unhealthy installation. The shared clikit result carries that report
+	// and data.status lets callers use it as a shell gate without mislabeling
+	// diagnostic findings as a command failure.
 	return 0
+}
+
+func writeDoctorInstallationChecks(output *os.File, checks []doctor.Check) {
+	for _, check := range checks {
+		if check.OK {
+			continue
+		}
+		if check.Code != "" {
+			fmt.Fprintf(output, "Installation %s (%s): %s\n", check.ID, check.Code, check.Detail)
+		} else {
+			fmt.Fprintf(output, "Installation %s: %s\n", check.ID, check.Detail)
+		}
+		if check.Hint != "" {
+			fmt.Fprintf(output, "Next: %s\n", check.Hint)
+		}
+	}
 }
 
 func writeDoctorPlatformChecks(output *os.File, checks []doctor.Check) {

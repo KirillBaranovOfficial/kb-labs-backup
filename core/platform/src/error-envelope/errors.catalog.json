@@ -255,15 +255,6 @@
       "hint": "Run `kb-create install` to create the platform, or restore a named snapshot."
     },
     {
-      "code": "KB_INSTALL_STATUS_UNHEALTHY",
-      "area": "install",
-      "stage": "verify",
-      "severity": "error",
-      "retryable": true,
-      "message": "The installed host is not ready.",
-      "hint": "Inspect \"kb-create status\" or run \"kb-create doctor\"."
-    },
-    {
       "code": "KB_INSTALL_DOCTOR_INPUT_INVALID",
       "area": "install",
       "stage": "verify",

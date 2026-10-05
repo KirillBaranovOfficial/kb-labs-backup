@@ -353,7 +353,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 
 	// Stopped host: the installation is fine, the platform is not running.
 	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
-	if code != 1 || payload["ok"] != false {
+	if code != 0 || payload["ok"] != false {
 		t.Fatalf("doctor: %d %s", code, raw)
 	}
 	if payload["installation"].(map[string]any)["ok"] != true || payload["platform"].(map[string]any)["ok"] != false {
@@ -374,7 +374,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if textCode := (invocation{Operation: "doctor", PlatformRoot: inst.root}).run(textOutput); textCode != 1 {
+	if textCode := (invocation{Operation: "doctor", PlatformRoot: inst.root}).run(textOutput); textCode != 0 {
 		t.Fatalf("stopped text doctor exit code = %d", textCode)
 	}
 	if err := textOutput.Close(); err != nil {
@@ -403,7 +403,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, code, raw = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
-	if code != 1 || payload["installation"].(map[string]any)["ok"] != false || payload["platform"].(map[string]any)["ok"] != true {
+	if code != 0 || payload["installation"].(map[string]any)["ok"] != false || payload["platform"].(map[string]any)["ok"] != true {
 		t.Fatalf("doctor on a broken installation: %d %s", code, raw)
 	}
 }
@@ -566,7 +566,7 @@ func TestDoctorOptionalCredentialWarningKeepsFreshInstallHealthy(t *testing.T) {
 	}
 	payload, code, output = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	findings, ok = payload["findings"].([]any)
-	if code == 0 || payload["ok"] != false || !ok || len(findings) != 2 {
+	if code != 0 || payload["ok"] != false || !ok || len(findings) != 2 {
 		t.Fatalf("required platform configuration did not fail doctor: exit=%d %s", code, output)
 	}
 	if findings[1].(map[string]any)["severity"] != doctor.SeverityError {
