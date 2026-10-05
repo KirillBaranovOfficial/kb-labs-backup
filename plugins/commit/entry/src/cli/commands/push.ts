@@ -33,7 +33,7 @@ export default defineCommand({
       } catch (err) {
         pushLoader.fail('Push failed');
         handleError(ctx, err, input.json);
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: 'Could not start the Git push. Check the configured remote and credentials, then rerun `kb commit push`.' };
       }
 
       // Output

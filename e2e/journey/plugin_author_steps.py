@@ -66,7 +66,8 @@ def _json_payload(result: subprocess.CompletedProcess[str], command: list[str]) 
     try:
         payload = json.loads(output)
     except json.JSONDecodeError as error:
-        raise RuntimeError(f"`{' '.join(command)}` did not return valid JSON") from error
+        detail = (result.stderr or "").strip()
+        raise RuntimeError(f"`{' '.join(command)}` did not return valid JSON: {detail[-500:]}") from error
     if not isinstance(payload, dict):
         raise RuntimeError(f"`{' '.join(command)}` did not return a JSON object")
     return payload
@@ -148,8 +149,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         _git(["config", "user.name", "Journey Fixture"], project=project, env=env)
         _git(["config", "user.email", "journey@example.test"], project=project, env=env)
         if is_new_repo:
-            seed = project / ".kb" / "journey-commit-cases" / "seed.txt"
-            _git(["add", str(seed.relative_to(project))], project=project, env=env)
+            _git(["add", ".kb"], project=project, env=env)
             _git(["commit", "-m", "chore: initialize journey fixture"], project=project, env=env)
 
     prepared = journey.step("prepare Commit and Review case fixtures", "plugin-author",
@@ -158,7 +158,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         cases = [f"S-014.{step}" for step in range(1, 4)]
         cases.extend(f"S-015.{step}" for step in range(1, 5))
         cases.extend(f"S-030.{step}" for step in range(1, 5))
-        cases.extend(f"S-160.{step}" for step in range(1, 4))
+        cases.extend(f"S-160.{step}" for step in range(1, 5))
         for case_id in cases:
             journey.blocked(f"{case_id} Commit and Review flow", "plugin-author",
                             "blocked because Commit/Review fixture preparation failed", cases=[case_id])
@@ -166,6 +166,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     _stage_case_file(project, env, "s014-generate")
     before_s014 = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+    before_s014_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
 
     def s014_dry_run() -> None:
         command = ["commit", "commit", "--dry-run", "--json"]
@@ -173,9 +174,10 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         payload = _json_payload(result, [str(kb_path), *command])
         plan = _find_plan(payload)
         after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+        after_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
         if (result.returncode != 0 or not plan or plan.get("metadata", {}).get("llmUsed") is not True
-                or after != before_s014):
-            raise RuntimeError("S-014.1 expected an LLM plan from --dry-run without creating a Git commit")
+                or payload.get("applied") is not False or after != before_s014 or after_status != before_s014_status):
+            raise RuntimeError("S-014.1 expected a preview-only LLM plan without changing Git state")
 
     journey.step("generate a real-provider Commit plan without applying it", "plugin-author",
                  s014_dry_run, cases=["S-014.1"])
@@ -193,10 +195,11 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     _stage_case_file(project, env, "s014-apply")
 
     def s014_apply() -> None:
-        command = ["commit", "commit"]
+        command = ["commit", "commit", "--json"]
         result = cli(command, step_id="S-014.3")
+        payload = _json_payload(result, [str(kb_path), *command])
         subject = _git(["log", "-1", "--format=%s"], project=project, env=env).strip()
-        if result.returncode != 0 or not subject.startswith(("test(", "chore(", "feat(", "fix(")):
+        if result.returncode != 0 or payload.get("applied") is not True or not subject.startswith(("test(", "chore(", "feat(", "fix(")):
             raise RuntimeError(f"S-014.3 did not create a conventional generated commit: {subject!r}")
 
     journey.step("apply a generated Commit plan", "plugin-author", s014_apply, cases=["S-014.3"])
@@ -259,14 +262,18 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
 
     _stage_case_file(project, env, "s160-dry-run")
     before_s160 = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+    before_s160_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
 
     def s160_dry_run() -> None:
-        command = ["commit", "commit", "--dry-run"]
+        command = ["commit", "commit", "--dry-run", "--json"]
         result = cli(command, step_id="S-160.1")
-        plan = _find_plan(_json_payload(result, [str(kb_path), *command]))
+        payload = _json_payload(result, [str(kb_path), *command])
+        plan = _find_plan(payload)
         after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
-        if not plan or plan.get("metadata", {}).get("llmUsed") is not True or after != before_s160:
-            raise RuntimeError("S-160.1 expected JSON with llmUsed=true and no new Git commit from --dry-run")
+        after_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
+        if (not plan or plan.get("metadata", {}).get("llmUsed") is not True or payload.get("applied") is not False
+                or after != before_s160 or after_status != before_s160_status):
+            raise RuntimeError("S-160.1 expected JSON preview output without changing Git state")
 
     journey.step("preview the deterministic fixture Commit plan", "plugin-author",
                  s160_dry_run, cases=["S-160.1"])
@@ -297,14 +304,33 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
     _stage_case_file(project, env, "s160-apply")
 
     def s160_apply() -> None:
-        command = ["commit", "commit"]
+        command = ["commit", "commit", "--json"]
         result = cli(command, step_id="S-160.3")
+        payload = _json_payload(result, [str(kb_path), *command])
         subject = _git(["log", "-1", "--format=%s"], project=project, env=env).strip()
-        if result.returncode != 0 or subject != "test(journey): verify deterministic commit fixture response":
+        if result.returncode != 0 or payload.get("applied") is not True or subject != "test(journey): verify deterministic commit fixture response":
             raise RuntimeError(f"S-160.3 did not apply the deterministic fixture subject: {subject!r}")
 
     journey.step("apply the deterministic fixture Commit plan", "plugin-author",
                  s160_apply, cases=["S-160.3"])
+
+    before_s160_noop = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+    before_s160_noop_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
+
+    def s160_no_changes() -> None:
+        command = ["commit", "commit", "--json"]
+        result = cli(command, step_id="S-160.4")
+        payload = _json_payload(result, [str(kb_path), *command])
+        plan = _find_plan(payload)
+        after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
+        after_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
+        if (result.returncode != 0 or not plan or plan.get("commits") != []
+                or payload.get("applied") is not False or payload.get("commits") != []
+                or after != before_s160_noop or after_status != before_s160_noop_status):
+            raise RuntimeError("S-160.4 expected a successful empty result without changing Git state")
+
+    journey.step("return a successful empty Commit result", "plugin-author",
+                 s160_no_changes, cases=["S-160.4"])
 
     _stage_case_file(project, env, "s030-progress")
 

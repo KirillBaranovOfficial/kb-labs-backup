@@ -34,7 +34,7 @@ export default defineCommand({
         plan = await loadPlan(cwd, scope);
       } catch (err) {
         handleError(ctx, err, input.json);
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: 'Could not load the commit plan. Check project storage, then rerun `kb commit open`.' };
       }
       const planPath = getCurrentPlanPath(cwd, scope);
 

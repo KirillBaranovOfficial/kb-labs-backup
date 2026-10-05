@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 vi.mock('@kb-labs/commit-core', () => ({
   generateCommitPlan: vi.fn(),
   savePlan: vi.fn().mockResolvedValue(undefined),
   hasChanges: vi.fn().mockReturnValue(true),
-  getGitStatus: vi.fn().mockResolvedValue({ staged: [], unstaged: [] }),
+  getGitStatus: vi.fn().mockResolvedValue({ staged: [], unstaged: [], untracked: [] }),
   applyCommitPlan: vi.fn(),
   pushCommits: vi.fn(),
   saveToHistory: vi.fn().mockResolvedValue(undefined),
@@ -33,7 +37,7 @@ vi.mock('../../src/rest/handlers/scope-resolver.js', () => ({
 }));
 
 import { generateCommitPlan, applyCommitPlan, hasChanges, getGitStatus, savePlan, saveToHistory, clearPlan } from '@kb-labs/commit-core';
-import { AdapterCredentialsMissingError, AdapterUnavailableError } from '@kb-labs/sdk';
+import { AdapterCredentialsMissingError, AdapterUnavailableError, findRepoRoot } from '@kb-labs/sdk';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import runCommand from '../../src/cli/commands/run.js';
 import generateCommand from '../../src/cli/commands/generate.js';
@@ -75,7 +79,7 @@ const mockApplyResult = {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(getGitStatus).mockResolvedValue({ staged: [], unstaged: [] } as never);
+  vi.mocked(getGitStatus).mockResolvedValue({ staged: [], unstaged: [], untracked: [] } as never);
   vi.mocked(hasChanges).mockReturnValue(true);
   vi.mocked(generateCommitPlan).mockResolvedValue(mockPlan as never);
   vi.mocked(savePlan).mockResolvedValue(undefined);
@@ -104,7 +108,8 @@ describe('commit:commit (run)', () => {
     expect(vi.mocked(applyCommitPlan)).toHaveBeenCalledOnce();
   });
 
-  it('CR-02: no changes — failed result and warning', async () => {
+  // case: S-160.4
+  it('CR-02: no changes — successful no-op result', async () => {
     vi.mocked(hasChanges).mockReturnValue(false);
 
     const { ui, captured } = createCapturedUI();
@@ -112,9 +117,11 @@ describe('commit:commit (run)', () => {
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.warnings.length).toBeGreaterThan(0);
+    expect(result.ok).toBe(true);
+    expect(result.result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+    expect(captured.success[0]?.message).toContain('No changes to commit');
     expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
+    expect(vi.mocked(generateCommitPlan)).not.toHaveBeenCalled();
   });
 
   it('CR-03: apply fails — failed result and error shown', async () => {
@@ -145,30 +152,74 @@ describe('commit:commit (run)', () => {
     expect(Array.isArray(out.commits)).toBe(true);
   });
 
-  it('CR-05: --dry-run shows intent, applyCommitPlan is NOT called', async () => {
-    const { ui, captured } = createCapturedUI();
-    const ctx = createRunContext(ui);
+  it('CR-05: --dry-run returns a preview without changing HEAD, index, or working tree', async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), 'commit-dry-run-'));
+    try {
+      execFileSync('git', ['init', '-q', repo]);
+      execFileSync('git', ['-C', repo, 'config', 'user.name', 'Test User']);
+      execFileSync('git', ['-C', repo, 'config', 'user.email', 'test@example.com']);
+      await writeFile(path.join(repo, 'tracked.txt'), 'committed\n');
+      execFileSync('git', ['-C', repo, 'add', 'tracked.txt']);
+      execFileSync('git', ['-C', repo, 'commit', '-qm', 'test: initial']);
+      await writeFile(path.join(repo, 'tracked.txt'), 'staged change\n');
+      execFileSync('git', ['-C', repo, 'add', 'tracked.txt']);
+      await writeFile(path.join(repo, 'tracked.txt'), 'working tree change\n');
+      await mkdir(path.join(repo, 'untracked-dir'));
+      await writeFile(path.join(repo, 'untracked-dir', 'new.txt'), 'untracked\n');
 
-    const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true } }));
+      vi.mocked(findRepoRoot).mockResolvedValue(repo);
+      const gitSnapshot = () => ({
+        head: execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+        index: execFileSync('git', ['-C', repo, 'diff', '--cached', '--binary'], { encoding: 'utf8' }),
+        worktree: execFileSync('git', ['-C', repo, 'diff', '--binary'], { encoding: 'utf8' }),
+        status: execFileSync('git', ['-C', repo, 'status', '--porcelain=v1', '--untracked-files=all'], { encoding: 'utf8' }),
+      });
+      const before = gitSnapshot();
+      const { ui, captured } = createCapturedUI();
+      const result = await runCommand.execute(createRunContext(ui) as never, mockCLIInput({
+        flags: { 'dry-run': true, json: true },
+      }));
 
-    expect(result.ok).toBe(true);
-    expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
-    expect(captured.infos[0]?.message).toContain('Dry-run');
-    expect(captured.infos[0]?.message).toContain('2 commit');
+      expect(result.ok).toBe(true);
+      expect(gitSnapshot()).toEqual(before);
+      expect(generateCommitPlan).toHaveBeenCalledOnce();
+      expect(applyCommitPlan).not.toHaveBeenCalled();
+      expect(savePlan).not.toHaveBeenCalled();
+      expect(saveToHistory).not.toHaveBeenCalled();
+      expect(clearPlan).not.toHaveBeenCalled();
+      expect(result.result).toMatchObject({ plan: mockPlan, applied: false, pushed: false, commits: [] });
+      expect(captured.json[0]).toMatchObject({ plan: mockPlan, applied: false, pushed: false, commits: [] });
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
   });
 
-  it('CR-06: --dry-run with no changes — shows intent with empty operations', async () => {
+  it('CR-06: --dry-run with no changes — returns an empty preview in the same result shape', async () => {
     vi.mocked(hasChanges).mockReturnValue(false);
 
     const { ui, captured } = createCapturedUI();
     const ctx = createRunContext(ui);
 
-    const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true } }));
+    const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true, json: true } }));
 
     expect(result.ok).toBe(true);
     expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
-    expect(captured.infos[0]?.message).toContain('Dry-run');
-    expect(captured.infos[0]?.message).toContain('No changes');
+    expect(result.result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+    expect(captured.json[0]).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+  });
+
+  // case: S-160.4
+  it('CR-07: no changes without --dry-run — returns a successful empty result', async () => {
+    vi.mocked(hasChanges).mockReturnValue(false);
+
+    const { ui, captured } = createCapturedUI();
+    const result = await runCommand.execute(createRunContext(ui) as never, mockCLIInput({ flags: { json: true } }));
+
+    expect(result.ok).toBe(true);
+    expect(result.result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+    expect(captured.json[0]).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+    expect(applyCommitPlan).not.toHaveBeenCalled();
+    expect(generateCommitPlan).not.toHaveBeenCalled();
   });
 
   // case: S-160.2
