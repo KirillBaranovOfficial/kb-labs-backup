@@ -287,9 +287,12 @@ Project-specific workflow log views remain scoped to their selected project.
 registered project identity. `docs generate-cli-reference` stays
 project-scoped because it writes documentation into the project tree. The
 simple `hello` command is platform-scoped because it reads no project state and
-writes no project files. `config get`, `config set`, and `config show` remain
-project-scoped while g50 resolves platform/project config targeting; a future
-platform-target mode should be explicit rather than inferred from cwd.
+writes no project files. `config get`, `config set`, and `config show` are
+project-context commands: their default/effective view includes project state,
+while explicit `--scope platform|project` selects the corresponding user config
+file from any registered project cwd. Platform adapter changes require an
+explicit host restart, which `config set --scope platform` reports as the exact
+next command.
 
-Cases: PC-002.7, S-003.7, S-054.2, S-054.18, S-199.6, S-201.1–S-201.2,
-S-203.7–S-203.8.
+Cases: PC-002.7, S-003.7, S-017.5, S-018.3, S-054.2, S-054.18, S-199.6,
+S-201.1–S-201.2, S-203.7–S-203.8.

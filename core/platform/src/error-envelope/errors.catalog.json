@@ -696,6 +696,24 @@
       "hint": "Top up the quota or switch to another model."
     },
     {
+      "code": "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The LLM provider could not be reached or returned an invalid response.",
+      "hint": "Check platform.adapterOptions.llm.baseURL with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`, then retry."
+    },
+    {
+      "code": "KB_CONFIG_LLM_PROVIDER_TIMEOUT",
+      "area": "config",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The LLM provider did not respond before the request timed out.",
+      "hint": "Check provider availability and platform.adapterOptions.llm.baseURL with `kb config get platform.adapterOptions.llm.baseURL --scope platform --json`, then retry."
+    },
+    {
       "code": "KB_PLUGIN_SDK_INCOMPATIBLE",
       "area": "plugin",
       "stage": "extend",

@@ -21,7 +21,7 @@ export type PlatformCallRequest = z.infer<typeof PlatformCallRequestSchema>;
 export interface PlatformCallResponse {
   ok: boolean;
   result?: unknown;
-  error?: { message: string; code?: string };
+  error?: { message: string; code?: string; hint?: string; correlationId?: string };
   /** Wall-clock duration of the adapter call in milliseconds. */
   durationMs: number;
 }

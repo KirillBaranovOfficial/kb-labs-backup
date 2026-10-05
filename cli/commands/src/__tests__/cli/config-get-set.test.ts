@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
@@ -17,6 +18,7 @@ import { configGet } from '../../commands/system/config/get.js';
 import { configSet } from '../../commands/system/config/set.js';
 import { configShow } from '../../commands/system/config/show.js';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
+import { resolveConfigRoots, userConfigFileForScope } from '../../commands/system/config/shared.js';
 
 // ── Harness ──────────────────────────────────────────────────────────────────
 
@@ -202,6 +204,36 @@ describe('config set', () => {
       PLATFORM_CONFIG.replace('@kb-labs/adapters-openai', '@kb-labs/adapters-vibeproxy'),
     );
     expect(await fsp.readFile(PROJECT_FILE(), 'utf8')).toBe(PROJECT_CONFIG);
+  });
+
+  // case: S-017.5
+  it('writes platform adapter settings from a registered project and reports the host restart command', async () => {
+    const { code, out } = await run(configSet, [
+      'platform.adapterOptions.llm.baseURL', 'https://llm.example.test/v1',
+    ], { scope: 'platform' });
+
+    expect(code).toBe(0);
+    expect(out.json[0]).toMatchObject({
+      ok: true,
+      scope: 'platform',
+      nextCommand: `kb-create restart --platform-root ${JSON.stringify(platformRoot)}`,
+    });
+    expect(await fsp.realpath(String(out.json[0]?.file))).toBe(await fsp.realpath(PLATFORM_FILE()));
+    expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toContain('https://llm.example.test/v1');
+    expect(await fsp.readFile(PROJECT_FILE(), 'utf8')).toBe(PROJECT_CONFIG);
+  });
+
+  // case: S-017.5
+  it('resolves the installed platform from the CLI module when platform scope is run inside a project', async () => {
+    vi.stubEnv('KB_PLATFORM_ROOT', '');
+    const moduleUrl = pathToFileURL(path.join(
+      platformRoot, 'node_modules', '@kb-labs', 'cli-commands', 'dist', 'commands', 'system', 'config', 'set.js',
+    )).href;
+    const roots = await resolveConfigRoots(projectRoot, 'platform', moduleUrl);
+
+    expect(roots.platformRoot).toBe(platformRoot);
+    expect(await fsp.realpath(await userConfigFileForScope(roots, 'platform')))
+      .toBe(await fsp.realpath(PLATFORM_FILE()));
   });
 
   // case: S-204.5

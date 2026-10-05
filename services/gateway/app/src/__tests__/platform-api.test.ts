@@ -329,4 +329,99 @@ describe('Unified Platform API – POST /platform/v1/:adapter/:method', () => {
     expect(lines[1]).toBe('data:  world');
     expect(lines[lines.length - 1]).toBe('data: [DONE]');
   });
+
+  it('returns a typed HTTP error when an LLM stream fails before its first chunk and keeps serving', async () => {
+    async function* failedBeforeFirstChunk(): AsyncIterable<string> {
+      throw Object.assign(new Error('provider rejected credentials'), {
+        name: 'AuthenticationError',
+        status: 401,
+      });
+    }
+    mockLLM.stream = vi.fn().mockReturnValueOnce(failedBeforeFirstChunk());
+
+    const failed = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/llm/stream',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: ['test prompt'] },
+    });
+
+    expect(failed.statusCode).toBe(502);
+    expect(failed.headers['content-type']).toContain('application/json');
+    expect(failed.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_CONFIG_LLM_KEY_INVALID',
+        area: 'config',
+        stage: 'run',
+        severity: 'error',
+        retryable: false,
+        message: expect.any(String),
+        hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'"),
+        correlationId: expect.any(String),
+      },
+    });
+    expect(failed.body).not.toContain('provider rejected credentials');
+
+    const healthy = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/cache/get',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: ['after-stream-failure'] },
+    });
+    expect(healthy.statusCode).toBe(200);
+    expect(healthy.json().ok).toBe(true);
+  });
+
+  it('writes a typed terminal SSE error when an LLM stream fails after a chunk and keeps serving', async () => {
+    async function* failedAfterFirstChunk(): AsyncIterable<string> {
+      yield 'partial';
+      throw Object.assign(new Error('provider disconnected'), {
+        name: 'APIConnectionError',
+      });
+    }
+    mockLLM.stream = vi.fn().mockReturnValueOnce(failedAfterFirstChunk());
+
+    const failed = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/llm/stream',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: ['test prompt'] },
+    });
+
+    expect(failed.statusCode).toBe(200);
+    expect(failed.headers['content-type']).toContain('text/event-stream');
+    expect(failed.body).toContain('data: partial\n\n');
+    expect(failed.body).toContain('event: error\n');
+    expect(failed.body).toContain('"code":"KB_CONFIG_LLM_PROVIDER_UNAVAILABLE"');
+    expect(failed.body).toContain('kb config get platform.adapterOptions.llm.baseURL --scope platform --json');
+    expect(failed.body).toContain('"correlationId":"req-1"');
+    expect(failed.body).not.toContain('[DONE]');
+    expect(failed.body).not.toContain('provider disconnected');
+
+    const healthy = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/cache/get',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: ['after-stream-failure'] },
+    });
+    expect(healthy.statusCode).toBe(200);
+    expect(healthy.json().ok).toBe(true);
+  });
+
+  it('rejects a stream call without a prompt as typed invalid input before invoking the adapter', async () => {
+    const failed = await app.inject({
+      method: 'POST',
+      url: '/platform/v1/llm/stream',
+      headers: { authorization: TEST_AUTH },
+      payload: { args: [] },
+    });
+
+    expect(failed.statusCode).toBe(400);
+    expect(failed.json()).toMatchObject({
+      ok: false,
+      error: { code: 'KB_RUNTIME_INPUT_INVALID', message: expect.any(String), hint: expect.any(String) },
+    });
+    expect(mockLLM.stream).not.toHaveBeenCalled();
+  });
 });

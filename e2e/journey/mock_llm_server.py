@@ -25,6 +25,21 @@ def valid_openai_request(request: dict) -> bool:
     )
 
 
+def openai_stream_chunks(request: dict):
+    """Yield OpenAI chat-completion SSE chunks, including the terminal marker."""
+    model = request.get("model", "journey-mock-model")
+    completion_id = "journey-mock-stream"
+    common = {"id": completion_id, "object": "chat.completion.chunk", "created": 1, "model": model}
+    first = {**common, "choices": [{"index": 0, "delta": {"content": "OPENAI_MOCK_RESPONSE"}, "finish_reason": None}]}
+    yield f"data: {json.dumps(first)}\n\n"
+    if model == "journey-provider-stream-error":
+        yield "data: {malformed provider stream frame\n\n"
+        return
+    final = {**common, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+    yield f"data: {json.dumps(final)}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 def commit_tool_completion(request: dict) -> dict | None:
     """Build the deterministic Commit tool response used by installed journeys."""
     messages = request.get("messages")
@@ -93,12 +108,37 @@ class Handler(BaseHTTPRequestHandler):
         if not is_vibeproxy and self.path != "/v1/chat/completions":
             self.send_error(404)
             return
+        messages_text = "\n".join(
+            message.get("content", "") if isinstance(message.get("content"), str) else ""
+            for message in messages if isinstance(message, dict)
+        )
+        if not is_vibeproxy and (
+            request.get("model") == "journey-provider-401" or "journey-provider-401" in messages_text
+        ):
+            body = json.dumps({"error": {
+                "message": "The mock provider rejected the journey API key.",
+                "type": "authentication_error",
+                "param": None,
+                "code": "invalid_api_key",
+            }}).encode()
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if not is_vibeproxy and request.get("stream") is True:
+            body = "".join(openai_stream_chunks(request)).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         result = None if is_vibeproxy else commit_tool_completion(request)
         if result is not None:
-            messages_text = "\n".join(
-                message.get("content", "") if isinstance(message.get("content"), str) else ""
-                for message in messages if isinstance(message, dict)
-            )
             if "s030-cancel" in messages_text:
                 deadline = time.monotonic() + 30
                 while time.monotonic() < deadline:

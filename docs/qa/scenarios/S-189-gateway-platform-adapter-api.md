@@ -29,16 +29,14 @@ async iterable results.
 | S-189.2 | Send an authenticated `POST /platform/v1/analytics/track` with `{"args":["case.gateway.call",{"source":"case-fixture"}]}` | HTTP 200 returns the successful platform-call envelope and the event is recorded by analytics. |
 | S-189.3 | Send authenticated calls to `POST /platform/v1/unknownAdapter/method` and `/platform/v1/analytics/unknownMethod` | Each returns a typed ADR-0049 error naming the unknown adapter or disallowed method, with a corrective hint and no stack trace in the response. |
 | S-189.4 | Send an authenticated `POST /platform/v1/llm/stream` with a request that returns an `AsyncIterable` | The response uses `text/event-stream`, yields each result chunk, and ends with the `[DONE]` event. |
+| S-189.5 | Send an authenticated stream request whose mock provider rejects the key before its first chunk, then a request whose provider stream becomes malformed after one chunk; check gateway health after each request | Before SSE headers, HTTP 502 contains `KB_CONFIG_LLM_KEY_INVALID`, a plain-language message, correlation ID, and a hint with the exact `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}'` command. After streaming starts, the terminal `event: error` contains catalogued `KB_CONFIG_LLM_PROVIDER_UNAVAILABLE`, a hint with the exact `kb config get platform.adapterOptions.llm.baseURL --scope platform --json` command, and no `[DONE]`. Both requests end cleanly, and the gateway remains healthy. |
+| S-189.6 | Send an authenticated `POST /platform/v1/llm/stream` with `{"args":[]}` | HTTP 400 contains the typed `KB_RUNTIME_INPUT_INVALID` envelope; the gateway remains healthy. |
 
 ## Pass criteria
 
 The route is `POST /platform/v1/:adapter/:method`; its static allowlist is in
-`services/gateway/app/src/platform/routes.ts:21-52,88-93`. It accepts calls
-through the adapter and streams async iterables as SSE ending in `[DONE]`
-(`:167-206`). Unknown adapter and method responses have codes
-`ADAPTER_NOT_FOUND` and `METHOD_NOT_ALLOWED` (`:109-125`), and caught adapter
-errors return `ADAPTER_ERROR` without a stack (`:207-219`). However, there is
-no catalog endpoint or journey claim for this API, and these current error
-objects do not include the ADR-0049 corrective `hint`. Keep this case planned
-until a documented/discoverable catalog and the ADR-0049 error envelope are
-available and the journey can call the route.
+`services/gateway/app/src/platform/routes.ts`. It streams async iterables as
+SSE ending in `[DONE]`, emits catalogued provider errors when the adapter fails,
+and returns `KB_RUNTIME_INPUT_INVALID` for a stream request without a prompt.
+The case remains planned until S-189.1 has a documented adapter catalog endpoint
+and the installed journey passes all steps.

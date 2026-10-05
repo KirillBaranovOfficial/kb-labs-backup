@@ -67,6 +67,8 @@ export type ConfigSetResult = CommandResult & {
   adapterSchemaChecked?: boolean;
   /** Set when a higher layer still overrides the value just written. */
   shadowedBy?: { layer: string; source: string };
+  /** Exact command to activate a changed platform adapter configuration. */
+  nextCommand?: string;
 };
 
 export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
@@ -128,6 +130,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
       }
       const file = await userConfigFileForScope(roots, scope);
       const runtimeConfig = await loadPlatformConfig({
+        moduleUrl: import.meta.url,
         startDir: getContextCwd(ctx),
         loadEnvFile: false,
         projectScope: scope === 'platform' ? 'platform' : 'required',
@@ -251,6 +254,11 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         value: redactValue(segments, value),
         adapterSchemaChecked: validate !== undefined,
         shadowedBy,
+        nextCommand: scope === 'platform' && segments[0] === 'platform'
+          && (segments[1] === 'adapters' || segments[1] === 'adapterOptions')
+          && result.changed && !result.dryRun
+          ? `kb-create restart --platform-root ${JSON.stringify(roots.platformRoot)}`
+          : undefined,
       };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
@@ -275,6 +283,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         value: result.value ?? null,
         adapterSchemaChecked: result.adapterSchemaChecked,
         shadowedBy: result.shadowedBy,
+        ...(result.nextCommand ? { nextCommand: result.nextCommand } : {}),
       });
       return;
     }
@@ -287,6 +296,9 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
       items.push(
         `Note:  a ${result.shadowedBy.layer} value in ${result.shadowedBy.source} overrides this one.`,
       );
+    }
+    if (result.nextCommand) {
+      items.push(`Next:  ${result.nextCommand}`);
     }
     const title = !result.changed
       ? 'Already set, nothing to do'

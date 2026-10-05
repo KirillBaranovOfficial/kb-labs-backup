@@ -261,7 +261,7 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       if (!roots.projectId) {
         throw new Error('Effective config requires a registered project.');
       }
-      const result = await loadPlatformConfig({ startDir: cwd, loadEnvFile: false, projectId: roots.projectId });
+      const result = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: cwd, loadEnvFile: false, projectId: roots.projectId });
       const rows = buildRows(result);
 
       // Platform provenance remains available from the platform config layer.
