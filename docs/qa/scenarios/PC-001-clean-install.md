@@ -36,6 +36,7 @@ test.
 | PC-001.6 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` after host start | Exits 0; JSON has `ok: true`, `installed: true`, `running: true`, `reachable: true`, and `platform.ok: true`. |
 | PC-001.7 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok: true`, `installed: true`, `running: true`, `reachable: true`, `host.state: "running"`, and `installation.receiptId` equal to the ID in `.kb/v2/receipt.json`. |
 | PC-001.8 | Repeat `kb-create plan --index release-index.json --request-platform-root "$PLATFORM_ROOT" --service-profile default --scenario commit --json` | The returned plan has the same `planHash`, `artifacts`, and `serviceGraph` as the first plan; planning does not write package or runtime config files under the root. |
+| PC-001.9 | While another process owns a port required by the selected service graph, run `kb-create apply --index release-index.json --request-platform-root "$PLATFORM_ROOT" --service-profile default --scenario commit --json` | Apply exits non-zero with catalogued `KB_INSTALL_PORT_IN_USE`; the error details identify the port, owning PID, and command, and the hint names the owning process and tells the operator to rerun `kb-create apply` after stopping it. |
 
 ## Pass criteria
 
