@@ -1,5 +1,6 @@
 {
   "name": "@kb-labs/viewer-core",
+  "description": "Architecture package validation and project-confined file access for the KB Labs viewer.",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -8,11 +9,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup --config tsup.config.ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@kb-labs/viewer-contracts": "workspace:*",
@@ -20,10 +28,15 @@
     "js-yaml": "^4.2.0"
   },
   "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.3.3",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "@kb-labs/devkit": "workspace:*"
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=9.0.0"
   }
 }

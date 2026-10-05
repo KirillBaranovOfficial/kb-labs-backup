@@ -20,12 +20,12 @@ export const manifest = {
   rest: {
     basePath: '/v1/plugins/viewer',
     routes: [
-      { method: 'GET', path: '/index', handler: './rest/handlers/index-handler.js#default' },
-      { method: 'GET', path: '/file', handler: './rest/handlers/file-handler.js#default' },
-      { method: 'GET', path: '/convert', handler: './rest/handlers/convert-handler.js#default' },
-      { method: 'GET', path: '/export', handler: './rest/handlers/export-handler.js#default' },
-      { method: 'GET', path: '/sources', handler: './rest/handlers/sources-handler.js#default' },
-      { method: 'POST', path: '/import', handler: './rest/handlers/import-handler.js#default' },
+      { method: 'GET', path: '/index', errors: [{ code: 'KB_RUNTIME_INPUT_INVALID', http: 400 }, { code: 'KB_RUNTIME_UNEXPECTED', http: 500 }], input: { zod: './rest/schemas.js#viewerIndexQuerySchema' }, handler: './rest/handlers/index-handler.js#default' },
+      { method: 'GET', path: '/file', errors: [{ code: 'KB_RUNTIME_INPUT_INVALID', http: 400 }, { code: 'KB_RUNTIME_UNEXPECTED', http: 500 }], input: { zod: './rest/schemas.js#viewerFileQuerySchema' }, handler: './rest/handlers/file-handler.js#default' },
+      { method: 'GET', path: '/convert', errors: [{ code: 'KB_RUNTIME_INPUT_INVALID', http: 400 }, { code: 'KB_RUNTIME_UNEXPECTED', http: 500 }], input: { zod: './rest/schemas.js#viewerConvertQuerySchema' }, handler: './rest/handlers/convert-handler.js#default' },
+      { method: 'GET', path: '/export', errors: [{ code: 'KB_RUNTIME_INPUT_INVALID', http: 400 }, { code: 'KB_RUNTIME_UNEXPECTED', http: 500 }], input: { zod: './rest/schemas.js#viewerExportQuerySchema' }, handler: './rest/handlers/export-handler.js#default' },
+      { method: 'GET', path: '/sources', errors: [{ code: 'KB_RUNTIME_UNEXPECTED', http: 500 }], input: { zod: './rest/schemas.js#viewerSourcesQuerySchema' }, handler: './rest/handlers/sources-handler.js#default' },
+      { method: 'POST', path: '/import', errors: [{ code: 'KB_RUNTIME_INPUT_INVALID', http: 400 }, { code: 'KB_RUNTIME_UNEXPECTED', http: 500 }], input: { zod: './rest/schemas.js#viewerImportBodySchema' }, handler: './rest/handlers/import-handler.js#default' },
     ],
   },
   studio: {

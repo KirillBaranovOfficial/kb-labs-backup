@@ -240,7 +240,10 @@ def project_plugin_settings_isolation() -> str | None:
         def scope_ids(status: int, body: object, project_name: str) -> tuple[set[str], str | None]:
             if status != 200:
                 return set(), f"Commit settings for {project_name} returned HTTP {status}"
-            value = body.get("data", body) if isinstance(body, dict) else body
+            try:
+                value = decode_ux_success_result(body)
+            except ValueError:
+                return set(), f"Commit settings for {project_name} returned an invalid UX success envelope"
             options = value.get("options") if isinstance(value, dict) else None
             if not isinstance(options, list):
                 return set(), f"Commit settings for {project_name} returned no scope options"
