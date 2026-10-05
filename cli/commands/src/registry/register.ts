@@ -156,9 +156,9 @@ export async function registerManifests(
         const cmd: RegisteredCommand = {
           manifest,
           v3Manifest: manifest.manifestV2,
-          available: availability.available,
-          unavailableReason: availability.available ? undefined : availability.reason,
-          hint: availability.available ? undefined : availability.hint,
+          available: manifest.unavailablePlugin ? false : availability.available,
+          unavailableReason: manifest.unavailablePlugin ? manifest.describe : availability.available ? undefined : availability.reason,
+          hint: manifest.unavailablePlugin ? 'Run `pnpm build` and retry the command.' : availability.available ? undefined : availability.hint,
           source: result.source,
           shadowed: false,
           pkgRoot: result.pkgRoot,

@@ -18,7 +18,7 @@ import type { CommandManifest, DiscoveryResult } from './types';
 import { manifestToCommands, createUnavailableManifest } from './manifest-commands';
 import { toPosixPath } from '../utils/path';
 
-// Discovery diagnostics are opt-in and go to stderr so they never pollute --json output.
+// Discovery errors always go to stderr; warnings are opt-in. Neither affects --json output.
 const DEBUG_MODE = process.env.DEBUG_SANDBOX === '1' || process.env.KB_DISCOVERY_DEBUG === '1';
 
 export interface DiscoverManifestsOptions {
@@ -67,17 +67,14 @@ export function toDiscoveryResults(discovered: CoreDiscoveryResult): DiscoveryRe
     }
   }
 
-  const loadedNames = new Set(discovered.plugins.map(p => p.packageName));
   for (const failure of discovered.failures) {
-    if (failure.reason !== 'manifest' || !failure.manifestPath || loadedNames.has(failure.packageName)) {
-      continue;
-    }
+    if (failure.diagnosticCode !== 'PLUGIN_BUILD_MISSING') { continue; }
     results.push({
-      manifests: [createUnavailableManifest(failure.packageName, failure.message)],
+      manifests: [createUnavailableManifest(failure.packageName, failure.message, failure.id)],
       source: failure.origin,
       scope: failure.scope,
       packageName: failure.packageName,
-      manifestPath: toPosixPath(failure.manifestPath),
+      manifestPath: toPosixPath(failure.manifestPath ?? failure.packageRoot),
       pkgRoot: toPosixPath(failure.packageRoot),
     });
   }
@@ -106,10 +103,12 @@ export async function discoverManifestsDetailed(
 
   const discovered = await new DiscoveryManager({ root: projectRoot, platformRoot }).discover();
 
-  if (DEBUG_MODE) {
-    for (const event of discovered.diagnostics) {
-      if (event.severity === 'info' || event.severity === 'debug') {continue;}
+  for (const event of discovered.diagnostics) {
+    if (event.severity === 'error' || (DEBUG_MODE && event.severity === 'warning')) {
       console.error(`[discover] ${event.severity} ${event.code}: ${event.message}`);
+      if (event.remediation) {
+        console.error(`[discover] next: ${event.remediation}`);
+      }
     }
   }
 

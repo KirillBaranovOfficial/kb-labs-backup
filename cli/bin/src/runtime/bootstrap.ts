@@ -528,6 +528,20 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
     rawConfig?.execution as Record<string, unknown> | undefined
   )?.mode;
 
+  if (p.manifestCmd.manifest.unavailablePlugin) {
+    const envelope = createErrorEnvelope('KB_PLUGIN_NOT_FOUND', {
+      details: { plugin: p.manifestCmd.packageName ?? p.manifestCmd.manifest.group },
+      message: `${p.manifestCmd.packageName ?? p.manifestCmd.manifest.group} is locked in this workspace but its manifest has not been built.`,
+      hint: 'Run `pnpm build`, then retry the command.',
+    });
+    if (p.presenter.isJSON) {
+      p.presenter.json({ ok: false, error: envelope });
+    } else {
+      p.presenter.error(`${envelope.message} [${envelope.code}]\nHint: ${envelope.hint}`);
+    }
+    return 2;
+  }
+
   return p.runWithMiddleware(async () => {
     if (executionMode !== "in-process") {
       const gatewayClient = await tryResolveGateway();

@@ -18,7 +18,7 @@ A user creates an agent session for a project, retrieves its turns and plan, and
 
 - [ ] Agent plugin installed in the selected project and its REST routes enabled.
 - [ ] Host running; in secured mode, an authenticated user has access to the selected project.
-- [ ] An agent ID available in the project configuration.
+- [ ] An agent ID defined by the Agents plugin, such as `orchestrator`.
 
 ## Steps
 
@@ -28,3 +28,4 @@ A user creates an agent session for a project, retrieves its turns and plan, and
 | S-141.2 | Send `GET /api/v1/projects/<project-id>/rest/v1/plugins/agents/sessions` | Response contains the new session ID and a total count that includes it. |
 | S-141.3 | Send `GET /api/v1/projects/<project-id>/rest/v1/plugins/agents/sessions/<session-id>` , `GET /api/v1/projects/<project-id>/rest/v1/plugins/agents/sessions/<session-id>/turns`, and `GET /api/v1/projects/<project-id>/rest/v1/plugins/agents/sessions/<session-id>/plan` | Session detail and turn history identify the same session ID; an empty turn history is represented as an empty collection. |
 | S-141.4 | Send `GET /api/v1/projects/<project-id>/rest/v1/plugins/agents/sessions/session-does-not-exist` | Response reports a not-found error naming the session ID; no stack trace is returned. |
+| S-141.5 | Send `POST /api/v1/projects/<project-id>/rest/v1/plugins/agents/sessions` with JSON `{"agentId":"agent-does-not-exist","task":"Summarize the project"}` | HTTP 404 returns a typed `KB_AGENT_NOT_FOUND` envelope naming the unknown agent ID; no session is created. |

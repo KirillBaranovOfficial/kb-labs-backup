@@ -26,6 +26,9 @@ from marketplace_steps import _registry_version, _output
 from adapter_defaults_steps import run_adapter_default_steps
 from analytics_steps import run_analytics_and_gateway_steps
 from worktree_steps import run_worktree_steps
+from project_identity_steps import run_project_identity_steps, run_project_registry_steps
+from workspace_steps import run_workspace_cli_steps
+from plugin_isolation_steps import run_project_plugin_availability_steps
 from mcp_project_steps import (
     apply_commit_plan,
     commit_tool_schema,
@@ -33,7 +36,11 @@ from mcp_project_steps import (
     local_auth,
     mcp_ux_result_contract,
     project_isolation,
+    project_plugin_catalog_isolation,
+    project_readonly_tool_isolation,
+    run_agent_session_steps,
     secured_auth,
+    secured_project_catalog_isolation,
     unknown_tool,
 )
 from platform_state_dump import archive_service_logs
@@ -402,6 +409,13 @@ def checks(mode: str):
     if project_b_id and project_b_root:
         yield ("project MCP cross-project isolation", "mcp",
                lambda: project_isolation(pid, project_b_id, project_b_root, auth_token()))
+        yield ("project plugin catalog isolation", "mcp",
+               lambda: project_plugin_catalog_isolation(pid, project_b_id, auth_token()))
+        yield ("project MCP read-only tool isolation", "mcp",
+               lambda: project_readonly_tool_isolation(pid, project_b_id, auth_token()))
+        if mode == "secured":
+            yield ("secured project MCP catalog selection", "mcp",
+                   lambda: secured_project_catalog_isolation(pid, project_b_id, auth_token()))
     else:
         yield ("project MCP cross-project isolation", "mcp",
                lambda: "BLOCKED: register project B and provide KB_JOURNEY_PROJECT_B_ID and KB_JOURNEY_PROJECT_B_ROOT")
@@ -517,6 +531,9 @@ def _case_claims(name: str, mode: str = "local") -> list[str]:
         "project MCP invalid argument error": "S-140.4",
         "MCP UX result contract from live registry": "S-203.2",
         "project MCP cross-project isolation": "S-140.5",
+        "project plugin catalog isolation": "S-199.3",
+        "project MCP read-only tool isolation": "S-199.4",
+        "secured project MCP catalog selection": "S-199.5",
     }
     case_id = case_by_name.get(name)
     if name == "project MCP secured missing and invalid token rejection":
@@ -565,6 +582,16 @@ def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runne
 
 def _run_installed_flows(journey: Journey, project_root: str, registry: str) -> None:
     env = os.environ.copy()
+    cli_path = Path.home() / ".local/bin/kb"
+    journey.step("project registry and current-project flows", "projects",
+                 lambda: run_project_registry_steps(journey, str(cli_path), env, registry))
+    run_project_identity_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root)))
+    run_workspace_cli_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root)))
+    project_b_root = os.environ.get("KB_JOURNEY_PROJECT_B_ROOT", "")
+    if project_b_root:
+        run_project_plugin_availability_steps(
+            journey, str(cli_path), Path(project_root), Path(project_b_root), env,
+        )
     journey.step("adapter defaults flow", "adapter",
                  lambda: run_adapter_default_steps(journey, project_root, env))
     journey.step("plugin author flow", "plugin-author",
@@ -671,7 +698,7 @@ def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> Path:
 
 def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
                          runner=run_command) -> tuple[str, str]:
-    """Install Commit into project A and register a clean project B for isolation."""
+    """Install the project fixture plugins into A and register clean project B."""
     command_runner = runner
     def runner(command, **kwargs):
         options = dict(kwargs)
@@ -686,6 +713,12 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
                        text=True, timeout=300)
     _output(installed, install)
+    agent_package = "@kb-labs/agent-entry"
+    agent_version = _registry_version(agent_package, registry, env, runner)
+    agent_install = ["kb", "marketplace", "install", f"{agent_package}@{agent_version}", "--json"]
+    agent_installed = runner(agent_install, cwd=str(project_a), env=env, capture_output=True,
+                             text=True, timeout=300)
+    _output(agent_installed, agent_install)
     _write_mcp_commit_plan(project_a, env)
 
     home = Path(env["HOME"])
@@ -708,11 +741,19 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     project_b_id, project_b_root = _find_project_registration(payload)
     if not project_b_id or not project_b_root:
         raise RuntimeError("registering MCP isolation project B returned no project ID and canonical path")
+    review_package = "@kb-labs/review-entry"
+    review_version = _registry_version(review_package, registry, env, runner)
+    review_install = ["kb", "marketplace", "install", f"{review_package}@{review_version}", "--json"]
+    review_installed = runner(review_install, cwd=str(project_b), env=env, capture_output=True,
+                              text=True, timeout=300)
+    _output(review_installed, review_install)
     lock_path = project_b / ".kb" / "marketplace.lock"
     if lock_path.exists():
         lock = json.loads(lock_path.read_text())
-        if package in lock.get("plugins", {}):
+        if "@kb-labs/commit" in lock.get("plugins", {}):
             raise RuntimeError("MCP isolation project B unexpectedly has the Commit plugin installed")
+        if "@kb-labs/review" not in lock.get("plugins", {}):
+            raise RuntimeError("MCP isolation project B does not have its Review fixture plugin installed")
     return project_b_id, project_b_root
 
 
@@ -730,6 +771,8 @@ def _prepare_and_export_mcp_projects(project_root: str, registry: str, env: dict
         output_path = Path(fixture_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps({
+            "projectAId": PROJECT_ID,
+            "projectARoot": str(Path(project_root).resolve()),
             "projectBId": project_b_id,
             "projectBRoot": project_b_root,
         }), encoding="utf-8")
@@ -760,6 +803,11 @@ def main() -> int:
                 _prepare_and_export_mcp_projects(project_root, registry, env)
             journey.step("prepare MCP project fixtures", "mcp", prepare_projects)
         run_service_steps(journey, checks(args.mode), args.mode)
+        if PROJECT_ID:
+            run_agent_session_steps(
+                journey, PROJECT_ID, os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
+                os.getenv("KB_JOURNEY_AGENT_ID", "orchestrator"),
+            )
         run_analytics_and_gateway_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""))
         if project_root:
             _run_installed_flows(journey, project_root, registry)

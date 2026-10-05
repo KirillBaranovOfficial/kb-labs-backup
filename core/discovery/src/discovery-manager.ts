@@ -244,7 +244,9 @@ export class DiscoveryManager {
     const diag = new DiagnosticCollector();
     const { id, entry, packageRoot } = candidate;
 
-    const fail = (reason: DiscoveryFailure['reason'], message: string, manifestPath?: string): CandidateOutcome => ({
+    const fail = (reason: DiscoveryFailure['reason'], message: string, manifestPath?: string,
+                  diagnosticCode?: DiscoveryFailure['diagnosticCode'],
+                  remediation?: string): CandidateOutcome => ({
       events: diag.getEvents(),
       failure: {
         id,
@@ -255,6 +257,8 @@ export class DiscoveryManager {
         manifestPath,
         reason,
         message,
+        diagnosticCode,
+        remediation,
       },
     });
 
@@ -283,6 +287,32 @@ export class DiscoveryManager {
       const ok = await this.checkIntegrity(packageRoot, entry.integrity, id, diag);
       if (!ok) {
         return fail('integrity', `Integrity mismatch for "${id}"`);
+      }
+    }
+
+    // A linked workspace package whose declared compiled manifest is absent is
+    // known to be unbuilt. Keep it visible with a build diagnostic instead of
+    // silently dropping its locked command namespace.
+    if (entry?.source === 'local' && entry.link) {
+      const packageJsonPath = path.join(packageRoot, 'package.json');
+      try {
+        const packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8')) as {
+          kb?: { manifest?: string };
+        };
+        const manifestTarget = packageJson.kb?.manifest;
+        const staticManifest = path.join(packageRoot, 'dist', 'manifest.json');
+        const hasStaticManifest = await fs.access(staticManifest).then(() => true).catch(() => false);
+        const hasCompiledManifest = manifestTarget
+          ? await fs.access(path.resolve(packageRoot, manifestTarget)).then(() => true).catch(() => false)
+          : false;
+        if (manifestTarget && !hasStaticManifest && !hasCompiledManifest) {
+          const remediation = 'Run `pnpm build` and retry the command.';
+          const message = `Workspace plugin "${id}" is unavailable because its manifest build output is missing.`;
+          diag.error('PLUGIN_BUILD_MISSING', message, { pluginId: id, filePath: path.resolve(packageRoot, manifestTarget), remediation });
+          return fail('manifest', message, path.resolve(packageRoot, manifestTarget), 'PLUGIN_BUILD_MISSING', remediation);
+        }
+      } catch {
+        // Let the manifest loader report malformed or unreadable package metadata.
       }
     }
 

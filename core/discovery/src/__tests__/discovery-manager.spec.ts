@@ -58,6 +58,29 @@ describe('DiscoveryManager', () => {
     expect(pkgNotFound!.remediation).toContain('install');
   });
 
+  it('reports an actionable build diagnostic for a locked local workspace plugin without manifest output', async () => {
+    const pluginDir = path.join(tmpDir, 'plugins', 'release-manager-cli');
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(path.join(pluginDir, 'package.json'), JSON.stringify({
+      name: '@kb-labs/release-manager-cli',
+      kb: { manifest: './dist/manifest.js' },
+    }));
+    const lock = createEmptyLock();
+    lock.plugins['@kb-labs/release'] = createMarketplaceEntry({
+      version: '1.0.0', integrity: 'sha256-test', provides: ['plugin'],
+      source: 'local', resolvedPath: './plugins/release-manager-cli', primaryKind: 'plugin',
+    });
+    await writeMarketplaceLock(tmpDir, lock);
+
+    const result = await new DiscoveryManager({ root: tmpDir }).discover();
+    const diagnostic = result.diagnostics.find(event => event.code === 'PLUGIN_BUILD_MISSING');
+    expect(diagnostic).toMatchObject({
+      severity: 'error',
+      context: { pluginId: '@kb-labs/release' },
+      remediation: 'Run `pnpm build` and retry the command.',
+    });
+  });
+
   it('associates missing shared-store diagnostics with the pinned plugin', async () => {
     const lock = createEmptyLock();
     lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({

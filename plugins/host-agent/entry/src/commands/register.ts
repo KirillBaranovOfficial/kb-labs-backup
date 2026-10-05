@@ -1,5 +1,5 @@
 /**
- * workspace:register command (alias: agent:register)
+ * workspace:register command
  * Register this machine with a Platform Gateway and save credentials to ~/.kb/agent.json.
  */
 

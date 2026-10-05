@@ -12,7 +12,11 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_arguments, local_auth,
-                               mcp_ux_result_contract, project_isolation, secured_auth, unknown_tool)
+                               mcp_ux_result_contract, project_isolation, project_plugin_catalog_isolation,
+                               project_readonly_tool_isolation,
+                               run_agent_session_steps,
+                               secured_auth, secured_project_catalog_isolation, unknown_tool)
+from service_steps import Journey
 from service_runner import _case_claims, checks
 
 
@@ -36,6 +40,118 @@ def tool_error(code: str, message: str, hint: str):
 
 
 class ProjectMcpJourneyTests(unittest.TestCase):
+    # case: S-141.1, S-141.2, S-141.3, S-141.4, S-141.5
+    def test_agent_session_steps_reject_fake_failures_then_claim_full_lifecycle(self):
+        journey = Journey("local", "agent-session")
+        failures = iter([
+            (500, {"error": "creation failed"}, {}),
+            (500, {"error": "list failed"}, {}),
+            (500, {"error": "detail failed"}, {}),
+            (200, {"message": "session-does-not-exist"}, {}),
+            (201, {"data": {"session": {"id": "bad", "agentId": "agent-does-not-exist"}}}, {}),
+        ])
+        with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(failures)):
+            run_agent_session_steps(journey, "prj_a", "token")
+        red = journey.result()
+        self.assertEqual(red.status, "FAIL")
+        self.assertEqual({claim["claimId"] for claim in red.case_run["claims"]}, {
+            "S-141.1", "S-141.2", "S-141.3", "S-141.4", "S-141.5",
+        })
+
+        session = {"id": "session-1", "agentId": "orchestrator",
+                   "task": "Summarize the project", "status": "pending"}
+        responses = iter([
+            (201, {"data": {"session": session}}, {}),
+            (200, {"data": {"sessions": [session], "total": 1}}, {}),
+            (200, {"data": {"sessionId": "session-1"}}, {}),
+            (200, {"data": {"turns": []}}, {}),
+            (200, {"data": {"sessionId": "session-1", "plan": None}}, {}),
+            (404, {"error": {"message": "session-does-not-exist not found"}}, {}),
+            (404, {"error": {"code": "KB_AGENT_NOT_FOUND", "message": "Agent ID agent-does-not-exist is not registered."}}, {}),
+        ])
+        green = Journey("local", "agent-session")
+        with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(responses)):
+            run_agent_session_steps(green, "prj_a", "token")
+        result = green.result()
+        self.assertEqual(result.status, "PASS", result.first_failure)
+        self.assertEqual({claim["claimId"] for claim in result.case_run["claims"]}, {
+            "S-141.1", "S-141.2", "S-141.3", "S-141.4", "S-141.5",
+        })
+
+    # case: S-199.3
+    def test_project_catalog_isolation_rejects_fake_failure_then_proves_project_scoped_tool(self):
+        journey = Journey("local", "project-catalog-isolation")
+        with patch("service_runner.request", side_effect=[
+            (500, {}, {}), (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
+        ]):
+            journey.step("project catalog isolation", "mcp",
+                         lambda: project_plugin_catalog_isolation("prj_a", "prj_b", "token"),
+                         cases=["S-199.3"])
+        self.assertEqual(journey.result().case_run["claims"], [
+            {"claimId": "S-199.3", "kind": "journey", "status": "FAIL"},
+        ])
+
+        journey = Journey("local", "project-catalog-isolation")
+        responses = [
+            (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
+            (200, {"result": {"tools": [{"name": "kb-labs-workflow__workflow_run"}]}}, {}),
+        ]
+        with patch("service_runner.request", side_effect=responses):
+            journey.step("project catalog isolation", "mcp",
+                         lambda: project_plugin_catalog_isolation("prj_a", "prj_b", "token"),
+                         cases=["S-199.3"])
+        self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
+
+    # case: S-199.5
+    def test_secured_project_catalog_claim_rejects_fake_failure_then_checks_auth_and_scope(self):
+        failure = Journey("secured", "project-catalog-auth")
+        with patch("service_runner.request", side_effect=[
+            (500, {}, {}),
+        ]):
+            failure.step("secured project MCP catalog selection", "mcp",
+                         lambda: secured_project_catalog_isolation("prj_a", "prj_b", "token"),
+                         cases=["S-199.5"])
+        self.assertEqual(failure.result().case_run["claims"], [
+            {"claimId": "S-199.5", "kind": "journey", "status": "FAIL"},
+        ])
+
+        auth_error = {"ok": False, "error": {
+            "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
+            "hint": 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
+            "correlationId": "corr-auth",
+        }}
+        responses = [
+            (401, auth_error, {}),
+            (200, {"result": {"tools": [{"name": "kb-labs-commit__commit_apply"}]}}, {}),
+            (401, auth_error, {}),
+            (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
+        ]
+        green = Journey("secured", "project-catalog-auth")
+        with patch("service_runner.request", side_effect=responses) as request:
+            green.step("secured project MCP catalog selection", "mcp",
+                       lambda: secured_project_catalog_isolation("prj_a", "prj_b", "token"),
+                       cases=["S-199.5"])
+        self.assertEqual(green.result().status, "PASS", green.result().first_failure)
+        self.assertEqual([call.kwargs.get("token", "") for call in request.call_args_list], ["", "token", "", "token"])
+
+    # case: S-199.4
+    def test_readonly_agents_tool_isolation_rejects_fake_failure_then_checks_a_and_b(self):
+        failed = Journey("local", "readonly-tool-isolation")
+        with patch("service_runner.request", side_effect=[(500, {}, {})]):
+            failed.step("project MCP read-only tool isolation", "mcp",
+                        lambda: project_readonly_tool_isolation("prj_a", "prj_b", "token"),
+                        cases=["S-199.4"])
+        self.assertEqual(failed.result().status, "FAIL")
+
+        success = {"result": {"isError": False, "structuredContent": {"hasPlan": True}, "content": []}}
+        unknown = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown tool.", "Use tools/list.")
+        green = Journey("local", "readonly-tool-isolation")
+        with patch("service_runner.request", side_effect=[(200, success, {}), (200, unknown, {})]):
+            green.step("project MCP read-only tool isolation", "mcp",
+                       lambda: project_readonly_tool_isolation("prj_a", "prj_b", "token"),
+                       cases=["S-199.4"])
+        self.assertEqual(green.result().status, "PASS", green.result().first_failure)
+
     def test_live_registry_ux_step_is_registered_as_s203_claim(self):
         step = "MCP UX result contract from live registry"
         self.assertIn(step, {name for name, _, _ in checks("local")})

@@ -72,7 +72,7 @@ export class TrieBackedRegistry {
   }
 
   registerManifest(cmd: RegisteredCommand): void {
-    if (cmd.manifest._synthetic) { return; }
+    if (cmd.manifest._synthetic && !cmd.manifest.unavailablePlugin) { return; }
 
     const segs = cmd.manifest.segments;
     const pkg  = cmd.packageName ?? 'unknown';

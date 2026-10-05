@@ -37,6 +37,8 @@ export interface CommandManifest {
   pkgRoot?: string;
   /** Internal flag: true for synthetic "unavailable" manifests (the manifest file exists but failed to load). */
   _synthetic?: boolean;
+  /** Synthetic entry retained for a locked workspace plugin that needs a build. */
+  unavailablePlugin?: boolean;
   /** Archetype from manifest — drives automatic flag injection and --schema generation. */
   operationType?: 'read' | 'mutate' | 'execute' | 'analyze';
 }
@@ -95,4 +97,3 @@ export interface GlobalFlags {
 export type AvailabilityCheck = 
   | { available: true }
   | { available: false; reason: string; hint?: string }
-
