@@ -54,7 +54,7 @@ describe('registerObservabilityRoutes', () => {
 
       expect(response.statusCode).toBe(503);
       expect(response.json().error).toMatchObject({
-        code: 'KB_RUNTIME_UNEXPECTED',
+        code: 'KB_HOST_SERVICE_ADDRESS_MISSING',
         hint: expect.any(String),
         correlationId: expect.any(String),
       });
@@ -134,7 +134,7 @@ describe('registerObservabilityRoutes', () => {
       });
 
       expect(response.statusCode).toBe(503);
-      expect(response.json().error.code).toBe('KB_RUNTIME_UNEXPECTED');
+      expect(response.json().error.code).toBe('KB_HOST_SERVICE_ADDRESS_MISSING');
       expect(mockFetch).not.toHaveBeenCalled();
     });
 

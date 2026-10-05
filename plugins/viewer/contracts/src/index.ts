@@ -20,12 +20,13 @@ export const architectureIndexSchema = z.object({
   nodes: z.array(architectureNodeSchema),
 });
 
+export const viewerFileEntrySchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  kind: z.enum(['directory', 'markdown', 'diagram', 'pdf', 'office', 'other']),
+  size: z.number().nonnegative().optional(),
+});
+
 export type ArchitectureNode = z.infer<typeof architectureNodeSchema>;
 export type ArchitectureIndex = z.infer<typeof architectureIndexSchema>;
-
-export interface ViewerFileEntry {
-  path: string;
-  name: string;
-  kind: 'directory' | 'markdown' | 'diagram' | 'pdf' | 'office' | 'other';
-  size?: number;
-}
+export type ViewerFileEntry = z.infer<typeof viewerFileEntrySchema>;

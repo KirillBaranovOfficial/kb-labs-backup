@@ -27,6 +27,7 @@ import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs
 import type { ITransport } from '@kb-labs/core-ipc';
 import type { LoadedMiddleware } from '@kb-labs/plugin-runtime';
 import { createBaseStdoutUI, setJsonMode, type UIPrompts } from '@kb-labs/shared-cli-ui';
+import { resolveHandlerErrorCode } from './resolve-handler-error-code.js';
 
 // Worker state
 const workerId = process.env.KB_WORKER_ID ?? 'unknown';
@@ -301,7 +302,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
   } catch (error) {
     sendError(requestId, {
       message: error instanceof Error ? error.message : String(error),
-      code: 'HANDLER_ERROR',
+      code: resolveHandlerErrorCode(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
   }

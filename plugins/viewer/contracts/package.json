@@ -1,5 +1,6 @@
 {
   "name": "@kb-labs/viewer-contracts",
+  "description": "Shared schemas and types for the KB Labs architecture viewer.",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -8,18 +9,30 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup --config tsup.config.ts",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@kb-labs/devkit": "workspace:*",
     "tsup": "^8.5.0",
     "typescript": "^5.6.3",
-    "@kb-labs/devkit": "workspace:*"
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=9.0.0"
   }
 }

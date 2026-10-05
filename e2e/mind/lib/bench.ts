@@ -17,6 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { APIRequestContext } from '@playwright/test'
+import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
 import { MIND } from '@kb-labs/e2e-shared/urls.js'
 import { readCorpus, type CorpusFile } from './corpus.js'
 import { grepSearch } from './grep.js'
@@ -127,9 +128,8 @@ export interface BenchMetrics {
 // Mind is served by the REST API under the `MIND` base (e2e-shared/urls.js) —
 // no probing, same convention as WORKFLOW/GATEWAY in the other domains.
 
-async function unwrap(res: { json(): Promise<unknown> }): Promise<any> {
-  const body = (await res.json()) as { data?: unknown }
-  return body.data ?? body
+async function unwrap(res: { json(): Promise<unknown> }): Promise<Record<string, unknown>> {
+  return decodeUxSuccessResult<Record<string, unknown>>(await res.json())
 }
 
 /** (Re)build a bench index from a corpus scope via the live engine. */
@@ -175,7 +175,7 @@ export async function runBench(
       throw new Error(`search failed for ${q.id}: ${res.status()} ${await res.text()}`)
     }
     const data = await unwrap(res)
-    const results: { file: string }[] = data.results ?? []
+  const results = data.results as { file: string }[]
     // File-level, order-preserving dedup.
     const files = [...new Set(results.map((r) => r.file))]
     perQuery.push({
@@ -183,7 +183,7 @@ export async function runBench(
       hit1: hitAtK(files, q.relevant, 1),
       rr: reciprocalRank(files, q.relevant),
       top: files[0],
-      semanticWinRate: data.meta?.semanticWinRate ?? 0,
+      semanticWinRate: (data.meta as { semanticWinRate?: number } | undefined)?.semanticWinRate ?? 0,
     })
   }
 

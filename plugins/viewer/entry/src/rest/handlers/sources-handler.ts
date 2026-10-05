@@ -1,10 +1,13 @@
-import { defineHandler, type PluginContextV3 } from '@kb-labs/sdk';
+import { parseViewerInput } from '../validation.js';
+import { viewerSourcesQuerySchema } from '../schemas.js';
+import { defineHandler, type PluginContextV3, type RestInput } from '@kb-labs/sdk';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { loadArchitecture, resolveArchitectureRoot, resolveSourceRoot } from '@kb-labs/viewer-core';
 
 export default defineHandler({
-  async execute(ctx: PluginContextV3) {
+  async execute(ctx: PluginContextV3, input: RestInput<Record<string, never>>) {
+    parseViewerInput(viewerSourcesQuerySchema, input.query ?? {});
     const sources = [{ id: 'workspace', title: 'docs/architecture' }];
     const packageRoot = path.join(ctx.cwd, '.kb', 'viewer', 'sources');
     let folders: string[] = [];
