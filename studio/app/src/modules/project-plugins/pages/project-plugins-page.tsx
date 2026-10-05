@@ -14,6 +14,7 @@ import {
   UIMessage,
   UIPage,
   UIPageHeader,
+  UIAlert,
   UISpin,
   UISwitch,
   UITable,
@@ -23,6 +24,7 @@ import {
 import { useDataSources } from '@/providers/data-sources-provider';
 import { useProjectPlugins, useSetProjectPluginEnabled, useInstallProjectPlugin, useUninstallProjectPlugin } from '@kb-labs/studio-data-client';
 import type { ProjectPluginEntry } from '@kb-labs/studio-data-client';
+import { KBError } from '@kb-labs/studio-data-client';
 import { useProjectContext } from '@/providers/project-context-provider';
 
 export function ProjectPluginsPage() {
@@ -33,6 +35,7 @@ export function ProjectPluginsPage() {
   const setEnabled = useSetProjectPluginEnabled(source, projectId);
   const installPlugin = useInstallProjectPlugin(source, projectId);
   const uninstallPlugin = useUninstallProjectPlugin(source, projectId);
+  const [installError, setInstallError] = React.useState<{ message: string; hint?: string } | null>(null);
 
   const handleToggle = React.useCallback(
     async (plugin: ProjectPluginEntry, enabled: boolean) => {
@@ -50,11 +53,15 @@ export function ProjectPluginsPage() {
     const requested = spec.trim();
     if (!projectId || !requested) {return;}
     try {
+      setInstallError(null);
       await installPlugin.mutateAsync(requested);
       setSpec('');
       UIMessage.success(`Installed ${requested} for this project`);
     } catch (error) {
-      UIMessage.error(error instanceof Error ? error.message : 'Failed to install the plugin');
+      setInstallError({
+        message: error instanceof KBError ? error.message : 'Could not install the requested plugin.',
+        ...(error instanceof KBError && error.hint ? { hint: error.hint } : {}),
+      });
     }
   }, [installPlugin, projectId, spec]);
 
@@ -134,6 +141,15 @@ export function ProjectPluginsPage() {
           </div>
         )}
       />
+      {installError && (
+        <UIAlert
+          variant="error"
+          message={installError.message}
+          description={installError.hint}
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
       {!projectId ? null : isLoading ? (
         <UISpin />
       ) : !plugins || plugins.length === 0 ? (

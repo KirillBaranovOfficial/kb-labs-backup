@@ -31,6 +31,12 @@ describe('Studio API client UX result envelope', () => {
     await expect(new HttpClient().fetch('/fixture')).resolves.toEqual(validSuccess.data);
   });
 
+  it('decodes a success envelope for routes that require the UX result contract', async () => {
+    respondWith(validSuccess);
+
+    await expect(new HttpClient().fetchUx('/fixture')).resolves.toEqual(validSuccess.data);
+  });
+
   // case: S-203.1
   it('rejects a raw success body for a route that requires the UX envelope', async () => {
     respondWith({ status: 'healthy' });

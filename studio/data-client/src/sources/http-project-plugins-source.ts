@@ -16,7 +16,7 @@ export class HttpProjectPluginsSource implements ProjectPluginsDataSource {
   }
 
   async installPlugin(projectId: string, spec: string): Promise<unknown> {
-    return this.client.fetch('/plugins/install', { method: 'POST', data: { projectId, spec } });
+    return this.client.fetchUx('/plugins/install', { method: 'POST', data: { projectId, spec } });
   }
 
   async uninstallPlugin(projectId: string, packageId: string): Promise<{ id: string; removed: boolean }> {

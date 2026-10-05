@@ -4,7 +4,7 @@ import { useProjects } from '@kb-labs/studio-data-client';
 import { useDataSources } from '@/providers/data-sources-provider';
 import { useProjectContext } from '@/providers/project-context-provider';
 
-export function ProjectContextSelector() {
+export function ProjectContextSelector({ ariaLabel = 'Active project' }: { ariaLabel?: string }) {
   const { projects } = useDataSources();
   const { data, isLoading } = useProjects(projects);
   const { projectId, setProjectId } = useProjectContext();
@@ -21,7 +21,7 @@ export function ProjectContextSelector() {
 
   return (
     <UISelect
-      aria-label="Active project"
+      aria-label={ariaLabel}
       value={projectId ?? undefined}
       loading={isLoading}
       placeholder="Select a project"

@@ -2,7 +2,7 @@ import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosResponse,
 import type { RequestInterceptor, ResponseInterceptor, ErrorInterceptor } from './types';
 import { KBError } from '../errors/kb-error';
 import { mapFetchError, mapInvalidResultEnvelope } from './error-mapper';
-import { isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
+import { decodeUxSuccessResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import { ulid } from 'ulid';
 
 export class HttpClient {
@@ -43,7 +43,8 @@ export class HttpClient {
           }
           if (data.ok) {
             // Success envelope: unwrap and return data
-            response.data = data.data;
+            response.data = decodeUxSuccessResult(data);
+            if (requireUxResult) return response;
           } else {
             // Error envelope: throw error
             const error = mapFetchError(data, {

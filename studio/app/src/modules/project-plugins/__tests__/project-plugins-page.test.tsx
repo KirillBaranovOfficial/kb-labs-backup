@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { KBError } from '@kb-labs/studio-data-client';
 import type { DataSources, ProjectPluginEntry } from '@kb-labs/studio-data-client';
 import { DataSourcesContext } from '../../../providers/data-sources-provider';
 import { ProjectContextProvider } from '../../../providers/project-context-provider';
@@ -74,5 +75,29 @@ describe('ProjectPluginsPage', () => {
     });
 
     await waitFor(() => expect(enablePlugin).toHaveBeenCalledWith('prj_1', '@kb-labs/commit-entry'));
+  });
+
+  // case: S-182.5
+  it('shows the UX error message and hint when package installation fails', async () => {
+    const listPlugins = vi.fn().mockResolvedValue([]);
+    const installPlugin = vi.fn().mockRejectedValue(new KBError(
+      'KB_PLUGIN_NOT_FOUND',
+      'Package @kb-labs/unknown-package was not found.',
+      404,
+      undefined,
+      'Run `kb marketplace search` to find a package in the registry.',
+    ));
+    renderPage({ projectPlugins: { listPlugins, installPlugin } as never });
+
+    fireEvent.change(screen.getByLabelText('Plugin package and version'), {
+      target: { value: '@kb-labs/unknown-package' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Package @kb-labs/unknown-package was not found.');
+    expect(alert.textContent).toContain('Run `kb marketplace search`');
+    expect(installPlugin).toHaveBeenCalledWith('prj_1', '@kb-labs/unknown-package');
+    expect(screen.queryByText(/unknown-package.*1\.0\.0/)).toBeNull();
   });
 });
