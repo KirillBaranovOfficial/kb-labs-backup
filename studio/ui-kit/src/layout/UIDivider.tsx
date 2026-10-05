@@ -2,6 +2,7 @@
  * UIDivider component - Visual separator
  *
  * Wraps Ant Design Divider.
+  * @demoArgs {"orientation":"left","dashed":true,"children":"Integrations"}
  */
 
 import * as React from 'react';

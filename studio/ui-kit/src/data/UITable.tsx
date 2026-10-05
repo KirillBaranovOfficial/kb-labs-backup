@@ -9,6 +9,10 @@ import * as React from 'react';
 import { Table as AntTable } from 'antd';
 import type { ColumnType } from 'antd/es/table';
 import type { ExpandableConfig } from 'antd/es/table/interface';
+import { UISkeletonTable } from '../feedback/UISkeleton';
+import { UISpinIndicator } from '../feedback/UISpin';
+import { toAntSize } from '../core/UISize';
+import type { UICompatibleSize } from '../core/UISize';
 
 export interface UITableColumn<T = any> extends ColumnType<T> {
   /** Column key */
@@ -57,7 +61,7 @@ export interface UITableProps<T = any> {
     onDoubleClick?: () => void;
   };
   /** Table size */
-  size?: 'small' | 'middle' | 'large';
+  size?: UICompatibleSize;
   /** Show border */
   bordered?: boolean;
   /** Expandable row config */
@@ -117,16 +121,25 @@ export function UITable<T extends Record<string, any> = any>({
   style,
   scroll,
 }: UITableProps<T>) {
+  const initialLoading = Boolean(loading && dataSource.length === 0);
+  const skeletonColumns = columns.map((column) => {
+    if (typeof column.width === 'number') return `${column.width}px`;
+    return column.width ?? '1fr';
+  });
+
   return (
     <AntTable<T>
       columns={columns}
       dataSource={dataSource}
       rowKey={rowKey}
-      loading={loading}
+      loading={loading && !initialLoading ? { spinning: true, indicator: <UISpinIndicator size="small" /> } : false}
+      locale={initialLoading ? {
+        emptyText: <UISkeletonTable columns={skeletonColumns} rows={5} showHeader={false} label="Loading table" />,
+      } : undefined}
       pagination={pagination}
       rowSelection={rowSelection}
       onRow={onRow}
-      size={size}
+      size={toAntSize(size)}
       bordered={bordered}
       expandable={expandable}
       className={className}

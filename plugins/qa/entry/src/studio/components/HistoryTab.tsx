@@ -3,7 +3,7 @@
  */
 
 import * as React from 'react';
-import { UITable, UITag, UISpin, UIAlert, UISpace, UIIcon, UIFlex, useData, useTheme, type UITableColumn } from '@kb-labs/sdk/studio';
+import { UITable, UITag, UISkeleton, UIAlert, UISpace, UIIcon, UIFlex, useData, useTheme, type UITableColumn } from '@kb-labs/sdk/studio';
 import type { QAHistoryResponse, RunSnapshot } from '@kb-labs/qa-contracts';
 import { QA_BASE_PATH, QA_ROUTES } from '@kb-labs/qa-contracts';
 
@@ -39,7 +39,7 @@ export function HistoryTab() {
   const { data, isLoading } = useData<QAHistoryResponse>(`${QA_BASE_PATH}${QA_ROUTES.HISTORY}`);
 
   if (isLoading) {
-    return <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />;
+    return <UISkeleton active lines={6} />;
   }
 
   if (!data || !data.snapshots || data.snapshots.length === 0) {

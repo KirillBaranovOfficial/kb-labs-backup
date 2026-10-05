@@ -24,6 +24,7 @@ import {
   UITable,
   UITooltip,
   UIIcon,
+  UISkeleton,
 } from '@kb-labs/studio-ui-kit';
 import type {
   IncidentDetailResponse,
@@ -159,9 +160,7 @@ export function IncidentDetailPage() {
   if (incidentLoading) {
     return (
       <UIPage>
-        <div style={{ textAlign: 'center', padding: '100px 0' }}>
-          <UISpin size="large" />
-        </div>
+        <UISkeleton active avatar lines={7} />
       </UIPage>
     );
   }

@@ -3,6 +3,8 @@ import type { Metadata } from 'next';
 
 import { DocsLayout } from '@/components/DocsLayout';
 import { getDocPage, extractHeadings } from '@/lib/content';
+import { findUiKitComponent } from '@/lib/ui-kit-docs';
+import { UiKitComponentPage } from '@/components/UiKitCatalog';
 
 type Props = {
   params: Promise<{ locale: string; slug?: string[] }>;
@@ -12,6 +14,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { locale, slug } = await params;
   if (!slug || slug.length === 0) return {};
   const doc = await getDocPage(locale, slug);
+  const component = findUiKitComponent(slug);
+  if (!doc && component) return { title: component.name, description: component.description };
   if (!doc) return {};
   return {
     title: doc.frontmatter.title,
@@ -27,6 +31,17 @@ export default async function DocPage({ params }: Props) {
   }
 
   const doc = await getDocPage(locale, slug);
+  const component = findUiKitComponent(slug);
+  if (!doc && !component) notFound();
+
+  if (!doc && component) {
+    return (
+      <DocsLayout locale={locale} toc={[]} slug={slug} isFallback={locale !== 'en'} isIndex={false} pageTitle={component.name} pageDescription={component.description}>
+        <UiKitComponentPage component={component} />
+      </DocsLayout>
+    );
+  }
+
   if (!doc) notFound();
 
   const toc = extractHeadings(locale, slug);

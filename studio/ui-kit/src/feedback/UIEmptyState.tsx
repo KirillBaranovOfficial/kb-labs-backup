@@ -3,6 +3,7 @@
  *
  * Displays empty state with icon, title, description, and optional action.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"title":"No services yet","description":"Add a service to see its health and recent activity.","useDefaultImage":true}
  */
 
 import * as React from 'react';

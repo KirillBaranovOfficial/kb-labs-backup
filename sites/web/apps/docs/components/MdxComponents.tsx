@@ -1,5 +1,7 @@
 import type { ComponentPropsWithoutRef } from 'react';
 import { CodeBlock } from './CodeBlock';
+import { UiKitCatalog, UiKitCategories } from './UiKitCatalog';
+import { UiKitPreview } from './UiKitPreview';
 
 function slugify(text: string): string {
   return String(text)
@@ -86,4 +88,7 @@ export const MdxComponents = {
   Callout,
   Steps,
   Step,
+  UiKitCatalog,
+  UiKitCategories,
+  UiKitPreview,
 } as const;

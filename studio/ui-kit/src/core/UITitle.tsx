@@ -3,6 +3,7 @@
  *
  * Wraps Ant Design Typography.Title with consistent styling.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"level":2,"children":"Gateway settings","subtitle":"Authentication and routing"}
  */
 
 import * as React from 'react';

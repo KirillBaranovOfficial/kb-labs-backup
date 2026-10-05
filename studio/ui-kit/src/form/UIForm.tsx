@@ -3,6 +3,7 @@
  *
  * Wraps Ant Design Form with consistent layout.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"layout":"vertical"}
  */
 
 import * as React from 'react';

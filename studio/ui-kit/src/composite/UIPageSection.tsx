@@ -3,6 +3,7 @@
  *
  * Adds consistent bottom margin between page sections.
  * NO hardcoded colors, uses Ant Design theme.
+ * @demoArgs {"gap":24,"children":"Section content"}
  */
 
 import * as React from 'react';

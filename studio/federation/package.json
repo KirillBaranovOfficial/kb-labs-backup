@@ -28,6 +28,7 @@
     "@kb-labs/studio-devtools": "workspace:*",
     "@kb-labs/studio-event-bus": "workspace:*",
     "@kb-labs/studio-hooks": "workspace:*",
+    "@kb-labs/studio-ui-kit": "workspace:*",
     "@module-federation/runtime": "^2.3.0"
   },
   "devDependencies": {

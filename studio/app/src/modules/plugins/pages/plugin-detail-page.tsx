@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  UISpin,
+  UISkeleton,
   UIButton,
   UITabs,
   type UITabItem,
@@ -105,9 +105,7 @@ export function PluginDetailPage() {
   if (loading) {
     return (
       <UIPage>
-        <div style={{ textAlign: 'center', padding: '80px 0' }}>
-          <UISpin size="large" />
-        </div>
+        <UISkeleton active avatar lines={6} />
       </UIPage>
     );
   }

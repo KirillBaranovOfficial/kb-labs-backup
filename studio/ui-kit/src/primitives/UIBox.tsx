@@ -3,12 +3,14 @@
  *
  * Uses tokens from @kb-labs/studio-ui-core for consistent spacing.
  * NO inline styles for spacing/sizing.
+  * @demoArgs {"p":16,"as":"div","children":"Content with consistent padding"}
  */
 
 import * as React from 'react';
 import { spacing } from '@kb-labs/studio-ui-core';
 
 export type UIBoxSpacingValue = keyof typeof spacing;
+export type UIBoxElement = 'div' | 'section' | 'article' | 'main' | 'aside' | 'nav' | 'span';
 
 export interface UIBoxProps {
   /** Box content */
@@ -34,7 +36,7 @@ export interface UIBoxProps {
   /** Margin left */
   ml?: UIBoxSpacingValue;
   /** HTML element to render */
-  as?: keyof React.JSX.IntrinsicElements;
+  as?: UIBoxElement;
   /** Additional CSS class */
   className?: string;
   /** Additional styles (use sparingly) */

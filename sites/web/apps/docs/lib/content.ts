@@ -8,10 +8,11 @@ import remarkGfm from 'remark-gfm';
 
 import { MdxComponents } from '@/components/MdxComponents';
 import { syncDocSources } from './expand-doc-sources.mjs';
+import { docsShikiThemes } from './shiki-themes';
 import generatedDocSources from '../generated/doc-source-snippets.json';
 
 const prettyCodeOptions: PrettyCodeOptions = {
-  theme: { light: 'github-light', dark: 'github-dark-dimmed' },
+  theme: docsShikiThemes,
   keepBackground: false,
   defaultLang: 'plaintext',
   bypassInlineCode: true,

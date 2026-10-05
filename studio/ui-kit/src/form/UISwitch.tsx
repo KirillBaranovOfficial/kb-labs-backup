@@ -3,6 +3,7 @@
  *
  * Wraps Ant Design Switch with label positioning.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"defaultChecked":true,"label":"Require authentication","labelPosition":"right","loading":false}
  */
 
 import * as React from 'react';
@@ -10,11 +11,12 @@ import { Switch as AntSwitch } from 'antd';
 import type { SwitchProps as AntSwitchProps } from 'antd';
 import { UIFlex } from '../primitives/UIFlex';
 import { UIText } from '../primitives/UIText';
+import type { UISize } from '../core/UISize';
 
-export type UISwitchSize = 'small' | 'default';
+export type UISwitchSize = Extract<UISize, 'sm' | 'md'> | 'small' | 'default';
 export type UISwitchLabelPosition = 'left' | 'right';
 
-export interface UISwitchProps extends Omit<AntSwitchProps, 'onChange'> {
+export interface UISwitchProps extends Omit<AntSwitchProps, 'onChange' | 'size'> {
   /** Checked state */
   checked?: boolean;
   /** Default checked state */
@@ -70,7 +72,7 @@ export function UISwitch({
       defaultChecked={defaultChecked}
       disabled={disabled}
       loading={loading}
-      size={size}
+      size={size === 'sm' || size === 'small' ? 'small' : 'default'}
       checkedChildren={checkedChildren}
       unCheckedChildren={unCheckedChildren}
       onChange={onChange}

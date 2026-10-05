@@ -3,13 +3,16 @@
  *
  * Wraps Ant Design Input with semantic variants.
  * NO hardcoded colors, uses Ant Design theme.
+  * @demoArgs {"placeholder":"Search services","defaultValue":"gateway","allowClear":true,"showCount":false,"size":"middle"}
  */
 
 import * as React from 'react';
 import { Input as AntInput } from 'antd';
 import type { InputProps as AntInputProps } from 'antd';
+import { toAntSize } from '../core/UISize';
+import type { UICompatibleSize } from '../core/UISize';
 
-export interface UIInputProps extends Omit<AntInputProps, 'onChange'> {
+export interface UIInputProps extends Omit<AntInputProps, 'onChange' | 'size'> {
   /** Input value */
   value?: string;
   /** Default value */
@@ -32,6 +35,8 @@ export interface UIInputProps extends Omit<AntInputProps, 'onChange'> {
   onChange?: (value: string) => void;
   /** Enter key handler */
   onPressEnter?: () => void;
+  /** Shared size scale. Ant Design values remain accepted as aliases. */
+  size?: UICompatibleSize;
 }
 
 /**
@@ -56,6 +61,7 @@ export function UIInput({
   allowClear,
   onChange,
   onPressEnter,
+  size,
   ...rest
 }: UIInputProps) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,6 +81,7 @@ export function UIInput({
       allowClear={allowClear}
       onChange={handleChange}
       onPressEnter={onPressEnter}
+      size={toAntSize(size)}
       {...rest}
     />
   );
@@ -83,20 +90,26 @@ export function UIInput({
 /**
  * UIInputPassword - Password input with toggle visibility
  */
-export function UIInputPassword(props: React.ComponentProps<typeof AntInput.Password>) {
-  return <AntInput.Password {...props} />;
+export type UIInputPasswordProps = Omit<React.ComponentProps<typeof AntInput.Password>, 'size'> & { size?: UICompatibleSize };
+
+export function UIInputPassword({ size, ...props }: UIInputPasswordProps) {
+  return <AntInput.Password {...props} size={toAntSize(size)} />;
 }
 
 /**
  * UIInputTextArea - Multiline text input
  */
-export function UIInputTextArea(props: React.ComponentProps<typeof AntInput.TextArea>) {
-  return <AntInput.TextArea {...props} />;
+export type UIInputTextAreaProps = Omit<React.ComponentProps<typeof AntInput.TextArea>, 'size'> & { size?: UICompatibleSize };
+
+export function UIInputTextArea({ size, ...props }: UIInputTextAreaProps) {
+  return <AntInput.TextArea {...props} size={toAntSize(size)} />;
 }
 
 /**
  * UIInputSearch - Search input with search button
  */
-export function UIInputSearch(props: React.ComponentProps<typeof AntInput.Search>) {
-  return <AntInput.Search {...props} />;
+export type UIInputSearchProps = Omit<React.ComponentProps<typeof AntInput.Search>, 'size'> & { size?: UICompatibleSize };
+
+export function UIInputSearch({ size, ...props }: UIInputSearchProps) {
+  return <AntInput.Search {...props} size={toAntSize(size)} />;
 }

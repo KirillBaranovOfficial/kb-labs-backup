@@ -1,10 +1,15 @@
+.page {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
 .root {
   min-height: calc(100vh - var(--docs-header-height));
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 4rem 1.5rem;
-  background: var(--surface);
+  background: var(--bg);
 }
 
 .inner {
@@ -16,7 +21,7 @@
   font-size: clamp(5rem, 18vw, 8rem);
   font-weight: 700;
   letter-spacing: -0.04em;
-  color: var(--line);
+  color: color-mix(in srgb, var(--accent) 30%, var(--line));
   line-height: 1;
   margin-bottom: 0.75rem;
   font-family: var(--font-heading), sans-serif;
@@ -47,9 +52,10 @@
   color: #fff;
   font-size: 0.875rem;
   font-weight: 500;
-  transition: opacity 0.15s;
+  transition: background-color 0.15s, transform 0.15s;
 }
 
 .btn:hover {
-  opacity: 0.75;
+  background: var(--accent-hover);
+  transform: translateY(-1px);
 }

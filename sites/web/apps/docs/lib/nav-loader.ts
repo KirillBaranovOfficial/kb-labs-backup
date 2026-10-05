@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import matter from 'gray-matter';
+import { uiKitCatalog } from '@kb-labs/sdk/studio/catalog';
 
 import type { NavGroup, NavItem } from '@/nav.config';
 
@@ -94,7 +95,47 @@ function collectGroupItems(locale: string, groupDirAbs: string, groupSlug: strin
     if (entry.isDirectory()) {
       const nestedIndex = path.join(groupDirAbs, entry.name, 'index.mdx');
       if (fs.existsSync(nestedIndex)) {
-        items.push(fileToItem(locale, [groupSlug, entry.name], nestedIndex, entry.name));
+        const nestedDir = path.join(groupDirAbs, entry.name);
+        const parent = fileToItem(locale, [groupSlug, entry.name], nestedIndex, entry.name);
+        const nestedMeta = readDirMeta(nestedDir);
+        const children = collectGroupItems(locale, nestedDir, `${groupSlug}/${entry.name}`);
+        items.push({
+          ...parent,
+          item: {
+            ...parent.item,
+            ...(nestedMeta.title ? { label: nestedMeta.title } : {}),
+            ...(children.length > 0 ? { children } : {}),
+          },
+        });
+      }
+    }
+  }
+
+  // Keep the Studio component catalog grouped under its landing page, even though
+  // the category pages use flat, established URLs such as `studio-navigation`.
+  if (groupSlug === 'sdk/plugin-api') {
+    const studioPage = items.find((entry) => entry.item.href === `/${locale}/sdk/plugin-api/studio`);
+    if (studioPage) {
+      const categories = items.filter((entry) => {
+        const slug = entry.item.href.replace(`/${locale}/sdk/plugin-api/`, '');
+        return slug.startsWith('studio-') && slug !== 'studio-cookbook';
+      });
+      studioPage.item.children = categories
+        .filter((entry) => !entry.hidden)
+        .sort((a, b) => a.order - b.order || a.item.label.localeCompare(b.item.label))
+        .map((entry) => {
+          const category = entry.item.href.split('/').pop()?.replace(/^studio-/, '') ?? '';
+          const children = uiKitCatalog
+            .filter((component) => component.category === category)
+            .map((component) => ({
+              label: component.name,
+              href: `${entry.item.href}/${component.name.replace(/^UI/, '').replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()}`,
+            }));
+          return { ...entry.item, children };
+        });
+      for (const category of categories) {
+        const index = items.indexOf(category);
+        if (index >= 0) items.splice(index, 1);
       }
     }
   }

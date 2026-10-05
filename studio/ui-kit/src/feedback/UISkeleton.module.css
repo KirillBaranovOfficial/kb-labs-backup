@@ -1,8 +1,235 @@
-@keyframes skeletonLoading {
-  0%   { background-position: 100% 50%; }
-  100% { background-position: 0%   50%; }
+@keyframes skeletonSweep {
+  from { transform: translate3d(-150%, 0, 0); }
+  to { transform: translate3d(220%, 0, 0); }
+}
+
+.skeleton,
+.skeletonText,
+.tableSkeleton,
+.chartSkeleton {
+  --skeleton-base: color-mix(in srgb, var(--bg-tertiary) 78%, var(--bg-secondary));
+  --skeleton-highlight: color-mix(in srgb, var(--skeleton-base) 86%, var(--text-secondary));
+}
+
+:global(.dark) .skeleton,
+:global(.dark) .skeletonText,
+:global(.dark) .tableSkeleton,
+:global(.dark) .chartSkeleton {
+  --skeleton-base: color-mix(in srgb, var(--bg-tertiary) 76%, var(--bg-secondary));
+  --skeleton-highlight: color-mix(in srgb, var(--skeleton-base) 88%, var(--text-secondary));
+}
+
+:global(.ant-skeleton .ant-skeleton-title),
+:global(.ant-skeleton .ant-skeleton-paragraph > li),
+:global(.ant-skeleton .ant-skeleton-avatar),
+:global(.ant-skeleton .ant-skeleton-button),
+:global(.ant-skeleton .ant-skeleton-input),
+:global(.ant-skeleton .ant-skeleton-image) {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--skeleton-base, var(--bg-tertiary)) !important;
+  background-image: none !important;
+  animation: none !important;
+}
+
+:global(.ant-skeleton .ant-skeleton-title),
+:global(.ant-skeleton .ant-skeleton-paragraph > li) {
+  border-radius: 4px;
+}
+
+:global(.ant-skeleton-active .ant-skeleton-title)::after,
+:global(.ant-skeleton-active .ant-skeleton-paragraph > li)::after,
+:global(.ant-skeleton-active .ant-skeleton-avatar)::after,
+:global(.ant-skeleton-active .ant-skeleton-button)::after,
+:global(.ant-skeleton-active .ant-skeleton-input)::after,
+:global(.ant-skeleton-active .ant-skeleton-image)::after,
+.skeletonText::after,
+.bar::after,
+.chartBar::after,
+.legendMark::after,
+.legendLabel::after,
+.axisLabel::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 70%;
+  height: 100%;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--skeleton-highlight, color-mix(in srgb, var(--skeleton-base, var(--bg-tertiary)) 86%, var(--text-secondary))) 50%,
+    transparent 100%
+  );
+  transform: translate3d(-150%, 0, 0);
+  animation: skeletonSweep 1.7s linear infinite;
+  will-change: transform;
+}
+
+:global(.ant-skeleton-image .ant-skeleton-image-path) {
+  fill: var(--text-tertiary) !important;
+  opacity: 0.38;
 }
 
 .skeletonText {
-  animation: skeletonLoading 1.4s ease infinite;
+  position: relative;
+  overflow: hidden;
+  background-color: var(--skeleton-base);
+}
+
+.tableSkeleton {
+  display: grid;
+  gap: 0;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.tableHeader,
+.tableRow {
+  display: grid;
+  grid-template-columns: var(--table-columns);
+  align-items: center;
+  column-gap: 16px;
+}
+
+.tableHeader {
+  min-height: 42px;
+  padding: 0 12px;
+  background: color-mix(in srgb, var(--bg-tertiary) 62%, var(--bg-secondary));
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.tableRow {
+  min-height: 48px;
+  padding: 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 54%, transparent);
+}
+
+.bar {
+  position: relative;
+  display: block;
+  width: var(--bar-width, 72%);
+  height: 12px;
+  overflow: hidden;
+  border-radius: 3px;
+  background-color: var(--skeleton-base);
+}
+
+.chartSkeleton {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: var(--chart-height, 240px);
+  gap: 12px;
+}
+
+.chartLegend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  min-height: 14px;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendMark,
+.legendLabel,
+.chartBar,
+.axisLabel {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background-color: var(--skeleton-base);
+}
+
+.legendMark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.legendLabel {
+  width: 52px;
+  height: 8px;
+  border-radius: 3px;
+}
+
+.chartPlot {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 2px 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-secondary) 72%, var(--bg-tertiary));
+}
+
+.chartGridLine {
+  display: block;
+  width: 100%;
+  border-top: 1px solid color-mix(in srgb, var(--border-primary) 62%, transparent);
+}
+
+.chartBars {
+  position: absolute;
+  inset: 0 2% 0 2%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  gap: 1.5%;
+}
+
+.chartBar {
+  width: 4%;
+  height: var(--bar-height, 50%);
+  border-radius: 3px 3px 0 0;
+}
+
+.chartAxis {
+  display: flex;
+  justify-content: space-between;
+  min-height: 8px;
+}
+
+.axisLabel {
+  width: 28px;
+  height: 7px;
+  border-radius: 3px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonText::after,
+  .bar::after,
+  .chartBar::after,
+  .legendMark::after,
+  .legendLabel::after,
+  .axisLabel::after,
+  :global(.ant-skeleton-active .ant-skeleton-title)::after,
+  :global(.ant-skeleton-active .ant-skeleton-paragraph > li)::after,
+  :global(.ant-skeleton-active .ant-skeleton-avatar)::after,
+  :global(.ant-skeleton-active .ant-skeleton-button)::after,
+  :global(.ant-skeleton-active .ant-skeleton-input)::after,
+  :global(.ant-skeleton-active .ant-skeleton-image)::after {
+    animation: none !important;
+    display: none;
+  }
 }

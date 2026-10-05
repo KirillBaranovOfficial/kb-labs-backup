@@ -47,7 +47,7 @@ export function PlatformPulse() {
     : 0;
 
   return (
-    <UICard styles={{ body: { padding: '18px 24px' } }}>
+    <UICard loading={metrics.isLoading} styles={{ body: { padding: '18px 24px' } }}>
       <div className="platform-pulse">
         <div className="platform-pulse__status">
           <span className={`platform-pulse__dot platform-pulse__dot--${status}`} />

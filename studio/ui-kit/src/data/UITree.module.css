@@ -1,0 +1,114 @@
+.tree {
+  width: 100%;
+}
+
+.tree :global(.ant-tree-treenode) {
+  align-items: center;
+  min-width: 100%;
+  padding-block: 2px;
+}
+
+.tree :global(.ant-tree-node-content-wrapper) {
+  min-width: 0;
+  border-radius: 7px;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.tree :global(.ant-tree-node-content-wrapper:hover) {
+  background: var(--ant-color-fill-tertiary, rgba(0, 0, 0, 0.045));
+}
+
+.tree :global(.ant-tree-node-content-wrapper.ant-tree-node-selected) {
+  background: var(--ant-color-primary-bg, rgba(22, 119, 255, 0.12));
+  color: var(--ant-color-primary-text, #0958d9);
+}
+
+.tree :global(.ant-tree-switcher) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  border-radius: 6px;
+  color: var(--ant-color-text-tertiary, rgba(0, 0, 0, 0.45));
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.tree :global(.ant-tree-switcher:hover) {
+  background: var(--ant-color-fill-quaternary, rgba(0, 0, 0, 0.03));
+  color: var(--ant-color-text, rgba(0, 0, 0, 0.88));
+}
+
+/* Ant Design renders switcher icons in a nested .anticon wrapper. Keep that
+   wrapper tied to the switcher's theme color so SVG currentColor follows it. */
+.tree :global(.ant-tree-switcher .anticon) {
+  color: inherit;
+}
+
+.tree :global(.ant-tree-indent-unit::before) {
+  border-color: var(--ant-color-border-secondary, rgba(5, 5, 5, 0.12));
+}
+
+.tree.sm :global(.ant-tree-indent-unit),
+.tree.sm :global(.ant-tree-switcher) {
+  width: 20px;
+}
+
+.tree.md :global(.ant-tree-indent-unit),
+.tree.md :global(.ant-tree-switcher) {
+  width: 24px;
+}
+
+.tree.lg :global(.ant-tree-indent-unit),
+.tree.lg :global(.ant-tree-switcher) {
+  width: 28px;
+}
+
+.tree.sm :global(.ant-tree-treenode) {
+  padding-block: 1px;
+}
+
+.tree.sm :global(.ant-tree-node-content-wrapper),
+.tree.sm :global(.ant-tree-switcher) {
+  min-height: 26px;
+  font-size: 12px;
+}
+
+.tree.sm :global(.ant-tree-node-content-wrapper) {
+  line-height: 1.4;
+  padding-block: 4px;
+}
+.tree.sm :global(.ant-tree-switcher) { line-height: 26px; }
+
+.tree.md :global(.ant-tree-node-content-wrapper),
+.tree.md :global(.ant-tree-switcher) {
+  min-height: 32px;
+  font-size: 13px;
+}
+
+.tree.md :global(.ant-tree-node-content-wrapper) {
+  line-height: 1.4;
+  padding-block: 6px;
+}
+.tree.md :global(.ant-tree-switcher) { line-height: 32px; }
+
+.tree.lg :global(.ant-tree-treenode) {
+  padding-block: 3px;
+}
+
+.tree.lg :global(.ant-tree-node-content-wrapper),
+.tree.lg :global(.ant-tree-switcher) {
+  min-height: 38px;
+  font-size: 14px;
+}
+
+.tree.lg :global(.ant-tree-node-content-wrapper) {
+  line-height: 1.4;
+  padding-block: 9px;
+}
+.tree.lg :global(.ant-tree-switcher) { line-height: 38px; }
+
+.tree :global(.ant-tree-node-content-wrapper:focus-visible),
+.tree :global(.ant-tree-switcher:focus-visible) {
+  outline: 2px solid var(--ant-color-primary, #1677ff);
+  outline-offset: 1px;
+}

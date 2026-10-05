@@ -58,27 +58,6 @@
   color: #1890ff !important;
 }
 
-/* Loading shimmer effect for skeleton */
-@keyframes shimmer {
-  0% {
-    background-position: -1000px 0;
-  }
-  100% {
-    background-position: 1000px 0;
-  }
-}
-
-.skeleton-loading {
-  animation: shimmer 2s infinite linear;
-  background: linear-gradient(
-    90deg,
-    #f0f0f0 25%,
-    #e0e0e0 37%,
-    #f0f0f0 63%
-  );
-  background-size: 1000px 100%;
-}
-
 /* Card content fade-in */
 .ant-card-body {
   animation: fadeIn 0.4s ease-out 0.2s forwards;

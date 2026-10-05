@@ -6,7 +6,7 @@ import { KBStatCard } from '@/components/ui';
 
 export function DashboardMetricsWidget() {
   const sources = useDataSources();
-  const { data: metrics } = usePrometheusMetrics(sources.observability);
+  const { data: metrics, isLoading } = usePrometheusMetrics(sources.observability);
 
   const totalRequests = metrics?.requests?.total ?? 0;
   const totalErrors = (metrics?.requests?.clientErrors ?? 0) + (metrics?.requests?.serverErrors ?? 0);
@@ -34,6 +34,7 @@ export function DashboardMetricsWidget() {
       }
       style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
       styles={{ body: { flex: 1, padding: '16px' } }}
+      loading={isLoading}
     >
       <UIRow gutter={[16, 16]} style={{ height: '100%' }}>
         <UICol span={6}>

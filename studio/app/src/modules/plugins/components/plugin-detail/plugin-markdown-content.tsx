@@ -1,4 +1,4 @@
-import { UISpin, UIAlert, UICard, UIEmptyState, UIMarkdownViewer } from '@kb-labs/studio-ui-kit';
+import { UISkeleton, UIAlert, UICard, UIEmptyState, UIMarkdownViewer } from '@kb-labs/studio-ui-kit';
 
 export interface PluginMarkdownContentProps {
   content: string | null;
@@ -15,9 +15,7 @@ export function PluginMarkdownContent({
 }: PluginMarkdownContentProps) {
   if (loading) {
     return (
-      <div style={{ textAlign: 'center', padding: '60px 0' }}>
-        <UISpin />
-      </div>
+      <UISkeleton active lines={6} />
     );
   }
   if (error) {

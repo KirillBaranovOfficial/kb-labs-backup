@@ -4,6 +4,7 @@ import {
   UIProgress,
   UIAlert,
   UITag,
+  UISkeleton,
 } from '@kb-labs/studio-ui-kit';
 import { useStateBrokerStats } from '@kb-labs/studio-data-client';
 import { useDataSources } from '../../../providers/data-sources-provider';
@@ -72,9 +73,7 @@ export function StateBrokerPage() {
           title="State Broker"
           description="In-memory cache statistics"
         />
-        <div style={{ padding: '24px 0', textAlign: 'center' }}>
-          Loading...
-        </div>
+        <UISkeleton active lines={7} />
       </UIPage>
     );
   }

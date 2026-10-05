@@ -11,6 +11,7 @@
  */
 
 import * as React from 'react';
+import { UISkeleton } from '@kb-labs/studio-ui-kit';
 import { RequirePermission } from '@/auth/guards';
 import { authClient } from '../auth/shared-client.js';
 
@@ -148,7 +149,7 @@ function InvitesList() {
       )}
       {error && <p role="alert" style={{ color: 'red', marginBottom: '1rem' }}>{error}</p>}
 
-      {loading && <p>Loading invites…</p>}
+      {loading && <UISkeleton active lines={4} />}
 
       {!loading && invites.length > 0 && (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>

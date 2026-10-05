@@ -99,7 +99,9 @@ export function getAntDesignTokens(): ThemeConfig['token'] {
     colorTextLabel: 'var(--text-secondary, #6B7280)', // Labels use secondary
     colorTextDescription: 'var(--text-secondary, #6B7280)', // Descriptions use secondary
     colorTextPlaceholder: 'var(--text-tertiary, #6B7280)', // Placeholders use tertiary
-    colorTextLightSolid: 'var(--text-inverse, #FFFFFF)', // NEW: Text on colored backgrounds
+    // Ant derives solid button foreground tokens through a color parser that
+    // cannot resolve CSS var() strings. Keep this concrete for contrast.
+    colorTextLightSolid: '#FFFFFF',
 
     // ============ Border Colors ============
     colorBorder: 'var(--border-primary, #E5E7EB)',
@@ -323,7 +325,8 @@ export function getAntDesignComponents(): ThemeConfig['components'] {
       colorPrimary: 'var(--link)',
       colorPrimaryHover: 'var(--link-hover)',
       colorPrimaryActive: 'var(--link-hover)',
-      primaryColor: 'var(--text-inverse)',
+      primaryColor: '#FFFFFF',
+      dangerColor: '#FFFFFF',
       primaryShadow: '0 2px 0 rgba(12, 102, 255, 0.15)',
 
       // ============ Default button (filled style) ============
@@ -806,4 +809,3 @@ export function getThemeAlgorithm(theme: 'light' | 'dark' | 'auto' = 'light'): M
 
   return actualTheme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm;
 }
-

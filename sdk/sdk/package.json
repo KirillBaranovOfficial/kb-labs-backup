@@ -45,6 +45,10 @@
       "types": "./dist/studio/index.d.ts",
       "import": "./dist/studio/index.js"
     },
+    "./studio/catalog": {
+      "types": "./dist/studio/catalog.d.ts",
+      "import": "./dist/studio/catalog.js"
+    },
     "./studio-build": {
       "types": "./dist/studio-build/index.d.ts",
       "import": "./dist/studio-build/index.js"

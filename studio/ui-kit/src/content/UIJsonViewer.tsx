@@ -3,6 +3,7 @@
  *
  * Displays JSON data with syntax highlighting and collapsible nodes.
  * NO hardcoded colors, uses Ant Design theme.
+ * @demoArgs {"data":{"service":"gateway","status":"healthy","replicas":3},"collapsed":false,"indent":2,"showLineNumbers":true}
  */
 
 import * as React from 'react';

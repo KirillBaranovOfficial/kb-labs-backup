@@ -2,6 +2,7 @@
  * UISpace component - Spacing container
  *
  * Wraps Ant Design Space for consistent spacing between elements.
+  * @demoArgs {"size":12,"direction":"horizontal"}
  */
 
 import * as React from 'react';

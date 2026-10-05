@@ -2,6 +2,7 @@
  * UIDropdown component - Dropdown menu
  *
  * Wraps Ant Design Dropdown.
+ * @demoArgs {"menu":{"items":[{"key":"settings","label":"Settings"},{"key":"disable","label":"Disable"}]},"trigger":["click"],"children":"Actions"}
  */
 
 import * as React from 'react';

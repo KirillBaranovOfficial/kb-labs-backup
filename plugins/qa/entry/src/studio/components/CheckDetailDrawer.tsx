@@ -13,7 +13,7 @@ import {
   UITypographyText,
   UIAlert,
   UIEmptyState,
-  UISpin,
+  UISkeleton,
   UIIcon,
   UIAccordion,
   useData,
@@ -180,7 +180,7 @@ export function CheckDetailDrawer({ open, onClose }: CheckDetailDrawerProps) {
       onClose={onClose}
     >
       {isLoading && (
-        <UISpin size="large" style={{ display: 'block', margin: '48px auto' }} />
+        <UISkeleton active lines={5} />
       )}
 
       {!isLoading && !latestCheck && (

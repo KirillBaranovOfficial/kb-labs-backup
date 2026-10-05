@@ -4,6 +4,7 @@ export type NavItem = {
   label: string;
   href: string;
   untranslated?: boolean;
+  children?: NavItem[];
 };
 
 export type NavGroup = {
