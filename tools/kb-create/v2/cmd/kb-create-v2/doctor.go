@@ -369,7 +369,7 @@ func (i invocation) runRecover(output *os.File) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	status, _ := runner.Status(ctx)
-	if _, supervised := supervisor.LivePID(state); supervised || status.State != host.StateStopped {
+	if _, supervised := supervisor.LivePID(state, i.PlatformRoot); supervised || status.State != host.StateStopped {
 		return command.fail(1, contracts.NewDiag(contracts.CodeRecoveryHostRunning, "Recovery needs the host to be stopped, but it is running.", "Run \"kb-create stop\", recover, then \"kb-create start\".", nil))
 	}
 	code, err := runner.RunTool(ctx, *runner.Spec.Recover, i.Recover.args(), os.Stdin, output, os.Stderr)

@@ -23,18 +23,45 @@ import (
 // pidRecord is the host.pid file. It is the only cross-process handle on the
 // host: stop and status from another launcher invocation rely on it.
 type pidRecord struct {
-	PID       int       `json:"pid"`
-	StartedAt time.Time `json:"startedAt"`
-	HealthURL string    `json:"healthUrl"`
-	Command   string    `json:"command"`
+	PID          int       `json:"pid"`
+	PlatformRoot string    `json:"platformRoot"`
+	StartedAt    time.Time `json:"startedAt"`
+	HealthURL    string    `json:"healthUrl"`
+	Command      string    `json:"command"`
+}
+
+// ActiveHostRecord identifies a live host process in the per-user launcher state.
+type ActiveHostRecord struct {
+	PID          int
+	PlatformRoot string
+}
+
+// ActiveHost reads the live host record without deciding whether it belongs to
+// a caller's requested platform root.
+func ActiveHost(state State) (ActiveHostRecord, bool) {
+	data, err := os.ReadFile(state.HostPID())
+	if err != nil {
+		return ActiveHostRecord{}, false
+	}
+	var record pidRecord
+	if json.Unmarshal(data, &record) != nil || record.PID <= 0 {
+		return ActiveHostRecord{}, false
+	}
+	if !processAlive(record.PID) {
+		_ = os.Remove(state.HostPID())
+		return ActiveHostRecord{}, false
+	}
+	return ActiveHostRecord{PID: record.PID, PlatformRoot: record.PlatformRoot}, true
 }
 
 // ProcessRunner spawns the host command directly in its own process group,
 // records a pid file and log under the state home, polls the health URL, and
 // stops it with a graceful terminate followed by a kill after the grace period.
 type ProcessRunner struct {
-	Spec  Spec
-	State State
+	Spec         Spec
+	State        State
+	PlatformRoot string
+	Operation    string
 	// HTTP and PollInterval exist for tests; zero values use sane defaults.
 	HTTP         *http.Client
 	PollInterval time.Duration
@@ -71,6 +98,9 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	}
 	if record, ok := r.readPID(); ok {
 		if processAlive(record.PID) {
+			if record.PlatformRoot != r.PlatformRoot {
+				return Info{}, RootConflict(record.PlatformRoot, record.PID)
+			}
 			return Info{}, hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil, pidDetail(record.PID))
 		}
 		_ = os.Remove(r.State.HostPID())
@@ -80,7 +110,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		_ = conn.Close()
 		_, port, _ := net.SplitHostPort(address)
 		owner := listenerOwner(port)
-		return Info{}, hostError(contracts.CodePortInUse, "Port "+port+" is already in use.", "Stop the application using this port, then run `kb-create install` again.", nil, map[string]string{"port": port, "address": address, "pid": owner.PID, "command": owner.Command})
+		return Info{}, portInUseError(port, address, "", owner, r.Operation, nil)
 	}
 	logFile, err := os.OpenFile(r.State.HostLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -112,7 +142,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		r.mu.Unlock()
 		close(exited)
 	}()
-	record := pidRecord{PID: cmd.Process.Pid, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command}
+	record := pidRecord{PID: cmd.Process.Pid, PlatformRoot: r.PlatformRoot, StartedAt: time.Now().UTC(), HealthURL: r.Spec.HealthURL, Command: r.Spec.Command}
 	if err := writeJSONFile(r.State.HostPID(), record); err != nil {
 		r.kill(cmd.Process.Pid)
 		return Info{}, hostError("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+r.State.Dir+".", "Fix the directory permissions or free disk space.", err, map[string]string{"path": r.State.Dir})
@@ -223,6 +253,40 @@ func (r *ProcessRunner) waitReady(ctx context.Context, pid int, exited <-chan st
 
 type portOwner struct{ PID, Command string }
 
+func portInUseError(port, address, purpose string, owner portOwner, operation string, cause error) *diag.Diag {
+	if operation == "" {
+		operation = "start"
+	}
+	message := "Port " + port + " is already in use."
+	if purpose != "" {
+		message = "Port " + port + " required by " + purpose + " is already in use."
+	}
+	hint := "Stop the process using port " + port + ", then rerun `kb-create " + operation + "`."
+	if owner.PID != "" && owner.Command != "" {
+		hint = "Stop process " + owner.PID + " (" + owner.Command + ") using port " + port + ", then rerun `kb-create " + operation + "`."
+	}
+	meta := map[string]string{"port": port, "pid": owner.PID, "command": owner.Command, "operation": operation}
+	if address != "" {
+		meta["address"] = address
+	}
+	if purpose != "" {
+		meta["purpose"] = purpose
+	}
+	return hostError(contracts.CodePortInUse, message, hint, cause, meta)
+}
+
+// RootConflict reports that the per-user launcher's live host serves another
+// platform root. A host recorded without a root predates root ownership, so the
+// hint names its pid instead of a stop command that could not match it.
+func RootConflict(platformRoot string, pid int) *diag.Diag {
+	pidText := strconv.Itoa(pid)
+	meta := map[string]string{"platformRoot": platformRoot, "pid": pidText}
+	if platformRoot == "" {
+		return hostError("KB_HOST_ALREADY_RUNNING", "A KB Labs host started by an earlier launcher is already running (pid "+pidText+").", "Stop process "+pidText+", then rerun the command.", nil, meta)
+	}
+	return hostError("KB_HOST_ALREADY_RUNNING", "The KB Labs host for platform root "+platformRoot+" is already running (pid "+pidText+").", "Stop that platform first with `kb-create stop --platform-root "+platformRoot+"`.", nil, meta)
+}
+
 func listenerOwner(port string) portOwner {
 	output, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-Fp", "-Fc").Output()
 	if err != nil {
@@ -245,7 +309,7 @@ func listenerOwner(port string) portOwner {
 
 // CheckPorts reports conflicts in the resolved service graph before package
 // downloads or installation change the platform root.
-func CheckPorts(plan contracts.ResolvedInstallPlan) error {
+func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 	ports := map[string]string{}
 	if plan.Host != nil {
 		if parsed, err := url.Parse(plan.Host.HealthURL); err == nil {
@@ -266,7 +330,7 @@ func CheckPorts(plan contracts.ResolvedInstallPlan) error {
 			continue
 		}
 		owner := listenerOwner(port)
-		return hostError(contracts.CodePortInUse, "Port "+port+" required by "+purpose+" is already in use.", "Stop the application using this port, then run `kb-create install` again.", err, map[string]string{"port": port, "pid": owner.PID, "command": owner.Command, "purpose": purpose})
+		return portInUseError(port, "", purpose, owner, operation, err)
 	}
 	return nil
 }
@@ -308,6 +372,9 @@ func (r *ProcessRunner) healthy(ctx context.Context) bool {
 func (r *ProcessRunner) Stop(ctx context.Context) (StopResult, error) {
 	result := StopResult{Runner: r.Name()}
 	record, ok := r.readPID()
+	if ok && processAlive(record.PID) && record.PlatformRoot != r.PlatformRoot {
+		return result, nil
+	}
 	if !ok || !processAlive(record.PID) {
 		_ = os.Remove(r.State.HostPID())
 		return result, nil
@@ -372,6 +439,9 @@ func (r *ProcessRunner) Status(ctx context.Context) (Status, error) {
 	status := Status{Runner: r.Name(), State: StateStopped, HealthURL: r.Spec.HealthURL}
 	record, ok := r.readPID()
 	if !ok {
+		return status, nil
+	}
+	if record.PlatformRoot != r.PlatformRoot {
 		return status, nil
 	}
 	if !processAlive(record.PID) {

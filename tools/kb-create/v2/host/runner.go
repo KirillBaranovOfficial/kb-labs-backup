@@ -66,7 +66,11 @@ func NewRunner(platformRoot string, state State) (*ProcessRunner, error) {
 		return nil, err
 	}
 	store := secrets.Store{PlatformRoot: platformRoot}
-	return &ProcessRunner{Spec: spec, State: state, SecretEnv: store.Environment}, nil
+	root, err := filepath.Abs(platformRoot)
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessRunner{Spec: spec, State: state, PlatformRoot: filepath.Clean(root), SecretEnv: store.Environment}, nil
 }
 
 // Prober is the trial run used to validate a plan's host before its receipt is
@@ -77,6 +81,7 @@ func NewRunner(platformRoot string, state State) (*ProcessRunner, error) {
 type Prober struct {
 	PlatformRoot string
 	State        State
+	Operation    string
 }
 
 // Probe starts and stops the declared host once.
@@ -86,7 +91,7 @@ func (p Prober) Probe(ctx context.Context, declared contracts.HostSpec) error {
 		return specInvalid(err)
 	}
 	store := secrets.Store{PlatformRoot: p.PlatformRoot}
-	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(p.State.Dir, "probe")}, SecretEnv: store.Environment}
+	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(p.State.Dir, "probe")}, PlatformRoot: p.PlatformRoot, SecretEnv: store.Environment, Operation: p.Operation}
 	if _, err := runner.Start(ctx); err != nil {
 		return err
 	}

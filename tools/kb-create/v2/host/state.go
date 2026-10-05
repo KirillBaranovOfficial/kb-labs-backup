@@ -17,11 +17,8 @@ import (
 // isolates every per-user file in tests and sandboxes.
 const KBHomeEnv = "KB_HOME"
 
-// State names the files the launcher owns in its per-user state home
-// (<KB_HOME>/launcher). There is one launcher per user: the platform is a
-// per-user install (ADR-0044), so pid files, the control channel and the
-// operation lock are not keyed by platform root. There is no package-level
-// state: every component receives a State value.
+// State names the per-user launcher files. The platform root served by a live
+// host is recorded in its pid and supervisor records.
 type State struct{ Dir string }
 
 // KBHome resolves the machine-level KB Labs home: $KB_HOME when set, else ~/.kb.

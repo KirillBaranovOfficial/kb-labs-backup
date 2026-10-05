@@ -65,6 +65,10 @@ func (c hostCommand) run(operation string) int {
 	if failure != nil {
 		return c.fail(2, failure)
 	}
+	runner.Operation = operation
+	if runner.Operation == "supervise" {
+		runner.Operation = "start"
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	switch operation {
@@ -102,7 +106,7 @@ func (c hostCommand) hostStatus(ctx context.Context, runner host.Runner, state h
 	if active, readErr := receipt.Read(c.PlatformRoot); readErr == nil {
 		payload["installation"] = map[string]any{"receiptId": active.ID, "platformVersion": active.Plan.ServiceGraph.PlatformVersion, "platformChannel": active.Plan.PlatformChannel}
 	}
-	if pid, ok := supervisor.LivePID(state); ok {
+	if pid, ok := supervisor.LivePID(state, c.PlatformRoot); ok {
 		info := map[string]any{"pid": pid}
 		if client, connectErr := control.Connect(state); connectErr == nil {
 			info["address"] = client.File.Address
@@ -156,7 +160,10 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 	if status.State != host.StateStopped {
 		return c.fail(1, contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil))
 	}
-	if pid, alive := supervisor.LivePID(state); alive {
+	if record, alive := activeLauncher(state); alive {
+		return c.fail(1, supervisor.Refusal(record, c.PlatformRoot))
+	}
+	if pid, alive := supervisor.LivePID(state, c.PlatformRoot); alive {
 		e := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil)
 		e.Meta = map[string]any{"supervisorPid": fmt.Sprint(pid)}
 		return c.fail(1, e)
@@ -242,7 +249,7 @@ func supervisorFailure(state host.State) error {
 }
 
 func (c hostCommand) supervise(ctx context.Context, runner host.Runner, state host.State) int {
-	if err := (&supervisor.Supervisor{Runner: runner, State: state, Version: c.Version}).Run(ctx); err != nil {
+	if err := (&supervisor.Supervisor{Runner: runner, State: state, PlatformRoot: c.PlatformRoot, Version: c.Version}).Run(ctx); err != nil {
 		return c.fail(1, asDiag(err))
 	}
 	return 0
@@ -264,7 +271,11 @@ func (c hostCommand) stop(ctx context.Context, runner host.Runner, state host.St
 // control channel) and then whatever it left behind, or a foreground host.
 func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopResult, error) {
 	before, _ := runner.Status(ctx)
-	if pid, alive := supervisor.LivePID(state); alive {
+	platformRoot := ""
+	if process, ok := runner.(*host.ProcessRunner); ok {
+		platformRoot = process.PlatformRoot
+	}
+	if pid, alive := supervisor.LivePID(state, platformRoot); alive {
 		host.TerminateProcess(pid)
 		if !waitExit(pid, stopBudget(runner)) {
 			host.KillProcess(pid)

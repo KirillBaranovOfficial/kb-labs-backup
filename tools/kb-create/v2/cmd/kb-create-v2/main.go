@@ -200,6 +200,23 @@ func (i invocation) run(output *os.File) int {
 			}
 		}
 	}
+	root := response.Plan.Request.PlatformRoot
+	state, stateErr := host.StateHome()
+	if stateErr != nil {
+		write(output, map[string]any{"ok": false, "error": asDiag(stateErr)})
+		return 2
+	}
+	if operation == "apply" {
+		if running := refuseRunningHost(state, root); running != nil {
+			write(output, map[string]any{"ok": false, "error": running})
+			return 2
+		}
+	} else if operation == "update" {
+		if running := refuseForeignHost(state, root); running != nil {
+			write(output, map[string]any{"ok": false, "error": running})
+			return 2
+		}
+	}
 	if operation == "apply" {
 		root := response.Plan.Request.PlatformRoot
 		if err := preflight.CheckInstallResources(root); err != nil {
@@ -211,7 +228,7 @@ func (i invocation) run(output *os.File) int {
 			}
 			return 2
 		}
-		if err := host.CheckPorts(*response.Plan); err != nil {
+		if err := host.CheckPorts(*response.Plan, operation); err != nil {
 			write(output, map[string]any{"ok": false, "error": asDiag(err)})
 			return 2
 		}
@@ -226,7 +243,6 @@ func (i invocation) run(output *os.File) int {
 		outcome, errorCode = "success", ""
 		return 0
 	}
-	root := response.Plan.Request.PlatformRoot
 	correlationID := fmt.Sprintf("%s-%d", operation, time.Now().UTC().UnixNano())
 	transcript, err := logs.New(root, correlationID, nil)
 	if err != nil {
@@ -243,17 +259,6 @@ func (i invocation) run(output *os.File) int {
 		write(output, failure(contracts.CodeApplyFailed, "the session signing secret could not be generated or stored.", "check that the platform root is writable, then rerun `kb-create install`", err))
 		return 2
 	}
-	state, stateErr := host.StateHome()
-	if stateErr != nil {
-		write(output, map[string]any{"ok": false, "error": asDiag(stateErr)})
-		return 2
-	}
-	if operation == "apply" {
-		if running := refuseRunningHost(state); running != nil {
-			write(output, map[string]any{"ok": false, "error": running})
-			return 2
-		}
-	}
 	release, lockErr := state.AcquireOperation(operation)
 	if lockErr != nil {
 		write(output, map[string]any{"ok": false, "error": asDiag(lockErr)})
@@ -264,7 +269,7 @@ func (i invocation) run(output *os.File) int {
 	defer stop()
 	offlineArtifacts := response.Plan.Request.Source == contracts.SourceOffline
 	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: root, Registry: i.Registry, Offline: offlineArtifacts, Log: transcript}, Binaries: artifacts.Binaries{Root: root, Offline: offlineArtifacts}}
-	prober := host.Prober{PlatformRoot: root, State: state}
+	prober := host.Prober{PlatformRoot: root, State: state, Operation: operation}
 	deps := runtime.Dependencies{Artifacts: artifactExecutor, CorrelationID: correlationID, Secrets: &store}
 	if i.RuntimeDeps != nil {
 		if i.RuntimeDeps.Artifacts != nil {
