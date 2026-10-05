@@ -102,7 +102,7 @@ export function manifestToCommands(manifest: ManifestV3, pkgName: string, pkgRoo
  * Synthetic manifest marking a package as unavailable with an actionable hint.
  * Used when a package's manifest file exists but could not be loaded.
  */
-export function createUnavailableManifest(pkgName: string, reason: string): CommandManifest {
+export function createUnavailableManifest(pkgName: string, reason: string, pluginId?: string): CommandManifest {
   // Try to extract missing module name from the reason
   let missing: string | null = null;
   const m1 = reason.match(/Cannot find (?:module|package) '([^']+)'/);
@@ -112,20 +112,26 @@ export function createUnavailableManifest(pkgName: string, reason: string): Comm
 
   // Derive group from package name (e.g., @kb-labs/core-cli -> core)
   const seg = pkgName.includes('/') ? pkgName.split('/')[1] : pkgName;
-  const group = (seg || pkgName).replace(/-cli$/, '');
-  const short = seg || pkgName;
-
-  const unavailableId = `manifest:${short}`;
+  const group = pluginId?.startsWith('@kb-labs/') ? pluginId.slice('@kb-labs/'.length) : (seg || pkgName).replace(/-cli$/, '');
+  const unavailableId = group;
   return {
     manifestVersion: '1.0',
-    segments: [group, unavailableId],
+    segments: [group],
     id: unavailableId,
     group,
-    describe: `Commands from ${pkgName} are unavailable`,
+    describe: `Unavailable: ${pkgName} needs a workspace build. Run pnpm build.`,
     requires: missing ? [missing] : [],
     loader: async () => {
       throw new Error(`Cannot load ${pkgName} CLI manifest. ${reason}`);
     },
     _synthetic: true,
+    unavailablePlugin: true,
+    manifestV2: {
+      schema: 'kb.plugin/3',
+      id: pluginId ?? pkgName,
+      version: '0.0.0',
+      display: { name: pkgName, description: reason },
+      cli: { groupMeta: [{ path: group, describe: `Unavailable: ${pkgName}. Run pnpm build.` }], commands: [] },
+    } satisfies ManifestV3,
   };
 }

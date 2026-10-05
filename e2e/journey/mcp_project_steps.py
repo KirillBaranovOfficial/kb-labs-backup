@@ -253,6 +253,52 @@ def secured_auth(project_id: str) -> str | None:
     return None
 
 
+def secured_project_catalog_isolation(project_a: str, project_b: str, token: str) -> str | None:
+    """Check authentication and project-scoped catalogs for S-199.5."""
+    if not token:
+        return "secured project catalog check requires the authenticated journey token"
+    for project_id in (project_a, project_b):
+        path = f"/api/v1/projects/{project_id}/mcp"
+        payload = {"jsonrpc": "2.0", "id": 1995, "method": "tools/list", "params": {}}
+        with invocation_context(step_id="S-199.5"):
+            missing_status, missing_body, _ = _request(
+                path, method="POST", payload=payload, accept="application/json, text/event-stream",
+            )
+        envelope = missing_body.get("error") if isinstance(missing_body, dict) else None
+        if (missing_status != 401 or not isinstance(envelope, dict)
+                or envelope.get("code") != "KB_AUTH_REQUIRED"
+                or not isinstance(envelope.get("correlationId"), str)
+                or not envelope["correlationId"].strip()
+                or (isinstance(missing_body, dict)
+                    and isinstance(missing_body.get("result"), dict)
+                    and missing_body["result"].get("tools"))):
+            return f"secured tools/list for {project_id} did not return a 401 KB_AUTH_REQUIRED envelope without a catalog"
+
+        with invocation_context(step_id="S-199.5"):
+            status, body, _ = _request(
+                path, method="POST", token=token, payload=payload,
+                accept="application/json, text/event-stream",
+            )
+        if status != 200:
+            return f"authenticated tools/list for {project_id} returned HTTP {status}, expected 200"
+        result = body.get("result") if isinstance(body, dict) else None
+        tools = result.get("tools") if isinstance(result, dict) else None
+        if not isinstance(tools, list):
+            return f"authenticated tools/list for {project_id} returned no catalog"
+        names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
+        if project_id == project_a:
+            if "kb-labs-commit__commit_apply" not in names:
+                return "Project A's authenticated catalog omitted its project-only Commit tool"
+            if "kb-labs-review__review_run" in names:
+                return "Project A's authenticated catalog included Project B's Review tool"
+        else:
+            if "kb-labs-review__review_run" not in names:
+                return "Project B's authenticated catalog omitted its project-only Review tool"
+            if "kb-labs-commit__commit_apply" in names:
+                return "Project B's authenticated catalog included Project A's Commit tool"
+    return None
+
+
 def local_auth(project_id: str) -> str | None:
     status, body, _ = _request(
         f"/api/v1/projects/{project_id}/mcp",
@@ -350,8 +396,68 @@ def project_isolation(project_a: str, project_b: str, project_b_root: str, token
     return unknown_tool(project_b, token)
 
 
+def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str) -> str | None:
+    """Check that a project-only Commit tool appears in A's catalog, not B's."""
+    catalogs: dict[str, set[str]] = {}
+    for project_id in (project_a, project_b):
+        with invocation_context(step_id="S-199.3"):
+            status, body, _ = _request(
+                f"/api/v1/projects/{project_id}/mcp", method="POST", token=token,
+                accept="application/json, text/event-stream",
+                payload={"jsonrpc": "2.0", "id": 1993, "method": "tools/list", "params": {}},
+            )
+        if status != 200:
+            return f"project {project_id} tools/list returned HTTP {status}"
+        result = body.get("result") if isinstance(body, dict) else None
+        tools = result.get("tools") if isinstance(result, dict) else None
+        if not isinstance(tools, list):
+            return f"project {project_id} tools/list returned no tool catalog"
+        catalogs[project_id] = {tool["name"] for tool in tools
+                                if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
+    project_only_tool = "kb-labs-commit__commit_apply"
+    if project_only_tool not in catalogs[project_a]:
+        return "Project A's catalog omitted its project-only Commit tool"
+    if project_only_tool in catalogs[project_b]:
+        return "Project B's catalog included Project A's Commit tool"
+    return None
+
+
+def project_readonly_tool_isolation(project_a: str, project_b: str, token: str) -> str | None:
+    """Read Project A's Commit plan, then verify the same read-only tool is absent from B (S-199.4)."""
+    tool_name = "kb-labs-commit__commit_open"
+    with invocation_context(step_id="S-199.4"):
+        status_a, body_a, _ = _request(
+            f"/api/v1/projects/{project_a}/mcp", method="POST", token=token,
+            accept="application/json, text/event-stream",
+            payload={"jsonrpc": "2.0", "id": 1994, "method": "tools/call",
+                     "params": {"name": tool_name, "arguments": {"json": True}}},
+        )
+    if status_a != 200:
+        return f"Project A's read-only Commit plan tool returned HTTP {status_a}"
+    result_a = body_a.get("result") if isinstance(body_a, dict) else None
+    if not isinstance(result_a, dict) or result_a.get("isError") is True:
+        return "Project A's read-only Commit plan tool did not succeed"
+    structured_a = result_a.get("structuredContent")
+    if not isinstance(structured_a, dict):
+        return "Project A's read-only Commit plan tool returned no structured result"
+    result_data = structured_a.get("result", structured_a)
+    if not isinstance(result_data, dict) or result_data.get("hasPlan") is not True:
+        return "Project A's read-only Commit plan tool did not return its project plan"
+
+    with invocation_context(step_id="S-199.4"):
+        status_b, body_b, _ = _request(
+            f"/api/v1/projects/{project_b}/mcp", method="POST", token=token,
+            accept="application/json, text/event-stream",
+            payload={"jsonrpc": "2.0", "id": 1994, "method": "tools/call",
+                     "params": {"name": tool_name, "arguments": {"json": True}}},
+        )
+    if status_b != 200:
+        return f"Project B's unknown Commit tool returned HTTP {status_b}, expected MCP HTTP 200"
+    return _check_error_result(body_b, "KB_RUNTIME_MCP_UNKNOWN_TOOL")
+
+
 def run_agent_session_steps(journey: Journey, project_id: str, token: str,
-                            agent_id: str = "journey-agent") -> None:
+                            agent_id: str = "orchestrator") -> None:
     """Exercise the documented project Agents session REST lifecycle (S-141)."""
     session_id = ""
     base = f"/api/v1/projects/{project_id}/rest/v1/plugins/agents/sessions"
@@ -430,3 +536,18 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
         return None
 
     journey.step("reject unknown project agent session", "agents", unknown_session, cases=["S-141.4"])
+
+    def unknown_agent() -> str | None:
+        with invocation_context(step_id="S-141.5"):
+            status, body, _ = _request(
+                base, method="POST", token=token,
+                payload={"agentId": "agent-does-not-exist", "task": "Summarize the project"},
+            )
+        error = body.get("error") if isinstance(body, dict) else None
+        if (status != 404 or not isinstance(error, dict)
+                or error.get("code") != "KB_AGENT_NOT_FOUND"
+                or "agent-does-not-exist" not in str(error.get("message", ""))):
+            return "unknown agent ID did not return the typed KB_AGENT_NOT_FOUND 404"
+        return None
+
+    journey.step("reject undefined project agent ID", "agents", unknown_agent, cases=["S-141.5"])

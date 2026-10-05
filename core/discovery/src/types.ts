@@ -145,6 +145,8 @@ export interface DiscoveryFailure {
   /** `manifest`: the manifest exists but could not be loaded. */
   reason: 'manifest' | 'integrity' | 'package-missing';
   message: string;
+  diagnosticCode?: DiagnosticCode;
+  remediation?: string;
 }
 
 export interface DiscoveryResult {

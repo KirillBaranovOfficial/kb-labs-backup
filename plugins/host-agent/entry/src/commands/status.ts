@@ -1,5 +1,5 @@
 /**
- * workspace:status command (alias: agent:status)
+ * workspace:status command
  * Show Workspace Agent daemon status via IPC socket.
  */
 

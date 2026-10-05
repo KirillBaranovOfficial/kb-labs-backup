@@ -18,6 +18,7 @@ from nightly_report import aggregate, fingerprint, load_results, render_summary,
 from entrypoint import run_runner
 from service_runner import (checks, configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
+                            PROJECT_ID,
                             _prepare_and_export_mcp_projects,
                             main as service_main, mcp_probe, run_service_steps)
 from service_steps import Journey, record_runner_failure
@@ -214,8 +215,15 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(registered_project_roots, [project_b_root])
         self.assertEqual(env["KB_JOURNEY_PROJECT_B_ID"], project_b_id)
         self.assertEqual(env["KB_JOURNEY_PROJECT_B_ROOT"], project_b_root)
-        self.assertEqual(handoff, {"projectBId": project_b_id, "projectBRoot": project_b_root})
+        self.assertEqual(handoff, {
+            "projectAId": PROJECT_ID,
+            "projectARoot": str(project_a.resolve()),
+            "projectBId": project_b_id,
+            "projectBRoot": project_b_root,
+        })
         self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"])
+        self.assertEqual(calls[1], ["kb", "marketplace", "install", "@kb-labs/agent-entry@2.120.1", "--json"])
+        self.assertEqual(calls[3], ["kb", "marketplace", "install", "@kb-labs/review-entry@2.120.1", "--json"])
         registration_calls = [call for call in calls if call[:3] == ["kb", "project", "add"]]
         self.assertEqual(len(registration_calls), 1)
         self.assertEqual(registration_calls[0][0:3], ["kb", "project", "add"])
