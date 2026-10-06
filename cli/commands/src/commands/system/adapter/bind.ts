@@ -1,9 +1,7 @@
 /** Bind an installed machine adapter to a platform slot. */
 
-import { configErrorEnvelope, setUserConfigValue } from '@kb-labs/core-config';
-import { DiagnosticCollector, readMarketplaceLock } from '@kb-labs/core-discovery';
+import { configErrorEnvelope, createAdapterOptionsValidator, setUserConfigValue } from '@kb-labs/core-config';
 import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
@@ -52,29 +50,22 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
     }
 
     let roots: Awaited<ReturnType<typeof resolveConfigRoots>>;
-    let lock;
     try {
       roots = await resolveConfigRoots(getContextCwd(ctx));
-      lock = await readMarketplaceLock(roots.platformRoot, new DiagnosticCollector());
     } catch (error) {
       throwSystemCataloguedError(configErrorEnvelope(error));
     }
-    if (!lock?.adapters?.[packageId]) {
-      const envelope = createErrorEnvelope('KB_ADAPTER_NOT_INSTALLED', {
-        details: { package: packageId },
-      });
-      throwSystemCataloguedError({
-        ...envelope,
-        hint: `kb marketplace install ${packageId} --scope platform`,
-      });
-    }
 
     try {
+      const validate = createAdapterOptionsValidator(['platform', 'adapters', slot], {
+        platformRoot: roots.platformRoot,
+      });
       const result = await setUserConfigValue({
         filePath: await userConfigFileForScope(roots, 'platform'),
         path: ['platform', 'adapters', slot],
         value: packageId,
         schema: PlatformUserConfigSchema,
+        validate,
         dryRun: Boolean(flags['dry-run']),
       });
       return {

@@ -154,6 +154,18 @@ beforeEach(async () => {
   platformRoot = path.join(tmp, 'platform');
   projectRoot = path.join(tmp, 'project');
   await fsp.mkdir(path.join(platformRoot, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true });
+  const openaiRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-openai');
+  await write(openaiRoot, 'package.json', JSON.stringify({
+    name: '@kb-labs/adapters-openai', type: 'module', exports: './manifest.js',
+  }));
+  await write(openaiRoot, 'manifest.js', `export const manifest = {
+    implements: 'ILLM',
+    configSchema: {
+      apiKey: { type: 'string' }, baseURL: { type: 'string' }, defaultModel: { type: 'string' },
+      model: { type: 'string' }, temperature: { type: 'number' },
+      mode: { type: 'string', enum: ['fast', 'careful'] },
+    },
+  };\n`);
   await fsp.mkdir(projectRoot, { recursive: true });
   projectRoot = await fsp.realpath(projectRoot);
   await write(platformRoot, '.kb/kb.config.jsonc', PLATFORM_CONFIG);
@@ -198,6 +210,10 @@ describe('config set', () => {
   });
 
   it('--scope platform writes the platform user config', async () => {
+    const vibeproxyRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-vibeproxy');
+    await fsp.mkdir(vibeproxyRoot, { recursive: true });
+    await fsp.writeFile(path.join(vibeproxyRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-vibeproxy', type: 'module', exports: './manifest.js' }));
+    await fsp.writeFile(path.join(vibeproxyRoot, 'manifest.js'), 'export const manifest = { implements: "ILLM" };');
     const { code } = await run(configSet, ['platform.adapters.llm', '@kb-labs/adapters-vibeproxy'], {
       scope: 'platform',
     });
@@ -206,6 +222,48 @@ describe('config set', () => {
       PLATFORM_CONFIG.replace('@kb-labs/adapters-openai', '@kb-labs/adapters-vibeproxy'),
     );
     expect(await fsp.readFile(PROJECT_FILE(), 'utf8')).toBe(PROJECT_CONFIG);
+  });
+
+  // case: S-051.4, S-211.7
+  it('rejects a missing platform adapter package before persisting platform.adapters', async () => {
+    const before = await fsp.readFile(PLATFORM_FILE(), 'utf8');
+    const { code, out } = await run(configSet, ['platform.adapters.llm', '@kb-labs/adapters-vibeproxy'], {
+      scope: 'platform',
+    });
+
+    expect(code).toBe(1);
+    expect((out.json[0] as { error: { code: string; message: string; hint: string; details: Record<string, string> } }).error).toMatchObject({
+      code: 'KB_ADAPTER_NOT_INSTALLED',
+      message: 'Adapter package @kb-labs/adapters-vibeproxy is not installed on this platform.',
+      hint: 'kb marketplace install @kb-labs/adapters-vibeproxy --scope platform',
+      details: { package: '@kb-labs/adapters-vibeproxy', slot: 'llm', path: 'platform.adapters.llm' },
+    });
+    expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toBe(before);
+  });
+
+  // case: S-211.7
+  it('rejects an installed adapter package that does not declare the requested slot', async () => {
+    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-storage-fixture');
+    await write(packageRoot, 'package.json', JSON.stringify({
+      name: '@kb-labs/adapters-storage-fixture', type: 'module', exports: './manifest.js',
+    }));
+    await write(packageRoot, 'manifest.js', `export const manifest = {
+      implements: 'IStorage', defaultFor: ['storage'],
+    };\n`);
+    const before = await fsp.readFile(PLATFORM_FILE(), 'utf8');
+
+    const { code, out } = await run(configSet, [
+      'platform.adapters.llm', '@kb-labs/adapters-storage-fixture',
+    ], { scope: 'platform' });
+
+    expect(code).toBe(1);
+    expect((out.json[0] as { error: Record<string, unknown> }).error).toMatchObject({
+      code: 'KB_ADAPTER_SLOT_MISMATCH',
+      message: 'Adapter package @kb-labs/adapters-storage-fixture does not declare platform slot llm.',
+      details: { package: '@kb-labs/adapters-storage-fixture', slot: 'llm' },
+      hint: 'Install a provider that declares llm with `kb marketplace install <pkg> --scope platform`, then retry.',
+    });
+    expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toBe(before);
   });
 
   // case: S-017.5
@@ -445,9 +503,19 @@ describe('config set', () => {
       expect(dataOf(ok.out.json[0])?.adapterSchemaChecked).toBe(true);
     });
 
-    it('skips the manifest check when the adapter package is not installed', async () => {
+    // case: S-211.7
+    it('rejects adapter options when the bound package schema is unavailable without persisting them', async () => {
       await write(platformRoot, '.kb/kb.config.jsonc', `{ "platform": { "adapters": { "llm": "@not/installed" } } }\n`);
-      expect((await run(configSet, ['platform.adapterOptions.llm.temperature', '"hot"'], { scope: 'platform' })).code).toBe(0);
+      const configFile = path.join(platformRoot, '.kb', 'kb.config.jsonc');
+      const before = await fsp.readFile(configFile, 'utf8');
+      const { code, out } = await run(configSet, ['platform.adapterOptions.llm.temperature', '"hot"'], { scope: 'platform' });
+      expect(code).toBe(1);
+      expect((out.json[0] as { error: { code: string; message: string; hint: string } }).error).toMatchObject({
+        code: 'KB_ADAPTER_NOT_INSTALLED',
+        message: 'Adapter package @not/installed is not installed on this platform.',
+        hint: 'kb marketplace install @not/installed --scope platform',
+      });
+      expect(await fsp.readFile(configFile, 'utf8')).toBe(before);
     });
   });
 });

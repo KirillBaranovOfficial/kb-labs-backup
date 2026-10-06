@@ -94,10 +94,29 @@ export function configErrorEnvelope(error: unknown): ErrorEnvelope {
         details: { path: error.details.path ?? '' },
         cause: error.message,
       });
+    case 'KB_ADAPTER_NOT_INSTALLED':
+      return createErrorEnvelope('KB_ADAPTER_NOT_INSTALLED', {
+        details: {
+          package: error.details.package ?? '',
+          ...(error.details.slot ? { slot: error.details.slot } : {}),
+          ...(error.details.path ? { path: error.details.path } : {}),
+        },
+        ...(error.details.hint ? { hint: error.details.hint } : {}),
+      });
+    case 'KB_ADAPTER_SLOT_MISMATCH':
+      return createErrorEnvelope('KB_ADAPTER_SLOT_MISMATCH', {
+        details: {
+          package: error.details.package ?? '',
+          slot: error.details.slot ?? '',
+          ...(error.details.path ? { path: error.details.path } : {}),
+        },
+        ...(error.details.hint ? { hint: error.details.hint } : {}),
+      });
     case 'KB_CONFIG_INVALID':
       return createErrorEnvelope('KB_CONFIG_INVALID', {
         details: { path: error.details.path ?? '' },
         cause: error.message,
+        ...(error.details.hint ? { hint: error.details.hint } : {}),
       });
   }
 }

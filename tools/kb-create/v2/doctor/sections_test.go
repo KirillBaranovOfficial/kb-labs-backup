@@ -201,6 +201,24 @@ func TestPlatformSectionReportsPerSlotAdapterModeAndImplementation(t *testing.T)
 	}
 }
 
+// case: S-211.6
+func TestPlatformSectionReportsDegradedAdapterWithRecoveryCommand(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health/adapters" {
+			_, _ = w.Write([]byte(`{"ok":true,"data":[{"slot":"llm","mode":"degraded","implementation":"@kb-labs/adapters-vibeproxy","configuredPackage":"@kb-labs/adapters-vibeproxy","reason":"load-failed","correlationId":"load-123","action":{"id":"install-adapter","label":"Install @kb-labs/adapters-vibeproxy","command":"kb marketplace install @kb-labs/adapters-vibeproxy --scope platform"},"recordedAt":"2026-10-06T00:00:00.000Z"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"data":{"upstreams":{}}}`))
+	}))
+	defer server.Close()
+	status := host.Status{State: host.StateRunning, PID: 9, Healthy: true, HealthURL: server.URL + "/health"}
+	section := InspectPlatform(context.Background(), status, server.Client(), nil)
+	got := check(t, section, "adapter:llm")
+	if got.OK || got.Mode != "degraded" || !strings.Contains(got.Detail, "load-failed") || !strings.Contains(got.Detail, "load-123") || got.Hint != "kb marketplace install @kb-labs/adapters-vibeproxy --scope platform" {
+		t.Fatalf("degraded adapter check = %+v", got)
+	}
+}
+
 // case: S-054.10
 func TestPlatformSectionRejectsInMemoryFallbackWhenPersistentProviderIsBound(t *testing.T) {
 	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{}}}`, "")

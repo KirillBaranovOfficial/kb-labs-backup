@@ -348,6 +348,18 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(validateErrorEnvelope(envelope)).toEqual([]);
   });
 
+  it('catalogues an installed adapter that does not declare the requested slot', () => {
+    const envelope = createErrorEnvelope('KB_ADAPTER_SLOT_MISMATCH', {
+      details: { package: '@kb-labs/adapters-storage-fixture', slot: 'llm' },
+    });
+    expect(envelope).toMatchObject({
+      code: 'KB_ADAPTER_SLOT_MISMATCH',
+      message: 'Adapter package @kb-labs/adapters-storage-fixture does not declare platform slot llm.',
+      hint: 'Install a provider that declares llm with `kb marketplace install <pkg> --scope platform`, then retry.',
+    });
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+  });
+
   it('rejects codes that are not in the catalog', () => {
     expect(() => createErrorEnvelope('KB_NOPE_NOPE')).toThrow(/errors\.catalog\.json/);
   });

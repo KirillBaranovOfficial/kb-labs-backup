@@ -94,6 +94,17 @@ def _json_object(result: subprocess.CompletedProcess[str] | None) -> dict[str, o
     return decode_ux_success_result(payload) if result.returncode == 0 else decode_ux_error_result(payload)
 
 
+def _install_error(result: subprocess.CompletedProcess[str]) -> str:
+    try:
+        payload = _json_object(result)
+        message = payload.get("message")
+        if isinstance(message, str) and message:
+            return message
+    except ValueError as parse_error:
+        return (result.stderr or result.stdout).strip() or str(parse_error)
+    return (result.stderr or result.stdout).strip() or f"install exited with status {result.returncode}"
+
+
 def _store_studio_llm_model(model: str | None) -> None:
     fixture_file = os.environ.get("KB_JOURNEY_STUDIO_FIXTURE_FILE", "")
     if not model or not fixture_file:
@@ -178,6 +189,17 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
         and all(_json_contains(item, "OPENAI_MOCK_RESPONSE") for item in openai_projects)
         else "both registered project roots must return the deterministic OpenAI mock response"
     ), cases=["S-018.2"])
+
+    vibe_install = _cli(["kb", "marketplace", "install", "@kb-labs/adapters-vibeproxy",
+                         "--scope", "platform", "--json"], "setup-vibeproxy-install", runner)
+    install_error = _install_error(vibe_install) if vibe_install.returncode != 0 else ""
+    journey.step("install VibeProxy adapter prerequisite", "gateway", lambda: (
+        None if vibe_install.returncode == 0 else f"VibeProxy install failed: {install_error}"
+    ), cases=[])
+    if vibe_install.returncode != 0:
+        journey.step("switch to VibeProxy messages protocol in both projects", "gateway",
+                     lambda: f"prerequisite not met: {install_error}", cases=["S-018.3"])
+        return
 
     vibe_adapter = _cli(["kb", "config", "set", "--scope", "platform", "platform.adapters.llm",
                          "@kb-labs/adapters-vibeproxy", "--json"], "S-018.3", runner)

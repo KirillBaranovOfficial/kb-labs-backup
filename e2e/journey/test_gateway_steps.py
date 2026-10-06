@@ -98,8 +98,12 @@ class GatewayStepTests(unittest.TestCase):
             "KB_JOURNEY_PLATFORM_ROOT": directory + "/platform",
             "OPENAI_API_KEY": "fake-openai-key",
         }, clear=False):
+            calls = []
             def successful(command, **_kwargs):
-                if command[1:3] == ["config", "get"]:
+                calls.append(command)
+                if command[:3] == ["kb", "marketplace", "install"]:
+                    output = '{"ok":true,"data":{"package":"@kb-labs/adapters-vibeproxy"}}'
+                elif command[1:3] == ["config", "get"]:
                     output = '{"ok":true,"data":{"value":"${OPENAI_API_KEY}"}}'
                 elif command[1:3] == ["config", "set"] and any("baseURL" in arg for arg in command):
                     platform_root = str(Path(directory, "platform").resolve())
@@ -131,6 +135,41 @@ class GatewayStepTests(unittest.TestCase):
             "S-017.5": "PASS",
             "S-018.1": "PASS", "S-018.2": "PASS", "S-018.3": "PASS",
         })
+        install_index = next(i for i, call in enumerate(calls) if call[:3] == ["kb", "marketplace", "install"])
+        bind_index = next(i for i, call in enumerate(calls) if "@kb-labs/adapters-vibeproxy" in call
+                          and "platform.adapters.llm" in call)
+        self.assertLess(install_index, bind_index)
+
+    def test_failed_vibeproxy_install_blocks_s018_3_without_cascade(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_PROJECT_ROOT": "/fixture/project-a",
+            "KB_JOURNEY_PROJECT_B_ROOT": "/fixture/project-b",
+            "KB_JOURNEY_PROJECT_ID": "project-a",
+            "KB_JOURNEY_PROJECT_B_ID": "project-b",
+            "KB_JOURNEY_LLM_MOCK_BASE_URL": "http://mock-llm:8317",
+            "OPENAI_API_KEY": "fake-openai-key",
+        }, clear=False):
+            calls = []
+
+            def install_fails(command, **_kwargs):
+                calls.append(command)
+                if command[:3] == ["kb", "marketplace", "install"]:
+                    return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {
+                        "code": "KB_MARKETPLACE_PACKAGE_NOT_FOUND", "message": "VibeProxy package unavailable",
+                    }}), "")
+                return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
+
+            journey = Journey("local", "provider-install-fails")
+            run_llm_provider_steps(journey, runner=install_fails)
+
+        claims = {item["claimId"]: item for item in journey.result().case_run["claims"]}
+        self.assertEqual(claims["S-018.3"]["status"], "FAIL")
+        step = next(item for item in journey.result().steps
+                    if item["name"] == "switch to VibeProxy messages protocol in both projects")
+        self.assertIn("prerequisite not met: VibeProxy package unavailable", step["message"])
+        self.assertFalse(any("@kb-labs/adapters-vibeproxy" in call
+                             and call[:3] != ["kb", "marketplace", "install"] for call in calls))
 
     def test_provider_steps_reject_success_exit_with_wrong_provider_content(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {

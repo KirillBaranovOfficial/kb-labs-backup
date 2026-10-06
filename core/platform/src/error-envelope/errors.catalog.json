@@ -1047,6 +1047,15 @@
       "hint": "kb marketplace install {package} --scope platform"
     },
     {
+      "code": "KB_ADAPTER_SLOT_MISMATCH",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Adapter package {package} does not declare platform slot {slot}.",
+      "hint": "Install a provider that declares {slot} with `kb marketplace install <pkg> --scope platform`, then retry."
+    },
+    {
       "code": "KB_ADAPTER_PROJECT_SCOPE",
       "area": "plugin",
       "stage": "run",
