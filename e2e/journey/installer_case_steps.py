@@ -316,12 +316,10 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                 or installation.get("platformVersion") != exact_version):
             raise RuntimeError(f"receipt-backed status did not confirm {channel} {exact_version}")
 
-    for channel, index, root_name, claim in (
-        ("stable", stable_index, "s181-stable-root", "S-181.1"),
-        ("canary", canary_index, "s181-canary-root", "S-181.2"),
-    ):
-        journey.step(f"plan, apply, and verify {channel} install", "platform.install",
-                     lambda c=channel, i=index, r=root_name: channel_plan(c, i, r), cases=[claim])
+    journey.step("plan, apply, and verify stable install", "platform.install",
+                 lambda: channel_plan("stable", stable_index, "s181-stable-root"), cases=["S-181.1"])
+    journey.step("plan, apply, and verify canary install", "platform.install",
+                 lambda: channel_plan("canary", canary_index, "s181-canary-root"), cases=["S-181.2"])
 
     secret_root = platform_root.parent / "s181-secret-root"
     def secret_apply() -> None:

@@ -193,20 +193,20 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         raise RuntimeError("secured marketplace journey needs KB_JOURNEY_ADMIN_PASSWORD")
     login = ["kb", "auth", "login", "--gateway-url", gateway,
              "--email", email, "--password", password, "--json"]
-    with invocation_context(step_id="S-041.12"):
+    with invocation_context(step_id="marketplace.authenticated-session"):
         result = _run(login, cwd=project, env=env, runner=runner)
     if result.returncode != 0:
         raise RuntimeError("secured admin CLI login failed; check the isolated journey credentials")
 
     status = ["kb", "auth", "status", "--json"]
-    with invocation_context(step_id="S-041.12"):
+    with invocation_context(step_id="marketplace.authenticated-session"):
         auth_status = _json(_run(status, cwd=project, env=env, runner=runner), status)
     session = auth_status.get("session")
     if not isinstance(session, dict) or session.get("authenticated") is not True:
         raise RuntimeError("secured marketplace CLI login did not save a user session")
 
     command = ["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"]
-    with invocation_context(step_id="S-041.12"):
+    with invocation_context(step_id="marketplace.authenticated-session"):
         resumed = _run(command, cwd=project, env=env, runner=runner)
     payload = read_ux_cli_result(resumed.stdout, resumed.returncode)
     failure = payload.get("error") if isinstance(payload, dict) else None

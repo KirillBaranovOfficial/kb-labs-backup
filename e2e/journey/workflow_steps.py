@@ -579,17 +579,21 @@ def _real_work_case(journey: Journey, *, env: dict[str, str], project: Path,
         "          command: 'printf done > .kb/workflow-marker'\n",
         encoding="utf-8")
     try:
-        for step_id in ("S-028.1", "S-028.2"):
-            def lint(claim_id: str = step_id) -> None:
-                result = _case_cli(claim_id, ["workflow", "lint"], env=env, cwd=project)
-                if result.returncode or "real-work.yml" not in result.stdout or "valid" not in result.stdout.lower():
-                    raise AssertionError(f"workflow lint rejected real-work.yml: {result.stdout!r}")
-            journey.step("lint real-work workflow", "workflow", lint, cases=[step_id])
-            if step_id == "S-028.1":
-                with definition.open("a", encoding="utf-8") as stream:
-                    stream.write(
-                        "      - name: Check local health\n        id: check-health\n        uses: builtin:shell\n        with:\n"
-                        f"          command: 'curl -fsS http://127.0.0.1:{port}/health'\n")
+        def lint_first_step() -> None:
+            result = _case_cli("S-028.1", ["workflow", "lint"], env=env, cwd=project)
+            if result.returncode or "real-work.yml" not in result.stdout or "valid" not in result.stdout.lower():
+                raise AssertionError(f"workflow lint rejected real-work.yml: {result.stdout!r}")
+        journey.step("lint real-work workflow", "workflow", lint_first_step, cases=["S-028.1"])
+        with definition.open("a", encoding="utf-8") as stream:
+            stream.write(
+                "      - name: Check local health\n        id: check-health\n        uses: builtin:shell\n        with:\n"
+                f"          command: 'curl -fsS http://127.0.0.1:{port}/health'\n")
+
+        def lint_both_steps() -> None:
+            result = _case_cli("S-028.2", ["workflow", "lint"], env=env, cwd=project)
+            if result.returncode or "real-work.yml" not in result.stdout or "valid" not in result.stdout.lower():
+                raise AssertionError(f"workflow lint rejected real-work.yml: {result.stdout!r}")
+        journey.step("lint real-work workflow", "workflow", lint_both_steps, cases=["S-028.2"])
 
         def execute() -> None:
             data = _case_json_cli("S-028.3", ["workflow", "run", "--workflow-id=real-work", "--json"],
