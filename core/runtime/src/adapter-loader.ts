@@ -35,6 +35,8 @@ export interface LoadedAdapterModule {
 interface DependencyGraphNode {
   /** Adapter name (config key) */
   name: string;
+  /** Configured package specifier used to load this slot. */
+  modulePath?: string;
   /** Adapter manifest */
   manifest: AdapterManifest;
   /** Loaded module */
@@ -220,6 +222,7 @@ export class AdapterLoader {
 
       graph.addNode({
         name,
+        modulePath: config.module,
         manifest: module.manifest,
         module,
         config: config.config,
@@ -300,7 +303,10 @@ export class AdapterLoader {
   async loadAdapters(
     configs: Record<string, AdapterConfig>,
     loadModule: (modulePath: string) => Promise<LoadedAdapterModule>,
-    sharedDeps: { logger?: ILogger } = {},
+    sharedDeps: {
+      logger?: ILogger;
+      onAdapterLoadFailure?: (slot: string, packageName: string, error: unknown) => void;
+    } = {},
   ): Promise<Map<string, unknown>> {
     // Step 1: Build dependency graph
     const graph = await this.buildDependencyGraph(configs, loadModule);
@@ -312,37 +318,40 @@ export class AdapterLoader {
     const adapters = new Map<string, unknown>();
 
     for (const node of sorted) {
-      // Build deps object for factory function
-      const deps: Record<string, unknown> = sharedDeps.logger ? { logger: sharedDeps.logger } : {};
+      try {
+        // Build deps object for factory function
+        const deps: Record<string, unknown> = sharedDeps.logger ? { logger: sharedDeps.logger } : {};
 
-      // Get dependency aliases
-      const aliases = this.getDependencyAliases(node.manifest);
+        // Get dependency aliases
+        const aliases = this.getDependencyAliases(node.manifest);
 
-      // Add required dependencies
-      for (const depId of node.requiredDeps) {
-        const depInstance = adapters.get(depId);
-        if (!depInstance) {
-          throw new Error(
-            `Internal error: Required dependency "${depId}" not loaded before "${node.name}"`
-          );
-        }
-        const alias = aliases.get(depId) ?? depId;
-        deps[alias] = depInstance;
-      }
-
-      // Add optional dependencies (if present)
-      for (const depId of node.optionalDeps) {
-        const depInstance = adapters.get(depId);
-        if (depInstance) {
+        // Add required dependencies
+        for (const depId of node.requiredDeps) {
+          const depInstance = adapters.get(depId);
+          if (!depInstance) {
+            throw new Error(
+              `Required adapter dependency "${depId}" failed to load before "${node.name}".`,
+            );
+          }
           const alias = aliases.get(depId) ?? depId;
           deps[alias] = depInstance;
         }
-        // If optional dep missing, skip
-      }
 
-      // Create adapter instance
-      const instance = await node.module.createAdapter(node.config, deps);
-      adapters.set(node.name, instance);
+        // Add optional dependencies (if present)
+        for (const depId of node.optionalDeps) {
+          const depInstance = adapters.get(depId);
+          if (depInstance) {
+            const alias = aliases.get(depId) ?? depId;
+            deps[alias] = depInstance;
+          }
+        }
+
+        const instance = await node.module.createAdapter(node.config, deps);
+        adapters.set(node.name, instance);
+      } catch (error) {
+        if (!sharedDeps.onAdapterLoadFailure) {throw error;}
+        sharedDeps.onAdapterLoadFailure(node.name, node.modulePath ?? node.name, error);
+      }
     }
 
     return adapters;

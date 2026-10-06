@@ -137,6 +137,11 @@ func adapterChecks(ctx context.Context, client *http.Client, healthURL string, b
 		Slot           string `json:"slot"`
 		Mode           string `json:"mode"`
 		Implementation string `json:"implementation"`
+		Reason         string `json:"reason"`
+		CorrelationID  string `json:"correlationId"`
+		Action         struct {
+			Command string `json:"command"`
+		} `json:"action"`
 	}
 	status, err := getJSON(ctx, client, parsed.String(), &statuses)
 	if status == 0 {
@@ -159,10 +164,13 @@ func adapterChecks(ctx context.Context, client *http.Client, healthURL string, b
 	for _, adapter := range statuses {
 		seen[adapter.Slot] = true
 		provider, hasPersistentProvider := expected[adapter.Slot]
-		fallback := hasPersistentProvider && (adapter.Mode == "inmemory" || adapter.Mode == "noop")
+		fallback := adapter.Mode == "degraded" || hasPersistentProvider && (adapter.Mode == "inmemory" || adapter.Mode == "noop")
 		detail := fmt.Sprintf("%s is loaded in %s mode using %s.", adapter.Slot, adapter.Mode, adapter.Implementation)
 		hint := ""
-		if fallback {
+		if adapter.Mode == "degraded" {
+			detail = fmt.Sprintf("%s is degraded because %s failed to load (reason: %s, correlationId: %s).", adapter.Slot, adapter.Implementation, adapter.Reason, adapter.CorrelationID)
+			hint = adapter.Action.Command
+		} else if fallback {
 			detail = fmt.Sprintf("%s has a configured persistent provider (%s) but loaded the %s fallback.", adapter.Slot, provider, adapter.Mode)
 			hint = fmt.Sprintf("From a project using this platform, run `kb adapter bind %s %s`.", adapter.Slot, provider)
 		}

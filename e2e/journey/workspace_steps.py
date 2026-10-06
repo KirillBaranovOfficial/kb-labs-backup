@@ -22,6 +22,7 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
         shutil.copy2(repo_root / ".kb/marketplace.lock", kb_home / "marketplace.lock")
         env["KB_HOME"] = str(kb_home)
         env.pop("KB_NET_OFFSET", None)
+        env["GATEWAY_PORT"] = "1"
 
         def run(*args: str) -> subprocess.CompletedProcess[str]:
             return run_command(["node", str(cli), *args], cwd=repo_root, env=env, timeout=120)
@@ -104,7 +105,8 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
             if not isinstance(payload, dict):
                 return "workspace adapter listing returned non-object UX data"
             rows = payload.get("adapters", [])
-            implementations = {row.get("slot"): row.get("implementation") for row in rows if isinstance(row, dict)}
+            adapter_rows = {row.get("slot"): row for row in rows if isinstance(row, dict)}
+            implementations = {slot: row.get("implementation") for slot, row in adapter_rows.items()}
             expected = {
                 "storage": "@kb-labs/adapters-fs",
                 "cache": "@kb-labs/adapters-state-broker",
@@ -120,6 +122,11 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
             missing = [slot for slot, package in expected.items() if implementations.get(slot) != package]
             if missing:
                 return f"workspace adapter listing did not resolve configured workspace packages for: {', '.join(missing)}"
+            unknown = [slot for slot in expected if adapter_rows[slot].get("runtimeStatus") != "unknown"
+                       or adapter_rows[slot].get("mode") != "unknown"
+                       or adapter_rows[slot].get("action", {}).get("command") != "kb-create start"]
+            if unknown:
+                return f"stopped host adapter rows did not report unknown status with `kb-create start` for: {', '.join(unknown)}"
             return None
 
         journey.step("list configured workspace adapters", "workspace-cli", list_workspace_adapters, cases=["S-179.5"])
