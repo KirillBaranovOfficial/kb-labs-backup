@@ -31,6 +31,10 @@ events outside the configured retention period.
 | S-191.4 | Inspect `platform.adapterOptions.analytics` in `.kb/kb.config.jsonc`, then query for an event older than 90 days after startup and again after a day of uptime | The default retention is 90 days; events older than that age are absent after startup and at least daily while recent events remain queryable. |
 | S-191.5 | Set `platform.adapterOptions.analytics.retentionDays` to `30`, restart the platform, and query for an event older than 30 days after startup and again after a day of uptime | SQLite analytics removes events older than the configured 30-day age on startup and at least daily. |
 | S-191.6 | Have the fixture plugin perform cache, storage, and vector-store operations, then query `/api/v1/analytics/events?from=<before-operations>&to=<after-operations>` | The time range contains no raw cache, storage, or vector-store operation events; fixture LLM and embeddings usage events remain queryable with their usage metrics. |
+| S-191.7 | In an isolated installed platform, set `platform.adapterOptions.analytics.retentionDays` to `0`, then start the host | Startup fails with catalogued `KB_CONFIG_INVALID`, identifies `platform.adapterOptions.analytics.retentionDays` as a positive integer requirement, and gives the exact correction command `kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90`; it does not surface `KB_RUNTIME_UNEXPECTED`. |
+
+Periodic prune failure logging previously recorded as S-191.8 is covered by
+[S-211.3](S-211-optional-adapter-failure-visibility.md#steps).
 
 ## Analytics boundary
 

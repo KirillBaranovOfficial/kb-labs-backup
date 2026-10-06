@@ -30,4 +30,7 @@ A developer uses the marketplace-installed Mind plugin to index a project and re
 | S-016.5 | Run `kb mind ask --text "explain the plugin system" --agent` | Agent output is valid JSON with `answer` and `sources`; each source identifies a project file. |
 | S-016.6 | Unbind the LLM adapter and run the same `kb mind ask` command | The command returns a typed error naming the missing `llm` capability and includes a `kb adapter bind llm <installed-adapter-package>` hint. |
 
+The optional Qdrant failure behavior previously recorded as S-016.7 is covered by
+[S-211.1](S-211-optional-adapter-failure-visibility.md#steps).
+
 Mind is an optional marketplace plugin outside the platform core release contour.

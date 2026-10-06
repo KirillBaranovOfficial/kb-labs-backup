@@ -52,6 +52,9 @@ of that path uses the same ID.
 | S-054.18 | On an installed platform whose built-in adapter manifests provide defaults and which has no user-written `.kb/kb.config.json[c]`, run `kb adapter list --json` from a registered project | The command succeeds and reports the same installed default providers as S-054.1. A missing optional user config is a valid default state on installed platforms as well as solo development checkouts; absent `platform.mode` does not make the config invalid. |
 | S-054.19 | Run a workflow that requires host gateway dispatch when its runtime has no `KB_GATEWAY_URL` | The command returns the typed `KB_HOST_SERVICE_ADDRESS_MISSING` error, names the missing `gateway` address, preserves its correlation ID, and tells the operator to start the host with `kb-create start`. |
 
+Redis outage visibility previously recorded as S-054.20 is covered by
+[S-211.2](S-211-optional-adapter-failure-visibility.md#steps).
+
 ## Dependencies
 
 - Workflow run-record persistence through the configured `IStorage` adapter is
