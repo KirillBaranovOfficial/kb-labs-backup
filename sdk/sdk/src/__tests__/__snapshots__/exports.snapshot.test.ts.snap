@@ -98,7 +98,9 @@ exports[`SDK Exports Snapshot > Type Exports > should export core contract types
 
 exports[`SDK Exports Snapshot > should match snapshot of all exported names 1`] = `
 [
+  "AdapterConfigError",
   "AdapterCredentialsMissingError",
+  "AdapterOperationError",
   "AdapterUnavailableError",
   "DEFAULT_TRANSIENT_RETRY_POLICY",
   "DELETE",
@@ -113,6 +115,7 @@ exports[`SDK Exports Snapshot > should match snapshot of all exported names 1`] 
   "PATCH",
   "POST",
   "PUT",
+  "PlatformConfigError",
   "PluginError",
   "TimingTracker",
   "buildConfirmationSignal",
@@ -213,7 +216,9 @@ exports[`SDK Exports Snapshot > should match snapshot of all exported names 1`] 
 
 exports[`SDK Exports Snapshot > should match snapshot of exported functions 1`] = `
 [
+  "AdapterConfigError",
   "AdapterCredentialsMissingError",
+  "AdapterOperationError",
   "AdapterUnavailableError",
   "DELETE",
   "FileFeedbackStore",
@@ -227,6 +232,7 @@ exports[`SDK Exports Snapshot > should match snapshot of exported functions 1`] 
   "PATCH",
   "POST",
   "PUT",
+  "PlatformConfigError",
   "PluginError",
   "TimingTracker",
   "buildConfirmationSignal",

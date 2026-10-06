@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { AdapterLoader, DependencyGraph } from '../adapter-loader.js';
-import type { AdapterManifest } from '@kb-labs/core-platform';
+import type { AdapterManifest, ILogger } from '@kb-labs/core-platform';
 import type { LoadedAdapterModule, AdapterConfig } from '../adapter-loader.js';
 
 describe('DependencyGraph', () => {
@@ -129,6 +129,30 @@ describe('DependencyGraph', () => {
 });
 
 describe('AdapterLoader', () => {
+  it('provides the platform logger to adapter factories through shared dependencies', async () => {
+    let logger: ILogger;
+    logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn(), debug: vi.fn(), trace: vi.fn(),
+      child: vi.fn(() => logger),
+    };
+    const createAdapter = vi.fn((_config, deps) => {
+      expect(deps.logger).toBe(logger);
+      return {};
+    });
+    const loader = new AdapterLoader();
+    const configs = { cache: { module: '@example/cache', config: {} } };
+    const loadModule = vi.fn(async (): Promise<LoadedAdapterModule> => ({
+      manifest: {
+        manifestVersion: '1.0.0', id: 'cache', name: 'Cache', version: '1.0.0', type: 'core', implements: 'ICache',
+      },
+      createAdapter,
+    }));
+
+    await loader.loadAdapters(configs, loadModule, { logger });
+
+    expect(createAdapter).toHaveBeenCalledTimes(1);
+  });
+
   it('should build dependency graph from configs', async () => {
     const loader = new AdapterLoader();
 

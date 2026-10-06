@@ -7,10 +7,38 @@ import json
 from pathlib import Path
 
 from installer_case_steps import (_seed_doctor_fixture, run_doctor_root_isolation_step,
-                                  run_installer_case_steps, run_uninstall_decline_step)
+                                  run_analytics_invalid_retention_step, run_installer_case_steps,
+                                  run_uninstall_decline_step)
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_invalid_analytics_retention_claim_requires_catalogued_start_error(self):
+        with tempfile.TemporaryDirectory(prefix="journey-invalid-analytics-retention-") as temp:
+            root = Path(temp)
+            config_path = root / ".kb/kb.config.jsonc"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text('{"platform":{"adapterOptions":{"analytics":{"retentionDays":90}}}}\n')
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                self.assertEqual(json.loads(config_path.read_text())["platform"]["adapterOptions"]["analytics"]["retentionDays"], 0)
+                payload = {"ok": False, "error": {
+                    "code": "KB_CONFIG_INVALID",
+                    "message": "Invalid platform.adapterOptions.analytics.retentionDays",
+                    "cause": "must be a positive integer",
+                    "hint": "Run kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90",
+                }}
+                return subprocess.CompletedProcess(args, 1, json.dumps(payload), "")
+
+            journey = run_analytics_invalid_retention_step(mode="local", launcher="kb-create",
+                                                           platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].cases, ["S-191.7"])
+        self.assertEqual(journey.steps[0].status, "PASS")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1], "start")
+
     def test_doctor_root_isolation_claim_checks_repair_and_main_status(self):
         with tempfile.TemporaryDirectory(prefix="journey-doctor-isolation-") as temp:
             root = Path(temp)
@@ -104,7 +132,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                       for status in [step.status]}
             expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
-                        "S-025.3", "S-025.4", "S-025.5", "S-025.6",
+                        "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",
                         "S-187.4", "S-187.5"}
             self.assertEqual(set(claims), expected)

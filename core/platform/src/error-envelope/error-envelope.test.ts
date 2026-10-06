@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
+import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
 import {
   ERROR_STAGES,
@@ -124,6 +124,24 @@ describe('renderTemplate', () => {
 });
 
 describe('toErrorEnvelope (platform errors)', () => {
+  // case: S-191.7
+  it('maps invalid adapter options to an actionable KB_CONFIG_INVALID envelope', () => {
+    const envelope = toErrorEnvelope(new AdapterConfigError(
+      'platform.adapterOptions.analytics.retentionDays',
+      'must be a positive integer',
+      'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90',
+    ));
+
+    expect(envelope).toMatchObject({
+      code: 'KB_CONFIG_INVALID',
+      message: 'Adapter option "platform.adapterOptions.analytics.retentionDays" is invalid: must be a positive integer.',
+      hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90',
+      details: { path: 'platform.adapterOptions.analytics.retentionDays' },
+      cause: 'must be a positive integer',
+    });
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+  });
+
   it('maps platform config load failures to actionable KB_CONFIG_INVALID envelopes', () => {
     const error = new PlatformConfigError('/tmp/platform/.kb/kb.config.json', 'parse', 'Unexpected token');
     const envelope = toErrorEnvelope(error);
@@ -183,6 +201,23 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(envelope.actions?.[0]?.command).toBe(
       'kb adapter bind llm @kb-labs/adapters-openai',
     );
+  });
+
+  // case: S-211.4
+  it('maps exhausted adapter operations to a catalogued actionable failure', () => {
+    const envelope = toErrorEnvelope(new AdapterOperationError(
+      'cache',
+      'get',
+      'Redis cache operation failed.',
+      new Error('connection lost'),
+    ));
+
+    expect(envelope).toMatchObject({
+      code: 'KB_ADAPTER_OPERATION_FAILED',
+      message: 'The cache adapter failed during get.',
+      hint: expect.stringContaining('kb logs query'),
+      details: { slot: 'cache', operation: 'get' },
+    });
   });
 
   it('maps a missing vector store to a bind action for that capability', () => {

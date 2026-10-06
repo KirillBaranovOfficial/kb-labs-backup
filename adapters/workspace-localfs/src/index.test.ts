@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
@@ -31,6 +31,16 @@ async function exists(p: string): Promise<boolean> {
 }
 
 describe('LocalFsWorkspaceAdapter', () => {
+  // case: S-211.5
+  it('preserves workspace registry parse failures instead of reporting a missing workspace', async () => {
+    const registryDir = path.join(tmp, 'registry');
+    await mkdir(registryDir, { recursive: true });
+    await writeFile(path.join(registryDir, 'ws_broken.json'), '{', 'utf8');
+    const adapter = new LocalFsWorkspaceAdapter({ workspace: { cwd: tmp }, registryDir });
+
+    await expect(adapter.getStatus('ws_broken')).rejects.toThrow(SyntaxError);
+  });
+
   it('materializes and attaches workspace', async () => {
     const adapter = new LocalFsWorkspaceAdapter({ workspace: { cwd: tmp } });
     const workspace = await adapter.materialize({ basePath: './demo' });

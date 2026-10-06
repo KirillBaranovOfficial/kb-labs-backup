@@ -31,6 +31,46 @@ describe('SQLiteAnalytics', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  // case: S-191.7
+  it('maps a non-positive retentionDays value to KB_CONFIG_INVALID', () => {
+    let failure: unknown;
+    try {
+      new SQLiteAnalytics({ dbPath: join(tmpDir, 'invalid.sqlite'), retentionDays: 0 });
+    } catch (error) {
+      failure = error;
+    }
+    expect(toErrorEnvelope(failure)).toMatchObject({
+      code: 'KB_CONFIG_INVALID',
+      message: 'Adapter option "platform.adapterOptions.analytics.retentionDays" is invalid: must be a positive integer.',
+      hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90',
+      details: { path: 'platform.adapterOptions.analytics.retentionDays' },
+    });
+  });
+
+  // case: S-211.3
+  it('logs scheduled pruning failures through the injected platform logger', async () => {
+    vi.useFakeTimers();
+    const databasePath = join(tmpDir, 'prune-failure.sqlite');
+    const logger = {
+      error: vi.fn(), info: vi.fn(), warn: vi.fn(), fatal: vi.fn(), debug: vi.fn(), trace: vi.fn(),
+      child: vi.fn(),
+    };
+    const adapter = new SQLiteAnalytics({ dbPath: databasePath, logger });
+    try {
+      const rawDb = new Database(databasePath);
+      rawDb.exec('DROP TABLE events');
+      rawDb.close();
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+      expect(logger.error).toHaveBeenCalledWith('Analytics retention pruning failed', expect.any(Error), expect.objectContaining({
+        adapter: 'analytics-sqlite',
+        operation: 'retention-prune',
+      }));
+    } finally {
+      adapter.close();
+      vi.useRealTimers();
+    }
+  });
+
   // ── track / getEvents ──────────────────────────────────────────────────────
 
   it('track stores event and getEvents returns it', async () => {

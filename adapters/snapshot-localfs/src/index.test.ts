@@ -46,6 +46,18 @@ async function prepareWorkspace(registryDir: string): Promise<{ workspaceId: str
 }
 
 describe('LocalFsSnapshotAdapter', () => {
+  // case: S-211.5
+  it('preserves snapshot record parse failures instead of reporting a missing snapshot', async () => {
+    const storageDir = path.join(tmp, 'snapshots');
+    const recordsDir = path.join(storageDir, '.records');
+    await mkdir(recordsDir, { recursive: true });
+    await writeFile(path.join(recordsDir, 'snap_broken.json'), '{', 'utf8');
+    const snapshot = new LocalFsSnapshotAdapter({ workspace: { cwd: tmp }, storageDir });
+
+    await expect(snapshot.restore({ snapshotId: 'snap_broken', targetPath: './restore' }))
+      .rejects.toThrow(SyntaxError);
+  });
+
   it('captures and restores workspace snapshot, keeping default state outside the project', async () => {
     const { workspaceId, filePath } = await prepareWorkspace(
       resolveRuntimeStatePath(tmp, ['runtime', 'workspace-registry'])
