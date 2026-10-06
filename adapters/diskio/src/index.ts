@@ -126,7 +126,7 @@ export class DiskStorageAdapter implements IStorage {
       return true;
     } catch (error) {
       if (isMissing(error)) return false;
-      return false;
+      throw error;
     }
   }
 

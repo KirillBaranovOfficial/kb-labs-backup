@@ -20,6 +20,8 @@
 
 import Redis, { type RedisOptions } from "ioredis";
 import type { ICache } from "@kb-labs/sdk/adapters";
+import type { ILogger } from "@kb-labs/sdk/adapters";
+import { AdapterOperationError } from "@kb-labs/sdk";
 
 // Re-export manifest
 export { manifest } from "./manifest.js";
@@ -44,10 +46,13 @@ export interface RedisCacheConfig extends RedisOptions {
 export class RedisCacheAdapter implements ICache {
   private client: Redis;
   private keyPrefix: string;
+  private pendingConnectionError?: Error;
+  private readonly logger?: ILogger;
 
-  constructor(config: RedisCacheConfig = {}) {
+  constructor(config: RedisCacheConfig = {}, logger?: ILogger) {
     const { url, keyPrefix, ...redisOptions } = config;
     this.keyPrefix = keyPrefix ?? "kb:";
+    this.logger = logger;
 
     if (url) {
       this.client = new Redis(url, {
@@ -65,12 +70,31 @@ export class RedisCacheAdapter implements ICache {
       });
     }
 
-    // Prevent unhandled error events from crashing the process on reconnect failures
-    this.client.on("error", () => {});
+    this.client.on("error", (error) => {
+      this.pendingConnectionError = error;
+      this.logger?.error("Redis cache connection error", error, {
+        adapter: "redis",
+        operation: "connection",
+        endpoint: url ? "configured-url" : `${redisOptions.host ?? "localhost"}:${redisOptions.port ?? 6379}`,
+      });
+    });
+  }
+
+  private async run<T>(operation: string, action: () => Promise<T>): Promise<T> {
+    if (this.pendingConnectionError) {
+      const error = this.pendingConnectionError;
+      this.pendingConnectionError = undefined;
+      throw new AdapterOperationError("cache", operation, "Redis reported a connection failure before this cache operation.", error);
+    }
+    try {
+      return await action();
+    } catch (error) {
+      throw new AdapterOperationError("cache", operation, "Redis cache operation failed.", error);
+    }
   }
 
   async get<T>(key: string): Promise<T | null> {
-    const value = await this.client.get(key);
+    const value = await this.run("get", () => this.client.get(key));
     if (value === null) {
       return null;
     }
@@ -88,31 +112,31 @@ export class RedisCacheAdapter implements ICache {
 
     if (ttl !== undefined) {
       // TTL in milliseconds, Redis uses seconds
-      await this.client.setex(key, Math.ceil(ttl / 1000), serialized);
+      await this.run("set", () => this.client.setex(key, Math.ceil(ttl / 1000), serialized));
     } else {
-      await this.client.set(key, serialized);
+      await this.run("set", () => this.client.set(key, serialized));
     }
   }
 
   async delete(key: string): Promise<void> {
-    await this.client.del(key);
+    await this.run("delete", () => this.client.del(key));
   }
 
   async clear(pattern?: string): Promise<void> {
     if (!pattern) {
       // Clear all keys with our prefix
-      await this.client.flushdb();
+      await this.run("clear", () => this.client.flushdb());
       return;
     }
 
     // Find keys matching pattern
     const fullPattern = `${this.keyPrefix}${pattern}`;
-    const keys = await this.client.keys(fullPattern);
+    const keys = await this.run("clear", () => this.client.keys(fullPattern));
 
     if (keys.length > 0) {
       // Remove prefix before deleting (ioredis adds it automatically)
       const keysWithoutPrefix = keys.map((k) => k.slice(this.keyPrefix.length));
-      await this.client.del(...keysWithoutPrefix);
+      await this.run("clear", () => this.client.del(...keysWithoutPrefix));
     }
   }
 
@@ -121,7 +145,7 @@ export class RedisCacheAdapter implements ICache {
   // ═══════════════════════════════════════════════════════════════════════
 
   async zadd(key: string, score: number, member: string): Promise<void> {
-    await this.client.zadd(key, score, member);
+    await this.run("zadd", () => this.client.zadd(key, score, member));
   }
 
   async zrangebyscore(
@@ -129,11 +153,11 @@ export class RedisCacheAdapter implements ICache {
     min: number,
     max: number,
   ): Promise<string[]> {
-    return this.client.zrangebyscore(key, min, max);
+    return this.run("zrangebyscore", () => this.client.zrangebyscore(key, min, max));
   }
 
   async zrem(key: string, member: string): Promise<void> {
-    await this.client.zrem(key, member);
+    await this.run("zrem", () => this.client.zrem(key, member));
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -149,11 +173,11 @@ export class RedisCacheAdapter implements ICache {
 
     if (ttl !== undefined) {
       // SET key value PX milliseconds NX
-      const result = await this.client.set(key, serialized, "PX", ttl, "NX");
+      const result = await this.run("setIfNotExists", () => this.client.set(key, serialized, "PX", ttl, "NX"));
       return result === "OK";
     } else {
       // SET key value NX (no TTL)
-      const result = await this.client.set(key, serialized, "NX");
+      const result = await this.run("setIfNotExists", () => this.client.set(key, serialized, "NX"));
       return result === "OK";
     }
   }
@@ -163,7 +187,7 @@ export class RedisCacheAdapter implements ICache {
    * Call this on app shutdown.
    */
   async disconnect(): Promise<void> {
-    await this.client.quit();
+    await this.run("disconnect", () => this.client.quit());
   }
 }
 
@@ -171,8 +195,8 @@ export class RedisCacheAdapter implements ICache {
  * Create Redis cache adapter.
  * This is the factory function called by initPlatform() when loading adapters.
  */
-export function createAdapter(config?: RedisCacheConfig): RedisCacheAdapter {
-  return new RedisCacheAdapter(config);
+export function createAdapter(config?: RedisCacheConfig, deps: { logger?: ILogger } = {}): RedisCacheAdapter {
+  return new RedisCacheAdapter(config, deps.logger);
 }
 
 // Default export for direct import
