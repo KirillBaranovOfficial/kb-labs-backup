@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,5 +76,33 @@ func TestRunSealsNormalizedReleaseExport(t *testing.T) {
 func TestRunRejectsMissingPublishPaths(t *testing.T) {
 	if err := run("", "", ""); err == nil {
 		t.Fatal("expected missing paths")
+	}
+}
+
+func TestSealingFailureEnvelopePreservesValidationReason(t *testing.T) {
+	reason := "secret manifest requirement gateway.jwt must declare env and services"
+	envelope, err := sealingFailureEnvelope(&sealingFailure{
+		gate: "manifest validation",
+		rule: reason,
+		hint: "Add env and services to the secret requirement described in the cause, then rerun release-index preparation.",
+		err:  errors.New(reason),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Cause != reason {
+		t.Fatalf("cause = %q, want %q", envelope.Cause, reason)
+	}
+	if envelope.Details["gate"] != "manifest validation" || envelope.Details["rule"] != reason {
+		t.Fatalf("details = %#v", envelope.Details)
+	}
+	if envelope.Code != "KB_RELEASE_INDEX_SEAL_FAILED" {
+		t.Fatalf("code = %q", envelope.Code)
+	}
+	if envelope.Retryable {
+		t.Fatal("deterministic manifest validation must not be retryable")
+	}
+	if envelope.Hint == "" {
+		t.Fatal("expected actionable remediation hint")
 	}
 }

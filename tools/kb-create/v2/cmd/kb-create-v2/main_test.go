@@ -17,6 +17,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/shim"
 )
@@ -34,6 +35,53 @@ func TestRequestWithGeneratedSecretsAddsOnlyDeclaredGeneratedSecretInputs(t *tes
 	got, changed, err = requestWithGeneratedSecrets(got, artifacts)
 	if err != nil || changed || len(got.SecretInputs) != 1 {
 		t.Fatalf("second request/changed/error = %#v / %v / %v", got, changed, err)
+	}
+}
+
+// case: S-005.6
+func TestClientStatusAndDoctorAreHealthyWithoutHost(t *testing.T) {
+	root := t.TempDir()
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "client"}}
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "client-r1", Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	statusFile, err := os.CreateTemp(t.TempDir(), "status-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusFile.Close()
+	if code := (invocation{Operation: "status", PlatformRoot: root, JSON: true}).runStatus(statusFile); code != 0 {
+		t.Fatalf("status exit = %d", code)
+	}
+	if _, err := statusFile.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(statusFile).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status["profile"] != "client" || status["installed"] != true || status["running"] != false {
+		t.Fatalf("client status = %#v", status)
+	}
+
+	doctorFile, err := os.CreateTemp(t.TempDir(), "doctor-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer doctorFile.Close()
+	if code := (invocation{Operation: "doctor", PlatformRoot: root, JSON: true}).runDoctor(doctorFile); code != 0 {
+		t.Fatalf("doctor exit = %d", code)
+	}
+	if _, err := doctorFile.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var diagnosis map[string]any
+	if err := json.NewDecoder(doctorFile).Decode(&diagnosis); err != nil {
+		t.Fatal(err)
+	}
+	if diagnosis["profile"] != "client" || diagnosis["ok"] != true || diagnosis["running"] != false {
+		t.Fatalf("client doctor = %#v", diagnosis)
 	}
 }
 

@@ -37,6 +37,15 @@ class SecuredConnectionContractTests(unittest.TestCase):
             "code": "KB_AUTH_FORBIDDEN", "message": "Permission denied: users:read", "hint": "Ask an administrator",
         }})
 
+    def test_client_apply_claim_requires_client_profile_empty_services_and_shim(self):
+        payload = {"ok": True, "profile": "client", "services": [], "shim": {"path": "/tmp/kb"},
+                   "receipt": {"plan": {"request": {"platformRoot": "/tmp/client"}}}}
+        validate_cli_case("S-005.1", 0, "", payload, root="/tmp/client")
+        for key, value in (("profile", "default"), ("services", ["gateway"]), ("shim", None)):
+            invalid = {**payload, key: value}
+            with self.subTest(key=key), self.assertRaisesRegex(AssertionError, "S-005.1"):
+                validate_cli_case("S-005.1", 0, "", invalid, root="/tmp/client")
+
 
 if __name__ == "__main__":
     unittest.main()

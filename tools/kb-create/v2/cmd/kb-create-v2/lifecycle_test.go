@@ -714,3 +714,20 @@ func TestFreshApplyIsRefusedWhileASupervisedHostRuns(t *testing.T) {
 		t.Fatalf("the refusal must have a hint: %#v", failure)
 	}
 }
+
+// case: S-005.7
+func TestClientApplyIsAllowedBesideASupervisedHost(t *testing.T) {
+	inst := newInstallation(t)
+	state := host.State{Dir: inst.state}
+	if _, code, raw := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start: %s", raw)
+	}
+	clientPlan := contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{Profile: "client"}}
+	if failure := refuseApplyBesideRunningHost(state, clientPlan, filepath.Join(t.TempDir(), "client")); failure != nil {
+		t.Fatalf("client apply refused beside host: %v", failure)
+	}
+	hostPlan := contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{}}
+	if failure := refuseApplyBesideRunningHost(state, hostPlan, filepath.Join(t.TempDir(), "other")); failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" {
+		t.Fatalf("host apply beside host failure = %#v", failure)
+	}
+}

@@ -47,6 +47,19 @@ describe('errors.catalog.json lint', () => {
     });
   });
 
+  it('keeps installer index errors separate from publisher sealing errors', () => {
+    expect(getCatalogEntry('KB_INSTALL_RELEASE_INDEX_INVALID')).toMatchObject({
+      area: 'install',
+      retryable: true,
+      hint: 'Retry the command; if it persists report the correlationId (this is a KB Labs problem).',
+    });
+    expect(getCatalogEntry('KB_RELEASE_INDEX_SEAL_FAILED')).toMatchObject({
+      area: 'release',
+      retryable: false,
+      hint: 'Fix the release inputs named in the cause, then rerun release-index preparation.',
+    });
+  });
+
   it('only uses KB_ codes whose prefix matches the area (adapter codes belong to plugin)', () => {
     const prefixArea: Record<string, string> = {
       INSTALL: 'install',
@@ -62,6 +75,7 @@ describe('errors.catalog.json lint', () => {
       SERVICE: 'runtime',
       ENV: 'config',
       MARKETPLACE: 'plugin',
+      RELEASE: 'release',
     };
     for (const entry of errorCatalog.codes) {
       const prefix = entry.code.split('_')[1] ?? '';

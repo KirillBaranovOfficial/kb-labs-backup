@@ -1,6 +1,7 @@
 package release
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,8 +29,23 @@ func TestEnrichWithManifestsReplacesReleaseConfigProjection(t *testing.T) {
 
 func TestRequirementsRejectsSecretDefault(t *testing.T) {
 	_, err := requirements([]doctor.Requirement{{ID: "token", Secret: true, Env: "TOKEN", Services: []string{"gateway"}, Default: []byte(`"unsafe"`)}})
-	if err == nil {
-		t.Fatal("expected secret default rejection")
+	var ruleErr *ManifestRuleError
+	if !errors.As(err, &ruleErr) {
+		t.Fatalf("error = %v, want ManifestRuleError", err)
+	}
+	if ruleErr.Hint != "Remove the default from secret requirement token, then rerun release-index preparation." {
+		t.Fatalf("hint = %q", ruleErr.Hint)
+	}
+}
+
+func TestRequirementsSecretBindingRuleHasSpecificHint(t *testing.T) {
+	_, err := requirements([]doctor.Requirement{{ID: "token", Secret: true}})
+	var ruleErr *ManifestRuleError
+	if !errors.As(err, &ruleErr) {
+		t.Fatalf("error = %v, want ManifestRuleError", err)
+	}
+	if ruleErr.Hint != "Declare env and services for secret requirement token, then rerun release-index preparation." {
+		t.Fatalf("hint = %q", ruleErr.Hint)
 	}
 }
 
