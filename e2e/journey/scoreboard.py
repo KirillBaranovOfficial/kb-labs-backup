@@ -241,6 +241,14 @@ def _all_active_green(data: dict, mode: str) -> set[str]:
             and case.get("caseStatus") == "active" and mode in case.get("modes", [])}
 
 
+def _claim_counts(data: dict, mode: str) -> tuple[int, int]:
+    applicable = [case for case in data.get("cases", []) if mode in case.get("modes", [])]
+    total = sum(len(case.get("claims", [])) for case in applicable)
+    passing = sum(len(set(case.get("passingClaims", [])) & set(case.get("claims", [])))
+                  for case in applicable)
+    return passing, total
+
+
 def render_delta(previous_dir: Path, current_dir: Path) -> str:
     lines = [f"Case scoreboard delta: {previous_dir.name} → {current_dir.name}"]
     for mode in MODES:
@@ -257,8 +265,11 @@ def render_delta(previous_dir: Path, current_dir: Path) -> str:
         after_release = _fully_green(current, mode)
         before_active = _all_active_green(previous, mode)
         after_active = _all_active_green(current, mode)
+        before_claims = _claim_counts(previous, mode)
+        after_claims = _claim_counts(current, mode)
         lines.extend(["", f"{mode} release cases: fully green {previous['releaseCases']['fullyGreen']}/{previous['releaseCases']['total']} → "
                       f"{current['releaseCases']['fullyGreen']}/{current['releaseCases']['total']}",
+                      f"  Claims passing: {before_claims[0]}/{before_claims[1]} → {after_claims[0]}/{after_claims[1]}",
                       "  Became fully green: " + (", ".join(sorted(after_release - before_release)) or "none"),
                       "  Regressed: " + (", ".join(sorted(before_release - after_release)) or "none"),
                       f"  All active: fully green {previous['activeCases']['fullyGreen']}/{previous['activeCases']['total']} → "
