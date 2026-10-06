@@ -25,6 +25,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self._write_receipt("3.0.0")
         self.commands: list[list[str]] = []
         self.user_checks = 0
+        self.project_user_checks: list[int] = []
 
     def tearDown(self):
         self.temp.cleanup()
@@ -69,6 +70,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         elif args[1] == "doctor":
             stdout = json.dumps({"ok": True, "platform": {"ok": True}})
         elif args[1] == "project":
+            self.project_user_checks.append(self.user_checks)
             stdout = json.dumps({"ok": True, "projects": [], "total": 0})
         else:
             code = 2
@@ -121,7 +123,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} |
                          {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.10", "S-203.11"})
         self.assertEqual([command[1] for command in self.commands], [
-            "status", "plan", "update", "update", "status", "project", "plan", "update",
+            "status", "project", "plan", "update", "update", "status", "project", "plan", "update",
             "rollback", "rollback", "rollback", "status", "project", "doctor",
         ])
         for operation in ("plan", "update"):
@@ -130,10 +132,11 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         rollback = next(args for args in self.commands if args[1] == "rollback" and "missing-journey-snapshot" not in args)
         self.assertIn("--yes", rollback)
         self.assertIn("snapshot-1", rollback)
-        self.assertNotIn("--json", self.commands[3])
-        self.assertNotIn("--json", self.commands[8])
-        self.assertIn("--json", self.commands[9])
+        self.assertNotIn("--json", self.commands[4])
+        self.assertNotIn("--json", self.commands[9])
+        self.assertIn("--json", self.commands[10])
         self.assertEqual(self.user_checks, 3)
+        self.assertEqual(self.project_user_checks, [1, 1, 2])
         self.assertNotIn("S-041.4", steps["verify updated receipt, config, and host status"]["cases"])
         self.assertIn("S-041.4", steps["verify restored receipt, config, host, and project command"]["cases"])
 

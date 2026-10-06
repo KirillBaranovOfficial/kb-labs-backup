@@ -38,7 +38,7 @@ describe('gatewayApiFetch auth mapping', () => {
     await expect(gatewayApiFetch('http://127.0.0.1:4000/api')).rejects.toMatchObject({
       envelope: {
         code: 'KB_AUTH_REQUIRED',
-        hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email> --password <password>".',
+        hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
         details: { gatewayUrl: 'http://127.0.0.1:4000' },
       },
     });

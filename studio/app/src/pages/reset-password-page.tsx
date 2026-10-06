@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useParams } from 'react-router-dom';
+import { normalizeStudioFailure } from '@kb-labs/studio-federation';
 
 export function ResetPasswordPage() {
   const { token } = useParams<{ token: string }>();
@@ -28,8 +29,8 @@ export function ResetPasswordPage() {
         body: JSON.stringify({ token, newPassword: password }),
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { message?: string };
-        setError(body.message ?? 'This reset link is invalid or expired');
+        const failure = normalizeStudioFailure(await response.json());
+        setError(failure.message);
         return;
       }
       window.location.replace('/login?password-reset=success');

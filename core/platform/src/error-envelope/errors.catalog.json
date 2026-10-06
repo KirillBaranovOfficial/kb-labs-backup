@@ -459,7 +459,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Authentication is required.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\"."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_AUTH_INVALID_CREDENTIALS",
@@ -471,13 +471,40 @@
       "hint": "Retry, or reset your credentials."
     },
     {
+      "code": "KB_AUTH_INVALID_INVITE",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The invitation is invalid, expired, or already used.",
+      "hint": "Ask the administrator who invited you to send a new invitation."
+    },
+    {
+      "code": "KB_AUTH_INVALID_PASSWORD_RESET",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "This reset link is invalid, expired, or already used.",
+      "hint": "Ask an administrator to issue a new password reset link."
+    },
+    {
+      "code": "KB_AUTH_LAST_ADMIN",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The last active administrator cannot be demoted or disabled.",
+      "hint": "Add another active tenant administrator before changing this account."
+    },
+    {
       "code": "KB_AUTH_TOKEN_EXPIRED",
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
       "message": "Your session token has expired and could not be refreshed.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\"."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_AUTH_SESSION_REVOKED",
@@ -486,7 +513,7 @@
       "severity": "error",
       "retryable": false,
       "message": "The saved Gateway session was revoked.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\" to start a new session."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_AUTH_USER_INACTIVE",
@@ -495,7 +522,7 @@
       "severity": "error",
       "retryable": false,
       "message": "The user account for this Gateway session is inactive.",
-      "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\"."
+      "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_AUTH_FORBIDDEN",

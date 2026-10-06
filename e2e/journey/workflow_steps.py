@@ -16,13 +16,14 @@ from invocations import (decode_ux_error_result, invocation_context, read_ux_cli
                          run_command, run_pty_command)
 
 
-def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120):
+def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120,
+            input_text: str | None = None):
     cli_path = env.get("KB_JOURNEY_CLI_PATH")
     if cli_path:
         command = [cli_path, *args]
     else:
         command = ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"', "kb", *args]
-    result = run_command(command, env=env, cwd=cwd, timeout=timeout)
+    result = run_command(command, env=env, cwd=cwd, timeout=timeout, input=input_text)
     return subprocess.CompletedProcess(command, result.returncode,
                                         stdout=(result.stdout or "") + (result.stderr or ""),
                                         stderr=result.stderr)
@@ -438,7 +439,8 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
             raise AssertionError("secured workflow journey requires KB_JOURNEY_ADMIN_EMAIL and KB_JOURNEY_ADMIN_PASSWORD")
         gateway = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
         login = run_cli(["auth", "login", "--gateway-url", gateway,
-                         "--email", email, "--password", password], env=env, cwd=project)
+                         "--email", email, "--password-stdin"], env=env, cwd=project,
+                        input_text=password + "\n")
         if login.returncode != 0:
             raise AssertionError(f"admin CLI login failed: {' '.join(login.stdout.split())[-400:]}")
         for command in commands:

@@ -74,6 +74,7 @@ def run_platform_update_steps(
     updated_version: str,
     run_command: CommandRunner = invoke_command,
     verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
+    expire_user_session: Callable[[], None] | None = None,
 ) -> Journey:
     command_runner = run_command
     def run_command(args: list[str]) -> subprocess.CompletedProcess:
@@ -125,6 +126,19 @@ def run_platform_update_steps(
             if login.returncode != 0:
                 raise RuntimeError(f"initial admin login failed: {' '.join(login.stdout.split())[-400:]}")
             saved_user_session_established = True
+            protected = run_command([kb_binary, "project", "list", "--json"])
+            try:
+                protected_result = read_ux_cli_result(protected.stdout, protected.returncode)
+                if protected.returncode != 0:
+                    failure = decode_ux_error_result(protected_result)
+                    raise RuntimeError(f"saved session failed its pre-update project request: {failure!r}")
+                payload = decode_ux_success_result(protected_result)
+            except ValueError as error:
+                raise RuntimeError(f"pre-update project request returned an invalid UX result: {error}") from error
+            if not isinstance(payload, dict) or not isinstance(payload.get("projects"), list):
+                raise RuntimeError("pre-update project request did not return a projects payload")
+            if expire_user_session is not None:
+                expire_user_session()
 
     journey.step("save installed receipt, config, and host status", "platform.update", save_known_good_state,
                  cases=["S-023.1"], details=checkpoint_details)

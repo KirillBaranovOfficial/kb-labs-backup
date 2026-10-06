@@ -58,15 +58,21 @@ function mockActivateFetch(result: 'ok' | 'expired' | 'weak_password') {
       if (result === 'expired') {
         return Promise.resolve({
           ok: false,
-          status: 400,
-          json: () => Promise.resolve({ error: 'invalid_invite' }),
+          status: 422,
+          json: () => Promise.resolve({ ok: false, error: {
+            code: 'KB_AUTH_INVALID_INVITE', message: 'The invitation is invalid, expired, or already used.',
+            hint: 'Request a new invite.', correlationId: 'invite-correlation',
+          } }),
         });
       }
       // weak_password
       return Promise.resolve({
         ok: false,
         status: 400,
-        json: () => Promise.resolve({ error: 'password_too_weak' }),
+        json: () => Promise.resolve({ ok: false, error: {
+          code: 'KB_AUTH_WEAK_PASSWORD', message: 'password_too_weak',
+          hint: 'Choose a stronger password.', correlationId: 'password-correlation',
+        } }),
       });
     }
     return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) });

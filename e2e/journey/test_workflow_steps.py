@@ -17,7 +17,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             project = Path(directory)
             (project / ".kb" / "workflows").mkdir(parents=True)
 
-            def fake_run(args, *, env, cwd, timeout=120):
+            def fake_run(args, *, env, cwd, timeout=120, input_text=None):
                 if args == ["workflow", "init"]:
                     (cwd / ".kb" / "workflows" / "hello.yml").write_text(
                         "on:\n  manual: true\ncommand: echo hello-workflow\n", encoding="utf-8")
@@ -107,7 +107,7 @@ class WorkflowJourneyTests(unittest.TestCase):
         call_cwds = []
         call_envs = []
 
-        def fake_run(args, *, env, cwd, timeout=120):
+        def fake_run(args, *, env, cwd, timeout=120, input_text=None):
             args = list(args)
             calls.append(args)
             call_homes.append(env["HOME"])
@@ -124,12 +124,13 @@ class WorkflowJourneyTests(unittest.TestCase):
                 if not authenticated[0]:
                     return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
                         "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
-                        "hint": 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email> --password <password>".',
+                        "hint": 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>".',
                     }}))
                 return CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"id": "hello"}}))
             if args[:2] == ["auth", "login"]:
                 self.assertIn("admin@example.test", args)
-                self.assertIn("admin-password", args)
+                self.assertNotIn("admin-password", args)
+                self.assertEqual(input_text, "admin-password\n")
                 authenticated[0] = True
                 return CompletedProcess(args, 0, "Logged in")
             self.fail(f"unexpected CLI command: {args!r}")

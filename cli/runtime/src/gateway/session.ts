@@ -14,8 +14,10 @@ import type { SessionCredentials, ISessionManager } from './types.js';
 import { GatewayAuthResponseError, readGatewaySuccessData } from './result.js';
 import { isSavedCredentialBase, readSavedAuthFile } from './saved-auth-file.js';
 
-/** Default session file path */
-const SESSION_PATH = path.join(os.homedir(), '.kb', 'session.json');
+/** Resolve the one canonical human-session path for the current CLI user. */
+export function sessionFilePath(homeDirectory = os.homedir()): string {
+  return path.join(homeDirectory, '.kb', 'session.json');
+}
 
 /** Buffer before expiry to trigger refresh (60 seconds) */
 const EXPIRY_BUFFER_MS = 60_000;
@@ -24,7 +26,11 @@ export class SessionManager implements ISessionManager {
   private readonly filePath: string;
 
   constructor(filePath?: string) {
-    this.filePath = filePath ?? SESSION_PATH;
+    this.filePath = filePath ?? sessionFilePath();
+  }
+
+  getFilePath(): string {
+    return this.filePath;
   }
 
   async load(): Promise<SessionCredentials | null> {

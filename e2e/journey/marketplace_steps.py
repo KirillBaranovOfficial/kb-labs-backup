@@ -20,8 +20,9 @@ from plugin_author_steps import run_commit_case_steps
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
-def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner) -> subprocess.CompletedProcess[str]:
-    return run_with_runner(runner, command, cwd=cwd, env=env, timeout=300)
+def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner,
+         input: str | None = None) -> subprocess.CompletedProcess[str]:
+    return run_with_runner(runner, command, cwd=cwd, env=env, timeout=300, input=input)
 
 
 def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str:
@@ -173,7 +174,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         if (result.returncode == 0 or not isinstance(failure, dict)
                 or failure.get("code") != "KB_AUTH_REQUIRED"
                 or failure.get("message") != "Authentication is required."
-                or failure.get("hint") != f'Run "kb auth login --gateway-url {env.get("KB_JOURNEY_BASE_URL", "<url>")} --email <email> --password <password>".'):
+                or failure.get("hint") != f'Run "kb auth login --gateway-url {env.get("KB_JOURNEY_BASE_URL", "<url>")} --email <email>".'):
             raise RuntimeError("unauthenticated marketplace list did not return KB_AUTH_REQUIRED with the login hint")
 
     journey.step("secured marketplace requires a saved CLI session", "marketplace",
@@ -192,9 +193,9 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     if not password:
         raise RuntimeError("secured marketplace journey needs KB_JOURNEY_ADMIN_PASSWORD")
     login = ["kb", "auth", "login", "--gateway-url", gateway,
-             "--email", email, "--password", password, "--json"]
+             "--email", email, "--password-stdin", "--json"]
     with invocation_context(step_id="marketplace.authenticated-session"):
-        result = _run(login, cwd=project, env=env, runner=runner)
+        result = _run(login, cwd=project, env=env, runner=runner, input=password + "\n")
     if result.returncode != 0:
         raise RuntimeError("secured admin CLI login failed; check the isolated journey credentials")
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Writable } from 'node:stream';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import type { ICache, ILogger, IServiceTransport } from '@kb-labs/core-platform';
@@ -109,7 +110,7 @@ describe('Gateway global auth gate', () => {
         ok: false,
         error: {
           code: 'KB_AUTH_REQUIRED',
-          hint: `Run "kb auth login --gateway-url ${gatewayUrl} --email <email> --password <password>".`,
+          hint: `Run "kb auth login --gateway-url ${gatewayUrl} --email <email>" and enter your password at the prompt, or provide it with --password-stdin.`,
           correlationId: expect.any(String),
         },
       });
@@ -148,6 +149,28 @@ describe('Gateway global auth gate', () => {
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED', correlationId: expect.any(String) } });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('logs the missing-session rejection used by the post-update protected request', async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        records.push(JSON.parse(String(chunk)) as Record<string, unknown>);
+        callback();
+      },
+    });
+    app = Fastify({ logger: { level: 'warn', stream } });
+    app.addHook('onRequest', createAuthMiddleware(cache(), { secret: 'test-secret' }, { authEnabled: true }));
+    app.get('/api/v1/projects', async () => ({ ok: true }));
+    await app.ready();
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/projects' });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
+    expect(records).toContainEqual(expect.objectContaining({
+      event: 'gateway.auth.rejected',
+      reason: 'missing',
+    }));
   });
 
   it('lets the self-guarded auth-readiness route decide whether this is a local operator', async () => {

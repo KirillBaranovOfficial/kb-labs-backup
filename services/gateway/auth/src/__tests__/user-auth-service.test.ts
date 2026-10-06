@@ -384,7 +384,7 @@ describe('activate', () => {
     })).rejects.toMatchObject({ code: 'unknown_invite' });
   });
 
-  it('expired invite → invalid_invite', async () => {
+  it('expired invite → catalogued invalid invite', async () => {
     const { activationToken } = await invites.createInvite({
       email: 'bob@x.com', tenantId: tenant,
       groupId: 'tenant-member', createdBy: 'admin', ttlMs: 1,
@@ -392,7 +392,7 @@ describe('activate', () => {
     nowMs += 10;
     await expect(svc.activate({
       activationToken, password: 'fresh-pw-1234', deviceCtx: {},
-    })).rejects.toMatchObject({ code: 'invalid_invite' });
+    })).rejects.toMatchObject({ code: 'KB_AUTH_INVALID_INVITE' });
   });
 
   it('weak password → weak_password and invite stays usable', async () => {
@@ -416,7 +416,7 @@ describe('activate', () => {
 
     // Fire both with the identical valid token + password concurrently.
     // The atomic consume() gate must let exactly one through to account
-    // creation; the loser must reject cleanly (invalid_invite) WITHOUT
+    // creation; the loser must reject cleanly (catalogued invalid invite) WITHOUT
     // creating a second user or crashing on the unique-email index.
     const settled = await Promise.allSettled([
       svc.activate({ activationToken, password: 'fresh-pw-1234', deviceCtx: {} }),
@@ -427,7 +427,7 @@ describe('activate', () => {
     const rejected = settled.filter((s) => s.status === 'rejected');
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
-    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: 'invalid_invite' });
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: 'KB_AUTH_INVALID_INVITE' });
 
     // Exactly one user account exists for that email in the tenant.
     const all = await users.listByTenant(tenant);
@@ -454,7 +454,7 @@ describe('admin-generated password reset', () => {
       { providerId: 'email-password', input: { email: 'alice@x.com', password: 'Replacement123!' } }, tenant, {},
     )).resolves.toMatchObject({ user: { userId } });
     await expect(svc.completePasswordReset({ token: reset.token, newPassword: 'AnotherPassword123!' }))
-      .rejects.toMatchObject({ code: 'invalid_password_reset' });
+      .rejects.toMatchObject({ code: 'KB_AUTH_INVALID_PASSWORD_RESET' });
   });
 });
 

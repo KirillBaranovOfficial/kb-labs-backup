@@ -17,6 +17,7 @@
 import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { CredentialsManager, readGatewaySuccessData, SessionManager } from '@kb-labs/cli-runtime/gateway';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { promptForPassword, readPasswordFromStdin } from './password-input.js';
 
 type LoginFlags = {
   'gateway-url': { type: 'string'; description: string };
@@ -24,6 +25,7 @@ type LoginFlags = {
   'client-secret': { type: 'string'; description: string };
   email: { type: 'string'; description: string };
   password: { type: 'string'; description: string };
+  'password-stdin': { type: 'boolean'; description: string };
   json: { type: 'boolean'; description: string };
 };
 
@@ -43,12 +45,13 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
   longDescription:
     'Machine identity: exchange --client-id/--client-secret for JWT tokens, saved to ' +
     '~/.kb/credentials.json. Use "kb auth register" to create credentials first. ' +
-    'Human identity: exchange --email/--password for JWT tokens, saved to ' +
+    'Human identity: exchange --email and a prompted or stdin password for JWT tokens, saved to ' +
     '~/.kb/session.json. Both auto-refresh on expiry.',
   category: 'auth',
   examples: [
     'kb auth login --gateway-url http://localhost:4000 --client-id clt_xxx --client-secret cs_xxx',
-    'kb auth login --gateway-url http://localhost:4000 --email admin@example.com --password ***',
+    'kb auth login --gateway-url http://localhost:4000 --email admin@example.com',
+    'kb auth login --gateway-url http://localhost:4000 --email admin@example.com --password-stdin < password.txt',
     'kb auth login --gateway-url https://gateway.example.com --client-id clt_xxx --client-secret cs_xxx --json',
   ],
   flags: {
@@ -57,6 +60,7 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
     'client-secret': { type: 'string', description: 'Client Secret from service account registration' },
     email: { type: 'string', description: 'Email for human (admin) login' },
     password: { type: 'string', description: 'Password for human (admin) login' },
+    'password-stdin': { type: 'boolean', description: 'Read the human password from stdin' },
     json: { type: 'boolean', description: 'Output in JSON format' },
   },
   // eslint-disable-next-line sonarjs/cognitive-complexity
@@ -65,11 +69,35 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
     const clientId = flags['client-id'];
     const clientSecret = flags['client-secret'];
     const email = flags.email;
-    const password = flags.password;
 
     if (!gatewayUrl) {
-      const msg = '--gateway-url is required, plus either --client-id/--client-secret or --email/--password';
+      const msg = '--gateway-url is required, plus either --client-id/--client-secret or --email';
       throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
+    }
+
+    if (flags['password-stdin'] && flags.password) {
+      throwSystemCommandError('Choose either --password or --password-stdin.', 'Run `kb auth login --help` and retry with one password source.');
+    }
+
+    let password = flags.password;
+    if (!password && flags['password-stdin']) {
+      password = await readPasswordFromStdin();
+    } else if (!password && email) {
+      try {
+        password = await promptForPassword();
+      } catch {
+        throwSystemCommandError(
+          'A password prompt requires an interactive terminal.',
+          'Run `kb auth login --gateway-url <url> --email <email> --password-stdin < password.txt` to provide the password through stdin.',
+        );
+      }
+    }
+
+    if (email && !password) {
+      throwSystemCommandError(
+        'No password was provided for the human login.',
+        'Run `kb auth login --gateway-url <url> --email <email> --password-stdin < password.txt` with a password file on stdin.',
+      );
     }
 
     if (email && password) {
@@ -77,7 +105,7 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
     }
 
     if (!clientId || !clientSecret) {
-      const msg = 'Provide either --client-id/--client-secret (machine) or --email/--password (human)';
+      const msg = 'Provide either --client-id/--client-secret (machine) or --email with a password (human)';
       throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
     }
 

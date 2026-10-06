@@ -17,6 +17,7 @@
 
 import * as React from 'react';
 import { useParams } from 'react-router-dom';
+import { normalizeStudioFailure } from '@kb-labs/studio-federation';
 
 export function ActivatePage() {
   const { token } = useParams<{ token: string }>();
@@ -60,11 +61,11 @@ export function ActivatePage() {
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { error?: string };
-        if (body.error === 'invalid_invite') {
+        const failure = normalizeStudioFailure(await res.json());
+        if (failure.code === 'KB_AUTH_INVALID_INVITE') {
           setError('This invite link is invalid or expired');
         } else {
-          setError(body.error ?? 'Activation failed');
+          setError(failure.message);
         }
         return;
       }

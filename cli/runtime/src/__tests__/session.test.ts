@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { SessionManager } from '../gateway/session.js';
+import { SessionManager, sessionFilePath } from '../gateway/session.js';
 import type { SessionCredentials } from '../gateway/types.js';
 
 const mockFetch = vi.fn();
@@ -50,6 +50,11 @@ afterEach(async () => {
 });
 
 describe('SessionManager', () => {
+  // case: S-041.6
+  it('resolves the canonical human session path from the CLI home directory', () => {
+    expect(sessionFilePath('/home/member')).toBe('/home/member/.kb/session.json');
+  });
+
   it('SM-01: load() returns null when no file exists', async () => {
     expect(await manager.load()).toBeNull();
   });
