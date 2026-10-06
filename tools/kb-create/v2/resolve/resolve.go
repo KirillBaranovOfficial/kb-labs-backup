@@ -115,6 +115,34 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if len(platform.Binaries) > 0 && !binaryForTarget {
 		return contracts.ResolvedInstallPlan{}, incompatible("binary", goos+"/"+goarch, "platform "+platform.Version+" ships no binary for this OS/arch")
 	}
+	if graph.Profile == "client" {
+		var clientBinary []contracts.Artifact
+		for _, item := range artifacts {
+			if item.Kind == "binary" && item.ID == "kb-create" {
+				clientBinary = append(clientBinary, item)
+			}
+		}
+		if len(clientBinary) != 1 {
+			return contracts.ResolvedInstallPlan{}, incompatible("client binary", platform.Version, "release index must contain exactly one kb-create binary for "+goos+"/"+goarch)
+		}
+		var clientCLI []contracts.Artifact
+		for _, member := range platform.Members {
+			if member.Package == "@kb-labs/cli-bin" {
+				clientCLI = append(clientCLI, artifact(member, "platform-member"))
+			}
+		}
+		if len(clientCLI) != 1 {
+			return contracts.ResolvedInstallPlan{}, incompatible("client CLI", platform.Version, "release index must contain exactly one @kb-labs/cli-bin platform member")
+		}
+		clientArtifacts := append(clientBinary, clientCLI...)
+		plan := contracts.ResolvedInstallPlan{
+			Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: clientArtifacts,
+			ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version),
+			ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest,
+		}
+		plan.PlanHash = hash(plan)
+		return plan, nil
+	}
 	if request.SDK.Version != "" || request.SDK.Channel != "" {
 		sdk, found := findComponentVersion(source.SDKs, sdkVersion)
 		if !found {
@@ -179,11 +207,14 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
-	if platform.Host == nil {
+	var selectedHost *contracts.HostSpec
+	if platform.Host != nil {
+		host := cloneHost(*platform.Host)
+		selectedHost = &host
+	} else if graph.Profile != "client" {
 		return contracts.ResolvedInstallPlan{}, incompatible("platform", platform.Version, "declares no host to run")
 	}
-	host := cloneHost(*platform.Host)
-	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version), ProviderBindings: bindings, Host: &host, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version), ProviderBindings: bindings, Host: selectedHost, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
 	plan.PlanHash = hash(plan)
 	return plan, nil
 }

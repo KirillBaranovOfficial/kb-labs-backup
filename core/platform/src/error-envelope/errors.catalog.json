@@ -1290,6 +1290,15 @@
       "hint": "Inspect the remote install log and correct the install failure before retrying."
     },
     {
+      "code": "KB_RELEASE_INDEX_SEAL_FAILED",
+      "area": "release",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The release index could not be sealed.",
+      "hint": "Fix the release inputs named in the cause, then rerun release-index preparation."
+    },
+    {
       "code": "KB_INSTALL_SHIM_DANGLING",
       "area": "install",
       "stage": "verify",

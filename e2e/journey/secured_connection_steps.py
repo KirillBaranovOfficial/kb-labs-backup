@@ -84,6 +84,9 @@ def validate_cli_case(case_id: str, returncode: int, output: str, payload: dict 
     data = payload.get("data", payload)
     session = data.get("session", {})
     checks = {
+        "S-005.1": returncode == 0 and payload.get("ok") is True and root == expected_root(payload)
+        and payload.get("profile") == "client" and payload.get("services") == []
+        and isinstance(payload.get("shim"), dict),
         "S-005.2": returncode == 0,
         "S-005.3": returncode == 0 and session.get("authenticated") is True
         and session.get("email") == email and session.get("gatewayUrl") == gateway,
@@ -224,31 +227,46 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
     journey.step("reject consumed password reset token", "auth.secured", replay_reset, cases=["S-042.6"])
 
     # Keep the secured CLI profile independent from the reset-link flow.
+    def apply_isolated_platform():
+        home = _journey_home(env)
+        root = home / ".kb/s005-client"
+        index = home / ".local/share/kb-create/release-index.json"
+        result = run_command([env.get("KB_JOURNEY_KB_CREATE_PATH", str(home / ".local/bin/kb-create")),
+                              "apply", "--index", str(index), "--request-platform-root", str(root),
+                              "--service-profile", "client", "--json"],
+                             env=env, cwd=home, timeout=600)
+        value = _json(result, "kb-create apply")
+        actual = value.get("receipt", {}).get("plan", {}).get("request", {}).get("platformRoot")
+        validate_cli_case("S-005.1", result.returncode, result.stdout, value, root=str(actual or ""))
+        _expect(actual == str(root), "kb-create apply did not report the requested isolated platform root")
+        state["client_cli"] = str(root / ".kb/v2/bin/kb")
+        return None
+
+    journey.step("apply isolated client platform", "auth.secured", apply_isolated_platform, cases=["S-005.1"])
+
     def member_login():
-        result = run_command([cli, "auth", "login", "--gateway-url", base,
+        result = run_command([state.get("client_cli", cli), "auth", "login", "--gateway-url", base,
                               "--email", member_email, "--password-stdin"],
                              env=env, input="NewMemberPass123!\n", timeout=90)
         validate_cli_case("S-005.2", result.returncode, result.stdout)
+        session = json.loads(_session_path(state.get("client_cli", cli), env).read_text())
+        state["client_access"] = session["accessToken"]
         return None
 
     def member_status():
-        result = _cli(cli, env, "auth", "status", "--json")
+        result = _cli(state.get("client_cli", cli), env, "auth", "status", "--json")
         value = _json(result, "kb auth status")
         validate_cli_case("S-005.3", result.returncode, result.stdout, value,
                           email=member_email, gateway=base)
         return None
 
     def member_permissions():
-        with invocation_context(step_id="journey.setup"):
-            access = _login(base, member_email, "NewMemberPass123!")[0]
-        response = _request(base, "/auth/permissions", token=access)
+        response = _request(base, "/auth/permissions", token=state["client_access"])
         validate_case_response("S-005.4", 200, response)
         return None
 
     def member_users_denied():
-        with invocation_context(step_id="journey.setup"):
-            access, _ = _login(base, member_email, "NewMemberPass123!")
-        status, value = _response(base, "/auth/users", token=access)
+        status, value = _response(base, "/auth/users", token=state["client_access"])
         validate_case_response("S-005.5", status, value)
         return None
 

@@ -58,6 +58,24 @@ func TestInstallationSectionReportsACompleteInstallationAsHealthy(t *testing.T) 
 	}
 }
 
+// case: S-005.6
+func TestClientInstallationIsHealthyWithoutHostOrRuntimeConfig(t *testing.T) {
+	root := t.TempDir()
+	state := host.State{Dir: filepath.Join(t.TempDir(), "launcher")}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.5.0", Profile: "client"}}
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "client-r1", Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	section := InspectInstallation(root, state)
+	if !section.OK {
+		t.Fatalf("client installation section = %+v", section)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
+		t.Fatalf("client runtime config stat error = %v", err)
+	}
+}
+
 // case: S-025.3
 func TestInstallationSectionReportsInvalidReceiptHostSpec(t *testing.T) {
 	root, state := installation(t, "kb-create-test-host")

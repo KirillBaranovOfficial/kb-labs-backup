@@ -212,7 +212,7 @@ func (i invocation) run(output *os.File) int {
 		return 2
 	}
 	if operation == "apply" {
-		if running := refuseRunningHost(state, root); running != nil {
+		if running := refuseApplyBesideRunningHost(state, *response.Plan, root); running != nil {
 			write(output, map[string]any{"ok": false, "error": running})
 			return 2
 		}
@@ -233,9 +233,11 @@ func (i invocation) run(output *os.File) int {
 			}
 			return 2
 		}
-		if err := host.CheckPorts(*response.Plan, operation); err != nil {
-			write(output, map[string]any{"ok": false, "error": asDiag(err)})
-			return 2
+		if response.Plan.Host != nil {
+			if err := host.CheckPorts(*response.Plan, operation); err != nil {
+				write(output, map[string]any{"ok": false, "error": asDiag(err)})
+				return 2
+			}
 		}
 	}
 	started := time.Now()
@@ -295,7 +297,7 @@ func (i invocation) run(output *os.File) int {
 		if i.Operation == "apply" && i.RuntimeDeps != nil && deps.Progress != nil {
 			// The shared apply engine owns artifact, render, host and verification events.
 		}
-		if deps.Host == nil {
+		if deps.Host == nil && response.Plan.Host != nil {
 			deps.Host = prober
 		}
 		receipt, applyErr := runtime.Apply(ctx, *response.Plan, deps)
@@ -318,7 +320,7 @@ func (i invocation) run(output *os.File) int {
 					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
 				}
 			}
-			payload := map[string]any{"ok": true, "operation": operation, "receipt": receipt, "logPath": transcript.Path()}
+			payload := map[string]any{"ok": true, "operation": operation, "receipt": receipt, "logPath": transcript.Path(), "profile": receipt.Plan.ServiceGraph.Profile, "services": receipt.Plan.ServiceGraph.Services}
 			if i.Executable != "" {
 				payload["shim"] = shimResult
 			}
@@ -613,11 +615,20 @@ func (i invocation) runStatus(output *os.File) int {
 	if root == "" {
 		root = defaultPlatformRoot()
 	}
-	if _, err := receipt.Read(root); err != nil {
+	active, err := receipt.Read(root)
+	if err != nil {
 		if i.JSON {
 			write(output, map[string]any{"ok": true, "operation": "status", "installed": false, "running": false, "reachable": false, "next": "kb-create install"})
 		} else {
 			fmt.Fprintln(output, "Installed: no\nRunning: no\nReachable: no\nNext: kb-create install")
+		}
+		return 0
+	}
+	if active.Plan.ServiceGraph.Profile == "client" {
+		if i.JSON {
+			write(output, map[string]any{"ok": true, "operation": "status", "installed": true, "running": false, "reachable": false, "profile": "client", "services": []contracts.Service{}})
+		} else {
+			fmt.Fprintln(output, "Installed: yes\nProfile: client\nRunning: no (no host is expected)\nReachable: no (no host is expected)\nServices: none")
 		}
 		return 0
 	}

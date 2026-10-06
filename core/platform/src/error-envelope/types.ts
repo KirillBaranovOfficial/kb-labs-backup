@@ -16,6 +16,7 @@ export const ERROR_AREAS = [
   'update',
   'runtime',
   'product',
+  'release',
 ] as const;
 export type ErrorArea = (typeof ERROR_AREAS)[number];
 

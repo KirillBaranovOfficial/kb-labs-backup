@@ -20,7 +20,7 @@
 ```jsonc
 {
   "code": "KB_INSTALL_PORT_IN_USE",       // стабильный, никогда не переиспользуется
-  "area": "install",                    // install | host | auth | project | config | plugin | update | runtime | product
+  "area": "install",                    // install | host | auth | project | config | plugin | update | runtime | product | release (publisher tooling)
   "stage": "preflight",                 // момент пути пользователя (см. §3)
   "severity": "error",                  // error | warning
   "retryable": false,

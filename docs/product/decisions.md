@@ -388,6 +388,18 @@ Cases: S-002, S-121, S-191.
 
 ## 2026-10-07
 
+### Team members install a client profile
+
+`kb-create apply --service-profile client` installs the CLI and the user's
+`kb` shim without declaring services, writing host runtime configuration, or
+starting a host. The client profile shares the installer with host profiles
+and uses the existing shim ownership rules. The single-host guard applies only
+to profiles that run a host, so client installation succeeds beside a running
+host. `kb-create status` and `doctor` report `profile: client` as healthy without
+expecting a host. The member then signs in with `kb auth login --gateway-url
+<url> --email <member>` and uses the secured team Gateway. Cases: S-005.1,
+S-005.6–S-005.7.
+
 ### One `kb` command belongs to one live platform root
 
 The user has one managed `kb` command. Applying another platform leaves the

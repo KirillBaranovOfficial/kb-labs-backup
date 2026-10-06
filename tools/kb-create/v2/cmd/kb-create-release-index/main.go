@@ -5,11 +5,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/release"
@@ -22,9 +24,37 @@ func main() {
 	manifestRoot := flag.String("manifest-root", "", "staging root containing exact V2 package manifests")
 	flag.Parse()
 	if err := run(*input, *output, *manifestRoot); err != nil {
-		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"ok": false, "error": contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "could not seal V2 release index", "fix the normalized manifest export before publishing the release", err)})
+		failure, envelopeErr := sealingFailureEnvelope(err)
+		if envelopeErr != nil {
+			fmt.Fprintf(os.Stderr, "kb-create-release-index: failed to format diagnostic: %v\n", envelopeErr)
+			os.Exit(2)
+		}
+		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"ok": false, "error": failure})
 		os.Exit(2)
 	}
+}
+
+type sealingFailure struct {
+	gate, rule, hint string
+	err              error
+}
+
+func (failure *sealingFailure) Error() string { return failure.err.Error() }
+func (failure *sealingFailure) Unwrap() error { return failure.err }
+
+func sealingFailureEnvelope(err error) (diag.Envelope, error) {
+	var failure *sealingFailure
+	if !errors.As(err, &failure) {
+		failure = &sealingFailure{
+			gate: "release-index validation", rule: err.Error(),
+			hint: "Fix the release inputs named in the cause, then rerun release-index preparation.",
+			err:  err,
+		}
+	}
+	diagnostic := contracts.NewDiag(contracts.CodeReleaseIndexSealFailed, "could not seal V2 release index", failure.hint, failure.err)
+	diagnostic.Cause = failure.rule
+	diagnostic.Meta = map[string]any{"gate": failure.gate, "rule": failure.rule}
+	return diag.ToEnvelope(diagnostic)
 }
 
 func run(input, output, manifestRoot string) error {
@@ -41,7 +71,16 @@ func run(input, output, manifestRoot string) error {
 	}
 	source, err = release.EnrichWithManifests(source, manifestRoot)
 	if err != nil {
-		return fmt.Errorf("export V2 package manifests: %w", err)
+		hint := "Fix the manifest named in the cause, then rerun release-index preparation."
+		var rule *release.ManifestRuleError
+		if errors.As(err, &rule) {
+			hint = rule.Hint
+		}
+		return &sealingFailure{
+			gate: "manifest validation", rule: err.Error(),
+			hint: hint,
+			err:  err,
+		}
 	}
 	if err := scenario.ValidateCatalog(source); err != nil {
 		return fmt.Errorf("built-in scenario validation: %w", err)

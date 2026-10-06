@@ -6,6 +6,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"reflect"
+	stdruntime "runtime"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,29 @@ func TestAmbiguousProviderFailsFast(t *testing.T) {
 	}
 	if value, ok := err.(*diag.Diag); !ok || value.Code != contracts.CodeProviderAmbiguous {
 		t.Fatalf("%T %#v", err, err)
+	}
+}
+
+// case: S-005.1
+func TestClientProfileResolvesWithoutHostOrServices(t *testing.T) {
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			Profiles: map[string]contracts.ServiceGraph{"default": {}, "client": {}},
+			Binaries: []catalog.Binary{{ID: "kb-create", OS: stdruntime.GOOS, Arch: stdruntime.GOARCH, URL: "https://example.test/kb-create", Filename: "kb-create", SHA256: "binary"}},
+			Members:  []catalog.Component{{ID: "cli-bin", Version: "2.0.0", Package: "@kb-labs/cli-bin", Tarball: "https://example.test/cli-bin.tgz", SHA256: "cli-bin"}},
+		}},
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "client"}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Host != nil || plan.ServiceGraph.Profile != "client" || len(plan.ServiceGraph.Services) != 0 {
+		t.Fatalf("client plan = %#v", plan)
+	}
+	if len(plan.Artifacts) != 2 || plan.Artifacts[0].Kind != "binary" || plan.Artifacts[0].ID != "kb-create" || plan.Artifacts[1].Package != "@kb-labs/cli-bin" || len(plan.ConfigPatches) != 0 {
+		t.Fatalf("client artifacts/config = %#v / %#v", plan.Artifacts, plan.ConfigPatches)
 	}
 }
 

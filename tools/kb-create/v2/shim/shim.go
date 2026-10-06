@@ -53,6 +53,9 @@ func Ensure(launcher, platformRoot string) (EnsureResult, error) {
 			return EnsureResult{}, failed(path, fmt.Sprintf("already points to unmanaged target %s", existing), nil)
 		}
 		if _, err := receipt.Read(owner); err == nil {
+			if err := ensureTarget(target, cliEntry); err != nil {
+				return EnsureResult{}, err
+			}
 			return EnsureResult{Linked: false, Owner: owner}, nil
 		}
 		if err := ensureTarget(target, cliEntry); err != nil {

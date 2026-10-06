@@ -14,7 +14,7 @@
     },
     "area": {
       "type": "string",
-      "enum": ["install", "host", "auth", "project", "config", "plugin", "update", "runtime", "product"]
+      "enum": ["install", "host", "auth", "project", "config", "plugin", "update", "runtime", "product", "release"]
     },
     "stage": {
       "type": "string",

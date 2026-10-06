@@ -91,6 +91,9 @@ func TestEnsureReplacesOnlyAnInstallerManagedShim(t *testing.T) {
 	if result.Linked || result.Owner != firstRoot || !Correct(launcher, firstRoot) {
 		t.Fatalf("Ensure changed the live owner: result=%+v target=%s", result, mustReadlink(t, Path(launcher)))
 	}
+	if _, err := os.Stat(Target(secondRoot)); err != nil {
+		t.Fatalf("Ensure did not create the second root's local kb command: %v", err)
+	}
 	if err := receipt.Delete(firstRoot); err != nil {
 		t.Fatal(err)
 	}
