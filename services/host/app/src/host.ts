@@ -249,6 +249,10 @@ export async function createHostConfig(
   // this runs last) — a fresh host in the same process (as in tests) can then
   // install its own.
   let resolveHook: PlatformResolveHook | undefined;
+  const releaseResolveHook = (): void => {
+    resolveHook?.deregister();
+    resolveHook = undefined;
+  };
 
   let preparing: Promise<PreparedHost> | undefined;
   const prepare = (ctx: ServiceContext): Promise<PreparedHost> => {
@@ -301,8 +305,7 @@ export async function createHostConfig(
         }
         return { settings, upstreams, gatewayAddress };
       } catch (error) {
-        resolveHook.deregister();
-        resolveHook = undefined;
+        releaseResolveHook();
         throw error;
       }
     })();
@@ -319,26 +322,33 @@ export async function createHostConfig(
       defaultHost: INTERNAL_BIND_HOST,
       setup: async (ctx) => {
         const { settings } = await prepare(ctx);
-        const teardown = await (async (): Promise<Teardown> => {
-          if (!isSelected(settings, spec.id)) {
-            ctx.logger.info("Module disabled by host.modules", {
-              moduleId: spec.id,
-            });
-            return skipped();
+        try {
+          const teardown = await (async (): Promise<Teardown> => {
+            if (!isSelected(settings, spec.id)) {
+              ctx.logger.info("Module disabled by host.modules", {
+                moduleId: spec.id,
+              });
+              return skipped();
+            }
+            assertInternalAddress(ctx, spec.serviceId);
+            return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
+          })();
+          if (index !== 0) {
+            return teardown;
           }
-          assertInternalAddress(ctx, spec.serviceId);
-          return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
-        })();
-        if (index !== 0) {
-          return teardown;
+          return async () => {
+            try {
+              await teardown();
+            } finally {
+              releaseResolveHook();
+            }
+          };
+        } catch (error) {
+          if (index === 0) {
+            releaseResolveHook();
+          }
+          throw error;
         }
-        return async () => {
-          try {
-            await teardown();
-          } finally {
-            resolveHook?.deregister();
-          }
-        };
       },
     }),
   );

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { HostExposureRefusedError } from "../errors.js";
+import * as marketplaceApp from "@kb-labs/marketplace-app";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canBind,
   isPortListening,
@@ -7,6 +7,11 @@ import {
   type RunningHost,
 } from "./harness.js";
 import { readUxSuccessResult } from "./testkit.js";
+
+vi.mock("@kb-labs/marketplace-app", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@kb-labs/marketplace-app")>();
+  return { ...actual, setup: vi.fn(actual.setup) };
+});
 
 interface HealthBody {
   upstreams: Record<string, { status: string }>;
@@ -95,6 +100,19 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
     }
   });
 
+  it("releases the platform resolve hook before another platform root starts", async () => {
+    running = await startTestHost();
+    const firstRoot = running.projectRoot;
+    expect((await running.fetchGateway("/health")).status).toBe(200);
+
+    await running.stop();
+    running = undefined;
+
+    running = await startTestHost();
+    expect(running.projectRoot).not.toBe(firstRoot);
+    expect((await running.fetchGateway("/health")).status).toBe(200);
+  });
+
   it("runs only the modules listed in host.modules", async () => {
     running = await startTestHost({ host: { modules: ["gateway", "state"] } });
 
@@ -121,22 +139,33 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
     expect((await fetch(`${stateUrl}/health`)).status).toBe(200);
   });
 
-  it("refuses to start with auth off and a non-loopback bind, before binding anything", async () => {
-    let refusal: unknown;
+  it("rejects unsafe setup and releases the hook before another platform root starts", async () => {
+    await expect(startTestHost({
+      host: { auth: "off" },
+      gateway: { host: "0.0.0.0" },
+    })).rejects.toMatchObject({
+      envelope: {
+        code: "KB_HOST_EXPOSURE_REFUSED",
+        hint: expect.any(String),
+        details: { bindHost: "0.0.0.0" },
+      },
+    });
+
+    running = await startTestHost();
+    expect((await running.fetchGateway("/health")).status).toBe(200);
+  });
+
+  it("rejects a first-module setup failure and releases the hook before another root starts", async () => {
+    const failure = new Error("marketplace setup failed");
+    const setup = vi.mocked(marketplaceApp.setup).mockRejectedValueOnce(failure);
     try {
-      running = await startTestHost({
-        host: { auth: "off" },
-        gateway: { host: "0.0.0.0" },
-      });
-    } catch (error) {
-      refusal = error;
+      await expect(startTestHost()).rejects.toBe(failure);
+    } finally {
+      setup.mockRestore();
     }
 
-    expect(refusal).toBeInstanceOf(HostExposureRefusedError);
-    const envelope = (refusal as HostExposureRefusedError).envelope;
-    expect(envelope.code).toBe("KB_HOST_EXPOSURE_REFUSED");
-    expect(envelope.hint.length).toBeGreaterThan(0);
-    expect(envelope.details).toEqual({ bindHost: "0.0.0.0" });
+    running = await startTestHost();
+    expect((await running.fetchGateway("/health")).status).toBe(200);
   });
 
   it("requires login on the gateway when host.auth is on", async () => {

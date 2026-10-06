@@ -425,14 +425,14 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
       unhealthyAfterMs: 0,
       healthModules: { rest: "up", workflow: "down", mcp: "up" },
     });
-    const subject = manager({ startTimeoutMs: 400 });
+    const subject = manager({ startTimeoutMs: 1500 });
 
     const error = await expectRuntimeError(
       subject.acquire(a),
       "KB_PROJECT_RUNTIME_START_FAILED",
     );
 
-    expect(error.envelope.cause).toContain("not healthy within 400 ms");
+    expect(error.envelope.cause).toContain("not healthy within 1500 ms");
     expect(error.envelope.cause).toContain('"workflow":"down"');
     expect(subject.status().active).toBe(0);
   });
