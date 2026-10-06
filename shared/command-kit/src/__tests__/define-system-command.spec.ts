@@ -8,6 +8,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
+import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { defineSystemCommand, defineSystemCommandGroup } from '../define-system-command';
 
 describe('defineSystemCommand', () => {
@@ -70,6 +72,158 @@ describe('defineSystemCommand', () => {
   });
 
   describe('Basic Command Creation', () => {
+    it.each([
+      ['catalogued', Object.assign(new Error('Catalogued failure.'), {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        hint: 'Fix the failure and retry.',
+        details: { resource: 'widget-1' },
+      })],
+      ['plain Error', new Error('Unexpected failure.')],
+      ['string', 'Unexpected string failure'],
+      ['invalid details', Object.assign(new Error('Bad details.'), {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        details: { report: '{"errors":[]}' },
+      })],
+      ['non-string details', Object.assign(new Error('Bad detail type.'), {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        details: { report: 42 },
+      })],
+    ])('uses the platform normalizer for %s across system and plugin JSON paths', async (_name, thrown) => {
+      const command = defineSystemCommand({
+        name: 'system-error-normalizer',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System error normalizer fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => { throw thrown; },
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+      const systemOutput = mockUI.json.mock.calls[0]?.[0] as { error: unknown };
+      const pluginOutput = normalizeJsonResult(
+        { ok: false, error: thrown },
+        { correlationId: 'test-request-id' },
+      ) as { error: unknown };
+
+      expect(exitCode).toBe(1);
+      expect(systemOutput.error).toEqual(pluginOutput.error);
+      expect(systemOutput.error).toEqual(toErrorEnvelope(thrown, { correlationId: 'test-request-id' }));
+    });
+
+    it('serializes returned system command data through the shared CLI result serializer', async () => {
+      const command = defineSystemCommand({
+        name: 'system-result',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System result fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => ({ ok: true as const, version: '1.2.3' }),
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(0);
+      expect(mockUI.json).toHaveBeenCalledOnce();
+      expect(mockUI.json).toHaveBeenCalledWith({ ok: true, data: { version: '1.2.3' } });
+    });
+
+    it('rejects handler JSON writes with the catalogued contract violation', async () => {
+      const command = defineSystemCommand({
+        name: 'system-json-violation',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System JSON violation fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async (ctx) => {
+          ctx.ui?.json({ ok: true, data: 'bypass' });
+          return { ok: true as const };
+        },
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledOnce();
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }),
+      }));
+    });
+
+    it('rejects handler error writes with the catalogued contract violation', async () => {
+      const command = defineSystemCommand({
+        name: 'system-error-violation',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System error violation fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async (ctx) => {
+          ctx.ui?.error('bypass');
+          return { ok: true as const };
+        },
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledOnce();
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }),
+      }));
+    });
+
+    it('normalizes unknown throws and preserves catalogued error details', async () => {
+      const unexpected = defineSystemCommand({
+        name: 'system-unexpected',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System unexpected fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => { throw new Error('sensitive internal cause'); },
+      });
+      const unexpectedExit = await unexpected.run(mockCtx, [], { json: true });
+      const unexpectedEnvelope = mockUI.json.mock.calls.at(-1)?.[0];
+      expect(unexpectedExit).toBe(1);
+      expect(unexpectedEnvelope).toMatchObject({
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_UNEXPECTED',
+          correlationId: expect.any(String),
+        },
+      });
+      expect(JSON.stringify(unexpectedEnvelope)).not.toContain('sensitive internal cause');
+
+      mockUI.json.mockClear();
+      const catalogued = defineSystemCommand({
+        name: 'system-catalogued',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System catalogued failure fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => {
+          throw Object.assign(new Error('Invalid configuration value.'), {
+            code: 'KB_CONFIG_INVALID',
+            hint: 'Run `kb config validate`.',
+            details: { key: 'gateway.port' },
+            correlationId: 'corr-system-catalogued',
+          });
+        },
+      });
+
+      expect(await catalogued.run(mockCtx, [], { json: true })).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'KB_CONFIG_INVALID',
+          message: 'Invalid configuration value.',
+          hint: 'Run `kb config validate`.',
+          details: { key: 'gateway.port' },
+          correlationId: 'corr-system-catalogued',
+        }),
+      }));
+    });
+
     it('rejects undeclared flags through the JSON error presenter', async () => {
       const handler = vi.fn(async () => ({ ok: true as const }));
       const command = defineSystemCommand({
@@ -245,7 +399,11 @@ describe('defineSystemCommand', () => {
         expect.objectContaining({
           host: 'cli',
           pluginId: '@kb-labs/system',
-          ui: mockUI,
+          ui: expect.objectContaining({
+            ...mockUI,
+            json: expect.any(Function),
+            error: expect.any(Function),
+          }),
           platform: expect.objectContaining({ logger: mockLogger }),
           runtime: expect.any(Object),
           trace: expect.objectContaining({ traceId: 'test-trace-id' }),
@@ -270,7 +428,7 @@ describe('defineSystemCommand', () => {
       expect(exitCode).toBe(0);
     });
 
-    it('should return 1 for failed CommandResult', async () => {
+    it('rejects returned failure results so system handlers must throw failures', async () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
@@ -289,6 +447,7 @@ describe('defineSystemCommand', () => {
 
       const exitCode = await command.run(mockCtx, [], {});
       expect(exitCode).toBe(1);
+      expect(mockUI.error).toHaveBeenCalledWith(expect.stringContaining('KB_PLUGIN_CONTRACT_VIOLATION'), expect.anything());
     });
 
     it('should return numeric exit code directly', async () => {
@@ -443,7 +602,11 @@ describe('defineSystemCommand', () => {
       expect(mockUI.json).toHaveBeenCalled();
       const jsonCall = mockUI.json.mock.calls[0]?.[0];
       expect(jsonCall.ok).toBe(false);
-      expect(jsonCall.error).toBe('Handler error');
+      expect(jsonCall.error).toMatchObject({
+        code: 'KB_RUNTIME_UNEXPECTED',
+        message: 'An unexpected error occurred.',
+        correlationId: expect.any(String),
+      });
     });
   });
 

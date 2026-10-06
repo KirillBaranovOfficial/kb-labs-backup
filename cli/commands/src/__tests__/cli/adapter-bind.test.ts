@@ -41,6 +41,11 @@ function context() {
   return { ctx, outputs, errors, hints };
 }
 
+function dataOf<T>(envelope: unknown): T {
+  expect(envelope).toMatchObject({ ok: true, data: expect.anything() });
+  return (envelope as { data: T }).data;
+}
+
 beforeEach(async () => {
   sandbox = await mkdtemp(join(tmpdir(), 'kb-adapter-bind-'));
   const kbHome = join(sandbox, 'kb-home');
@@ -79,7 +84,7 @@ describe('kb adapter list', () => {
 
     expect(code).toBe(0);
     expect(outputs[0]).toMatchObject({ ok: true });
-    const adapters = (outputs[0] as { adapters: Array<Record<string, unknown>> }).adapters;
+    const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
     expect(adapters.find(({ slot }) => slot === 'storage')).toMatchObject({
       implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: join(projectRoot, '.kb', 'data'), networkRequired: false,
     });
@@ -129,7 +134,7 @@ describe('kb adapter list', () => {
     const code = await adapterList.run(ctx, [], { json: true });
 
     expect(code).toBe(0);
-    const adapters = (outputs[0] as { adapters: Array<Record<string, unknown>> }).adapters;
+    const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
     expect(adapters.find(({ slot }) => slot === 'storage')).toMatchObject({
       implementation: '@kb-labs/adapters-fs', mode: 'real', baseDir: join(projectRoot, '.kb', 'data'), networkRequired: false,
     });
@@ -159,7 +164,7 @@ describe('kb adapter list', () => {
     const code = await adapterList.run(ctx, [], { json: true });
 
     expect(code).toBe(0);
-    const adapters = (outputs[0] as { adapters: Array<Record<string, unknown>> }).adapters;
+    const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
     expect(adapters.find(({ slot }) => slot === 'llm')).toMatchObject({
       implementation: '@kb-labs/adapters-openai', mode: 'real',
       credentialsStatus: 'missing', missingCredentials: ['OPENAI_API_KEY'],
@@ -192,7 +197,7 @@ describe('kb adapter bind', () => {
     const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-memory-cache'], { json: true });
 
     expect(code).toBe(0);
-    expect(outputs[0]).toMatchObject({ ok: true, slot: 'cache', packageId: '@kb-labs/adapters-memory-cache', changed: true });
+    expect(outputs[0]).toMatchObject({ ok: true, data: { slot: 'cache', packageId: '@kb-labs/adapters-memory-cache', changed: true } });
     expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8'))).toMatchObject({
       platform: { adapters: { cache: '@kb-labs/adapters-memory-cache' } },
     });
@@ -215,7 +220,7 @@ describe('kb adapter bind', () => {
     const code = await adapterBind.run(ctx, ['vectorStore', '@kb-labs/adapters-qdrant'], { json: true });
 
     expect(code).toBe(0);
-    expect(outputs[0]).toMatchObject({ ok: true, slot: 'vectorStore', packageId: '@kb-labs/adapters-qdrant' });
+    expect(outputs[0]).toMatchObject({ ok: true, data: { slot: 'vectorStore', packageId: '@kb-labs/adapters-qdrant' } });
   });
 
   // case: S-051.3, S-051.4
@@ -260,7 +265,7 @@ describe('kb adapter bind', () => {
     const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-memory-cache'], { json: true, 'dry-run': true });
 
     expect(code).toBe(0);
-    expect(outputs[0]).toMatchObject({ ok: true, dryRun: true, changed: true });
+    expect(outputs[0]).toMatchObject({ ok: true, data: { dryRun: true, changed: true } });
     expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({});
   });
 });
@@ -275,7 +280,7 @@ describe('kb adapter unbind', () => {
     const code = await adapterUnbind.run(ctx, ['storage'], { json: true });
 
     expect(code).toBe(0);
-    expect(outputs[0]).toMatchObject({ ok: true, slot: 'storage', changed: true, dryRun: false });
+    expect(outputs[0]).toMatchObject({ ok: true, data: { slot: 'storage', changed: true, dryRun: false } });
     expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({ platform: { adapters: {}, adapterOptions: {} } });
     expect(JSON.parse(await readFile(join(projectRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({});
   });
@@ -287,7 +292,7 @@ describe('kb adapter unbind', () => {
     const code = await adapterUnbind.run(ctx, ['storage'], { json: true, 'dry-run': true });
 
     expect(code).toBe(0);
-    expect(outputs[0]).toMatchObject({ ok: true, dryRun: true, changed: true });
+    expect(outputs[0]).toMatchObject({ ok: true, data: { dryRun: true, changed: true } });
     expect(JSON.parse(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8'))).toEqual({
       platform: { adapters: { storage: '@kb-labs/adapters-fs' } },
     });

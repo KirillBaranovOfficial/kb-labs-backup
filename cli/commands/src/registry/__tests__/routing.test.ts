@@ -157,6 +157,26 @@ describe('User-Defined Aliases', () => {
     expect(reg.resolve(['mpl']).type).toBe('command');
   });
 
+  it('resolves grouped system command aliases at the CLI root', () => {
+    const groupedCommand = makeSystemCmd('version', ['version']);
+    const group: SystemGroup = {
+      name: 'info',
+      describe: 'System information commands',
+      commands: [groupedCommand],
+    };
+
+    reg.registerGroup(group);
+
+    expect(reg.resolve(['info', 'version'])).toMatchObject({
+      type: 'system-cmd',
+      cmd: groupedCommand,
+    });
+    expect(reg.resolve(['version'])).toMatchObject({
+      type: 'system-cmd',
+      cmd: groupedCommand,
+    });
+  });
+
   it('getCommandAt retrieves by canonical segments', () => {
     const plugin = makePlugin('list', 'marketplace', 'plugins', ['mpl']);
     reg.registerManifest(plugin);

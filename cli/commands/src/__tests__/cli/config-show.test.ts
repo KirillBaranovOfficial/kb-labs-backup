@@ -48,13 +48,22 @@ function makeCtx(overrides: Partial<PluginContextV3['ui']> = {}): PluginContextV
     pluginId: '@kb-labs/system',
     pluginVersion: '1.0.0',
     cwd: '/test/workspace',
-    ui: { ...noopUI, ...overrides },
+    ui: {
+      ...noopUI,
+      ...overrides,
+    },
     platform: { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() } } as never,
     runtime: { fs: {} as never, fetch: vi.fn(), env: vi.fn() },
     api: {} as never,
     hostContext: { host: 'cli' as const, argv: [], flags: {} },
     trace: noopTraceContext,
   };
+}
+
+function readData<T>(jsonSpy: ReturnType<typeof vi.fn>): T {
+  const envelope = jsonSpy.mock.calls[0]?.[0] as { ok?: boolean; data?: T };
+  expect(envelope).toMatchObject({ ok: true, data: expect.anything() });
+  return envelope.data as T;
 }
 
 async function getConfigShow() {
@@ -112,7 +121,7 @@ describe('config show', () => {
     const code = await configShow.run(ctx, [], { json: true });
     expect(code).toBe(0);
 
-    const payload = jsonSpy.mock.calls[0]?.[0] as { fields: Array<{ source: string; field: string; value: unknown }> };
+    const payload = readData<{ fields: Array<{ source: string; field: string; value: unknown }> }> (jsonSpy);
     const byField = new Map(payload.fields.map((r) => [r.field, r]));
 
     expect(byField.get('adapters.llm')?.source).toBe('platform');
@@ -133,7 +142,7 @@ describe('config show', () => {
     const ctx = makeCtx({ json: jsonSpy });
 
     await configShow.run(ctx, [], { json: true });
-    const payload = jsonSpy.mock.calls[0]?.[0] as { fields: Array<{ source: string; field: string; value: unknown }> };
+    const payload = readData<{ fields: Array<{ source: string; field: string; value: unknown }> }> (jsonSpy);
     const byField = new Map(payload.fields.map((r) => [r.field, r]));
 
     expect(byField.get('plugins.review')?.source).toBe('platform');
@@ -148,7 +157,7 @@ describe('config show', () => {
     const ctx = makeCtx({ json: jsonSpy, success: successSpy });
 
     await configShow.run(ctx, [], { json: true });
-    const payload = jsonSpy.mock.calls[0]?.[0] as { fields: Array<{ field: string; value: unknown }> };
+    const payload = readData<{ fields: Array<{ field: string; value: unknown }> }> (jsonSpy);
     const apiKeyRow = payload.fields.find((r) => r.field === 'adapterOptions.llm.apiKey');
     expect(apiKeyRow?.value).toBe('***REDACTED***');
 
@@ -176,7 +185,7 @@ describe('config show', () => {
     const ctx = makeCtx({ json: jsonSpy });
 
     await configShow.run(ctx, [], { json: true });
-    const payload = jsonSpy.mock.calls[0]?.[0] as { fields: Array<{ source: string; field: string; value: unknown }> };
+    const payload = readData<{ fields: Array<{ source: string; field: string; value: unknown }> }> (jsonSpy);
     const ignoredRow = payload.fields.find((r) => r.field === 'execution.mode' && r.source === 'ignored');
     expect(ignoredRow?.value).toBe('worker-pool');
   });
@@ -213,7 +222,7 @@ describe('config show', () => {
     const ctx = makeCtx({ json: jsonSpy });
 
     await configShow.run(ctx, [], { json: true });
-    const payload = jsonSpy.mock.calls[0]?.[0] as { fields: Array<{ source: string; field: string }> };
+    const payload = readData<{ fields: Array<{ source: string; field: string }> }> (jsonSpy);
     const byField = new Map(payload.fields.map((r) => [r.field, r]));
     expect(byField.get('adapters.llm')?.source).toBe('both');
     expect(byField.get('services.studio')?.source).toBe('both');
@@ -254,7 +263,7 @@ describe('config show', () => {
     const ctx = makeCtx({ json: jsonSpy });
 
     await configShow.run(ctx, [], { json: true });
-    const payload = jsonSpy.mock.calls[0]?.[0] as { fields: Array<{ field: string; value: unknown }> };
+    const payload = readData<{ fields: Array<{ field: string; value: unknown }> }> (jsonSpy);
     // `tierMapping` is an object keyed by tier name whose values are the
     // arrays (matching this repo's real .kb/kb.config.json shape) — flatten
     // recurses through the object down to each per-tier array, which is

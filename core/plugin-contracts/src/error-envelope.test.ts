@@ -38,6 +38,17 @@ describe('toPluginErrorEnvelope', () => {
     expect(toPluginErrorEnvelope(new RateLimitError('x', 2500)).message).toContain('3s');
   });
 
+  it('rejects structured details rather than serializing them into strings', () => {
+    const envelope = toPluginErrorEnvelope(new PluginError('bad', 'CUSTOM_FAILURE', {
+      report: { findings: [] },
+    }), { correlationId: 'c2' });
+    expect(envelope).toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      correlationId: 'c2',
+    });
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+  });
+
   it('delegates non-plugin errors to core-platform', () => {
     expect(toPluginErrorEnvelope(new Error('boom')).code).toBe('KB_RUNTIME_UNEXPECTED');
   });

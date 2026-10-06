@@ -82,7 +82,7 @@ describe('hello command', () => {
     expect(writeSpy).not.toHaveBeenCalled();
     expect(jsonSpy).toHaveBeenCalledOnce();
     expect(jsonSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Hello World' }),
+      { ok: true, data: { message: 'Hello World', status: 'ready' } },
     );
     expect(exitCode).toBe(0);
   });
