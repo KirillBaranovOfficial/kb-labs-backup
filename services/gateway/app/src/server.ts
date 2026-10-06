@@ -558,7 +558,7 @@ export async function createServer(
           summary:
             "Platform adapter status — mode (real | inmemory | noop) per slot",
           querystring: { type: 'object', properties: {}, additionalProperties: false },
-          response: { 200: { type: 'array', items: { type: 'object', properties: { slot: { type: 'string' }, mode: { type: 'string', enum: ['real', 'inmemory', 'noop'] }, implementation: { type: 'string' }, reason: { type: 'string' }, recordedAt: { type: 'string', format: 'date-time' } }, required: ['slot', 'mode', 'implementation', 'reason', 'recordedAt'] } } },
+          response: { 200: { type: 'array', items: { type: 'object', properties: { slot: { type: 'string' }, mode: { type: 'string', enum: ['real', 'inmemory', 'noop'] }, implementation: { type: 'string' }, reason: { type: 'string' }, recordedAt: { type: 'string', format: 'date-time' } }, required: ['slot', 'mode', 'implementation', 'recordedAt'] } } },
         },
       },
       async () => {
