@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from platform_update_steps import _json_command
+from invocations import decode_ux_error_result, decode_ux_success_result, read_ux_cli_result
 from service_steps import Journey
 
 
@@ -63,14 +64,15 @@ def run_platform_channel_steps(
                     "--project-root", str(project_root)]
             command = run_command(args)
             try:
-                envelope = json.loads(command.stdout)
-                result = envelope.get("data", {})
-            except json.JSONDecodeError as error:
-                raise RuntimeError("apply canary: expected JSON output") from error
+                envelope = read_ux_cli_result(command.stdout, command.returncode)
+                result = (decode_ux_success_result(envelope) if command.returncode == 0
+                          else decode_ux_error_result(envelope))
+            except ValueError as error:
+                raise RuntimeError(f"apply canary: expected an ADR-0049 result: {error}") from error
             if not isinstance(result, dict):
                 raise RuntimeError("apply canary: expected a JSON object")
             if command.returncode != 0:
-                error = envelope.get("error", {})
+                error = result
                 if isinstance(error, dict) and error.get("code") == "KB_INSTALL_MEMORY_INSUFFICIENT":
                     details = error.get("meta", {})
                     available = details.get("available", "unknown") if isinstance(details, dict) else "unknown"
@@ -189,10 +191,10 @@ def run_platform_channel_steps(
         request_file.write_text(json.dumps(request) + "\n")
         result = run_command([launcher, "update", "--json", "--index", str(stable_index), "--input", str(request_file)])
         try:
-            envelope = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise RuntimeError("stable downgrade refusal returned non-JSON output") from error
-        failure = envelope.get("error", {}) if isinstance(envelope, dict) else {}
+            envelope = read_ux_cli_result(result.stdout, result.returncode)
+            failure = decode_ux_error_result(envelope)
+        except ValueError as error:
+            raise RuntimeError(f"stable downgrade refusal returned an invalid ADR-0049 result: {error}") from error
         if result.returncode == 0 or failure.get("code") != "KB_UPDATE_DOWNGRADE_REFUSED":
             raise RuntimeError("update did not refuse the stable downgrade with KB_UPDATE_DOWNGRADE_REFUSED")
         if not failure.get("hint"):

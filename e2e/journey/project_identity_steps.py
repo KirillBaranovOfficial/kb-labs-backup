@@ -7,8 +7,17 @@ import tempfile
 from pathlib import Path
 
 from service_steps import Journey
-from invocations import invocation_context, run_command, run_with_runner
+from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
+                         read_ux_cli_result, run_command, run_with_runner)
 from marketplace_steps import _output, _registry_version
+
+
+def _cli_success(result: subprocess.CompletedProcess[str]):
+    return decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+
+
+def _cli_error(result: subprocess.CompletedProcess[str]):
+    return decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
 
 
 def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], registry: str,
@@ -37,15 +46,18 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             for project in projects:
                 if (project / ".kb").exists():
                     return f"{project.name} fixture unexpectedly contains .kb before registration"
-            for project, step_id in zip(projects, ("S-043.1", "S-196.1"), strict=True):
+            step_ids = ("S-043.1", "S-196.1")
+            if len(projects) != len(step_ids):
+                raise RuntimeError("project registry fixture step mapping is incomplete")
+            for project, step_id in zip(projects, step_ids):
                 result = run(project, "project", "add", str(project), "--json", step_id=step_id)
                 if result.returncode != 0:
                     return f"kb project add failed for {project.name}: {(result.stderr or result.stdout).strip()}"
                 try:
-                    payload = json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    return f"kb project add returned invalid JSON for {project.name}"
-                row = payload.get("project", payload.get("data", {}).get("project", {})) if isinstance(payload, dict) else {}
+                    payload = _cli_success(result)
+                except ValueError as error:
+                    return f"kb project add returned an invalid UX result for {project.name}: {error}"
+                row = payload.get("project", {}) if isinstance(payload, dict) else {}
                 identifier = row.get("id") if isinstance(row, dict) else None
                 path = row.get("path") if isinstance(row, dict) else None
                 if not isinstance(identifier, str) or not identifier or path != str(project.resolve()):
@@ -63,10 +75,10 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             if result.returncode != 0:
                 return f"kb project list failed: {(result.stderr or result.stdout).strip()}"
             try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                return "kb project list returned invalid JSON"
-            rows = payload.get("projects", payload.get("data", {}).get("projects", [])) if isinstance(payload, dict) else []
+                payload = _cli_success(result)
+            except ValueError as error:
+                return f"kb project list returned an invalid UX result: {error}"
+            rows = payload.get("projects", []) if isinstance(payload, dict) else []
             found = {(row.get("id"), row.get("path")) for row in rows if isinstance(row, dict)}
             expected = {(ids.get(project), str(project.resolve())) for project in projects}
             if not expected <= found:
@@ -128,10 +140,10 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                 if result.returncode != 0:
                     return f"adapter list failed in {project.name}: {(result.stderr or result.stdout).strip()}"
                 try:
-                    payload = json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    return f"adapter list returned invalid JSON in {project.name}"
-                outputs.append(payload.get("data", payload))
+                    payload = _cli_success(result)
+                except ValueError as error:
+                    return f"adapter list returned an invalid UX result in {project.name}: {error}"
+                outputs.append(payload)
                 for config in (project / ".kb" / "kb.config.json", project / ".kb" / "kb.config.jsonc"):
                     if config.exists() and '"adapters"' in config.read_text():
                         return f"{project.name} config contains project-scoped adapter settings"
@@ -148,10 +160,10 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                 if result.returncode != 0:
                     return f"project show failed in {project.name}: {(result.stderr or result.stdout).strip()}"
                 try:
-                    payload = json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    return f"project show returned invalid JSON in {project.name}"
-                row = payload.get("project", payload.get("data", {}).get("project", {})) if isinstance(payload, dict) else {}
+                    payload = _cli_success(result)
+                except ValueError as error:
+                    return f"project show returned an invalid UX result in {project.name}: {error}"
+                row = payload.get("project", {}) if isinstance(payload, dict) else {}
                 if not isinstance(row, dict) or row.get("id") != ids[project] or row.get("path") != str(project.resolve()):
                     return f"project show did not identify {project.name}'s registered root"
             return None
@@ -164,10 +176,10 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             if listed.returncode != 0:
                 return f"project list failed: {(listed.stderr or listed.stdout).strip()}"
             try:
-                payload = json.loads(listed.stdout)
-            except json.JSONDecodeError:
-                return "project list returned invalid JSON"
-            rows = payload.get("projects", payload.get("data", {}).get("projects", [])) if isinstance(payload, dict) else []
+                payload = _cli_success(listed)
+            except ValueError as error:
+                return f"project list returned an invalid UX result: {error}"
+            rows = payload.get("projects", []) if isinstance(payload, dict) else []
             expected = {(ids[project], str(project.resolve())) for project in projects}
             found = {(row.get("id"), row.get("path")) for row in rows if isinstance(row, dict)}
             if not expected <= found:
@@ -175,9 +187,9 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             for project in projects:
                 result = run(project, "project", "show", "--json", step_id="S-196.2")
                 try:
-                    current = json.loads(result.stdout).get("project", {})
-                except json.JSONDecodeError:
-                    return f"project show returned invalid JSON in {project.name}"
+                    current = _cli_success(result).get("project", {})
+                except ValueError as error:
+                    return f"project show returned an invalid UX result in {project.name}: {error}"
                 if (result.returncode != 0 or current.get("id") != ids[project]
                         or current.get("path") != str(project.resolve())):
                     return f"project show selected the wrong registered root from {project.name}"
@@ -222,9 +234,9 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                 if result.returncode != 0:
                     return f"mcp config codex failed in {project.name}: {(result.stderr or result.stdout).strip()}"
                 try:
-                    payload = json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    return f"mcp config codex returned invalid JSON in {project.name}"
+                    payload = _cli_success(result)
+                except ValueError as error:
+                    return f"mcp config codex returned an invalid UX result in {project.name}: {error}"
                 expected_url = f"/api/v1/projects/{ids[project]}/mcp"
                 if (payload.get("projectId") != ids[project]
                         or not isinstance(payload.get("url"), str)
@@ -252,9 +264,9 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                 if result.returncode != 0:
                     return f"config show failed from {project.name} subdirectory: {(result.stderr or result.stdout).strip()}"
                 try:
-                    payload = json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    return f"config show returned invalid JSON from {project.name} subdirectory"
+                    payload = _cli_success(result)
+                except ValueError as error:
+                    return f"config show returned an invalid UX result from {project.name} subdirectory: {error}"
                 rows = payload.get("rows", []) if isinstance(payload, dict) else []
                 scopes = next((row for row in rows if isinstance(row, dict)
                                and row.get("field") == "plugins.commit.scope.scopes"), None)
@@ -269,10 +281,9 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
         def unknown_project_and_local_command() -> str | None:
             result = run(fixture_root, "config", "show", "--json", step_id="S-196.4")
             try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                return "config show outside registered projects returned invalid JSON"
-            error = payload.get("error", {}) if isinstance(payload, dict) else {}
+                error = _cli_error(result)
+            except ValueError as error:
+                return f"config show outside registered projects returned an invalid UX result: {error}"
             if result.returncode == 0 or error.get("code") != "KB_PROJECT_UNKNOWN":
                 return "project-scoped config show outside registered roots did not return KB_PROJECT_UNKNOWN"
             hint = error.get("hint", "")
@@ -307,10 +318,10 @@ def run_project_identity_steps(journey: Journey, repo_root: Path) -> None:
                 timeout=120,
             )
             try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                return f"project show did not return JSON: {result.stderr or result.stdout}"
-            error = payload.get("error", {})
+                error = _cli_error(result)
+            except ValueError as error:
+                return f"project show returned an invalid UX result: {error}"
+            payload = error
             if result.returncode == 0 or error.get("code") != "KB_PROJECT_UNKNOWN":
                 return f"unregistered cwd returned unexpected result: {payload}"
             if "kb project add" not in error.get("hint", ""):

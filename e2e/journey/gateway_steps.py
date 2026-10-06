@@ -8,7 +8,8 @@ import shlex
 import subprocess
 import urllib.request
 
-from invocations import invocation_context, open_http, run_command
+from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context, invocation_link,
+                         open_http, read_ux_cli_result, read_ux_http_result, run_command)
 from service_steps import Journey
 
 
@@ -22,10 +23,14 @@ def _http(path: str, *, token: str, method: str = "GET", payload: object = None,
                  **({"Authorization": f"Bearer {token}"} if token else {})}, method=method,
     )
     status, raw, _ = open_http(opener, request, timeout=60, env=os.environ)
-    try:
-        return status, json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
+    if path == "/platform/v1/llm/stream" and status == 200:
         return status, raw.decode(errors="replace")
+    try:
+        envelope = read_ux_http_result(raw, status)
+        return status, (decode_ux_success_result(envelope) if 200 <= status < 300
+                        else decode_ux_error_result(envelope))
+    except ValueError as error:
+        raise AssertionError(f"HTTP {method} {path} did not return a UX JSON envelope: {error}") from error
 
 
 def _cli(command: list[str], step_id: str, runner, *, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -37,12 +42,9 @@ def _cli(command: list[str], step_id: str, runner, *, cwd: str | None = None) ->
 def _json_contains(result: subprocess.CompletedProcess[str], expected: str) -> bool:
     if result.returncode != 0:
         return False
-    try:
-        payload = json.loads(result.stdout)
-    except (TypeError, json.JSONDecodeError):
-        return False
-    if not isinstance(payload, dict):
-        return False
+    payload = read_ux_cli_result(result.stdout, result.returncode)
+    if result.returncode == 0:
+        payload = decode_ux_success_result(payload)
     values: list[str] = []
 
     def collect(value: object) -> None:
@@ -60,12 +62,11 @@ def _json_contains(result: subprocess.CompletedProcess[str], expected: str) -> b
 
 
 def _json_string_field(result: subprocess.CompletedProcess[str] | None, field: str) -> str | None:
-    if result is None or result.returncode != 0:
-        return None
-    try:
-        payload = json.loads(result.stdout)
-    except (TypeError, json.JSONDecodeError):
-        return None
+    if result is None:
+        raise ValueError("CLI result is required")
+    payload = read_ux_cli_result(result.stdout, result.returncode)
+    if result.returncode == 0:
+        payload = decode_ux_success_result(payload)
 
     def find(value: object) -> str | None:
         if isinstance(value, dict):
@@ -87,13 +88,10 @@ def _json_string_field(result: subprocess.CompletedProcess[str] | None, field: s
 
 
 def _json_object(result: subprocess.CompletedProcess[str] | None) -> dict[str, object]:
-    if result is None or result.returncode != 0:
-        return {}
-    try:
-        payload = json.loads(result.stdout)
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    if result is None:
+        raise ValueError("CLI result is required")
+    payload = read_ux_cli_result(result.stdout, result.returncode)
+    return decode_ux_success_result(payload) if result.returncode == 0 else decode_ux_error_result(payload)
 
 
 def _store_studio_llm_model(model: str | None) -> None:
@@ -123,10 +121,15 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
     project_config_before = project_config.read_bytes() if project_config.is_file() else None
     openai_base = _cli(["kb", "config", "set", "--scope", "platform",
                         "platform.adapterOptions.llm.baseURL", f"{mock_base}/v1", "--json"], "S-017.2", runner)
-    base_result = _json_object(openai_base)
+    base_result_error = None
+    try:
+        base_result = _json_object(openai_base)
+    except ValueError as error:
+        base_result = {}
+        base_result_error = str(error)
     platform_root = Path(os.environ.get("KB_JOURNEY_PLATFORM_ROOT", str(Path.home() / "kb-platform"))).resolve()
     expected_platform_config = str(platform_root / ".kb" / "kb.config.jsonc")
-    scope_ok = (base_result.get("file") == expected_platform_config
+    scope_ok = (base_result_error is None and base_result.get("file") == expected_platform_config
                 and project_config_before == (project_config.read_bytes() if project_config.is_file() else None)
                 and base_result.get("nextCommand") == f"kb-create restart --platform-root {json.dumps(str(platform_root))}")
     openai_model = _cli(["kb", "config", "set", "--scope", "platform",
@@ -137,12 +140,19 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
                    and "${OPENAI_API_KEY}" in inspect.stdout
                    and os.environ.get("OPENAI_API_KEY", "") not in inspect.stdout)
     journey.step("store platform config without exposing the key or changing project config", "gateway",
-                 lambda: None if secret_safe and scope_ok else "platform config wrote to the wrong file, changed project config, omitted restart guidance, or exposed the OPENAI_API_KEY reference",
+                 lambda: (None if secret_safe and scope_ok else
+                          f"platform config command returned an invalid UX result: {base_result_error}"
+                          if base_result_error else
+                          "platform config wrote to the wrong file, changed project config, omitted restart guidance, or exposed the OPENAI_API_KEY reference"),
                  cases=["S-017.2", "S-017.4", "S-017.5"])
 
-    restart = _cli(shlex.split(str(base_result.get("nextCommand", "kb-create restart"))), "S-017.5", runner)
+    next_command = base_result.get("nextCommand")
+    restart = (_cli(shlex.split(next_command), "S-017.5", runner)
+               if isinstance(next_command, str) else None)
     journey.step("restart the host after changing platform LLM settings", "gateway", lambda: (
-        None if restart.returncode == 0 else "the exact restart command returned by kb config set failed"
+        None if restart is not None and restart.returncode == 0
+        else (f"kb config set returned no restart command: {base_result_error}"
+              if base_result_error else "kb config set did not return a restart command")
     ), cases=["S-017.5"])
 
     project_a = os.environ.get("KB_JOURNEY_PROJECT_ROOT", "")
@@ -209,7 +219,7 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
         call_status, call_body = _http("/platform/v1/analytics/track", token=token, method="POST",
                                        payload={"args": ["case.gateway.call", {"source": "case-fixture"}]}, opener=opener)
     journey.step("call analytics through platform API", "gateway", lambda: (
-        None if call_status == 200 and isinstance(call_body, dict) and call_body.get("ok") is True
+        None if call_status == 200 and isinstance(call_body, dict)
         else f"platform analytics call returned HTTP {call_status} without the success envelope"
     ), cases=["S-189.2"])
 
@@ -240,18 +250,32 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
         midstream_status, midstream_stream = _http("/platform/v1/llm/stream", token=token, method="POST",
                                                    payload={"args": ["journey-provider-stream-error"]}, opener=opener)
         health_status, health = _http("/health", token=token, opener=opener)
-    error_envelope = error_stream.get("error", {}) if isinstance(error_stream, dict) else {}
+    error_envelope = error_stream if isinstance(error_stream, dict) else {}
     midstream_envelope = {}
+    midstream_error_problem: str | None = None
     if isinstance(midstream_stream, str) and "event: error\n" in midstream_stream and "[DONE]" not in midstream_stream:
-        for line in midstream_stream.splitlines():
-            if line.startswith("data: "):
+        for frame in midstream_stream.split("\n\n"):
+            lines = frame.splitlines()
+            if "event: error" not in lines:
+                continue
+            for line in lines:
+                if not line.startswith("data: "):
+                    continue
                 try:
                     event_payload = json.loads(line[6:])
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event_payload, dict) and isinstance(event_payload.get("error"), dict):
-                    midstream_envelope = event_payload["error"]
+                    midstream_envelope = decode_ux_error_result(event_payload)
+                except json.JSONDecodeError as error:
+                    evidence = invocation_link("S-189.5")
+                    suffix = f" ({evidence})" if evidence else ""
+                    midstream_error_problem = f"SSE error event is not JSON: {error}{suffix}"
                     break
+                except ValueError as error:
+                    midstream_error_problem = str(error)
+                    break
+                if isinstance(midstream_envelope, dict):
+                    break
+            if midstream_envelope or midstream_error_problem:
+                break
     midstream_error_event = (midstream_status == 200 and midstream_envelope.get("code") == "KB_CONFIG_LLM_PROVIDER_UNAVAILABLE"
                    and "kb config get platform.adapterOptions.llm.baseURL --scope platform --json" in midstream_envelope.get("hint", "")
                    and midstream_envelope.get("message") and midstream_envelope.get("correlationId"))
@@ -263,13 +287,15 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
     health_ok = health_status == 200 and isinstance(health, dict)
     journey.step("keep gateway healthy after an LLM stream failure", "gateway", lambda: (
         None if before_headers_error and midstream_error_event and health_ok
-        else f"LLM stream failure was not typed or gateway health returned HTTP {health_status}"
+        else (f"LLM stream failure was not typed or gateway health returned HTTP {health_status}; "
+              f"{midstream_error_problem}" if midstream_error_problem else
+              f"LLM stream failure was not typed or gateway health returned HTTP {health_status}")
     ), cases=["S-189.5"])
 
     with invocation_context(step_id="S-189.6"):
         invalid_status, invalid_body = _http("/platform/v1/llm/stream", token=token, method="POST",
                                               payload={"args": []}, opener=opener)
-    invalid_error = invalid_body.get("error", {}) if isinstance(invalid_body, dict) else {}
+    invalid_error = invalid_body if isinstance(invalid_body, dict) else {}
     journey.step("reject an LLM stream request without a prompt", "gateway", lambda: (
         None if invalid_status == 400 and invalid_error.get("code") == "KB_RUNTIME_INPUT_INVALID"
         else f"empty LLM stream args returned HTTP {invalid_status} without KB_RUNTIME_INPUT_INVALID"
@@ -298,8 +324,6 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
         after_rejection_status, after_rejection = _http(telemetry_query, token=token, opener=opener)
     issues = rejected.get("issues", []) if isinstance(rejected, dict) else []
     stored = after_rejection.get("events", []) if isinstance(after_rejection, dict) else []
-    if isinstance(after_rejection, dict) and isinstance(after_rejection.get("data"), dict):
-        stored = after_rejection["data"].get("events", stored)
     mutated = isinstance(stored, list) and any(
         isinstance(event, dict) and str(event.get("type", "")).startswith("case.telemetry.over.")
         for event in stored

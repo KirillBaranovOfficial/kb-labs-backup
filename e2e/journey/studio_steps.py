@@ -11,7 +11,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from invocations import invocation_link, open_http, record_invocation, run_streaming_command
+from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_link,
+                         open_http, read_ux_http_result, record_invocation, run_streaming_command)
 
 PLAYWRIGHT_HEADLESS_SHELL = Path("chromium_headless_shell-1217/chrome-linux/headless_shell")
 PLAYWRIGHT_IMAGE_REBUILD_COMMAND = "e2e/journey/run.sh --no-build"
@@ -60,7 +61,9 @@ def create_studio_member(base_url: str, admin_email: str, admin_password: str) -
         status, raw, _ = open_http(urllib.request.urlopen, request, timeout=20, env=os.environ)
         if status not in {200, 201}:
             raise RuntimeError(f"POST {path} returned HTTP {status}")
-        return json.loads(raw) if raw else {}
+        envelope = read_ux_http_result(raw, status)
+        return (decode_ux_success_result(envelope) if 200 <= status < 300
+                else decode_ux_error_result(envelope))
 
     login = post("/auth/login/cli", {"email": admin_email, "password": admin_password})
     token = str(login.get("accessToken") or login.get("token") or "")
@@ -90,7 +93,9 @@ def create_studio_access_tokens(base_url: str, admin_email: str, admin_password:
         status, raw, _ = open_http(urllib.request.urlopen, request, timeout=20, env=env)
         if status not in {200, 201}:
             raise RuntimeError(f"POST /auth/login/cli returned HTTP {status} while preparing Studio settings auth")
-        payload = json.loads(raw) if raw else {}
+        envelope = read_ux_http_result(raw, status)
+        payload = (decode_ux_success_result(envelope) if 200 <= status < 300
+                   else decode_ux_error_result(envelope))
         token = payload.get("accessToken") or payload.get("token") if isinstance(payload, dict) else ""
         if not isinstance(token, str) or not token:
             raise RuntimeError("POST /auth/login/cli returned no access token while preparing Studio settings auth")

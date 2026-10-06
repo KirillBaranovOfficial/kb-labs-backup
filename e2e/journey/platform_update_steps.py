@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
-from invocations import run_command as invoke_command, run_with_runner
+from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
+                         run_command as invoke_command, run_with_runner)
 
 
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
@@ -16,26 +17,27 @@ CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
 
 def _json_command(run_command: CommandRunner, args: list[str], label: str) -> dict:
     result = run_command(args)
-    if result.returncode != 0:
-        raise RuntimeError(f"{label}: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}{_log_tail(result.stdout)}")
     try:
-        value = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"{label}: expected JSON output") from error
-    if not isinstance(value, dict) or value.get("ok") is not True:
-        raise RuntimeError(f"{label}: expected a successful result envelope")
-    payload = value.get("data")
+        value = read_ux_cli_result(result.stdout, result.returncode)
+        if result.returncode != 0:
+            error = decode_ux_error_result(value)
+            raise RuntimeError(f"{label}: {error!r}{_log_tail(result.stdout, result.returncode)}")
+        payload = decode_ux_success_result(value)
+    except ValueError as error:
+        raise RuntimeError(f"{label}: expected a valid ADR-0049 result: {error}") from error
     if not isinstance(payload, dict):
         raise RuntimeError(f"{label}: result envelope did not contain an object payload")
     return payload
 
 
-def _log_tail(stdout: str) -> str:
+def _log_tail(stdout: str, returncode: int) -> str:
     """The end of the operation log named by a failed launcher result, so the journey report shows the cause."""
     try:
-        log_path = json.loads(stdout).get("logPath")
+        envelope = read_ux_cli_result(stdout, returncode)
+        payload = decode_ux_error_result(envelope) if returncode else decode_ux_success_result(envelope)
+        log_path = payload.get("logPath")
         text = Path(log_path).read_text(encoding="utf-8", errors="replace") if log_path else ""
-    except (json.JSONDecodeError, AttributeError, OSError, TypeError):
+    except (ValueError, AttributeError, OSError, TypeError):
         return ""
     return f"; operation log tail: {' '.join(text.split())[-1500:]}" if text else ""
 
@@ -72,7 +74,6 @@ def run_platform_update_steps(
     updated_version: str,
     run_command: CommandRunner = invoke_command,
     verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
-    verify_contract_transition: Callable[[], None] | None = None,
 ) -> Journey:
     command_runner = run_command
     def run_command(args: list[str]) -> subprocess.CompletedProcess:
@@ -89,6 +90,8 @@ def run_platform_update_steps(
     updated_plan_hash = ""
     updated_plan: dict = {}
     config_checkpoints: dict[str, str | None] = {}
+    saved_user_session_established = False
+    saved_session_succeeded_after_update = False
 
     def checkpoint_details() -> dict[str, dict[str, str | None]]:
         return {"configSha256": dict(config_checkpoints)}
@@ -98,6 +101,7 @@ def run_platform_update_steps(
         config_checkpoints[name] = digest
 
     def save_known_good_state() -> None:
+        nonlocal saved_user_session_established
         receipt = json.loads(receipt_path.read_text())
         actual = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
         if actual != base_version:
@@ -113,6 +117,7 @@ def run_platform_update_steps(
             login = verify_user()
             if login.returncode != 0:
                 raise RuntimeError(f"initial admin login failed: {' '.join(login.stdout.split())[-400:]}")
+            saved_user_session_established = True
 
     journey.step("save installed receipt, config, and host status", "platform.update", save_known_good_state,
                  cases=["S-023.1"], details=checkpoint_details)
@@ -165,30 +170,36 @@ def run_platform_update_steps(
         verified_hash = receipt.get("verification", {}).get("configSha256")
         if not config_hash or config_hash != verified_hash:
             raise RuntimeError("generated config is missing or does not match the updated receipt verification hash")
-        if verify_user is not None:
-            if verify_contract_transition is not None:
-                verify_contract_transition()
-            login = verify_user()
-            if login.returncode != 0:
-                raise RuntimeError(f"admin login failed after update: {' '.join(login.stdout.split())[-400:]}")
 
     journey.step("verify updated receipt, config, and host status", "platform.update", verify_updated_install,
-                 cases=["S-023.4", "S-041.4"] if verify_contract_transition else ["S-023.4"])
+                 cases=["S-023.4"])
 
     def project_command() -> None:
+        nonlocal saved_session_succeeded_after_update
         result = run_command([kb_binary, "project", "list", "--json"])
-        if result.returncode != 0:
-            raise RuntimeError(f"project list after update: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
         try:
-            envelope = json.loads(result.stdout)
-            payload = envelope.get("data", {}) if isinstance(envelope, dict) else {}
-        except json.JSONDecodeError as error:
-            raise RuntimeError("project list after update did not return JSON") from error
-        if not isinstance(payload.get("projects"), list):
+            envelope = read_ux_cli_result(result.stdout, result.returncode)
+            if result.returncode != 0:
+                failure = decode_ux_error_result(envelope)
+                raise RuntimeError(f"project list after update was rejected: {failure!r}")
+            payload = decode_ux_success_result(envelope)
+        except ValueError as error:
+            raise RuntimeError(f"project list after update returned an invalid UX result: {error}") from error
+        if not isinstance(payload, dict) or not isinstance(payload.get("projects"), list):
             raise RuntimeError("project list after update did not return a projects payload")
+        saved_session_succeeded_after_update = True
 
     journey.step("run the core project list command after update", "platform.update", project_command,
                  cases=["S-023.5"])
+
+    if verify_user is not None:
+        def login_after_update() -> None:
+            login = verify_user()
+            if login.returncode != 0:
+                raise RuntimeError(f"existing admin login failed after update: {' '.join(login.stdout.split())[-400:]}")
+
+        journey.step("existing admin can log in after update", "platform.update", login_after_update,
+                     cases=["S-023.4"])
 
     def repeat_update() -> None:
         preview = _json_command(run_command, [launcher, "plan", "--json", "--index", str(update_index),
@@ -251,10 +262,10 @@ def run_platform_update_steps(
         if result.returncode == 0:
             raise RuntimeError("rollback unexpectedly accepted an unknown snapshot")
         try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise RuntimeError("unknown-snapshot rollback returned non-JSON output") from error
-        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+            envelope = read_ux_cli_result(result.stdout, result.returncode)
+            error = decode_ux_error_result(envelope)
+        except ValueError as error:
+            raise RuntimeError(f"unknown-snapshot rollback returned an invalid ADR-0049 result: {error}") from error
         if not isinstance(error, dict) or not error.get("code") or not error.get("hint") or not error.get("correlationId"):
             raise RuntimeError("unknown-snapshot rollback omitted its structured recovery error or hint")
         if receipt_path.read_bytes() != before:
@@ -292,24 +303,33 @@ def run_platform_update_steps(
                 f"afterRollbackHostRestart={after_rollback}, afterMissingSnapshotRecovery={after_recovery}"
             )
         if verify_user is not None:
-            if verify_contract_transition is not None:
-                verify_contract_transition()
-            login = verify_user()
-            if login.returncode != 0:
-                raise RuntimeError(f"admin login failed after rollback: {' '.join(login.stdout.split())[-400:]}")
+            if not saved_user_session_established:
+                raise RuntimeError("saved user session was not established before update")
+            if not saved_session_succeeded_after_update:
+                raise RuntimeError("saved user session did not run a protected command successfully after update")
         command = run_command([kb_binary, "project", "list", "--json"])
-        if command.returncode != 0:
-            raise RuntimeError(f"project list after rollback: exit {command.returncode}; {' '.join(command.stdout.split())[-500:]}")
         try:
-            envelope = json.loads(command.stdout)
-            payload = envelope.get("data", {}) if isinstance(envelope, dict) else {}
-        except json.JSONDecodeError as error:
-            raise RuntimeError("project list after rollback did not return JSON") from error
-        if not isinstance(payload.get("projects"), list):
+            envelope = read_ux_cli_result(command.stdout, command.returncode)
+            if command.returncode != 0:
+                failure = decode_ux_error_result(envelope)
+                raise RuntimeError(f"project list after rollback was rejected: {failure!r}")
+            payload = decode_ux_success_result(envelope)
+        except ValueError as error:
+            raise RuntimeError(f"project list after rollback returned an invalid UX result: {error}") from error
+        if not isinstance(payload, dict) or not isinstance(payload.get("projects"), list):
             raise RuntimeError("project list after rollback did not return a projects payload")
 
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
-                 cases=["S-024.3", "S-041.4"] if verify_contract_transition else ["S-024.3"], details=checkpoint_details)
+                 cases=["S-024.3", "S-041.4"] if verify_user is not None else ["S-024.3"], details=checkpoint_details)
+
+    if verify_user is not None:
+        def login_after_rollback() -> None:
+            login = verify_user()
+            if login.returncode != 0:
+                raise RuntimeError(f"existing admin login failed after rollback: {' '.join(login.stdout.split())[-400:]}")
+
+        journey.step("existing admin can log in after rollback", "platform.rollback", login_after_rollback,
+                     cases=["S-024.3"])
 
     def doctor() -> None:
         result = _json_command(run_command, [launcher, "doctor", "--platform-root", root, "--json"], "doctor")

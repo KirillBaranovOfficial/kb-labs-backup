@@ -7,7 +7,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from invocations import invocation_context, run_command
+from invocations import decode_ux_success_result, invocation_context, read_ux_cli_result, run_command
 
 
 SERVICE_SOURCES = {
@@ -16,6 +16,13 @@ SERVICE_SOURCES = {
     "e2e/journey/steps/accounts.py",
     "e2e/journey/studio_steps.py",
 }
+
+
+def read_coverage_result(stdout: str, returncode: int) -> dict:
+    payload = decode_ux_success_result(read_ux_cli_result(stdout, returncode))
+    if not isinstance(payload, dict):
+        raise ValueError("QA coverage result data is not an object")
+    return payload
 
 
 def selectors_from_coverage(results: list[dict]) -> list[str]:
@@ -48,7 +55,7 @@ def main() -> int:
             result = run_command(command, cwd=Path.cwd(), env=os.environ, timeout=120)
         if result.returncode != 0:
             raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout, stderr=result.stderr)
-        results.append(json.loads(result.stdout))
+        results.append(read_coverage_result(result.stdout, result.returncode))
     print(json.dumps(selectors_from_coverage(results)))
     return 0
 

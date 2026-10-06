@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
-from invocations import invocation_context, run_command, run_pty_command, run_with_runner
+from invocations import (
+    decode_ux_success_result,
+    invocation_context,
+    read_ux_cli_result,
+    run_command,
+    run_pty_command,
+    run_with_runner,
+)
 
 
 PLUGIN_NAME = "demo"
@@ -36,10 +43,7 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str],
 def _plugins(kb: Path, *, cwd: Path, env: dict[str, str], command_runner) -> list[dict]:
     output = _run([str(kb), "marketplace", "plugins", "list", "--json"],
                   cwd=cwd, env=env, command_runner=command_runner)
-    try:
-        data = json.loads(output)
-    except json.JSONDecodeError as error:
-        raise RuntimeError("kb marketplace plugins list --json did not return JSON") from error
+    data = decode_ux_success_result(read_ux_cli_result(output, 0))
     entries = data.get("entries") if isinstance(data, dict) else None
     if not isinstance(entries, list):
         raise RuntimeError("kb marketplace plugins list --json returned no entries array")
@@ -63,13 +67,9 @@ def _lock_entry(project: Path) -> tuple[dict, dict]:
 
 def _json_payload(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
     output = result.stdout or ""
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as error:
-        detail = (result.stderr or "").strip()
-        raise RuntimeError(f"`{' '.join(command)}` did not return valid JSON: {detail[-500:]}") from error
+    payload = decode_ux_success_result(read_ux_cli_result(output, result.returncode))
     if not isinstance(payload, dict):
-        raise RuntimeError(f"`{' '.join(command)}` did not return a JSON object")
+        raise ValueError(f"`{' '.join(command)}` success data is not a JSON object")
     return payload
 
 

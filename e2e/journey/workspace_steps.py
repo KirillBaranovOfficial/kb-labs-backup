@@ -8,7 +8,8 @@ import tempfile
 from pathlib import Path
 
 from service_steps import Journey
-from invocations import invocation_context, run_command
+from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
+                         read_ux_cli_result, run_command)
 
 
 def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
@@ -53,14 +54,12 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
             if result.returncode != 0:
                 return f"workspace QA case validation failed (exit {result.returncode}): {result.stderr or result.stdout}"
             try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError as error:
+                envelope = read_ux_cli_result(result.stdout, result.returncode)
+                payload = decode_ux_success_result(envelope)
+            except ValueError as error:
                 return f"workspace QA case validation did not return JSON: {error}"
-            if not isinstance(payload, dict) or payload.get("ok") is not True:
-                return "workspace QA case validation did not return a successful JSON envelope"
-            data = payload.get("data")
-            if not isinstance(data, dict) or data.get("valid") is not True:
-                return "workspace QA case validation envelope did not contain valid case data"
+            if not isinstance(payload, dict) or payload.get("valid") is not True:
+                return "workspace QA case validation data did not report valid cases"
             return None
 
         journey.step("validate QA cases with the workspace CLI", "workspace-cli", validate_cases, cases=["S-179.2", "S-203.1"])
@@ -70,13 +69,13 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
             if result.returncode != 0:
                 return f"workspace adapter listing failed (exit {result.returncode}): {result.stderr or result.stdout}"
             try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError as error:
+                envelope = read_ux_cli_result(result.stdout, result.returncode)
+                payload = decode_ux_success_result(envelope)
+            except ValueError as error:
                 return f"workspace adapter listing did not return JSON: {error}"
-            data = payload.get("data") if isinstance(payload, dict) else None
-            if not isinstance(payload, dict) or payload.get("ok") is not True or not isinstance(data, dict):
-                return "workspace adapter listing did not return a successful JSON envelope"
-            rows = data.get("adapters", [])
+            if not isinstance(payload, dict):
+                return "workspace adapter listing returned non-object UX data"
+            rows = payload.get("adapters", [])
             implementations = {row.get("slot"): row.get("implementation") for row in rows if isinstance(row, dict)}
             expected = {
                 "storage": "@kb-labs/adapters-fs",
@@ -154,10 +153,10 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
                 command_result = run_command(["node", str(cli), "release", "plan", "--json"],
                                              cwd=fixture_root, env=isolated_env, timeout=120)
             try:
-                payload = json.loads(command_result.stdout or "")
-            except json.JSONDecodeError:
-                return "unbuilt release command did not return a typed JSON error"
-            error = payload.get("error") if isinstance(payload, dict) else None
+                envelope = read_ux_cli_result(command_result.stdout or "", command_result.returncode)
+                error = decode_ux_error_result(envelope)
+            except ValueError as error:
+                return f"unbuilt release command returned an invalid UX result: {error}"
             if (command_result.returncode == 0 or not isinstance(error, dict)
                     or error.get("code") != "KB_PLUGIN_NOT_FOUND"
                     or "pnpm build" not in str(error.get("hint", ""))):

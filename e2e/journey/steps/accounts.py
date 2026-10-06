@@ -11,7 +11,8 @@ import subprocess
 import os
 
 from .auth import _login, _request
-from invocations import open_http, run_command
+from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
+                         read_ux_cli_result, read_ux_http_result, run_command)
 
 
 def _browser_call(base_url: str, jar: http.cookiejar.CookieJar, path: str, *, method: str = "GET",
@@ -36,7 +37,9 @@ def _browser_call(base_url: str, jar: http.cookiejar.CookieJar, path: str, *, me
     status, raw, _ = open_http(opener.open, request, timeout=15, env=os.environ)
     if status != expected:
         raise AssertionError(f"{method} {path}: expected HTTP {expected}, got {status}: {raw[:300]!r}")
-    return json.loads(raw) if raw else {}
+    envelope = read_ux_http_result(raw, status)
+    return (decode_ux_success_result(envelope) if 200 <= status < 300
+            else decode_ux_error_result(envelope))
 
 
 def _browser_login(base_url: str, email: str, password: str) -> http.cookiejar.CookieJar:
@@ -83,14 +86,14 @@ def run_cli_logout_steps(cli_path: str, env: dict[str, str]) -> None:
 
     logout = invoke(["auth", "logout", "--json"])
     try:
-        logout_payload = json.loads(logout.stdout)
+        logout_payload = decode_ux_success_result(read_ux_cli_result(logout.stdout, logout.returncode))
     except json.JSONDecodeError as error:
         raise AssertionError(f"kb auth logout --json did not return JSON: {logout.stdout[-400:]}") from error
-    if logout.returncode != 0 or logout_payload != {"ok": True, "message": "Logged out. Credentials removed."}:
+    if logout.returncode != 0 or logout_payload != {"message": "Logged out. Credentials removed."}:
         raise AssertionError(f"kb auth logout returned unexpected JSON: {logout_payload!r}")
     status = invoke(["auth", "status", "--json"])
     try:
-        status_payload = json.loads(status.stdout)
+        status_payload = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))
     except json.JSONDecodeError as error:
         raise AssertionError(f"kb auth status --json did not return JSON: {status.stdout[-400:]}") from error
     if status.returncode != 0 or status_payload.get("session", {}).get("authenticated") is not False:

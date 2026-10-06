@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 import urllib.request
 
-from invocations import invocation_context, open_http, run_command
+from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
+                         open_http, read_ux_cli_result, read_ux_http_result, run_command)
 from service_steps import Journey
 from steps.accounts import _browser_call, _browser_login
 from steps.auth import _login, _request
@@ -26,11 +27,12 @@ def _cli(cli: str, env: dict[str, str], *args: str):
 
 def _json(result, description: str) -> dict:
     try:
-        value = json.loads(result.stdout)
+        value = read_ux_cli_result(result.stdout, result.returncode)
     except json.JSONDecodeError as error:
         raise AssertionError(f"{description} did not return JSON") from error
     _expect(isinstance(value, dict), f"{description} did not return a JSON object")
-    return value
+    envelope = value
+    return envelope
 
 
 def _response(base: str, path: str, *, method: str = "GET", token: str = "",
@@ -44,9 +46,11 @@ def _response(base: str, path: str, *, method: str = "GET", token: str = "",
     request = urllib.request.Request(base + path, data=data, headers=headers, method=method)
     status, raw, _ = open_http(urllib.request.urlopen, request, timeout=15, env=os.environ)
     try:
-        payload = json.loads(raw) if raw else {}
+        envelope = read_ux_http_result(raw, status)
     except json.JSONDecodeError as error:
         raise AssertionError(f"{method} {path} did not return JSON") from error
+    payload = (decode_ux_success_result(envelope) if 200 <= status < 300
+               else decode_ux_error_result(envelope))
     _expect(isinstance(payload, dict), f"{method} {path} did not return a JSON object")
     return status, payload
 

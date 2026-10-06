@@ -8,7 +8,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from invocations import invocation_context, open_http, run_command, run_with_runner
+from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
+                         open_http, read_ux_cli_result, read_ux_http_result, run_command, run_with_runner)
 from service_steps import Journey
 from gateway_steps import run_gateway_steps
 
@@ -25,7 +26,9 @@ def _request(method: str, path: str, *, token: str, payload: object = None,
     )
     status, raw, _ = open_http(opener, request, timeout=30, env=os.environ)
     try:
-        return status, json.loads(raw) if raw else {}
+        envelope = read_ux_http_result(raw, status)
+        return status, (decode_ux_success_result(envelope) if 200 <= status < 300
+                        else decode_ux_error_result(envelope))
     except json.JSONDecodeError:
         return status, raw.decode(errors="replace")
 
@@ -55,13 +58,11 @@ def _marker_event(events: list[dict], marker: str) -> dict | None:
 def _emission_succeeded(result: subprocess.CompletedProcess[str] | None, marker: str) -> bool:
     if result is None or result.returncode != 0:
         return False
-    try:
-        payload = json.loads(result.stdout)
-    except (TypeError, json.JSONDecodeError):
+    payload = read_ux_cli_result(result.stdout, result.returncode)
+    if result.returncode != 0:
         return False
-    if not isinstance(payload, dict):
-        return False
-    data = payload.get("result", payload.get("data", payload))
+    data = decode_ux_success_result(payload)
+    data = data.get("result", data) if isinstance(data, dict) else data
     return (isinstance(data, dict) and data.get("type") == "case.analytics.persist"
             and data.get("marker") == marker)
 
