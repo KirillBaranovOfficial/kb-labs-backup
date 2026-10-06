@@ -37,7 +37,7 @@ class StudioFixtureStepTests(unittest.TestCase):
                     }), "")
                 if command[1:3] == ["marketplace", "uninstall"]:
                     attached[cwd].remove(command[3])
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {}}), "")
                 package = command[3]
                 attached[cwd].append(package)
                 return subprocess.CompletedProcess(command, 0, json.dumps({

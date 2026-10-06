@@ -47,13 +47,13 @@ elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
     plugins = json.loads(lock_path.read_text()).get("plugins", {}) if lock_path.exists() else {}
     entries = [{"id": key, "source": value["source"], "scope": "project"}
                for key, value in plugins.items()]
-    print(json.dumps({"entries": entries, "total": len(entries)}))
+    print(json.dumps({"ok": True, "data": {"entries": entries, "total": len(entries)}}))
 elif args[:4] == ["marketplace", "plugins", "unlink", "demo"]:
     lock_path.write_text(json.dumps({"plugins": {}}))
 elif args[:2] == ["marketplace", "install"]:
-    print(json.dumps({"ok": True, "scope": "project"}))
+    print(json.dumps({"ok": True, "data": {"scope": "project"}}))
 elif args[:2] == ["marketplace", "uninstall"]:
-    print(json.dumps({"ok": True}))
+    print(json.dumps({"ok": True, "data": {}}))
 elif args[:2] == ["adapter", "list"]:
     print(json.dumps({"ok": True, "data": {"adapters": [{
         "slot": "llm", "implementation": "@kb-labs/adapters-openai"
@@ -62,10 +62,10 @@ elif args[:3] == ["config", "get", "platform.adapterOptions.llm.baseURL"]:
     print(json.dumps({"ok": True, "data": {"value": "http://mock-llm:8317/v1"}}))
 elif args[:3] == ["adapter", "unbind", "llm"]:
     (root / ".kb/llm-unbound").write_text("true")
-    print(json.dumps({"ok": True}))
+    print(json.dumps({"ok": True, "data": {}}))
 elif args[:3] == ["adapter", "bind", "llm"]:
     (root / ".kb/llm-unbound").unlink(missing_ok=True)
-    print(json.dumps({"ok": True}))
+    print(json.dumps({"ok": True, "data": {}}))
 elif args[:3] == ["commit", "commit", "--dry-run"]:
     staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root,
                             capture_output=True, text=True, check=True).stdout
@@ -86,32 +86,32 @@ elif args[:3] == ["commit", "commit", "--dry-run"]:
         print("Re-analyzing with diff context (Phase 2)...", flush=True)
         print("Plan generated", flush=True)
         raise SystemExit(0)
-    print(json.dumps({"plan": {"metadata": {"llmUsed": True}}, "applied": False}))
+    print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": False}}))
 elif args[:2] == ["commit", "commit"]:
     changes = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"],
                              cwd=root, capture_output=True, text=True, check=True).stdout
     if not changes:
-        print(json.dumps({"plan": {"commits": []}, "applied": False, "pushed": False, "commits": []}))
+        print(json.dumps({"ok": True, "data": {"plan": {"commits": []}, "applied": False, "pushed": False, "commits": []}}))
         raise SystemExit(0)
     subprocess.run(["git", "commit", "-m", "test(journey): verify deterministic commit fixture response"],
                    cwd=root, capture_output=True, text=True, check=True)
     if "--json" in args:
-        print(json.dumps({"plan": {"metadata": {"llmUsed": True}}, "applied": True,
-                          "pushed": False, "commits": [{"message": "test(journey): verify deterministic commit fixture response"}]}))
+        print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": True,
+                          "pushed": False, "commits": [{"message": "test(journey): verify deterministic commit fixture response"}]}}))
     else:
         print("Commits created successfully")
 elif args[:3] == ["review", "run", "--mode=heuristic"] and "--json" not in args:
     print("Files: 1\nFindings: 0\n")
 elif args[:3] == ["review", "run", "--mode=heuristic"]:
-    print(json.dumps({"findings": [{"file": ".kb/journey-commit-cases/s015-review.ts", "line": 1}]}))
+    print(json.dumps({"ok": True, "data": {"findings": [{"file": ".kb/journey-commit-cases/s015-review.ts", "line": 1}], "metadata": {"mode": "heuristic", "analyzedFiles": 1}}}))
 elif args[:2] == ["review", "run"] and "--mode=llm" in args:
     if (root / ".kb/llm-unbound").exists():
         print(json.dumps({"ok": False, "error": {"code": "KB_ADAPTER_UNAVAILABLE",
             "message": "Adapter llm is not configured.", "hint": "kb adapter bind llm @kb-labs/adapters-openai"}}))
         raise SystemExit(1)
-    print(json.dumps({"findings": []}))
+    print(json.dumps({"ok": True, "data": {"findings": []}}))
 elif args[:2] == ["review", "run"]:
-    print(json.dumps({"findings": []}))
+    print(json.dumps({"ok": True, "data": {"findings": []}}))
 elif args == ["--help"]:
     print("Commands: demo")
 elif args == ["demo", "hello"]:

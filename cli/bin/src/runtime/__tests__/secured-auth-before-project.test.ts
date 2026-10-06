@@ -50,8 +50,8 @@ describe('secured CLI auth ordering', () => {
     vi.clearAllMocks();
   });
 
-  // case: S-041.7
-  it('returns the auth envelope for a project-scoped system command before project resolution', async () => {
+  // case: S-041.7, S-041.17
+  it('returns the auth envelope from an unregistered project directory before project resolution', async () => {
     isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-secured-auth-'));
     process.env.HOME = isolatedHome;
     process.env.KB_HOME = path.join(isolatedHome, '.kb');
@@ -98,8 +98,8 @@ describe('secured CLI auth ordering', () => {
     expect(mocks.executeViaGateway).not.toHaveBeenCalled();
   });
 
-  // case: S-203.2
-  it('keeps an unknown command as invalid input in local mode', async () => {
+  // case: S-203.2, S-047.3
+  it('returns one JSON error envelope when a removed plugin command is unknown', async () => {
     isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-secured-unknown-'));
     process.env.HOME = isolatedHome;
     process.env.KB_HOME = path.join(isolatedHome, '.kb');
@@ -119,13 +119,13 @@ describe('secured CLI auth ordering', () => {
     mocks.hasUsablePlatformAuth.mockResolvedValue(false);
 
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const exitCode = await executeCli(['missing-command', '--json'], { cwd: isolatedHome });
+    const exitCode = await executeCli(['commit', 'open', '--json'], { cwd: isolatedHome });
     const records = stdout.mock.calls.map(([record]) => String(record));
 
     expect(exitCode).toBe(2);
     expect(JSON.parse(records[0]!)).toMatchObject({
       ok: false,
-      error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'Unknown command: missing-command' },
+      error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'Unknown command: commit open' },
     });
     expect(mocks.hasUsablePlatformAuth).not.toHaveBeenCalled();
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();

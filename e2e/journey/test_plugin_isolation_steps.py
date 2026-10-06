@@ -39,7 +39,7 @@ class PluginIsolationStepsTest(unittest.TestCase):
             def unavailable(command, **_kwargs):
                 if "review" in command and Path(_kwargs.get("cwd", "")) == project_b:
                     payload = {"findings": [], "metadata": {"mode": "heuristic", "analyzedFiles": 1}}
-                    return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": payload}), "")
                 package = "@kb-labs/review-entry" if "review" in command else "@kb-labs/commit-entry"
                 output = f"KB_PLUGIN_NOT_FOUND: {package} is not installed. Run kb marketplace install {package}."
                 return subprocess.CompletedProcess(command, 1, "", output)

@@ -51,7 +51,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                                  "hostRestarted": True, "logPath": "/logs/update.log"})
         elif args[1] == "rollback":
             if "missing-journey-snapshot" in args:
-                stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_NO_SNAPSHOT", "hint": "restore a named snapshot", "correlationId": "c-missing"}})
+                stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_NO_SNAPSHOT", "message": "Snapshot is unknown.", "hint": "restore a named snapshot", "correlationId": "c-missing"}})
                 code = 1
             else:
                 self.config.write_text('{"stable":true}\n')
@@ -76,27 +76,22 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                 stdout = json.dumps(decoded)
         return subprocess.CompletedProcess(args, code, stdout, "")
 
-    def test_update_rollback_claims_all_steps_and_confirms_non_tty_rollback(self):
-        contract_transition_checks = 0
-
+    def test_update_rollback_preserves_the_saved_user_session(self):
         def verify_user():
             self.user_checks += 1
             return subprocess.CompletedProcess(["kb", "auth", "login"], 0, "logged in", "")
-
-        def verify_contract_transition():
-            nonlocal contract_transition_checks
-            contract_transition_checks += 1
 
         result = run_platform_update_steps(
             mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
             update_index=self.root / "update-index.json",
             request_file=self.root / "request.json", base_version="3.0.0", updated_version="3.0.1",
             run_command=self.fake_kb, verify_user=verify_user,
-            verify_contract_transition=verify_contract_transition,
         )
         report = result.result()
         self.assertEqual(report.status, "PASS")
         steps = {step["name"]: step for step in report.steps}
+        self.assertEqual(steps["existing admin can log in after update"]["status"], "PASS")
+        self.assertEqual(steps["existing admin can log in after rollback"]["status"], "PASS")
         self.assertEqual(
             steps["save installed receipt, config, and host status"]["details"]["configSha256"]["beforeUpdate"],
             hashlib.sha256(b'{"stable":true}\n').hexdigest(),
@@ -126,11 +121,10 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertNotIn("--json", self.commands[8])
         self.assertIn("--json", self.commands[9])
         self.assertEqual(self.user_checks, 3)
-        self.assertEqual(contract_transition_checks, 2)
-        self.assertIn("S-041.4", steps["verify updated receipt, config, and host status"]["cases"])
+        self.assertNotIn("S-041.4", steps["verify updated receipt, config, and host status"]["cases"])
         self.assertIn("S-041.4", steps["verify restored receipt, config, host, and project command"]["cases"])
 
-    def test_login_failure_keeps_the_valid_before_update_hash_and_does_not_fake_a_config_change(self):
+    def test_failed_initial_login_does_not_claim_saved_session_survives_update(self):
         login_attempts = 0
 
         def failed_login():
@@ -147,7 +141,8 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         )
         steps = {step["name"]: step for step in result.result().steps}
         self.assertEqual(steps["save installed receipt, config, and host status"]["status"], "FAIL")
-        self.assertEqual(steps["verify restored receipt, config, host, and project command"]["status"], "PASS")
+        self.assertEqual(steps["verify restored receipt, config, host, and project command"]["status"], "FAIL")
+        self.assertIn("saved user session was not established", steps["verify restored receipt, config, host, and project command"]["message"])
         self.assertEqual(
             steps["save installed receipt, config, and host status"]["details"]["configSha256"]["beforeUpdate"],
             hashlib.sha256(b'{"stable":true}\n').hexdigest(),
@@ -161,7 +156,8 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             if args[1] == "status":
                 status_calls += 1
                 if status_calls == 1:
-                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": False, "running": False}), "")
+                    return subprocess.CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
+                        "code": "KB_HOST_UNHEALTHY", "message": "The host is stopped.", "hint": "Start the host."}}), "")
             return self.fake_kb(args)
 
         result = run_platform_update_steps(
@@ -214,7 +210,9 @@ class PlatformUpdateStepsTest(unittest.TestCase):
     def test_failed_update_reports_the_first_failed_case_step(self):
         def broken(args: list[str]) -> subprocess.CompletedProcess:
             if args[1] == "plan":
-                return subprocess.CompletedProcess(args, 2, "invalid request", "")
+                return subprocess.CompletedProcess(args, 2, json.dumps({"ok": False, "error": {
+                    "code": "KB_TEST_PLAN_REJECTED", "message": "Invalid update request.",
+                    "hint": "Correct the request and retry."}}), "")
             return self.fake_kb(args)
 
         result = run_platform_update_steps(
@@ -227,7 +225,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(report.status, "FAIL")
         self.assertEqual(report.first_failure["name"], "plan the newer sealed release")
         self.assertEqual(report.first_failure["cases"], ["S-023.2"])
-        self.assertIn("exit 2", report.first_failure["message"])
+        self.assertIn("KB_TEST_PLAN_REJECTED", report.first_failure["message"])
 
     def test_repeat_plan_drift_names_changed_plan_fields_before_mutation(self):
         def drifting(args: list[str]) -> subprocess.CompletedProcess:

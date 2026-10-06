@@ -24,7 +24,7 @@ class FakeResponse:
         return None
 
     def read(self):
-        return b'{"error":"fixture unavailable"}'
+        return b'{"ok":false,"error":{"code":"KB_RUNTIME_UNEXPECTED","message":"fixture unavailable"}}'
 
 
 class JsonResponse:
@@ -62,22 +62,22 @@ class AnalyticsStepTests(unittest.TestCase):
             def runner(command, **_kwargs):
                 if command[:3] == ["kb", "journey", "analytics"]:
                     marker = next(arg.split("=", 1)[1] for arg in command if arg.startswith("--marker="))
-                    payload = {"ok": True, "result": {"type": "case.analytics.persist", "marker": marker}}
+                    payload = {"ok": True, "data": {"result": {"type": "case.analytics.persist", "marker": marker}}}
                     events.append({"id": f"event-{marker}", "type": "case.analytics.persist",
                                    "payload": {"source": "case-fixture", "marker": marker},
                                    "projectId": "project-a" if marker.endswith("project-a") else "project-b"})
                     return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
-                return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
+                return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
 
             def opener(request, **_kwargs):
                 if "/api/v1/projects/project-a/analytics/events" in request.full_url:
-                    payload = {"data": {"events": [event for event in events if event["projectId"] == "project-a"]}}
+                    payload = {"ok": True, "data": {"events": [event for event in events if event["projectId"] == "project-a"]}}
                 elif "/api/v1/projects/project-b/analytics/events" in request.full_url:
-                    payload = {"data": {"events": [event for event in events if event["projectId"] == "project-b"]}}
+                    payload = {"ok": True, "data": {"events": [event for event in events if event["projectId"] == "project-b"]}}
                 elif "/workflow/api/v1/runs" in request.full_url:
-                    payload = {"data": {"runs": []}}
+                    payload = {"ok": True, "data": {"runs": []}}
                 else:
-                    payload = {"data": {"events": events}}
+                    payload = {"ok": True, "data": {"events": events}}
                 return JsonResponse(payload)
 
             journey = Journey("local", "analytics-green")
@@ -99,7 +99,9 @@ class AnalyticsStepTests(unittest.TestCase):
             "KB_JOURNEY_PROJECT_ID": "project-a",
             "KB_JOURNEY_PROJECT_B_ID": "project-b",
         }, clear=False):
-            failed = lambda command, **_kwargs: subprocess.CompletedProcess(command, 1, "", "fixture failed")
+            failed = lambda command, **_kwargs: subprocess.CompletedProcess(command, 1, json.dumps({
+                "ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED", "message": "fixture failed"},
+            }), "")
             journey = Journey("local", "fake-analytics")
             run_analytics_steps(journey, token="fixture-token", runner=failed,
                                 opener=lambda *_args, **_kwargs: FakeResponse())

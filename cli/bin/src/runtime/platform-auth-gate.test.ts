@@ -3,11 +3,25 @@ import { dispatchWithPlatformAuthGate } from './platform-auth-gate.js';
 import { isPlatformAuthExemptFlag } from './platform-auth-policy.js';
 
 describe('platform authentication gate', () => {
-  // case: S-041.7
+  // case: S-041.4, S-041.7
   it('blocks an undeclared plugin before its handler is called', async () => {
     const handler = vi.fn(async () => 0);
     const result = await dispatchWithPlatformAuthGate({
       accessMode: 'secured', commandPath: 'fresh-plugin run', commandKind: 'plugin', hasAuth: false,
+    }, handler);
+    expect(result).toMatchObject({ error: {
+      code: 'KB_AUTH_REQUIRED',
+      message: 'Authentication is required.',
+      hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
+    } });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  // case: S-041.4
+  it('requires login when the host rejects a saved user token', async () => {
+    const handler = vi.fn(async () => 0);
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'secured', commandPath: 'project list', commandKind: 'system', hasAuth: false,
     }, handler);
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',

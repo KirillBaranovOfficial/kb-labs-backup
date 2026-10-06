@@ -25,7 +25,7 @@ class FakeResponse:
         return None
 
     def read(self):
-        return b'{"error":"fixture route unavailable"}'
+        return b'{"ok":false,"error":{"code":"KB_RUNTIME_UNEXPECTED","message":"fixture route unavailable"}}'
 
 
 class JsonResponse:
@@ -57,7 +57,7 @@ class GatewayStepTests(unittest.TestCase):
             "OPENAI_API_KEY": "fake-secret",
         }, clear=False):
             def failed(command, **_kwargs):
-                return subprocess.CompletedProcess(command, 1, "", "fixture failed")
+                return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED", "message": "fixture failed"}}), "")
 
             def opener(request, **_kwargs):
                 path = request.full_url.split("gateway.test", 1)[-1]
@@ -100,24 +100,26 @@ class GatewayStepTests(unittest.TestCase):
         }, clear=False):
             def successful(command, **_kwargs):
                 if command[1:3] == ["config", "get"]:
-                    output = '{"ok":true,"value":"${OPENAI_API_KEY}"}'
+                    output = '{"ok":true,"data":{"value":"${OPENAI_API_KEY}"}}'
                 elif command[1:3] == ["config", "set"] and any("baseURL" in arg for arg in command):
                     platform_root = str(Path(directory, "platform").resolve())
                     output = json.dumps({
                         "ok": True,
-                        "file": platform_root + "/.kb/kb.config.jsonc",
-                        "nextCommand": f"kb-create restart --platform-root {json.dumps(platform_root)}",
+                        "data": {
+                            "file": platform_root + "/.kb/kb.config.jsonc",
+                            "nextCommand": f"kb-create restart --platform-root {json.dumps(platform_root)}",
+                        },
                     })
                 elif command[:2] == ["kb-create", "restart"]:
-                    output = '{"ok":true}'
+                    output = '{"ok":true,"data":{}}'
                 elif command[1:4] == ["journey", "llm", "complete"]:
                     marker = "VIBEPROXY_MOCK_RESPONSE" if any("vibeproxy" in arg for arg in command) else "OPENAI_MOCK_RESPONSE"
                     stop_reason = "end_turn" if marker == "VIBEPROXY_MOCK_RESPONSE" else None
-                    output = json.dumps({"ok": True, "result": {
+                    output = json.dumps({"ok": True, "data": {"result": {
                         "content": marker, "model": "journey-mock-model", "stopReason": stop_reason,
-                    }})
+                    }}})
                 else:
-                    output = '{"ok":true}'
+                    output = '{"ok":true,"data":{}}'
                 return subprocess.CompletedProcess(command, 0, output, "")
 
             journey = Journey("local", "provider-green")
@@ -142,8 +144,8 @@ class GatewayStepTests(unittest.TestCase):
         }, clear=False):
             def wrong_provider(command, **_kwargs):
                 output = ('{"ok":true,"value":"${OPENAI_API_KEY}"}' if command[1:3] == ["config", "get"]
-                          else '{"ok":true,"result":{"content":"cached response from another provider"}}'
-                          if command[1:4] == ["journey", "llm", "complete"] else '{"ok":true}')
+                          else '{"ok":true,"data":{"result":{"content":"cached response from another provider"}}}'
+                          if command[1:4] == ["journey", "llm", "complete"] else '{"ok":true,"data":{}}')
                 return subprocess.CompletedProcess(command, 0, output, "")
 
             journey = Journey("local", "provider-red")
@@ -166,14 +168,14 @@ class GatewayStepTests(unittest.TestCase):
         }, clear=False):
             def missing_message_shape(command, **_kwargs):
                 if command[1:3] == ["config", "get"]:
-                    output = '{"ok":true,"value":"${OPENAI_API_KEY}"}'
+                    output = '{"ok":true,"data":{"value":"${OPENAI_API_KEY}"}}'
                 elif command[1:4] == ["journey", "llm", "complete"]:
                     marker = "VIBEPROXY_MOCK_RESPONSE" if any("vibeproxy" in arg for arg in command) else "OPENAI_MOCK_RESPONSE"
-                    output = json.dumps({"ok": True, "result": {
+                    output = json.dumps({"ok": True, "data": {"result": {
                         "content": marker, "model": "journey-mock-model", "stopReason": None,
-                    }})
+                    }}})
                 else:
-                    output = '{"ok":true}'
+                    output = '{"ok":true,"data":{}}'
                 return subprocess.CompletedProcess(command, 0, output, "")
 
             journey = Journey("local", "provider-wrong-shape")
@@ -192,7 +194,7 @@ class GatewayStepTests(unittest.TestCase):
             "OPENAI_API_KEY": "fake-secret",
         }, clear=False):
             def failed(command, **_kwargs):
-                return subprocess.CompletedProcess(command, 1, "", "fixture failed")
+                return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED", "message": "fixture failed"}}), "")
 
             journey = Journey("local", "fake-gateway")
             run_gateway_steps(journey, token="fixture-token", runner=failed,

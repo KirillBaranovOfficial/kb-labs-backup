@@ -276,7 +276,7 @@ class ServiceJourneyTests(unittest.TestCase):
                         Path(registry_project_root).is_dir() and (Path(registry_project_root) / ".git").is_dir())
                     return subprocess.CompletedProcess(
                         command, 0,
-                        json.dumps({"ok": True, "project": {"id": "prj_b", "path": registry_project_root}}), "")
+                        json.dumps({"ok": True, "data": {"project": {"id": "prj_b", "path": registry_project_root}}}), "")
                 return subprocess.CompletedProcess(command, 0, "{}", "")
 
             with patch("service_runner._registry_version", return_value="2.120.1"):
@@ -330,7 +330,7 @@ class ServiceJourneyTests(unittest.TestCase):
     def test_health_claim_requires_json_object(self):
         with patch("service_runner.request", return_value=(200, {"ok": True, "data": {"ready": True}}, {})):
             self.assertIsNone(expect_json("/ready", "gateway readiness"))
-        with patch("service_runner.request", return_value=(200, {"ready": True}, {})):
+        with patch("service_runner.request", side_effect=ValueError("response is not a valid UX success envelope")):
             self.assertIn("invalid UX result envelope", expect_json("/ready", "gateway readiness"))
 
     # case: S-041.4
