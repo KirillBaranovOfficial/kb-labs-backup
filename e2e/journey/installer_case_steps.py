@@ -396,6 +396,8 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                      "--platform-channel", channel, "--policy", "compatible",
                                      "--request-platform-root", str(platform_root.parent / root_name)]),
                         f"{channel} apply")
+        if applied.get("shim") != {"linked": False, "owner": str(platform_root)}:
+            raise RuntimeError(f"{channel} apply changed the live command owner: {applied.get('shim')}")
         status = _json_command(run_command, [launcher, "status", "--json", "--platform-root",
                                              str(platform_root.parent / root_name)], f"{channel} status")
         installation = status.get("installation", status)
@@ -413,21 +415,65 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     def secret_apply() -> None:
         if not secret_value:
             raise RuntimeError("isolated journey secret is unavailable for S-181.3")
-        result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                              "--platform-channel", "stable", "--request-platform-root", str(secret_root),
-                              "--scenario", "custom", "--scenario-answers",
-                              json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
-                                          "admin.tenant": "journey"}),
-                              "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
-        if result.returncode != 0:
-            raise RuntimeError(f"secret apply: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
+        apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                    "--platform-channel", "stable", "--request-platform-root", str(secret_root),
+                                    "--scenario", "custom", "--scenario-answers",
+                                    json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
+                                                "admin.tenant": "journey"}),
+                                    "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
+        payload = _data(apply_result, "secret apply")
+        if payload.get("shim") != {"linked": False, "owner": str(platform_root)}:
+            raise RuntimeError(f"secret apply changed the live command owner: {payload.get('shim')}")
+        shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
+        if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
+            raise RuntimeError("secondary apply moved the kb shim away from the primary platform root")
+        cli = run_command(["kb", "--help"])
+        if cli.returncode != 0:
+            raise RuntimeError(f"the existing kb shim did not run the primary platform CLI: {cli.stdout[-500:]}")
         receipt_path = secret_root / ".kb/v2/receipt.json"
-        serialized = result.stdout + (receipt_path.read_text() if receipt_path.is_file() else "")
+        serialized = apply_result.stdout + (receipt_path.read_text() if receipt_path.is_file() else "")
         if secret_value in serialized or "KB_JOURNEY_ADMIN_PASSWORD" in serialized:
             raise RuntimeError("secret apply serialized the secret value or environment-variable name")
 
     journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
-                 cases=["S-181.3"])
+                 cases=["S-181.3", "PC-001.10"])
+
+    def repair_dangling_shim() -> None:
+        shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
+        _data(run_command([launcher, "doctor", "--fix", "--platform-root", str(secret_root), "--json"]),
+              "doctor fix live non-owner")
+        if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
+            raise RuntimeError("doctor --fix changed a shim owned by another live platform")
+        dangling_root = platform_root.parent / "removed-shim-owner"
+        shim_path.unlink(missing_ok=True)
+        shim_path.symlink_to(dangling_root / ".kb/v2/bin/kb")
+        diagnosis = _data(run_command([launcher, "doctor", "--platform-root", str(platform_root), "--json"]),
+                          "doctor dangling shim")
+        finding = next((item for item in diagnosis.get("findings", [])
+                        if item.get("code") == "KB_INSTALL_SHIM_DANGLING"), None)
+        expected_fix = f'kb-create doctor --fix --platform-root "{platform_root}"'
+        if not finding or expected_fix not in finding.get("hint", ""):
+            raise RuntimeError(f"doctor omitted the dangling shim finding or exact repair command: {diagnosis}")
+        _data(run_command([launcher, "doctor", "--fix", "--platform-root", str(platform_root), "--json"]),
+              "doctor fix dangling shim")
+        if shim_path.resolve() != (platform_root / ".kb/v2/bin/kb").resolve():
+            raise RuntimeError("doctor --fix did not link the shim to its requested live platform root")
+
+    journey.step("diagnose and repair a dangling managed kb command", "platform.install",
+                 repair_dangling_shim, cases=["S-025.9"])
+
+    def uninstall_non_owner() -> None:
+        _data(run_command([launcher, "uninstall", "--platform-root", str(secret_root), "--yes", "--json"]),
+              "uninstall non-owning root")
+        shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
+        if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
+            raise RuntimeError("uninstall changed the live owner's kb shim")
+        cli = run_command(["kb", "--help"])
+        if cli.returncode != 0:
+            raise RuntimeError(f"kb stopped working after non-owner uninstall: {cli.stdout[-500:]}")
+
+    journey.step("uninstall a platform that does not own the kb command", "platform.install",
+                 uninstall_non_owner, cases=["PC-001.11"])
 
     for step in run_offline_plan_step(mode=mode, launcher=launcher, stable_index=stable_index,
                                       platform_root=platform_root, run_command=run_command).steps:
@@ -437,6 +483,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     for generated_root in (apply_root, platform_root.parent / "s181-stable-root",
                            platform_root.parent / "s181-canary-root", secret_root,
+                           platform_root.parent / "removed-shim-owner",
                            platform_root.parent / "s181-offline-root"):
         shutil.rmtree(generated_root, ignore_errors=True)
     for step in run_installer_fixture_steps(mode=mode, launcher=launcher, platform_root=platform_root,

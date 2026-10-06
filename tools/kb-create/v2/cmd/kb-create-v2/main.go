@@ -300,11 +300,14 @@ func (i invocation) run(output *os.File) int {
 		}
 		receipt, applyErr := runtime.Apply(ctx, *response.Plan, deps)
 		if applyErr == nil {
+			var shimResult shim.EnsureResult
 			if i.Executable != "" {
 				if deps.Progress != nil {
 					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: true})
 				}
-				if shimErr := shim.Ensure(i.Executable, root); shimErr != nil {
+				var shimErr error
+				shimResult, shimErr = shim.Ensure(i.Executable, root)
+				if shimErr != nil {
 					if deps.Progress != nil {
 						deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
 					}
@@ -315,7 +318,11 @@ func (i invocation) run(output *os.File) int {
 					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
 				}
 			}
-			write(output, map[string]any{"ok": true, "operation": operation, "receipt": receipt, "logPath": transcript.Path()})
+			payload := map[string]any{"ok": true, "operation": operation, "receipt": receipt, "logPath": transcript.Path()}
+			if i.Executable != "" {
+				payload["shim"] = shimResult
+			}
+			write(output, payload)
 			outcome, errorCode = "success", ""
 			return 0
 		}
@@ -454,6 +461,13 @@ func (i invocation) runInstall(output *os.File) int {
 			writeHumanFailure(humanOut, contracts.NewDiag("KB_INSTALL_APPLY_FAILED", "Installation failed before a structured result was available.", "Run `kb-create doctor`, then rerun `kb-create install`.", nil))
 		}
 		return code
+	}
+	var applied map[string]any
+	if json.Unmarshal(data, &applied) == nil {
+		if status, ok := applied["shim"].(map[string]any); ok && status["linked"] == false {
+			owner, _ := status["owner"].(string)
+			fmt.Fprintf(humanOut, "The kb command is owned by %s; run %s to use this platform.\n", owner, shim.Target(root))
+		}
 	}
 	if planned.Plan.Request.ProjectRoot == "" {
 		fmt.Fprintf(humanOut, "\nKB Labs is installed at %s.\nNext: register a project with `kb project add <path>`.\n", root)
