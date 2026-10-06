@@ -216,9 +216,11 @@ describe('refresh', () => {
     // the strings differ whenever a real second boundary falls in between.
     const a = await verifyUserRefreshToken(first.refresh.token, jwtConfig);
     const b = await verifyUserRefreshToken(second.refresh.token, jwtConfig);
-    expect(a).not.toBeNull();
-    expect(b?.jti).toBe(a?.jti);
-    expect(b?.familyId).toBe(a?.familyId);
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    if (!a.ok || !b.ok) { throw new Error('Expected both refresh tokens to verify'); }
+    expect(b.payload.jti).toBe(a.payload.jti);
+    expect(b.payload.familyId).toBe(a.payload.familyId);
     expect(await sessions.listFamiliesByUser(userId)).toHaveLength(1);
   });
 
@@ -245,7 +247,10 @@ describe('refresh', () => {
       expect(second.refresh.token).not.toBe(first.refresh.token); // iat differs
       const a = await verifyUserRefreshToken(first.refresh.token, jwtConfig);
       const b = await verifyUserRefreshToken(second.refresh.token, jwtConfig);
-      expect(b?.jti).toBe(a?.jti);
+      expect(a.ok).toBe(true);
+      expect(b.ok).toBe(true);
+      if (!a.ok || !b.ok) { throw new Error('Expected both refresh tokens to verify'); }
+      expect(b.payload.jti).toBe(a.payload.jti);
       expect(await sessions.listFamiliesByUser(userId)).toHaveLength(1);
     });
   });

@@ -7,8 +7,8 @@ type TaskUpdateFlags = {
   desc?: string;
   status?: string;
   priority?: number;
-  assignee_add?: string;
-  assignee_rem?: string;
+  'assignee-add'?: string;
+  'assignee-rem'?: string;
   due?: string;
   json?: boolean;
   full?: boolean;
@@ -51,7 +51,9 @@ export default defineCommand({
         return validationError(ctx, 'Task ID is required', 'Usage: kb clickup task update <taskId> [--name ...] [--status ...]', input.flags.json);
       }
 
-      const { name, desc, status, priority, assignee_add, assignee_rem, due, json, full } = input.flags;
+      const { name, desc, status, priority, due, json, full } = input.flags;
+      const assigneeAdd = input.flags['assignee-add'];
+      const assigneeRem = input.flags['assignee-rem'];
 
       const body: Record<string, unknown> = {};
       if (name !== undefined) body.name = name;
@@ -59,10 +61,10 @@ export default defineCommand({
       if (status !== undefined) body.status = status;
       if (priority !== undefined) body.priority = priority;
       if (due !== undefined) body.due_date = parseDue(due);
-      if (assignee_add || assignee_rem) {
+      if (assigneeAdd || assigneeRem) {
         body.assignees = {
-          add: assignee_add ? assignee_add.split(',').map(Number) : [],
-          rem: assignee_rem ? assignee_rem.split(',').map(Number) : [],
+          add: assigneeAdd ? assigneeAdd.split(',').map(Number) : [],
+          rem: assigneeRem ? assigneeRem.split(',').map(Number) : [],
         };
       }
 

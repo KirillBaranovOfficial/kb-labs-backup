@@ -6,6 +6,7 @@ import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationErr
 import { HostServiceAddressError } from '../host-service-address.js';
 import {
   ERROR_STAGES,
+  ErrorEnvelopeError,
   createErrorEnvelope,
   errorCatalog,
   getCatalogEntry,
@@ -156,6 +157,14 @@ describe('structured error diagnostics', () => {
 });
 
 describe('toErrorEnvelope (platform errors)', () => {
+  it('preserves a typed catalogued envelope thrown through the platform boundary', () => {
+    const envelope = createErrorEnvelope('KB_AUTH_TOKEN_EXPIRED', {
+      details: { gatewayUrl: 'https://gateway.test', reason: 'expired' },
+      correlationId: 'auth-correlation',
+    });
+    expect(toErrorEnvelope(new ErrorEnvelopeError(envelope))).toEqual(envelope);
+  });
+
   // case: S-191.7
   it('maps invalid adapter options to an actionable KB_CONFIG_INVALID envelope', () => {
     const envelope = toErrorEnvelope(new AdapterConfigError(

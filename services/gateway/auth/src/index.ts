@@ -11,9 +11,11 @@ export {
   signUserRefreshToken,
   verifyUserAccessToken,
   verifyUserRefreshToken,
+  KB_JWT_ISSUER,
 } from './jwt.js';
 export type {
   JwtConfig,
+  TokenVerification,
   UserAccessPayload,
   UserRefreshPayload,
   SignUserTokenOptions,

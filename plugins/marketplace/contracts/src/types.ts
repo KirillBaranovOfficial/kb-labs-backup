@@ -312,6 +312,7 @@ export interface SyncResult {
 export interface DoctorIssue {
   severity: 'error' | 'warning' | 'info';
   packageId: string;
+  diagnosticCode?: string;
   message: string;
   remediation?: string;
 }

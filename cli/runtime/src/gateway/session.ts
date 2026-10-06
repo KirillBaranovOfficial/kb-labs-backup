@@ -61,7 +61,7 @@ export class SessionManager implements ISessionManager {
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new GatewayAuthResponseError('Session refresh', response.status, body);
+      throw new GatewayAuthResponseError('Session refresh', response.status, body, session.gatewayUrl);
     }
 
     const data = await readGatewaySuccessData<{

@@ -19,7 +19,6 @@ import {
 } from "@kb-labs/plugin-contracts";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import { setJsonMode } from "@kb-labs/shared-cli-ui";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   AdapterUnavailableError,
@@ -28,6 +27,7 @@ import {
 } from "@kb-labs/core-platform";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
+import { resolveCliHandlerPath } from "@kb-labs/cli-commands";
 import type { PluginContextV3 } from "@kb-labs/plugin-contracts";
 import { createCLIUIFacade } from "./ui-facade";
 
@@ -69,9 +69,12 @@ export async function executePlugin(
   const cliCommand = pluginManifest.cli?.commands?.find(
     (c) => c.path === commandPath,
   );
+  if (!cliCommand) {
+    return undefined;
+  }
 
   // Resolve handler path from handler field
-  const handlerRelativePath = cliCommand?.handler?.split("#")[0];
+  const handlerRelativePath = cliCommand.handler.split("#")[0];
   if (!handlerRelativePath) {
     return undefined;
   }
@@ -82,9 +85,7 @@ export async function executePlugin(
   }
 
   // Handler path should point to dist/ (compiled output)
-  const handlerPath = handlerRelativePath.startsWith("dist/")
-    ? path.resolve(pluginRoot, handlerRelativePath)
-    : path.resolve(pluginRoot, "dist", handlerRelativePath);
+  const handlerPath = resolveCliHandlerPath(pluginRoot, cliCommand.handler);
   const permissions = getHandlerPermissions(
     pluginManifest,
     "cli",

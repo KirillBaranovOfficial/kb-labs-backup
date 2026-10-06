@@ -14,6 +14,7 @@ import { checkRequires } from './availability';
 import type { ILogger } from '@kb-labs/core-platform';
 import { platform } from '@kb-labs/core-runtime';
 import { getLogLevel } from '@kb-labs/cli-runtime';
+import { CliFlagDeclSchema } from '@kb-labs/plugin-contracts';
 
 export interface RegisterManifestsOptions {
   cwd?: string;
@@ -38,16 +39,10 @@ function validateManifestStructure(manifest: CommandManifest): void {
   }
   if (manifest.flags) {
     for (const flag of manifest.flags) {
-      if (!flag.name || !flag.type) {
-        throw new Error(`Invalid flag in ${manifest.segments.join(' ')}: missing name or type`);
-      }
-      if (flag.alias && flag.alias.length !== 1) {
-        throw new Error(`Flag "${flag.name}" in ${manifest.segments.join(' ')}: alias must be a single character`);
-      }
-      if (flag.choices && flag.type !== 'string') {
-        throw new Error(
-          `Flag "${flag.name}" in ${manifest.segments.join(' ')}: choices only allowed for string type`
-        );
+      const parsed = CliFlagDeclSchema.safeParse(flag);
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        throw new Error(`Invalid flag "${flag.name}" in ${manifest.segments.join(' ')}: ${issue?.message ?? 'invalid declaration'}`);
       }
     }
   }
@@ -158,7 +153,9 @@ export async function registerManifests(
           v3Manifest: manifest.manifestV2,
           available: manifest.unavailablePlugin ? false : availability.available,
           unavailableReason: manifest.unavailablePlugin ? manifest.describe : availability.available ? undefined : availability.reason,
-          hint: manifest.unavailablePlugin ? 'Run `pnpm build` and retry the command.' : availability.available ? undefined : availability.hint,
+          hint: manifest.unavailablePlugin
+            ? manifest.unavailableDiagnostic?.remediation ?? 'Run `kb marketplace plugins doctor --scope platform` to diagnose this plugin.'
+            : availability.available ? undefined : availability.hint,
           source: result.source,
           shadowed: false,
           pkgRoot: result.pkgRoot,

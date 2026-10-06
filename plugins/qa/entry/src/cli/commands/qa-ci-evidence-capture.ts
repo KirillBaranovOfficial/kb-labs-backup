@@ -12,7 +12,7 @@ export default defineCommand<unknown, CLIInput<QaCiEvidenceCaptureFlags>, unknow
     async execute(ctx: PluginCommandContextV3, input: CLIInput<QaCiEvidenceCaptureFlags>): Promise<CommandResult> {
       const config = await useConfig<QAPluginConfig>();
       const repository = input.flags.repository ?? config?.ci?.repository ?? process.env.GITHUB_REPOSITORY;
-      const runId = input.flags.runId ?? process.env.GITHUB_RUN_ID;
+      const runId = input.flags['run-id'] ?? process.env.GITHUB_RUN_ID;
       if (!repository || !runId) {
 
         return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'GitHub repository and run ID are required', hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' } };
@@ -20,7 +20,7 @@ export default defineCommand<unknown, CLIInput<QaCiEvidenceCaptureFlags>, unknow
       try {
         const cwd = ctx.cwd ?? process.cwd();
         const provider = new GithubActionsProvider(ctx.api.shell, cwd);
-        const excludeJobNames = input.flags.excludeJob
+        const excludeJobNames = input.flags['exclude-job']
           ?.split(',')
           .map(name => name.trim())
           .filter(Boolean);

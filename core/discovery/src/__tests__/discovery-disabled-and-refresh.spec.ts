@@ -198,7 +198,8 @@ describe('DiscoveryManager — local integrity refresh', () => {
     expect(mismatch!.severity).toBe('error');
   });
 
-  it('warns about manifest ID mismatch but still discovers', async () => {
+  // case: S-203.21
+  it('rejects an enabled marketplace entry whose ID differs from its manifest ID', async () => {
     const pluginDir = path.join(tmpDir, 'plugins', 'id-mismatch');
     await fs.mkdir(pluginDir, { recursive: true });
     const pkgJson = JSON.stringify({ name: '@kb-labs/id-mismatch', version: '1.0.0' });
@@ -225,14 +226,13 @@ describe('DiscoveryManager — local integrity refresh', () => {
     const dm = new DiscoveryManager({ root: tmpDir });
     const result = await dm.discover();
 
-    // Should still discover, using manifest's own ID
-    expect(result.plugins).toHaveLength(1);
-    expect(result.plugins[0]!.id).toBe('@kb-labs/actual-id');
-
-    // Should warn about mismatch
-    const warning = result.diagnostics.find(d => d.code === 'MANIFEST_VALIDATION_ERROR');
-    expect(warning).toBeDefined();
-    expect(warning!.severity).toBe('warning');
-    expect(warning!.message).toContain('does not match');
+    expect(result.plugins).toHaveLength(0);
+    const mismatch = result.diagnostics.find(d => d.code === 'PLUGIN_ID_MISMATCH');
+    expect(mismatch).toMatchObject({
+      severity: 'error',
+      context: { pluginId: '@kb-labs/id-mismatch' },
+      remediation: 'Correct the manifest id or reinstall the package with its canonical plugin ID.',
+    });
+    expect(mismatch?.message).toContain('does not match');
   });
 });

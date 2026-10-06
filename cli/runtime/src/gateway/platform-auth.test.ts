@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 const mocks = vi.hoisted(() => ({
   session: { gatewayUrl: 'https://gateway.test', accessToken: 'saved', refreshToken: 'refresh', expiresAt: 0 },
@@ -68,14 +69,74 @@ describe('platform auth verification cache', () => {
     mocks.isExpired.mockReturnValue(false);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 401 })));
 
-    await expect(hasUsablePlatformAuth()).resolves.toEqual({ authenticated: false });
+    await expect(hasUsablePlatformAuth()).resolves.toMatchObject({
+      authenticated: false,
+      error: { code: 'KB_AUTH_REQUIRED', details: { gatewayUrl: 'https://gateway.test' } },
+    });
+  });
+
+  // case: S-203.20
+  it('preserves a catalogued rejection returned by /auth/me and fills the saved Gateway URL', async () => {
+    mocks.load.mockResolvedValue({ ...mocks.session, expiresAt: Date.now() + 600_000 });
+    mocks.isExpired.mockReturnValue(false);
+    const envelope = createErrorEnvelope('KB_AUTH_SESSION_REVOKED', {
+      details: { gatewayUrl: '<url>', reason: 'revoked' }, correlationId: 'me-correlation',
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, error: envelope }), {
+      status: 401, headers: { 'Content-Type': 'application/json' },
+    })));
+
+    await expect(hasUsablePlatformAuth()).resolves.toMatchObject({
+      authenticated: false,
+      error: {
+        code: 'KB_AUTH_SESSION_REVOKED',
+        message: 'The saved Gateway session was revoked.',
+        details: { gatewayUrl: 'https://gateway.test', reason: 'revoked' },
+        correlationId: 'me-correlation',
+        hint: 'Run "kb auth login --gateway-url https://gateway.test --email <email> --password <password>" to start a new session.',
+      },
+    });
   });
 
   it('treats an HTTP 401 from the refresh endpoint as a rejected saved token', async () => {
     mocks.load.mockResolvedValue(mocks.session);
     mocks.refresh.mockRejectedValue(new GatewayAuthResponseError('Session refresh', 401, 'unauthorized'));
 
-    await expect(hasUsablePlatformAuth()).resolves.toEqual({ authenticated: false });
+    await expect(hasUsablePlatformAuth()).resolves.toMatchObject({
+      authenticated: false,
+      error: { code: 'KB_AUTH_REQUIRED', details: { gatewayUrl: 'https://gateway.test' } },
+    });
+  });
+
+  // case: S-203.20
+  it('preserves safe auth rejection reasons with a catalog login action', async () => {
+    for (const reason of ['expired', 'revoked', 'unknown-issuer'] as const) {
+      vi.resetModules();
+      ({ GatewayAuthResponseError } = await import('./result.js'));
+      ({ hasUsablePlatformAuth } = await import('./platform-auth.js'));
+      mocks.load.mockResolvedValue(mocks.session);
+      const code = reason === 'expired'
+        ? 'KB_AUTH_TOKEN_EXPIRED'
+        : reason === 'revoked' ? 'KB_AUTH_SESSION_REVOKED' : 'KB_AUTH_REQUIRED';
+      mocks.refresh.mockRejectedValue(new GatewayAuthResponseError('Session refresh', 401, JSON.stringify({
+        ok: false,
+        error: {
+          ...createErrorEnvelope(code, { details: { gatewayUrl: '<url>', reason }, correlationId: 'refresh-correlation' }),
+        },
+      }), 'https://gateway.test'));
+
+      await expect(hasUsablePlatformAuth()).resolves.toMatchObject({
+        authenticated: false,
+        error: {
+          code,
+          details: { gatewayUrl: 'https://gateway.test', reason },
+          correlationId: 'refresh-correlation',
+          hint: reason === 'revoked'
+            ? 'Run "kb auth login --gateway-url https://gateway.test --email <email> --password <password>" to start a new session.'
+            : 'Run "kb auth login --gateway-url https://gateway.test --email <email> --password <password>".',
+        },
+      });
+    }
   });
 
   it('preserves a non-auth Gateway response as a catalogued command failure', async () => {

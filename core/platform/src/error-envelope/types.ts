@@ -79,6 +79,15 @@ export interface ErrorEnvelope {
   diagnostics?: PlatformDiagnostic[];
 }
 
+/** Thrown to propagate a catalogued envelope through a typed runtime boundary. */
+export class ErrorEnvelopeError extends Error {
+  constructor(public readonly envelope: ErrorEnvelope) {
+    super(envelope.message);
+    this.name = 'ErrorEnvelopeError';
+    Object.setPrototypeOf(this, ErrorEnvelopeError.prototype);
+  }
+}
+
 /** JSON Schema form used by Fastify response validators and serializers. */
 export const ErrorEnvelopeJsonSchema = {
   type: 'object',

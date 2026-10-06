@@ -6,7 +6,7 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { resolvePluginBasePath, type ManifestV3 } from '@kb-labs/plugin-contracts';
+import { CliCommandDeclSchema, resolvePluginBasePath, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import { createExtensionStore } from '@kb-labs/core-extension-store';
 import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import type {
@@ -20,6 +20,8 @@ import type {
   EntityKind,
 } from './types.js';
 import { DiagnosticCollector } from './diagnostics.js';
+import { resolveCliHandlerPath } from './resolve-cli-handler.js';
+import { describeHandlerAccessFailure } from './handler-access.js';
 import { readMarketplaceLock } from './marketplace-lock.js';
 import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
@@ -343,6 +345,12 @@ export class DiscoveryManager {
     if (!loaded) {
       const events = diag.getEvents();
       if (events.some(e => e.code === 'MANIFEST_NOT_PLUGIN')) {
+        if (entry?.primaryKind === 'plugin') {
+          const message = `Enabled plugin "${id}" does not contain a plugin manifest.`;
+          const remediation = `Install a package that declares a plugin manifest, or remove "${id}" from the marketplace lock.`;
+          diag.error('MANIFEST_NOT_PLUGIN', message, { pluginId: id, filePath: packageRoot, remediation });
+          return fail('manifest', message, packageRoot, 'MANIFEST_NOT_PLUGIN', remediation);
+        }
         return { events }; // another kind of package, not a failure
       }
       const { cause, failedFile } = describeLoadFailure(events, packageRoot);
@@ -352,17 +360,60 @@ export class DiscoveryManager {
 
     // Validate manifest ID matches expected package ID
     if (entry && manifest.id !== id) {
-      diag.warning('MANIFEST_VALIDATION_ERROR',
-        `Manifest ID "${manifest.id}" does not match lock entry "${id}"`, {
+      const message = `Manifest ID "${manifest.id}" does not match lock entry "${id}"`;
+      const remediation = 'Correct the manifest id or reinstall the package with its canonical plugin ID.';
+      diag.error('PLUGIN_ID_MISMATCH',
+        message, {
         pluginId: id,
         filePath: packageRoot,
+        remediation,
       });
-      // Continue anyway — use the manifest's own ID
+      return fail('manifest', message, loaded.manifestPath, 'PLUGIN_ID_MISMATCH', remediation);
     }
 
     // Governance gate (plugins.allow / plugins.block / plugins.linked) for installed third-party packages
     if (candidate.origin === 'node_modules' && !this.passesPolicy(candidate, loaded.packageName, manifest.id, diag)) {
       return { events: diag.getEvents() };
+    }
+
+    const invalidCliCommandPaths = new Set<string>();
+    for (const command of manifest.cli?.commands ?? []) {
+      const validation = CliCommandDeclSchema.safeParse(command);
+      if (!validation.success) {
+        invalidCliCommandPaths.add(command.path);
+        const remediation = `Correct the CLI command schema in ${loaded.packageName ?? manifest.id}, rebuild it, then run "kb marketplace plugins doctor --scope ${candidate.scope}".`;
+        diag.error('COMMAND_SCHEMA_INVALID',
+          `CLI command "${command.path}" in plugin "${manifest.id}" is invalid: ${validation.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}.`, {
+            pluginId: manifest.id,
+            entityKind: 'cli-command',
+            entityId: command.path,
+            filePath: loaded.manifestPath,
+            remediation,
+          });
+      }
+    }
+
+    for (const command of manifest.cli?.commands ?? []) {
+      if (invalidCliCommandPaths.has(command.path)) { continue; }
+      const absoluteHandlerPath = resolveCliHandlerPath(packageRoot, command.handler);
+      try {
+        await fs.access(absoluteHandlerPath);
+      } catch (error) {
+        const failure = describeHandlerAccessFailure(error);
+        const packageName = loaded.packageName ?? manifest.id;
+        const buildCommand = `pnpm --filter ${packageName}... build`;
+        const remediation = failure.code === 'COMMAND_HANDLER_MISSING'
+          ? `Run \`${buildCommand}\`, then run \`kb marketplace plugins doctor --scope ${candidate.scope}\`.`
+          : `Check access to the declared handler file, then run \`${buildCommand}\` and \`kb marketplace plugins doctor --scope ${candidate.scope}\`.`;
+        diag.error(failure.code,
+          `Command handler "${command.handler}" declared by plugin "${manifest.id}" ${failure.reason}.`, {
+            pluginId: manifest.id,
+            entityKind: 'cli-command',
+            entityId: command.path,
+            filePath: absoluteHandlerPath,
+            remediation,
+          });
+      }
     }
 
     // Signature check (info-level, not blocking)

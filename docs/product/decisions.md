@@ -317,6 +317,42 @@ S-201.1–S-201.2, S-203.7–S-203.8.
 
 ## 2026-10-06
 
+### Enabled plugin identity must match its manifest
+
+An enabled marketplace lock entry whose canonical package/plugin ID differs
+from `ManifestV3.id` is invalid and contributes no commands or other entities.
+Discovery retains a typed diagnostic, CLI unknown-command output points to
+`kb marketplace plugins doctor --scope <scope>`, and plugin doctor lists the
+failed enabled entry. No silent continue is allowed. Cases: S-203.21.
+
+### Gateway authentication exposes only safe rejection categories
+
+Protected Gateway rejections may include `details.reason` only from the closed
+set `expired`, `invalid`, `unknown-issuer`, `inactive`, and `revoked`. Missing
+or invalid credentials use `KB_AUTH_REQUIRED`; expired, revoked, and inactive
+credentials use their catalogued actionable auth code. The Gateway logs the
+same category with the request correlation ID. It never returns raw verifier
+messages, token claims, token IDs, or secret material. Cases: S-203.20.
+
+### Plugin command declarations have one shared schema
+
+The `@kb-labs/plugin-contracts` CLI declaration schema is the source of truth
+for the SDK authoring types, CLI registration, and discovery. CLI flag names
+use lowercase letters, digits, and hyphens; choices apply only to string
+flags. Invalid first-party declarations fail the workspace manifest test and
+enabled invalid plugins receive a retained discovery diagnostic. Discovery
+and CLI execution use one handler-path resolver. Cases: S-203.21.
+
+### Gateway credential failures use catalogued actionable codes
+
+Missing and invalid credentials remain `KB_AUTH_REQUIRED`. Expired access
+credentials use `KB_AUTH_TOKEN_EXPIRED`; revoked sessions and inactive users
+use their own catalogued codes. Safe `details.reason` values remain available
+for automation. The CLI renders the returned catalog envelope and fills its
+Gateway URL template from the saved auth context. KB-signed JWTs use an
+explicit issuer; tokens without that issuer require a fresh login. Cases:
+S-203.20.
+
 ### macOS user temp directories are valid plugin workspaces
 
 The hardcoded filesystem boundary denies operating-system paths such as `/etc`,

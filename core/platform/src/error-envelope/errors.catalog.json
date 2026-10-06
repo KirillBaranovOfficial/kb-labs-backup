@@ -477,7 +477,25 @@
       "severity": "error",
       "retryable": false,
       "message": "Your session token has expired and could not be refreshed.",
-      "hint": "Run \"kb auth login\"."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\"."
+    },
+    {
+      "code": "KB_AUTH_SESSION_REVOKED",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The saved Gateway session was revoked.",
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\" to start a new session."
+    },
+    {
+      "code": "KB_AUTH_USER_INACTIVE",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The user account for this Gateway session is inactive.",
+      "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\"."
     },
     {
       "code": "KB_AUTH_FORBIDDEN",
