@@ -27,7 +27,7 @@ class SecuredCliLoginTests(unittest.TestCase):
             "/isolated-home/.local/bin/kb", "auth", "login",
             "--gateway-url", "http://127.0.0.1:4000",
             "--email", "admin@example.test",
-            "--password", "JourneyPassw0rd!",
+            "--password-stdin",
         ])
         self.assertEqual(calls[0][1]["cwd"], "/isolated-home")
         self.assertEqual(calls[0][1]["env"], env)

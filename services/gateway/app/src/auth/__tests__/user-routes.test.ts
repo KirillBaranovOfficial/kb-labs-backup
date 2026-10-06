@@ -830,7 +830,20 @@ describe('POST /auth/activate', () => {
       payload: { token: 'totally-invalid-token', password: 'NewPassword123!' },
     });
     expect(r.statusCode).toBe(422);
-    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_INVITE', message: 'The invitation is invalid, expired, or already used.', hint: expect.any(String) } });
+  });
+
+  // case: S-042.3
+  it('returns the catalogued invite error when an activation token is reused', async () => {
+    const invite = await ctx.invites.createInvite({
+      email: 'reused@test.com', tenantId: TENANT_ID, groupId: 'tenant-member', createdBy: 'admin-1', ttlMs: HOUR,
+    });
+    const payload = { token: invite.activationToken, password: 'NewPassword123!' };
+    const accepted = await ctx.app.inject({ method: 'POST', url: '/auth/activate', headers: { host: HOST }, payload });
+    expect(accepted.statusCode).toBe(200);
+    const reused = await ctx.app.inject({ method: 'POST', url: '/auth/activate', headers: { host: HOST }, payload });
+    expect(reused.statusCode).toBe(422);
+    expect(reused.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_INVITE', hint: expect.any(String) } });
   });
 
   it('returns 400 when token is missing', async () => {
@@ -1242,11 +1255,11 @@ describe('GET /auth/users (admin only)', () => {
     const disable = await ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/disable',
       headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken } });
     expect(disable.statusCode).toBe(409);
-    expect(disable.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
+    expect(disable.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_LAST_ADMIN', hint: expect.any(String) } });
     const demote = await ctx.app.inject({ method: 'POST', url: '/auth/users/admin-1/role',
       headers: { host: HOST, cookie: admin.cookieHeader, 'x-csrf-token': admin.csrfToken }, payload: { role: 'member' } });
     expect(demote.statusCode).toBe(409);
-    expect(demote.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String) } });
+    expect(demote.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_LAST_ADMIN', hint: expect.any(String) } });
     expect((await ctx.users.getById('admin-1'))?.status).toBe('active');
   });
 
@@ -1579,6 +1592,7 @@ describe('admin password reset links', () => {
     expect(applied.statusCode).toBe(200);
     const reused = await ctx.app.inject({ method: 'POST', url: '/auth/password/reset', headers: { host: HOST }, payload: { token, newPassword: 'OtherPassword123!' } });
     expect(reused.statusCode).toBe(400);
+    expect(reused.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_INVALID_PASSWORD_RESET', hint: expect.any(String) } });
     const login = await ctx.app.inject({ method: 'POST', url: '/auth/login', headers: { host: HOST }, payload: { email: 'member-reset@test.com', password: 'NewPassword123!' } });
     expect(login.statusCode).toBe(200);
     await ctx.app.close();

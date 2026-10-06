@@ -93,7 +93,7 @@ describe('platform auth verification cache', () => {
         message: 'The saved Gateway session was revoked.',
         details: { gatewayUrl: 'https://gateway.test', reason: 'revoked' },
         correlationId: 'me-correlation',
-        hint: 'Run "kb auth login --gateway-url https://gateway.test --email <email> --password <password>" to start a new session.',
+        hint: 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
       },
     });
   });
@@ -131,9 +131,7 @@ describe('platform auth verification cache', () => {
           code,
           details: { gatewayUrl: 'https://gateway.test', reason },
           correlationId: 'refresh-correlation',
-          hint: reason === 'revoked'
-            ? 'Run "kb auth login --gateway-url https://gateway.test --email <email> --password <password>" to start a new session.'
-            : 'Run "kb auth login --gateway-url https://gateway.test --email <email> --password <password>".',
+          hint: 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
         },
       });
     }
