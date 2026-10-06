@@ -187,11 +187,13 @@ Standard event types:
 - `llm.completion.completed` — `{ totalTokens, totalCost, model, tier, durationMs }`
 - `llm.chatWithTools.completed` — same plus tool call counts
 - `embeddings.embed.completed` — `{ totalTokens, totalCost, durationMs }`
-- `vectorStore.search.completed` — `{ totalSearches, durationMs }`
-- `cache.hit` / `cache.miss` — `{ namespace, durationMs }`
-- `storage.read.completed` / `storage.write.completed` — `{ bytesRead, bytesWritten, durationMs }`
 - `plugin.command.completed` / `plugin.command.failed` — `{ pluginId, commandId, durationMs, exitCode }`
 - `workflow.run.completed` / `workflow.run.failed` — `{ workflowId, runId, durationMs, jobsTotal, jobsFailed }`
+
+Cache, storage, and vector-store adapter operations are operational telemetry,
+not product analytics events. They do not create rows in the analytics event
+store; inspect the relevant adapter or observability surface for operational
+health instead.
 
 Plugins can emit custom events via `useAnalytics().track(name, payload)`.
 

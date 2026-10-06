@@ -300,3 +300,18 @@ next command.
 
 Cases: PC-002.7, S-003.7, S-017.5, S-018.3, S-054.2, S-054.18, S-199.6,
 S-201.1–S-201.2, S-203.7–S-203.8.
+
+## 2026-10-06
+
+### Product analytics excludes raw adapter operation telemetry
+
+`IAnalytics` stores product actions and usage that answers a product question.
+Raw cache, storage, and vector-store calls are adapter telemetry and must not
+be written as analytics events. LLM and embeddings events remain because their
+usage and cost inform product usage. Adapter errors belong in contextual
+operational logs; operation counts and latency belong in metrics where the
+runtime exposes a metrics registry. The current core platform has no shared
+adapter metrics registry, so it does not synthesize analytics or per-call log
+events as a substitute. Local SQLite analytics retains 90 days by default;
+`platform.adapterOptions.analytics.retentionDays` overrides the age in days.
+Cases: S-002, S-121, S-191.

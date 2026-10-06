@@ -115,9 +115,6 @@ export type {
 // Analytics wrappers
 export { AnalyticsLLM } from "./wrappers/analytics-llm.js";
 export { AnalyticsEmbeddings } from "./wrappers/analytics-embeddings.js";
-export { AnalyticsVectorStore } from "./wrappers/analytics-vector-store.js";
-export { AnalyticsCache } from "./wrappers/analytics-cache.js";
-export { AnalyticsStorage } from "./wrappers/analytics-storage.js";
 export {
   ScopedAnalytics,
   createScopedAnalytics,

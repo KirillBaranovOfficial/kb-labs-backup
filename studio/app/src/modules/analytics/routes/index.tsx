@@ -8,9 +8,6 @@ import { AnalyticsOverviewPage } from '../pages/analytics-overview-page';
 import { AnalyticsEventsPage } from '../pages/analytics-events-page';
 import { AnalyticsLLMPage } from '../pages/analytics-llm-page';
 import { AnalyticsEmbeddingsPage } from '../pages/analytics-embeddings-page';
-import { AnalyticsVectorStorePage } from '../pages/analytics-vectorstore-page';
-import { AnalyticsCachePage } from '../pages/analytics-cache-page';
-import { AnalyticsStoragePage } from '../pages/analytics-storage-page';
 import { ErrorBoundary } from '../../../components/error-boundary';
 import { renderIcon } from '../../../routes/helpers';
 import type { NavigationItem } from '@/components/ui';
@@ -21,9 +18,6 @@ const PATHS = {
   EVENTS: '/analytics/events',
   LLM: '/analytics/llm',
   EMBEDDINGS: '/analytics/embeddings',
-  VECTORSTORE: '/analytics/vectorstore',
-  CACHE: '/analytics/cache',
-  STORAGE: '/analytics/storage',
 } as const;
 
 // Route keys
@@ -33,9 +27,6 @@ const KEYS = {
   EVENTS: 'analytics-events',
   LLM: 'analytics-llm',
   EMBEDDINGS: 'analytics-embeddings',
-  VECTORSTORE: 'analytics-vectorstore',
-  CACHE: 'analytics-cache',
-  STORAGE: 'analytics-storage',
 } as const;
 
 /**
@@ -60,21 +51,6 @@ export const analyticsRoutes: RouteObject[] = [
   {
     path: PATHS.EMBEDDINGS,
     element: <AnalyticsEmbeddingsPage />,
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    path: PATHS.VECTORSTORE,
-    element: <AnalyticsVectorStorePage />,
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    path: PATHS.CACHE,
-    element: <AnalyticsCachePage />,
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    path: PATHS.STORAGE,
-    element: <AnalyticsStoragePage />,
     errorElement: <ErrorBoundary />,
   },
 ];
@@ -122,24 +98,6 @@ export const analyticsNavigation: NavigationItem = {
           label: 'Embeddings',
           path: PATHS.EMBEDDINGS,
           icon: renderIcon('NodeIndexOutlined'),
-        },
-        {
-          key: KEYS.VECTORSTORE,
-          label: 'Vector Store',
-          path: PATHS.VECTORSTORE,
-          icon: renderIcon('DatabaseOutlined'),
-        },
-        {
-          key: KEYS.CACHE,
-          label: 'Cache',
-          path: PATHS.CACHE,
-          icon: renderIcon('ThunderboltOutlined'),
-        },
-        {
-          key: KEYS.STORAGE,
-          label: 'Storage',
-          path: PATHS.STORAGE,
-          icon: renderIcon('SaveOutlined'),
         },
       ],
     },

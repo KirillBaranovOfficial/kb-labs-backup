@@ -8,9 +8,6 @@ import type { AdaptersDataSource, DateRangeOptions, DailyStats } from './adapter
 import type {
   LLMUsageStats,
   EmbeddingsUsageStats,
-  VectorStoreUsageStats,
-  CacheUsageStats,
-  StorageUsageStats,
 } from '../contracts/adapters';
 
 /**
@@ -59,21 +56,6 @@ export class HttpAdaptersSource implements AdaptersDataSource {
     return this.client.fetch<EmbeddingsUsageStats>(this.path(`/adapters/embeddings/usage${query}`));
   }
 
-  async getVectorStoreUsage(options?: DateRangeOptions): Promise<VectorStoreUsageStats> {
-    const query = this.buildQueryString(options);
-    return this.client.fetch<VectorStoreUsageStats>(this.path(`/adapters/vectorstore/usage${query}`));
-  }
-
-  async getCacheUsage(options?: DateRangeOptions): Promise<CacheUsageStats> {
-    const query = this.buildQueryString(options);
-    return this.client.fetch<CacheUsageStats>(this.path(`/adapters/cache/usage${query}`));
-  }
-
-  async getStorageUsage(options?: DateRangeOptions): Promise<StorageUsageStats> {
-    const query = this.buildQueryString(options);
-    return this.client.fetch<StorageUsageStats>(this.path(`/adapters/storage/usage${query}`));
-  }
-
   async getLLMDailyStats(options?: DateRangeOptions): Promise<DailyStats[]> {
     const query = this.buildQueryString(options);
     return this.client.fetch<DailyStats[]>(this.path(`/adapters/llm/daily-stats${query}`));
@@ -84,18 +66,4 @@ export class HttpAdaptersSource implements AdaptersDataSource {
     return this.client.fetch<DailyStats[]>(this.path(`/adapters/embeddings/daily-stats${query}`));
   }
 
-  async getVectorStoreDailyStats(options?: DateRangeOptions): Promise<DailyStats[]> {
-    const query = this.buildQueryString(options);
-    return this.client.fetch<DailyStats[]>(this.path(`/adapters/vectorstore/daily-stats${query}`));
-  }
-
-  async getCacheDailyStats(options?: DateRangeOptions): Promise<DailyStats[]> {
-    const query = this.buildQueryString(options);
-    return this.client.fetch<DailyStats[]>(this.path(`/adapters/cache/daily-stats${query}`));
-  }
-
-  async getStorageDailyStats(options?: DateRangeOptions): Promise<DailyStats[]> {
-    const query = this.buildQueryString(options);
-    return this.client.fetch<DailyStats[]>(this.path(`/adapters/storage/daily-stats${query}`));
-  }
 }

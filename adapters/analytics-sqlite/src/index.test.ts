@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import Database from 'better-sqlite3';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { toErrorEnvelope } from '@kb-labs/sdk';
 import { SQLiteAnalytics } from './index.js';
@@ -38,6 +39,73 @@ describe('SQLiteAnalytics', () => {
     expect(total).toBe(1);
     expect(events[0]?.type).toBe('llm.complete');
     expect(events[0]?.payload).toEqual({ model: 'gpt-4', totalTokens: 100 });
+  });
+
+  // case: S-191.5
+  it('prunes events older than the configured retention on startup', async () => {
+    const databasePath = join(tmpDir, 'retention.sqlite');
+    const seed = new SQLiteAnalytics({ dbPath: databasePath, retentionDays: 365 });
+    await seed.track('retention.old');
+    await seed.track('retention.recent');
+    seed.close();
+
+    const rawDb = new Database(databasePath);
+    rawDb.prepare('UPDATE events SET ts = ? WHERE type = ?')
+      .run(new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString(), 'retention.old');
+    rawDb.close();
+
+    const restarted = new SQLiteAnalytics({ dbPath: databasePath, retentionDays: 30 });
+    try {
+      expect((await restarted.getEvents({ type: 'retention.old' })).events).toHaveLength(0);
+      expect((await restarted.getEvents({ type: 'retention.recent' })).events).toHaveLength(1);
+    } finally {
+      restarted.close();
+    }
+  });
+
+  // case: S-191.4
+  it('uses a 90-day retention period when none is configured', async () => {
+    const databasePath = join(tmpDir, 'default-retention.sqlite');
+    const seed = new SQLiteAnalytics({ dbPath: databasePath, retentionDays: 365 });
+    await seed.track('retention.default-old');
+    seed.close();
+
+    const rawDb = new Database(databasePath);
+    rawDb.prepare('UPDATE events SET ts = ? WHERE type = ?')
+      .run(new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString(), 'retention.default-old');
+    rawDb.close();
+
+    const restarted = new SQLiteAnalytics({ dbPath: databasePath });
+    try {
+      expect((await restarted.getEvents({ type: 'retention.default-old' })).events).toHaveLength(0);
+    } finally {
+      restarted.close();
+    }
+  });
+
+  // case: S-191.5
+  it('prunes events at least daily while the adapter remains open', async () => {
+    vi.useFakeTimers();
+    const databasePath = join(tmpDir, 'periodic-retention.sqlite');
+    const timersBeforeAdapter = vi.getTimerCount();
+    const periodic = new SQLiteAnalytics({ dbPath: databasePath, retentionDays: 30 });
+    try {
+      expect(vi.getTimerCount()).toBe(timersBeforeAdapter + 1);
+      await periodic.track('retention.periodic');
+      const rawDb = new Database(databasePath);
+      rawDb.prepare('UPDATE events SET ts = ? WHERE type = ?')
+        .run(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString(), 'retention.periodic');
+      rawDb.close();
+
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+
+      expect((await periodic.getEvents({ type: 'retention.periodic' })).events).toHaveLength(0);
+      periodic.dispose();
+      expect(vi.getTimerCount()).toBe(timersBeforeAdapter);
+    } finally {
+      periodic.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it('getEvents filters by type', async () => {

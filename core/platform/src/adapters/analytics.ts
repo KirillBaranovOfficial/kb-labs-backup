@@ -288,12 +288,8 @@ export interface IAnalytics {
    * - NoOpAnalytics: Not implemented (returns empty array)
    * - Adapters that don't support breakdownBy/groupBy silently ignore those fields
    *
-   * The metrics object contains aggregated values specific to the event type:
-   * - LLM events: totalTokens, totalCost, avgDurationMs
-   * - Embeddings events: totalTokens, totalCost, avgDurationMs
-   * - VectorStore events: totalSearches, totalUpserts, totalDeletes, avgDurationMs
-   * - Cache events: totalHits, totalMisses, totalSets, hitRate
-   * - Storage events: totalBytesRead, totalBytesWritten, avgDurationMs
+   * The metrics object contains event-specific numeric aggregates. LLM and
+   * embeddings usage metrics are supported by product analytics adapters.
    *
    * @example
    * ```typescript

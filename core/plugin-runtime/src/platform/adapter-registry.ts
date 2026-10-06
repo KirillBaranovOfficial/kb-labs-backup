@@ -25,9 +25,6 @@ import type { INotifier, ILLM, IEmbeddings, IVectorStore, IAnalytics, ILogger, P
 import {
   AnalyticsLLM,
   AnalyticsEmbeddings,
-  AnalyticsVectorStore,
-  AnalyticsCache,
-  AnalyticsStorage,
   createPIIRedactionLLM,
 } from '@kb-labs/core-platform';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
@@ -277,7 +274,7 @@ const wrapNotifier: AdapterMiddlewareFn<INotifier> = (adapter, ctx) => {
  * Platform-only fields (e.g. serviceTransport) live in PlatformServices only
  * and must NOT be in this registry — they are excluded from plugin context.
  * until a corresponding entry is added. Each entry declares (in pipeline order):
- *   - analyticsFactory:      optional tracking wrap (before router)
+ *   - analyticsFactory:      optional product-usage tracking (LLM and embeddings)
  *   - routerFactory:         optional platform-level routing (LLMRouter, etc.)
  *   - resourceBrokerFactory: optional rate limiting / queuing
  *   - postAssemblyFactory:   optional outermost wrap (e.g. PII redaction)
@@ -323,8 +320,6 @@ export const ADAPTER_REGISTRY = {
   },
 
   vectorStore: {
-    analyticsFactory: (raw: IVectorStore, analytics: IAnalytics) =>
-      new AnalyticsVectorStore(raw, analytics),
     resourceBrokerFactory: (raw: IVectorStore, broker: unknown) =>
       createQueuedVectorStore(broker as IResourceBroker, raw),
     governance: { strategy: 'wrap', fn: wrapVectorStore },
@@ -332,15 +327,11 @@ export const ADAPTER_REGISTRY = {
   },
 
   cache: {
-    analyticsFactory: (raw: CacheAdapter, analytics: IAnalytics) =>
-      new AnalyticsCache(raw, analytics),
     governance: { strategy: 'wrap', fn: wrapCache },
     ipc: { strategy: 'proxy', create: (t) => new CacheProxy(t) },
   },
 
   storage: {
-    analyticsFactory: (raw: StorageAdapter, analytics: IAnalytics) =>
-      new AnalyticsStorage(raw, analytics),
     governance: { strategy: 'wrap', fn: wrapStorage },
     ipc: { strategy: 'proxy', create: (t) => new StorageProxy(t) },
   },

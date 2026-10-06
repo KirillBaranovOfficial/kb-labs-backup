@@ -2,6 +2,23 @@ import { test, expect } from '@playwright/test'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 
+test('Analytics overview excludes raw adapter telemetry and retired pages stay absent @S-121.1 @S-121.7', async ({ page }) => {
+  await page.goto(`${GATEWAY}/analytics/overview`)
+  await expect(page.getByRole('heading', { name: 'Analytics Overview', exact: true })).toBeVisible()
+  await expect(page.getByText('LLM Usage', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Embeddings', { exact: true }).first()).toBeVisible()
+  for (const label of ['Cache Usage', 'Storage Usage', 'VectorStore Usage']) {
+    await expect(page.getByText(label, { exact: true })).toHaveCount(0)
+  }
+
+  for (const path of ['/analytics/cache', '/analytics/storage', '/analytics/vectorstore']) {
+    await page.goto(`${GATEWAY}${path}`)
+    await expect(page).toHaveURL(`${GATEWAY}${path}`)
+    await expect(page.getByText('Page not found', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /Cache Usage|Storage Usage|VectorStore Usage/ })).toHaveCount(0)
+  }
+})
+
 function hasFixtures(...names: string[]): boolean {
   return names.every(name => Boolean(process.env[name]))
 }

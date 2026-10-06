@@ -1,12 +1,7 @@
 import { UIRow, UICol, UIStatistic, UIAlert } from '@kb-labs/studio-ui-kit';
 import {
-  ThunderboltOutlined,
-  DatabaseOutlined,
-  CloudOutlined,
-  RocketOutlined,
   RobotOutlined,
   FileTextOutlined,
-  SaveOutlined,
   ArrowRightOutlined,
   DollarOutlined,
 } from '@ant-design/icons';
@@ -15,9 +10,6 @@ import {
   useAnalyticsStats,
   useAdaptersLLMUsage,
   useAdaptersEmbeddingsUsage,
-  useAdaptersVectorStoreUsage,
-  useAdaptersCacheUsage,
-  useAdaptersStorageUsage,
 } from '@kb-labs/studio-data-client';
 import { useDataSources } from '../../../providers/data-sources-provider';
 import { useNavigate } from 'react-router-dom';
@@ -56,9 +48,6 @@ export function AnalyticsOverviewPage() {
   // Fetch all adapter stats
   const { data: llmStats, isLoading: llmLoading } = useAdaptersLLMUsage(sources.adapters);
   const { data: embeddingsStats, isLoading: embeddingsLoading } = useAdaptersEmbeddingsUsage(sources.adapters);
-  const { data: vectorstoreStats, isLoading: vectorstoreLoading } = useAdaptersVectorStoreUsage(sources.adapters);
-  const { data: cacheStats, isLoading: cacheLoading } = useAdaptersCacheUsage(sources.adapters);
-  const { data: storageStats, isLoading: storageLoading } = useAdaptersStorageUsage(sources.adapters);
 
   // Check if analytics is not configured
   const analyticsNotConfigured =
@@ -71,7 +60,7 @@ export function AnalyticsOverviewPage() {
       <UIPage>
         <UIPageHeader
           title="Analytics"
-          description="Platform-wide analytics and adapter metrics"
+      description="Platform-wide product events and usage"
         />
         <UIAlert
           message="Analytics Not Configured"
@@ -87,7 +76,7 @@ export function AnalyticsOverviewPage() {
   if (isStatsError) {
     return (
       <UIPage>
-        <UIPageHeader title="Analytics" description="Platform-wide analytics" />
+      <UIPageHeader title="Analytics" description="Platform-wide product events and usage" />
         <UIAlert
           message="Analytics source unavailable"
           description="Source: REST API analytics endpoint. Run kb-create doctor --platform-root <platform-root> to diagnose the service."
@@ -131,52 +120,13 @@ export function AnalyticsOverviewPage() {
         { title: 'Text Chars', value: embeddingsStats?.totalTextLength ?? 0 },
       ],
     },
-    {
-      key: 'vectorstore',
-      path: '/analytics/vectorstore',
-      label: 'VectorStore',
-      icon: <DatabaseOutlined />,
-      color: 'var(--link)',
-      loading: vectorstoreLoading,
-      stats: [
-        { title: 'Searches', value: vectorstoreStats?.searchQueries ?? 0 },
-        { title: 'Avg Score', value: vectorstoreStats?.avgSearchScore ?? 0, precision: 2 },
-      ],
-    },
-    {
-      key: 'cache',
-      path: '/analytics/cache',
-      label: 'Cache',
-      icon: <ThunderboltOutlined />,
-      color: 'var(--warning)',
-      loading: cacheLoading,
-      stats: [
-        {
-          title: 'Hit Rate', value: cacheStats?.hitRate ?? 0, suffix: '%', precision: 1,
-          valueColor: cacheStats && cacheStats.hitRate >= 80 ? 'var(--success)' : 'var(--info)',
-        },
-        { title: 'Total Gets', value: cacheStats?.totalGets ?? 0 },
-      ],
-    },
-    {
-      key: 'storage',
-      path: '/analytics/storage',
-      label: 'Storage',
-      icon: <SaveOutlined />,
-      color: 'var(--error)',
-      loading: storageLoading,
-      stats: [
-        { title: 'Reads', value: storageStats?.readOperations ?? 0 },
-        { title: 'Writes', value: storageStats?.writeOperations ?? 0 },
-      ],
-    },
   ];
 
   return (
     <UIPage width="full">
       <UIPageHeader
         title="Analytics Overview"
-        description="High-level metrics across all platform adapters"
+        description="High-level product event and usage metrics"
       />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: 8 }}>

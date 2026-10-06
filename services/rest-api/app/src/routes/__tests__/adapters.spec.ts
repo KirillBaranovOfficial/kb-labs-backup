@@ -335,298 +335,6 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
     });
   });
 
-  describe('GET /api/v1/adapters/vectorstore/usage', () => {
-    it('should return vectorstore usage stats with date range', async () => {
-      const searchEvents = [
-        createMockEvent('vectorstore.search.completed', '2026-01-15T10:00:00Z', {
-          durationMs: 50,
-          resultsCount: 5,
-        }),
-      ];
-
-      const upsertEvents = [
-        createMockEvent('vectorstore.upsert.completed', '2026-01-15T11:00:00Z', {
-          durationMs: 100,
-          vectorCount: 10,
-        }),
-      ];
-
-      const deleteEvents: any[] = [];
-
-      const mockAnalytics: any = {
-        getEvents: vi.fn((query: any) => {
-          expect(query.from).toBe('2026-01-01T00:00:00Z');
-          expect(query.to).toBe('2026-01-31T23:59:59Z');
-
-          if ([].concat(query.type).some(t => t === 'vectorstore.search.completed')) {
-            return Promise.resolve(eventsResponse(searchEvents));
-          }
-          if ([].concat(query.type).some(t => t === 'vectorstore.upsert.completed')) {
-            return Promise.resolve(eventsResponse(upsertEvents));
-          }
-          if ([].concat(query.type).some(t => t === 'vectorstore.delete.completed')) {
-            return Promise.resolve(eventsResponse(deleteEvents));
-          }
-          return Promise.resolve(eventsResponse([]));
-        }),
-      };
-
-      mockPlatform.analytics = mockAnalytics;
-
-      const { registerAdaptersRoutes } = await import('../adapters');
-      const app = Fastify({ logger: false });
-      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
-      await registerAdaptersRoutes(app as any, BASE_CONFIG);
-
-      const response = await app.inject({
-        method: 'GET',
-        url: '/api/v1/adapters/vectorstore/usage?from=2026-01-01T00:00:00Z&to=2026-01-31T23:59:59Z',
-      });
-
-      expect(response.statusCode).toBe(200);
-      const payload = response.json();
-      expect(payload.ok).toBe(true);
-      expect(payload.data.searchQueries).toBe(1);
-      expect(payload.data.upsertOperations).toBe(1);
-      expect(payload.data.deleteOperations).toBe(0);
-
-      await app.close();
-    });
-
-    it('should return 400 for invalid date', async () => {
-      const mockAnalytics: any = {
-        getEvents: vi.fn(),
-      };
-
-      mockPlatform.analytics = mockAnalytics;
-
-      const { registerAdaptersRoutes } = await import('../adapters');
-      const app = Fastify({ logger: false });
-      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
-      await registerAdaptersRoutes(app as any, BASE_CONFIG);
-
-      const response = await app.inject({
-        method: 'GET',
-        url: '/api/v1/adapters/vectorstore/usage?from=2026-13-45T99:99:99Z',
-      });
-
-      expect(response.statusCode).toBe(400);
-
-      await app.close();
-    });
-  });
-
-  describe('GET /api/v1/adapters/cache/usage', () => {
-    it('should return cache usage stats with date range', async () => {
-      const hitEvents = [
-        createMockEvent('cache.hit', '2026-01-15T10:00:00Z', { durationMs: 1 }),
-        createMockEvent('cache.hit', '2026-01-15T11:00:00Z', { durationMs: 2 }),
-      ];
-
-      const missEvents = [
-        createMockEvent('cache.miss', '2026-01-15T12:00:00Z', { durationMs: 1 }),
-      ];
-
-      const setEvents = [
-        createMockEvent('cache.set', '2026-01-15T13:00:00Z', { durationMs: 5 }),
-      ];
-
-      const mockAnalytics: any = {
-        getEvents: vi.fn((query: any) => {
-          expect(query.from).toBe('2026-01-01T00:00:00Z');
-          expect(query.to).toBe('2026-01-31T23:59:59Z');
-
-          if ([].concat(query.type).some(t => t === 'cache.get.hit')) {
-            return Promise.resolve(eventsResponse(hitEvents));
-          }
-          if ([].concat(query.type).some(t => t === 'cache.get.miss')) {
-            return Promise.resolve(eventsResponse(missEvents));
-          }
-          if ([].concat(query.type).some(t => t === 'cache.set.completed')) {
-            return Promise.resolve(eventsResponse(setEvents));
-          }
-          return Promise.resolve(eventsResponse([]));
-        }),
-      };
-
-      mockPlatform.analytics = mockAnalytics;
-
-      const { registerAdaptersRoutes } = await import('../adapters');
-      const app = Fastify({ logger: false });
-      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
-      await registerAdaptersRoutes(app as any, BASE_CONFIG);
-
-      const response = await app.inject({
-        method: 'GET',
-        url: '/api/v1/adapters/cache/usage?from=2026-01-01T00:00:00Z&to=2026-01-31T23:59:59Z',
-      });
-
-      expect(response.statusCode).toBe(200);
-      const payload = response.json();
-      expect(payload.ok).toBe(true);
-      expect(payload.data.hits).toBe(2);
-      expect(payload.data.misses).toBe(1);
-      expect(payload.data.sets).toBe(1);
-      expect(payload.data.totalGets).toBe(3);
-      expect(payload.data.hitRate).toBeCloseTo(66.67, 1);
-
-      await app.close();
-    });
-
-    it('should work without date parameters for backward compatibility', async () => {
-      const hitEvents = [
-        createMockEvent('cache.hit', '2026-01-15T10:00:00Z', { durationMs: 1 }),
-      ];
-
-      const mockAnalytics: any = {
-        getEvents: vi.fn((query: any) => {
-          expect(query.from).toBeUndefined();
-          expect(query.to).toBeUndefined();
-
-          if ([].concat(query.type).some(t => t === 'cache.get.hit')) {
-            return Promise.resolve(eventsResponse(hitEvents));
-          }
-          return Promise.resolve(eventsResponse([]));
-        }),
-      };
-
-      mockPlatform.analytics = mockAnalytics;
-
-      const { registerAdaptersRoutes } = await import('../adapters');
-      const app = Fastify({ logger: false });
-      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
-      await registerAdaptersRoutes(app as any, BASE_CONFIG);
-
-      const response = await app.inject({
-        method: 'GET',
-        url: '/api/v1/adapters/cache/usage',
-      });
-
-      expect(response.statusCode).toBe(200);
-
-      await app.close();
-    });
-  });
-
-  describe('GET /api/v1/adapters/storage/usage', () => {
-    it('should return storage usage stats with date range', async () => {
-      const readEvents = [
-        createMockEvent('storage.read.completed', '2026-01-15T10:00:00Z', {
-          durationMs: 10,
-          bytesRead: 1024,
-        }),
-      ];
-
-      const writeEvents = [
-        createMockEvent('storage.write.completed', '2026-01-15T11:00:00Z', {
-          durationMs: 20,
-          bytesWritten: 2048,
-        }),
-      ];
-
-      const deleteEvents: any[] = [];
-
-      const mockAnalytics: any = {
-        getEvents: vi.fn((query: any) => {
-          expect(query.from).toBe('2026-01-01T00:00:00Z');
-          expect(query.to).toBe('2026-01-31T23:59:59Z');
-
-          if ([].concat(query.type).some(t => t === 'storage.read.completed')) {
-            return Promise.resolve(eventsResponse(readEvents));
-          }
-          if ([].concat(query.type).some(t => t === 'storage.write.completed')) {
-            return Promise.resolve(eventsResponse(writeEvents));
-          }
-          if ([].concat(query.type).some(t => t === 'storage.delete.completed')) {
-            return Promise.resolve(eventsResponse(deleteEvents));
-          }
-          return Promise.resolve(eventsResponse([]));
-        }),
-      };
-
-      mockPlatform.analytics = mockAnalytics;
-
-      const { registerAdaptersRoutes } = await import('../adapters');
-      const app = Fastify({ logger: false });
-      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
-      await registerAdaptersRoutes(app as any, BASE_CONFIG);
-
-      const response = await app.inject({
-        method: 'GET',
-        url: '/api/v1/adapters/storage/usage?from=2026-01-01T00:00:00Z&to=2026-01-31T23:59:59Z',
-      });
-
-      expect(response.statusCode).toBe(200);
-      const payload = response.json();
-      expect(payload.ok).toBe(true);
-      expect(payload.data.readOperations).toBe(1);
-      expect(payload.data.writeOperations).toBe(1);
-      expect(payload.data.deleteOperations).toBe(0);
-      expect(payload.data.totalBytesRead).toBe(1024);
-      expect(payload.data.totalBytesWritten).toBe(2048);
-
-      await app.close();
-    });
-
-    it('should handle only from parameter', async () => {
-      const readEvents: any[] = [];
-
-      const mockAnalytics: any = {
-        getEvents: vi.fn((query: any) => {
-          expect(query.from).toBe('2026-01-01T00:00:00Z');
-          expect(query.to).toBeUndefined();
-
-          return Promise.resolve(eventsResponse(readEvents));
-        }),
-      };
-
-      mockPlatform.analytics = mockAnalytics;
-
-      const { registerAdaptersRoutes } = await import('../adapters');
-      const app = Fastify({ logger: false });
-      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
-      await registerAdaptersRoutes(app as any, BASE_CONFIG);
-
-      const response = await app.inject({
-        method: 'GET',
-        url: '/api/v1/adapters/storage/usage?from=2026-01-01T00:00:00Z',
-      });
-
-      expect(response.statusCode).toBe(200);
-
-      await app.close();
-    });
-
-    it('should handle only to parameter', async () => {
-      const readEvents: any[] = [];
-
-      const mockAnalytics: any = {
-        getEvents: vi.fn((query: any) => {
-          expect(query.from).toBeUndefined();
-          expect(query.to).toBe('2026-01-31T23:59:59Z');
-
-          return Promise.resolve(eventsResponse(readEvents));
-        }),
-      };
-
-      mockPlatform.analytics = mockAnalytics;
-
-      const { registerAdaptersRoutes } = await import('../adapters');
-      const app = Fastify({ logger: false });
-      registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
-      await registerAdaptersRoutes(app as any, BASE_CONFIG);
-
-      const response = await app.inject({
-        method: 'GET',
-        url: '/api/v1/adapters/storage/usage?to=2026-01-31T23:59:59Z',
-      });
-
-      expect(response.statusCode).toBe(200);
-
-      await app.close();
-    });
-  });
-
   describe('Date format support', () => {
     it('should accept ISO 8601 with milliseconds', async () => {
       const mockAnalytics: any = {
@@ -693,5 +401,28 @@ describe('Adapter Analytics Routes - Date Range Support', () => {
 
       await app.close();
     });
+  });
+
+  it('does not register routes that aggregate raw cache, storage, or vector-store events', async () => {
+    mockPlatform.analytics = { getEvents: vi.fn() };
+
+    const { registerAdaptersRoutes } = await import('../adapters');
+    const app = Fastify({ logger: false });
+    registerEnvelopeMiddleware(app as unknown as FastifyInstance, BASE_CONFIG);
+    await registerAdaptersRoutes(app as any, BASE_CONFIG);
+
+    for (const path of [
+      '/api/v1/adapters/vectorstore/daily-stats',
+      '/api/v1/adapters/vectorstore/usage',
+      '/api/v1/adapters/cache/daily-stats',
+      '/api/v1/adapters/cache/usage',
+      '/api/v1/adapters/storage/daily-stats',
+      '/api/v1/adapters/storage/usage',
+    ]) {
+      const response = await app.inject({ method: 'GET', url: path });
+      expect(response.statusCode, path).toBe(404);
+    }
+
+    await app.close();
   });
 });
