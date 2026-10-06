@@ -26,7 +26,7 @@ from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run
 from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status, run_local_auth_steps, run_secured_auth_steps
 from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
 from platform_state_dump import PlatformStateDumpOnce
-from scoreboard import write_scoreboards
+from scoreboard import release_claims_for_case, write_scoreboards
 from invocations import (invocation_context, open_http, run_command, run_pty_command,
                          start_background_command)
 
@@ -122,31 +122,55 @@ def fail(message: str):
 
 
 def configure_secured_platform(
-    env: dict[str, str], *, run_command=run,
+    env: dict[str, str], launcher: str, *, configure_oidc: bool = False, run_command=run,
 ) -> tuple[str, subprocess.CompletedProcess] | None:
-    """Set secured gateway options from an existing directory before project setup."""
-    provider_config = json.dumps({
-        "email-password": {"type": "email-password"},
-        "corp": {
-            "type": "oidc",
-            "issuer": "https://idp-stub:9443",
-            "clientId": "kb-gateway",
-            "clientSecretEnv": "OIDC_CORP_CLIENT_SECRET",
-            "scopes": ["openid", "email"],
-            "pkce": True,
-        },
-    })
+    """Apply secured journey config through the authenticated CLI session."""
     home = Path(env["HOME"])
-    for key, value in (("gateway.auth.providers", provider_config),
-                       ("gateway.auth.cookieSecure", "false")):
+    settings = []
+    if configure_oidc:
+        settings.append(("gateway.auth.providers", json.dumps({
+            "email-password": {"type": "email-password"},
+            "corp": {
+                "type": "oidc",
+                "issuer": "https://idp-stub:9443",
+                "clientId": "kb-gateway",
+                "clientSecretEnv": "OIDC_CORP_CLIENT_SECRET",
+                "scopes": ["openid", "email"],
+                "pkce": True,
+            },
+        })))
+    if not settings:
+        return None
+    for key, value in settings:
         configured, _ = run_command(
             ["bash", "-c", '. "$HOME/.profile"; kb config set --scope platform "$1" "$2" --json',
-            "journey", key, value],
+             "journey", key, value],
             env=env, cwd=home, timeout=90,
         )
         if configured.returncode != 0:
             return key, configured
+    restarted, _ = run_command(
+        [launcher, "restart", "--platform-root", env["KB_JOURNEY_PLATFORM_ROOT"]],
+        env=env, cwd=home, timeout=180,
+    )
+    if restarted.returncode != 0:
+        return "kb-create restart", restarted
     return None
+
+
+def login_and_configure_secured_admin(
+    env: dict[str, str], launcher: str, *, configure_oidc: bool = False, run_command=run,
+) -> tuple[str, subprocess.CompletedProcess] | None:
+    """Sign in the bootstrap admin before making authenticated platform config changes."""
+    project = Path(env["KB_JOURNEY_PROJECT_ROOT"])
+    login, _ = run_command(
+        ["bash", "-c", '. "$HOME/.profile"; kb auth login --gateway-url http://127.0.0.1:4000 --email "$1" --password "$2"',
+         "journey", env["KB_JOURNEY_ADMIN_EMAIL"], env["KB_JOURNEY_ADMIN_PASSWORD"]],
+        env=env, cwd=project, timeout=90,
+    )
+    if login.returncode != 0:
+        return "kb auth login", login
+    return configure_secured_platform(env, launcher, configure_oidc=configure_oidc, run_command=run_command)
 
 
 def dump_failure_state() -> None:
@@ -696,14 +720,6 @@ def main():
         append_summary(False)
         return failure_exit()
 
-    if VARIANT.endswith("secured"):
-        configured = configure_secured_platform(env)
-        if configured is not None:
-            key, result = configured
-            if not require(result, step=f"kb config set --scope platform {key}"):
-                append_summary(False)
-                return failure_exit()
-
     result, elapsed = run([launcher, "start", "--platform-root", str(PLATFORM)], env=env, timeout=300)
     TIMES["start"] = elapsed
     if not require(result, step="kb-create start"):
@@ -979,11 +995,13 @@ def main():
         if mode == "secured":
             service_env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
             service_env["KB_JOURNEY_ADMIN_PASSWORD"] = "JourneyPassw0rd!"
-            login, _ = run(["bash", "-c", '. "$HOME/.profile"; kb auth login --gateway-url http://127.0.0.1:4000 --email "$1" --password "$2"',
-                            "journey", service_env["KB_JOURNEY_ADMIN_EMAIL"], service_env["KB_JOURNEY_ADMIN_PASSWORD"]],
-                           env=service_env, cwd=PROJECT, timeout=90)
-            if login.returncode != 0:
-                fail(f"secured service journey admin CLI login: `kb auth login` exited {login.returncode}; {' '.join(login.stdout.split())[-400:]}")
+            oauth_claims = release_claims_for_case(
+                "S-109", Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios")
+            configured = login_and_configure_secured_admin(
+                service_env, launcher, configure_oidc=bool(oauth_claims))
+            if configured is not None:
+                step, result = configured
+                fail(f"secured service journey setup: `{step}` exited {result.returncode}; {' '.join(result.stdout.split())[-400:]}")
         workflow_dir = PROJECT / ".kb" / "workflows"
         workflow_dir.mkdir(parents=True, exist_ok=True)
         (workflow_dir / "e2e-hello.yml").write_text(
@@ -1204,6 +1222,18 @@ def main():
             project_root=str(PROJECT),
             kb_bin=str(BIN / "kb"),
         )
+        oauth_claims = []
+        for key in ("KB_STUDIO_OAUTH_JOURNEY", "KB_STUDIO_OIDC_PROVIDER_ID",
+                    "KB_STUDIO_OIDC_PROVIDER_NAME", "KB_STUDIO_OIDC_EMAIL"):
+            studio_env.pop(key, None)
+        if mode == "secured":
+            oauth_claims = release_claims_for_case(
+                "S-109", Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios")
+            if oauth_claims:
+                studio_env["KB_STUDIO_OAUTH_JOURNEY"] = "1"
+                studio_env["KB_STUDIO_OIDC_PROVIDER_ID"] = "corp"
+                studio_env["KB_STUDIO_OIDC_PROVIDER_NAME"] = "corp"
+                studio_env["KB_STUDIO_OIDC_EMAIL"] = service_env["KB_JOURNEY_ADMIN_EMAIL"]
         cron_id = "studio-a"
         (PROJECT / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
         (PROJECT / ".kb" / "crons" / f"{cron_id}.yml").write_text(
@@ -1300,10 +1330,6 @@ def main():
                         service_env["KB_JOURNEY_ADMIN_PASSWORD"])
                 studio_env["KB_STUDIO_MEMBER_EMAIL"] = member_email
                 studio_env["KB_STUDIO_MEMBER_PASSWORD"] = member_password
-                studio_env["KB_STUDIO_OAUTH_JOURNEY"] = "1"
-                studio_env["KB_STUDIO_OIDC_PROVIDER_ID"] = "corp"
-                studio_env["KB_STUDIO_OIDC_PROVIDER_NAME"] = "corp"
-                studio_env["KB_STUDIO_OIDC_EMAIL"] = service_env["KB_JOURNEY_ADMIN_EMAIL"]
                 with invocation_context(step_id="journey.setup"):
                     admin_token, member_token = create_studio_access_tokens(
                         "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
@@ -1326,8 +1352,8 @@ def main():
             except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
                 fail(f"Studio secured member setup: {error}")
         studio_claims = "S-106.1,S-106.2,S-106.3,S-106.4,S-106.5,S-106.6,S-107.1,S-107.2,S-107.3"
-        if mode == "secured":
-            studio_claims += ",S-109.1,S-109.2,S-109.3,S-109.4"
+        if mode == "secured" and oauth_claims:
+            studio_claims += "," + ",".join(oauth_claims)
         with invocation_context(step_id=studio_claims):
             studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
                 "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
