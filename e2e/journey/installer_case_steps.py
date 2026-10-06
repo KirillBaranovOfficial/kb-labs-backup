@@ -199,6 +199,107 @@ def run_analytics_invalid_retention_step(*, mode: str, launcher: str, platform_r
     return journey
 
 
+def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
+                          platform_root: Path, run_command: CommandRunner) -> Journey:
+    """Resolve the sealed stable request exclusively from the local artifact cache."""
+    journey = Journey(mode, f"offline-plan-{mode}")
+
+    def offline_plan() -> None:
+        root = platform_root.parent / "s181-offline-root"
+        plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
+                                           "--platform-channel", "stable", "--offline",
+                                           "--request-platform-root", str(root)], "offline plan").get("plan", {})
+        sources = {item.get("source") for item in plan.get("artifacts", [])}
+        if not sources or sources != {"offline"}:
+            raise RuntimeError(f"offline plan did not identify only offline artifacts: {sorted(map(str, sources))}")
+
+    journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
+                 cases=["S-181.4"])
+    return journey
+
+
+def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Path,
+                                  platform_root: Path, run_command: CommandRunner) -> Journey:
+    """Compare repeat plans while no host process can write into the install tree."""
+    journey = Journey(mode, f"repeat-plan-readonly-{mode}")
+    root = str(platform_root)
+
+    def repeat_plan() -> None:
+        status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
+                               "status before repeat plan")
+        host = status.get("host", {})
+        was_running = isinstance(host, dict) and host.get("state") == "running"
+        if not was_running or status.get("running") is not True or status.get("reachable") is not True:
+            raise RuntimeError("PC-001.8 requires a running, reachable host before the filesystem snapshot")
+        if was_running:
+            _json_command(run_command, [launcher, "stop", "--platform-root", root, "--json"],
+                          "stop before repeat plan")
+
+        try:
+            before = _snapshot_tree(platform_root)
+            args = [launcher, "plan", "--json", "--index", str(stable_index),
+                    "--request-platform-root", root, "--service-profile", "default",
+                    "--scenario", "commit"]
+            first = _json_command(run_command, args, "first clean-install plan").get("plan", {})
+            second = _json_command(run_command, args, "repeat clean-install plan").get("plan", {})
+            if any(first.get(key) != second.get(key) for key in ("planHash", "artifacts", "serviceGraph")):
+                raise RuntimeError("repeat plan changed planHash, artifacts, or serviceGraph")
+            after = _snapshot_tree(platform_root)
+            changes = _snapshot_changes(before, after)
+            if any(changes.values()):
+                raise RuntimeError(_format_snapshot_changes(changes))
+        finally:
+            if was_running:
+                _json_command(run_command, [launcher, "start", "--platform-root", root, "--json"],
+                              "restart after repeat plan")
+                restarted = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
+                                          "health check after repeat plan")
+                restarted_host = restarted.get("host", {})
+                if (not isinstance(restarted_host, dict) or restarted_host.get("state") != "running"
+                        or restarted.get("running") is not True or restarted.get("reachable") is not True):
+                    raise RuntimeError("host health check failed after PC-001.8 restart: expected running and reachable")
+
+    journey.step("repeat install planning without changing the installed root", "platform.install",
+                 repeat_plan, cases=["PC-001.8"])
+    return journey
+
+
+def _snapshot_tree(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
+    snapshot = {}
+    for path in root.rglob("*"):
+        relative = str(path.relative_to(root))
+        if path.is_symlink():
+            snapshot[relative] = ("symlink", str(path.readlink()))
+        elif path.is_dir():
+            snapshot[relative] = ("directory", None)
+        elif path.is_file():
+            snapshot[relative] = ("file", path.read_bytes())
+    return snapshot
+
+
+def _snapshot_changes(before: dict[str, tuple[str, bytes | str | None]],
+                      after: dict[str, tuple[str, bytes | str | None]]) -> dict[str, list[str]]:
+    old_paths, new_paths = set(before), set(after)
+    added = sorted(new_paths - old_paths)
+    removed = sorted(old_paths - new_paths)
+    changed = sorted(path for path in old_paths & new_paths if before[path] != after[path])
+    return {"changed": changed, "added": added, "removed": removed}
+
+
+def _format_snapshot_changes(changes: dict[str, list[str]]) -> str:
+    total = sum(len(paths) for paths in changes.values())
+    remaining = 20
+    categories = []
+    for category in ("changed", "added", "removed"):
+        paths = changes[category]
+        visible = paths[:remaining]
+        remaining -= len(visible)
+        categories.append(f"{category} ({len(paths)}): {', '.join(visible) if visible else 'none'}")
+    shown = min(total, 20)
+    return ("planning changed the active platform root: " + "; ".join(categories)
+            + f"; {total} path(s) total, showing {shown} of {total}")
+
+
 def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                              canary_index: Path, platform_root: Path,
                              secret_value: str, run_command: CommandRunner) -> Journey:
@@ -276,24 +377,11 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                      lambda step=step: None if step.status == "PASS" else step.message,
                      cases=step.cases)
 
-    def repeat_plan() -> None:
-        before = {str(path.relative_to(platform_root)): path.read_bytes()
-                  for path in platform_root.rglob("*") if path.is_file()}
-        first = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
-                                            "--request-platform-root", root, "--service-profile", "default",
-                                            "--scenario", "commit"], "first clean-install plan").get("plan", {})
-        second = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
-                                             "--request-platform-root", root, "--service-profile", "default",
-                                             "--scenario", "commit"], "repeat clean-install plan").get("plan", {})
-        if any(first.get(key) != second.get(key) for key in ("planHash", "artifacts", "serviceGraph")):
-            raise RuntimeError("repeat plan changed planHash, artifacts, or serviceGraph")
-        after = {str(path.relative_to(platform_root)): path.read_bytes()
-                 for path in platform_root.rglob("*") if path.is_file()}
-        if before != after:
-            raise RuntimeError("planning wrote or changed files under the active platform root")
-
-    journey.step("repeat install planning without changing the installed root", "platform.install",
-                 repeat_plan, cases=["PC-001.8"])
+    for step in run_repeat_plan_readonly_step(mode=mode, launcher=launcher, stable_index=stable_index,
+                                              platform_root=platform_root, run_command=run_command).steps:
+        journey.step(step.name, step.capability,
+                     lambda step=step: None if step.status == "PASS" else step.message,
+                     cases=step.cases)
 
     def channel_plan(channel: str, index: Path, root_name: str) -> None:
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(index),
@@ -341,17 +429,11 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
                  cases=["S-181.3"])
 
-    def offline_plan() -> None:
-        plan = _json_command(run_command([launcher, "plan", "--json", "--index", str(stable_index),
-                                          "--platform-channel", "stable", "--offline",
-                                          "--request-platform-root", str(platform_root.parent / "s181-offline-root")]),
-                             "offline plan").get("plan", {})
-        sources = {item.get("source") for item in plan.get("artifacts", [])}
-        if not sources or sources != {"offline"}:
-            raise RuntimeError(f"offline plan did not identify only offline artifacts: {sorted(map(str, sources))}")
-
-    journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
-                 cases=["S-181.4"])
+    for step in run_offline_plan_step(mode=mode, launcher=launcher, stable_index=stable_index,
+                                      platform_root=platform_root, run_command=run_command).steps:
+        journey.step(step.name, step.capability,
+                     lambda step=step: None if step.status == "PASS" else step.message,
+                     cases=step.cases)
 
     for generated_root in (apply_root, platform_root.parent / "s181-stable-root",
                            platform_root.parent / "s181-canary-root", secret_root,

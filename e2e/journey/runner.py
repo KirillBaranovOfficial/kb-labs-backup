@@ -22,7 +22,7 @@ from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import run_doctor_root_isolation_step, run_installer_case_steps, run_uninstall_decline_step
 from release_index import channel_platform_version, stable_platform_version
-from service_steps import FlowGraph, Journey, record_runner_failure
+from service_steps import FlowGraph, Journey, record_candidate_provenance, record_runner_failure
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
 from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status,
                         run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
@@ -753,6 +753,27 @@ def main():
     ACTIVE_LAUNCHER = launcher
     version, _ = run([launcher, "--version"], env=env, timeout=30)
     version_ok = version.returncode == 0 and re.fullmatch(r"kb-create [^\s]+\s*", version.stdout) is not None
+    candidate = {}
+    identity, _ = run([launcher, "version", "--json"], env=env, timeout=30)
+    if identity.returncode == 0:
+        try:
+            envelope = json.loads(identity.stdout)
+            data = envelope.get("data", {})
+            if envelope.get("ok") is True and isinstance(data, dict):
+                candidate = {key: value for key, value in data.items() if isinstance(value, str)}
+            else:
+                candidate["identityError"] = "version --json returned no success data"
+        except json.JSONDecodeError as error:
+            candidate["identityError"] = f"version --json returned invalid JSON: {error}"
+    else:
+        candidate["identityError"] = (
+            f"version --json exited {identity.returncode}: {' '.join(identity.stdout.split())[:300]}")
+    provenance = record_candidate_provenance(
+        CASE_JOURNEY, os.getenv("KB_JOURNEY_GIT_REVISION", ""), candidate)
+    if provenance.status != "PASS":
+        fail(provenance.message or "candidate provenance check failed")
+        append_summary(False)
+        return failure_exit()
     record_case("launcher version", version_ok,
                "kb-create --version did not print the launcher version", cases=["PC-001.1"])
     if VARIANT == "occupied-port":

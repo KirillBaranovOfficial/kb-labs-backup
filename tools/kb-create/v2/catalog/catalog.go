@@ -279,7 +279,7 @@ func compatibilityArtifactExists(source Catalog, label CompatibilityLabel) bool 
 
 func Verify(source Catalog) error {
 	if source.Digest == "" {
-		return fmt.Errorf("release index digest is required")
+		return &indexGateError{gate: "digest", expected: "non-empty SHA-256 digest", actual: "missing", err: fmt.Errorf("release index digest is required")}
 	}
 	expected := source.Digest
 	source.Digest = ""
@@ -291,7 +291,8 @@ func Verify(source Catalog) error {
 		return err
 	}
 	if !strings.EqualFold(expected, actual) {
-		return contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index digest does not match its content.", indexInvalidHint, nil)
+		return &indexGateError{gate: "digest", expected: expected, actual: actual,
+			err: contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index digest does not match its content.", indexInvalidHint, nil)}
 	}
 	return nil
 }

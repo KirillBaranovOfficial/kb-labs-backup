@@ -337,6 +337,12 @@ func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int 
 		writeDiagnosticFailure(output, root, correlationID, "", asDiag(err), nil)
 		return 1
 	}
+	if filepath.Base(i.Executable) == "kb-create" {
+		if shimErr := shim.Ensure(i.Executable, root); shimErr != nil {
+			writeShimFailure(output, "KB_INSTALL_APPLY_FAILED", root, shimErr)
+			return 1
+		}
+	}
 	fixOK := !unresolvedRequiredInput
 	write(output, map[string]any{"ok": fixOK, "operation": "doctor-fix", "findings": response.Findings, "repair": response.Repair, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning})
 	// Safe projection repair is complete even when the repair plan still names

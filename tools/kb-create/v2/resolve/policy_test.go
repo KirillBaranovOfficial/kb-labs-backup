@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"github.com/kb-labs/clikit/diag"
+	"path/filepath"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
@@ -21,6 +22,31 @@ func policyCatalog() catalog.Catalog {
 			{ID: "sdk", Version: "3.0.0", Package: "@kb/sdk", SHA256: "sdk-3.0.0"},
 			{ID: "sdk", Version: "3.2.0", Package: "@kb/sdk", SHA256: "sdk-3.2.0"},
 		},
+	}
+}
+
+// case: S-053.2
+func TestValidJourneyReleaseIndexResolvesPolicyIncompatibility(t *testing.T) {
+	index, err := catalog.LoadFile(filepath.Join("../../../../e2e/platform/fixtures/installer-cases",
+		"compatibility-matrix-linux-arm64.json"))
+	if err != nil {
+		t.Fatalf("valid compatibility fixture did not load: %v", err)
+	}
+	request := contracts.InstallRequest{PlatformRoot: t.TempDir(),
+		Platform: contracts.VersionSelector{Version: "3.2.0"},
+		SDK:      contracts.VersionSelector{Version: "3.2.0"},
+		Policy:   contracts.PolicyStrict}
+	_, err = PlanWith(request, index, Options{OS: "linux", Arch: "arm64"})
+	launcherErr, ok := err.(*diag.Diag)
+	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents ||
+		launcherErr.Meta["component"] != "SDK" || launcherErr.Meta["version"] != "3.2.0" ||
+		launcherErr.Meta["range"] != ">=3.0.0 <4.0.0" ||
+		launcherErr.Hint != "Use an exact platform/SDK pair from the release matrix or choose --policy compatible." {
+		t.Fatalf("strict policy did not produce the indexed SDK incompatibility: %#v", err)
+	}
+	request.Policy = contracts.PolicyCompatible
+	if _, err := PlanWith(request, index, Options{OS: "linux", Arch: "arm64"}); err != nil {
+		t.Fatalf("compatible policy rejected the SDK admitted by the valid fixture: %v", err)
 	}
 }
 

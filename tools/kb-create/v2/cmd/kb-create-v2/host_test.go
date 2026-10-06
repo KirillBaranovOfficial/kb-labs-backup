@@ -322,7 +322,7 @@ func TestStartPrintsHumanTextWithoutJSONFlag(t *testing.T) {
 		t.Fatalf("start: %d %q", code, raw)
 	}
 	_, code, raw = inst.run("start")
-	if code != 1 || !bytes.Contains([]byte(raw), []byte("KB_HOST_ALREADY_RUNNING")) || !bytes.Contains([]byte(raw), []byte("next:")) {
+	if code != 1 || !bytes.Contains([]byte(raw), []byte("KB_HOST_ALREADY_RUNNING")) || !bytes.Contains([]byte(raw), []byte("Hint:")) {
 		t.Fatalf("second start: %d %q", code, raw)
 	}
 }
