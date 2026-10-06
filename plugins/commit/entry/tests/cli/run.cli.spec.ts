@@ -137,7 +137,7 @@ describe('commit:commit (run)', () => {
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-04: --json outputs CommitRunOutput', async () => {
@@ -147,7 +147,7 @@ describe('commit:commit (run)', () => {
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    const out = captured.json[0] as Record<string, unknown>;
+    const out = result.result as Record<string, unknown>;
     expect(out.applied).toBe(true);
     expect(Array.isArray(out.commits)).toBe(true);
   });
@@ -188,7 +188,6 @@ describe('commit:commit (run)', () => {
       expect(saveToHistory).not.toHaveBeenCalled();
       expect(clearPlan).not.toHaveBeenCalled();
       expect(result.result).toMatchObject({ plan: mockPlan, applied: false, pushed: false, commits: [] });
-      expect(captured.json[0]).toMatchObject({ plan: mockPlan, applied: false, pushed: false, commits: [] });
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -205,7 +204,6 @@ describe('commit:commit (run)', () => {
     expect(result.ok).toBe(true);
     expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
     expect(result.result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
-    expect(captured.json[0]).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
   });
 
   // case: S-160.4
@@ -217,7 +215,6 @@ describe('commit:commit (run)', () => {
 
     expect(result.ok).toBe(true);
     expect(result.result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
-    expect(captured.json[0]).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
     expect(applyCommitPlan).not.toHaveBeenCalled();
     expect(generateCommitPlan).not.toHaveBeenCalled();
   });
@@ -243,12 +240,13 @@ describe('commit:generate (adapter errors)', () => {
     const result = await generateCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(false);
-    expect(captured.json[0]).toMatchObject({
+    expect(result).toMatchObject({
       ok: false,
       error: {
         code: 'KB_ADAPTER_NOT_CONFIGURED',
+        message: expect.stringContaining('not configured'),
+        hint: expect.any(String),
         details: { service: 'llm' },
-        actions: [{ command: 'kb adapter bind llm @kb-labs/adapters-openai' }],
       },
     });
   });
@@ -268,8 +266,8 @@ describe('commit:generate (adapter errors)', () => {
     const result = await generateCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(false);
-    expect(captured.json).toHaveLength(1);
-    expect(captured.json[0]).toMatchObject({
+    expect(captured.json).toHaveLength(0);
+    expect(result).toMatchObject({
       ok: false,
       error: {
         code: 'KB_ADAPTER_CREDENTIALS_MISSING',
@@ -277,8 +275,8 @@ describe('commit:generate (adapter errors)', () => {
         hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"),
       },
     });
-    expect(captured.json[0]).toMatchObject({ error: { hint: expect.stringContaining('No request was sent') } });
-    expect(JSON.stringify(captured.json[0])).not.toContain('test-secret-value');
+    expect(result.error?.hint).toContain('No request was sent');
+    expect(JSON.stringify(result)).not.toContain('test-secret-value');
     expect(captured.errors).toHaveLength(0);
     expect(captured.infos).toHaveLength(0);
   });
@@ -298,7 +296,7 @@ describe('commit:generate (adapter errors)', () => {
     const result = await generateCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(false);
-    expect(captured.json[0]).toMatchObject({
+    expect(result).toMatchObject({
       ok: false,
       error: {
         code: 'KB_ADAPTER_CREDENTIALS_MISSING',
@@ -306,6 +304,6 @@ describe('commit:generate (adapter errors)', () => {
         hint: expect.stringContaining("kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env"),
       },
     });
-    expect(captured.json[0]).toMatchObject({ error: { hint: expect.stringContaining('No request was sent') } });
+    expect(result.error?.hint).toContain('No request was sent');
   });
 });

@@ -50,10 +50,10 @@ describe('workflow:metrics', () => {
     const result = await metricsCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: WorkflowMetricsData };
+    const payload = result as { ok: boolean; result: WorkflowMetricsData };
     expect(payload.ok).toBe(true);
-    expect(payload.data.runs.total).toBe(42);
-    expect(payload.data.jobs.total).toBe(120);
+    expect(payload.result.runs.total).toBe(42);
+    expect(payload.result.jobs.total).toBe(120);
   });
 
   it('CM-03: daemon unavailable returns exitCode 1', async () => {
@@ -68,6 +68,6 @@ describe('workflow:metrics', () => {
     const result = await metricsCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 });

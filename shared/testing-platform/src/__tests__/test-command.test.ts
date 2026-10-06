@@ -26,8 +26,7 @@ const failingHandler = {
     ctx: PluginContextV3,
     _input: { flags: Record<string, unknown>; argv: string[] }
   ): Promise<CommandResult> {
-    ctx.ui.error('Something went wrong');
-    return { ok: false, error: 'test-failure', meta: { reason: 'test-failure' } };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Something went wrong.', hint: 'Resolve the test failure and retry.' }, meta: { reason: 'test-failure' } };
   },
 };
 
@@ -82,7 +81,7 @@ const routeHandler = {
   ): Promise<CommandResult<{ found: boolean }>> {
     const id = input.query?.id;
     if (!id) {
-      return { ok: false, error: 'not found', result: { found: false } };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'The requested item was not found.', hint: 'Check the item ID and retry.' }, result: { found: false } };
     }
     return { ok: true, result: { found: true } };
   },
@@ -200,7 +199,10 @@ describe('testCommand', () => {
       result.cleanup();
 
       expect(result.exitCode).toBe(1);
-      expect(result.ui.error).toHaveBeenCalledWith('Something went wrong');
+      expect(result.raw).toMatchObject({
+        ok: false,
+        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Something went wrong.', hint: expect.any(String) },
+      });
       expect(result.meta).toEqual({ reason: 'test-failure' });
     });
 
@@ -510,7 +512,7 @@ describe('testCommand', () => {
       expect(result.ui.debug).toHaveBeenCalledWith('internal');
     });
 
-    it('should support UI override', async () => {
+    it('should not render command failures; the shared CLI renderer owns them', async () => {
       const customError = vi.fn();
 
       const result = await testCommand(failingHandler, {
@@ -518,7 +520,8 @@ describe('testCommand', () => {
       });
       result.cleanup();
 
-      expect(customError).toHaveBeenCalledWith('Something went wrong');
+      expect(customError).not.toHaveBeenCalled();
+      expect(result.raw).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
     });
   });
 

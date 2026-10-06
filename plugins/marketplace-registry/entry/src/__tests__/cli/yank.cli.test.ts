@@ -56,7 +56,7 @@ describe('marketplace:yank', () => {
     }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ yanked: true, version: '1.0.0' });
+    expect(result.result).toMatchObject({ yanked: true, version: '1.0.0' });
   });
 
   it('YK-04: missing pkg — exitCode 1, no HTTP call', async () => {
@@ -113,6 +113,6 @@ describe('marketplace:yank', () => {
     }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

@@ -51,8 +51,8 @@ describe('clickup:task comments list', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(Array.isArray(captured.json[0])).toBe(true);
-    const slim = (captured.json[0] as Array<Record<string, unknown>>)[0]!;
+    expect(Array.isArray(result.result)).toBe(true);
+    const slim = (result.result as Array<Record<string, unknown>>)[0]!;
     expect(slim.id).toBe('comment-1');
     expect(typeof slim.user).toBe('string');
     expect(slim).not.toHaveProperty('resolved');
@@ -70,7 +70,7 @@ describe('clickup:task comments list', () => {
     );
 
     expect(result.ok).toBe(true);
-    const raw = (captured.json[0] as typeof mockComments)[0]!;
+    const raw = (result.result as typeof mockComments)[0]!;
     expect(typeof raw.user).toBe('object');
     expect(raw.resolved).toBeDefined();
   });
@@ -98,7 +98,7 @@ describe('clickup:task comments list', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TCL-05: core error returns exitCode 1', async () => {
@@ -112,6 +112,6 @@ describe('clickup:task comments list', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

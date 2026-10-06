@@ -69,7 +69,7 @@ describe('release:checks', () => {
     const result = await checksCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    const out = captured.json[0] as Record<string, unknown>;
+    const out = result.result as Record<string, unknown>;
     expect(out.ok).toBe(true);
     expect(out.failed).toEqual(['pack-install']);
   });
@@ -85,7 +85,7 @@ describe('release:checks', () => {
     const result = await checksCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(false);
-    const out = captured.json[0] as Record<string, unknown>;
+    const out = result.result as Record<string, unknown>;
     expect(out.ok).toBe(false);
     expect(out.failed).toEqual(['dist-exports']);
   });
@@ -133,7 +133,7 @@ describe('release:checks', () => {
     const result = await checksCommand.execute(ctx as never, mockCLIInput({ flags: { json: true, flow: 'platform' } }));
 
     expect(result.ok).toBe(false);
-    const out = captured.json[0] as { failed: string[]; report: { failures: Array<{ classification: string; package: string }> } };
+    const out = result.result as { failed: string[]; report: { failures: Array<{ classification: string; package: string }> } };
     expect(out.failed).toEqual(['pack-install']);
     expect(out.report.failures.map(f => f.classification)).toEqual(['environment', 'suspected-flake']);
     expect(out.report.failures.map(f => f.package)).toEqual(['a', 'b']);
@@ -153,7 +153,7 @@ describe('release:checks', () => {
 
     expect(result.ok).toBe(false);
     expect(runReleaseChecks).not.toHaveBeenCalled();
-    const out = captured.json[0] as { failed: string[]; report: { stages: Array<{ stage: string; status: string }> } };
+    const out = result.result as { failed: string[]; report: { stages: Array<{ stage: string; status: string }> } };
     expect(out.failed).toEqual(['preflight:docker']);
     expect(out.report.stages.map(s => `${s.stage}:${s.status}`)).toEqual(['preflight:failed', 'checks:not-run']);
 

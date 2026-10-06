@@ -60,8 +60,8 @@ describe('clickup:list.tasks', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(Array.isArray(captured.json[0])).toBe(true);
-    const slim = (captured.json[0] as Array<Record<string, unknown>>)[0]!;
+    expect(Array.isArray(result.result)).toBe(true);
+    const slim = (result.result as Array<Record<string, unknown>>)[0]!;
     expect(slim.id).toBe('task-1');
     expect(typeof slim.status).toBe('string');
     expect(slim).toHaveProperty('due_date');
@@ -81,7 +81,7 @@ describe('clickup:list.tasks', () => {
     );
 
     expect(result.ok).toBe(true);
-    const raw = (captured.json[0] as typeof mockTasks)[0]!;
+    const raw = (result.result as typeof mockTasks)[0]!;
     expect(typeof raw.status).toBe('object');
     expect(raw.date_created).toBeDefined();
   });
@@ -109,7 +109,7 @@ describe('clickup:list.tasks', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LT-05: core function throws — exitCode 1, error shown', async () => {
@@ -123,6 +123,6 @@ describe('clickup:list.tasks', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

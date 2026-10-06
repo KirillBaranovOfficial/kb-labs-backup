@@ -100,11 +100,11 @@ describe('createPluginContextV3 — streaming logger', () => {
 
   const descriptor: PluginContextDescriptor = {
     requestId: 'test-streaming',
-    hostType: 'cli',
+    hostType: 'workflow',
     pluginId: '@kb-labs/test-streaming',
     pluginVersion: '1.0.0',
     permissions: {},
-    hostContext: { host: 'cli', argv: [], flags: {} },
+    hostContext: { host: 'workflow', workflowId: 'test-workflow', runId: 'test-run', stepId: 'test-step' },
   };
 
   it('should NOT wrap logger when eventEmitter is absent', () => {
@@ -304,11 +304,11 @@ describe('createPluginContextV3 — streaming UI', () => {
 
   const descriptor: PluginContextDescriptor = {
     requestId: 'test-streaming-ui',
-    hostType: 'cli',
+    hostType: 'workflow',
     pluginId: '@kb-labs/test-streaming-ui',
     pluginVersion: '1.0.0',
     permissions: {},
-    hostContext: { host: 'cli', argv: [], flags: {} },
+    hostContext: { host: 'workflow', workflowId: 'test-workflow', runId: 'test-run', stepId: 'test-step' },
   };
 
   it('wraps UI with StreamingUI when eventEmitter is provided', () => {
@@ -361,7 +361,8 @@ describe('createPluginContextV3 — streaming UI', () => {
     });
 
     context.ui.warn('watch out');
-    context.ui.error('bad');
+    const error = Reflect.get(context.ui, 'error') as (value: unknown) => void;
+    error('bad');
 
     const calls = (emitter as ReturnType<typeof vi.fn>).mock.calls;
     const warnLine = calls.find((c: unknown[]) => (c[1] as Record<string, unknown>)?.['line'] === 'watch out');

@@ -52,7 +52,7 @@ describe('workflow:runs rerun', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true });
+    expect(result).toMatchObject({ ok: true });
   });
 
   it('RRR-02b: --run-id flag works as alias for positional arg', async () => {
@@ -83,7 +83,7 @@ describe('workflow:runs rerun', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RRR-04: daemon error returns exitCode 1', async () => {
@@ -102,7 +102,7 @@ describe('workflow:runs rerun', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RRR-05: --dry-run shows intent, daemon is NOT called', async () => {

@@ -58,8 +58,7 @@ describe('devlink:freeze', () => {
     const result = await freezeCommand.execute(ctx as never, mockCLIInput<FreezeFlags>({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect((captured.json[0] as Record<string, unknown>).frozenAt).toBeDefined();
+    expect(result.result).toMatchObject({ frozenAt: expect.any(String) });
   });
 
   it('FREEZE-03: --dry-run shows intent, freeze is NOT called', async () => {

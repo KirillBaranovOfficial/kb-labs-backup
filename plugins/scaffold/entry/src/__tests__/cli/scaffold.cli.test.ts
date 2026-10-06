@@ -93,9 +93,9 @@ describe('scaffold:run', () => {
     );
 
     expect(result.ok).toBe(false);
-    // Command either writes help text or shows error
-    const hasOutput = captured.writes.length > 0 || captured.errors.length > 0 || captured.infos.length > 0;
-    expect(hasOutput).toBe(true);
+    if (result.ok) { throw new Error('expected missing scaffold entity to fail'); }
+    expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
+    expect(result.error.hint).toContain('kb scaffold run --help');
   });
 
   it('SS-02: --dry-run — writeFiles is not called, exitCode 0', async () => {

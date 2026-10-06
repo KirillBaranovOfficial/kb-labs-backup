@@ -50,10 +50,10 @@ describe('workflow:defs list', () => {
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: typeof sampleWorkflows };
+    const payload = result as { ok: boolean; result: typeof sampleWorkflows };
     expect(payload.ok).toBe(true);
-    expect(Array.isArray(payload.data)).toBe(true);
-    expect(payload.data.length).toBe(2);
+    expect(Array.isArray(payload.result)).toBe(true);
+    expect(payload.result.length).toBe(2);
   });
 
   it('DL-03: --status active filters by status', async () => {
@@ -132,7 +132,7 @@ describe('workflow:defs list', () => {
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('DL-08: renders Tags column joined by comma', async () => {

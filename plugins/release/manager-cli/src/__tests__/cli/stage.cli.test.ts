@@ -28,7 +28,8 @@ vi.mock('../../shared/dep-rewrite.js', () => ({
   rewriteWorkspaceDeps: vi.fn(() => () => {}),
 }));
 
-vi.mock('node:child_process', () => ({
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
   spawnSync: vi.fn((cmd: string, args: string[], opts: { cwd?: string }) => {
     if (cmd === 'npm') {
       return { status: 0, stdout: JSON.stringify([{ filename: 'kb-labs-sdk-2.115.0.tgz' }]), stderr: '' };

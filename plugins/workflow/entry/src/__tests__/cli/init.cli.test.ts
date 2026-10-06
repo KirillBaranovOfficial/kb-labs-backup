@@ -30,6 +30,7 @@ describe('workflow:init', () => {
     const duplicate = await initCommand.execute(ctx, mockCLIInput({ flags: {} }));
     expect(duplicate.ok).toBe(false);
     expect(await readFile(path, 'utf8')).toBe(source);
-    expect(captured.errors[0]).toContain('already exists');
+    if (duplicate.ok) { throw new Error('expected existing workflow initialization to fail'); }
+    expect(duplicate.error.message).toContain('already exists');
   });
 });

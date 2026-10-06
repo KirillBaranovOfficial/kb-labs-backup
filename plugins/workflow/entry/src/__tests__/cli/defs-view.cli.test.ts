@@ -75,7 +75,7 @@ describe('workflow:defs view', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: sampleWorkflow });
+    expect(result).toMatchObject({ ok: true, result: sampleWorkflow });
   });
 
   it('DV-03: --id flag works as alias for positional argument', async () => {
@@ -105,7 +105,7 @@ describe('workflow:defs view', () => {
     const result = await defsViewCommand.execute(ctx, mockCLIInput({ argv: [], flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length + captured.warnings.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('DV-05: workflow not found (404) returns exitCode 1', async () => {
@@ -124,7 +124,7 @@ describe('workflow:defs view', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('DV-06: daemon unavailable returns exitCode 1', async () => {

@@ -58,9 +58,9 @@ describe('clickup:workspace', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ id: 'ws-1', name: 'My Workspace' });
+    expect(result.result).toMatchObject({ id: 'ws-1', name: 'My Workspace' });
     // Compact format: spaces array should be present
-    expect((captured.json[0] as typeof mockWorkspace).spaces).toBeDefined();
+    expect((result.result as typeof mockWorkspace).spaces).toBeDefined();
   });
 
   it('W-03: --json --full outputs full workspace object', async () => {
@@ -75,7 +75,7 @@ describe('clickup:workspace', () => {
 
     expect(result.ok).toBe(true);
     // Full mode returns the raw workspace object
-    expect(captured.json[0]).toMatchObject({ id: 'ws-1', name: 'My Workspace' });
+    expect(result.result).toMatchObject({ id: 'ws-1', name: 'My Workspace' });
   });
 
   it('W-04: core function throws — exitCode 1, error shown', async () => {
@@ -89,6 +89,6 @@ describe('clickup:workspace', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

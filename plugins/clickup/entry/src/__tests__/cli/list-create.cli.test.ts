@@ -72,8 +72,8 @@ describe('clickup:list.create', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ id: 'list-1', name: 'My List' });
-    expect(Object.keys(captured.json[0] as object)).toEqual(['id', 'name']);
+    expect(result.result).toMatchObject({ id: 'list-1', name: 'My List' });
+    expect(Object.keys(result.result as object)).toEqual(['id', 'name']);
   });
 
   it('LC-03b: --json --full outputs raw list object', async () => {
@@ -87,7 +87,7 @@ describe('clickup:list.create', () => {
     );
 
     expect(result.ok).toBe(true);
-    const raw = captured.json[0] as typeof mockList;
+    const raw = result.result as typeof mockList;
     expect(raw.orderindex).toBeDefined();
     expect(raw.taskCount).toBeDefined();
   });
@@ -101,7 +101,7 @@ describe('clickup:list.create', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LC-05: missing --folder and --space — exitCode 1, error shown', async () => {
@@ -113,7 +113,7 @@ describe('clickup:list.create', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LC-06: core function throws — exitCode 1, error shown', async () => {
@@ -127,7 +127,7 @@ describe('clickup:list.create', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LC-07: --dry-run shows intent, HTTP is NOT called', async () => {

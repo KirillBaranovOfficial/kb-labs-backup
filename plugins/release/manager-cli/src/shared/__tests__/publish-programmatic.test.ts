@@ -11,7 +11,8 @@ const capturedArgs: string[][] = [];
 let mockCloseCode = 0;
 let mockStderr = '';
 
-vi.mock('node:child_process', () => ({
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
   spawn: vi.fn((_command: string, args: string[], options: { cwd: string }) => {
     const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
     child.stdout = new EventEmitter();

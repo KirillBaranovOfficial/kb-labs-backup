@@ -51,11 +51,11 @@ describe('workflow:runs list', () => {
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: typeof sampleRuns };
+    const payload = result as { ok: boolean; result: typeof sampleRuns };
     expect(payload.ok).toBe(true);
-    expect(Array.isArray(payload.data)).toBe(true);
-    expect(payload.data.length).toBe(2);
-    expect(payload.data[0]).toMatchObject({ id: 'r-001', workflowId: 'e2e-hello', status: 'success' });
+    expect(Array.isArray(payload.result)).toBe(true);
+    expect(payload.result.length).toBe(2);
+    expect(payload.result[0]).toMatchObject({ id: 'r-001', workflowId: 'e2e-hello', status: 'success' });
   });
 
   it('CL-03: --status running filters by status', async () => {
@@ -134,7 +134,7 @@ describe('workflow:runs list', () => {
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('CL-09: future startedAt renders as "just now" (not negative)', async () => {

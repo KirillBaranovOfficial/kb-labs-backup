@@ -40,7 +40,7 @@ describe('workflow:run', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: { runId: 'r-123', status: 'queued' } });
+    expect(result).toMatchObject({ ok: true, result: { runId: 'r-123', status: 'queued' } });
   });
 
   it('CR-03: --input passes JSON payload to runWorkflow', async () => {
@@ -96,7 +96,7 @@ describe('workflow:run', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('CR-06: daemon unavailable — readable error, exitCode 1', async () => {
@@ -110,7 +110,7 @@ describe('workflow:run', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('CR-07: invalid --isolation value returns exitCode 1', async () => {
@@ -122,7 +122,7 @@ describe('workflow:run', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.json[0]).toMatchObject({
+    expect(result).toMatchObject({
       ok: false,
       error: { code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) },
     });
@@ -136,7 +136,7 @@ describe('workflow:run', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.json[0]).toMatchObject({
+    expect(result).toMatchObject({
       ok: false,
       error: { code: 'KB_RUNTIME_INPUT_INVALID', message: expect.stringContaining('Expected manual'), hint: expect.any(String) },
     });

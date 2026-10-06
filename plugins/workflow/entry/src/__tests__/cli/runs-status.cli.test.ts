@@ -83,10 +83,10 @@ describe('workflow:runs-status', () => {
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: { json: true }, argv: ['r-001'] }));
 
     expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: WorkflowRunDetail };
+    const payload = result as { ok: boolean; result: WorkflowRunDetail };
     expect(payload.ok).toBe(true);
-    expect(payload.data.id).toBe('r-001');
-    expect(payload.data.status).toBe('success');
+    expect(payload.result.id).toBe('r-001');
+    expect(payload.result.status).toBe('success');
   });
 
   it('RST-04: missing runId returns exitCode 1 with validation error message', async () => {
@@ -95,7 +95,8 @@ describe('workflow:runs-status', () => {
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: {}, argv: [] }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.some(e => e.includes('Missing run ID'))).toBe(true);
+    if (result.ok) { throw new Error('expected a missing run ID to fail'); }
+    expect(result.error.message).toContain('Missing run ID');
   });
 
   it('RST-05: daemon unavailable returns exitCode 1', async () => {
@@ -110,6 +111,6 @@ describe('workflow:runs-status', () => {
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: {}, argv: ['r-001'] }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 });

@@ -50,7 +50,7 @@ describe('workspace:register', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.result.configPath).toContain('agent.json');
+    expect(result).toMatchObject({ result: { configPath: expect.stringContaining('agent.json') } });
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -70,7 +70,7 @@ describe('workspace:register', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({
+    expect(result.result).toMatchObject({
       hostId: MOCK_REGISTER_RESPONSE.hostId,
       clientId: MOCK_REGISTER_RESPONSE.clientId,
     });
@@ -85,7 +85,7 @@ describe('workspace:register', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-04: invalid gateway URL (no http/https prefix) returns exitCode 1', async () => {
@@ -97,7 +97,7 @@ describe('workspace:register', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-05: workspace path does not exist — exitCode 1, error reported', async () => {
@@ -111,7 +111,7 @@ describe('workspace:register', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-06: gateway returns HTTP 500 — exitCode 1, error reported', async () => {
@@ -129,7 +129,7 @@ describe('workspace:register', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-07: fetch throws (unreachable gateway) — exitCode 1, error reported', async () => {
@@ -143,7 +143,7 @@ describe('workspace:register', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CR-09: --dry-run shows intent, fetch and writeFile are NOT called', async () => {
@@ -177,6 +177,6 @@ describe('workspace:register', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

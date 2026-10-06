@@ -35,6 +35,6 @@ describe('qa:ci-overview', () => {
     const { ui, captured } = createCapturedUI();
     const result = await command.execute(createMockContext({ ui, cwd: '/' }) as never, mockCLIInput({ flags: { input: writeDossier(), json: true } }) as never);
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ runsAnalyzed: 1, findings: [{ fingerprint: 'network.registry.docker-hub-timeout' }] });
+    expect(result.result).toMatchObject({ runsAnalyzed: 1, findings: [{ fingerprint: 'network.registry.docker-hub-timeout' }] });
   });
 });

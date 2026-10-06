@@ -58,8 +58,8 @@ describe('clickup:folder.create', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ id: 'folder-1', name: 'My Folder' });
-    expect(Object.keys(captured.json[0] as object)).toEqual(['id', 'name']);
+    expect(result.result).toMatchObject({ id: 'folder-1', name: 'My Folder' });
+    expect(Object.keys(result.result as object)).toEqual(['id', 'name']);
   });
 
   it('FC-02b: --json --full outputs raw folder object', async () => {
@@ -73,7 +73,7 @@ describe('clickup:folder.create', () => {
     );
 
     expect(result.ok).toBe(true);
-    const raw = captured.json[0] as typeof mockFolder;
+    const raw = result.result as typeof mockFolder;
     expect(raw.lists).toBeDefined();
     expect(raw.orderindex).toBeDefined();
   });
@@ -87,7 +87,7 @@ describe('clickup:folder.create', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('FC-04: missing --name — exitCode 1, error shown', async () => {
@@ -99,7 +99,7 @@ describe('clickup:folder.create', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('FC-05: core function throws — exitCode 1, error shown', async () => {
@@ -113,7 +113,7 @@ describe('clickup:folder.create', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('FC-06: --dry-run shows intent, createFolder is NOT called', async () => {

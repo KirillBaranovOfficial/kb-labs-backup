@@ -31,8 +31,9 @@ describe('site-tools:page', () => {
 
     const result = await pageCommand.execute(ctx as never, mockCLIInput<PageFlags>({ argv: [] }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (result.ok) { throw new Error('expected missing page segment to fail'); }
+    expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
+    expect(result.error.hint).toContain('kb site page pricing');
     expect(writeFileSync).not.toHaveBeenCalled();
   });
 
@@ -44,8 +45,8 @@ describe('site-tools:page', () => {
 
     const result = await pageCommand.execute(ctx as never, mockCLIInput<PageFlags>({ argv: ['pricing'] }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors[0]).toContain('pricing');
+    if (result.ok) { throw new Error('expected existing page path to fail'); }
+    expect(result.error.message).toContain('pricing');
     expect(mkdirSync).not.toHaveBeenCalled();
   });
 
@@ -108,8 +109,8 @@ describe('site-tools:page', () => {
 
     const result = await pageCommand.execute(ctx as never, mockCLIInput<PageFlags>({ argv: ['pricing'] }));
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors[0]).toContain('opengraph-image.tsx');
+    if (result.ok) { throw new Error('expected existing Open Graph image path to fail'); }
+    expect(result.error.message).toContain('opengraph-image.tsx');
     expect(mkdirSync).not.toHaveBeenCalled();
   });
 
@@ -122,8 +123,9 @@ describe('site-tools:page', () => {
       mockCLIInput<PageFlags>({ argv: ['../../../etc/passwd'] }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors[0]).toContain('Invalid segment');
+    if (result.ok) { throw new Error('expected path traversal to fail'); }
+    expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
+    expect(result.error.message).toContain('Invalid segment');
     expect(mkdirSync).not.toHaveBeenCalled();
     expect(writeFileSync).not.toHaveBeenCalled();
   });
@@ -137,8 +139,9 @@ describe('site-tools:page', () => {
       mockCLIInput<PageFlags>({ argv: ['My-Page'] }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(captured.errors[0]).toContain('Invalid segment');
+    if (result.ok) { throw new Error('expected uppercase segment to fail'); }
+    expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
+    expect(result.error.message).toContain('Invalid segment');
   });
 
   it('PAGE-06: nested segment produces camelCase namespace in messages', async () => {

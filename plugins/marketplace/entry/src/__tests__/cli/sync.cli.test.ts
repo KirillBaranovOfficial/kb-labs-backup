@@ -100,8 +100,8 @@ describe('marketplace:sync', () => {
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect(captured.json[0]).toMatchObject({ added: expect.any(Array), total: 1 });
+    expect(result.result).toBeDefined();
+    expect(result.result).toMatchObject({ added: expect.any(Array), total: 1 });
   });
 
   it('CS-04: HTTP error — returns exitCode 1 with error captured', async () => {
@@ -113,7 +113,7 @@ describe('marketplace:sync', () => {
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CS-05: no sync.include configured — returns exitCode 1 with validation error', async () => {

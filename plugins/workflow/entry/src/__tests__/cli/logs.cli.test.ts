@@ -50,10 +50,10 @@ describe('workflow job logs', () => {
     const result = await logsCommand.execute(ctx, mockCLIInput({ argv: ['j-abc'], flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: { logs: typeof sampleLogs } };
+    const payload = result as { ok: boolean; result: { logs: typeof sampleLogs } };
     expect(payload.ok).toBe(true);
-    expect(Array.isArray(payload.data.logs)).toBe(true);
-    expect(payload.data.logs.length).toBe(3);
+    expect(Array.isArray(payload.result.logs)).toBe(true);
+    expect(payload.result.logs.length).toBe(3);
   });
 
   it('CLG-03: missing positional job ID returns exitCode 1', async () => {
@@ -62,7 +62,7 @@ describe('workflow job logs', () => {
     const result = await logsCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('CLG-04: empty logs renders empty state without throwing', async () => {
@@ -93,7 +93,7 @@ describe('workflow job logs', () => {
     const result = await logsCommand.execute(ctx, mockCLIInput({ argv: ['j-123'] }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
 });

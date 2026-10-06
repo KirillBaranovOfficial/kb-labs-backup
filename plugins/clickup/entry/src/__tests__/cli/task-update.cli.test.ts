@@ -51,7 +51,7 @@ describe('clickup:task.update', () => {
     );
 
     expect(result.ok).toBe(true);
-    const slim = captured.json[0] as Record<string, unknown>;
+    const slim = result.result as Record<string, unknown>;
     expect(slim.id).toBe('task-001');
     expect(typeof slim.status).toBe('string');
     expect(slim).not.toHaveProperty('date_created');
@@ -69,7 +69,7 @@ describe('clickup:task.update', () => {
     );
 
     expect(result.ok).toBe(true);
-    const raw = captured.json[0] as typeof mockUpdatedTask;
+    const raw = result.result as typeof mockUpdatedTask;
     expect(typeof raw.status).toBe('object');
     expect(raw.date_created).toBeDefined();
   });
@@ -83,7 +83,7 @@ describe('clickup:task.update', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TU-05: --dry-run shows intent, updateTask is NOT called', async () => {
@@ -111,6 +111,6 @@ describe('clickup:task.update', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

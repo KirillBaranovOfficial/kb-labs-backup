@@ -75,7 +75,7 @@ describe('release:version', () => {
     const result = await versionCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    const out = captured.json[0] as Record<string, unknown>;
+    const out = result.result as Record<string, unknown>;
     expect(out.ok).toBe(true);
     expect(Array.isArray(out.updates)).toBe(true);
   });

@@ -81,7 +81,7 @@ describe('workflow:runs approve', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: resolvedPayload });
+    expect(result).toMatchObject({ ok: true, result: resolvedPayload });
   });
 
   it('RAP-04: explicit --job-id + --step-id bypasses list call', async () => {
@@ -119,7 +119,7 @@ describe('workflow:runs approve', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RAP-06: multiple pending approvals returns exitCode 1 with list', async () => {
@@ -144,7 +144,7 @@ describe('workflow:runs approve', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RAP-07: missing runId returns exitCode 1 with validation error', async () => {
@@ -160,7 +160,7 @@ describe('workflow:runs approve', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length + captured.warnings.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RAP-08: invalid action value returns exitCode 1', async () => {
@@ -176,7 +176,7 @@ describe('workflow:runs approve', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length + captured.warnings.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RAP-09: daemon error on resolve returns exitCode 1', async () => {

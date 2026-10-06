@@ -54,8 +54,9 @@ describe('release:clean-install', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors[0]).toContain('EUNSUPPORTEDPROTOCOL');
-    expect(captured.errors[0]).toContain('workspace:*');
+    if (result.ok) { throw new Error('expected clean install verification to fail'); }
+    expect(result.error.message).toContain('EUNSUPPORTEDPROTOCOL');
+    expect(result.error.message).toContain('workspace:*');
   });
 
   it('VCI-03: missing --tarball or --name fails before calling verifyCleanInstall', async () => {
@@ -79,7 +80,7 @@ describe('release:clean-install', () => {
     );
 
     expect(result.ok).toBe(true);
-    const out = captured.json[0] as Record<string, unknown>;
+    const out = result.result as Record<string, unknown>;
     expect(out.ok).toBe(true);
   });
 });

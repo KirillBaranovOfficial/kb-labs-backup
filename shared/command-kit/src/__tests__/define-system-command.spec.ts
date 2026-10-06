@@ -277,7 +277,14 @@ describe('defineSystemCommand', () => {
         jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
-        handler: async () => ({ ok: false, error: 'failed' }),
+        handler: async () => ({
+          ok: false,
+          error: {
+            code: 'KB_RUNTIME_COMMAND_FAILED',
+            message: 'The command failed.',
+            hint: 'Run `kb <command> --help` to review required inputs, then rerun the command.',
+          },
+        }),
       });
 
       const exitCode = await command.run(mockCtx, [], {});

@@ -59,7 +59,7 @@ describe('marketplace:share', () => {
     mockedPost.mockResolvedValue({ token: 'kbrt_x', pkg: 'kirill/my-plugin', expiresAt: '' });
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await shareCommand.execute(ctx, mockCLIInput({
+    const result = await shareCommand.execute(ctx, mockCLIInput({
       argv: ['kb:kirill/my-plugin'],
       flags: { link: true, ttl: '14' },
     }));
@@ -73,14 +73,14 @@ describe('marketplace:share', () => {
   it('SH-04: --link --json outputs JSON token', async () => {
     const tokenResult = { token: 'kbrt_abc', pkg: 'kirill/my-plugin', expiresAt: '' };
     mockedPost.mockResolvedValue(tokenResult);
-    const { ui, captured } = createCapturedUI();
+    const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await shareCommand.execute(ctx, mockCLIInput({
+    const result = await shareCommand.execute(ctx, mockCLIInput({
       argv: ['kb:kirill/my-plugin'],
       flags: { link: true, json: true },
     }));
 
-    expect(captured.json[0]).toMatchObject({ token: 'kbrt_abc' });
+    expect(result.result).toMatchObject({ token: 'kbrt_abc' });
   });
 
   it('SH-05: missing package arg — exitCode 1, no HTTP call', async () => {
@@ -137,6 +137,6 @@ describe('marketplace:share', () => {
     }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

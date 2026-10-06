@@ -61,13 +61,13 @@ describe('qa:baseline:update', () => {
   });
 
   it('QBU-02: --json outputs baseline data', async () => {
-    const { ui, captured } = createCapturedUI();
+    const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: '/project' });
 
     const result = await baselineUpdateCommand.execute(ctx as never, mockCLIInput<BaselineUpdateFlags>({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
+    expect(result.result).toMatchObject({ id: 'baseline-1' });
   });
 
   it('QBU-03: --dry-run shows intent, no checks run', async () => {
