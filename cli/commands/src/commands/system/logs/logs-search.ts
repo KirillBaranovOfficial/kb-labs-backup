@@ -4,6 +4,7 @@
 
 import {
   defineSystemCommand,
+  throwSystemCommandError,
   type CommandResult,
 } from "@kb-labs/shared-command-kit";
 import { generateExamples } from "../../../utils/generate-examples";
@@ -30,11 +31,8 @@ type Flags = {
 };
 
 type LogSearchResult = CommandResult & {
+  data: { query: string; logs: object[]; total: number; hasMore: boolean };
   _raw?: LogRecord[];
-  query?: string;
-  logs?: object[];
-  total?: number;
-  hasMore?: boolean;
 };
 
 export const logsSearch = defineSystemCommand<Flags, LogSearchResult>({
@@ -67,18 +65,12 @@ export const logsSearch = defineSystemCommand<Flags, LogSearchResult>({
   async handler(_ctx, argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return {
-        ok: false,
-        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log reader not available. Ensure platform is initialized.", hint: "Run `kb logs search --help` to review valid inputs and recovery steps, then retry." },
-      };
+      throwSystemCommandError("Log reader not available. Ensure platform is initialized.", "Run `kb logs search --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const searchText = argv[0];
     if (!searchText) {
-      return {
-        ok: false,
-        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Search text required. Usage: kb logs search "your query"', hint: "Run `kb logs search --help` to review valid inputs and recovery steps, then retry." },
-      };
+      throwSystemCommandError('Search text required. Usage: kb logs search "your query"', "Run `kb logs search --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const filters: LogQuery = {
@@ -103,40 +95,28 @@ export const logsSearch = defineSystemCommand<Flags, LogSearchResult>({
     });
 
     return {
-      ok: true,
-      query: searchText,
-      logs: result.logs.map(formatLogJson),
-      total: result.total,
-      hasMore: result.hasMore,
+      ok: true as const,
+      data: {
+        query: searchText,
+        logs: result.logs.map(formatLogJson),
+        total: result.total,
+        hasMore: result.hasMore,
+      },
       _raw: result.logs,
     };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      const { _raw, ...jsonResult } = result;
-      ctx.ui.json(jsonResult);
-      return;
-    }
-
-    if (!result.ok) {
-      const error = typeof result.error === "string" ? result.error : "Unknown";
-      ctx.ui.error("Log Search", {
-        sections: [{ header: "Error", items: [error] }],
-      });
-      return;
-    }
-
     const raw = result._raw;
     if (!raw || raw.length === 0) {
-      ctx.ui.write(`No logs found matching "${result.query}".\n`);
+      ctx.ui.write(`No logs found matching "${result.data.query}".\n`);
       return;
     }
 
-    ctx.ui.write(`Search results for "${result.query}":\n\n`);
+    ctx.ui.write(`Search results for "${result.data.query}":\n\n`);
     for (const record of raw) {
       ctx.ui.write(formatLogLine(record) + "\n");
     }
 
-    ctx.ui.write(`\n--- ${raw.length} of ${result.total} matches ---\n`);
+    ctx.ui.write(`\n--- ${raw.length} of ${result.data.total} matches ---\n`);
   },
 });

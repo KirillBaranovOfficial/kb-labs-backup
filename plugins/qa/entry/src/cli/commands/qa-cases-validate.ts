@@ -16,7 +16,7 @@ export default defineCommand<unknown, CLIInput<QaCasesValidateFlags>, unknown>({
     const result = { schema: 'kb.qa-case-validation/v1', valid: diagnostics.length === 0, cases: catalog.cases.length, claims: claims.claims.length, diagnostics };
     if (diagnostics.length) {
       if (!input.flags.json) ctx.ui?.warn?.(`QA case validation found ${diagnostics.length} issue(s).`);
-      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'QA case validation failed', hint: 'Run `kb qa cases validate --help` to check the command inputs, then retry.' }, result };
+      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'QA case validation failed', hint: 'Run `kb qa cases validate --help` to check the command inputs, then retry.', diagnostics: diagnostics.map((diagnostic) => ({ code: 'QA_CASE_INVALID', message: diagnostic.message, severity: 'error' as const, path: diagnostic.file, line: diagnostic.line })) } };
     }
     if (!input.flags.json) ctx.ui?.success?.(`Validated ${catalog.cases.length} case(s) and ${claims.claims.length} test claim(s).`);
     return { ok: true, result };

@@ -56,9 +56,7 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
         ref = match.project.id;
       }
       const project = await showProject(registry, ref);
-      if (json) {
-        ctx.ui?.json({ ok: true, project });
-      } else {
+      if (!json) {
         ctx.ui?.write(`${project.name} (${project.id})\n`);
         ctx.ui?.write(`  path:        ${project.path}${project.pathExists ? '' : '  (folder missing)'}\n`);
         ctx.ui?.write(`  status:      ${project.status}\n`);
@@ -69,7 +67,7 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
       }
       return { ok: true, project };
     } catch (error) {
-      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
+      return failWithEnvelope(projectErrorEnvelope(error));
     }
   },
 });

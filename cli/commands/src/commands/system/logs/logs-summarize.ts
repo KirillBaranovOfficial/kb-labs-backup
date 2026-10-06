@@ -3,7 +3,7 @@
  * Agent-first: ask a natural-language question about logs.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../../utils/generate-examples';
 import { platform } from '@kb-labs/core-runtime';
 import { parseRelativeTime, computeLogStats } from './logs-utils';
@@ -118,7 +118,7 @@ export const logsSummarize = defineSystemCommand<Flags, LogSummarizeResult>({
   async handler(_ctx, argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Log reader not available. Ensure platform is initialized.', hint: "Run `kb logs summarize --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError('Log reader not available. Ensure platform is initialized.', "Run `kb logs summarize --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const question = argv[0] || 'What happened recently? Summarize errors and notable events.';
@@ -169,17 +169,6 @@ export const logsSummarize = defineSystemCommand<Flags, LogSummarizeResult>({
     };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui.json(result);
-      return;
-    }
-
-    if (!result.ok) {
-      const error = typeof result.error === 'string' ? result.error : 'Unknown';
-      ctx.ui.error('Log Summarize', { sections: [{ header: 'Error', items: [error] }] });
-      return;
-    }
-
     ctx.ui.write(`Question: ${result.question}\n`);
     ctx.ui.write(`${result.llmUsed ? '(AI-powered)' : '(Statistical fallback)'}\n\n`);
     ctx.ui.write((result.summary ?? '') + '\n');

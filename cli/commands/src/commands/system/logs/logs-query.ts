@@ -4,6 +4,7 @@
 
 import {
   defineSystemCommand,
+  throwSystemCommandError,
   type CommandResult,
 } from "@kb-labs/shared-command-kit";
 import { generateExamples } from "../../../utils/generate-examples";
@@ -12,10 +13,7 @@ import type { LogQuery, LogRecord, LogLevel } from "@kb-labs/core-platform";
 import { parseRelativeTime, formatLogLine, formatLogJson } from "./logs-utils";
 
 type LogQueryResult = CommandResult & {
-  logs?: ReturnType<typeof formatLogJson>[];
-  total?: number;
-  hasMore?: boolean;
-  source?: string;
+  data: { logs: ReturnType<typeof formatLogJson>[]; total: number; hasMore: boolean; source?: string };
   _raw?: LogRecord[];
 };
 
@@ -84,10 +82,7 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
   async handler(_ctx, _argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return {
-        ok: false,
-        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log reader not available. Ensure platform is initialized.", hint: "Run `kb logs query --help` to review valid inputs and recovery steps, then retry." },
-      };
+      throwSystemCommandError("Log reader not available. Ensure platform is initialized.", "Run `kb logs query --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const query: LogQuery = {};
@@ -135,29 +130,17 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
     });
 
     return {
-      ok: true,
-      logs: result.logs.map(formatLogJson),
-      total: result.total,
-      hasMore: result.hasMore,
-      source: result.source,
-      _raw: result.logs, // kept for formatter
+      ok: true as const,
+      data: {
+        logs: result.logs.map(formatLogJson),
+        total: result.total,
+        hasMore: result.hasMore,
+        source: result.source,
+      },
+      _raw: result.logs,
     };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      const { _raw, ...jsonResult } = result;
-      ctx.ui.json(jsonResult);
-      return;
-    }
-
-    if (!result.ok) {
-      const error = typeof result.error === "string" ? result.error : "Unknown";
-      ctx.ui.error("Log Query", {
-        sections: [{ header: "Error", items: [error] }],
-      });
-      return;
-    }
-
     const raw = result._raw;
     if (!raw || raw.length === 0) {
       ctx.ui.write("No logs found matching criteria.\n");
@@ -169,7 +152,7 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
     }
 
     ctx.ui.write(
-      `\n--- ${raw.length} of ${result.total} logs (source: ${result.source}) ---\n`,
+      `\n--- ${raw.length} of ${result.data.total} logs (source: ${result.data.source}) ---\n`,
     );
   },
 });

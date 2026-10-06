@@ -11,6 +11,7 @@ import type {
   ErrorCatalog,
   ErrorCatalogEntry,
   ErrorEnvelope,
+  PlatformDiagnostic,
 } from './types.js';
 
 export type ErrorCode = (typeof catalogData.codes)[number]['code'];
@@ -43,6 +44,7 @@ export interface CreateEnvelopeOptions {
   hint?: string;
   /** Override a catalog message when a typed error carries a more specific explanation. */
   message?: string;
+  diagnostics?: PlatformDiagnostic[];
 }
 
 /** Builds an envelope from a catalog code. Throws for a code that is not in the catalog. */
@@ -52,6 +54,17 @@ export function createErrorEnvelope(code: string, options: CreateEnvelopeOptions
     throw new Error(`Unknown error code "${code}": add it to errors.catalog.json`);
   }
   const details = options.details ?? {};
+  if (typeof details !== 'object' || details === null || Array.isArray(details)) {
+    throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
+  }
+  for (const [key, value] of Object.entries(details)) {
+    if (typeof value !== 'string') {
+      throw createErrorDetailsContractViolation(key, 'must be a string identifier');
+    }
+    if (isSerializedStructuredValue(value)) {
+      throw createErrorDetailsContractViolation(key, 'contains serialized JSON');
+    }
+  }
   const envelope: ErrorEnvelope = {
     code: entry.code,
     area: entry.area,
@@ -76,5 +89,24 @@ export function createErrorEnvelope(code: string, options: CreateEnvelopeOptions
   if (Object.keys(details).length > 0) {
     envelope.details = details;
   }
+  if (options.diagnostics?.length) {
+    envelope.diagnostics = options.diagnostics;
+  }
   return envelope;
+}
+
+export function isSerializedStructuredValue(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === 'object' && parsed !== null;
+  } catch {
+    return false;
+  }
+}
+
+export function createErrorDetailsContractViolation(key: string, reason: string): Error & { code: string; hint: string } {
+  return Object.assign(new Error(`Error detail "${key}" ${reason}; use result data or error.diagnostics.`), {
+    code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+    hint: 'Keep error.details values as identifiers; return structured reports in data or gate findings in error.diagnostics.',
+  });
 }

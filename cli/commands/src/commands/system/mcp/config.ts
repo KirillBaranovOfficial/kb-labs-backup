@@ -1,5 +1,4 @@
-import {
-  defineSystemCommand,
+import { defineSystemCommand, throwSystemCommandError,
   type CommandResult,
 } from "@kb-labs/shared-command-kit";
 import { getContextCwd } from "@kb-labs/shared-cli-ui";
@@ -82,15 +81,7 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
     const client = argv[0];
     if (client !== "claude" && client !== "codex" && client !== "cursor") {
       const message = "Choose a client: claude, codex, or cursor.";
-      if (json) {
-        ctx.ui?.json({
-          ok: false,
-          error: { message, next: "kb mcp config <claude|codex|cursor>" },
-        });
-      } else {
-        ctx.ui?.error(`${message} Next: kb mcp config <claude|codex|cursor>`);
-      }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: message, hint: "Run `kb mcp config --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(message, "Run `kb mcp config --help` to review valid inputs and recovery steps, then retry.");
     }
     try {
       const cwd = getContextCwd(ctx);
@@ -121,9 +112,7 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
         auth: local ? "none" : "Bearer ${KB_MCP_TOKEN}",
         config: renderMcpClientConfig(client, url, !local),
       };
-      if (json) {
-        ctx.ui?.json(body);
-      } else {
+      if (!json) {
         ctx.ui?.write(`${renderMcpClientConfig(client, url, !local)}\n`);
         if (!local) {
           ctx.ui?.write(
@@ -133,7 +122,7 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
       }
       return body;
     } catch (error) {
-      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
+      return failWithEnvelope(projectErrorEnvelope(error));
     }
   },
 });

@@ -3,7 +3,7 @@
  * Agent-first command: single call gives a full diagnostic report.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../../utils/generate-examples';
 import { platform } from '@kb-labs/core-runtime';
 import { parseRelativeTime, computeLogStats, formatLogLine } from './logs-utils';
@@ -17,11 +17,14 @@ type Flags = {
 };
 
 type DiagnoseResult = CommandResult & {
-  period?: { from: string; to: string };
-  summary?: { total: number; errors: number; warnings: number; sources: string[] };
-  topErrors?: TopError[];
-  bySource?: Record<string, SourceBreakdown>;
-  recentErrors?: object[];
+  data: {
+    status: 'healthy' | 'degraded' | 'unhealthy';
+    period: { from: string; to: string };
+    summary: { total: number; errors: number; warnings: number; sources: string[] };
+    topErrors: TopError[];
+    bySource: Record<string, SourceBreakdown>;
+    recentErrors: object[];
+  };
   _raw?: LogRecord[];
 };
 
@@ -43,7 +46,7 @@ export const logsDiagnose = defineSystemCommand<Flags, DiagnoseResult>({
   async handler(_ctx, _argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Log reader not available. Ensure platform is initialized.', hint: "Run `kb logs diagnose --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError('Log reader not available. Ensure platform is initialized.', "Run `kb logs diagnose --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const fromTs = flags.from ? parseRelativeTime(flags.from) : Date.now() - 3_600_000;
@@ -60,38 +63,28 @@ export const logsDiagnose = defineSystemCommand<Flags, DiagnoseResult>({
     const diagnostics = computeLogStats(result.logs);
 
     return {
-      ok: true,
-      period: {
-        from: new Date(fromTs).toISOString(),
-        to: new Date(toTs).toISOString(),
+      ok: true as const,
+      data: {
+        status: diagnostics.errors > 0 ? 'unhealthy' as const : diagnostics.warnings > 0 ? 'degraded' as const : 'healthy' as const,
+        period: {
+          from: new Date(fromTs).toISOString(),
+          to: new Date(toTs).toISOString(),
+        },
+        summary: {
+          total: diagnostics.total,
+          errors: diagnostics.errors,
+          warnings: diagnostics.warnings,
+          sources: diagnostics.sources,
+        },
+        topErrors: diagnostics.topErrors,
+        bySource: diagnostics.bySource,
+        recentErrors: diagnostics.recentErrors,
       },
-      summary: {
-        total: diagnostics.total,
-        errors: diagnostics.errors,
-        warnings: diagnostics.warnings,
-        sources: diagnostics.sources,
-      },
-      topErrors: diagnostics.topErrors,
-      bySource: diagnostics.bySource,
-      recentErrors: diagnostics.recentErrors,
       _raw: result.logs,
     };
   },
-   
-  formatter(result, ctx, flags) {
-    if (flags.json) {
-      const { _raw, ...jsonResult } = result;
-      ctx.ui.json(jsonResult);
-      return;
-    }
-
-    if (!result.ok) {
-      const error = typeof result.error === 'string' ? result.error : 'Unknown';
-      ctx.ui.error('Log Diagnose', { sections: [{ header: 'Error', items: [error] }] });
-      return;
-    }
-
-    const { summary, topErrors, bySource, period } = result;
+  formatter(result, ctx) {
+    const { summary, topErrors, bySource, period } = result.data;
 
     // Summary
     const summaryItems = [
@@ -129,8 +122,6 @@ export const logsDiagnose = defineSystemCommand<Flags, DiagnoseResult>({
 
     if ((summary?.errors ?? 0) === 0 && (summary?.warnings ?? 0) === 0) {
       ctx.ui.success('Log Diagnosis', { sections });
-    } else if ((summary?.errors ?? 0) > 0) {
-      ctx.ui.error('Log Diagnosis', { sections });
     } else {
       ctx.ui.warn('Log Diagnosis', { sections });
     }

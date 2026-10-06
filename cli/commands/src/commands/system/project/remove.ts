@@ -6,7 +6,8 @@
  * protocol (ADR-0025): without --yes nothing happens, in human and --json mode.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import { confirmDestructive, getContextCwd } from '@kb-labs/shared-cli-ui';
 import type { ProjectRecord } from '@kb-labs/core-contracts';
 import { projectErrorEnvelope } from '@kb-labs/core-project-registry';
@@ -56,9 +57,7 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
       const { project } = await registry.get(ref);
 
       if (flags['dry-run']) {
-        if (json) {
-          ctx.ui?.json({ ok: true, dryRun: true, project });
-        } else {
+        if (!json) {
           ctx.ui?.info(`Dry run: would unregister ${project.name} (${project.id}); no files are deleted.`);
         }
         return { ok: true, dryRun: true, project };
@@ -78,23 +77,23 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
         },
       });
       if (blocked) {
-        if (json) {
-          ctx.ui?.json({ ok: false, error: blocked.error });
-        } else {
-          ctx.ui?.error(`${blocked.error.message}\n  Hint:  ${blocked.error.hint}`);
-        }
-        return blocked;
+        throwSystemCataloguedError(createErrorEnvelope(blocked.error.code, {
+          message: blocked.error.message,
+          hint: blocked.error.hint,
+          ...(blocked.error.details ? { details: blocked.error.details } : {}),
+        }));
       }
 
       const removed = await registry.remove(project.id);
-      if (json) {
-        ctx.ui?.json({ ok: true, project: removed });
-      } else {
+      if (!json) {
         ctx.ui?.success(`Unregistered ${removed.name} (${removed.id}); files were not touched.`);
       }
       return { ok: true, project: removed };
     } catch (error) {
-      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
+      if (error instanceof Error && 'code' in error && 'hint' in error) {
+        throw error;
+      }
+      return failWithEnvelope(projectErrorEnvelope(error));
     }
   },
 });

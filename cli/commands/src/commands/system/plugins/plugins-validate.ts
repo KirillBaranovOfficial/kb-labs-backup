@@ -2,13 +2,14 @@
  * plugin:validate command - Validate plugin manifest and contracts
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { validateManifest, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 
 type PluginValidateFlags = {
+  json: { type: 'boolean'; description?: string };
   manifest: { type: 'string'; description?: string; default?: string };
   contracts: { type: 'string'; description?: string };
   fix: { type: 'boolean'; description?: string };
@@ -80,6 +81,7 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
   description: 'Validate plugin manifest and contracts',
   category: 'marketplace',
   flags: {
+    json: { type: 'boolean', description: 'Output machine-readable JSON' },
     manifest: {
       type: 'string',
       description: 'Path to manifest file (default: manifest.v2.ts)',
@@ -99,15 +101,15 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
     const cwd = getContextCwd(ctx);
     const manifestPath = path.resolve(cwd, flags.manifest || 'manifest.v2.ts');
 
-    ctx.ui.write(`Validating manifest: ${manifestPath}\n`);
+    if (!flags.json) ctx.ui.write(`Validating manifest: ${manifestPath}\n`);
 
     // Read and parse manifest
     let manifestContent: string;
     try {
       manifestContent = await fs.readFile(manifestPath, 'utf-8');
     } catch (error) {
-      ctx.ui.error(`Failed to read manifest: ${error instanceof Error ? error.message : String(error)}\n`);
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Failed to read manifest', hint: "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry." } };
+
+      throwSystemCommandError('Failed to read manifest', "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry.");
     }
 
     // Try to import manifest (for TypeScript files)
@@ -122,8 +124,8 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
       try {
         manifest = JSON.parse(manifestContent);
       } catch (_jsonError) {
-        ctx.ui.error(`Failed to parse manifest: ${error instanceof Error ? error.message : String(error)}\n`);
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Failed to parse manifest', hint: "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry." } };
+
+        throwSystemCommandError('Failed to parse manifest', "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry.");
       }
     }
 
@@ -131,37 +133,28 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
     const validationResult = validateManifest(manifest as ManifestV3);
 
     if (!validationResult.valid) {
-      ctx.ui.error('❌ Manifest validation failed:\n');
-      for (const msg of validationResult.errors) {
-        ctx.ui.write(`  - ${msg}\n`);
-      }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Manifest validation failed', hint: "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry." }, valid: false, errors: validationResult.errors.map((msg) => ({ path: '', message: msg })) };
+
+      throwSystemCommandError('Manifest validation failed', "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry.", undefined, validationResult.errors.map((message) => ({ code: 'KB_RUNTIME_INPUT_INVALID', message, severity: 'error' as const })));
     }
 
-    ctx.ui.success('✅ Manifest structure is valid!\n');
+    if (!flags.json) ctx.ui.success('✅ Manifest structure is valid!\n');
 
     // Cross-validation with contracts
     if (flags.contracts) {
       const contractsPath = path.resolve(cwd, flags.contracts);
-      ctx.ui.write(`\nValidating against contracts: ${contractsPath}\n`);
+      if (!flags.json) ctx.ui.write(`\nValidating against contracts: ${contractsPath}\n`);
 
       const crossValidation = await validateManifestAgainstContracts(manifest, contractsPath);
 
       if (!crossValidation.ok) {
-        ctx.ui.error('❌ Manifest does not match contracts:\n');
-        for (const issue of crossValidation.issues) {
-          ctx.ui.write(`  - ${issue}\n`);
-        }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Contract validation failed', hint: "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry." }, valid: false, errors: crossValidation.issues.map((issue) => ({
-          path: '',
-          message: issue,
-        })) };
+
+        throwSystemCommandError('Contract validation failed', "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry.", undefined, crossValidation.issues.map((message) => ({ code: 'KB_RUNTIME_INPUT_INVALID', message, severity: 'error' as const })));
       }
 
-      ctx.ui.success('✅ Manifest matches contracts!\n');
+      if (!flags.json) ctx.ui.success('✅ Manifest matches contracts!\n');
     }
 
-    ctx.ui.success('\n✅ All validations passed!\n');
+    if (!flags.json) ctx.ui.success('\n✅ All validations passed!\n');
     return { ok: true, valid: true };
   },
 });

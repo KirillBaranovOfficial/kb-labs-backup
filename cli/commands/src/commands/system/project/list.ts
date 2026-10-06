@@ -39,11 +39,9 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
     const json = Boolean(flags.json);
     try {
       const projects = await listProjects(openRegistry());
-      if (json) {
-        ctx.ui?.json({ ok: true, projects, total: projects.length });
-      } else if (projects.length === 0) {
-        ctx.ui?.write('No projects registered. Add one with: kb project add <path>\n');
-      } else {
+      if (projects.length === 0) {
+        if (!json) ctx.ui?.write('No projects registered. Add one with: kb project add <path>\n');
+      } else if (!json) {
         const nameWidth = Math.max(4, ...projects.map((p) => p.name.length));
         ctx.ui?.write(`${pad('NAME', nameWidth)}  ${pad('ID', 20)}  ${pad('STATUS', 8)}  PATH\n`);
         for (const p of projects) {
@@ -53,7 +51,7 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
       }
       return { ok: true, projects, total: projects.length };
     } catch (error) {
-      return failWithEnvelope(ctx.ui, projectErrorEnvelope(error), json);
+      return failWithEnvelope(projectErrorEnvelope(error));
     }
   },
 });

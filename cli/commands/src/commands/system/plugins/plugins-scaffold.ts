@@ -207,9 +207,7 @@ export const run = defineCommand<${pluginName.charAt(0).toUpperCase() + pluginNa
       durationMs: duration,
     });
 
-    if (flags.json) {
-      ctx.ui.json({ ok: true, ...result, timing: duration });
-    } else if (!flags.quiet) {
+    if (!flags.json && !flags.quiet) {
       const summary = [
         ctx.ui.colors.success('✓ Success'),
         \`Message: \${result.message}\`,
@@ -322,4 +320,3 @@ dist
     ctx.ui.success('Plugin Scaffold', { sections });
   },
 });
-

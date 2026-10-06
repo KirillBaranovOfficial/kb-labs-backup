@@ -1,4 +1,4 @@
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 
@@ -12,7 +12,7 @@ function errorEnvelope(error: unknown): ErrorEnvelope | null {
 
 type ResetLinkFlags = { 'user-id': { type: 'string'; description: string }; json: { type: 'boolean'; description: string } };
 
-export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult & { resetUrl?: string }>({
+export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult & { resetUrl?: string; expiresAt?: number }>({
   name: 'reset-link',
   scope: 'platform',
   jsonTest: { noSafeValidPath: "This command requests an account reset link." },
@@ -26,27 +26,19 @@ export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult &
   },
   async handler(ctx, _argv, flags) {
     const fail = (error: string) => {
-      if (flags.json) { ctx.ui?.json({ ok: false, error }); }
-      else { ctx.ui?.error?.(error); }
-      return { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: error, hint: 'Run `kb auth reset-link --help` to review valid inputs and recovery steps, then retry.' } };
+      throwSystemCommandError(error, 'Run `kb auth reset-link --help` to review valid inputs and recovery steps, then retry.');
     };
     if (!flags['user-id']) { return fail('Provide --user-id. Run `kb auth reset-link --user-id <id>` after `kb auth login`.'); }
     try {
       const response = await gatewayApiFetch(`http://127.0.0.1:4000/auth/users/${encodeURIComponent(flags['user-id'])}/password-reset-link`, { method: 'POST' });
       if (!response.ok) { return fail(`Gateway could not create the reset link (HTTP ${response.status}). Check the user ID and retry kb auth reset-link.`); }
       const result = await readGatewaySuccessData<{ resetUrl: string; expiresAt: number }>(response);
-      if (flags.json) { ctx.ui?.json({ ok: true, ...result }); }
-      else { ctx.ui?.write?.(`Password reset link (expires ${new Date(result.expiresAt).toISOString()}):\n${result.resetUrl}\n`); }
-      return { ok: true, resetUrl: result.resetUrl };
+      if (!flags.json) { ctx.ui?.write?.(`Password reset link (expires ${new Date(result.expiresAt).toISOString()}):\n${result.resetUrl}\n`); }
+      return { ok: true, resetUrl: result.resetUrl, expiresAt: result.expiresAt };
     } catch (error) {
       const envelope = errorEnvelope(error);
       if (envelope) {
-        if (flags.json) { ctx.ui?.json({ ok: false, error: envelope }); }
-        else {
-          const permission = envelope.details?.permission;
-          ctx.ui?.error?.(`${envelope.code}: ${envelope.message}${permission ? ` (permission: ${permission})` : ''} ${envelope.hint}`);
-        }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb auth reset-link --help` to review valid inputs and recovery steps, then retry." } };
+        throwSystemCataloguedError(envelope);
       }
       return fail(error instanceof Error ? error.message : String(error));
     }

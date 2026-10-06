@@ -22,6 +22,7 @@ const ALLOWED_KEYS = new Set([
   'docs',
   'correlationId',
   'details',
+  'diagnostics',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -95,11 +96,52 @@ export function validateErrorEnvelope(value: unknown): string[] {
   if (value.details !== undefined) {
     if (!isRecord(value.details)) {
       problems.push('details must be an object');
-    } else if (Object.values(value.details).some((entry) => typeof entry !== 'string')) {
-      problems.push('details values must be strings');
+    } else {
+      for (const [key, entry] of Object.entries(value.details)) {
+        if (typeof entry !== 'string') {
+          problems.push(`details.${key} must be a string`);
+        } else if (isSerializedStructuredValue(entry)) {
+          problems.push(`details.${key} must not contain serialized JSON; use data or diagnostics`);
+        }
+      }
+    }
+  }
+  if (value.diagnostics !== undefined) {
+    if (!Array.isArray(value.diagnostics)) {
+      problems.push('diagnostics must be an array');
+    } else {
+      value.diagnostics.forEach((diagnostic: unknown, index: number) => {
+        if (!isRecord(diagnostic) || !nonEmptyString(diagnostic.code) || !nonEmptyString(diagnostic.message) ||
+          typeof diagnostic.severity !== 'string' || !(ERROR_SEVERITIES as readonly string[]).includes(diagnostic.severity)) {
+          problems.push(`diagnostics[${index}] needs code, message, and valid severity`);
+          return;
+        }
+        for (const key of Object.keys(diagnostic)) {
+          if (!['code', 'message', 'severity', 'path', 'line', 'hint'].includes(key)) {
+            problems.push(`diagnostics[${index}] has unknown field "${key}"`);
+          }
+        }
+        for (const key of ['path', 'hint'] as const) {
+          if (diagnostic[key] !== undefined && typeof diagnostic[key] !== 'string') {
+            problems.push(`diagnostics[${index}].${key} must be a string`);
+          }
+        }
+        if (diagnostic.line !== undefined && (!Number.isInteger(diagnostic.line) || Number(diagnostic.line) < 1)) {
+          problems.push(`diagnostics[${index}].line must be a positive integer`);
+        }
+      });
     }
   }
   return problems;
+}
+
+function isSerializedStructuredValue(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === 'object' && parsed !== null;
+  } catch {
+    return false;
+  }
 }
 
 export function isErrorEnvelope(value: unknown): value is ErrorEnvelope {

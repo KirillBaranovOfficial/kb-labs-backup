@@ -1,4 +1,4 @@
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 
@@ -25,7 +25,7 @@ interface TokenRecord {
   revokedAt?: number;
 }
 
-export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { tokens?: TokenRecord[]; token?: string }>({
+export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { tokens?: TokenRecord[]; token?: string; tokenRecord?: TokenRecord; revoked?: string }>({
   name: 'tokens',
   scope: 'platform',
   jsonTest: { noSafeValidPath: "This command exposes stored authentication tokens." },
@@ -41,9 +41,7 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
   },
   async handler(ctx, _argv, flags) {
     const fail = (error: string) => {
-      if (flags.json) {ctx.ui?.json({ ok: false, error });}
-      else {ctx.ui?.error?.(error);}
-      return { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: error, hint: 'Run `kb auth tokens --help` to review valid inputs and recovery steps, then retry.' } };
+      throwSystemCommandError(error, 'Run `kb auth tokens --help` to review valid inputs and recovery steps, then retry.');
     };
     const request = async (path: string, method = 'GET', body?: Record<string, string | number>): Promise<Response> => gatewayApiFetch(`http://127.0.0.1:4000${path}`, {
       method,
@@ -53,12 +51,7 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
     const showGatewayError = (error: unknown) => {
       const envelope = errorEnvelope(error);
       if (envelope) {
-        if (flags.json) { ctx.ui?.json({ ok: false, error: envelope }); }
-        else {
-          const permission = envelope.details?.permission;
-          ctx.ui?.error?.(`${envelope.code}: ${envelope.message}${permission ? ` (permission: ${permission})` : ''} ${envelope.hint}`);
-        }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb auth tokens --help` to review valid inputs and recovery steps, then retry." } };
+        throwSystemCataloguedError(envelope);
       }
       return fail(error instanceof Error ? error.message : String(error));
     };
@@ -66,9 +59,8 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
       if (flags.revoke) {
         const response = await request(`/auth/tokens/${encodeURIComponent(flags.revoke)}/revoke`, 'POST');
         if (!response.ok) {return fail(`Gateway could not revoke token (HTTP ${response.status}). Check the token ID and retry kb auth tokens --revoke <token-id>.`);}
-        if (flags.json) {ctx.ui?.json({ ok: true, revoked: flags.revoke });}
-        else {ctx.ui?.write?.(`Revoked API token ${flags.revoke}.\n`);}
-        return { ok: true };
+        if (!flags.json) { ctx.ui?.write?.(`Revoked API token ${flags.revoke}.\n`); }
+        return { ok: true, revoked: flags.revoke };
       }
       if (flags.name) {
         const expiresFlag = flags['expires-in-days'];
@@ -82,16 +74,14 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
         });
         if (!response.ok) {return fail(`Gateway could not create the API token (HTTP ${response.status}). Retry kb auth tokens --name <name>.`);}
         const result = await readGatewaySuccessData<{ token: string; tokenRecord: TokenRecord }>(response);
-        if (flags.json) {ctx.ui?.json({ ok: true, ...result });}
-        else {ctx.ui?.write?.(`Token ${result.tokenRecord.name}${result.tokenRecord.expiresAt ? ` (expires ${new Date(result.tokenRecord.expiresAt).toISOString()})` : ' (no expiry)'}:\n${result.token}\n`);}
-        return { ok: true, token: result.token };
+        if (!flags.json) { ctx.ui?.write?.(`Token ${result.tokenRecord.name}${result.tokenRecord.expiresAt ? ` (expires ${new Date(result.tokenRecord.expiresAt).toISOString()})` : ' (no expiry)'}:\n${result.token}\n`); }
+        return { ok: true, token: result.token, tokenRecord: result.tokenRecord };
       }
       const response = await request('/auth/tokens');
       if (!response.ok) {return fail(`Gateway could not list API tokens (HTTP ${response.status}). Retry kb auth tokens.`);}
       const result = await readGatewaySuccessData<{ tokens: TokenRecord[] }>(response);
-      if (flags.json) {ctx.ui?.json({ ok: true, ...result });}
-      else if (result.tokens.length === 0) {ctx.ui?.write?.('No API tokens. Create one with `kb auth tokens --name "nightly CI"`.\n');}
-      else {ctx.ui?.write?.(result.tokens.map((token) => `${token.tokenId}  ${token.name}  ${token.expiresAt ? `expires ${new Date(token.expiresAt).toISOString()}` : 'no expiry'}${token.revokedAt ? '  revoked' : ''}`).join('\n') + '\n');}
+      if (!flags.json && result.tokens.length === 0) {ctx.ui?.write?.('No API tokens. Create one with `kb auth tokens --name "nightly CI"`.\n');}
+      else if (!flags.json) {ctx.ui?.write?.(result.tokens.map((token) => `${token.tokenId}  ${token.name}  ${token.expiresAt ? `expires ${new Date(token.expiresAt).toISOString()}` : 'no expiry'}${token.revokedAt ? '  revoked' : ''}`).join('\n') + '\n');}
       return { ok: true, tokens: result.tokens };
     } catch (error) {
       return showGatewayError(error);

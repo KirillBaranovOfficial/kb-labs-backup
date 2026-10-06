@@ -7,7 +7,7 @@
  *   - auto            → detect from workspace layout
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { platformSync, type PlatformSyncMode, type PlatformSyncResult } from '@kb-labs/core-runtime';
 import { generateExamples } from '../../../utils/generate-examples';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
@@ -95,29 +95,18 @@ export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, Platfo
       return { ok: true, status: 'success' as const, sync: result };
     }
 
-    return {
-      ok: false,
-      error: {
-        code: 'KB_RUNTIME_COMMAND_FAILED',
-        message: result.errors.join('; ') || 'Platform sync failed',
-        hint: 'Run `kb platform sync --help` to review recovery steps, then retry.',
-      },
-      status: 'error' as const,
-      sync: result,
-    };
+    throwSystemCommandError(
+      result.errors.map(({ message }) => message).join('; ') || 'Platform sync failed',
+      'Run `kb platform sync --help` to review recovery steps, then retry.',
+      undefined,
+      result.errors.map(({ message }) => ({ code: 'KB_RUNTIME_COMMAND_FAILED', message, severity: 'error' as const })),
+    );
   },
   // eslint-disable-next-line sonarjs/cognitive-complexity
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui?.json?.(result.sync ?? result);
-      return;
-    }
-
     const sync = result.sync;
     if (!sync) {
-      ctx.ui.error('Platform Sync', {
-        sections: [{ header: 'Error', items: ['Unknown error'] }],
-      });
+
       return;
     }
 
@@ -186,7 +175,7 @@ export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, Platfo
     if (sync.ok) {
       ctx.ui.success('Platform Sync', { sections });
     } else {
-      ctx.ui.error('Platform Sync', { sections });
+
     }
   },
 });

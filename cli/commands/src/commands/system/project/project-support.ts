@@ -5,7 +5,7 @@
  */
 
 import { resolve } from 'node:path';
-import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { throwSystemCataloguedError } from '@kb-labs/shared-command-kit';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
@@ -25,24 +25,7 @@ export function projectRef(arg: string | undefined, cwd: string): string {
   return arg.startsWith('.') || arg.includes('/') || arg.includes('\\') ? resolve(cwd, arg) : arg;
 }
 
-type Ui = PluginContextV3['ui'];
-
-/** Prints an envelope (JSON: one object; human: message, hint, code) and returns the failure result. */
-export function failWithEnvelope(ui: Ui | undefined, envelope: ErrorEnvelope, json: boolean) {
-  if (json) {
-    ui?.json({ ok: false, error: envelope });
-  } else {
-    ui?.error(`${envelope.message} [${envelope.code}]`);
-    ui?.write(`Hint: ${envelope.hint}\n`);
-  }
-  return {
-    ok: false as const,
-    error: {
-      code: envelope.code,
-      message: envelope.message,
-      hint: envelope.hint,
-      ...(envelope.details ? { details: envelope.details } : {}),
-    },
-    result: { envelope },
-  };
+/** Throws a catalogued project error for the shared command boundary to render. */
+export function failWithEnvelope(envelope: ErrorEnvelope): never {
+  throwSystemCataloguedError(envelope);
 }

@@ -94,6 +94,7 @@ export {
   wrapCliResult,
   wrapRestResult,
   unwrapRestData,
+  normalizeJsonResult,
   type RestResultWithMeta,
 } from './host/index.js';
 

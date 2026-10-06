@@ -2,10 +2,10 @@
 
 import { configErrorEnvelope, unsetUserConfigValue } from '@kb-labs/core-config';
 import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
-import { renderErrorEnvelope, resolveConfigRoots, userConfigFileForScope } from '../config/shared';
+import { resolveConfigRoots, userConfigFileForScope } from '../config/shared';
 
 type Flags = {
   json: { type: 'boolean'; description?: string };
@@ -40,7 +40,7 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
   async handler(ctx, argv, flags) {
     const [slot] = argv;
     if (!slot || !/^[a-z][a-zA-Z0-9-]*$/.test(slot)) {
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Provide a valid adapter slot.', hint: "Run `kb adapter unbind --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError('Provide a valid adapter slot.', "Run `kb adapter unbind --help` to review valid inputs and recovery steps, then retry.");
     }
 
     try {
@@ -61,20 +61,12 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
       return { ok: true, slot, file: binding.filePath, changed: binding.changed || options.changed, dryRun: binding.dryRun };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb adapter unbind --help` to review valid inputs and recovery steps, then retry." }, envelope };
+      throwSystemCataloguedError(envelope);
     }
   },
   formatter(result, ctx, flags) {
-    if (!result.ok && result.envelope) {
-      renderErrorEnvelope(ctx, result.envelope, Boolean(flags.json));
-      return;
-    }
-    if (flags.json) {
-      ctx.ui?.json?.(result.ok ? result : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: result.error, hint: "Run `kb adapter unbind --help` to review valid inputs and recovery steps, then retry." } });
-      return;
-    }
     if (!result.ok) {
-      ctx.ui?.error(`${result.error ?? 'Adapter unbind failed'}`);
+
       return;
     }
     ctx.ui?.success(result.dryRun ? 'Adapter unbind validated; no config written' : 'Adapter unbound from platform', {

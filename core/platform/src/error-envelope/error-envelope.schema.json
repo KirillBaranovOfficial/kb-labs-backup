@@ -45,6 +45,23 @@
       "type": "object",
       "additionalProperties": { "type": "string" },
       "description": "Structured, secret-free values."
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "severity"],
+        "properties": {
+          "code": { "type": "string", "minLength": 1 },
+          "message": { "type": "string", "minLength": 1 },
+          "severity": { "type": "string", "enum": ["error", "warning"] },
+          "path": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "hint": { "type": "string", "minLength": 1 }
+        }
+      },
+      "description": "Structured findings from gate commands."
     }
   }
 }

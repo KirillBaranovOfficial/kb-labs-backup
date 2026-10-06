@@ -5,7 +5,7 @@
  * with provisioned status for each.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
 import { CredentialsManager } from '@kb-labs/cli-runtime/gateway';
 
@@ -49,8 +49,7 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
 
     if (!credentials) {
       const msg = 'Not authenticated. Run "kb auth login" first.';
-      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(msg, "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const qs = flags.plugin ? `?pluginId=${encodeURIComponent(flags.plugin)}` : '';
@@ -63,23 +62,19 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
       });
     } catch (err) {
       const msg = `Cannot reach Gateway at ${credentials.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(msg, "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry.");
     }
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       const msg = `List failed (HTTP ${response.status}): ${body}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(msg, "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const data = await readGatewaySuccessData<{ webhooks: WebhookEntry[] }>(response);
     const webhooks = data.webhooks ?? [];
 
-    if (flags.json) {
-      ctx.ui?.json({ ok: true, webhooks });
-    } else {
+    if (!flags.json) {
       if (webhooks.length === 0) {
         ctx.ui?.write?.('No webhook endpoints found.\n');
       } else {

@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { TrieBackedRegistry } from '../../registry/service';
 
-type CompletionResult = CommandResult & { ok: boolean; status: string; script: string; shell: string };
+type CompletionResult = CommandResult & { script: string; shell: string };
 type InstallResult   = CommandResult & { ok: boolean; status: string; shell: string; profilePath: string; alreadyInstalled: boolean; aliasInstalled: boolean };
 
 const MARKER        = '# kb completion';
@@ -263,14 +263,12 @@ export function createCompletionCommand(registry: TrieBackedRegistry) {
       // ── print dynamic script ───────────────────────────────────────────────
       const script = dynamicScript(arg);
       if (!script) { throw new Error(`Unsupported shell: ${arg}. Supported: bash, zsh, fish`); }
-      return { ok: true, status: 'success', script, shell: arg } as CompletionResult;
+      return { ok: true, script, shell: arg };
     },
 
     formatter(result, ctx, flags) {
       if ('script' in result) {
-        if (flags.json) {
-          ctx.ui?.json({ script: result.script, shell: result.shell });
-        } else {
+        {
           process.stdout.write(result.script + '\n');
         }
         return;

@@ -14,7 +14,7 @@
  * Both branches auto-refresh on expiry and chmod their store 0o600.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { CredentialsManager, readGatewaySuccessData, SessionManager } from '@kb-labs/cli-runtime/gateway';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
@@ -30,6 +30,9 @@ type LoginFlags = {
 type LoginResult = CommandResult & {
   gatewayUrl: string;
   expiresIn: number;
+  handle?: string;
+  email?: string;
+  tenantId?: string;
 };
 
 export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
@@ -66,12 +69,7 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
 
     if (!gatewayUrl) {
       const msg = '--gateway-url is required, plus either --client-id/--client-secret or --email/--password';
-      if (flags.json) {
-        ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." } });
-      } else {
-        ctx.ui?.error?.(msg);
-      }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." }, gatewayUrl: '', expiresIn: 0 };
+      throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
     }
 
     if (email && password) {
@@ -80,12 +78,7 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
 
     if (!clientId || !clientSecret) {
       const msg = 'Provide either --client-id/--client-secret (machine) or --email/--password (human)';
-      if (flags.json) {
-        ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." } });
-      } else {
-        ctx.ui?.error?.(msg);
-      }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." }, gatewayUrl: '', expiresIn: 0 };
+      throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
     }
 
     // Exchange credentials for tokens
@@ -99,23 +92,13 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
       });
     } catch (err) {
       const msg = `Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
-      if (flags.json) {
-        ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." } });
-      } else {
-        ctx.ui?.error?.(msg);
-      }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." }, gatewayUrl, expiresIn: 0 };
+      throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
     }
 
     if (!tokenResponse.ok) {
       const body = await tokenResponse.text().catch(() => '');
       const msg = `Authentication failed (HTTP ${tokenResponse.status}): ${body}`;
-      if (flags.json) {
-        ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." } });
-      } else {
-        ctx.ui?.error?.(msg);
-      }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." }, gatewayUrl, expiresIn: 0 };
+      throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const tokenData = await readGatewaySuccessData<{
@@ -153,20 +136,13 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
       namespaceId,
     });
 
-    if (flags.json) {
-      ctx.ui?.json({
-        ok: true,
-        gatewayUrl,
-        expiresIn: tokenData.expiresIn,
-        ...(handle ? { handle } : {}),
-      });
-    } else {
+    if (!flags.json) {
       ctx.ui?.write?.(`Authenticated with Gateway at ${gatewayUrl}\n`);
       if (handle) { ctx.ui?.write?.(`Handle: ${handle}\n`); }
       ctx.ui?.write?.(`Token expires in ${Math.floor(tokenData.expiresIn / 60)} minutes (auto-refresh enabled).\n`);
     }
 
-    return { ok: true, gatewayUrl, expiresIn: tokenData.expiresIn };
+    return { ok: true, gatewayUrl, expiresIn: tokenData.expiresIn, ...(handle ? { handle } : {}) };
   },
 });
 
@@ -187,23 +163,13 @@ async function humanLogin(
     });
   } catch (err) {
     const msg = `Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
-    if (flags.json) {
-      ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." } });
-    } else {
-      ctx.ui?.error?.(msg);
-    }
-    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." }, gatewayUrl, expiresIn: 0 };
+    throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
   }
 
   if (!loginResponse.ok) {
     const body = await loginResponse.text().catch(() => '');
     const msg = `Authentication failed (HTTP ${loginResponse.status}): ${body}`;
-    if (flags.json) {
-      ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." } });
-    } else {
-      ctx.ui?.error?.(msg);
-    }
-    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth login --help` to review valid inputs and recovery steps, then retry." }, gatewayUrl, expiresIn: 0 };
+    throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
   }
 
   const loginData = await readGatewaySuccessData<{
@@ -242,19 +208,17 @@ async function humanLogin(
     tenantId,
   });
 
-  if (flags.json) {
-    ctx.ui?.json({
-      ok: true,
-      gatewayUrl,
-      expiresIn: loginData.expiresIn,
-      ...(profileEmail ? { email: profileEmail } : {}),
-      ...(tenantId ? { tenantId } : {}),
-    });
-  } else {
+  if (!flags.json) {
     ctx.ui?.write?.(`Authenticated with Gateway at ${gatewayUrl}\n`);
     if (profileEmail) { ctx.ui?.write?.(`Email: ${profileEmail}\n`); }
     ctx.ui?.write?.(`Token expires in ${Math.floor(loginData.expiresIn / 60)} minutes (auto-refresh enabled).\n`);
   }
 
-  return { ok: true, gatewayUrl, expiresIn: loginData.expiresIn };
+  return {
+    ok: true,
+    gatewayUrl,
+    expiresIn: loginData.expiresIn,
+    ...(profileEmail ? { email: profileEmail } : {}),
+    ...(tenantId ? { tenantId } : {}),
+  };
 }

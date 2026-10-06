@@ -46,6 +46,15 @@ export interface ErrorAction {
   command?: string;
 }
 
+export interface PlatformDiagnostic {
+  code: string;
+  message: string;
+  severity: ErrorSeverity;
+  path?: string;
+  line?: number;
+  hint?: string;
+}
+
 export interface ErrorEnvelope {
   /** Stable, never reused: `KB_<AREA>_<CONDITION>` or `<PLUGIN>_<CONDITION>`. */
   code: string;
@@ -66,6 +75,8 @@ export interface ErrorEnvelope {
   correlationId?: string;
   /** Structured, secret-free values. */
   details?: Record<string, string>;
+  /** Structured findings produced by gate commands. */
+  diagnostics?: PlatformDiagnostic[];
 }
 
 /** JSON Schema form used by Fastify response validators and serializers. */
@@ -84,6 +95,22 @@ export const ErrorEnvelopeJsonSchema = {
     docs: { type: 'string' },
     correlationId: { type: 'string' },
     details: { type: 'object', additionalProperties: { type: 'string' } },
+    diagnostics: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          code: { type: 'string', minLength: 1 },
+          message: { type: 'string', minLength: 1 },
+          severity: { enum: ERROR_SEVERITIES },
+          path: { type: 'string' },
+          line: { type: 'integer', minimum: 1 },
+          hint: { type: 'string', minLength: 1 },
+        },
+        required: ['code', 'message', 'severity'],
+        additionalProperties: false,
+      },
+    },
   },
   required: ['code', 'area', 'stage', 'severity', 'retryable', 'message', 'hint'],
   additionalProperties: false,

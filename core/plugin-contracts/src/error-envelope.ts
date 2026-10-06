@@ -21,7 +21,12 @@ export function isCataloguedErrorCode(code: string): boolean {
 }
 
 export function pluginErrorToEnvelope(error: PluginError, options: ToEnvelopeOptions = {}): ErrorEnvelope {
-  const details = stringifyDetails(error.details);
+  let details: Record<string, string>;
+  try {
+    details = stringifyDetails(error.details);
+  } catch (invalidDetails) {
+    return platformToErrorEnvelope(invalidDetails, options);
+  }
   const base = { ...options, cause: error.message };
   switch (error.code) {
     case ErrorCode.VALIDATION_ERROR:

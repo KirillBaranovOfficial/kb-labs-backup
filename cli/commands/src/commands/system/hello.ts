@@ -7,6 +7,7 @@ type HelloFlags = {
 
 type HelloResult = CommandResult & {
   message: string;
+  status: 'ready';
 };
 
 export const hello = defineSystemCommand<HelloFlags, HelloResult>({
@@ -34,10 +35,8 @@ export const hello = defineSystemCommand<HelloFlags, HelloResult>({
 
     if (!flags.json) {
       ctx.ui?.write(`${message}\n`);
-    } else {
-      ctx.ui?.json({ message, status: 'ready' });
     }
 
-    return { ok: true, message };
+    return { ok: true, message, status: 'ready' };
   },
 });

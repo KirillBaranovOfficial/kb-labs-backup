@@ -12,7 +12,9 @@ import {
 } from './index';
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { formatError } from './errors/index';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, getCatalogEntry, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
+import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
 
 /**
  * Flag definition for Command interface
@@ -221,8 +223,6 @@ export interface SystemCommandConfig<
  *           { items: [message] },
  *         ]);
  *       }
- *     } else {
- *       ctx.ui?.json({ message });
  *     }
  *
  *     return { ok: true, message };
@@ -257,8 +257,6 @@ export interface SystemCommandConfig<
  *           { items: workflows.map(w => `• ${w.id}`) },
  *         ]);
  *       }
- *     } else {
- *       ctx.ui?.json({ workflows, total: workflows.length });
  *     }
  *
  *     return { ok: true, workflows, total: workflows.length };
@@ -360,28 +358,46 @@ export function defineSystemCommand<
         validatedFlags = rawFlags as InferFlags<TFlags>;
       }
 
-      // Call handler with error handling
+      const handlerContext = ctx.ui
+        ? {
+          ...ctx,
+          ui: {
+            ...ctx.ui,
+            json: () => { throw createContractViolation(); },
+            error: () => { throw createContractViolation(); },
+          },
+        }
+        : ctx;
+
+      // Handlers return result data. The command boundary owns serialization.
       let result: number | TResult;
       try {
-        result = await handler(ctx, argv as unknown as TArgv, validatedFlags);
-      } catch (error) {
-        // Log error to platform logger
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        ctx.platform?.logger?.error?.(`Command ${name} failed: ${errorMessage}`);
-
-        // Display error to user
-        if (jsonMode) {
-          ctx.ui?.json({ ok: false, error: errorMessage });
-        } else {
-          ctx.ui?.error(errorMessage);
+        result = await handler(handlerContext, argv as unknown as TArgv, validatedFlags);
+        if (isCommandFailure(result)) {
+          throw createContractViolation();
         }
-
-        // Return error exit code
+      } catch (error) {
+        const envelope = toErrorEnvelope(error, { correlationId: ctx.requestId });
+        if (envelope.code === 'KB_RUNTIME_UNEXPECTED') {
+          ctx.platform?.logger?.error?.(`Command ${name} failed unexpectedly`, error instanceof Error ? error : new Error(String(error)), {
+            correlationId: envelope.correlationId,
+          });
+        }
+        if (jsonMode) {
+          ctx.ui?.json({ ok: false, error: envelope });
+        } else {
+          ctx.ui?.error(
+            renderErrorEnvelope(envelope),
+            { hint: envelope.hint },
+          );
+        }
         return 1;
       }
 
-      // Call formatter if provided and result is not a number
-      if (formatter && typeof result !== 'number') {
+      if (jsonMode) {
+        const output = typeof result === 'number' ? null : result ?? null;
+        ctx.ui?.json(normalizeJsonResult(output));
+      } else if (formatter && typeof result !== 'number' && result !== undefined && result !== null) {
         formatter(result as TResult, ctx, validatedFlags, argv as unknown as TArgv);
       }
 
@@ -392,9 +408,49 @@ export function defineSystemCommand<
       if (typeof result === 'number') {
         return result;
       }
-      return result.ok ? 0 : 1;
+      return 0;
     },
   };
+}
+
+function createContractViolation(): Error & { code: string; hint: string } {
+  return Object.assign(new Error('System command handlers must return result data instead of writing through ctx.ui.'), {
+    code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+    hint: 'Return command data from the handler, or throw a catalogued failure with a message and hint.',
+  });
+}
+
+function isCommandFailure(value: unknown): value is { ok: false; error: { code: string; message: string; hint: string } } {
+  return typeof value === 'object' && value !== null && 'ok' in value && value.ok === false
+    && 'error' in value && value.error !== null && typeof value.error === 'object'
+    && 'code' in value.error && typeof value.error.code === 'string'
+    && 'message' in value.error && typeof value.error.message === 'string'
+    && 'hint' in value.error && typeof value.error.hint === 'string';
+}
+
+export function throwSystemCommandError(
+  message: string,
+  hint: string,
+  details?: Record<string, string>,
+  diagnostics?: ErrorEnvelope['diagnostics'],
+): never {
+  throw Object.assign(new Error(message), {
+    code: 'KB_RUNTIME_COMMAND_FAILED',
+    hint,
+    ...(details ? { details } : {}),
+    ...(diagnostics ? { diagnostics } : {}),
+  });
+}
+
+export function throwSystemCataloguedError(envelope: ErrorEnvelope): never {
+  throw Object.assign(new Error(envelope.message), {
+    code: envelope.code,
+    hint: envelope.hint,
+    ...(envelope.cause ? { cause: envelope.cause } : {}),
+    ...(envelope.details ? { details: envelope.details } : {}),
+    ...(envelope.diagnostics ? { diagnostics: envelope.diagnostics } : {}),
+    ...(envelope.correlationId ? { correlationId: envelope.correlationId } : {}),
+  });
 }
 
 /**

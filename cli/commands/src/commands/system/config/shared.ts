@@ -17,10 +17,8 @@ import {
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { loadPlatformConfig } from '@kb-labs/core-runtime';
 import { resolveProjectRoot, resolveRoots } from '@kb-labs/core-workspace';
-import type { ErrorEnvelope } from '@kb-labs/core-platform';
 import type { ConfigLayerFile } from '@kb-labs/core-config';
 import type { LoadPlatformConfigResult } from '@kb-labs/core-runtime';
-import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 export const CONFIG_SCOPES = ['platform', 'project'] as const;
 export type ConfigScope = (typeof CONFIG_SCOPES)[number];
@@ -145,25 +143,6 @@ export function valueAtPath(data: unknown, path: readonly string[]): { found: bo
     current = (current as Record<string, unknown>)[segment];
   }
   return { found: true, value: current };
-}
-
-// ── Error envelope rendering ─────────────────────────────────────────────────
-// `configErrorEnvelope` (the ConfigWriteError -> ErrorEnvelope mapping) now
-// lives in `@kb-labs/core-config` (ADR-0049), shared with the host's
-// `/api/v1/adapters` API; only terminal rendering stays here.
-
-/** Print an envelope: one compact JSON object with `--json`, otherwise a readable message. */
-export function renderErrorEnvelope(ctx: PluginContextV3, envelope: ErrorEnvelope, json: boolean): void {
-  if (json) {
-    ctx.ui?.json?.({ ok: false, error: envelope });
-    return;
-  }
-  const lines = [`${envelope.message} [${envelope.code}]`];
-  if (envelope.cause) {
-    lines.push(`  Cause: ${envelope.cause}`);
-  }
-  lines.push(`  Hint:  ${envelope.hint}`);
-  ctx.ui?.error?.(lines.join('\n'));
 }
 
 /** Layer label used in human output. */

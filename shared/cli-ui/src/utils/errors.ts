@@ -1,5 +1,16 @@
 import { isCataloguedErrorCode, toPluginErrorEnvelope } from '@kb-labs/plugin-contracts';
 import type { CommandFailure } from '@kb-labs/plugin-contracts';
+import type { CommandError } from '@kb-labs/plugin-contracts';
+
+/** Render a platform failure consistently for system and plugin CLI commands. */
+export function renderErrorEnvelope(envelope: CommandError): string {
+  return [
+    `${envelope.message} [${envelope.code}]`,
+    ...(envelope.diagnostics ?? []).map((item) => `  - ${item.code} (${item.severity})${item.path ? ` ${item.path}${item.line ? `:${item.line}` : ''}` : ''}: ${item.message}${item.hint ? ` — ${item.hint}` : ''}`),
+    `  Hint:  ${envelope.hint}`,
+    ...(envelope.correlationId ? [`  Correlation ID: ${envelope.correlationId}`] : []),
+  ].join('\n');
+}
 
 type ErrorContext = unknown;
 
@@ -32,7 +43,7 @@ export function handleError(_ctx: ErrorContext, err: unknown, _isJson?: boolean)
     ? err.envelope
     : null;
   if (envelope !== null && typeof envelope === 'object' && 'code' in envelope && 'message' in envelope) {
-    const typedEnvelope = envelope as { code: string; message: string; hint?: string; details?: Record<string, unknown>; [key: string]: unknown };
+    const typedEnvelope = envelope as { code: string; message: string; hint?: string; details?: Record<string, unknown>; diagnostics?: CommandError['diagnostics']; [key: string]: unknown };
     const code = isCataloguedErrorCode(typedEnvelope.code) ? typedEnvelope.code : 'KB_RUNTIME_COMMAND_FAILED';
     return {
       ok: false,
@@ -41,6 +52,7 @@ export function handleError(_ctx: ErrorContext, err: unknown, _isJson?: boolean)
         message: typedEnvelope.message,
         hint: typedEnvelope.hint ?? 'Resolve the reported error, then retry the command.',
         ...(typedEnvelope.details && isStringMap(typedEnvelope.details) ? { details: typedEnvelope.details } : {}),
+        ...(typedEnvelope.diagnostics ? { diagnostics: typedEnvelope.diagnostics } : {}),
       },
     };
   }
@@ -53,6 +65,7 @@ export function handleError(_ctx: ErrorContext, err: unknown, _isJson?: boolean)
       message: typedEnvelope.message,
       hint: typedEnvelope.hint,
       ...(typedEnvelope.details && isStringMap(typedEnvelope.details) ? { details: typedEnvelope.details } : {}),
+      ...(typedEnvelope.diagnostics ? { diagnostics: typedEnvelope.diagnostics } : {}),
     },
   };
 }
