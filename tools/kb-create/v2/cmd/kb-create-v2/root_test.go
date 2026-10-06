@@ -28,6 +28,19 @@ func TestDoctorHumanSummaryIncludesInstalledChannelAndVersion(t *testing.T) {
 	}
 }
 
+// case: PC-001.10
+func TestApplyHumanSummaryNamesShimOwnerAndDirectCommand(t *testing.T) {
+	summary := operationHumanSummary("apply", map[string]any{
+		"shim":    map[string]any{"linked": false, "owner": "/platform/a"},
+		"receipt": map[string]any{"plan": map[string]any{"request": map[string]any{"platformRoot": "/platform/b"}}},
+	})
+	for _, want := range []string{"owned by /platform/a", "run /platform/b/.kb/v2/bin/kb"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("apply summary %q does not contain %q", summary, want)
+		}
+	}
+}
+
 // case: S-025.1, S-025.2, S-203.2, S-203.4
 func TestUnhealthyDoctorReportUsesNormalClikitSuccessResult(t *testing.T) {
 	data := []byte(`{"ok":false,"platformChannel":"stable","platformVersion":"3.2.0","findings":[{"code":"KB_INSTALL_CONFIG_REQUIRED","component":"@kb-labs/gateway","path":"/gateway/access/mode","hint":"Set the value in the generated config."}],"installation":{"ok":false,"checks":[{"id":"config","ok":false,"detail":"required config is missing","hint":"Run kb-create doctor --fix."}]}}`)
