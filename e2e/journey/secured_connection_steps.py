@@ -116,6 +116,11 @@ def _session_path(cli: str, env: dict[str, str]) -> Path:
 
 
 
+def expected_root(payload: dict) -> str:
+    receipt = payload.get("receipt", {})
+    return str(receipt.get("plan", {}).get("request", {}).get("platformRoot", ""))
+
+
 def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> None:
     """Register exact S-005, S-031, and S-042 journey claims.
 
