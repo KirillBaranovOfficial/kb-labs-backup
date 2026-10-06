@@ -10,7 +10,7 @@ import type { FastifyInstance } from "fastify";
 import type { RestApiConfig } from "@kb-labs/rest-api-core";
 import type { IEntityRegistry, RegistrySnapshot } from "@kb-labs/core-registry";
 import type { ManifestV3 } from "@kb-labs/plugin-contracts";
-import { validateManifest } from "@kb-labs/plugin-contracts";
+import { resolvePluginBasePath, validateManifest } from "@kb-labs/plugin-contracts";
 import { mountRoutes } from "@kb-labs/plugin-execution/http";
 import {
   mountEventStreams,
@@ -38,6 +38,7 @@ interface SnapshotManifestEntry {
   pluginId: string;
   manifest: ManifestV3;
   pluginRoot: string;
+  scope: RegistrySnapshot["manifests"][number]["scope"];
 }
 
 function extractSnapshotManifests(
@@ -47,6 +48,7 @@ function extractSnapshotManifests(
     pluginId: entry.pluginId,
     manifest: entry.manifest,
     pluginRoot: entry.pluginRoot,
+    scope: entry.scope,
   }));
 }
 
@@ -91,6 +93,7 @@ export async function registerPluginRoutes(
         // ctx.cwd to fall back to the platform dir (kb-platform333) instead of the user's
         // project dir when services are started via kb-dev start.
         KB_PROJECT_ROOT: process.env.KB_PROJECT_ROOT,
+        KB_HOME: process.env.KB_HOME,
         KB_LABS_WORKSPACE_ROOT: process.env.KB_LABS_WORKSPACE_ROOT,
         KB_LABS_REPO_ROOT: process.env.KB_LABS_REPO_ROOT,
       },
@@ -167,11 +170,11 @@ export async function registerPluginRoutes(
     // Filter plugins that have routes, realtime streams or channels to mount
     const mountableManifests = manifests.filter(
       (entry) =>
-        (entry.manifest.rest?.routes &&
+        ((entry.manifest.rest?.routes &&
           entry.manifest.rest.routes.length > 0) ||
         (entry.manifest.sse?.streams &&
           entry.manifest.sse.streams.length > 0) ||
-        (entry.manifest.ws?.channels && entry.manifest.ws.channels.length > 0),
+        (entry.manifest.ws?.channels && entry.manifest.ws.channels.length > 0)),
     );
 
     platform.logger.info("Plugins selected for route mounting", {
@@ -402,35 +405,8 @@ export async function registerPluginRoutes(
       try {
         const start = performance.now();
 
-        let pluginBasePath: string;
-        if (manifest.rest?.basePath) {
-          if (manifest.rest.basePath.startsWith("/api/")) {
-            pluginBasePath = manifest.rest.basePath;
-          } else if (manifest.rest.basePath.startsWith("/v1/")) {
-            pluginBasePath = manifest.rest.basePath.replace(
-              /^\/v1/,
-              config.basePath,
-            );
-          } else {
-            pluginBasePath = `${config.basePath}${manifest.rest.basePath}`;
-          }
-        } else {
-          pluginBasePath = `${config.basePath}/plugins/${manifest.id}`;
-        }
-
-        let sseBasePath = pluginBasePath;
-        if (manifest.sse?.basePath) {
-          if (manifest.sse.basePath.startsWith("/api/")) {
-            sseBasePath = manifest.sse.basePath;
-          } else if (manifest.sse.basePath.startsWith("/v1/")) {
-            sseBasePath = manifest.sse.basePath.replace(
-              /^\/v1/,
-              config.basePath,
-            );
-          } else {
-            sseBasePath = `${config.basePath}${manifest.sse.basePath}`;
-          }
-        }
+        const pluginBasePath = resolvePluginBasePath(manifest, "rest", config.basePath);
+        const sseBasePath = resolvePluginBasePath(manifest, "sse", config.basePath);
 
         platform.logger.info("Mounting plugin routes", {
           plugin: `${manifest.id}@${manifest.version}`,
@@ -514,13 +490,7 @@ export async function registerPluginRoutes(
         if (manifest.ws?.channels && manifest.ws.channels.length > 0) {
           try {
             const wsStart = performance.now();
-            let wsBasePath: string =
-              manifest.ws.basePath || `/v1/ws/plugins/${manifest.id}`;
-            // Normalize: /v1/ → config.basePath (same as REST routes) so gateway
-            // can proxy both HTTP and WS under the same /api/v1 prefix.
-            if (wsBasePath.startsWith("/v1/")) {
-              wsBasePath = wsBasePath.replace(/^\/v1/, config.basePath);
-            }
+            const wsBasePath = resolvePluginBasePath(manifest, "ws", config.basePath);
 
             platform.logger.info("Mounting WebSocket channels", {
               plugin: `${manifest.id}@${manifest.version}`,

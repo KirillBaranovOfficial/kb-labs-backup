@@ -6,10 +6,10 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { DISCOVERY_MARKETPLACE_LOCK } from './discovery-inputs.js';
 import type { MarketplaceLock, MarketplaceEntry, EntityKind, EntitySignature } from './types.js';
 import { DiagnosticCollector } from './diagnostics.js';
 
-const LOCK_FILE = '.kb/marketplace.lock';
 const SCHEMA_VERSION = 'kb.marketplace/3' as const;
 
 // ---------------------------------------------------------------------------
@@ -23,8 +23,10 @@ const SCHEMA_VERSION = 'kb.marketplace/3' as const;
 export async function readMarketplaceLock(
   root: string,
   diag: DiagnosticCollector,
+  onInputRead?: (filePath: string) => void,
 ): Promise<MarketplaceLock | null> {
-  const lockPath = path.join(root, LOCK_FILE);
+  const lockPath = path.join(root, DISCOVERY_MARKETPLACE_LOCK);
+  onInputRead?.(lockPath);
 
   let raw: string;
   try {
@@ -79,7 +81,7 @@ export async function writeMarketplaceLock(
   root: string,
   lock: MarketplaceLock,
 ): Promise<void> {
-  const lockPath = path.join(root, LOCK_FILE);
+  const lockPath = path.join(root, DISCOVERY_MARKETPLACE_LOCK);
   const dir = path.dirname(lockPath);
   await fs.mkdir(dir, { recursive: true });
 

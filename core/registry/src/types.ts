@@ -243,6 +243,8 @@ export interface IEntityRegistry {
 
   // Snapshot & lifecycle
   snapshot(): RegistrySnapshot;
+  /** Resolve an absent REST namespace against immutable extension-store manifests. */
+  findStoredPluginPackageForRestPrefix(requestedPrefix: string, basePath: string): Promise<string | undefined>;
   refresh(): Promise<void>;
   onChange(cb: (diff: RegistryDiff) => void): () => void;
 

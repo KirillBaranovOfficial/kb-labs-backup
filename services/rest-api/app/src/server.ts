@@ -9,6 +9,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { registerRoutes } from './routes/index';
+import { registerPluginRouteNotFoundHandler } from './routes/plugin-route-not-found.js';
 import { registerPlugins } from './plugins';
 import { registerMiddleware } from './middleware/index';
 import { platform } from '@kb-labs/core-runtime';
@@ -223,6 +224,7 @@ export async function createServer(
 
   // Register routes
   await registerRoutes(server as unknown as FastifyInstance, config, repoRoot, registry);
+  registerPluginRouteNotFoundHandler(server as unknown as FastifyInstance, config, registry);
 
   return server as unknown as FastifyInstance;
 }

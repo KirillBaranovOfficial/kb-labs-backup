@@ -50,7 +50,6 @@ declare module 'fastify' {
       inFlight: number;
     };
     kbEventHub?: EventHub;
-    kbPluginMountPromise?: Promise<void>;
     listening?: boolean;
   }
 }

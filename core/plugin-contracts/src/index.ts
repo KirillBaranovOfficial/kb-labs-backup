@@ -293,7 +293,9 @@ export {
   isServiceManifest,
   getHandlerPath,
   getHandlerPermissions,
+  resolvePluginBasePath,
 } from "./manifest.js";
+export type { PluginBasePathManifest, PluginRouteSurface } from "./manifest.js";
 export {
   parseManifest,
   validateManifest,

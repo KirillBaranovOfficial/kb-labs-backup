@@ -798,6 +798,36 @@ export interface ManifestV3 {
   };
 }
 
+export type PluginRouteSurface = "rest" | "sse" | "ws";
+
+/** The manifest fields needed to resolve a plugin transport's shared base-path convention. */
+export type PluginBasePathManifest = Pick<ManifestV3, "id"> & {
+  rest?: { basePath?: string };
+  sse?: { basePath?: string };
+  ws?: { basePath?: string };
+};
+
+/** Resolve the effective mount prefix for one declared plugin transport. */
+export function resolvePluginBasePath(
+  manifest: PluginBasePathManifest,
+  surface: PluginRouteSurface,
+  configBasePath: string,
+): string {
+  const configBase = configBasePath.replace(/\/$/, "");
+  const declaredBasePath = manifest[surface]?.basePath;
+
+  if (surface === "sse" && !declaredBasePath) {
+    return resolvePluginBasePath(manifest, "rest", configBase);
+  }
+
+  const basePath = declaredBasePath || (surface === "ws"
+    ? `/v1/ws/plugins/${manifest.id}`
+    : `/plugins/${manifest.id}`);
+  if (basePath.startsWith("/api/")) return basePath;
+  if (basePath.startsWith("/v1/")) return basePath.replace(/^\/v1/, configBase);
+  return `${configBase}${basePath.startsWith("/") ? "" : "/"}${basePath}`;
+}
+
 /**
  * Type guard to check if manifest is V3
  */

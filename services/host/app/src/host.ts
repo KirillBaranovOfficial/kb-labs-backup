@@ -13,6 +13,7 @@
 
 import { createRequire } from "node:module";
 import { loadEffectiveConfig } from "@kb-labs/core-config";
+import { createDiscoveryInputFingerprinter } from "@kb-labs/core-discovery";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import {
   GATEWAY_SERVICE_NETWORK,
@@ -371,6 +372,7 @@ export async function createHostConfig(
             ? { stopTimeoutMs: overrides.stopTimeoutMs }
             : {}),
         });
+      const fingerprintDiscoveryInputs = createDiscoveryInputFingerprinter();
       const manager = new ProjectRuntimeManager({
         launcher,
         logger,
@@ -392,6 +394,7 @@ export async function createHostConfig(
           ? { sweepIntervalMs: overrides.sweepIntervalMs }
           : {}),
         ...(overrides.restart ? { restart: overrides.restart } : {}),
+        getPluginSetDigest: (project) => fingerprintDiscoveryInputs([ctx.platformRoot, project.root]),
         onStarted: (project) => {
           registry.touch(project.id).catch((error: unknown) => {
             logger.warn("Could not record project use", {
