@@ -68,11 +68,11 @@ class ServiceJourneyTests(unittest.TestCase):
             raise RuntimeError("marketplace CLI is unavailable")
 
         run_service_steps(journey, [
-            ("marketplace registry", "marketplace", broken_check),
-            ("gateway readiness", "gateway", lambda: None),
+            ("marketplace registry", "marketplace", broken_check, []),
+            ("gateway readiness", "gateway", lambda: None, []),
         ], states={
             "host-running": {"passed": True, "evidence": "healthy", "group": "install", "step": "start", "claim": "PC-002.1"},
-            "project-registered": {"passed": True, "evidence": "registered", "group": "project", "step": "add", "claim": "PC-002.8"},
+            "project-registered": {"passed": True, "evidence": "registered", "group": "project", "step": "add", "claim": "no case claim"},
         })
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "service-local.json"
@@ -87,7 +87,7 @@ class ServiceJourneyTests(unittest.TestCase):
     def test_service_step_preserves_blocked_result_without_case_claim(self):
         journey = Journey("local", "blocked-step")
         run_service_steps(journey, [
-            ("gateway readiness", "gateway", lambda: "BLOCKED: gateway fixture is missing"),
+            ("gateway readiness", "gateway", lambda: "BLOCKED: gateway fixture is missing", []),
         ])
         self.assertEqual(journey.steps[0].status, "BLOCKED")
         self.assertEqual(journey.result().case_run["claims"], [])
@@ -126,15 +126,14 @@ class ServiceJourneyTests(unittest.TestCase):
                                         lambda: "saved session rejected", cases=["S-023.5"]),
                    cases=["S-023.5"])
         graph.probe_state("host-running", "update", "rollback/status",
-                          lambda: "kb-create status reports running=False; gateway /ready returned HTTP 503",
-                          cases=["PC-002.2"])
+                          lambda: "kb-create status reports running=False; gateway /ready returned HTTP 503")
         graph.flow("auth group", "auth", "auth", lambda: calls.append("auth"), cases=["S-041.1"])
 
         self.assertEqual(calls, [])
         self.assertEqual([step.status for step in journey.steps], ["FAIL", "FAIL", "BLOCKED"])
         self.assertIn("blocked by state host-running:", journey.steps[2].message)
         self.assertIn("running=False", journey.steps[2].message)
-        self.assertIn("update/rollback/status (PC-002.2)", journey.steps[2].message)
+        self.assertIn("update/rollback/status (no case claim)", journey.steps[2].message)
 
     def test_saved_session_assertion_does_not_block_after_fresh_login_probe(self):
         journey = Journey("secured", "saved-session-failure-fresh-login")
@@ -143,7 +142,7 @@ class ServiceJourneyTests(unittest.TestCase):
         graph.flow("saved session product assertion", "auth", "auth",
                    lambda: journey.step("saved session rejected", "auth", lambda: "saved token rejected",
                                         cases=["S-023.5"]), cases=["S-023.5"])
-        graph.probe_state("session", "auth", "fresh admin login", lambda: None, cases=["S-041.18"])
+        graph.probe_state("session", "auth", "fresh admin login", lambda: None)
         graph.flow("plugin author group", "plugin-author", "plugin-author",
                    lambda: calls.append("plugin-author"), cases=["S-014.1"])
 
@@ -159,17 +158,16 @@ class ServiceJourneyTests(unittest.TestCase):
             "projects": {"capabilities": {"projects"}, "depends_on": ("host-running",)},
         }
         graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in groups.items()})
-        graph.probe_state("host-running", "install", "gateway readiness", lambda: "host is down",
-                          cases=["PC-002.3"])
+        graph.probe_state("host-running", "install", "gateway readiness", lambda: "host is down")
         run_grouped_service_steps(journey, [
-            ("local identity", "auth.local", lambda: calls.append("auth")),
-            ("project registration", "projects", lambda: calls.append("projects")),
+            ("local identity", "auth.local", lambda: calls.append("auth"), []),
+            ("project registration", "projects", lambda: calls.append("projects"), []),
         ], groups=groups, graph=graph)
 
         self.assertEqual(calls, [])
         self.assertEqual([step.status for step in journey.steps], ["FAIL", "BLOCKED", "BLOCKED"])
         self.assertIn("blocked by state host-running", journey.steps[1].message)
-        self.assertIn("PC-002.3", journey.steps[1].message)
+        self.assertIn("no case claim", journey.steps[1].message)
         self.assertIn("gateway readiness", journey.steps[2].message)
 
     def test_fixture_probe_blocks_only_groups_that_need_the_fixture(self):
@@ -180,7 +178,7 @@ class ServiceJourneyTests(unittest.TestCase):
                    lambda: journey.step("marketplace product assertion", "marketplace",
                                         lambda: "route returned 500", cases=["S-010.1"]), cases=["S-010.1"])
         graph.probe_state("fixtures-installed", "marketplace-fixtures", "fixture handoff",
-                          lambda: "project B fixture ID is missing", cases=["S-140.2"])
+                          lambda: "project B fixture ID is missing")
         graph.flow("workflow health", "workflow", "workflow", lambda: calls.append("workflow"))
         graph.flow("project-scoped MCP initialize", "mcp", "mcp", lambda: calls.append("mcp"),
                    cases=["S-140.2"])
@@ -210,7 +208,7 @@ class ServiceJourneyTests(unittest.TestCase):
                        lambda: (_ for _ in ()).throw(RuntimeError("adapter fixture broke")),
                        cases=["S-054.1"])
             graph.probe_state("adapter-defaults", "adapter", "adapter default verification",
-                              lambda: "configured adapter default is unavailable", cases=["S-054.1"])
+                              lambda: "configured adapter default is unavailable")
             graph.flow("analytics extras", "analytics", "analytics",
                        lambda: calls.append("analytics"), cases=["S-191.1"])
             graph.flow("workflow depending on adapter", "adapter-dependent", "workflow",
@@ -224,7 +222,26 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual([step.status for step in journey.steps], ["PASS", "FAIL", "FAIL", "PASS", "BLOCKED", "PASS"])
         self.assertIn("RuntimeError: adapter fixture broke", diagnostic)
         self.assertIn("blocked by state adapter-defaults:", journey.steps[4].message)
-        self.assertIn("adapter/adapter default verification (S-054.1)", journey.steps[4].message)
+        self.assertIn("adapter/adapter default verification (no case claim)", journey.steps[4].message)
+
+    def test_flow_exception_is_orchestration_evidence_without_case_claims(self):
+        journey = Journey("local", "flow-exception-no-claim")
+        graph = FlowGraph(journey, {"project": ()})
+
+        graph.flow("project orchestration", "project", "projects",
+                   lambda: (_ for _ in ()).throw(RuntimeError("project setup failed")),
+                   cases=["PC-002.8"])
+
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertEqual(journey.steps[0].cases, [])
+        self.assertEqual(journey.result().case_run["claims"], [])
+
+    def test_state_probe_rejects_case_claims(self):
+        graph = FlowGraph(Journey("local", "probe-no-claim"), {})
+
+        with self.assertRaises(TypeError):
+            graph.probe_state("project-registered", "project", "project add", lambda: None,
+                              cases=["PC-002.8"])
 
     def test_installed_cli_bin_is_added_to_service_path(self):
         with tempfile.TemporaryDirectory() as directory, patch("pathlib.Path.home", return_value=Path(directory)), \
@@ -667,7 +684,7 @@ class ServiceJourneyTests(unittest.TestCase):
     def test_declared_profile_capabilities_match_service_checks(self):
         for mode, auth_capability in (("local", "auth.local"), ("secured", "auth.invite-reset")):
             self.assertEqual(declared_capabilities(mode),
-                             {capability for _, capability, _ in checks(mode)}
+                             {capability for _, capability, _, _ in checks(mode)}
                              | {auth_capability, "plugin-author"})
 
     def test_issue_sync_is_idempotent_updates_existing_and_closes_fixed(self):
@@ -697,8 +714,8 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(changes, {"created": [], "updated": [], "closed": []})
 
     def test_required_mode_steps_and_workflow_fixture_are_explicit(self):
-        local = {capability for _, capability, _ in checks("local")}
-        secured = {capability for _, capability, _ in checks("secured")}
+        local = {capability for _, capability, _, _ in checks("local")}
+        secured = {capability for _, capability, _, _ in checks("secured")}
         self.assertNotIn("auth.invites", local | secured)
         self.assertNotIn("scaffold", local | secured)
         with patch("service_runner.request", return_value=(200, {"data": {"workflows": []}}, {})):
