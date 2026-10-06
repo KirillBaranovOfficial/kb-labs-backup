@@ -106,6 +106,15 @@ func (i invocation) runDoctor(output *os.File) int {
 	findings := doctor.Diagnose(input.Manifests, input.Configured)
 	findings = append(findings, manifestFindings...)
 	response := doctor.Response{Findings: findings, Repair: doctor.PlanRepair(findings)}
+	if i.Executable != "" && i.PlatformRoot != "" {
+		if _, dangling := shim.Dangling(i.Executable); dangling {
+			response.Findings = append(response.Findings, doctor.Finding{
+				Code: "KB_INSTALL_SHIM_DANGLING", Severity: doctor.SeverityError,
+				Component: "kb-create", Path: shim.Path(i.Executable),
+				Hint: fmt.Sprintf("Run `kb-create doctor --fix --platform-root %q`.", i.PlatformRoot),
+			})
+		}
+	}
 	if i.PlatformRoot != "" {
 		if active, readErr := receipt.Read(i.PlatformRoot); readErr == nil {
 			response.PlatformChannel = active.Plan.PlatformChannel
@@ -118,7 +127,7 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		installation := doctor.InspectInstallation(i.PlatformRoot, state)
 		if i.Executable != "" && !shim.Correct(i.Executable, i.PlatformRoot) {
-			installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: "Run `kb-create install` to repair the command shim."})
+			installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: fmt.Sprintf("Run `kb-create doctor --fix --platform-root %q` to repair the command shim when its current owner has been removed.", i.PlatformRoot)})
 			installation.OK = false
 		}
 		platform := i.inspectPlatform(state)
@@ -132,7 +141,7 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		response.Installation, response.Platform = &installation, &platform
 	}
-	response.OK = !doctor.HasErrors(findings) && (response.Installation == nil || response.Installation.OK) && (response.Platform == nil || response.Platform.OK)
+	response.OK = !doctor.HasErrors(response.Findings) && (response.Installation == nil || response.Installation.OK) && (response.Platform == nil || response.Platform.OK)
 	response.Installed = response.Installation != nil && response.Installation.OK
 	if response.Platform != nil {
 		for _, check := range response.Platform.Checks {
@@ -338,7 +347,7 @@ func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int 
 		return 1
 	}
 	if filepath.Base(i.Executable) == "kb-create" {
-		if shimErr := shim.Ensure(i.Executable, root); shimErr != nil {
+		if _, shimErr := shim.Ensure(i.Executable, root); shimErr != nil {
 			writeShimFailure(output, "KB_INSTALL_APPLY_FAILED", root, shimErr)
 			return 1
 		}

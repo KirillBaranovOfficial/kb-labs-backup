@@ -1236,6 +1236,15 @@
       "hint": "Inspect the remote install log and correct the install failure before retrying."
     },
     {
+      "code": "KB_INSTALL_SHIM_DANGLING",
+      "area": "install",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "message": "The managed `kb` command points to a platform root without a valid installation receipt.",
+      "hint": "Run `kb-create doctor --fix --platform-root <platform-root>` to point the command at the live installation."
+    },
+    {
       "code": "KB_SERVICE_HEALTH_TIMEOUT",
       "area": "runtime",
       "stage": "verify",

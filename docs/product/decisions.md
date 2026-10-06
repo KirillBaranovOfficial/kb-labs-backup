@@ -340,3 +340,20 @@ adapter metrics registry, so it does not synthesize analytics or per-call log
 events as a substitute. Local SQLite analytics retains 90 days by default;
 `platform.adapterOptions.analytics.retentionDays` overrides the age in days.
 Cases: S-002, S-121, S-191.
+
+## 2026-10-07
+
+### One `kb` command belongs to one live platform root
+
+The user has one managed `kb` command. Applying another platform leaves the
+shim with its current owner while that root has a valid V2 receipt. Apply takes
+the shim when it is absent, already points to the requested root, or points to
+a managed target whose receipt is no longer valid. JSON reports the current
+owner when apply leaves the shim in place, and human output gives the direct
+CLI path for the new root. Uninstall removes the shim only when the uninstalling
+root owns it; uninstall does not guess a replacement owner. Doctor reports a
+dangling managed target and repairs it to its requested root only when the
+target root has no valid receipt. User-owned files at the shim path are never
+modified. The decision is enforced in the shared `shim.Ensure` and
+`shim.Remove` boundary used by apply, uninstall, and doctor.
+Cases: PC-001.10–PC-001.11, S-025.9.

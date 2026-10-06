@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/kb-labs/create/v2/receipt"
 )
 
 // Failure identifies the filesystem operation that prevented shim creation.
@@ -28,43 +30,72 @@ func Target(platformRoot string) string {
 	return filepath.Join(platformRoot, ".kb", "v2", "bin", "kb")
 }
 
-func Ensure(launcher, platformRoot string) error {
+type EnsureResult struct {
+	Linked bool   `json:"linked"`
+	Owner  string `json:"owner"`
+}
+
+func Ensure(launcher, platformRoot string) (EnsureResult, error) {
 	path, target := Path(launcher), Target(platformRoot)
 	cliEntry := filepath.Join(platformRoot, "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
 	if _, err := os.Stat(cliEntry); err != nil {
-		return failed(cliEntry, "cannot read the installed kb command", err)
+		return EnsureResult{}, failed(cliEntry, "cannot read the installed kb command", err)
 	}
 	if existing, err := os.Readlink(path); err == nil {
 		if existing == target {
-			return ensureTarget(target, cliEntry)
+			if err := ensureTarget(target, cliEntry); err != nil {
+				return EnsureResult{}, err
+			}
+			return EnsureResult{Linked: true, Owner: platformRoot}, nil
 		}
-		if !managedTarget(existing) {
-			return failed(path, fmt.Sprintf("already points to unmanaged target %s", existing), nil)
+		owner, managed := managedRoot(existing)
+		if !managed {
+			return EnsureResult{}, failed(path, fmt.Sprintf("already points to unmanaged target %s", existing), nil)
+		}
+		if _, err := receipt.Read(owner); err == nil {
+			return EnsureResult{Linked: false, Owner: owner}, nil
 		}
 		if err := ensureTarget(target, cliEntry); err != nil {
-			return err
+			return EnsureResult{}, err
 		}
-		return replaceLink(path, target)
+		if err := replaceLink(path, target); err != nil {
+			return EnsureResult{}, err
+		}
+		return EnsureResult{Linked: true, Owner: platformRoot}, nil
 	} else if !os.IsNotExist(err) {
-		return failed(path, "cannot inspect the launcher path", err)
+		return EnsureResult{}, failed(path, "cannot inspect the launcher path", err)
 	}
 	if err := ensureTarget(target, cliEntry); err != nil {
-		return err
+		return EnsureResult{}, err
 	}
 	if err := os.Symlink(target, path); err != nil {
-		return failed(path, "cannot create the launcher symlink", err)
+		return EnsureResult{}, failed(path, "cannot create the launcher symlink", err)
 	}
-	return nil
+	return EnsureResult{Linked: true, Owner: platformRoot}, nil
 }
 
-func managedTarget(target string) bool {
-	root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(target))))
-	if Target(root) != target {
-		return false
+func managedRoot(target string) (string, bool) {
+	clean := filepath.Clean(target)
+	root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(clean))))
+	if root == "." || Target(root) != clean {
+		return "", false
 	}
-	cliEntry := filepath.Join(root, "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
-	content, err := os.ReadFile(target)
-	return err == nil && string(content) == shimContent(cliEntry)
+	return root, true
+}
+
+func Dangling(launcher string) (string, bool) {
+	target, err := os.Readlink(Path(launcher))
+	if err != nil {
+		return "", false
+	}
+	root, managed := managedRoot(target)
+	if !managed {
+		return "", false
+	}
+	if _, err := receipt.Read(root); err == nil {
+		return "", false
+	}
+	return root, true
 }
 
 func replaceLink(path, target string) error {
@@ -124,10 +155,14 @@ func Remove(launcher, platformRoot string) error {
 		return nil
 	}
 	if err != nil {
+		info, statErr := os.Lstat(path)
+		if statErr == nil && info.Mode()&os.ModeSymlink == 0 {
+			return nil
+		}
 		return err
 	}
 	if existing != target {
-		return fmt.Errorf("refusing to remove %s because it points to %s", path, existing)
+		return nil
 	}
 	return os.Remove(path)
 }
