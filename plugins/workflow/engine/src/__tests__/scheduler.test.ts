@@ -7,6 +7,7 @@ import { mockLogger } from '@kb-labs/shared-testing';
 // Reuse MockCache pattern from engine.test.ts
 class MockCache implements ICache {
   private store = new Map<string, any>();
+  lockAcquisitionAttempts = 0;
 
   async get<T>(key: string): Promise<T | null> { return this.store.get(key) ?? null; }
   async set<T>(key: string, value: T): Promise<void> { this.store.set(key, value); }
@@ -30,6 +31,7 @@ class MockCache implements ICache {
     this.store.set(key, zset.filter((item: any) => item.member !== member));
   }
   async setIfNotExists<T>(key: string, value: T): Promise<boolean> {
+    this.lockAcquisitionAttempts++;
     if (this.store.has(key)) { return false; }
     this.store.set(key, value);
     return true;
@@ -137,6 +139,15 @@ describe('Scheduler', () => {
   it('returns null when queue is empty', async () => {
     const result = await scheduler.dequeueJob();
     expect(result).toBeNull();
+  });
+
+  // case: S-002.7
+  it('does not acquire priority locks while repeatedly polling empty queues', async () => {
+    for (let poll = 0; poll < 20; poll++) {
+      expect(await scheduler.dequeueJob()).toBeNull();
+    }
+
+    expect(cache.lockAcquisitionAttempts).toBe(0);
   });
 
   it('removes dequeued entry from queue', async () => {

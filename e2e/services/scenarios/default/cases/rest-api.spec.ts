@@ -103,44 +103,17 @@ test('RA-09: GET /adapters/embeddings/usage returns stats or 501', async ({ requ
   }
 })
 
-test('RA-10: GET /adapters/storage/usage returns stats or 501', async ({ request }) => {
+test('RA-10: retired storage analytics endpoint is not registered', async ({ request }) => {
   const res = await request.get(`${REST}/adapters/storage/usage`)
-  expect([200, 501]).toContain(res.status())
-  const body = await res.json()
-  if (res.status() === 200) {
-    expect(body.ok).toBe(true)
-    // Storage returns readOperations/writeOperations (not totalRequests)
-    expect(typeof body.data.readOperations).toBe('number')
-    expect(typeof body.data.writeOperations).toBe('number')
-  } else {
-    expect(body.error?.code).toBe('ANALYTICS_NOT_IMPLEMENTED')
-  }
+  expect(res.status()).toBe(404)
 })
 
-test('RA-11: GET /adapters/cache/usage returns stats or 501', async ({ request }) => {
+test('RA-11: retired cache analytics endpoint is not registered', async ({ request }) => {
   const res = await request.get(`${REST}/adapters/cache/usage`)
-  expect([200, 501]).toContain(res.status())
-  const body = await res.json()
-  if (res.status() === 200) {
-    expect(body.ok).toBe(true)
-    // Cache returns totalGets/hits (not totalRequests)
-    expect(typeof body.data.totalGets).toBe('number')
-    expect(typeof body.data.hits).toBe('number')
-  } else {
-    expect(body.error?.code).toBe('ANALYTICS_NOT_IMPLEMENTED')
-  }
+  expect(res.status()).toBe(404)
 })
 
-test('RA-12: GET /adapters/vectorstore/usage returns stats or 501', async ({ request }) => {
+test('RA-12: retired vector-store analytics endpoint is not registered', async ({ request }) => {
   const res = await request.get(`${REST}/adapters/vectorstore/usage`)
-  expect([200, 501]).toContain(res.status())
-  const body = await res.json()
-  if (res.status() === 200) {
-    expect(body.ok).toBe(true)
-    // Vectorstore returns searchQueries/upsertOperations (not totalRequests)
-    expect(typeof body.data.searchQueries).toBe('number')
-    expect(typeof body.data.upsertOperations).toBe('number')
-  } else {
-    expect(body.error?.code).toBe('ANALYTICS_NOT_IMPLEMENTED')
-  }
+  expect(res.status()).toBe(404)
 })

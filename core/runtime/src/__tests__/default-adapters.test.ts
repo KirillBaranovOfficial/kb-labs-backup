@@ -62,7 +62,10 @@ describe('resolveDiscoveredAdapterDefaults', () => {
         storage: { baseDir: resolveRuntimeStatePath('/project', ['storage']) },
         documentDatabase: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
         kvStore: { filename: resolveRuntimeStatePath('/project', ['database', 'kb.sqlite']) },
-        analytics: { filename: resolveRuntimeStatePath('/project', ['analytics', 'analytics.sqlite']) },
+        analytics: {
+          filename: resolveRuntimeStatePath('/project', ['analytics', 'analytics.sqlite']),
+          retentionDays: 90,
+        },
       });
     } finally {
       if (previousHome === undefined) delete process.env.KB_HOME;

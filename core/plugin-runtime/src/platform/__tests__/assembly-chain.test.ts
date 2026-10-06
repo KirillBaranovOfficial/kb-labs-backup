@@ -18,9 +18,6 @@ import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import {
   AnalyticsLLM,
   AnalyticsEmbeddings,
-  AnalyticsVectorStore,
-  AnalyticsCache,
-  AnalyticsStorage,
   PIIRedactionLLM,
 } from '@kb-labs/core-platform';
 import type { IResourceBroker } from '@kb-labs/core-resource-broker';
@@ -188,10 +185,11 @@ describe('assemblePlatform — embeddings chain structure', () => {
 });
 
 describe('assemblePlatform — vectorStore chain structure', () => {
-  it('AnalyticsVectorStore is the outermost wrapper', () => {
+  it('does not turn vector-store adapter operations into product analytics events', async () => {
     const raw = createMockPlatform();
     const result = assemblePlatform(raw, {}, makeMockBroker());
-    expect(result.vectorStore).toBeInstanceOf(AnalyticsVectorStore);
+    await result.vectorStore.search([1, 2, 3], 10);
+    expect(raw.analytics.track).not.toHaveBeenCalled();
   });
 
   it('QueuedVectorStore is in the chain — broker.enqueue is called for search()', async () => {
@@ -204,19 +202,35 @@ describe('assemblePlatform — vectorStore chain structure', () => {
 });
 
 describe('assemblePlatform — cache chain structure', () => {
-  it('includes AnalyticsCache (no queuing for cache)', () => {
+  it('leaves cache operations out of product analytics', async () => {
     const raw = createMockPlatform();
     const result = assemblePlatform(raw, {}, makeMockBroker());
-    expect(result.cache).toBeInstanceOf(AnalyticsCache);
+    await result.cache.get('cache-key');
+    expect(result.cache).toBe(raw.cache);
+    expect(raw.analytics.track).not.toHaveBeenCalled();
   });
 });
 
 describe('assemblePlatform — storage chain structure', () => {
-  it('includes AnalyticsStorage (no queuing for storage)', () => {
+  it('leaves storage operations out of product analytics', async () => {
     const raw = createMockPlatform();
     const result = assemblePlatform(raw, {}, makeMockBroker());
-    expect(result.storage).toBeInstanceOf(AnalyticsStorage);
+    await result.storage.write('path', Buffer.from('data'));
+    expect(result.storage).toBe(raw.storage);
+    expect(raw.analytics.track).not.toHaveBeenCalled();
   });
+});
+
+// case: S-191.6
+it('keeps cache, storage, and vector-store operations out of analytics together', async () => {
+  const raw = createMockPlatform();
+  const result = assemblePlatform(raw, {}, makeMockBroker());
+
+  await result.cache.get('cache-key');
+  await result.storage.write('path', Buffer.from('data'));
+  await result.vectorStore.search([1, 2, 3], 10);
+
+  expect(raw.analytics.track).not.toHaveBeenCalled();
 });
 
 // ─── Pass-through adapters ────────────────────────────────────────────────────

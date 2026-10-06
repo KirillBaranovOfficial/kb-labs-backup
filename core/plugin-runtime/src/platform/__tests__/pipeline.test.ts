@@ -236,19 +236,19 @@ describe('applyPluginGovernance — lifecycle hooks', () => {
 });
 
 describe('assemblePlatform', () => {
-  it('skips routerFactory when config key is absent, but applies analyticsFactory and resourceBrokerFactory', () => {
+  it('skips optional router config and applies only declared adapter stages', () => {
     const raw = createMockPlatform();
     const broker = {} as never;
 
     // routerFactory requires config[key] to be present — skipped when config is empty.
-    // analyticsFactory and resourceBrokerFactory have no such requirement — always applied.
+    // Analytics usage wrappers and resource broker factories have no config requirement.
     const config: PlatformConfig = {};
     const result = assemblePlatform(raw, config, broker);
 
     // llm is transformed by analyticsFactory + resourceBrokerFactory → not the same reference
     expect(result.llm).not.toBe(raw.llm);
-    // cache is transformed by analyticsFactory (analytics present in mock) → not the same reference
-    expect(result.cache).not.toBe(raw.cache);
+    // Cache has no analytics factory; raw adapter identity is preserved.
+    expect(result.cache).toBe(raw.cache);
     // eventBus has no factories at all → returned as-is
     expect(result.eventBus).toBe(raw.eventBus);
   });
