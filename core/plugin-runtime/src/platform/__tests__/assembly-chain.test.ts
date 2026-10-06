@@ -221,7 +221,7 @@ describe('assemblePlatform — storage chain structure', () => {
   });
 });
 
-// case: S-191.6
+// case: S-212.3
 it('keeps cache, storage, and vector-store operations out of analytics together', async () => {
   const raw = createMockPlatform();
   const result = assemblePlatform(raw, {}, makeMockBroker());

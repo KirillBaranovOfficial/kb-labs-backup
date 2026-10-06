@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { QACase, QACaseClaim, QACaseRunResult } from '@kb-labs/qa-contracts';
-import { computeQACaseCoverage, parseQACatalog, scanQACaseClaims } from '../src/index.js';
+import { computeQACaseCoverage, parseQACatalog, RELEASE_CASE_CLAIM_BASELINE, scanQACaseClaims, validateReleaseCaseClaims } from '../src/index.js';
 
 const temporaryDirectories: string[] = [];
 function fixture(): string {
@@ -61,24 +61,94 @@ describe('QA case catalog diagnostics', () => {
 });
 
 describe('QA case claim scanning', () => {
+  // case: S-179.2
+  it('scans multiline journey claims and exact-step helpers', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const source = join(directory, 'e2e/journey');
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, 'journey.py'), [
+      'journey.step("multi", "capability", action,',
+      '    cases=["S-010.1",',
+      '           "S-010.2"] )',
+      'exact_step("S-010.2", action, "single helper claim")',
+    ].join('\n'));
+    const scanned = scanQACaseClaims(directory, [testCase]);
+    expect(scanned.diagnostics).toEqual([]);
+    expect(scanned.claims.map(claim => [claim.stepId, claim.kind])).toEqual([
+      ['S-010.1', 'journey'], ['S-010.2', 'journey'], ['S-010.2', 'journey'],
+    ]);
+
+    const otherSource = join(directory, 'other');
+    mkdirSync(otherSource);
+    writeFileSync(join(otherSource, 'fake.py'), 'cases=["S-010.1"]\nexact_step("S-010.2", action, "not a journey")\n');
+    writeFileSync(join(otherSource, 'fake.spec.ts'), "test('fake @S-010.2', () => {})\n");
+    expect(scanQACaseClaims(directory, [testCase]).claims).toEqual(scanned.claims);
+  });
+
   it('scans journey, Playwright, and adjacent unit claims and rejects unknown ids', () => {
     const directory = fixture();
     const testCase = parsedCase(directory);
-    const source = join(directory, 'claims');
-    mkdirSync(source);
+    const journeySource = join(directory, 'e2e/journey');
+    const playwrightSource = join(directory, 'e2e/studio');
+    const unitSource = join(directory, 'claims');
+    mkdirSync(journeySource, { recursive: true });
+    mkdirSync(playwrightSource, { recursive: true });
+    mkdirSync(unitSource);
     const journeyCases = ['cases', '=', '[', '"S-010.1"', ']'].join('');
     const playwrightTest = ['test', '(', "'install flow ", '@', 'S-010.2', "', () => {})"].join('');
     const unitCase = ['/', '/', ' case: S-010.1'].join('');
-    writeFileSync(join(source, 'journey.py'), `step("install", ${journeyCases})\n`);
-    writeFileSync(join(source, 'flow.spec.ts'), `${playwrightTest}\n${unitCase}\nit('unit install', () => {})\n`);
+    writeFileSync(join(journeySource, 'journey.py'), `step("install", ${journeyCases})\n`);
+    writeFileSync(join(playwrightSource, 'flow.spec.ts'), `${playwrightTest}\n`);
+    writeFileSync(join(unitSource, 'flow.test.ts'), `${unitCase}\nit('unit install', () => {})\n`);
     const goCase = ['/', '/', ' case: S-010.2'].join('');
-    writeFileSync(join(source, 'claim_test.go'), `package claims\n${goCase}\nfunc TestInstall(t *testing.T) {}\n`);
+    writeFileSync(join(unitSource, 'claim_test.go'), `package claims\n${goCase}\nfunc TestInstall(t *testing.T) {}\n`);
     const unknownStep = `S-${'999'}.1`;
-    writeFileSync(join(source, 'invalid.ts'), `test('missing @${unknownStep}', () => {})\n`);
+    writeFileSync(join(playwrightSource, 'invalid.spec.ts'), `test('missing @${unknownStep}', () => {})\n`);
     const scanned = scanQACaseClaims(directory, [testCase]);
     expect(scanned.claims.map(claim => claim.kind).sort()).toEqual(['e2e', 'e2e', 'journey', 'unit', 'unit']);
     expect(scanned.claims.map(claim => claim.stepId).sort()).toEqual(['S-010.1', 'S-010.1', 'S-010.2', 'S-010.2', `S-${'999'}.1`]);
-    expect(scanned.diagnostics).toEqual([expect.objectContaining({ file: expect.stringContaining('invalid.ts'), message: 'claim references unknown case S-999' })]);
+    expect(scanned.diagnostics).toEqual([expect.objectContaining({ file: expect.stringContaining('invalid.spec.ts'), message: 'claim references unknown case S-999' })]);
+  });
+
+  it('reports source traversal errors instead of silently skipping the claim scan', () => {
+    const directory = fixture();
+    const sourceRoot = join(directory, 'not-a-directory');
+    writeFileSync(sourceRoot, 'source');
+    const testCase = parsedCase(directory);
+    const scanned = scanQACaseClaims(sourceRoot, [testCase]);
+    expect(scanned.diagnostics).toEqual([
+      expect.objectContaining({ file: expect.stringContaining('not-a-directory'), line: 1, message: expect.stringContaining('unable to scan case-claim sources:') }),
+    ]);
+  });
+});
+
+describe('release case journey claim validation', () => {
+  // case: S-179.2
+  it('reports an unclaimed release step and rejects stale baseline entries', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const unclaimed = validateReleaseCaseClaims([testCase], [], []);
+    expect(unclaimed).toEqual([
+      expect.objectContaining({ file: testCase.file, line: 19, message: 'active release step S-010.1 has no journey or Playwright claim' }),
+      expect.objectContaining({ file: testCase.file, line: 20, message: 'active release step S-010.2 has no journey or Playwright claim' }),
+    ]);
+
+    const claimed = testCase.steps.map(step => ({ id: step.id, stepId: step.id, kind: 'journey' as const, source: 'e2e/journey/example.py', line: 1 }));
+    const staleBaseline = validateReleaseCaseClaims([testCase], claimed, ['S-010.1']);
+    expect(staleBaseline).toEqual([
+      expect.objectContaining({ file: 'plugins/qa/core/src/cases/release-claim-baseline.ts', line: 6, message: 'stale release claim baseline entry S-010.1; remove it' }),
+    ]);
+    expect(RELEASE_CASE_CLAIM_BASELINE.length).toBeGreaterThan(0);
+  });
+
+  it('ignores non-release and non-active cases and unit-only claims', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const unitClaim = testCase.steps.map(step => ({ id: step.id, stepId: step.id, kind: 'unit' as const, source: 'test.ts', line: 1 }));
+    expect(validateReleaseCaseClaims([testCase], unitClaim, [])).toHaveLength(2);
+    expect(validateReleaseCaseClaims([{ ...testCase, release: false }], [], [])).toEqual([]);
+    expect(validateReleaseCaseClaims([{ ...testCase, status: 'planned' }], [], [])).toEqual([]);
   });
 });
 
