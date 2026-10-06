@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import { analyzeLayering } from '@kb-labs/quality-core';
@@ -14,7 +14,7 @@ export default defineCommand<unknown, CLIInput<CheckLayersFlags>, unknown>({
   description: 'Detect layering violations (lower layer importing higher layer)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<CheckLayersFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<CheckLayersFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QualityPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -33,9 +33,9 @@ export default defineCommand<unknown, CLIInput<CheckLayersFlags>, unknown>({
         : report;
 
       if (flags.json) {
-        ctx.ui?.json?.(filtered);
+        return { ok: true, result: filtered };
         return filtered.totalViolations > 0
-          ? { ok: false, error: 'Layer violations found', result: filtered }
+          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Layer violations found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: filtered }
           : { ok: true, result: filtered };
       }
 
@@ -56,8 +56,8 @@ export default defineCommand<unknown, CLIInput<CheckLayersFlags>, unknown>({
         items: vs.map((v: LayeringViolation) => `→ ${v.toPackage} (Layer ${v.toLayer})  ${v.importSpecifier}`),
       }));
 
-      ctx.ui?.error?.(`${filtered.totalViolations} layering violation(s) in ${filtered.affectedPackages.length} package(s)`, { sections });
-      return { ok: false, error: 'Command failed' };
+
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${filtered.totalViolations} layering violation(s) found in ${filtered.affectedPackages.length} package(s).`, hint: 'Review the reported imports, then rerun `kb quality check-layers`.' } };
     },
   },
 });

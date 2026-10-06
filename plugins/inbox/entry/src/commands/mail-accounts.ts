@@ -16,7 +16,6 @@ export default defineCommand({
         const accounts = listAccounts();
 
         if (input.flags.json) {
-          ctx.ui?.json?.({ ok: true, result: accounts });
           return { ok: true, result: accounts };
         }
 
@@ -37,8 +36,7 @@ export default defineCommand({
 
         return { ok: true, result: accounts };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

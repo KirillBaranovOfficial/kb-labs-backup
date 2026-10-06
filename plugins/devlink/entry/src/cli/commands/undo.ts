@@ -1,4 +1,4 @@
-import { defineCommand, useLoader, TimingTracker, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useLoader, TimingTracker, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { getLastBackup, restoreBackup, saveState, loadState } from '@kb-labs/devlink-core';
 
 interface UndoFlags {
@@ -22,7 +22,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
   description: 'Restore previous dependency state from last backup',
 
   handler: {
-    async intent(_ctx: PluginContextV3, _input: UndoInput) {
+    async intent(_ctx: PluginCommandContextV3, _input: UndoInput) {
       return {
         summary: 'Restore previous dependency state from last backup',
         operations: [
@@ -31,7 +31,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: UndoInput): Promise<CommandResult<UndoResult>> {
+    async execute(ctx: PluginCommandContextV3, input: UndoInput): Promise<CommandResult<UndoResult>> {
       const tracker = new TimingTracker();
       const flags = (input.flags ?? input) as UndoFlags;
       const outputJson = flags.json ?? false;
@@ -40,8 +40,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
 
       const backup = getLastBackup(rootDir);
       if (!backup) {
-        validationError(ctx, 'No backups found. Run switch first to create a backup.', undefined, outputJson);
-        return { ok: false, error: 'Undo operation failed' };
+        return validationError(ctx, 'No backups found. Run switch first to create a backup.', undefined, outputJson);
       }
 
       const loader = useLoader(`Restoring from backup ${backup.id}...`);
@@ -53,8 +52,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
         ({ restored, errors } = restoreBackup(rootDir, backup.id));
       } catch (err) {
         loader.fail('Restore failed');
-        handleError(ctx, err, outputJson);
-        return { ok: false, error: 'Undo operation failed' };
+        return handleError(ctx, err, outputJson);
       }
       loader.succeed(`Restored ${restored} file(s)`);
       tracker.checkpoint('restore');
@@ -70,7 +68,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
       const result: UndoResult = { restored, backupId: backup.id, errors };
 
       if (outputJson) {
-        ctx.ui?.json?.(result);
+        return { ok: true, result: result };
       } else {
         ctx.ui?.success?.(`Restored from backup (mode: ${backup.modeAtBackup ?? 'unknown'})`, {
           title: 'DevLink — Undo',
@@ -91,7 +89,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
       }
 
       return errors.length > 0
-        ? { ok: false, error: `${errors.length} undo operation(s) failed`, result, meta: { timing: tracker.total() } }
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${errors.length} undo operation(s) failed`, hint: 'Run `kb devlink --help` to review the command inputs, then rerun the command.' }, result, meta: { timing: tracker.total() } }
         : { ok: true, result, meta: { timing: tracker.total() } };
     },
   },

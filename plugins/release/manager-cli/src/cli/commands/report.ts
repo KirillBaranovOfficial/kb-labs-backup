@@ -4,7 +4,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { ReleaseReport } from '@kb-labs/release-manager-core';
 import { findRepoRoot } from '../../shared/utils';
 
@@ -35,17 +35,14 @@ function buildReportSections(report: ReleaseReport): Array<{ header?: string; it
   return sections;
 }
 
-function handleReportNotFound(flags: ReportFlags, ctx: PluginContextV3): ReleaseReportResult {
+function handleReportNotFound(flags: ReportFlags, ctx: PluginCommandContextV3): ReleaseReportResult {
   ctx.platform?.logger?.warn?.('No release report found');
   if (flags.json) {
-    ctx.ui?.json?.({ ok: false, error: 'No release report found' });
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No release report found', hint: "Run `kb release report --help` to review the failure and next steps." } };
   } else {
-    ctx.ui?.error?.('No release report found', {
-      hint: 'Run: kb release run',
-      cause: 'No report has been generated for the current release',
-    });
+
   }
-  return { ok: false, error: 'No release report found' };
+  return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No release report found', hint: "Run `kb release report --help` to review its inputs and recovery steps, then retry." } };
 }
 
 // ── command ────────────────────────────────────────────────────────────────
@@ -55,7 +52,7 @@ export default defineCommand({
   description: 'Show last release report',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ReportFlags>): Promise<ReleaseReportResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ReportFlags>): Promise<ReleaseReportResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -71,7 +68,7 @@ export default defineCommand({
         });
 
         if (flags.json) {
-          ctx.ui?.json?.(report);
+          return { ok: true, result: report };
         } else {
           if (!ctx.ui) { throw new Error('UI not available'); }
           ctx.ui?.sideBox?.({
@@ -81,7 +78,7 @@ export default defineCommand({
           });
         }
 
-        return report.result.ok ? { ok: true, result: { report } } : { ok: false, error: 'Command failed', result: { report } };
+        return report.result.ok ? { ok: true, result: { report } } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release report --help` to review its inputs and recovery steps, then retry." }, result: { report } };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return handleReportNotFound(flags, ctx);

@@ -48,13 +48,13 @@ export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
         const error = 'Could not reach a Gateway to revoke saved credentials. Check the Gateway and run `kb auth logout` again.';
         if (flags.json) {ctx.ui?.json({ ok: false, error });}
         else {ctx.ui?.error?.(error);}
-        return { ok: false, error };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error, hint: 'Check the Gateway connection and retry `kb auth logout`.' } };
       }
       if (!response.ok) {
         const error = `Gateway rejected token revocation (HTTP ${response.status}). Run 'kb auth status', then 'kb auth logout' again.`;
         if (flags.json) {ctx.ui?.json({ ok: false, error });}
         else {ctx.ui?.error?.(error);}
-        return { ok: false, error };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error, hint: 'Run `kb auth status` to inspect the session, then retry `kb auth logout`.' } };
       }
     }
 

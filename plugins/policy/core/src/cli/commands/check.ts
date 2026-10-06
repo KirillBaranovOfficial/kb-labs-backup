@@ -1,4 +1,4 @@
-import { defineCommand, useConfig, findRepoRoot, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useConfig, findRepoRoot, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { execSync } from 'node:child_process';
 import type { PolicyConfig, CheckReport } from '@kb-labs/policy-contracts';
 import { detectCategory } from '../../core/category-resolver.js';
@@ -16,20 +16,18 @@ export default defineCommand({
   description: 'Run policy checks for changed repos or a specific path. Exits with code 1 on violations.',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CheckInput): Promise<CommandResult<CheckResult>> {
+    async execute(ctx: PluginCommandContextV3, input: CheckInput): Promise<CommandResult<CheckResult>> {
       const flags = (input as { flags?: CheckInput }).flags ?? input;
       const workspaceRoot = (await findRepoRoot(ctx.cwd)) ?? ctx.cwd;
       const policyConfig = await useConfig<PolicyConfig>();
 
       if (!policyConfig?.categories) {
-        ctx.ui.error('No policies config found in .kb/kb.config.json (expected "policies" key)');
         const emptyReport: CheckReport = {
           passed: false,
           repos: [],
           summary: { total: 0, passed: 0, failed: 0, violations: 0 },
         };
-        if (flags.json) {ctx.ui.json?.({ passed: false, error: 'No policies config' });}
-        return { ok: false, error: 'No policies config found', result: emptyReport };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No policies config found in .kb/kb.config.json (expected "policies" key)', hint: 'Add a `policies` section to .kb/kb.config.json, then rerun `kb policy check`.' }, result: emptyReport };
       }
 
       const repoPaths = flags.path
@@ -48,19 +46,19 @@ export default defineCommand({
       const report = await runChecks(repos, policyConfig, workspaceRoot);
 
       if (flags.json) {
-        ctx.ui.json?.(report);
+        return { ok: true, result: report };
       } else {
         renderHumanReport(ctx, report);
       }
 
       return report.passed
         ? { ok: true, result: report }
-        : { ok: false, error: 'Policy violations found', result: report };
+        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Policy violations found', hint: "Run `kb policy check --help` to review its inputs and recovery steps, then retry." }, result: report };
     },
   },
 });
 
-function renderHumanReport(ctx: PluginContextV3, report: CheckReport): void {
+function renderHumanReport(ctx: PluginCommandContextV3, report: CheckReport): void {
   const lines: string[] = [];
 
   for (const repo of report.repos) {
@@ -89,8 +87,6 @@ function renderHumanReport(ctx: PluginContextV3, report: CheckReport): void {
         { header: 'Summary', items: [`${passed}/${total} passed`] },
       ],
     });
-  } else {
-    ctx.ui.error(`Policy Check Failed\n${lines.join('\n')}\n\n${summaryLine}`);
   }
 }
 

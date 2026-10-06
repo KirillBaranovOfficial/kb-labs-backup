@@ -1,4 +1,4 @@
-import { defineCommand, handleError, validationError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { addPerson } from '@kb-labs/steward-core';
 import { parseList } from '../utils/flags.js';
 
@@ -9,11 +9,10 @@ export default defineCommand({
   description: 'Add a contact. Returns a possibleDuplicates warning, not an error, on a name match',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<Flags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const { name, topics, company, json } = input.flags;
       if (!name?.trim()) {
-        validationError(ctx, '--name is required', undefined, json);
-        return { ok: false, error: 'INVALID_ARGS', result: null };
+        return validationError(ctx, '--name is required', undefined, json);
       }
 
       try {
@@ -25,7 +24,7 @@ export default defineCommand({
         });
 
         if (json) {
-          ctx.ui?.json?.({ ok: true, result: { person, possibleDuplicates } });
+          return { ok: true, result: { person, possibleDuplicates } };
         } else {
           ctx.ui?.info?.(`Added "${person.name}" (${person.id})`);
           if (possibleDuplicates.length > 0) {
@@ -35,8 +34,7 @@ export default defineCommand({
         return { ok: true, result: { person, possibleDuplicates } };
       } catch (err) {
         ctx.platform.logger?.error?.('steward:person.add failed', err instanceof Error ? err : new Error(String(err)));
-        handleError(ctx, err, json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: null };
+        return handleError(ctx, err, json);
       }
     },
   },

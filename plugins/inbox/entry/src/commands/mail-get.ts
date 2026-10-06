@@ -19,14 +19,12 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<GetFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        validationError(ctx, 'uid is required', 'Usage: kb inbox get <uid>', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, 'uid is required', 'Usage: kb inbox get <uid>', input.flags.json);
       }
 
       const uid = parseInt(rawUid, 10);
       if (isNaN(uid)) {
-        validationError(ctx, `Invalid uid: "${rawUid}" — must be a number`, undefined, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, `Invalid uid: "${rawUid}" — must be a number`, undefined, input.flags.json);
       }
 
       try {
@@ -37,7 +35,6 @@ export default defineCommand({
         });
 
         if (input.flags.json) {
-          ctx.ui?.json?.({ ok: true, result: email });
           return { ok: true, result: email };
         }
 
@@ -68,8 +65,7 @@ export default defineCommand({
 
         return { ok: true, result: email };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

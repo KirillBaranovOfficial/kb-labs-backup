@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { defineCommand, handleError, type CLIInput, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { workflowCommandError } from './errors.js';
 
 interface InitFlags { json?: boolean; }
@@ -25,13 +25,13 @@ export default defineCommand<unknown, CLIInput<InitFlags>, unknown>({
   id: 'workflow:init',
   description: 'Create a runnable local workflow example',
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<InitFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<InitFlags>): Promise<CommandResult> {
       const output = join(process.cwd(), '.kb', 'workflows', 'hello.yml');
       try {
         await mkdir(join(process.cwd(), '.kb', 'workflows'), { recursive: true });
         await writeFile(output, EXAMPLE, { encoding: 'utf8', flag: 'wx' });
         const result = { ok: true, path: '.kb/workflows/hello.yml' };
-        if (input.flags.json) { ctx.ui?.json?.(result); }
+        if (input.flags.json) { return { ok: true, result: result }; }
         else {
           ctx.ui?.success?.('Created .kb/workflows/hello.yml');
           ctx.ui?.write?.('Next: kb workflow lint && kb workflow run --workflow-id=hello\n');
@@ -39,11 +39,9 @@ export default defineCommand<unknown, CLIInput<InitFlags>, unknown>({
         return { ok: true, result };
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
-          workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow init`.', input.flags.json ?? false);
-          return { ok: false, error: 'Command failed' };
+          return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow init`.', input.flags.json ?? false);
         }
-        handleError(ctx, error, input.flags.json ?? false);
-        return { ok: false, error: 'Could not create workflow example' };
+        return handleError(ctx, error, input.flags.json ?? false);
       }
     },
   },

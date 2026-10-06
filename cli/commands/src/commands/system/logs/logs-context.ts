@@ -48,7 +48,7 @@ export const logsContext = defineSystemCommand<Flags, CommandResult>({
     if (!reader) {
       return {
         ok: false,
-        error: "Log reader not available. Ensure platform is initialized.",
+        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log reader not available. Ensure platform is initialized.", hint: "Run `kb logs context --help` to review valid inputs and recovery steps, then retry." },
       };
     }
 
@@ -60,7 +60,7 @@ export const logsContext = defineSystemCommand<Flags, CommandResult>({
       return {
         ok: false,
         error:
-          "At least one correlation key required: --execution-id, --trace-id, or --request-id",
+          { code: 'KB_RUNTIME_COMMAND_FAILED', message: "At least one correlation key required: --execution-id, --trace-id, or --request-id", hint: "Run `kb logs context --help` to review valid inputs and recovery steps, then retry." },
       };
     }
 

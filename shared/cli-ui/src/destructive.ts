@@ -122,7 +122,7 @@ export function renderDestructiveMessage(a: DestructiveAction): string {
  *   if (blocked) return blocked;
  */
 export function confirmDestructive(
-  ctx: ConfirmContext,
+  _ctx: ConfirmContext,
   opts: { confirmed: boolean; isJson?: boolean; action: DestructiveAction },
 ): CommandFailure | null {
   if (opts.confirmed) {
@@ -130,20 +130,22 @@ export function confirmDestructive(
   }
   const a = opts.action;
   const signal = buildConfirmationSignal(a);
-  if (opts.isJson) {
-    // Machine-readable signal — `ctx.ui.json` emits one parseable line by
-    // default (the agent extracts it with `grep "^{"`).
-    ctx.ui?.json?.(signal);
-  } else {
-    (ctx.ui?.warn ?? ctx.ui?.error)?.(renderDestructiveMessage(a));
-  }
   return {
     ok: false,
     error: {
-      code: 'CONFIRMATION_REQUIRED',
+      code: 'KB_RUNTIME_CONFIRMATION_REQUIRED',
       kind: 'validation',
       message: signal.message,
-      details: { ...signal },
+      hint: 'Verify the target and effect, then rerun the command with --yes.',
+      details: {
+        action: signal.action,
+        resource: signal.resource,
+        effect: signal.effect,
+        reversible: String(signal.reversible),
+        irreversible: String(signal.irreversible),
+        severity: signal.severity,
+        confirmWith: signal.confirmWith,
+      },
     },
     result: signal,
   };

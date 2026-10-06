@@ -1,4 +1,4 @@
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { type SyncListFlags } from '@kb-labs/mind-contracts';
 import { buildMind } from '../../platform';
 
@@ -7,12 +7,12 @@ export default defineCommand<unknown, CLIInput<SyncListFlags>, unknown>({
   description: 'Show sync health for an index',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<SyncListFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<SyncListFlags>): Promise<CommandResult> {
       try {
       const mind = await buildMind(ctx.cwd);
       const res = await mind.syncStatus(input.flags.index);
       if (input.flags.json) {
-        ctx.ui?.json?.(res);
+        return { ok: true, result: res };
         return { ok: true };
       }
       ctx.ui?.success?.(
@@ -22,8 +22,7 @@ export default defineCommand<unknown, CLIInput<SyncListFlags>, unknown>({
       );
       return { ok: true };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

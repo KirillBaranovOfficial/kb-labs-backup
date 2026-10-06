@@ -3,7 +3,7 @@
  * Push commits to remote
  */
 
-import { defineCommand, useLoader, findRepoRoot, handleError, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, useLoader, findRepoRoot, handleError, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { pushCommits } from '@kb-labs/commit-core';
 import type { PushOutput } from '@kb-labs/commit-contracts';
@@ -20,7 +20,7 @@ export default defineCommand({
   description: 'Push commits to remote',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: PushInput): Promise<PushResult> {
+    async execute(ctx: PluginCommandContextV3, input: PushInput): Promise<PushResult> {
       const startTime = Date.now();
       const cwd = (await findRepoRoot(ctx.cwd || process.cwd())) ?? process.cwd();
 
@@ -32,8 +32,7 @@ export default defineCommand({
         result = await pushCommits(cwd, { force: input.force });
       } catch (err) {
         pushLoader.fail('Push failed');
-        handleError(ctx, err, input.json);
-        return { ok: false, error: 'Could not start the Git push. Check the configured remote and credentials, then rerun `kb commit push`.' };
+        return handleError(ctx, err, input.json);
       }
 
       // Output
@@ -55,19 +54,10 @@ export default defineCommand({
       }
 
       if (input.json) {
-        ctx.ui?.json?.(output);
+        return { ok: true, result: output };
       } else if (!result.success) {
         // Show error details
-        ctx.ui?.error?.('Push Failed', {
-          sections: [{
-            header: 'Details',
-            items: [
-              `Remote: ${result.remote || 'unknown'}`,
-              `Branch: ${result.branch || 'unknown'}`,
-              `Error: ${result.error || 'Unknown error'}`,
-            ],
-          }],
-        });
+
       } else if (result.commitsPushed > 0) {
         // Show success details
         ctx.ui?.success?.('Push Successful', {
@@ -89,7 +79,7 @@ export default defineCommand({
         meta: {
           timing: Date.now() - startTime,
         },
-      } : { ok: false, error: 'Commit push failed', result: output };
+      } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit push failed', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' }, result: output };
     },
   },
 });

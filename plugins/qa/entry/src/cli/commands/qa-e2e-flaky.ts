@@ -4,7 +4,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -17,7 +17,7 @@ import { PATHS, TRENDS_WINDOW, type QAPluginConfig, type E2eCaseResult } from '@
 import type { QaE2eFlakyFlags } from './flags.js';
 
 async function runIngest(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   cwd: string,
   store: SnapshotStore,
   dir: string,
@@ -42,21 +42,21 @@ async function runIngest(
     // shard failed before Playwright's reporter ever ran. Don't push an
     // empty snapshot into history; it would silently dilute the flip-rate
     // window with a run that carried no real signal.
-    ctx.ui?.error?.(`No flaky-report.json files found under ${dir} — nothing to ingest.`);
-    return { ok: false, error: 'Command failed' };
+
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No flaky-report.json files were found under ${dir}.`, hint: 'Create or locate a flaky report, then rerun `kb qa e2e flaky --ingest --dir <dir>`.' } };
   }
 
   const git = await captureGit(ctx.api.shell, cwd);
   const snap = store.saveE2eFlaky(cases, 0, git);
   ctx.ui?.success?.(`Ingested ${cases.length} e2e case result(s) from ${dir} into flaky history`, {});
-  ctx.ui?.json?.(snap);
+  return { ok: true, result: snap };
   return { ok: true };
 }
 
-async function runSync(ctx: PluginContextV3, cwd: string): Promise<boolean> {
+async function runSync(ctx: PluginCommandContextV3, cwd: string): Promise<boolean> {
   const fetch = await ctx.api.shell.exec('git', ['fetch', 'origin', 'ci-data'], { cwd, throwOnError: false });
   if (!fetch.ok) {
-    ctx.ui?.error?.('No flaky history yet — the "ci-data" branch has not been created by CI.');
+
     return false;
   }
   const show = await ctx.api.shell.exec(
@@ -65,7 +65,7 @@ async function runSync(ctx: PluginContextV3, cwd: string): Promise<boolean> {
     { cwd, throwOnError: false },
   );
   if (!show.ok) {
-    ctx.ui?.error?.('No flaky history yet — "ci-data" branch exists but has no snapshot file.');
+
     return false;
   }
   const target = join(cwd, PATHS.SNAPSHOTS_E2E_FLAKY);
@@ -79,7 +79,7 @@ export default defineCommand<unknown, CLIInput<QaE2eFlakyFlags>, unknown>({
   description: 'Track flaky e2e cases across CI runs — compact overview by default, per-case drill-down on request',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaE2eFlakyFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaE2eFlakyFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -91,7 +91,7 @@ export default defineCommand<unknown, CLIInput<QaE2eFlakyFlags>, unknown>({
       // than one implicitly winning.
       if (flags.sync) {
         const synced = await runSync(ctx, cwd);
-        if (!synced) {return { ok: false, error: 'Command failed' };}
+        if (!synced) {return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Flaky report sync failed.', hint: 'Check the configured CI repository and credentials, then rerun `kb qa e2e flaky --sync`.' } };}
       }
 
       if (flags.ingest) {
@@ -104,11 +104,11 @@ export default defineCommand<unknown, CLIInput<QaE2eFlakyFlags>, unknown>({
       if (flags.case) {
         const timeline = buildCaseTimeline(history.slice(-window), flags.case);
         if (!timeline) {
-          ctx.ui?.error?.(`No history found for case "${flags.case}". Run with --agent to see the "top" list of known cases.`);
-          return { ok: false, error: 'Command failed' };
+
+          return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No history was found for case "${flags.case}".`, hint: 'Run `kb qa e2e flaky --agent` to list known cases, then rerun with a valid --case.' } };
         }
         if (json) {
-          ctx.ui?.json?.(timeline);
+          return { ok: true, result: timeline };
         } else {
           ctx.ui?.success?.(`Case timeline: ${timeline.caseKey}`, {
             sections: [
@@ -128,7 +128,7 @@ export default defineCommand<unknown, CLIInput<QaE2eFlakyFlags>, unknown>({
 
       const overview = analyzeFlakyCases(history, window);
       if (json) {
-        ctx.ui?.json?.(overview);
+        return { ok: true, result: overview };
       } else {
         ctx.ui?.success?.(`E2E flaky overview (last ${overview.runsAnalyzed} runs)`, {
           sections: [

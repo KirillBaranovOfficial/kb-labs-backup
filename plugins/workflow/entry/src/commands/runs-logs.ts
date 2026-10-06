@@ -2,15 +2,14 @@
  * workflow:runs-logs <runId> command — fetch logs for a workflow run
  */
 
-import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 import type { RunsLogsFlags } from '../flags.js';
 
 type LogEntry = { level: string; message: string; timestamp: string; stepId?: string; stepName?: string; [key: string]: unknown };
 
-function renderLogs(ctx: PluginContextV3, logs: LogEntry[], outputJson: boolean): void {
+function renderLogs(ctx: PluginCommandContextV3, logs: LogEntry[], outputJson: boolean): void {
   if (outputJson) {
-    ctx.ui?.json?.({ ok: true, data: { logs } });
     return;
   }
 
@@ -32,14 +31,13 @@ export default defineCommand<unknown, CLIInput<RunsLogsFlags>, unknown>({
   description: 'Fetch logs for a workflow run',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<RunsLogsFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunsLogsFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const outputJson = flags?.json ?? false;
       const runId = flags?.['run-id'] ?? argv[0];
 
       if (!runId) {
-        validationError(ctx, 'Missing run ID', 'Usage: kb workflow runs logs <runId>', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return validationError(ctx, 'Missing run ID', 'Usage: kb workflow runs logs <runId>', outputJson);
       }
 
       try {
@@ -49,10 +47,9 @@ export default defineCommand<unknown, CLIInput<RunsLogsFlags>, unknown>({
           failedOnly: flags?.['log-failed'],
         });
         renderLogs(ctx, logs as LogEntry[], outputJson);
-        return { ok: true };
+        return { ok: true, result: { logs } };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

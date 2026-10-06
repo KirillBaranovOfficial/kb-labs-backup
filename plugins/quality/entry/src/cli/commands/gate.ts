@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import { analyzeLayering, QualitySnapshotStore } from '@kb-labs/quality-core';
@@ -14,7 +14,7 @@ export default defineCommand<unknown, CLIInput<GateFlags>, unknown>({
   description: 'Architecture gate: fail if new layering violations introduced',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<GateFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<GateFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QualityPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -45,9 +45,9 @@ export default defineCommand<unknown, CLIInput<GateFlags>, unknown>({
       };
 
       if (flags.json) {
-        ctx.ui?.json?.(result);
+        return { ok: true, result: result };
         return failed
-          ? { ok: false, error: 'Quality gate failed', result: { failed } }
+          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Quality gate failed', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: { failed } }
           : { ok: true, result: { failed } };
       }
 
@@ -76,8 +76,8 @@ export default defineCommand<unknown, CLIInput<GateFlags>, unknown>({
         });
       }
 
-      ctx.ui?.error?.('Gate failed — architecture violations detected', { sections });
-      return { ok: false, error: 'Command failed' };
+
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Architecture gate failed with ${current} layering violation(s).`, hint: 'Review the reported imports, then rerun `kb quality gate`.' } };
     },
   },
 });

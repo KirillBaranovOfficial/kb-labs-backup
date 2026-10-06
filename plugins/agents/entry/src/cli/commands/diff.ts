@@ -8,7 +8,7 @@
 
 import { defineCommand, useLogger } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
-import type { PluginContextV3 } from '@kb-labs/sdk';
+import type { PluginCommandContextV3 } from '@kb-labs/sdk';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -30,15 +30,15 @@ export default defineCommand({
   description: 'Show diff for specific file change',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: DiffInput): Promise<DiffResult> {
+    async execute(ctx: PluginCommandContextV3, input: DiffInput): Promise<DiffResult> {
       const logger = useLogger();
       const flags = (input as { flags?: DiffInput }).flags ?? input;
 
       const changeId = flags['change-id'] ?? flags.changeId;
       if (!changeId) {
         const err = { success: false, error: 'Missing required --change-id flag' };
-        ctx.ui?.json?.(err);
-        return { ok: false, error: 'Command failed', result: err };
+        return { ok: true, result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error, hint: 'Pass a change ID with `kb agents diff --change-id <id>`.' }, result: err };
       }
 
       try {
@@ -65,8 +65,8 @@ export default defineCommand({
 
         if (!snapshot) {
           const err = { success: false, error: `Change not found: ${changeId}` };
-          ctx.ui?.json?.(err);
-          return { ok: false, error: 'Command failed', result: err };
+          return { ok: true, result: err };
+          return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error, hint: 'Check the change ID, then rerun `kb agents diff --change-id <id>`.' }, result: err };
         }
 
         // Calculate diff
@@ -83,7 +83,7 @@ export default defineCommand({
         };
 
         if (flags.json) {
-          ctx.ui?.json?.(response);
+          return { ok: true, result: response };
         } else {
           printDiff(ctx, snapshot, diff);
         }
@@ -95,8 +95,8 @@ export default defineCommand({
           success: false,
           error: err instanceof Error ? err.message : String(err),
         };
-        ctx.ui?.json?.(errResponse);
-        return { ok: false, error: 'Command failed', result: errResponse };
+        return { ok: true, result: errResponse };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: errResponse.error, hint: 'Check the project files and rerun `kb agents diff --change-id <id>`.' }, result: errResponse };
       }
     },
   },
@@ -178,7 +178,7 @@ function calculateDiff(snapshot: Snapshot): DiffSummary {
 /**
  * Print diff in human-readable format
  */
-function printDiff(ctx: PluginContextV3, snapshot: Snapshot, diff: DiffSummary): void {
+function printDiff(ctx: PluginCommandContextV3, snapshot: Snapshot, diff: DiffSummary): void {
   ctx.ui.write('\n');
   ctx.ui.write('📝 File Change Diff\n');
   ctx.ui.write('\n');

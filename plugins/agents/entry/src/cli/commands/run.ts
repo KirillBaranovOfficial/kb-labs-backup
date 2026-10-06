@@ -4,7 +4,7 @@
  * Uses event-driven UI rendering instead of simple loaders.
  */
 
-import { defineCommand, useAnalytics, useCache, useConfig, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, useAnalytics, useCache, useConfig, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import {
   SessionManager,
   PlanDocumentService,
@@ -76,7 +76,7 @@ export default defineCommand({
   description: 'Execute a task with autonomous agent (orchestrator + child agents)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: RunInput): Promise<RunResult> {
+    async execute(ctx: PluginCommandContextV3, input: RunInput): Promise<RunResult> {
       // V3: Flags may come wrapped in input.flags or passed directly
       const flags = ('flags' in input && typeof (input as { flags?: unknown }).flags === 'object' && (input as { flags?: unknown }).flags !== null)
         ? (input as { flags: RunInput }).flags
@@ -154,7 +154,7 @@ export default defineCommand({
             if (plan.status !== 'draft') {
               ctx.ui?.warn?.(`Plan is not in draft state (current: ${plan.status}). Nothing to approve.`);
               clearTimeout_();
-              return { ok: false, error: 'Command failed' };
+              return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Plan is not in draft state (current: ${plan.status}).`, hint: 'Use `kb agent run --session-id <id> --task "<task>"` to create a new draft plan.' } };
             }
             const approvedAt = new Date().toISOString();
             const approvedPlan = { ...plan, status: 'approved' as const, approvedAt, approvalComment: 'Approved via CLI --approve', updatedAt: approvedAt };
@@ -167,21 +167,16 @@ export default defineCommand({
             clearTimeout_();
             return { ok: true, result: { sessionId: sessionId as string } };
           } catch {
-            if (jsonOutput) {
-              ctx.ui?.json?.({ ok: false, error: { code: 'NO_PLAN', message: `No approved plan for session ${sessionId}` } });
-            } else {
-              ctx.ui?.error?.('No plan found for this session', {
-                hint: `Run: kb agent run --session-id=${sessionId} --task "your task"`,
-                cause: `Session ${sessionId} has no approved plan`,
-              });
+            if (!jsonOutput) {
+
             }
             clearTimeout_();
-            return { ok: false, error: 'Command failed' };
+            return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No approved plan was found for session ${sessionId}.`, hint: 'Create a plan with `kb agent run --session-id <id> --task "<task>"`.' } };
           }
         }
-        ctx.ui?.error?.('Error: --task is required');
+
         clearTimeout_();
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'The --task flag is required.', hint: 'Rerun `kb agent run --task "<task>"` with the task to execute.' } };
       }
 
       // Build mode config
@@ -348,7 +343,7 @@ export default defineCommand({
                   iterations: specResult.iterations,
                   tokensUsed: specResult.tokensUsed,
                 } }
-                : { ok: false, error: 'Command failed', result: {
+                : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: specResult.summary || 'Agent specification generation failed.', hint: 'Review the agent run output, then rerun `kb agent run --task "<task>"`.' }, result: {
                     sessionId: effectiveSessionId,
                     success: specSucceeded,
                     summary: specResult.summary,
@@ -559,7 +554,7 @@ export default defineCommand({
             tokensUsed: result.tokensUsed,
             hasPlan: mode === 'plan' && !!result.plan,
           } }
-          : { ok: false as const, error: 'Command failed', result: {
+          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: result.summary || 'Agent execution failed.', hint: 'Check agent logs with `kb agent logs --session-id <id>`, then rerun `kb agent run --task "<task>"`.' }, result: {
             sessionId: effectiveSessionId,
             success: runSucceeded,
             summary: result.summary,
@@ -572,7 +567,7 @@ export default defineCommand({
           } };
 
         if (jsonOutput) {
-          ctx.ui?.json?.(structuredResult);
+          return { ok: true, result: structuredResult };
         }
 
         return structuredResult;
@@ -583,26 +578,16 @@ export default defineCommand({
           const reason = abortController.signal.reason instanceof Error
             ? abortController.signal.reason.message
             : `Agent execution timed out after ${timeoutSecs}s`;
-          if (jsonOutput) {
-            ctx.ui?.json?.({ ok: false, error: { code: 'TIMEOUT', message: reason } });
-          } else {
-            ctx.ui?.error?.('Agent execution timed out', {
-              hint: 'Check agent logs with: kb agent logs --session-id <id>',
-              cause: reason,
-            });
+          if (!jsonOutput) {
+
           }
-          return { ok: false, error: 'Command timed out' };
+          return { ok: false, error: { code: 'KB_RUNTIME_TIMEOUT', message: reason, hint: 'Check agent logs with `kb agent logs --session-id <id>`, then rerun `kb agent run --task "<task>"`.' } };
         }
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if (jsonOutput) {
-          ctx.ui?.json?.({ ok: false, error: { code: 'EXECUTION_FAILED', message: errorMessage } });
-        } else {
-          ctx.ui?.error?.('Agent execution failed', {
-            hint: 'Check agent logs with: kb agent logs --session-id <id>',
-            cause: errorMessage,
-          });
+        if (!jsonOutput) {
+
         }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: errorMessage, hint: 'Check agent logs with `kb agent logs --session-id <id>`, then rerun `kb agent run --task "<task>"`.' } };
       }
     },
   },

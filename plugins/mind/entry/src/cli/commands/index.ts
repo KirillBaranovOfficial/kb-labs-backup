@@ -1,4 +1,4 @@
-import { defineCommand, handleError, useLoader, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, useLoader, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { type IndexFlags, type IndexResponse } from '@kb-labs/mind-contracts';
 import { type IngestProgress } from '@kb-labs/mind-core';
@@ -29,7 +29,7 @@ export default defineCommand<unknown, CLIInput<IndexFlags>, IndexResponse>({
   description: 'Build or refresh a Mind index from source files',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<IndexFlags>): Promise<IndexCmdResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<IndexFlags>): Promise<IndexCmdResult> {
       const { flags } = input;
       try {
         // `--root` lets one kb-labs install index an arbitrary project root
@@ -48,7 +48,7 @@ export default defineCommand<unknown, CLIInput<IndexFlags>, IndexResponse>({
         );
 
         if (flags.json) {
-          ctx.ui?.json?.(res);
+          return { ok: true, result: res };
           return { ok: true, result: res };
         }
         const summary = `Indexed ${res.filesIndexed} file(s), ${res.chunks} chunk(s) into "${res.indexId}" (${res.durationMs}ms)`;
@@ -59,8 +59,7 @@ export default defineCommand<unknown, CLIInput<IndexFlags>, IndexResponse>({
         }
         return { ok: true, result: res };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

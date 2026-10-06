@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -21,7 +21,7 @@ export default defineCommand<unknown, CLIInput<QaCheckFlags>, unknown>({
   description: 'Run devkit structural checks',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaCheckFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaCheckFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -43,14 +43,14 @@ export default defineCommand<unknown, CLIInput<QaCheckFlags>, unknown>({
       };
 
       if (flags.json) {
-        ctx.ui?.json?.(buildCheckJsonReport(effective));
+        return { ok: true, result: buildCheckJsonReport(effective) };
       } else {
         for (const section of buildCheckReport(effective)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return raw.ok ? { ok: true, result: raw } : { ok: false, error: 'QA check failed', result: raw };
+      return raw.ok ? { ok: true, result: raw } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'QA check failed', hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' }, result: raw };
     },
   },
 });

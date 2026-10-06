@@ -493,7 +493,7 @@ async function runTrace(ctx: TraceCtx): Promise<CommandTraceResult> {
   };
 
   return failing
-    ? { ok: false, error: failing.message, ...result }
+    ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: failing.message, hint: "Run `kb info diag --help` to review valid inputs and recovery steps, then retry." }, ...result }
     : { ok: true, ...result };
 }
 
@@ -689,7 +689,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
 
     return summary.errors === 0
       ? { ok: true, diagnostics, summary }
-      : { ok: false, error: `${summary.errors} diagnostic error(s) found`, diagnostics, summary };
+      : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${summary.errors} diagnostic error(s) found`, hint: "Run `kb info diag --help` to review valid inputs and recovery steps, then retry." }, diagnostics, summary };
   },
 
   // eslint-disable-next-line sonarjs/cognitive-complexity

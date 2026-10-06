@@ -37,11 +37,11 @@ type RegisterResult = CommandResult & {
 /** Sends the same {ok:false, error} shape whether --json is set or not, and returns it. */
 function fail(ctx: PluginContextV3, json: boolean | undefined, msg: string): RegisterResult {
   if (json) {
-    ctx.ui?.json({ ok: false, error: msg });
+    ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth register --help` to review valid inputs and recovery steps, then retry." } });
   } else {
     ctx.ui?.error?.(msg);
   }
-  return { ok: false, error: msg };
+  return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth register --help` to review valid inputs and recovery steps, then retry." } };
 }
 
 /**

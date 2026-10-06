@@ -17,18 +17,15 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<MoveFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        validationError(ctx, 'uid is required', 'Usage: kb inbox move <uid> --folder Work', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, 'uid is required', 'Usage: kb inbox move <uid> --folder Work', input.flags.json);
       }
       if (!input.flags.folder) {
-        validationError(ctx, '--folder is required', undefined, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, '--folder is required', undefined, input.flags.json);
       }
 
       const uid = parseInt(rawUid, 10);
       if (isNaN(uid)) {
-        validationError(ctx, `Invalid uid: "${rawUid}" — must be a number`, undefined, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, `Invalid uid: "${rawUid}" — must be a number`, undefined, input.flags.json);
       }
 
       try {
@@ -36,15 +33,13 @@ export default defineCommand({
         await moveMessage(account, uid, input.flags.from ?? 'INBOX', input.flags.folder);
 
         if (input.flags.json) {
-          ctx.ui?.json?.({ ok: true, result: { uid, folder: input.flags.folder } });
           return { ok: true, result: { uid, folder: input.flags.folder } };
         }
 
         ctx.ui?.success?.(`Moved uid=${uid} → ${input.flags.folder}`);
         return { ok: true, result: null };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

@@ -3,7 +3,7 @@
  * List all connected Workspace Agents via Gateway REST API.
  */
 
-import { defineCommand, getHostServiceAddress, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, getHostServiceAddress, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { GatewayApiError, gatewayApiFetch } from '@kb-labs/cli-runtime/gateway';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,7 +32,7 @@ export default defineCommand({
   description: 'List all connected Workspace Agents',
 
   handler: {
-    async execute(ctx: PluginContextV3, rawInput: ListInput): Promise<CommandResult<ListResult>> {
+    async execute(ctx: PluginCommandContextV3, rawInput: ListInput): Promise<CommandResult<ListResult>> {
       const input: ListInput = rawInput.flags ?? rawInput;
 
       // Resolve Gateway URL: flag > agent config > env > default
@@ -57,20 +57,16 @@ export default defineCommand({
           const body = await res.json() as { hosts: HostEntry[] };
           hosts = body.hosts;
         } else {
-          handleError(ctx, new Error(`Failed to list hosts: HTTP ${res.status}`), input.json);
-          return { ok: false, error: `Failed to list hosts: HTTP ${res.status}`, result: { hosts: [] } };
+          return handleError(ctx, new Error(`Failed to list hosts: HTTP ${res.status}`), input.json);
         }
       } catch (err) {
         if (err instanceof GatewayApiError) {
-          handleError(ctx, err, input.json);
-          return { ok: false, error: err.envelope.message, result: { hosts: [] } };
+          return handleError(ctx, err, input.json);
         }
-        handleError(ctx, new Error(`Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`), input.json);
-        return { ok: false, error: `Cannot reach Gateway at ${gatewayUrl}`, result: { hosts: [] } };
+        return handleError(ctx, new Error(`Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`), input.json);
       }
 
       if (input.json) {
-        ctx.ui?.json?.({ hosts });
         return { ok: true, result: { hosts } };
       }
 

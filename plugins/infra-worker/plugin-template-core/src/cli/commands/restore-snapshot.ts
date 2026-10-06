@@ -1,4 +1,4 @@
-import { defineCommand, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 
 interface RestoreSnapshotFlags {
   snapshotId?: string;
@@ -23,7 +23,7 @@ export default defineCommand<unknown, RestoreSnapshotInput, RestoreSnapshotResul
   description: 'Restore snapshot to workspace/environment.',
   handler: {
     async execute(
-      ctx: PluginContextV3<unknown>,
+      ctx: PluginCommandContextV3<unknown>,
       input: RestoreSnapshotInput
     ): Promise<CommandResult<RestoreSnapshotResult>> {
       const flags = input.flags;

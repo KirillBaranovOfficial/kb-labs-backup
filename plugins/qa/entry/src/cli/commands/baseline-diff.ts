@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -18,7 +18,7 @@ export default defineCommand<unknown, CLIInput<BaselineDiffFlags>, unknown>({
   description: 'Diff current state against baseline',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<BaselineDiffFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<BaselineDiffFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -27,22 +27,22 @@ export default defineCommand<unknown, CLIInput<BaselineDiffFlags>, unknown>({
       const baseline = store.loadBaseline();
 
       if (!baseline) {
-        ctx.ui?.error?.('No baseline found. Run `qa baseline update` first.');
-        return { ok: false, error: 'Command failed' };
+
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No QA baseline was found.', hint: 'Run `kb qa baseline update`, then rerun `kb qa baseline diff`.' } };
       }
 
       const latestCheck = store.latestCheck();
       const latestStats = store.latestStats();
 
       if (!latestCheck || !latestStats) {
-        ctx.ui?.error?.('No check/stats snapshots found. Run `qa check` and `qa stats` first.');
-        return { ok: false, error: 'Command failed' };
+
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No QA check or stats snapshots were found.', hint: 'Run `kb qa check` and `kb qa stats`, then rerun `kb qa baseline diff`.' } };
       }
 
       const diff = compareWithBaseline(latestCheck.raw, latestStats.raw, baseline);
 
       if (flags.json) {
-        ctx.ui?.json?.(diff);
+        return { ok: true, result: diff };
       } else {
         for (const section of buildBaselineDiffReport(diff)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
@@ -50,7 +50,7 @@ export default defineCommand<unknown, CLIInput<BaselineDiffFlags>, unknown>({
       }
 
       return diff.newIssueCount > 0
-        ? { ok: false, error: 'New issues found', result: diff }
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'New issues found', hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' }, result: diff }
         : { ok: true, result: diff };
     },
   },

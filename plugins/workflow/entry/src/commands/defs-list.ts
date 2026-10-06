@@ -2,7 +2,7 @@
  * workflow:defs-list command — list workflow definitions available to run
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 import type { DefsListFlags } from '../flags.js';
 
@@ -11,7 +11,7 @@ export default defineCommand<unknown, CLIInput<DefsListFlags>, unknown>({
   description: 'List workflow definitions',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<DefsListFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<DefsListFlags>): Promise<CommandResult> {
       const flags = input.flags;
       const outputJson = flags?.json ?? false;
 
@@ -24,7 +24,7 @@ export default defineCommand<unknown, CLIInput<DefsListFlags>, unknown>({
         });
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: workflows });
+          return { ok: true, result: workflows };
           return { ok: true };
         }
 
@@ -55,8 +55,7 @@ export default defineCommand<unknown, CLIInput<DefsListFlags>, unknown>({
 
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

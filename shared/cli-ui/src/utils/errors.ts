@@ -1,64 +1,65 @@
-import { toPluginErrorEnvelope } from '@kb-labs/plugin-contracts';
+import { isCataloguedErrorCode, toPluginErrorEnvelope } from '@kb-labs/plugin-contracts';
+import type { CommandFailure } from '@kb-labs/plugin-contracts';
 
-interface ErrorContext {
-  ui?: {
-    json?: (data: unknown) => void;
-    error?: (message: string, opts?: Record<string, unknown>) => void;
-  };
-}
+type ErrorContext = unknown;
 
 /**
  * Structured validation error — emits { ok: false, error: { code: 'INVALID_ARGS', ... } } in JSON mode.
  * Call before try/catch, right before `return { exitCode: 1 }`.
  */
 export function validationError(
-  ctx: ErrorContext,
+  _ctx: ErrorContext,
   message: string,
   hint?: string,
-  isJson?: boolean,
-): void {
-  if (isJson) {
-    ctx.ui?.json?.({ ok: false, error: { code: 'INVALID_ARGS', message, ...(hint && { hint }) } });
-  } else {
-    ctx.ui?.error?.(message, { ...(hint && { hint }) });
-  }
+  _isJson?: boolean,
+): CommandFailure {
+  return {
+    ok: false,
+    error: {
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      message,
+      hint: hint ?? 'Run the command with --help to check its required arguments.',
+    },
+  };
 }
 
 /**
  * Structured runtime/API error — emits { ok: false, error: { code: 'INTERNAL_ERROR', ... } } in JSON mode.
  * Call in catch blocks, right before `return { exitCode: 1 }`.
  */
-export function handleError(ctx: ErrorContext, err: unknown, isJson?: boolean): void {
+export function handleError(_ctx: ErrorContext, err: unknown, _isJson?: boolean): CommandFailure {
   const envelope = err !== null && typeof err === 'object' && 'envelope' in err
     ? err.envelope
     : null;
   if (envelope !== null && typeof envelope === 'object' && 'code' in envelope && 'message' in envelope) {
     const typedEnvelope = envelope as { code: string; message: string; hint?: string; details?: Record<string, unknown>; [key: string]: unknown };
-    if (isJson) {
-      ctx.ui?.json?.({ ok: false, error: typedEnvelope });
-    } else {
-      const permission = typeof typedEnvelope.details?.permission === 'string' ? typedEnvelope.details.permission : undefined;
-      const cause = typeof typedEnvelope.cause === 'string' ? typedEnvelope.cause : undefined;
-      ctx.ui?.error?.(`${typedEnvelope.message}${permission ? ` (permission: ${permission})` : ''} [${typedEnvelope.code}]`, {
-        ...(cause ? { cause } : {}),
-        ...(typedEnvelope.hint ? { hint: typedEnvelope.hint } : {}),
-      });
-    }
-    return;
+    const code = isCataloguedErrorCode(typedEnvelope.code) ? typedEnvelope.code : 'KB_RUNTIME_COMMAND_FAILED';
+    return {
+      ok: false,
+      error: {
+        code,
+        message: typedEnvelope.message,
+        hint: typedEnvelope.hint ?? 'Resolve the reported error, then retry the command.',
+        ...(typedEnvelope.details && isStringMap(typedEnvelope.details) ? { details: typedEnvelope.details } : {}),
+      },
+    };
   }
   const typedEnvelope = toPluginErrorEnvelope(err);
-  if (isJson) {
-    ctx.ui?.json?.({ ok: false, error: typedEnvelope });
-  } else {
-    const permission = typeof typedEnvelope.details?.permission === 'string'
-      ? typedEnvelope.details.permission
-      : undefined;
-    const cause = typeof typedEnvelope.cause === 'string' ? typedEnvelope.cause : undefined;
-    ctx.ui?.error?.(
-      `${typedEnvelope.message}${permission ? ` (permission: ${permission})` : ''} [${typedEnvelope.code}]`,
-      { ...(cause ? { cause } : {}), hint: typedEnvelope.hint },
-    );
-  }
+  const code = isCataloguedErrorCode(typedEnvelope.code) ? typedEnvelope.code : 'KB_RUNTIME_COMMAND_FAILED';
+  return {
+    ok: false,
+    error: {
+      code,
+      message: typedEnvelope.message,
+      hint: typedEnvelope.hint,
+      ...(typedEnvelope.details && isStringMap(typedEnvelope.details) ? { details: typedEnvelope.details } : {}),
+    },
+  };
+}
+
+function isStringMap(value: unknown): value is Record<string, string> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) &&
+    Object.values(value).every((item) => typeof item === 'string');
 }
 
 /**

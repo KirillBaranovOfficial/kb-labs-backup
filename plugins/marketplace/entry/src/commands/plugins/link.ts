@@ -1,4 +1,4 @@
-import { defineCommand, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 
 import { post } from '../../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../../scope.js';
@@ -29,7 +29,7 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
   description: 'Link a local plugin for development',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: LinkInput) {
+    async intent(_ctx: PluginCommandContextV3, input: LinkInput) {
       const flags = (input.flags ?? input) as LinkFlags;
       const pluginPath = flags.link ?? input.argv?.[0] ?? '(unknown)';
       return {
@@ -38,13 +38,12 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
       };
     },
 
-    async execute(ctx: PluginContextV3, input: LinkInput): Promise<CommandResult<{ id: string; scope: string }>> {
+    async execute(ctx: PluginCommandContextV3, input: LinkInput): Promise<CommandResult<{ id: string; scope: string }>> {
       const flags = (input.flags ?? input) as LinkFlags;
       const pluginPath = flags.link ?? input.argv?.[0];
 
       if (!pluginPath) {
-        validationError(ctx, 'Specify a project-relative package path to link', 'Usage: kb marketplace link --link <relative-path>', flags.json);
-        return { ok: false, error: 'A plugin path is required', result: { id: '', scope: '' } };
+        return validationError(ctx, 'Specify a project-relative package path to link', 'Usage: kb marketplace link --link <relative-path>', flags.json);
       }
 
       let scopeCtx;
@@ -52,23 +51,22 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          validationError(ctx, err.message, undefined, flags.json);
+          return validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleError(ctx, err, flags.json);
+          return handleError(ctx, err, flags.json);
         }
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { id: '', scope: '' } };
-      }
+              }
 
       // Path validation uses the shared validation presenter, so the human
       // message remains actionable without treating bad input as a runtime error.
       if (pluginPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(pluginPath)) {
-        validationError(
+        return validationError(
           ctx,
           'The --link path must be relative to the selected scope directory.',
           'Provide a path relative to the selected scope directory, for example `.kb/plugins/demo/packages/demo-entry`.',
           flags.json,
         );
-        return { ok: false, error: 'The --link path must be relative to the selected scope directory.', result: { id: '', scope: '' } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'The --link path must be relative to the selected scope directory.', hint: "Run `kb marketplace link --help` to review its inputs and recovery steps, then retry." }, result: { id: '', scope: '' } };
       }
 
       try {
@@ -77,14 +75,13 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
         const result = await post<LinkResponse>(`/packages/link`, { path: pluginPath, ...scopeBody(scopeCtx) });
 
         if (flags.json) {
-          ctx.ui?.json?.({ ok: true, id: result.id, scope: result.scope });
+          return { ok: true, result: { id: result.id, scope: result.scope } };
         } else {
           ctx.ui?.success?.(`Linked ${result.id} (${result.scope})`);
         }
         return { ok: true, result: { id: result.id, scope: result.scope } };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { id: '', scope: '' } };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

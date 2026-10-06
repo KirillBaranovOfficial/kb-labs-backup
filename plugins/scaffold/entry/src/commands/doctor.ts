@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { defineCommand, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { scanRoot, type Finding } from '@kb-labs/scaffold-core';
 
 interface DoctorFlags {
@@ -7,7 +7,7 @@ interface DoctorFlags {
   json?: boolean;
 }
 
-type DoctorResult = { packagesScanned: number; findings: Finding[] };
+type DoctorResult = { root: string; packagesScanned: number; findings: Finding[] };
 
 export default defineCommand({
   id: 'scaffold:doctor',
@@ -15,7 +15,7 @@ export default defineCommand({
 
   handler: {
     async execute(
-      ctx: PluginContextV3,
+      ctx: PluginCommandContextV3,
       input: DoctorFlags,
     ): Promise<CommandResult<DoctorResult>> {
       const root = resolve(input.path ?? '.kb/plugins');
@@ -24,8 +24,7 @@ export default defineCommand({
       try {
         scan = await scanRoot(root, { workspaceRoot });
       } catch (err) {
-        handleError(ctx, err, input.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return handleError(ctx, err, input.json);
       }
 
       const { errorCount, warnCount } = scan.findings.reduce(
@@ -37,13 +36,16 @@ export default defineCommand({
         { errorCount: 0, warnCount: 0 },
       );
       const hasErrors = errorCount > 0;
+      const result = {
+        root,
+        packagesScanned: scan.packagesScanned,
+        findings: scan.findings,
+      };
 
       if (input.json) {
-        ctx.ui?.json?.({
-          root,
-          packagesScanned: scan.packagesScanned,
-          findings: scan.findings,
-        });
+        return hasErrors
+          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${errorCount} error(s) found`, hint: 'Inspect the error findings in the result and fix the affected plugin manifests, then rerun `kb scaffold doctor`.' }, result }
+          : { ok: true, result };
       } else if (scan.findings.length === 0) {
         ctx.ui?.success?.(`Scanned ${scan.packagesScanned} package(s) — no issues found.`, {
           title: 'scaffold doctor',
@@ -65,10 +67,7 @@ export default defineCommand({
         }));
 
         if (hasErrors) {
-          ctx.ui?.error?.(`Found ${errorCount} error(s), ${warnCount} warning(s) in ${scan.packagesScanned} package(s).`, {
-            title: 'scaffold doctor',
-            sections,
-          });
+
         } else {
           ctx.ui?.warn?.(`Found ${warnCount} warning(s) in ${scan.packagesScanned} package(s).`, {
             title: 'scaffold doctor',
@@ -79,17 +78,11 @@ export default defineCommand({
 
       return hasErrors ? {
         ok: false,
-        error: `${errorCount} error(s) found`,
-        result: {
-          packagesScanned: scan.packagesScanned,
-          findings: scan.findings,
-        },
+        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${errorCount} error(s) found`, hint: 'Inspect the error findings above and fix the affected plugin manifests, then rerun `kb scaffold doctor`.' },
+        result,
       } : {
         ok: true,
-        result: {
-          packagesScanned: scan.packagesScanned,
-          findings: scan.findings,
-        },
+        result,
       };
     },
   },

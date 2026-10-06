@@ -1,4 +1,4 @@
-import { defineCommand, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 
 import { get } from '../../http.js';
 import { resolveCliQueryScope, CliScopeError } from '../../scope.js';
@@ -29,7 +29,7 @@ export default defineCommand<unknown, ListInput, ListResultData>({
   description: 'List installed plugins',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: ListInput): Promise<CommandResult<ListResultData>> {
+    async execute(ctx: PluginCommandContextV3, input: ListInput): Promise<CommandResult<ListResultData>> {
       const flags = (input.flags ?? input) as ListFlags;
 
       let scopeCtx;
@@ -37,12 +37,11 @@ export default defineCommand<unknown, ListInput, ListResultData>({
         scopeCtx = await resolveCliQueryScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          validationError(ctx, err.message, undefined, flags.json);
+          return validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleError(ctx, err, flags.json);
+          return handleError(ctx, err, flags.json);
         }
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { entries: [], total: 0 } };
-      }
+              }
 
       try {
         const query: Record<string, string> = { kind: 'plugin', scope: scopeCtx.scope };
@@ -52,7 +51,7 @@ export default defineCommand<unknown, ListInput, ListResultData>({
         const data = await get<ListResultData>('/packages', query);
 
         if (flags.json) {
-          ctx.ui?.json?.(data);
+          return { ok: true, result: data };
         } else {
           const enabled = data.entries.filter(e => e.enabled !== false).length;
           const disabled = data.total - enabled;
@@ -71,8 +70,7 @@ export default defineCommand<unknown, ListInput, ListResultData>({
 
         return { ok: true, result: data };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { entries: [], total: 0 } };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

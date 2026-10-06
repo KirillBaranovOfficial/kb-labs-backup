@@ -315,6 +315,9 @@ export interface UIFacade {
   log(entry: UILogEntry): void;
 }
 
+/** UI methods available to plugin handlers. Command results and failures are returned, not printed. */
+export type PluginHandlerUIFacade = Omit<UIFacade, 'json' | 'error'>;
+
 /**
  * Options for text prompts
  */

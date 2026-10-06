@@ -7,7 +7,7 @@ import {
   validationError,
   handleError,
   type CommandResult,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CLIInput,
 } from '@kb-labs/sdk';
 import {
@@ -23,7 +23,6 @@ import {
 import type {
   RenderContext,
 } from '@kb-labs/scaffold-contracts';
-import { formatCommandHelp } from '@kb-labs/shared-cli-ui';
 import { writeScaffoldTransaction } from './scaffold-transaction.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -128,7 +127,7 @@ function parsePositional(argv: string[] | undefined): {
 }
 
 async function runDefault(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   rawInput: CLIInput<ScaffoldFlags>,
 ): Promise<CommandResult<ScaffoldResult>> {
   const start = Date.now();
@@ -138,40 +137,24 @@ async function runDefault(
 
   const available = await listEntities(TEMPLATES_ROOT);
   if (available.length === 0) {
-    validationError(ctx, 'No scaffold templates found. Reinstall @kb-labs/scaffold.');
-    return { ok: false, error: 'No scaffold templates found' };
+    return validationError(ctx, 'No scaffold templates found. Reinstall @kb-labs/scaffold.');
   }
 
   if (!entityArg) {
-    ctx.ui?.write?.(formatCommandHelp({
-      title: 'kb scaffold run',
-      description: 'Scaffold a new plugin, adapter, or other entity from a template.',
-      examples: available.map((e) => `kb scaffold run ${e} my-${e}`),
-      flags: SCAFFOLD_FLAGS,
-    }) + '\n');
-    ctx.ui?.info?.(`Available entities: ${available.join(', ')}`);
-    return { ok: false, error: `Unknown entity "${entityArg}"` };
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'An entity type is required.', hint: 'Run `kb scaffold run --help` to list entity types, then rerun `kb scaffold run <entity> <name>`.' } };
   }
 
   if (!available.includes(entityArg)) {
-    validationError(ctx, `Unknown entity "${entityArg}". Available: ${available.join(', ')}`);
-    return { ok: false, error: 'An entity name is required' };
+    return validationError(ctx, `Unknown entity "${entityArg}". Available: ${available.join(', ')}`);
   }
 
   if (!nameArg) {
-    ctx.ui?.write?.(formatCommandHelp({
-      title: `kb scaffold run ${entityArg} <name>`,
-      description: `Scaffold a new ${entityArg}. Provide a name to continue.`,
-      examples: [`kb scaffold run ${entityArg} my-${entityArg}`],
-      flags: SCAFFOLD_FLAGS,
-    }) + '\n');
-    return { ok: false, error: 'An entity name is required' };
+    return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'An entity name is required.', hint: 'Provide an entity and name, for example `kb scaffold run plugin my-plugin`.' } };
   }
 
   const problem = runValidator('npmName', nameArg);
   if (problem) {
-    validationError(ctx, `Invalid name "${nameArg}": ${problem}`, 'Name must be lowercase, no spaces, valid npm package name.');
-    return { ok: false, error: `Invalid name "${nameArg}": ${problem}` };
+    return validationError(ctx, `Invalid name "${nameArg}": ${problem}`, 'Name must be lowercase, no spaces, valid npm package name.');
   }
 
   const entity = await loadEntity(TEMPLATES_ROOT, entityArg);
@@ -200,8 +183,7 @@ async function runDefault(
   try {
     resolveBlocks(entity.blocks, selectedBlocks);
   } catch (e) {
-    handleError(ctx, e);
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return handleError(ctx, e);
   }
 
   for (const blockId of selectedBlocks) {
@@ -255,8 +237,7 @@ async function runDefault(
     if (input.force) {
       ctx.ui?.warn?.(`--force: overwriting ${outRoot}`);
     } else {
-      validationError(ctx, `Output directory "${outRoot}" already exists and is not empty.`, 'Use --force to overwrite.');
-      return { ok: false, error: `Output directory "${outRoot}" already exists and is not empty` };
+      return validationError(ctx, `Output directory "${outRoot}" already exists and is not empty.`, 'Use --force to overwrite.');
     }
   }
 
@@ -267,8 +248,7 @@ async function runDefault(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    validationError(ctx, message, 'Check the platform with `kb-create status`, then start it with `kb-create start`.');
-    return { ok: false, error: message };
+    return validationError(ctx, message, 'Check the platform with `kb-create status`, then start it with `kb-create start`.');
   }
 
   const linkPath = relative(ctx.cwd, entityArg === 'plugin'

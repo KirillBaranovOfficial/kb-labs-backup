@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, createTask } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 
@@ -29,7 +29,7 @@ export default defineCommand({
   description: 'Create a new task',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<TaskCreateFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<TaskCreateFlags>) {
       const { list, name } = input.flags;
       return {
         summary: `Create task "${name ?? '(unnamed)'}" in list ${list ?? '(unknown)'}`,
@@ -37,16 +37,14 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<TaskCreateFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<TaskCreateFlags>) {
       const { list, name, desc, status, priority, assignee, due, parent, json, full } = input.flags;
 
       if (!list) {
-        validationError(ctx, '--list is required', 'Use `kb clickup list tasks <listId>` to find the list ID', json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, '--list is required', 'Use `kb clickup list tasks <listId>` to find the list ID', json);
       }
       if (!name) {
-        validationError(ctx, '--name is required', undefined, json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, '--name is required', undefined, json);
       }
 
       try {
@@ -61,7 +59,7 @@ export default defineCommand({
         });
 
         if (json) {
-          ctx.ui?.json?.(full ? task : { id: task.id, name: task.name, status: task.status.status, url: task.url });
+          return { ok: true, result: full ? task : { id: task.id, name: task.name, status: task.status.status, url: task.url } };
         } else {
           ctx.ui?.success?.('Task created', {
             sections: [{
@@ -77,8 +75,7 @@ export default defineCommand({
 
         return { ok: true, result: task };
       } catch (err) {
-        handleError(ctx, err, json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, json);
       }
     },
   },

@@ -44,13 +44,13 @@ export const webhookRevoke = defineSystemCommand<RevokeFlags, RevokeResult>({
 
     if (!pluginId) {
       const msg = '--plugin is required';
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
+      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } };
     }
     if (!event) {
       const msg = '--event is required';
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
+      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     const credentialsManager = new CredentialsManager();
@@ -58,8 +58,8 @@ export const webhookRevoke = defineSystemCommand<RevokeFlags, RevokeResult>({
 
     if (!credentials) {
       const msg = 'Not authenticated. Run "kb auth login" first.';
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
+      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     // Build path: encode each segment to handle scoped package names (@org/pkg)
@@ -78,16 +78,16 @@ export const webhookRevoke = defineSystemCommand<RevokeFlags, RevokeResult>({
       });
     } catch (err) {
       const msg = `Cannot reach Gateway at ${credentials.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
+      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     // 204 = revoked, 404 = not found (idempotent — treat as ok)
     if (!response.ok && response.status !== 404) {
       const body = await response.text().catch(() => '');
       const msg = `Revoke failed (HTTP ${response.status}): ${body}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
+      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     const label = flags.instance

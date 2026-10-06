@@ -1,4 +1,4 @@
-import { defineCommand, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 
 import { post } from '../../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../../scope.js';
@@ -11,7 +11,7 @@ export default defineCommand<unknown, EnableInput, { packageId: string; scope: s
   description: 'Enable a plugin',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: EnableInput) {
+    async intent(_ctx: PluginCommandContextV3, input: EnableInput) {
       const packageId = input.argv?.[0] ?? '(unknown)';
       return {
         summary: `Enable plugin "${packageId}"`,
@@ -19,13 +19,12 @@ export default defineCommand<unknown, EnableInput, { packageId: string; scope: s
       };
     },
 
-    async execute(ctx: PluginContextV3, input: EnableInput): Promise<CommandResult<{ packageId: string; scope: string }>> {
+    async execute(ctx: PluginCommandContextV3, input: EnableInput): Promise<CommandResult<{ packageId: string; scope: string }>> {
       const packageId = input.argv?.[0];
       const flags = (input.flags ?? input) as EnableFlags;
 
       if (!packageId) {
-        validationError(ctx, 'Specify a plugin to enable', 'Usage: kb marketplace plugins enable <plugin-id>', flags.json);
-        return { ok: false, error: 'A package id is required', result: { packageId: '', scope: '' } };
+        return validationError(ctx, 'Specify a plugin to enable', 'Usage: kb marketplace plugins enable <plugin-id>', flags.json);
       }
 
       let scopeCtx;
@@ -33,24 +32,22 @@ export default defineCommand<unknown, EnableInput, { packageId: string; scope: s
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          validationError(ctx, err.message, undefined, flags.json);
+          return validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleError(ctx, err, flags.json);
+          return handleError(ctx, err, flags.json);
         }
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { packageId: '', scope: '' } };
-      }
+              }
 
       try {
         await post(`/packages/enable`, { packageId, ...scopeBody(scopeCtx) });
         if (flags.json) {
-          ctx.ui?.json?.({ ok: true, packageId, scope: scopeCtx.scope });
+          return { ok: true, result: { packageId, scope: scopeCtx.scope } };
         } else {
           ctx.ui?.success?.(`Enabled ${packageId} (${scopeCtx.scope})`);
         }
         return { ok: true, result: { packageId, scope: scopeCtx.scope } };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { packageId: '', scope: '' } };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

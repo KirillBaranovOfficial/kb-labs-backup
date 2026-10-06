@@ -3,7 +3,7 @@
  * Clear current commit plan
  */
 
-import { defineCommand, findRepoRoot, handleError, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, findRepoRoot, handleError, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { clearPlan, hasPlan } from '@kb-labs/commit-core';
 import type { ResetOutput } from '@kb-labs/commit-contracts';
@@ -19,7 +19,7 @@ export default defineCommand({
   description: 'Clear current commit plan',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: ResetInput) {
+    async intent(_ctx: PluginCommandContextV3, input: ResetInput) {
       const scope = input.scope ?? 'root';
       return {
         summary: `Clear commit plan (scope: "${scope}")`,
@@ -27,7 +27,7 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: ResetInput): Promise<ResetResult> {
+    async execute(ctx: PluginCommandContextV3, input: ResetInput): Promise<ResetResult> {
       const startTime = Date.now();
       const cwd = (await findRepoRoot(ctx.cwd || process.cwd())) ?? process.cwd();
 
@@ -54,8 +54,7 @@ export default defineCommand({
       try {
         await clearPlan(cwd, scope);
       } catch (err) {
-        handleError(ctx, err);
-        return { ok: false, error: 'Could not clear the commit plan. Check project storage permissions, then rerun `kb commit reset`.' };
+        return handleError(ctx, err);
       }
 
       ctx.ui?.success?.('Plan Cleared', {

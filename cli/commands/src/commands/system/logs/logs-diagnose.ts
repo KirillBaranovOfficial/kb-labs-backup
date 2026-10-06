@@ -43,7 +43,7 @@ export const logsDiagnose = defineSystemCommand<Flags, DiagnoseResult>({
   async handler(_ctx, _argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return { ok: false, error: 'Log reader not available. Ensure platform is initialized.' };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Log reader not available. Ensure platform is initialized.', hint: "Run `kb logs diagnose --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     const fromTs = flags.from ? parseRelativeTime(flags.from) : Date.now() - 3_600_000;

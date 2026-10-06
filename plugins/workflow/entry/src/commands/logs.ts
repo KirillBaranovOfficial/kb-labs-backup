@@ -2,16 +2,15 @@
  * workflow job logs command - Get raw job logs
  */
 
-import { defineCommand, validationError, handleError, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 
 type LogsInput = { argv?: string[]; json?: boolean; flags?: { json?: boolean } };
 
 type LogEntry = { level: string; message: string; timestamp: string; stepId?: string; [key: string]: unknown };
 
-function renderLogs(ctx: PluginContextV3, logs: LogEntry[], outputJson: boolean): void {
+function renderLogs(ctx: PluginCommandContextV3, logs: LogEntry[], outputJson: boolean): void {
   if (outputJson) {
-    ctx.ui?.json?.({ ok: true, data: { logs } });
     return;
   }
 
@@ -32,14 +31,13 @@ export default defineCommand<unknown, LogsInput, unknown>({
   description: 'Get logs for a raw workflow job',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: LogsInput): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: LogsInput): Promise<CommandResult> {
       const flags = input.flags ?? input;
       const outputJson = flags.json ?? false;
       const jobId = input.argv?.[0];
 
       if (!jobId) {
-        validationError(ctx, 'Missing job ID', 'Usage: kb workflow job logs <jobId>', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return validationError(ctx, 'Missing job ID', 'Usage: kb workflow job logs <jobId>', outputJson);
       }
 
       try {
@@ -48,10 +46,9 @@ export default defineCommand<unknown, LogsInput, unknown>({
         const logs = await client.getJobLogs(jobId);
         renderLogs(ctx, logs as LogEntry[], outputJson);
 
-        return { ok: true };
+        return { ok: true, result: { logs } };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

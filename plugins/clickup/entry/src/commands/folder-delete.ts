@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, deleteFolder } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 
@@ -13,7 +13,7 @@ export default defineCommand({
   description: 'Delete a folder',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<FolderDeleteFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<FolderDeleteFlags>) {
       const [folderId] = input.argv;
       return {
         summary: `Delete folder ${folderId ?? '(unknown)'}`,
@@ -21,30 +21,27 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<FolderDeleteFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<FolderDeleteFlags>) {
       const folderId = input.argv[0] as string | undefined;
       if (!folderId) {
-        validationError(ctx, 'folderId is required', 'Usage: kb clickup folder delete <folderId> --force', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, 'folderId is required', 'Usage: kb clickup folder delete <folderId> --force', input.flags.json);
       }
       if (!input.flags.force) {
-        validationError(ctx, `--force is required to delete folder ${folderId}`, 'Add --force to confirm deletion', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, `--force is required to delete folder ${folderId}`, 'Add --force to confirm deletion', input.flags.json);
       }
 
       try {
         await deleteFolder(requireApiKey(), folderId);
 
         if (input.flags.json) {
-          ctx.ui?.json?.({ ok: true, deleted: true, folderId });
+          return { ok: true, result: { deleted: true, folderId } };
         } else {
           ctx.ui?.success?.(`Deleted folder ${folderId}`);
         }
 
         return { ok: true, result: { deleted: true, folderId } };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

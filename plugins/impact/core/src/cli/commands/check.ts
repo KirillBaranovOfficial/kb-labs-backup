@@ -1,4 +1,4 @@
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import type { ImpactAnalysisResult, ImpactPluginConfig } from '@kb-labs/impact-contracts';
 import {
   findWorkspaceRoot,
@@ -36,7 +36,7 @@ export default defineCommand<unknown, CheckInput, ImpactAnalysisResult>({
 
   handler: {
     async execute(
-      ctx: PluginContextV3<unknown>,
+      ctx: PluginCommandContextV3<unknown>,
       input: CheckInput,
     ): Promise<CommandResult<ImpactAnalysisResult>> {
       const flags = input.flags ?? (input as unknown as CheckFlags);
@@ -45,14 +45,14 @@ export default defineCommand<unknown, CheckInput, ImpactAnalysisResult>({
       try {
         root = findWorkspaceRoot();
       } catch {
-        if (flags.json) {ctx.ui?.json?.(EMPTY_RESULT);}
+        if (flags.json) {return { ok: true, result: EMPTY_RESULT };}
         else {ctx.ui?.warn?.('Could not find workspace root');}
-        return { ok: false, error: 'Could not find workspace root' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Could not find workspace root', hint: "Run `kb impact check --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const changed = detectChangedPackages(root);
       if (changed.length === 0) {
-        if (flags.json) {ctx.ui?.json?.(EMPTY_RESULT);}
+        if (flags.json) {return { ok: true, result: EMPTY_RESULT };}
         else {ctx.ui?.success?.('No changes detected');}
         return { ok: true, result: EMPTY_RESULT };
       }
@@ -78,7 +78,7 @@ export default defineCommand<unknown, CheckInput, ImpactAnalysisResult>({
       const result: ImpactAnalysisResult = { packages, docs, tests, build, recommendations };
 
       if (flags.json) {
-        ctx.ui?.json?.(result);
+        return { ok: true, result: result };
       } else {
         ctx.ui?.write?.(formatHumanReadable(result));
       }

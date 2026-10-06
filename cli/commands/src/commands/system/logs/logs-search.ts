@@ -69,7 +69,7 @@ export const logsSearch = defineSystemCommand<Flags, LogSearchResult>({
     if (!reader) {
       return {
         ok: false,
-        error: "Log reader not available. Ensure platform is initialized.",
+        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log reader not available. Ensure platform is initialized.", hint: "Run `kb logs search --help` to review valid inputs and recovery steps, then retry." },
       };
     }
 
@@ -77,7 +77,7 @@ export const logsSearch = defineSystemCommand<Flags, LogSearchResult>({
     if (!searchText) {
       return {
         ok: false,
-        error: 'Search text required. Usage: kb logs search "your query"',
+        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Search text required. Usage: kb logs search "your query"', hint: "Run `kb logs search --help` to review valid inputs and recovery steps, then retry." },
       };
     }
 

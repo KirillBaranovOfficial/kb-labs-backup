@@ -6,7 +6,7 @@
  *   pnpm kb agent:trace:iteration <taskId> --iteration=5 --json
  */
 
-import { defineCommand, useLogger, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, useLogger, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import type {
   TraceCommandResponse,
@@ -31,7 +31,7 @@ export default defineCommand({
   description: 'View all events for a specific iteration',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: TraceIterationInput): Promise<TraceIterationResult> {
+    async execute(ctx: PluginCommandContextV3, input: TraceIterationInput): Promise<TraceIterationResult> {
       const logger = useLogger();
       const flags = ('flags' in input ? (input as { flags: TraceIterationInput }).flags : input) as TraceIterationInput;
       const taskId = (flags['task-id'] ?? flags.taskId) as string | undefined;
@@ -40,7 +40,7 @@ export default defineCommand({
     if (iteration === undefined || iteration < 1) {
       const err = error('INVALID_ITERATION', 'Missing or invalid --iteration flag (must be >= 1)');
       ctx.ui.write(JSON.stringify(err, null, 2) + '\n');
-      return { ok: false, error: 'Command failed', result: err };
+      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? 'The iteration number is invalid.', hint: 'Pass an iteration number of at least 1 with `kb agents trace iteration --iteration <n>`.' }, result: err };
     }
 
     try {
@@ -53,7 +53,7 @@ export default defineCommand({
           'CORRUPTED_TRACE';
         const err = error(code, formatTraceLoadError(loaded.error));
         ctx.ui.write(JSON.stringify(err, null, 2) + '\n');
-        return { ok: false, error: 'Command failed', result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? 'The trace task ID is invalid.', hint: 'Check the task ID, then rerun `kb agents trace iteration --task-id <id> --iteration <n>`.' }, result: err };
       }
 
       const normalized = normalizeTraceEvents(loaded.events);
@@ -62,7 +62,7 @@ export default defineCommand({
       if (filtered.length === 0) {
         const err = error('INVALID_ITERATION', `No events found for iteration ${iteration}`);
         ctx.ui.write(JSON.stringify(err, null, 2) + '\n');
-        return { ok: false, error: 'Command failed', result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? `No events were found for iteration ${iteration}.`, hint: 'Choose an iteration that exists in this trace, then rerun `kb agents trace iteration --task-id <id> --iteration <n>`.' }, result: err };
       }
 
       // Calculate summary
@@ -98,7 +98,7 @@ export default defineCommand({
       logger.error('trace:iteration error:', err instanceof Error ? err : undefined);
       const errResponse = error('IO_ERROR', err instanceof Error ? err.message : String(err));
       ctx.ui.write(JSON.stringify(errResponse, null, 2) + '\n');
-      return { ok: false, error: 'Command failed', result: errResponse };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: errResponse.error?.message ?? 'The trace iteration could not be read.', hint: 'Check the trace file, then rerun `kb agents trace iteration --task-id <id> --iteration <n>`.' }, result: errResponse };
     }
     },
   },
@@ -152,7 +152,7 @@ interface ErrorIterationEvent {
  * Print human-readable output
  */
 function printHumanReadable(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   iteration: number,
   events: DetailedTraceEntry[],
   summary: IterationResponse['summary']

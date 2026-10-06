@@ -1,4 +1,4 @@
-import { defineCommand, useEnv, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useEnv, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 
 import { post } from '../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../scope.js';
@@ -34,7 +34,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
   description: 'Sync workspace — scan for entities and populate lock',
 
   handler: {
-    async intent(_ctx: PluginContextV3, _input: SyncInput) {
+    async intent(_ctx: PluginCommandContextV3, _input: SyncInput) {
       return {
         summary: 'Sync workspace — scan for entities and populate lock file',
         operations: [
@@ -43,7 +43,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: SyncInput): Promise<CommandResult<SyncResultData>> {
+    async execute(ctx: PluginCommandContextV3, input: SyncInput): Promise<CommandResult<SyncResultData>> {
       const flags = (input.flags ?? input) as SyncFlags;
       const cwd = ctx.cwd ?? process.cwd();
 
@@ -52,11 +52,11 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
         scopeCtx = await resolveCliScope(cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          validationError(ctx, err.message, undefined, flags.json);
+          return validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleError(ctx, err, flags.json);
+          return handleError(ctx, err, flags.json);
         }
-        return { ok: false, error: 'Marketplace scope is not configured', result: { added: [], skipped: [], total: 0 } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Marketplace scope is not configured', hint: "Run `kb marketplace sync --help` to review its inputs and recovery steps, then retry." }, result: { added: [], skipped: [], total: 0 } };
       }
 
       // Sync reads include/exclude patterns from the config file located at
@@ -69,13 +69,13 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
       const syncConfig = await loadSyncConfig(configRoot);
 
       if (!syncConfig.include?.length) {
-        validationError(
+        return validationError(
           ctx,
           `No marketplace.sync.include configured.\n\nAdd to ${configRoot}/.kb/kb.config.json:\n\n  "marketplace": {\n    "sync": {\n      "include": ["plugins/*/entry", "plugins/*/core", "adapters/*"]\n    }\n  }`,
           undefined,
           flags.json,
         );
-        return { ok: false, error: 'No marketplace.sync.include configured', result: { added: [], skipped: [], total: 0 } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No marketplace.sync.include configured', hint: "Run `kb marketplace sync --help` to review its inputs and recovery steps, then retry." }, result: { added: [], skipped: [], total: 0 } };
       }
 
       try {
@@ -88,7 +88,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
         });
 
         if (flags.json) {
-          ctx.ui?.json?.(result);
+          return { ok: true, result: result };
         } else if (result.added.length === 0) {
           ctx.ui?.info?.(`Lock is up to date — ${scopeCtx.scope} (${result.total} entries)`);
         } else {
@@ -102,8 +102,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
 
         return { ok: true, result };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { added: [], skipped: [], total: 0 } };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

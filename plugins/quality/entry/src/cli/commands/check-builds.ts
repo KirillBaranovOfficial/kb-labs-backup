@@ -7,7 +7,7 @@
  * - Build duration tracking
  */
 
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import type { BuildCheckResult } from '@kb-labs/quality-contracts';
 import { CACHE_KEYS } from '@kb-labs/quality-contracts';
 import { checkBuilds } from '@kb-labs/quality-core/builds';
@@ -22,7 +22,7 @@ export default defineCommand({
 
   handler: {
     async execute(
-      ctx: PluginContextV3,
+      ctx: PluginCommandContextV3,
       input: CheckBuildsInput
     ): Promise<CommandResult<BuildCheckResult>> {
       const { ui, platform } = ctx;
@@ -40,7 +40,7 @@ export default defineCommand({
         if (cached) {
           outputBuildCheck({ ...cached, cached: true }, flags, ui);
           return cached.failing > 0
-            ? { ok: false, error: 'Build failures found', result: cached }
+            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Build failures found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: cached }
             : { ok: true, result: cached };
         }
       }
@@ -68,7 +68,7 @@ export default defineCommand({
       outputBuildCheck({ ...result, cached: false }, flags, ui);
 
       return result.failing > 0
-        ? { ok: false, error: 'Build failures found', result }
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Build failures found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result }
         : { ok: true, result };
     },
   },
@@ -80,10 +80,9 @@ export default defineCommand({
 function outputBuildCheck(
   result: BuildCheckResult & { cached?: boolean },
   flags: Record<string, unknown>,
-  ui: PluginContextV3['ui']
+  ui: PluginCommandContextV3['ui']
 ) {
   if (flags.json) {
-    ui?.json?.(result);
     return;
   }
 

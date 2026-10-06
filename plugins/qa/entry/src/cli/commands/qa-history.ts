@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -17,7 +17,7 @@ export default defineCommand<unknown, CLIInput<QaHistoryFlags>, unknown>({
   description: 'Show QA run history',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaHistoryFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaHistoryFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -27,7 +27,7 @@ export default defineCommand<unknown, CLIInput<QaHistoryFlags>, unknown>({
       const history = store.loadRunHistory();
 
       if (flags.json) {
-        ctx.ui?.json?.([...history].reverse().slice(0, limit));
+        return { ok: true, result: [...history].reverse().slice(0, limit) };
       } else {
         for (const section of buildHistoryTable(history, limit)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });

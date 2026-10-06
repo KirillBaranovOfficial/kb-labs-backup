@@ -7,7 +7,7 @@
  * Use --action=reject to reject instead of approve (default is approve).
  */
 
-import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 import { workflowCommandError } from './errors.js';
 import type { RunsApproveFlags } from '../flags.js';
@@ -17,7 +17,7 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
   description: 'Approve or reject a pending approval step in a workflow run',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<RunsApproveFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<RunsApproveFlags>) {
       const runId = input.flags?.['run-id'] ?? input.argv?.[0];
       const action = input.flags?.action ?? 'approve';
       return {
@@ -26,7 +26,7 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<RunsApproveFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunsApproveFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const outputJson = flags?.json ?? false;
       const runId = flags?.['run-id'] ?? argv[0];
@@ -34,19 +34,17 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
       const comment = flags?.comment;
 
       if (!runId) {
-        validationError(
+        return validationError(
           ctx,
           'Missing run ID',
           'Usage: kb workflow runs approve <runId> [--action=approve|reject] [--comment=<text>]\n' +
             '       kb workflow runs approve <runId> --job-id=<jobId> --step-id=<stepId>',
           outputJson,
         );
-        return { ok: false, error: 'Command failed' };
       }
 
       if (action !== 'approve' && action !== 'reject') {
-        validationError(ctx, `Invalid action "${action}" — must be "approve" or "reject"`, '', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return validationError(ctx, `Invalid action "${action}" — must be "approve" or "reject"`, 'Use `--action=approve` or `--action=reject`, then rerun `kb workflow runs approve`.', outputJson);
       }
 
       try {
@@ -63,50 +61,33 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
 
           if (pending.length === 0) {
             if (outputJson) {
-              workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'No pending approvals are available for this run.', `Inspect the run with: kb workflow runs-view ${runId}`, true);
+              return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'No pending approvals are available for this run.', `Inspect the run with: kb workflow runs view ${runId}`, true);
             } else {
-              ctx.ui?.error?.('No pending approvals', {
-                title: runId,
-                sections: [{ header: 'Details', items: ['No steps are currently waiting for approval.'] }],
-              });
+
             }
-            return { ok: false, error: 'Command failed' };
+            return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'No pending approvals are available for this run.', `Inspect the run with: kb workflow runs view ${runId}`, outputJson);
           }
 
           const first = pending[0];
           if (!first) {
             // Guard — cannot happen after the length===0 check above, but satisfies TS.
-            ctx.ui?.error?.('No pending approvals', { title: runId, sections: [] });
-            return { ok: false, error: 'Command failed' };
+
+            return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'No pending approval step was returned for this run.', `Inspect the run with: kb workflow runs view ${runId}`, outputJson);
           }
 
           if (pending.length > 1) {
             // Multiple pending — require explicit targeting.
             if (outputJson) {
-              workflowCommandError(ctx, 'KB_RUNTIME_INPUT_INVALID', 'Multiple approval steps are waiting.', 'Specify both `--job-id` and `--step-id` to choose one approval.', true);
+              return workflowCommandError(ctx, 'KB_RUNTIME_INPUT_INVALID', 'Multiple approval steps are waiting.', 'Specify both `--job-id` and `--step-id` to choose one approval.', true);
             } else {
               const items = pending.map(
                 (p, i) =>
                   `${i + 1}. [job:${p.jobId}] step "${p.stepName}" (${p.stepId})` +
                   (p.waitingSince ? ` — waiting since ${new Date(p.waitingSince).toLocaleString()}` : ''),
               );
-              ctx.ui?.error?.('Multiple pending approvals', {
-                title: runId,
-                sections: [
-                  {
-                    header: 'Specify --job-id and --step-id to resolve one:',
-                    items,
-                  },
-                  {
-                    header: 'Example',
-                    items: [
-                      `kb workflow runs approve ${runId} --job-id=${first.jobId} --step-id=${first.stepId}`,
-                    ],
-                  },
-                ],
-              });
+
             }
-            return { ok: false, error: 'Command failed' };
+            return workflowCommandError(ctx, 'KB_RUNTIME_INPUT_INVALID', 'Multiple approval steps are waiting.', 'Specify both `--job-id` and `--step-id` to choose one approval.', outputJson);
           }
 
           // Single pending — resolve it.
@@ -118,7 +99,7 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
         const result = await client.resolveApproval(runId, jobId, stepId, action, comment);
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: result });
+          return { ok: true, result: result };
         } else {
           const actionLabel = action === 'approve' ? 'Approved' : 'Rejected';
           const icon = action === 'approve' ? '✓' : '✗';
@@ -144,8 +125,7 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
 
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

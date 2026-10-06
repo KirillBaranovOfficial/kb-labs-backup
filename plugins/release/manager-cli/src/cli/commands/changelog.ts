@@ -4,7 +4,7 @@
 
 import { join } from 'node:path';
 import { stat, writeFile, mkdir, readFile } from 'node:fs/promises';
-import { defineCommand, type CLIInput, type PluginContextV3, useLLM, useLoader, displayArtifacts, type ArtifactInfo, useConfig, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3, useLLM, useLoader, displayArtifacts, type ArtifactInfo, useConfig, type CommandResult } from '@kb-labs/sdk';
 import { planRelease, type ReleaseConfig } from '@kb-labs/release-manager-core';
 import { findRepoRoot } from '../../shared/utils';
 import { createChangelogGenerator } from '../../shared/changelog-factory';
@@ -23,6 +23,8 @@ interface ChangelogFlags {
 }
 
 interface ChangelogPayload {
+  packagesCount: number;
+  markdown?: string;
   artifacts?: Array<{ name: string; path: string; size: number }>;
 }
 
@@ -98,7 +100,7 @@ export default defineCommand({
   description: 'Generate changelog from conventional commits',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ChangelogFlags>): Promise<CommandResult<ChangelogPayload>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ChangelogFlags>): Promise<CommandResult<ChangelogPayload>> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -114,7 +116,7 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         loader.fail(`No packages found matching scope: ${flags.scope || 'all'}`);
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release changelog --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const gitCwd = await resolveGitCwd(flags.scope, plan.packages, repoRoot);
@@ -156,11 +158,11 @@ export default defineCommand({
       loader.succeed('Changelog generated successfully');
 
       if (flags.json) {
-        ctx.ui?.json?.({
+        return { ok: true, result: {
           packagesCount: plan.packages.length,
           markdown: format === 'md' || format === 'both' ? markdown : undefined,
           artifacts: artifacts.map(a => ({ name: a.name, path: a.path, size: a.size ?? 0 })),
-        });
+        } };
       } else {
         ctx.ui?.sideBox?.({
           title: 'Changelog Generated',
@@ -170,6 +172,8 @@ export default defineCommand({
       }
 
       return { ok: true, result: {
+        packagesCount: plan.packages.length,
+        markdown: format === 'md' || format === 'both' ? markdown : undefined,
         artifacts: artifacts.map(a => ({ name: a.name, path: a.path, size: a.size ?? 0 })),
       } };
     },

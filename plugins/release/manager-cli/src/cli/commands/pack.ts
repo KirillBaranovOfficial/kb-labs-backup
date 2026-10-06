@@ -3,7 +3,7 @@
  * Atomic step: reads plan, runs npm pack checks, emits output marker for workflow.
  */
 
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3, useLoader, useConfig } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3, useLoader, useConfig } from '@kb-labs/sdk';
 import {
   planRelease,
   verifyPackages,
@@ -52,7 +52,7 @@ export default defineCommand({
   description: 'Verify built package artifacts via npm pack (checks exports, test leaks, syntax)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<PackFlags>): Promise<ReleasePackResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<PackFlags>): Promise<ReleasePackResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -67,9 +67,8 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         const msg = `No packages found${flags.scope ? ` matching scope: ${flags.scope}` : ''}`;
-        if (flags.json) { ctx.ui?.json?.({ ok: true, issues: [], results: [], message: msg }); }
+        if (flags.json) { return { ok: true, result: { issues: [], results: [], message: msg } }; }
         else { ctx.ui?.write?.(msg); }
-        console.log('::kb-output::' + JSON.stringify({ ok: true, issues: [] }));
         return { ok: true, result: { ok: true, issues: [], results: [] } };
       }
 
@@ -92,11 +91,9 @@ export default defineCommand({
         verifyLoader.fail(`${results.filter(r => !r.success).length} package(s) have issues`);
       }
 
-      console.log('::kb-output::' + JSON.stringify({ ok, issues }));
-
       if (flags.json) {
-        ctx.ui?.json?.({ ok, issues, results });
-        return ok ? { ok: true, result: { ok, issues, results } } : { ok: false, error: 'Command failed', result: { ok, issues, results } };
+        return { ok: true, result: { ok, issues, results } };
+        return ok ? { ok: true, result: { ok, issues, results } } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release pack --help` to review its inputs and recovery steps, then retry." }, result: { ok, issues, results } };
       }
 
       ctx.ui?.sideBox?.({
@@ -105,7 +102,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok: true, result: { ok, issues, results } } : { ok: false, error: 'Command failed', result: { ok, issues, results } };
+      return ok ? { ok: true, result: { ok, issues, results } } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release pack --help` to review its inputs and recovery steps, then retry." }, result: { ok, issues, results } };
     },
   },
 });

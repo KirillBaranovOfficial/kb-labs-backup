@@ -6,7 +6,7 @@
  * Use --log-failed to see only the logs from failed steps.
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import type { WorkflowRunDetail } from '../http-client.js';
 import { WorkflowDaemonClient } from '../http-client.js';
 import { workflowCommandError } from './errors.js';
@@ -176,7 +176,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
   description: 'View workflow run details for investigation',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<RunsViewFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunsViewFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const rawJson = flags?.json;
       const jsonFields: string | undefined =
@@ -208,13 +208,17 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
 
         const run = await client.getRun(runId);
 
+        if (jsonFields && run.status === 'failed') {
+          return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', `Workflow run ${runId} failed.`, `Inspect its logs with: kb workflow runs logs ${runId}`, true, run.result?.error?.message);
+        }
+
         // --json=fields output (--json=all for full, --json=status,jobs for selective)
         if (jsonFields) {
           if (jsonFields === 'all') {
-            ctx.ui?.json?.({ ok: true, data: run });
+            return { ok: true, result: run };
           } else {
             const fields = jsonFields.split(',').map(f => f.trim());
-            ctx.ui?.json?.({ ok: true, data: pickFields(run, fields) });
+            return { ok: true, result: pickFields(run, fields) };
           }
           return { ok: true };
         }
@@ -328,13 +332,11 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
         });
 
         if (failed) {
-          workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', `Workflow run ${runId} failed.`, `Inspect its logs with: kb workflow runs-logs ${runId}`, !!jsonFields, run.result?.error?.message);
-          return { ok: false, error: 'Command failed' };
+          return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', `Workflow run ${runId} failed.`, `Inspect its logs with: kb workflow runs logs ${runId}`, !!jsonFields, run.result?.error?.message);
         }
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, !!jsonFields);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, !!jsonFields);
       }
     },
   },

@@ -1,4 +1,4 @@
-import { defineCommand, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 
 interface PrepareInfraFlags {
   sourceRef?: string;
@@ -49,7 +49,7 @@ export default defineCommand<unknown, PrepareInfraInput, PrepareInfraResult>({
   description: 'Materialize workspace, optionally provision environment, optionally capture snapshot.',
   handler: {
     async execute(
-      ctx: PluginContextV3<unknown>,
+      ctx: PluginCommandContextV3<unknown>,
       input: PrepareInfraInput
     ): Promise<CommandResult<PrepareInfraResult>> {
       const flags = input.flags;

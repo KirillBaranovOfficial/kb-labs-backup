@@ -2,7 +2,7 @@
  * agent:history - Show file change history for agent sessions
  */
 
-import { defineCommand, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { SessionManager } from '@kb-labs/agent-core';
 import type { FileChangeSummary, Turn } from '@kb-labs/agent-contracts';
@@ -30,7 +30,7 @@ export default defineCommand({
   description: 'Show file change history for agent sessions',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: HistoryInput): Promise<HistoryResult> {
+    async execute(ctx: PluginCommandContextV3, input: HistoryInput): Promise<HistoryResult> {
       const flags = ('flags' in input && typeof (input as { flags?: unknown }).flags === 'object' && (input as { flags?: unknown }).flags !== null)
         ? (input as { flags: HistoryInput }).flags
         : input;
@@ -54,15 +54,15 @@ export default defineCommand({
           success: false,
           error: error instanceof Error ? error.message : String(error),
         };
-        ctx.ui?.json?.(response);
-        return { ok: false, error: 'Command failed', result: response };
+        return { ok: true, result: response };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: response.error, hint: 'Check the session ID and stored agent history, then rerun `kb agents history`.' }, result: response };
       }
     },
   },
 });
 
 async function showSessionHistory(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   manager: SessionManager,
   sessionId: string,
   asJson: boolean
@@ -70,8 +70,8 @@ async function showSessionHistory(
   const info = await manager.getSessionInfo(sessionId);
   if (!info) {
     const err = { success: false, error: `Session not found: ${sessionId}` };
-    ctx.ui?.json?.(err);
-    return { ok: false, error: 'Command failed', result: err };
+    return { ok: true, result: err };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: err.error, hint: 'Check the stored agent session data, then rerun `kb agents history`.' }, result: err };
   }
 
   const turns = await manager.getTurns(sessionId);
@@ -87,7 +87,7 @@ async function showSessionHistory(
   };
 
   if (asJson) {
-    ctx.ui?.json?.(response);
+    return { ok: true, result: response };
   } else {
     ctx.ui.write(`Session: ${sessionId}\n`);
     ctx.ui.write(`Runs: ${info.runCount} | Changes: ${changes.length}\n\n`);
@@ -103,7 +103,7 @@ async function showSessionHistory(
 }
 
 async function showFileHistory(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   manager: SessionManager,
   filePath: string,
   asJson: boolean
@@ -126,7 +126,7 @@ async function showFileHistory(
   };
 
   if (asJson) {
-    ctx.ui?.json?.(response);
+    return { ok: true, result: response };
   } else {
     ctx.ui.write(`File: ${filePath}\n`);
     ctx.ui.write(`Changes: ${allChanges.length}\n\n`);
@@ -141,7 +141,7 @@ async function showFileHistory(
 }
 
 async function showAgentHistory(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   manager: SessionManager,
   agentId: string,
   asJson: boolean
@@ -164,7 +164,7 @@ async function showAgentHistory(
   };
 
   if (asJson) {
-    ctx.ui?.json?.(response);
+    return { ok: true, result: response };
   } else {
     ctx.ui.write(`Agent: ${agentId}\n`);
     ctx.ui.write(`Changes: ${allChanges.length}\n\n`);
@@ -179,7 +179,7 @@ async function showAgentHistory(
 }
 
 async function listAllSessions(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   manager: SessionManager,
   asJson: boolean
 ): Promise<HistoryResult> {
@@ -205,7 +205,7 @@ async function listAllSessions(
   };
 
   if (asJson) {
-    ctx.ui?.json?.(response);
+    return { ok: true, result: response };
   } else {
     ctx.ui.write(`Sessions: ${data.length}\n\n`);
     for (const s of data) {

@@ -312,11 +312,13 @@ export {
 // Re-export contracts for convenience
 export type {
   PluginContextV3,
+  PluginCommandContextV3,
   PluginContextDescriptor,
   HostContext,
   HostType,
   PermissionSpec,
   UIFacade,
+  PluginHandlerUIFacade,
   Colors,
   ColorFunction,
   SideBoxOptions,

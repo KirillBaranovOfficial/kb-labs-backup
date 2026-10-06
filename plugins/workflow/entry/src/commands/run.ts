@@ -2,7 +2,7 @@
  * workflow:job-run command - Submit a raw job for execution
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginContextV3, useLoader , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3, useLoader , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 import { workflowCommandError } from './errors.js';
 
@@ -20,7 +20,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
 
   handler: {
     // eslint-disable-next-line sonarjs/cognitive-complexity -- Workflow execution with input parsing, validation, wait mode (polling + websocket logs), JSON/human output, and error handling
-    async execute(ctx: PluginContextV3, input: CLIInput<RunFlagsInput>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunFlagsInput>): Promise<CommandResult> {
       const outputJson = input.flags.json ?? false;
       const handler = input.flags.handler;
       const inputStr = input.flags.input;
@@ -28,14 +28,13 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
       const wait = input.flags.wait ?? false;
 
       if (!handler) {
-        workflowCommandError(
+        return workflowCommandError(
           ctx,
           'KB_RUNTIME_INPUT_INVALID',
           'Missing required flag: --handler.',
           'Run `kb workflow job run --help` to see the required flags.',
           outputJson,
         );
-        return { ok: false, error: 'Command failed' };
       }
 
       // Parse input JSON if provided
@@ -44,14 +43,13 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
         try {
           parsedInput = JSON.parse(inputStr);
         } catch {
-          workflowCommandError(
+          return workflowCommandError(
             ctx,
             'KB_RUNTIME_INPUT_INVALID',
             'The --input value is not valid JSON.',
             'Pass valid JSON with `--input`, then retry `kb workflow job run`.',
             outputJson,
           );
-          return { ok: false, error: 'Command failed' };
         }
       }
 
@@ -87,7 +85,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
               break;
             } else if (['failed', 'cancelled', 'skipped', 'dlq'].includes(status.status)) {
               waitLoader.fail('Job failed');
-              workflowCommandError(
+              return workflowCommandError(
                 ctx,
                 'KB_RUNTIME_COMMAND_FAILED',
                 `Job ${result.id} ended with status ${status.status}.`,
@@ -95,7 +93,6 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
                 outputJson,
                 status.error,
               );
-              return { ok: false, error: 'Command failed' };
             }
 
             maxAttempts--;
@@ -103,19 +100,18 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
 
           if (maxAttempts === 0) {
             waitLoader.fail('Timeout waiting for job completion');
-            workflowCommandError(
+            return workflowCommandError(
               ctx,
               'KB_RUNTIME_COMMAND_FAILED',
               `Timed out waiting for job ${result.id} to finish.`,
               `Inspect the job with: kb workflow job status ${result.id}`,
               outputJson,
             );
-            return { ok: false, error: 'Command failed' };
           }
         }
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: result });
+          return { ok: true, result: result };
         } else {
           const resultItems = [
             `Job ID: ${result.id}`,
@@ -136,8 +132,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
 
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

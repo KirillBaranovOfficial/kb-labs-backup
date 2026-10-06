@@ -1,4 +1,4 @@
-import { defineCommand, useConfig, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useConfig, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import type { PolicyConfig } from '@kb-labs/policy-contracts';
 
 type RulesInput = {
@@ -10,13 +10,12 @@ export default defineCommand({
   description: 'Show all policy rules and which categories they apply to',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: RulesInput): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: RulesInput): Promise<CommandResult> {
       const flags = (input as { flags?: RulesInput }).flags ?? input;
       const policyConfig = await useConfig<PolicyConfig>();
 
       if (!policyConfig?.categories || !policyConfig?.rules) {
-        ctx.ui.error('No policies config found in .kb/kb.config.json (expected "policies" key)');
-        return { ok: false, error: 'No policies config found' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No policies config found', hint: "Run `kb policy rules --help` to review its inputs and recovery steps, then retry." } };
       }
 
       // Build reverse map: rule → categories that use it
@@ -36,7 +35,7 @@ export default defineCommand({
           severity: ruleDef.severity,
           appliedTo: ruleToCategories.get(name) ?? [],
         }));
-        ctx.ui.json?.({ rules: output });
+        return { ok: true, result: { rules: output } };
       } else {
         const items = Object.entries(policyConfig.rules).map(([name, ruleDef]) => {
           const categories = ruleToCategories.get(name) ?? [];

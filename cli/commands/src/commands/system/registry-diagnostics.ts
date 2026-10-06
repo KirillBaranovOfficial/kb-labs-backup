@@ -55,7 +55,7 @@ export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, Diagnos
       return { ok: true, report };
     }
 
-    return { ok: false, error: `${report.summary.errors} diagnostic error(s) found`, report };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${report.summary.errors} diagnostic error(s) found`, hint: "Run `kb registry diagnostics --help` to review valid inputs and recovery steps, then retry." }, report };
   },
   formatter(result, ctx, flags) {
     if (flags.json) {

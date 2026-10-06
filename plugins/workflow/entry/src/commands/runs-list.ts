@@ -2,7 +2,7 @@
  * workflow:runs-list command — like `gh run list`
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 
 interface RunsListFlags {
@@ -46,7 +46,7 @@ export default defineCommand<unknown, CLIInput<RunsListFlags>, unknown>({
   description: 'List workflow runs',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<RunsListFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunsListFlags>): Promise<CommandResult> {
       const flags = input.flags;
       const outputJson = flags?.json ?? false;
       const limit = flags?.limit ?? 20;
@@ -60,7 +60,7 @@ export default defineCommand<unknown, CLIInput<RunsListFlags>, unknown>({
         });
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: runs });
+          return { ok: true, result: runs };
           return { ok: true };
         }
 
@@ -98,8 +98,7 @@ export default defineCommand<unknown, CLIInput<RunsListFlags>, unknown>({
 
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

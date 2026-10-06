@@ -1,4 +1,4 @@
-import { defineCommand, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 
 import { post } from '../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../scope.js';
@@ -33,7 +33,7 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
   description: 'Install package(s) from marketplace',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: InstallInput) {
+    async intent(_ctx: PluginCommandContextV3, input: InstallInput) {
       const argv = input.argv ?? [];
       const packages = argv.length > 0 ? argv : ['(no packages specified)'];
       return {
@@ -46,13 +46,12 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: InstallInput): Promise<CommandResult<InstallResultData>> {
+    async execute(ctx: PluginCommandContextV3, input: InstallInput): Promise<CommandResult<InstallResultData>> {
       const argv = input.argv ?? [];
       const flags = (input.flags ?? input) as InstallFlags;
 
       if (argv.length === 0) {
-        validationError(ctx, 'Please specify at least one package to install', 'Usage: kb marketplace install <package>', flags.json);
-        return { ok: false, error: 'Please specify at least one package to install', result: { installed: [], warnings: [], scope: '' } };
+        return validationError(ctx, 'Please specify at least one package to install', 'Usage: kb marketplace install <package>', flags.json);
       }
 
       let scopeCtx;
@@ -60,12 +59,11 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          validationError(ctx, err.message, undefined, flags.json);
+          return validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleError(ctx, err, flags.json);
+          return handleError(ctx, err, flags.json);
         }
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { installed: [], warnings: [], scope: '' } };
-      }
+              }
 
       try {
         const result = await post<InstallResultData>('/packages/install', {
@@ -76,7 +74,7 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
         });
 
         if (flags.json) {
-          ctx.ui?.json?.(result);
+          return { ok: true, result: result };
         } else {
           ctx.ui?.success?.(`Marketplace install completed (${result.scope ?? scopeCtx.scope})`, {
             sections: [
@@ -93,8 +91,7 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
 
         return { ok: true, result };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { installed: [], warnings: [], scope: '' } };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

@@ -61,7 +61,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       loaded = await loadPlatformConfig({ startDir: getContextCwd(ctx), loadEnvFile: false });
     } catch (error) {
       const envelope = toErrorEnvelope(error);
-      return { ok: false, error: envelope.message, envelope };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb adapter list --help` to review valid inputs and recovery steps, then retry." }, envelope };
     }
     const config = loaded.platformConfig;
     const resolvedDefaults = await resolveInstalledAdapterDefaults({

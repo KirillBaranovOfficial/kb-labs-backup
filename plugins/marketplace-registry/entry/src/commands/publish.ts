@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { defineCommand, handleError, validationError, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { registryPostMultipart, registryPatch, resolveRegistryHandle } from '../registry-http.js';
 import { packPlugin } from '../pack-plugin.js';
 
@@ -26,7 +26,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
   description: 'Publish plugin to KB Labs Registry',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<PublishFlags>): Promise<CommandResult<PublishResultData>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<PublishFlags>): Promise<CommandResult<PublishResultData>> {
       const { flags = {} } = input;
       const pluginDir = path.resolve(ctx.cwd, flags.path ?? '.');
       const visibility = flags.private ? 'private' : 'public';
@@ -37,24 +37,22 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
         const content = await fs.readFile(path.join(pluginDir, 'package.json'), 'utf-8');
         pkgJson = JSON.parse(content) as Record<string, unknown>;
       } catch {
-        validationError(ctx, 'Cannot read package.json in current directory', 'Run this command from the plugin root directory', flags.json);
-        return { ok: false, error: 'Cannot read package.json' };
+        return validationError(ctx, 'Cannot read package.json in current directory', 'Run this command from the plugin root directory', flags.json);
       }
 
       if (!pkgJson.name || !pkgJson.version) {
-        validationError(ctx, 'package.json must have name and version fields', undefined, flags.json);
-        return { ok: false, error: 'package.json must have name and version fields' };
+        return validationError(ctx, 'package.json must have name and version fields', undefined, flags.json);
       }
 
       const kb = pkgJson['kb'] as Record<string, unknown> | undefined;
       if (!kb?.manifest && !kb?.adapter) {
-        validationError(
+        return validationError(
           ctx,
           'Not a KB Labs plugin or adapter',
           'Add a kb.manifest or kb.adapter field to package.json',
           flags.json,
         );
-        return { ok: false, error: 'Not a KB Labs plugin or adapter' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Not a KB Labs plugin or adapter', hint: "Run `kb hub publish --help` to review its inputs and recovery steps, then retry." } };
       }
 
       // Read README (non-fatal)
@@ -96,8 +94,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
           });
           return { ok: true };
         } catch (err) {
-          handleError(ctx, err, flags.json);
-          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+          return handleError(ctx, err, flags.json);
         }
       }
 
@@ -110,8 +107,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
         tarball = await packPlugin(pluginDir);
         packMs = Date.now() - t1;
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return handleError(ctx, err, flags.json);
       }
 
       try {
@@ -122,7 +118,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
         );
 
         if (flags.json) {
-          ctx.ui?.json?.(result);
+          return { ok: true, result: result };
           return { ok: true, result };
         }
 
@@ -147,8 +143,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
         return { ok: true, result };
       } catch (err) {
         if (flags.json) {
-          handleError(ctx, err, true);
-          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+          return handleError(ctx, err, true);
         }
         const message = err instanceof Error ? err.message : String(err);
         ctx.ui?.chain?.([
@@ -160,7 +155,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
             timing: Date.now() - t0,
           },
         ]);
-        return { ok: false, error: message };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: message, hint: "Run `kb hub publish --help` to review its inputs and recovery steps, then retry." } };
       }
     },
   },

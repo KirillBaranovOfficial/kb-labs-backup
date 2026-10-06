@@ -1,4 +1,4 @@
-import { defineCommand, handleError, validationError, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { registryPost } from '../registry-http.js';
 
 interface ShareFlags {
@@ -12,6 +12,7 @@ interface ShareTokenResult {
   token?: string;
   pkg?: string;
   expiresAt?: string;
+  added?: string;
 }
 
 export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
@@ -19,24 +20,21 @@ export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
   description: 'Share a private plugin (--with or --link)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ShareFlags>): Promise<CommandResult<ShareTokenResult>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ShareFlags>): Promise<CommandResult<ShareTokenResult>> {
       const { flags = {}, argv = [] } = input;
       const pkg = argv[0];
       const t0 = Date.now();
 
       if (!pkg) {
-        validationError(ctx, 'Package spec is required', 'Usage: kb hub share kb:handle/name [--with handle | --link]', flags.json);
-        return { ok: false, error: 'Package spec is required' };
+        return validationError(ctx, 'Package spec is required', 'Usage: kb hub share kb:handle/name [--with handle | --link]', flags.json);
       }
 
       if (!flags.with && !flags.link) {
-        validationError(ctx, 'Specify --with <handle> to grant access, or --link to generate a share token', undefined, flags.json);
-        return { ok: false, error: 'Specify --with or --link' };
+        return validationError(ctx, 'Specify --with <handle> to grant access, or --link to generate a share token', undefined, flags.json);
       }
 
       if (!pkg.startsWith('kb:')) {
-        validationError(ctx, 'Package must be a kb: spec', 'Example: kb:kirill/my-plugin', flags.json);
-        return { ok: false, error: 'Package must be a kb: spec' };
+        return validationError(ctx, 'Package must be a kb: spec', 'Example: kb:kirill/my-plugin', flags.json);
       }
 
       const sliced = pkg.slice(3);
@@ -44,8 +42,7 @@ export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
       const handle = slashIdx > 0 ? sliced.slice(0, slashIdx) : '';
       const name = slashIdx > 0 ? sliced.slice(slashIdx + 1) : '';
       if (!handle || !name) {
-        validationError(ctx, 'Invalid kb: spec — expected kb:handle/name', undefined, flags.json);
-        return { ok: false, error: 'Invalid kb: spec' };
+        return validationError(ctx, 'Invalid kb: spec — expected kb:handle/name', undefined, flags.json);
       }
 
       try {
@@ -53,7 +50,7 @@ export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
           await registryPost(`/packages/${handle}/${encodeURIComponent(name)}/share/allowlist`, { namespaceId: flags.with });
 
           if (flags.json) {
-            ctx.ui?.json?.({ added: flags.with, pkg });
+            return { ok: true, result: { added: flags.with, pkg } };
             return { ok: true };
           }
 
@@ -74,7 +71,7 @@ export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
         const result = await registryPost<ShareTokenResult>(`/packages/${handle}/${encodeURIComponent(name)}/share/token`, { ttlDays });
 
         if (flags.json) {
-          ctx.ui?.json?.(result);
+          return { ok: true, result: result };
           return { ok: true, result };
         }
 
@@ -97,8 +94,7 @@ export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
 
         return { ok: true, result };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

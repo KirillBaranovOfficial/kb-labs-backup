@@ -1,16 +1,16 @@
-import { defineCommand, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 
 export default defineCommand<unknown, { flags?: { json?: boolean } }, unknown>({
   id: 'workflow:crons-list',
   description: 'List project and plugin workflow schedules',
   handler: {
-    async execute(ctx: PluginContextV3, input): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input): Promise<CommandResult> {
       const outputJson = input.flags?.json ?? false;
       try {
         const result = await new WorkflowDaemonClient().getCronJobs();
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: result });
+          return { ok: true, result: result };
         } else if (result.crons.length === 0) {
           ctx.ui?.warn?.('No workflow crons found. Create one in .kb/crons/<id>.yml, then run: kb workflow crons list');
         } else {
@@ -34,9 +34,9 @@ export default defineCommand<unknown, { flags?: { json?: boolean } }, unknown>({
         }
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
+        return handleError(ctx, error, outputJson);
         if (!outputJson) { ctx.ui?.warn?.('Check the workflow daemon and run: kb workflow crons list --json'); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb workflow crons list --help` to review its inputs and recovery steps, then retry." } };
       }
     },
   },
