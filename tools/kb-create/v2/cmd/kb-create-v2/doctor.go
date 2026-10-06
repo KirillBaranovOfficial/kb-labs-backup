@@ -90,13 +90,17 @@ func (i invocation) runDoctor(output *os.File) int {
 		if readErr != nil {
 			err = fmt.Errorf("read active V2 receipt: %w", readErr)
 		} else {
-			issues, inspectErr := installed.InspectProjections(i.PlatformRoot, active.Plan.Artifacts)
-			if inspectErr != nil {
-				err = inspectErr
-			} else if len(issues) > 0 {
-				manifestFindings = projectionFindings(issues)
+			if active.Plan.ServiceGraph.Profile == "client" {
+				input = doctor.Input{Configured: map[string]bool{}}
 			} else {
-				input, err = automaticDoctorInput(i.PlatformRoot)
+				issues, inspectErr := installed.InspectProjections(i.PlatformRoot, active.Plan.Artifacts)
+				if inspectErr != nil {
+					err = inspectErr
+				} else if len(issues) > 0 {
+					manifestFindings = projectionFindings(issues)
+				} else {
+					input, err = automaticDoctorInput(i.PlatformRoot)
+				}
 			}
 		}
 	}
@@ -120,6 +124,7 @@ func (i invocation) runDoctor(output *os.File) int {
 		if active, readErr := receipt.Read(i.PlatformRoot); readErr == nil {
 			response.PlatformChannel = active.Plan.PlatformChannel
 			response.PlatformVersion = active.Plan.ServiceGraph.PlatformVersion
+			response.Profile = active.Plan.ServiceGraph.Profile
 		}
 		state, stateErr := host.StateHome()
 		if stateErr != nil {
@@ -154,6 +159,9 @@ func (i invocation) runDoctor(output *os.File) int {
 	response.Next = "kb-create install"
 	if response.Installed {
 		response.Next = "kb-create start"
+		if response.Profile == "client" {
+			response.Next = "kb auth login --gateway-url <url> --email <member>"
+		}
 		if response.Running {
 			response.Next = "cd ~/any-project && kb commit"
 		}
@@ -187,6 +195,9 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		if response.PlatformVersion != "" {
 			fmt.Fprintf(output, "Platform version: %s\n", response.PlatformVersion)
+		}
+		if response.Profile != "" {
+			fmt.Fprintf(output, "Profile: %s\n", response.Profile)
 		}
 		fmt.Fprintf(output, "Installed: %s\nRunning: %s\nReachable: %s\nNext: %s\n", installed, running, reachable, next)
 		var warnings []doctor.Finding
@@ -261,6 +272,9 @@ func writeDoctorPlatformChecks(output *os.File, checks []doctor.Check) {
 // inspectPlatform observes the running host. An installation whose host cannot
 // even be built is reported as such rather than aborting the whole report.
 func (i invocation) inspectPlatform(state host.State) doctor.Section {
+	if active, err := receipt.Read(i.PlatformRoot); err == nil && active.Plan.ServiceGraph.Profile == "client" {
+		return doctor.NewSection(nil)
+	}
 	runner, err := host.NewRunner(i.PlatformRoot, state)
 	if err != nil {
 		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The host cannot be inspected: " + err.Error(), Hint: "Repair the installation first."}})

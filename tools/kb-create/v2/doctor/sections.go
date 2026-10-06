@@ -70,6 +70,15 @@ func InspectInstallation(platformRoot string, state host.State) Section {
 		checks = append(checks, Check{ID: "receipt", Detail: "The active installation receipt cannot be read: " + err.Error(), Hint: "Run \"kb-create apply\" to install, or restore a snapshot with \"kb-create rollback\"."})
 		return NewSection(append(checks, stateCheck(state)))
 	}
+	if active.Plan.ServiceGraph.Profile == "client" {
+		if active.Plan.Host != nil || len(active.Plan.ServiceGraph.Services) != 0 {
+			return NewSection([]Check{{ID: "client-profile", Code: contracts.CodeHostSpecInvalid, Detail: "The client profile unexpectedly declares host services."}})
+		}
+		if _, err := os.Stat(filepath.Join(platformRoot, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
+			return NewSection([]Check{{ID: "client-runtime-config", Detail: "The client profile must not contain host runtime configuration."}})
+		}
+		return NewSection([]Check{{ID: "receipt", OK: true, Detail: "client installation " + active.ID}, stateCheck(state)})
+	}
 	checks = append(checks, Check{ID: "receipt", OK: true, Detail: "platform " + active.Plan.ServiceGraph.PlatformVersion + ", receipt " + active.ID})
 	if _, err := os.Stat(filepath.Join(platformRoot, ".kb", "kb.config.jsonc")); err != nil {
 		checks = append(checks, Check{ID: "config", Detail: "The generated runtime config is missing.", Hint: "Run \"kb-create apply\" again to regenerate it."})

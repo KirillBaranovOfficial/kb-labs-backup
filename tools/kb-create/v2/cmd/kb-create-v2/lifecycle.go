@@ -53,6 +53,13 @@ func refuseRunningHost(state host.State, platformRoot string) *diag.Diag {
 	return failure
 }
 
+func refuseApplyBesideRunningHost(state host.State, plan contracts.ResolvedInstallPlan, platformRoot string) *diag.Diag {
+	if plan.Host == nil {
+		return nil
+	}
+	return refuseRunningHost(state, platformRoot)
+}
+
 func refuseForeignHost(state host.State, platformRoot string) *diag.Diag {
 	record, alive := activeLauncher(state)
 	if !alive {

@@ -23,7 +23,7 @@ Source: `docs/architecture/target/08-errors.md`.
 
 **One JSON envelope**, schema in `contracts`, shared by Go and TS via generated
 code or shared fixtures. Fields: `code`, `area`
-(`install|host|auth|project|config|plugin|update|runtime|product`), `stage`,
+(`install|host|auth|project|config|plugin|update|runtime|product|release`), `stage`,
 `severity` (`error|warning`), `retryable`, `message`, `cause`, `hint`,
 `actions[]` (`id`, `label`, `command`), optional `docs`, `correlationId`,
 `details`. `stage` is a closed enum: `preflight`, `resolve`, `apply`, `verify`,

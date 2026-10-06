@@ -39,6 +39,7 @@ const (
 	CodeWizardInputInvalid     = "KB_INSTALL_WIZARD_INPUT_INVALID"
 	CodeSecretInputInvalid     = "KB_INSTALL_SECRET_INPUT_INVALID"
 	CodeReleaseIndexInvalid    = "KB_INSTALL_RELEASE_INDEX_INVALID"
+	CodeReleaseIndexSealFailed = "KB_RELEASE_INDEX_SEAL_FAILED"
 	CodeIndexSchemaUnsupported = "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED"
 	CodeLauncherTooOld         = "KB_INSTALL_LAUNCHER_TOO_OLD"
 	CodeArtifactMismatch       = "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH"
