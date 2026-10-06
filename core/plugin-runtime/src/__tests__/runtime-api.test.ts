@@ -21,21 +21,11 @@ describe('Runtime API', () => {
   let testDir: string;
 
   beforeEach(async () => {
-    // Create temporary test directory in user's home dir (not /var or /tmp)
-    // to avoid DENIED_PATTERNS blocking (/var/, /etc/, /usr/)
-    const homeDir = os.homedir();
-    const testRoot = path.join(homeDir, '.kb-runtime-test');
-    await fs.mkdir(testRoot, { recursive: true });
-    testDir = await fs.mkdtemp(path.join(testRoot, 'test-'));
+    testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-runtime-test-'));
   });
 
   afterEach(async () => {
-    // Clean up test directory
-    try {
-      await fs.rm(testDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    await fs.rm(testDir, { recursive: true, force: true });
   });
 
   describe('fs.readFile', () => {
