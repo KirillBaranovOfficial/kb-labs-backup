@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scoreboard import build_scoreboard, load_cases, render_delta, write_scoreboards
+from scoreboard import build_scoreboard, load_cases, release_claims_for_case, render_delta, write_scoreboards
 
 
 class CaseScoreboardTests(unittest.TestCase):
@@ -75,6 +75,12 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertIs(cases["PC-005"]["release"], False)
         self.assertEqual(cases["S-034"]["status"], "planned")
         self.assertIs(cases["S-034"]["release"], False)
+
+    def test_release_claims_follow_the_case_release_flag(self):
+        catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
+        self.assertEqual(release_claims_for_case("S-109", catalog), [])
+        self.assertEqual(release_claims_for_case("S-100", catalog),
+                         ["S-100.1", "S-100.2", "S-100.3", "S-100.4"])
 
     def test_playwright_tags_and_skip_are_claimed(self):
         self.write_json("studio-playwright-secured.json", {"suites": [{"specs": [{
