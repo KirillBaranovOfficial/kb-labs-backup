@@ -2,48 +2,35 @@ package contracts
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
 )
 
-const sharedDir = "../../../../core/platform/src/error-envelope"
-
-type catalogFile struct {
-	Codes []struct {
-		Code      string     `json:"code"`
-		Area      string     `json:"area"`
-		Stage     ErrorStage `json:"stage"`
-		Severity  string     `json:"severity"`
-		Retryable bool       `json:"retryable"`
-		Message   string     `json:"message"`
-		Hint      string     `json:"hint"`
-	} `json:"codes"`
-}
-
-func loadCatalog(t *testing.T) catalogFile {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(sharedDir, "errors.catalog.json"))
-	if err != nil {
-		t.Fatalf("read shared catalog: %v", err)
-	}
-	var catalog catalogFile
-	if err := json.Unmarshal(data, &catalog); err != nil {
-		t.Fatalf("decode shared catalog: %v", err)
-	}
-	return catalog
-}
-
 func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	cause := os.ErrNotExist
-	value := NewDiag(CodeInputRequired, "required input is missing", "pass --input", cause)
-	if value.Code != CodeInputRequired || value.Hint != "pass --input" || value.Unwrap() != cause {
+	value := NewDiag(CodeInputRequired, "", "", cause)
+	if value.Code != CodeInputRequired || value.Unwrap() != cause {
 		t.Fatalf("diag = %#v; cause was not kept internal", value)
 	}
-	data, err := json.Marshal(value)
+	envelope, err := diag.ToEnvelope(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := diag.LookupCatalog(CodeInputRequired)
+	if !ok {
+		t.Fatal("input-required code is absent from the generated shared catalog")
+	}
+	if envelope.Message != entry.Message || envelope.Hint != entry.Hint || envelope.Area != entry.Area || envelope.Stage != entry.Stage || envelope.Severity != entry.Severity || envelope.Retryable != entry.Retryable {
+		t.Fatalf("envelope = %+v; shared catalog entry = %+v", envelope, entry)
+	}
+	data, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,40 +48,72 @@ func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	}
 }
 
-func TestCatalogCodesAreUniqueAndMatchSharedClikitCatalog(t *testing.T) {
-	catalog := loadCatalog(t)
-	seen := map[string]bool{}
-	for _, entry := range catalog.Codes {
-		if seen[entry.Code] {
-			t.Fatalf("duplicate catalog code %s", entry.Code)
-		}
-		seen[entry.Code] = true
-		if entry.Hint == "" || entry.Message == "" {
-			t.Fatalf("%s needs a message and hint", entry.Code)
-		}
-		shared, ok := diag.LookupCatalog(entry.Code)
-		if !ok || shared.Area != string(entry.Area) || shared.Stage != string(entry.Stage) || shared.Severity != string(entry.Severity) || shared.Retryable != entry.Retryable || shared.Message != entry.Message || shared.Hint != entry.Hint {
-			t.Fatalf("%s differs from shared clikit catalog: %+v", entry.Code, shared)
-		}
-	}
-}
-
 func TestEmittedCodesAreKnown(t *testing.T) {
-	literal := regexp.MustCompile(`"(KB_INSTALL_[A-Z_]+)"`)
-	for _, source := range []string{"../cmd/kb-create-v2/main.go", "../cmd/kb-create-release-index/main.go"} {
-		data, err := os.ReadFile(source)
+	root := ".."
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
-		for _, match := range literal.FindAllSubmatch(data, -1) {
-			if _, ok := LookupCode(string(match[1])); !ok {
-				t.Fatalf("%s uses unknown code %s", source, match[1])
+		if entry.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if filepath.Ext(path) != ".go" || len(base) >= len("_test.go") && base[len(base)-len("_test.go"):] == "_test.go" {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		check := func(code string) {
+			if _, ok := diag.LookupCatalog(code); !ok {
+				t.Errorf("%s emits code %s missing from the generated shared catalog", path, code)
 			}
 		}
-	}
-	for _, code := range []string{CodeIncompatibleComponents, CodeProviderUnresolved, CodeProviderAmbiguous, CodeInputRequired, CodeConfigRequired, CodeArtifactMismatch, CodeServiceGraphMismatch} {
-		if _, ok := LookupCode(code); !ok {
-			t.Fatalf("%s missing from shared catalog", code)
-		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch value := node.(type) {
+			case *ast.ValueSpec:
+				for index, name := range value.Names {
+					if len(name.Name) <= len("Code") || name.Name[:len("Code")] != "Code" || index >= len(value.Values) {
+						continue
+					}
+					literal, ok := value.Values[index].(*ast.BasicLit)
+					if !ok || literal.Kind != token.STRING {
+						continue
+					}
+					code, err := strconv.Unquote(literal.Value)
+					if err == nil {
+						check(code)
+					}
+				}
+			case *ast.CallExpr:
+				if len(value.Args) == 0 {
+					break
+				}
+				name := ""
+				switch function := value.Fun.(type) {
+				case *ast.Ident:
+					name = function.Name
+				case *ast.SelectorExpr:
+					name = function.Sel.Name
+				}
+				if name != "NewDiag" && name != "New" && name != "Wrap" && name != "hostError" {
+					break
+				}
+				literal, ok := value.Args[0].(*ast.BasicLit)
+				if !ok || literal.Kind != token.STRING {
+					break
+				}
+				code, err := strconv.Unquote(literal.Value)
+				if err == nil && len(code) > len("KB_") && code[:len("KB_")] == "KB_" {
+					check(code)
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

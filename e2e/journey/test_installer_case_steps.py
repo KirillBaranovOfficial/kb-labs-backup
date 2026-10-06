@@ -8,10 +8,159 @@ from pathlib import Path
 
 from installer_case_steps import (_seed_doctor_fixture, run_doctor_root_isolation_step,
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
+                                  run_offline_plan_step, run_repeat_plan_readonly_step,
                                   run_uninstall_decline_step)
+from service_steps import Journey, record_candidate_provenance
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_offline_plan_step_executes_with_fake_cli_and_claims_s181_4(self):
+        with tempfile.TemporaryDirectory(prefix="journey-offline-plan-") as temp:
+            root = Path(temp)
+            index = root / "release-index.json"
+            index.write_text("{}")
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                payload = {"ok": True, "data": {"plan": {"artifacts": [{"source": "offline"}]}}}
+                return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+            journey = run_offline_plan_step(mode="local", launcher="kb-create", stable_index=index,
+                                            platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].cases, ["S-181.4"])
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--offline", calls[0])
+
+    def test_repeat_plan_step_quiesces_host_and_keeps_tree_unchanged(self):
+        with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:
+            root = Path(temp) / "platform"
+            marker = root / ".kb/receipt.json"
+            marker.parent.mkdir(parents=True)
+            marker.write_text('{"receipt":"stable"}\n')
+            index = Path(temp) / "release-index.json"
+            index.write_text("{}")
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                command = args[1]
+                if command == "status":
+                    data = {"host": {"state": "running", "healthy": True}, "running": True, "reachable": True}
+                elif command == "plan":
+                    data = {"plan": {"planHash": "same", "artifacts": [{"id": "platform"}],
+                                     "serviceGraph": {"platformVersion": "2.0.0"}}}
+                else:
+                    data = {"operation": command}
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            journey = run_repeat_plan_readonly_step(mode="local", launcher="kb-create", stable_index=index,
+                                                    platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].cases, ["PC-001.8"])
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertEqual([args[1] for args in calls], ["status", "stop", "plan", "plan", "start", "status"])
+
+    def test_repeat_plan_reports_changed_added_and_removed_paths(self):
+        with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-diff-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir()
+            (root / "changed.txt").write_text("before")
+            (root / "removed.txt").write_text("remove")
+            index = Path(temp) / "release-index.json"
+            index.write_text("{}")
+
+            def run_command(args):
+                command = args[1]
+                if command == "status":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "host": {"state": "running"}, "running": True, "reachable": True}}), "")
+                if command == "plan" and not (root / "added.txt").exists():
+                    (root / "changed.txt").write_text("after")
+                    (root / "removed.txt").unlink()
+                    (root / "added.txt").write_text("new")
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                    "plan": {"planHash": "same", "artifacts": [], "serviceGraph": {}}}}), "")
+
+            journey = run_repeat_plan_readonly_step(mode="local", launcher="kb-create", stable_index=index,
+                                                    platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertIn("changed (1): changed.txt", journey.steps[0].message)
+        self.assertIn("added (1): added.txt", journey.steps[0].message)
+        self.assertIn("removed (1): removed.txt", journey.steps[0].message)
+
+    def test_repeat_plan_fails_when_restarted_host_is_unhealthy(self):
+        with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-unhealthy-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir()
+            index = Path(temp) / "release-index.json"
+            index.write_text("{}")
+            status_calls = 0
+
+            def run_command(args):
+                nonlocal status_calls
+                command = args[1]
+                if command == "status":
+                    status_calls += 1
+                    healthy = status_calls == 1
+                    data = {"host": {"state": "running" if healthy else "stopped"},
+                            "running": healthy, "reachable": healthy}
+                elif command == "plan":
+                    data = {"plan": {"planHash": "same", "artifacts": [], "serviceGraph": {}}}
+                else:
+                    data = {"operation": command}
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            journey = run_repeat_plan_readonly_step(mode="local", launcher="kb-create", stable_index=index,
+                                                    platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertIn("host health", journey.steps[0].message)
+
+    def test_repeat_plan_limits_displayed_paths_and_reports_total(self):
+        from installer_case_steps import _format_snapshot_changes
+
+        message = _format_snapshot_changes({"changed": [f"file-{index:02d}" for index in range(22)],
+                                            "added": [], "removed": []})
+
+        self.assertIn("changed (22):", message)
+        self.assertIn("22 path(s) total, showing 20 of 22", message)
+        self.assertNotIn("file-20", message)
+
+    def test_candidate_mismatch_is_typed_orchestration_failure_without_claims(self):
+        with tempfile.TemporaryDirectory(prefix="journey-candidate-provenance-") as temp:
+            report = Path(temp) / "candidate.json"
+            journey = Journey("local", "candidate-provenance-test")
+            step = record_candidate_provenance(journey, "abc1234", {
+                "version": "2.0.0", "commit": "def5678",
+            })
+            journey.write_json(report)
+            payload = json.loads(report.read_text())
+
+        self.assertEqual(step.status, "FAIL")
+        self.assertEqual(journey.result().case_run["claims"], [])
+        self.assertEqual(len(payload["steps"]), 1)
+        step = payload["steps"][0]
+        self.assertEqual(step["capability"], "journey.orchestration")
+        self.assertEqual(step["details"]["code"], "KB_JOURNEY_CANDIDATE_MISMATCH")
+        self.assertIn("abc1234", step["message"])
+        self.assertIn("def5678", step["message"])
+
+    def test_candidate_short_commit_matches_checkout_revision(self):
+        with tempfile.TemporaryDirectory(prefix="journey-candidate-provenance-") as temp:
+            report = Path(temp) / "candidate.json"
+            journey = Journey("local", "candidate-provenance-test")
+            step = record_candidate_provenance(journey, "abc1234567890", {
+                "version": "2.0.0", "commit": "abc1234",
+            })
+            journey.write_json(report)
+
+        self.assertEqual(step.status, "PASS")
+        self.assertEqual(journey.result().case_run["claims"], [])
+
     def test_invalid_analytics_retention_claim_requires_catalogued_start_error(self):
         with tempfile.TemporaryDirectory(prefix="journey-invalid-analytics-retention-") as temp:
             root = Path(temp)
