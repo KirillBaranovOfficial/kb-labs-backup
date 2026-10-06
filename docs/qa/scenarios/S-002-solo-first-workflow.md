@@ -30,4 +30,3 @@ A developer creates the documented local workflow example in a registered projec
 | S-002.4 | Run `kb workflow runs view <run-id>`, replacing the placeholder with the returned ID | Within 60 seconds, detail reports status `success`; the `hello` step output contains `hello-workflow`. |
 | S-002.5 | Run `kb workflow runs list --workflow=hello --json` | JSON includes the same run ID, workflow ID `hello`, and status `success`. |
 | S-002.6 | Run `kb workflow runs view <run-id>` with an unknown ID | CLI reports that the run was not found and gives a next action; it does not print a stack trace. |
-| S-002.7 | Leave the workflow daemon running with no queued jobs for one minute, then query `/api/v1/analytics/events?type=cache.setIfNotExists.error` | The empty-queue poll creates no cache operation analytics rows; a lock held by another worker is treated as contention and does not create an error row. |

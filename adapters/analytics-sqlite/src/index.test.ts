@@ -81,7 +81,7 @@ describe('SQLiteAnalytics', () => {
     expect(events[0]?.payload).toEqual({ model: 'gpt-4', totalTokens: 100 });
   });
 
-  // case: S-191.5
+  // case: S-212.2
   it('prunes events older than the configured retention on startup', async () => {
     const databasePath = join(tmpDir, 'retention.sqlite');
     const seed = new SQLiteAnalytics({ dbPath: databasePath, retentionDays: 365 });
@@ -103,7 +103,7 @@ describe('SQLiteAnalytics', () => {
     }
   });
 
-  // case: S-191.4
+  // case: S-212.1
   it('uses a 90-day retention period when none is configured', async () => {
     const databasePath = join(tmpDir, 'default-retention.sqlite');
     const seed = new SQLiteAnalytics({ dbPath: databasePath, retentionDays: 365 });
@@ -123,7 +123,7 @@ describe('SQLiteAnalytics', () => {
     }
   });
 
-  // case: S-191.5
+  // case: S-212.2
   it('prunes events at least daily while the adapter remains open', async () => {
     vi.useFakeTimers();
     const databasePath = join(tmpDir, 'periodic-retention.sqlite');

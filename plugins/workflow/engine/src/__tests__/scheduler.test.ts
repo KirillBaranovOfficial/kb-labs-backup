@@ -141,7 +141,7 @@ describe('Scheduler', () => {
     expect(result).toBeNull();
   });
 
-  // case: S-002.7
+  // case: S-213.1
   it('does not acquire priority locks while repeatedly polling empty queues', async () => {
     for (let poll = 0; poll < 20; poll++) {
       expect(await scheduler.dequeueJob()).toBeNull();
