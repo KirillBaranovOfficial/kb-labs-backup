@@ -76,6 +76,28 @@ describe("plugin route not-found response", () => {
     expect(JSON.stringify(response.json())).not.toContain("@kb-labs/mistyped-entry");
   });
 
+  // case: S-203.2
+  it("returns the resource-not-found envelope for an unmatched non-plugin REST route", async () => {
+    const registry = {
+      snapshot: () => ({ manifests: [] }),
+      findStoredPluginPackageForRestPrefix: async () => undefined,
+    } as unknown as IEntityRegistry;
+    const app = await server(registry);
+
+    const response = await app.inject({ method: "POST", url: "/api/v1/not-a-route?source=test" });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_RUNTIME_RESOURCE_NOT_FOUND",
+        message: "REST route POST /api/v1/not-a-route was not found.",
+        details: { route: "POST /api/v1/not-a-route" },
+        correlationId: expect.any(String),
+      },
+    });
+  });
+
   it("logs store lookup failures with the request correlation id and keeps the typed 404", async () => {
     const warn = vi.spyOn(platform.logger, "warn");
     const registry = {
@@ -98,7 +120,8 @@ describe("plugin route not-found response", () => {
     );
   });
 
-  it("keeps an unknown endpoint under an installed plugin as an ordinary 404", async () => {
+  // case: S-141.6
+  it("returns a typed route-specific 404 under an installed plugin", async () => {
     const registry = {
       snapshot: () => ({ manifests: [{ scope: "platform", pluginId: "@kb-labs/commit", pluginRoot: "/mock/commit", manifest: {
         id: "@kb-labs/commit",
@@ -110,6 +133,14 @@ describe("plugin route not-found response", () => {
     const response = await app.inject({ method: "GET", url: "/api/v1/plugins/commit/unknown" });
 
     expect(response.statusCode).toBe(404);
-    expect(response.json().error.code).not.toBe("KB_PLUGIN_NOT_INSTALLED");
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_RUNTIME_RESOURCE_NOT_FOUND",
+        message: "REST route GET /api/v1/plugins/commit/unknown was not found for plugin @kb-labs/commit.",
+        hint: "Run `kb marketplace plugins doctor --scope project` to inspect project plugin routes, then use a declared route.",
+        correlationId: expect.any(String),
+      },
+    });
   });
 });

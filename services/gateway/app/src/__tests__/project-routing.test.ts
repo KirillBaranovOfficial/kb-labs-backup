@@ -26,15 +26,15 @@ describe("registerProjectRoutes", () => {
     app = undefined;
   });
 
-  async function setup(routing: (port: number) => ProjectRouting) {
+  async function setup(routing: (port: number) => ProjectRouting, upstreamReply?: { statusCode: number; body: string }) {
     const seen: Array<{ url?: string; headers: Record<string, unknown>; body: string }> = [];
     upstream = createServer((req, res) => {
       const chunks: Buffer[] = [];
       req.on("data", (c: Buffer) => chunks.push(c));
       req.on("end", () => {
         seen.push({ url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString() });
-        res.writeHead(202, { "x-up": "1" });
-        res.end("ok");
+        res.writeHead(upstreamReply?.statusCode ?? 202, { "x-up": "1", "content-type": "application/json" });
+        res.end(upstreamReply?.body ?? '"ok"');
       });
     });
     await new Promise<void>((resolve) => {
@@ -114,5 +114,27 @@ describe("registerProjectRoutes", () => {
 
     expect(res.statusCode).toBe(502);
     expect(released).toBe(1);
+  });
+
+  // case: S-203.2
+  it("wraps a non-envelope upstream 404 as a typed resource-not-found failure", async () => {
+    await setup(() => ({
+      status: () => ({ limit: 1, active: 0, runtimes: [] }),
+      acquire: async () => ({ host: "127.0.0.1", port: (upstream!.address() as { port: number }).port, headers: {}, release: () => undefined }),
+    }), { statusCode: 404, body: '{"error":"Not Found"}' });
+
+    const res = await app!.inject({ method: "GET", url: "/api/v1/projects/p/rest/api/v1/plugins/agents/sessions" });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_RUNTIME_RESOURCE_NOT_FOUND",
+        message: "Project runtime returned HTTP 404 without an error envelope.",
+        hint: "Run `kb marketplace plugins doctor --scope project` to inspect project plugin routes, then retry the request.",
+        details: { upstreamStatus: "404" },
+        correlationId: expect.any(String),
+      },
+    });
   });
 });
