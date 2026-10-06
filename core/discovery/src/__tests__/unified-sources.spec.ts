@@ -166,11 +166,9 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
   });
 
   it('inside one scope workspace > linked > node_modules', async () => {
-    const installed = await makePlugin({ dir: path.join(platform, 'node_modules', 'dup'), id: '@x/dup', version: '1.0.0' });
     const linked = await makePlugin({ dir: path.join(platform, 'linked', 'dup'), id: '@x/dup', version: '2.0.0' });
     await writeLock(platform, {
-      'installed-key': await lockEntry(platform, installed, 'marketplace'),
-      'linked-key': await lockEntry(platform, linked, 'local'),
+      '@x/dup': await lockEntry(platform, linked, 'local'),
     });
 
     const withoutWorkspace = await new DiscoveryManager({ root: platform }).discover();

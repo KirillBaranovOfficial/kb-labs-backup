@@ -29,7 +29,8 @@ async function createPluginDir(
   version = '1.0.0',
 ): Promise<{ dir: string; integrity: string }> {
   const dir = path.join(tmpDir, 'packages', name);
-  await fs.mkdir(dir, { recursive: true });
+  await fs.mkdir(path.join(dir, 'dist'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'dist', 'h.js'), 'export default async () => 0;');
 
   const pkgJson = JSON.stringify({ name: id, version });
   await fs.writeFile(path.join(dir, 'package.json'), pkgJson);
@@ -39,7 +40,7 @@ async function createPluginDir(
       schema: 'kb.plugin/3',
       id,
       version,
-      cli: { commands: [{ id: 'hello', describe: 'hi', handler: './h.js' }] },
+      cli: { commands: [{ id: 'hello', path: 'hello', describe: 'hi', handler: './h.js' }] },
     }),
   );
 
@@ -632,6 +633,66 @@ describe('MarketplaceService', () => {
       const error = report.issues.find(i => i.severity === 'error');
       expect(error).toBeDefined();
       expect(error!.message).toContain('not found');
+      expect(error!.diagnosticCode).toBe('PACKAGE_NOT_FOUND');
+    });
+
+    // case: S-203.18
+    it('reports discovery failures for enabled plugin entries with their diagnostic code', async () => {
+      const { dir, integrity } = await createPluginDir(tmpDir, 'id-mismatch', '@kb-labs/id-mismatch');
+      const source = createMockSource(new Map([['@kb-labs/id-mismatch', { dir, version: '1.0.0', integrity }]]));
+      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'platform' }, ['@kb-labs/id-mismatch']);
+      await fs.writeFile(path.join(dir, 'kb.plugin.json'), JSON.stringify({
+        schema: 'kb.plugin/3', id: '@kb-labs/other-id', version: '1.0.0',
+      }));
+
+      const report = await service.doctor({ scope: 'platform' });
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        packageId: '@kb-labs/id-mismatch',
+        severity: 'error',
+        diagnosticCode: 'PLUGIN_ID_MISMATCH',
+      }));
+    });
+
+    // case: S-203.18
+    it('lists enabled plugins with missing command handlers and their discovery code', async () => {
+      const { dir, integrity } = await createPluginDir(tmpDir, 'missing-handler', '@kb-labs/missing-handler');
+      const source = createMockSource(new Map([['@kb-labs/missing-handler', { dir, version: '1.0.0', integrity }]]));
+      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'platform' }, ['@kb-labs/missing-handler']);
+      await fs.rm(path.join(dir, 'dist', 'h.js'));
+
+      const report = await service.doctor({ scope: 'platform' });
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        packageId: '@kb-labs/missing-handler',
+        severity: 'error',
+        diagnosticCode: 'COMMAND_HANDLER_MISSING',
+        remediation: expect.stringContaining('kb marketplace plugins doctor'),
+      }));
+    });
+
+    // case: S-203.18
+    it('lists enabled plugins with invalid command schemas and their discovery code', async () => {
+      const { dir, integrity } = await createPluginDir(tmpDir, 'invalid-command-schema', '@kb-labs/invalid-command-schema');
+      const source = createMockSource(new Map([['@kb-labs/invalid-command-schema', { dir, version: '1.0.0', integrity }]]));
+      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'platform' }, ['@kb-labs/invalid-command-schema']);
+      await fs.writeFile(path.join(dir, 'kb.plugin.json'), JSON.stringify({
+        schema: 'kb.plugin/3',
+        id: '@kb-labs/invalid-command-schema',
+        version: '1.0.0',
+        cli: { commands: [{ path: 'invalid run', describe: 'Invalid flags', handler: './h.js', flags: [{ name: 'runId', type: 'string' }] }] },
+      }));
+
+      const report = await service.doctor({ scope: 'platform' });
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        packageId: '@kb-labs/invalid-command-schema',
+        severity: 'error',
+        diagnosticCode: 'COMMAND_SCHEMA_INVALID',
+      }));
     });
 
     it('warns about integrity mismatch', async () => {

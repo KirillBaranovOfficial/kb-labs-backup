@@ -1,6 +1,6 @@
 export const manifest = {
   schema: 'kb.plugin/3',
-  id: 'case-fixture',
+  id: '@kb-labs/e2e-analytics-emitter',
   version: '1.0.0',
   display: {
     name: 'Journey Analytics Fixture',
@@ -16,14 +16,14 @@ export const manifest = {
         describe: 'Emit a uniquely marked analytics event through the platform SDK',
         operationType: 'execute',
         handler: './commands/emit.js#default',
-        flags: { marker: { type: 'string', description: 'Unique event marker', required: true } },
+        flags: [{ name: 'marker', type: 'string', description: 'Unique event marker', required: true }],
       },
       {
         path: 'journey llm complete',
         describe: 'Exercise the configured platform LLM adapter',
         operationType: 'execute',
         handler: './commands/complete.js#default',
-        flags: { marker: { type: 'string', description: 'Unique request marker', required: true } },
+        flags: [{ name: 'marker', type: 'string', description: 'Unique request marker', required: true }],
       },
     ],
   },

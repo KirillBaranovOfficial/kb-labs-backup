@@ -257,10 +257,13 @@ describe('POST /auth/token', () => {
 describe('POST /auth/refresh', () => {
   it('returns 200 with new token pair on valid refresh token', async () => {
     authService.refreshTokens.mockResolvedValue({
+      ok: true,
+      payload: {
       accessToken: 'new.access.token',
       refreshToken: 'new.refresh.token',
       expiresIn: 3600,
       tokenType: 'Bearer',
+      },
     });
 
     const res = await app.inject({
@@ -276,8 +279,9 @@ describe('POST /auth/refresh', () => {
     expect(authService.refreshTokens).toHaveBeenCalledWith('valid.refresh.token');
   });
 
-  it('returns 401 when refresh token is invalid (refreshTokens returns null)', async () => {
-    authService.refreshTokens.mockResolvedValue(null);
+  // case: S-203.17
+  it('returns 401 when refresh token is invalid with a safe reason', async () => {
+    authService.refreshTokens.mockResolvedValue({ ok: false, reason: 'expired' });
 
     const res = await app.inject({
       method: 'POST',
@@ -286,7 +290,7 @@ describe('POST /auth/refresh', () => {
     });
 
     expect(res.statusCode).toBe(401);
-    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
+    expect(res.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_TOKEN_EXPIRED', details: { reason: 'expired' } } });
   });
 
   it('returns 400 when refreshToken field is missing', async () => {
@@ -336,7 +340,7 @@ describe('POST /auth/logout/cli token-kind routing', () => {
     const routeApp = Fastify({ logger: false });
     registerGatewayUxErrorResponses(routeApp);
     const routeAuthService = {
-      classifyRefreshToken: vi.fn().mockResolvedValue(kind),
+      classifyRefreshToken: vi.fn().mockResolvedValue({ ok: true, payload: kind }),
       revokeRefreshToken: vi.fn().mockResolvedValue(true),
     };
     const userLogoutFn = vi.fn().mockResolvedValue(undefined);
@@ -363,7 +367,7 @@ describe('POST /auth/logout/cli token-kind routing', () => {
     const routeApp = Fastify({ logger: false });
     registerGatewayUxErrorResponses(routeApp);
     const routeAuthService = {
-      classifyRefreshToken: vi.fn().mockResolvedValue(null),
+      classifyRefreshToken: vi.fn().mockResolvedValue({ ok: false, reason: 'invalid' }),
       revokeRefreshToken: vi.fn(),
     };
     const userLogoutFn = vi.fn();

@@ -11,4 +11,23 @@ describe('CLI unknown command errors', () => {
       details: { command: 'workflow lint', suggestions: 'workflow defs list' },
     });
   });
+
+  // case: S-203.18
+  it('names discovery failures and their exact doctor command in human and JSON errors', () => {
+    const error = createUnknownCommandError('journey analytics emit', [], [{
+      severity: 'error',
+      code: 'COMMAND_HANDLER_MISSING',
+      message: 'Handler missing',
+      context: { pluginId: '@kb-labs/e2e-analytics-emitter' },
+      ts: 0,
+      remediation: 'Build @kb-labs/e2e-analytics-emitter, then run "kb marketplace plugins doctor --scope project".',
+    }]);
+
+    expect(error.hint).toContain('@kb-labs/e2e-analytics-emitter (COMMAND_HANDLER_MISSING)');
+    expect(error.hint).toContain('doctor --scope project');
+    expect(error.details).toMatchObject({
+      command: 'journey analytics emit',
+      pluginDiagnostics: '@kb-labs/e2e-analytics-emitter:COMMAND_HANDLER_MISSING',
+    });
+  });
 });

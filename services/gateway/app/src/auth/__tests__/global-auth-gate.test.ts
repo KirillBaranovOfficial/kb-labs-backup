@@ -102,13 +102,14 @@ describe('Gateway global auth gate', () => {
       if (!method || !isGateProbeMethod(method)) { continue; }
       const url = route.url.replace(/:([A-Za-z0-9_]+)/g, 'test-value').replace(/\*/g, 'probe');
       if (isPlatformPublicRoute(method, url)) { continue; }
-      const response = await app.inject({ method, url });
+      const gatewayUrl = 'http://gateway.test';
+      const response = await app.inject({ method, url, headers: { host: 'gateway.test' } });
       expect(response.statusCode, `${method} ${url}`).toBe(401);
       expect(response.json(), `${method} ${url}`).toMatchObject({
         ok: false,
         error: {
           code: 'KB_AUTH_REQUIRED',
-          hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
+          hint: `Run "kb auth login --gateway-url ${gatewayUrl} --email <email> --password <password>".`,
           correlationId: expect.any(String),
         },
       });

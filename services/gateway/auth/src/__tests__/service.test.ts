@@ -101,14 +101,16 @@ describe('AuthService', () => {
       const tokens = await service.issueTokens(clientId, clientSecret);
 
       const ctx = await service.verify(tokens!.accessToken);
-      expect(ctx).not.toBeNull();
-      expect(ctx!.type).toBe('machine');
-      expect(ctx!.namespaceId).toMatch(/^ns_/);
+      expect(ctx.ok).toBe(true);
+      if (ctx.ok) {
+        expect(ctx.payload.type).toBe('machine');
+        expect(ctx.payload.namespaceId).toMatch(/^ns_/);
+      }
     });
 
     it('returns null for garbage token', async () => {
       const ctx = await service.verify('not-a-jwt');
-      expect(ctx).toBeNull();
+      expect(ctx).toEqual({ ok: false, reason: 'invalid' });
     });
   });
 
@@ -144,9 +146,11 @@ describe('AuthService', () => {
       const first = await service.issueTokens(clientId, clientSecret);
 
       const second = await service.refreshTokens(first!.refreshToken);
-      expect(second).not.toBeNull();
-      expect(second!.accessToken).toBeTruthy();
-      expect(second!.refreshToken).not.toBe(first!.refreshToken); // rotated
+      expect(second.ok).toBe(true);
+      if (second.ok) {
+        expect(second.payload.accessToken).toBeTruthy();
+        expect(second.payload.refreshToken).not.toBe(first!.refreshToken); // rotated
+      }
     });
 
     it('rejects the same refresh token twice (rotation)', async () => {
@@ -158,12 +162,12 @@ describe('AuthService', () => {
 
       await service.refreshTokens(first!.refreshToken);
       const third = await service.refreshTokens(first!.refreshToken);
-      expect(third).toBeNull();
+      expect(third).toEqual({ ok: false, reason: 'revoked' });
     });
 
     it('returns null for garbage refresh token', async () => {
       const result = await service.refreshTokens('not-a-jwt');
-      expect(result).toBeNull();
+      expect(result).toEqual({ ok: false, reason: 'invalid' });
     });
   });
 
@@ -172,7 +176,7 @@ describe('AuthService', () => {
     const tokens = await service.issueTokens(clientId, clientSecret);
     expect(tokens).not.toBeNull();
     expect(await service.revokeRefreshToken(tokens!.refreshToken)).toBe(true);
-    expect(await service.refreshTokens(tokens!.refreshToken)).toBeNull();
+    expect(await service.refreshTokens(tokens!.refreshToken)).toEqual({ ok: false, reason: 'revoked' });
   });
 
   it('does not look up a user refresh token in the machine refresh-token cache', async () => {
@@ -200,10 +204,10 @@ describe('AuthService', () => {
     }, jwtConfig);
 
     await expect(service.classifyRefreshToken(machineRefreshToken)).resolves.toEqual({
-      kind: 'machine', hostId: 'host-1',
+      ok: true, payload: { kind: 'machine', hostId: 'host-1' },
     });
     await expect(service.classifyRefreshToken(userRefreshToken)).resolves.toMatchObject({
-      kind: 'user', userId: 'user-1', tenantId: 'tenant-1', familyId: 'family-1',
+      ok: true, payload: { kind: 'user', userId: 'user-1', tenantId: 'tenant-1', familyId: 'family-1' },
     });
   });
 });

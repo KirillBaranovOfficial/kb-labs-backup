@@ -15,6 +15,7 @@ vi.mock('./credentials.js', () => ({
 import { gatewayApiFetch } from './api-client.js';
 import { readGatewaySuccessData } from './result.js';
 import { SavedAuthFileError } from './saved-auth-file.js';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 describe('gatewayApiFetch auth mapping', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); mocks.session = null; mocks.loadError = null; mocks.refresh.mockReset(); });
@@ -35,7 +36,11 @@ describe('gatewayApiFetch auth mapping', () => {
   it('maps a 401 to the catalog required-auth envelope', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })));
     await expect(gatewayApiFetch('http://127.0.0.1:4000/api')).rejects.toMatchObject({
-      envelope: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".' },
+      envelope: {
+        code: 'KB_AUTH_REQUIRED',
+        hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email> --password <password>".',
+        details: { gatewayUrl: 'http://127.0.0.1:4000' },
+      },
     });
   });
 
@@ -69,6 +74,31 @@ describe('gatewayApiFetch auth mapping', () => {
 });
 
 describe('readGatewaySuccessData', () => {
+  // case: S-203.17
+  it('propagates catalog envelopes and fills the saved Gateway URL generically', async () => {
+    for (const [reason, code] of [
+      ['expired', 'KB_AUTH_TOKEN_EXPIRED'],
+      ['revoked', 'KB_AUTH_SESSION_REVOKED'],
+      ['inactive', 'KB_AUTH_USER_INACTIVE'],
+      ['unknown-issuer', 'KB_AUTH_REQUIRED'],
+    ] as const) {
+      const gatewayUrl = 'https://gateway.test:444';
+      const envelope = createErrorEnvelope(code, {
+        details: { gatewayUrl, reason },
+        correlationId: 'corr-auth',
+      });
+      const response = new Response(JSON.stringify({ ok: false, error: envelope }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      await expect(readGatewaySuccessData(response)).rejects.toMatchObject({
+        envelope: { ...envelope, details: { gatewayUrl, reason } },
+      });
+      await expect(readGatewaySuccessData(new Response(JSON.stringify({ ok: false, error: envelope }))))
+        .rejects.toBeInstanceOf(ErrorEnvelopeError);
+      expect(envelope.hint).toContain(gatewayUrl);
+    }
+  });
+
   // case: S-203.1
   it('unwraps the shared success result returned by Gateway JSON routes', async () => {
     const response = new Response(JSON.stringify({ ok: true, data: { accessToken: 'token' } }), {
@@ -88,6 +118,8 @@ describe('readGatewaySuccessData', () => {
         message: 'The operation failed unexpectedly.', hint: 'Copy diagnostics and contact support.', correlationId: 'corr-1',
       },
     }), { headers: { 'Content-Type': 'application/json' } });
-    await expect(readGatewaySuccessData(failure)).rejects.toThrow('KB_RUNTIME_UNEXPECTED');
+    await expect(readGatewaySuccessData(failure)).rejects.toMatchObject({
+      envelope: { code: 'KB_RUNTIME_UNEXPECTED' },
+    });
   });
 });
