@@ -340,3 +340,14 @@ adapter metrics registry, so it does not synthesize analytics or per-call log
 events as a substitute. Local SQLite analytics retains 90 days by default;
 `platform.adapterOptions.analytics.retentionDays` overrides the age in days.
 Cases: S-002, S-121, S-191.
+
+## 2026-10-07
+
+### Destructive confirmation without a TTY is invalid usage
+
+Destructive `kb-create` operations require explicit `--yes` when no terminal is
+available. Missing confirmation is invalid command usage and exits 2; a
+terminal cancellation remains an operation cancellation and exits 1. A shared
+confirmation boundary applies this rule to uninstall, rollback, and account
+recovery before any destructive action runs.
+Cases: S-050.3–S-050.4, S-024.4, S-203.12.
