@@ -57,6 +57,7 @@ import type {
 } from '@kb-labs/gateway-auth';
 import { registerOAuthRoutes } from './oauth-routes.js';
 import { sendAuthError } from './error-response.js';
+import { authRejectionEnvelope, gatewayRequestUrl } from './tokens.js';
 import { AuthError, verifyCsrfToken } from '@kb-labs/gateway-auth';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import type { UserAuthContext } from './user-auth-middleware.js';
@@ -243,7 +244,11 @@ export function createUserRefreshFn(
     } catch (err) {
       if (err instanceof AuthError) {
         clearSessionCookies(reply, cookieOpts);
-        void sendAuthError(reply, 401, undefined, 'Session expired or revoked');
+        const reason = err.reason === 'expired' || err.reason === 'revoked' || err.reason === 'inactive' || err.reason === 'unknown-issuer'
+          ? err.reason
+          : 'invalid';
+        request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason }, 'Gateway authentication rejected');
+        void reply.code(401).send({ ok: false, error: authRejectionEnvelope(reason, gatewayRequestUrl(request), String(request.id)) });
         return true;
       }
       throw err;
@@ -523,7 +528,11 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       });
     } catch (err) {
       if (err instanceof AuthError) {
-        return sendAuthError(reply, 401, undefined, 'Invalid or expired refresh token');
+        const reason = err.reason === 'expired' || err.reason === 'revoked' || err.reason === 'inactive' || err.reason === 'unknown-issuer'
+          ? err.reason
+          : 'invalid';
+        request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason }, 'Gateway authentication rejected');
+        return reply.code(401).send({ ok: false, error: authRejectionEnvelope(reason, gatewayRequestUrl(request), String(request.id)) });
       }
       throw err;
     }

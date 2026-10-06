@@ -11,6 +11,7 @@
 // Discovery manager
 export { DiscoveryManager, extractEntityKinds } from './discovery-manager.js';
 export type { DiscoveryOptions } from './discovery-manager.js';
+export { resolveCliHandlerPath } from './resolve-cli-handler.js';
 export {
   DISCOVERY_MARKETPLACE_LOCK,
   DISCOVERY_WORKSPACE_FILE,

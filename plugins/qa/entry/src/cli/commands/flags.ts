@@ -121,7 +121,7 @@ export const qaE2eFlakyFlags = defineFlags({
 export type QaE2eFlakyFlags = typeof qaE2eFlakyFlags.infer;
 
 export const qaCiEvidenceCaptureFlags = defineFlags({
-  runId: {
+  'run-id': {
     type: 'string',
     description: 'GitHub Actions run ID (defaults to GITHUB_RUN_ID)',
   },
@@ -134,7 +134,7 @@ export const qaCiEvidenceCaptureFlags = defineFlags({
     description: 'Path for the immutable dossier JSON',
     default: '.kb/qa/ci/dossier.json',
   },
-  excludeJob: {
+  'exclude-job': {
     type: 'string',
     description: 'Comma-separated job names to exclude from evidence (for example, the collector job itself)',
   },

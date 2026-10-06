@@ -2,7 +2,7 @@ import { CredentialsManager } from './credentials.js';
 import { SessionManager } from './session.js';
 import { createErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { randomUUID } from 'node:crypto';
-import { GatewayAuthResponseError } from './result.js';
+import { GatewayAuthResponseError, requiredAuthEnvelope, withGatewayUrl } from './result.js';
 import { SavedAuthFileError, savedAuthFileErrorEnvelope } from './saved-auth-file.js';
 import { isGatewayConnectionFailure } from './connection-errors.js';
 import type { GatewayCredentials, SessionCredentials } from './types.js';
@@ -62,7 +62,12 @@ async function verifies(gatewayUrl: string, accessToken: string): Promise<Platfo
     const response = await fetch(`${gatewayUrl.replace(/\/$/, '')}/auth/me`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    if (response.status === 401) { return { authenticated: false }; }
+    if (response.status === 401) {
+      return classifyFailure(
+        new GatewayAuthResponseError('Gateway verification', 401, await response.text(), gatewayUrl),
+        gatewayUrl,
+      );
+    }
     if (!response.ok) { return { authenticated: false, error: gatewayResponseFailure(response.status) }; }
     return { authenticated: true };
   } catch (error) {
@@ -84,7 +89,11 @@ function classifyFailure(error: unknown, gatewayUrl?: string): PlatformAuthCheck
     };
   }
   if (error instanceof GatewayAuthResponseError && error.status === 401) {
-    return { authenticated: false };
+    return error.envelope
+      ? { authenticated: false, error: withGatewayUrl(error.envelope, gatewayUrl) }
+      : gatewayUrl
+        ? { authenticated: false, error: requiredAuthEnvelope(gatewayUrl) }
+        : { authenticated: false };
   }
   return {
     authenticated: false,

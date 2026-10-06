@@ -307,7 +307,7 @@ export const manifest = {
           name: { type: 'string', description: 'Package name to import after install' },
           registry: { type: 'string', description: 'Registry override for ALL dependency resolution (default: real npm) — e.g. a local staging Verdaccio' },
           json: { type: 'boolean', description: 'Output in JSON format' },
-          additionalTarballs: {
+          'additional-tarballs': {
             type: 'string',
             description:
               'Comma-separated tarball paths for workspace siblings. Forces pnpm to install these exact local ' +
@@ -315,9 +315,9 @@ export const manifest = {
               '— required with --package-manager pnpm to avoid silently testing an already-published, possibly ' +
               'stale, version of an in-repo sibling.',
           },
-          packageManager: {
+          'package-manager': {
             type: 'string',
-            description: '"pnpm" enables the additionalTarballs override path; "npm" (default) keeps the plain Arborist install.',
+            description: '"pnpm" enables the additional-tarballs override path; "npm" (default) keeps the plain Arborist install.',
           },
         }),
 

@@ -43,9 +43,9 @@ const manifest = {
           },
         ],
         examples: [
-          { command: 'kb site page pricing', description: 'Create /pricing page' },
-          { command: 'kb site page solutions/my-solution --badge Solutions', description: 'Create a solutions sub-page' },
-          { command: 'kb site page new-feature --dry-run', description: 'Preview without writing' },
+          'kb site page pricing — create /pricing page',
+          'kb site page solutions/my-solution --badge Solutions — create a solutions sub-page',
+          'kb site page new-feature --dry-run — preview without writing',
         ],
       },
     ],

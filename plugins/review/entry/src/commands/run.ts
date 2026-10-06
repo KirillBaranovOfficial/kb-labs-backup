@@ -28,7 +28,7 @@ type RunFlags = {
   task?: string;
   preset?: string;
   files?: string[];
-  eslintConfig?: string;
+  'eslint-config'?: string;
   cwd?: string;
   json?: boolean;
   agent?: boolean;
@@ -358,7 +358,7 @@ export default defineCommand<unknown, CLIInput<RunFlags>, ReviewResult | AgentRe
           taskContext: flags.task,
           repoScope,
           config: {
-            eslintConfig: flags.eslintConfig ?? fileConfig?.eslintConfig,
+            eslintConfig: flags['eslint-config'] ?? fileConfig?.eslintConfig,
           },
         });
 

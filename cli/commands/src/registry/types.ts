@@ -3,7 +3,7 @@
  * Type definitions for the plugin system
  */
 
-import type { ManifestV3 } from '@kb-labs/plugin-contracts';
+import type { CliFlagDecl, ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { DiscoveryOrigin, DiscoveryScope } from '@kb-labs/core-discovery';
 
 export interface CommandManifest {
@@ -39,21 +39,13 @@ export interface CommandManifest {
   _synthetic?: boolean;
   /** Synthetic entry retained for a locked workspace plugin that needs a build. */
   unavailablePlugin?: boolean;
+  unavailableDiagnostic?: { code: string; remediation: string };
   /** Archetype from manifest — drives automatic flag injection and --schema generation. */
   operationType?: 'read' | 'mutate' | 'execute' | 'analyze';
 }
 
-export interface FlagDefinition {
-  name: string;              // "profile"
-  type: "string" | "boolean" | "number" | "array";
-  alias?: string;            // "p" - single letter
-  default?: unknown;
-  description?: string;
-  describe?: string;
-  choices?: string[];        // ["dev", "prod"] - only for string type
-  required?: boolean;
-  examples?: string[];
-}
+/** Registry reads this after runtime validation; choices stay visible to presentation consumers. */
+export type FlagDefinition = CliFlagDecl & { choices?: readonly string[]; describe?: string; examples?: string[] };
 
 export interface RegisteredCommand {
   manifest: CommandManifest;

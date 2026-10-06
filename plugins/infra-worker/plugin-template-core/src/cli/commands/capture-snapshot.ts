@@ -1,10 +1,10 @@
 import { defineCommand, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 
 interface CaptureSnapshotFlags {
-  workspaceId?: string;
-  environmentId?: string;
+  'workspace-id'?: string;
+  'environment-id'?: string;
   namespace?: string;
-  sourcePath?: string;
+  'source-path'?: string;
 }
 
 interface CaptureSnapshotInput {
@@ -26,10 +26,10 @@ export default defineCommand<unknown, CaptureSnapshotInput, CaptureSnapshotResul
     ): Promise<CommandResult<CaptureSnapshotResult>> {
       const flags = input.flags;
       const snapshot = await ctx.api.snapshot.capture({
-        workspaceId: flags.workspaceId,
-        environmentId: flags.environmentId,
+        workspaceId: flags['workspace-id'],
+        environmentId: flags['environment-id'],
         namespace: flags.namespace,
-        sourcePath: flags.sourcePath,
+        sourcePath: flags['source-path'],
       });
 
       const result: CaptureSnapshotResult = { snapshotId: snapshot.snapshotId };

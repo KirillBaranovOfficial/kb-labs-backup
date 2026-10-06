@@ -36,7 +36,7 @@ export const runFlags = defineFlags({
     type: 'array',
     description: 'File patterns to analyze',
   },
-  eslintConfig: {
+  'eslint-config': {
     type: 'string',
     description: 'ESLint config file path',
   },

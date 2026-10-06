@@ -87,13 +87,13 @@ export function createWsHandler(
     });
 
     const tokenEntry = await resolveToken(token, cache, jwtConfig);
-    if (!tokenEntry || tokenEntry.type !== 'machine') {
+    if (!tokenEntry.ok || tokenEntry.payload.type !== 'machine') {
       clearTimeout(helloTimeout);
       logDiagnosticEvent(logger, {
         domain: 'service',
         event: 'gateway.hosts.ws.auth',
         level: 'warn',
-        reasonCode: 'websocket_auth_failed',
+        reasonCode: tokenEntry.ok ? 'wrong_token_kind' : `token_${tokenEntry.reason}`,
         message: 'Host WebSocket machine token rejected',
         outcome: 'failed',
         serviceId: 'gateway',
@@ -103,7 +103,7 @@ export function createWsHandler(
       return;
     }
 
-    const { userId: hostId, namespaceId } = tokenEntry;
+    const { userId: hostId, namespaceId } = tokenEntry.payload;
     const connectionId = randomUUID();
     const sessionId = randomUUID();
 

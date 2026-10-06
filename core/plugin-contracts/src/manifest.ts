@@ -8,6 +8,7 @@
 import type { PermissionSpec } from "./permissions.js";
 import type { HostType } from "./host-context.js";
 import type { PluginServices } from "./platform.js";
+import type { CliFlagDecl } from './cli-schema.js';
 // ─── Studio V2 (Module Federation Pages) ───────────────────────────
 
 /**
@@ -130,23 +131,6 @@ export interface PlatformRequirements {
 /**
  * CLI command flag definition
  */
-export interface CliFlagDecl {
-  /** Flag name (e.g., 'verbose') */
-  name: string;
-  /** Flag type */
-  type: "string" | "boolean" | "number" | "array";
-  /** Short alias (e.g., 'v' for '--verbose') */
-  alias?: string;
-  /** Default value */
-  default?: unknown;
-  /** Description */
-  description?: string;
-  /** Allowed values (enum) */
-  choices?: string[];
-  /** Required flag */
-  required?: boolean;
-}
-
 /**
  * CLI command declaration.
  *

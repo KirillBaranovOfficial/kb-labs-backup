@@ -12,6 +12,7 @@ import {
   renderManifestCommandHelp,
   renderProductHelp,
   registry,
+  getDiscoveryDiagnostics,
   registerBuiltinSystemCommands,
   generateCommandSchema,
   type RegisteredCommand,
@@ -63,13 +64,30 @@ export function configuredGatewayUrl(): string {
   });
 }
 
-export function createUnknownCommandError(input: string, suggestions: string[] = []) {
+export function createUnknownCommandError(
+  input: string,
+  suggestions: string[] = [],
+  discoveryDiagnostics = getDiscoveryDiagnostics(),
+) {
+  const discoveryFailures = discoveryDiagnostics
+    .filter(event => event.severity === 'error' && event.context?.pluginId)
+    .map(event => ({ pluginId: event.context!.pluginId!, code: event.code, remediation: event.remediation }));
+  const failedPlugins = [...new Map(discoveryFailures.map(item => [`${item.pluginId}:${item.code}`, item])).values()];
+  const remediation = [...new Set(failedPlugins.flatMap(item => item.remediation ? [item.remediation] : []))];
+  const nextStep = remediation.length > 0
+    ? remediation.join(' ')
+    : 'Run "kb marketplace plugins doctor --scope platform".';
   return createErrorEnvelope("KB_RUNTIME_INPUT_INVALID", {
     message: `Unknown command: ${input}`,
-    hint: "Check the command name or run \"kb --help\" to list available commands.",
+    hint: failedPlugins.length > 0
+      ? `Enabled plugin ${failedPlugins.map(item => `${item.pluginId} (${item.code})`).join(', ')} failed to load. ${nextStep} Then retry.`
+      : "Check the command name or run \"kb --help\" to list available commands.",
     details: {
       command: input,
       ...(suggestions.length > 0 ? { suggestions: suggestions.join(", ") } : {}),
+      ...(failedPlugins.length > 0 ? {
+        pluginDiagnostics: failedPlugins.map(item => `${item.pluginId}:${item.code}`).join(', '),
+      } : {}),
     },
   });
 }
@@ -331,8 +349,10 @@ export async function executeCli(
     case "not-found": {
       const input = routeResult.input.join(" ") || "(none)";
       const diagCmd = `kb diag --command "${input}"`;
-      const diagHint = `\nTip: run  ${diagCmd}  to diagnose`;
       const unknownCommand = createUnknownCommandError(input, routeResult.suggestions);
+      const diagHint = unknownCommand.hint !== 'Check the command name or run "kb --help" to list available commands.'
+        ? `\n${unknownCommand.hint}`
+        : `\nTip: run  ${diagCmd}  to diagnose`;
       if (routeResult.suggestions.length > 0) {
         const sugs = routeResult.suggestions.map((s) => `  kb ${s}`).join("\n");
         if (global.json) {

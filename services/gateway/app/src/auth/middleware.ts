@@ -1,6 +1,5 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { ICache } from '@kb-labs/core-platform';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
 import {
   forwardedIdentityHeaders,
   readForwardedIdentity,
@@ -10,7 +9,7 @@ import {
 import type { JwtConfig } from '@kb-labs/gateway-auth';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
-import { resolveToken, extractBearerToken } from './tokens.js';
+import { authRejectionEnvelope, gatewayRequestUrl, resolveToken, extractBearerToken } from './tokens.js';
 import { createUserAuthMiddleware, type UserAuthMiddlewareDeps } from './user-auth-middleware.js';
 
 export const LOCAL_ADMIN_CONTEXT: AuthContext = {
@@ -108,14 +107,7 @@ export function createAuthMiddleware(
   const authEnabled = options.authEnabled !== false;
   const userAuth = options.userAuth ? createUserAuthMiddleware(options.userAuth) : undefined;
   return async function authMiddleware(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-    const unauthorized = (cause?: string) => reply.code(401).send({
-      ok: false,
-      error: createErrorEnvelope('KB_AUTH_REQUIRED', {
-        details: { gatewayUrl: '<url>' },
-        correlationId: String(request.id),
-        ...(cause ? { cause } : {}),
-      }),
-    });
+    const unauthorized = () => reply.code(401).send({ ok: false, error: authRejectionEnvelope(undefined, gatewayRequestUrl(request), String(request.id)) });
     if (isCorsPreflight(request)) { sendCorsPreflight(request, reply); return; }
     if (!request.url.startsWith('/internal/')) { stripForwardedIdentityHeaders(request.headers); }
     if (!authEnabled) {
@@ -159,9 +151,16 @@ export function createAuthMiddleware(
       if (registryPublicRead) { return; }
       return unauthorized();
     }
-    const authContext = await resolveToken(token, cache, jwtConfig).catch(() => null);
-    if (!authContext) { return unauthorized(); }
-    request.authContext = authContext;
+    const verification = await resolveToken(token, cache, jwtConfig);
+    if (!verification.ok) {
+      request.log.warn({
+        event: 'gateway.auth.rejected',
+        requestId: String(request.id),
+        reason: verification.reason,
+      }, 'Gateway authentication rejected');
+      return reply.code(401).send({ ok: false, error: authRejectionEnvelope(verification.reason, gatewayRequestUrl(request), String(request.id)) });
+    }
+    request.authContext = verification.payload;
     Object.assign(request.headers, forwardedIdentityHeaders(request.authContext, options.internalSecret));
   };
 }
