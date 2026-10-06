@@ -28,9 +28,10 @@ describe('workflow:lint', () => {
     const result = await lintCommand.execute(ctx, mockCLIInput({ flags: { path: fixture('invalid.yml') } }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
     // The validation error must mention the offending field (jobs).
-    expect(captured.errors.some((e) => /job/i.test(e))).toBe(true);
+    if (result.ok) { throw new Error('expected workflow lint to fail'); }
+    expect(result.error.message).toMatch(/job/i);
   });
 
   it('CLI-03: --json emits parseable { ok:false, files:[...] }', async () => {
@@ -43,7 +44,9 @@ describe('workflow:lint', () => {
     );
 
     expect(result.ok).toBe(false);
-    const payload = captured.json[0] as { ok: boolean; files: Array<{ ok: boolean; errors: string[] }> };
+    if (result.ok) { throw new Error('expected invalid workflow file to fail'); }
+    expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
+    const payload = result.result as { ok: boolean; files: Array<{ ok: boolean; errors: string[] }> };
     expect(payload.ok).toBe(false);
     expect(payload.files.length).toBe(1);
     expect(payload.files[0]!.ok).toBe(false);
@@ -60,7 +63,8 @@ describe('workflow:lint', () => {
     );
 
     expect(result.ok).toBe(false);
-    const payload = captured.json[0] as { ok: boolean; files: Array<{ relativePath: string; ok: boolean }> };
+    if (result.ok) { throw new Error('expected invalid workflows in directory to fail'); }
+    const payload = result.result as { ok: boolean; files: Array<{ relativePath: string; ok: boolean }> };
     expect(payload.files.length).toBe(2);
     expect(payload.files.some((f) => f.ok)).toBe(true);
     expect(payload.files.some((f) => !f.ok)).toBe(true);

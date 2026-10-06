@@ -283,7 +283,7 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: envelope.message, envelope };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb config show --help` to review valid inputs and recovery steps, then retry." }, envelope };
     }
   },
   formatter(result, ctx, flags) {

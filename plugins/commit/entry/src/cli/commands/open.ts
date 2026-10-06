@@ -3,7 +3,7 @@
  * Show current commit plan
  */
 
-import { defineCommand, findRepoRoot, useConfig, handleError, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, findRepoRoot, useConfig, handleError, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { loadPlan, getCurrentPlanPath, formatCommitMessage } from '@kb-labs/commit-core';
 import { checkPlanStaleness } from '@kb-labs/commit-core/validator';
@@ -22,7 +22,7 @@ export default defineCommand({
   description: 'Show current commit plan',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: OpenInput): Promise<OpenResult> {
+    async execute(ctx: PluginCommandContextV3, input: OpenInput): Promise<OpenResult> {
       const startTime = Date.now();
       const cwd = (await findRepoRoot(ctx.cwd || process.cwd())) ?? process.cwd();
 
@@ -33,8 +33,7 @@ export default defineCommand({
       try {
         plan = await loadPlan(cwd, scope);
       } catch (err) {
-        handleError(ctx, err, input.json);
-        return { ok: false, error: 'Could not load the commit plan. Check project storage, then rerun `kb commit open`.' };
+        return handleError(ctx, err, input.json);
       }
       const planPath = getCurrentPlanPath(cwd, scope);
 
@@ -62,7 +61,7 @@ export default defineCommand({
       };
 
       if (input.json) {
-        ctx.ui?.json?.(output);
+        return { ok: true, result: output };
       } else {
         if (!plan) {
           ctx.ui?.info?.('No commit plan found. Run `kb commit:generate` to create one.');

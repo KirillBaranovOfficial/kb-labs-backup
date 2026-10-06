@@ -262,7 +262,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
       };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: envelope.message, envelope };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb config set --help` to review valid inputs and recovery steps, then retry." }, envelope };
     }
   },
   formatter(result, ctx, flags) {

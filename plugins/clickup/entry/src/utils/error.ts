@@ -1,4 +1,4 @@
-import type { PluginContextV3 } from '@kb-labs/sdk';
+import type { CommandFailure } from '@kb-labs/sdk';
 import { ClickUpApiError } from '@kb-labs/clickup-core';
 
 export { validationError } from '@kb-labs/sdk';
@@ -14,43 +14,26 @@ function apiHint(err: ClickUpApiError): string {
 }
 
 /**
- * Output a structured error and return — call right before `return { ok: false, error: 'Command failed', result: null }`.
- * In JSON mode emits `{ ok: false, error: { code, message, hint?, status? } }`.
+ * Build a typed command failure for the shared CLI result renderer.
  * In CLI mode uses ctx.ui.error() with hint and cause.
  */
-export function handleError(ctx: PluginContextV3, err: unknown, isJson?: boolean): void {
+export function handleError(_ctx: unknown, err: unknown, _isJson?: boolean): CommandFailure {
   if (err instanceof ClickUpApiError) {
     const hint = apiHint(err);
-    if (isJson) {
-      ctx.ui?.json?.({ ok: false, error: { code: err.code, message: err.message, status: err.status, hint } });
-    } else {
-      ctx.ui?.error?.(err.message, { hint, cause: `ClickUp API ${err.status} (${err.code})` });
-    }
-    return;
+    const code = err.status === 401 ? 'KB_AUTH_REQUIRED' : err.status === 403 ? 'KB_PERMISSION_DENIED' : 'KB_RUNTIME_COMMAND_FAILED';
+    return { ok: false, error: { code, message: err.message, hint, details: { clickUpStatus: String(err.status), clickUpCode: err.code } } };
   }
 
   const message = err instanceof Error ? err.message : String(err);
   const isEnvMissing = /CLICKUP_API_KEY|CLICKUP_TEAM_ID/.test(message);
-
-  if (isJson) {
-    ctx.ui?.json?.({
-      ok: false,
-      error: {
-        code: isEnvMissing ? 'ENV_MISSING' : 'INTERNAL_ERROR',
-        message,
-        ...(isEnvMissing && {
-          hint: 'Set CLICKUP_API_KEY (and CLICKUP_TEAM_ID for workspace commands) as environment variables',
-        }),
-      },
-    });
-  } else {
-    ctx.ui?.error?.(message, {
-      ...(isEnvMissing && {
-        hint: 'Set CLICKUP_API_KEY (and CLICKUP_TEAM_ID for workspace commands) as environment variables',
-        command: 'export CLICKUP_API_KEY=pk_xxx CLICKUP_TEAM_ID=yyy',
-      }),
-    });
-  }
+  return {
+    ok: false,
+    error: {
+      code: isEnvMissing ? 'KB_RUNTIME_INPUT_INVALID' : 'KB_RUNTIME_COMMAND_FAILED',
+      message,
+      hint: isEnvMissing ? 'Set CLICKUP_API_KEY and CLICKUP_TEAM_ID as environment variables, then retry.' : 'Run `kb clickup --help` to review command inputs and retry.',
+    },
+  };
 }
 
 /**

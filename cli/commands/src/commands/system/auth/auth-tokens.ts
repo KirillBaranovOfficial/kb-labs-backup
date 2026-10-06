@@ -43,7 +43,7 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
     const fail = (error: string) => {
       if (flags.json) {ctx.ui?.json({ ok: false, error });}
       else {ctx.ui?.error?.(error);}
-      return { ok: false, error };
+      return { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: error, hint: 'Run `kb auth tokens --help` to review valid inputs and recovery steps, then retry.' } };
     };
     const request = async (path: string, method = 'GET', body?: Record<string, string | number>): Promise<Response> => gatewayApiFetch(`http://127.0.0.1:4000${path}`, {
       method,
@@ -58,7 +58,7 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
           const permission = envelope.details?.permission;
           ctx.ui?.error?.(`${envelope.code}: ${envelope.message}${permission ? ` (permission: ${permission})` : ''} ${envelope.hint}`);
         }
-        return { ok: false, error: envelope.message };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb auth tokens --help` to review valid inputs and recovery steps, then retry." } };
       }
       return fail(error instanceof Error ? error.message : String(error));
     };

@@ -51,7 +51,7 @@ describe('workflow:runs cancel', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: { runId: 'run-abc', cancelled: true } });
+    expect(result).toMatchObject({ ok: true, result: { runId: 'run-abc', cancelled: true } });
   });
 
   it('RCX-03: --run-id flag works as alias for positional argument', async () => {
@@ -84,7 +84,7 @@ describe('workflow:runs cancel', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length + captured.warnings.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RCX-05: daemon unavailable returns exitCode 1', async () => {
@@ -121,6 +121,6 @@ describe('workflow:runs cancel', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 });

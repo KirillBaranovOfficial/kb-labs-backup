@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, getListStatuses } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 
@@ -9,18 +9,17 @@ export default defineCommand({
   description: 'List available statuses for a list',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ListStatusesFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ListStatusesFlags>) {
       const [listId] = input.argv;
       if (!listId) {
-        validationError(ctx, 'List ID is required', 'Usage: kb clickup list statuses <listId>  (get IDs via `kb clickup workspace`)', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, 'List ID is required', 'Usage: kb clickup list statuses <listId>  (get IDs via `kb clickup workspace`)', input.flags.json);
       }
 
       try {
         const statuses = await getListStatuses(requireApiKey(), listId);
 
         if (input.flags.json) {
-          ctx.ui?.json?.(input.flags.full ? statuses : statuses.map(s => ({ status: s.status, type: s.type, color: s.color })));
+          return { ok: true, result: input.flags.full ? statuses : statuses.map(s => ({ status: s.status, type: s.type, color: s.color })) };
           return { ok: true, result: statuses };
         }
 
@@ -35,8 +34,7 @@ export default defineCommand({
 
         return { ok: true, result: statuses };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

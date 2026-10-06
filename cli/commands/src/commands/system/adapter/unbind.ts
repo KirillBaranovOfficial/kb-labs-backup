@@ -40,7 +40,7 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
   async handler(ctx, argv, flags) {
     const [slot] = argv;
     if (!slot || !/^[a-z][a-zA-Z0-9-]*$/.test(slot)) {
-      return { ok: false, error: 'Provide a valid adapter slot.' };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Provide a valid adapter slot.', hint: "Run `kb adapter unbind --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     try {
@@ -61,7 +61,7 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
       return { ok: true, slot, file: binding.filePath, changed: binding.changed || options.changed, dryRun: binding.dryRun };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: envelope.message, envelope };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb adapter unbind --help` to review valid inputs and recovery steps, then retry." }, envelope };
     }
   },
   formatter(result, ctx, flags) {
@@ -70,7 +70,7 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
       return;
     }
     if (flags.json) {
-      ctx.ui?.json?.(result.ok ? result : { ok: false, error: result.error });
+      ctx.ui?.json?.(result.ok ? result : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: result.error, hint: "Run `kb adapter unbind --help` to review valid inputs and recovery steps, then retry." } });
       return;
     }
     if (!result.ok) {

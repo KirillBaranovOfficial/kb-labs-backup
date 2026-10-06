@@ -78,6 +78,11 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
         },
       });
       if (blocked) {
+        if (json) {
+          ctx.ui?.json({ ok: false, error: blocked.error });
+        } else {
+          ctx.ui?.error(`${blocked.error.message}\n  Hint:  ${blocked.error.hint}`);
+        }
         return blocked;
       }
 

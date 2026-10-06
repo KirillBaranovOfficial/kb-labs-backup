@@ -1,4 +1,4 @@
-import { defineCommand, handleError, validationError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { whoToContact } from '@kb-labs/steward-core';
 
 type Flags = { project?: string; json?: boolean };
@@ -8,18 +8,17 @@ export default defineCommand({
   description: 'Find who to contact about a topic, with project-scoped priority and a global fallback',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<Flags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const [topic] = input.argv;
       const { project, json } = input.flags;
       if (!topic?.trim()) {
-        validationError(ctx, 'topic is required', 'Usage: kb steward who <topic> [--project=]', json);
-        return { ok: false, error: 'INVALID_ARGS', result: null };
+        return validationError(ctx, 'topic is required', 'Usage: kb steward who <topic> [--project=]', json);
       }
 
       try {
         const candidates = await whoToContact({ topic, projectId: project });
         if (json) {
-          ctx.ui?.json?.({ ok: true, result: candidates });
+          return { ok: true, result: candidates };
         } else if (candidates.length === 0) {
           ctx.ui?.info?.(`Nobody found for "${topic}".`);
         } else {
@@ -33,8 +32,7 @@ export default defineCommand({
         return { ok: true, result: candidates };
       } catch (err) {
         ctx.platform.logger?.error?.('steward:who failed', err instanceof Error ? err : new Error(String(err)));
-        handleError(ctx, err, json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: null };
+        return handleError(ctx, err, json);
       }
     },
   },

@@ -52,9 +52,18 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
             result = run("qa", "cases", "validate", "--json")
             if result.returncode != 0:
                 return f"workspace QA case validation failed (exit {result.returncode}): {result.stderr or result.stdout}"
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as error:
+                return f"workspace QA case validation did not return JSON: {error}"
+            if not isinstance(payload, dict) or payload.get("ok") is not True:
+                return "workspace QA case validation did not return a successful JSON envelope"
+            data = payload.get("data")
+            if not isinstance(data, dict) or data.get("valid") is not True:
+                return "workspace QA case validation envelope did not contain valid case data"
             return None
 
-        journey.step("validate QA cases with the workspace CLI", "workspace-cli", validate_cases, cases=["S-179.2"])
+        journey.step("validate QA cases with the workspace CLI", "workspace-cli", validate_cases, cases=["S-179.2", "S-203.1"])
 
         def list_workspace_adapters() -> str | None:
             result = run("adapter", "list", "--json")

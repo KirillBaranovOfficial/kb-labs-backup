@@ -245,7 +245,13 @@ describe('project remove', () => {
     const res = await run(projectRemove, ['alpha']);
 
     expect(res.code).toBe(1);
-    expect(res.json[0]).toMatchObject({ confirmationRequired: true, destructive: true, reversible: true });
+    expect(res.json[0]).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_CONFIRMATION_REQUIRED',
+        details: { action: 'project remove', reversible: 'true', confirmWith: '--yes' },
+      },
+    });
     expect((await run(projectList, [])).json[0]?.projects).toHaveLength(1);
   });
 

@@ -55,7 +55,7 @@ describe('workspace:list', () => {
     const result = await listCommand.execute(ctx, mockCLIInput({ flags: { gateway: 'http://localhost:4000' } }));
 
     expect(result.ok).toBe(true);
-    expect(result.result.hosts).toHaveLength(1);
+    expect(result).toMatchObject({ result: { hosts: [expect.any(Object)] } });
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -75,7 +75,7 @@ describe('workspace:list', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ hosts: [{ hostId: 'host-1' }] });
+    expect(result.result).toMatchObject({ hosts: [{ hostId: 'host-1' }] });
   });
 
   it('CL-03: empty host list prints info message and returns exitCode 0', async () => {
@@ -93,7 +93,7 @@ describe('workspace:list', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.result.hosts).toHaveLength(0);
+    expect(result).toMatchObject({ result: { hosts: [] } });
     expect(captured.infos.length).toBeGreaterThan(0);
   });
 
@@ -112,7 +112,7 @@ describe('workspace:list', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CL-05: fetch throws (gateway unreachable) — exitCode 1, error reported', async () => {
@@ -126,7 +126,7 @@ describe('workspace:list', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CL-06: multiple hosts — all returned in result', async () => {
@@ -148,6 +148,6 @@ describe('workspace:list', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(result.result.hosts).toHaveLength(2);
+    expect(result).toMatchObject({ result: { hosts: [expect.any(Object), expect.any(Object)] } });
   });
 });

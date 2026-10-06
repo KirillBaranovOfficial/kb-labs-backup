@@ -6,7 +6,7 @@
  * wrapper — all logic lives in the core (`@kb-labs/workflow-runtime`).
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { lintWorkflowFiles } from '@kb-labs/workflow-runtime';
 
 interface LintFlags {
@@ -20,7 +20,7 @@ export default defineCommand<unknown, CLIInput<LintFlags>, unknown>({
   description: 'Validate workflow files against the schema',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<LintFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<LintFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const outputJson = flags?.json ?? false;
       const strict = flags?.strict ?? false;
@@ -32,12 +32,12 @@ export default defineCommand<unknown, CLIInput<LintFlags>, unknown>({
         const isFailed = (r: (typeof results)[number]): boolean =>
           !r.ok || (strict && r.warnings.length > 0);
         const failed = results.filter(isFailed);
+        const firstError = failed.flatMap((file) => file.errors)[0];
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: failed.length === 0, files: results });
           return failed.length === 0
             ? { ok: true, result: { ok: true, files: results } }
-            : { ok: false, error: 'Workflow validation failed', result: { ok: false, files: results } };
+            : { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: firstError ? `Workflow validation failed: ${firstError}` : 'Workflow validation failed.', hint: 'Fix the file and field errors in the result, then rerun `kb workflow lint`.' }, result: { ok: false, files: results } };
         }
 
         if (results.length === 0) {
@@ -50,13 +50,13 @@ export default defineCommand<unknown, CLIInput<LintFlags>, unknown>({
             ctx.ui?.info?.(`✓ ${r.relativePath}`);
             continue;
           }
-          ctx.ui?.error?.(`✗ ${r.relativePath}`);
+
           for (const err of r.errors) {
-            ctx.ui?.error?.(`    ${err}`);
+
           }
           if (strict) {
             for (const warn of r.warnings) {
-              ctx.ui?.error?.(`    (warning) ${warn}`);
+
             }
           }
         }
@@ -66,11 +66,9 @@ export default defineCommand<unknown, CLIInput<LintFlags>, unknown>({
           return { ok: true };
         }
 
-        ctx.ui?.warn?.(`${failed.length}/${results.length} file(s) failed validation`);
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: firstError ? `${failed.length}/${results.length} workflow file(s) failed validation: ${firstError}` : `${failed.length}/${results.length} workflow file(s) failed validation.`, hint: 'Fix the file and field errors above, then rerun `kb workflow lint`.' }, result: { ok: false, files: results } };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

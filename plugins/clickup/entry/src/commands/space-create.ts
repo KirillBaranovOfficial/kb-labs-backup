@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, requireTeamId, createSpace } from '@kb-labs/clickup-core';
 import { handleError, validationError } from '../utils/error.js';
 
@@ -16,7 +16,7 @@ export default defineCommand({
   description: 'Create a new space',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<SpaceCreateFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<SpaceCreateFlags>) {
       const { name } = input.flags;
       return {
         summary: `Create space "${name ?? '(unnamed)'}"`,
@@ -24,11 +24,10 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<SpaceCreateFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<SpaceCreateFlags>) {
       const { name, color, json, full } = input.flags;
       if (!name) {
-        validationError(ctx, '--name is required', undefined, json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, '--name is required', undefined, json);
       }
 
       try {
@@ -39,7 +38,7 @@ export default defineCommand({
         });
 
         if (json) {
-          ctx.ui?.json?.(full ? space : { id: space.id, name: space.name });
+          return { ok: true, result: full ? space : { id: space.id, name: space.name } };
         } else {
           ctx.ui?.success?.('Space created', {
             sections: [{ items: [`id: ${space.id}`, `name: ${space.name}`] }],
@@ -48,8 +47,7 @@ export default defineCommand({
 
         return { ok: true, result: space };
       } catch (err) {
-        handleError(ctx, err, json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, json);
       }
     },
   },

@@ -6,7 +6,7 @@
  * while still using the snapshot env.
  */
 
-import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 import type { RunsRestartFlags } from '../flags.js';
 
@@ -15,7 +15,7 @@ export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
   description: 'Restart a run from a specific step, inheriting outputs of all preceding steps',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<RunsRestartFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<RunsRestartFlags>) {
       const runId = input.flags?.['run-id'] ?? input.argv[0];
       const fromStep = input.flags?.['from-step'];
       return {
@@ -24,19 +24,19 @@ export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<RunsRestartFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunsRestartFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const outputJson = flags?.json ?? false;
       const runId = flags?.['run-id'] ?? argv[0];
 
       if (!runId) {
-        validationError(
+        return validationError(
           ctx,
           'Missing run ID',
           'Usage: kb workflow runs-restart <runId> [--from-step=<stepId>]',
           outputJson,
         );
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb workflow runs restart --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const fromStepId = flags?.['from-step'];
@@ -46,7 +46,7 @@ export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
         const result = await client.restartRun(runId, { fromStepId });
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: result });
+          return { ok: true, result: result };
         } else {
           ctx.ui?.success?.('Workflow Restart Triggered', {
             title: runId,
@@ -69,8 +69,7 @@ export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
 
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

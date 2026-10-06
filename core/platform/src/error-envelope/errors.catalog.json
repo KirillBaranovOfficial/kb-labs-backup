@@ -795,6 +795,15 @@
       "hint": "Make the platform package a peer dependency of the plugin and reinstall it; run \"kb plugin doctor\" for details."
     },
     {
+      "code": "KB_PLUGIN_CONTRACT_VIOLATION",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin command violated the command result contract.",
+      "hint": "Return command data from the handler, or return a typed failure with a catalogued code, message, and hint."
+    },
+    {
       "code": "KB_PLUGIN_CRASHED",
       "area": "plugin",
       "stage": "run",
@@ -1053,7 +1062,25 @@
       "severity": "error",
       "retryable": false,
       "message": "The command could not complete.",
-      "hint": "Resolve the reported command failure, then run the command again."
+      "hint": "Run `kb <command> --help` to review required inputs, then rerun the command."
+    },
+    {
+      "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The requested resource was not found.",
+      "hint": "Check the resource ID or name, then rerun the command."
+    },
+    {
+      "code": "KB_RUNTIME_CONFIRMATION_REQUIRED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "This destructive action requires explicit confirmation.",
+      "hint": "Verify the target and effect, then rerun the command with --yes."
     },
     {
       "code": "KB_HOST_SERVICE_ADDRESS_MISSING",

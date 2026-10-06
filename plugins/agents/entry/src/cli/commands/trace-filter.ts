@@ -7,7 +7,7 @@
  *   pnpm kb agent:trace:filter <taskId> --type=error:captured
  */
 
-import { defineCommand, useLogger, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, useLogger, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import type {
   TraceCommandResponse,
@@ -59,7 +59,7 @@ export default defineCommand({
   description: 'Filter trace events by type for debugging',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: TraceFilterInput): Promise<TraceFilterResult> {
+    async execute(ctx: PluginCommandContextV3, input: TraceFilterInput): Promise<TraceFilterResult> {
       const logger = useLogger();
       const flags: TraceFilterInput =
         (typeof input === 'object' && input !== null && 'flags' in input)
@@ -71,7 +71,7 @@ export default defineCommand({
     if (!eventType) {
       const err = error('INVALID_EVENT_TYPE', 'Missing required --type flag');
       ctx.ui.write(JSON.stringify(err, null, 2) + '\n');
-      return { ok: false, error: 'Command failed', result: err };
+      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? 'The task ID is invalid.', hint: 'Pass a valid task ID with `kb agents trace filter --task-id <id>`.' }, result: err };
     }
 
     if (!VALID_EVENT_TYPES.includes(eventType)) {
@@ -80,7 +80,7 @@ export default defineCommand({
         `Invalid event type: ${eventType}. Valid types: ${VALID_EVENT_TYPES.join(', ')}`
       );
       ctx.ui.write(JSON.stringify(err, null, 2) + '\n');
-      return { ok: false, error: 'Command failed', result: err };
+      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? 'The trace was not found.', hint: 'Choose an existing trace, then rerun `kb agents trace filter --task-id <id>`.' }, result: err };
     }
 
     try {
@@ -93,7 +93,7 @@ export default defineCommand({
           'CORRUPTED_TRACE';
         const err = error(code, formatTraceLoadError(loaded.error));
         ctx.ui.write(JSON.stringify(err, null, 2) + '\n');
-        return { ok: false, error: 'Command failed', result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: err.error?.message ?? 'The trace could not be filtered.', hint: 'Check the trace data, then rerun `kb agents trace filter --task-id <id>`.' }, result: err };
       }
 
       const { events } = loaded;
@@ -131,7 +131,7 @@ export default defineCommand({
       logger.error('trace:filter error:', err instanceof Error ? err : undefined);
       const errResponse = error('IO_ERROR', err instanceof Error ? err.message : String(err));
       ctx.ui.write(JSON.stringify(errResponse, null, 2) + '\n');
-      return { ok: false, error: 'Command failed', result: errResponse };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: errResponse.error?.message ?? 'The trace could not be filtered.', hint: 'Check the trace data, then rerun `kb agents trace filter --task-id <id>`.' }, result: errResponse };
     }
     },
   },
@@ -140,7 +140,7 @@ export default defineCommand({
 /**
  * Print human-readable output
  */
-function printHumanReadable(ctx: PluginContextV3, eventType: string, events: DetailedTraceEntry[]): void {
+function printHumanReadable(ctx: PluginCommandContextV3, eventType: string, events: DetailedTraceEntry[]): void {
   ctx.ui.write('\n');
   ctx.ui.write(`🔍 Filtered Events: ${eventType}\n`);
   ctx.ui.write(`Found ${events.length} events\n`);

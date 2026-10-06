@@ -59,8 +59,8 @@ describe('marketplace:uninstall', () => {
     const result = await uninstallCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect(captured.json[0]).toMatchObject({ ok: true, removed: ['my-plugin'] });
+    expect(result.result).toBeDefined();
+    expect(result.result).toMatchObject({ removed: ['my-plugin'] });
   });
 
   it('CU-03: HTTP error — returns exitCode 1 with error captured', async () => {
@@ -71,7 +71,7 @@ describe('marketplace:uninstall', () => {
     const result = await uninstallCommand.execute(ctx, mockCLIInput({ argv: ['missing-pkg'], flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CU-04: missing argv — returns exitCode 1 without calling HTTP', async () => {

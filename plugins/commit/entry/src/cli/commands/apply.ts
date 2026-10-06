@@ -3,7 +3,7 @@
  * Apply current commit plan
  */
 
-import { defineCommand, useLoader, useConfig, findRepoRoot, validationError, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, useLoader, useConfig, findRepoRoot, validationError, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import {
   applyCommitPlan,
@@ -28,7 +28,7 @@ export default defineCommand({
   description: 'Apply current commit plan',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: ApplyInput) {
+    async intent(_ctx: PluginCommandContextV3, input: ApplyInput) {
       const scope = input.scope ?? 'root';
       return {
         summary: `Apply current commit plan (scope: "${scope}")`,
@@ -36,7 +36,7 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: ApplyInput): Promise<ApplyResult> {
+    async execute(ctx: PluginCommandContextV3, input: ApplyInput): Promise<ApplyResult> {
       const startTime = Date.now();
       const cwd = (await findRepoRoot(ctx.cwd || process.cwd())) ?? process.cwd();
 
@@ -52,8 +52,7 @@ export default defineCommand({
 
       if (!plan) {
         loadLoader.fail('No commit plan found');
-        validationError(ctx, 'No commit plan found', 'Run `kb commit:generate` first', input.json);
-        return { ok: false, error: 'No commit plan found. Run `kb commit generate` first.' };
+        return validationError(ctx, 'No commit plan found', 'Run `kb commit generate` first', input.json);
       }
 
       if (plan.commits.length === 0) {
@@ -101,7 +100,7 @@ export default defineCommand({
       };
 
       if (input.json) {
-        ctx.ui?.json?.(output);
+        return { ok: true, result: output };
       } else {
         if (result.success) {
           // Build commits section
@@ -139,20 +138,7 @@ export default defineCommand({
           const errorItems = result.errors.map((error) => error);
           const timing = Date.now() - startTime;
 
-          ctx.ui?.error?.('Failed to apply commits', {
-            title: 'Apply Commit Plan',
-            sections: [
-              {
-                header: 'Summary',
-                items: [`Total errors: ${result.errors.length}`],
-              },
-              {
-                header: 'Errors',
-                items: errorItems,
-              },
-            ],
-            timing,
-          });
+
         }
       }
 
@@ -162,7 +148,7 @@ export default defineCommand({
         meta: {
           timing: Date.now() - startTime,
         },
-      } : { ok: false, error: 'Commit apply failed', result: output };
+      } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit apply failed', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' }, result: output };
     },
   },
 });

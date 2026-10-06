@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import { scanWorkspace, buildPackageMap } from '@kb-labs/quality-core';
@@ -22,7 +22,7 @@ export default defineCommand<unknown, CLIInput<ContextFlags>, unknown>({
   description: 'Package context for agents: layer, dependents, dependencies, coupling',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ContextFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ContextFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QualityPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -47,7 +47,7 @@ export default defineCommand<unknown, CLIInput<ContextFlags>, unknown>({
           const summary = Object.fromEntries(
             [...byLayer.entries()].map(([l, names]) => [LAYER_NAMES[l] ?? `layer-${l}`, names])
           );
-          ctx.ui?.json?.({ totalPackages: packages.length, byLayer: summary });
+          return { ok: true, result: { totalPackages: packages.length, byLayer: summary } };
           return { ok: true };
         }
 
@@ -64,8 +64,8 @@ export default defineCommand<unknown, CLIInput<ContextFlags>, unknown>({
 
       const pkg = packageMap.get(pkgName);
       if (!pkg) {
-        ctx.ui?.error?.(`Package not found: ${pkgName}`);
-        return { ok: false, error: 'Command failed' };
+
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Package not found: ${pkgName}`, hint: 'Check the package name, then rerun `kb quality context --package <name>`.' } };
       }
 
       // Workspace deps (efferent)
@@ -93,7 +93,7 @@ export default defineCommand<unknown, CLIInput<ContextFlags>, unknown>({
       };
 
       if (flags.json) {
-        ctx.ui?.json?.(context);
+        return { ok: true, result: context };
         return { ok: true };
       }
 

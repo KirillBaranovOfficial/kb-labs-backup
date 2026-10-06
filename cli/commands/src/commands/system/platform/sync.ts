@@ -95,7 +95,16 @@ export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, Platfo
       return { ok: true, status: 'success' as const, sync: result };
     }
 
-    return { ok: false, error: result.errors.join('; ') || 'Platform sync failed', status: 'error' as const, sync: result };
+    return {
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        message: result.errors.join('; ') || 'Platform sync failed',
+        hint: 'Run `kb platform sync --help` to review recovery steps, then retry.',
+      },
+      status: 'error' as const,
+      sync: result,
+    };
   },
   // eslint-disable-next-line sonarjs/cognitive-complexity
   formatter(result, ctx, flags) {

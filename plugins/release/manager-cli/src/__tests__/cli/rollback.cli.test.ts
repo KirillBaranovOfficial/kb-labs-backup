@@ -38,13 +38,13 @@ describe('release:rollback', () => {
   });
 
   it('ROLL-02: --json outputs structured result', async () => {
-    const { ui, captured } = createCapturedUI();
+    const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: '/project' });
 
-    await rollbackCommand.execute(ctx as never, mockCLIInput<RollbackFlags>({ flags: { json: true } }));
+    const result = await rollbackCommand.execute(ctx as never, mockCLIInput<RollbackFlags>({ flags: { json: true } }));
 
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect((captured.json[0] as { result: { message: string } }).result.message).toBe('Rollback completed');
+    expect(result.result).toBeDefined();
+    expect((result.result as { message: string }).message).toBe('Rollback completed');
   });
 
   it('ROLL-03: --dry-run shows intent, restoreSnapshot is NOT called', async () => {

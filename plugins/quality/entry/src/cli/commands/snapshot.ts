@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -36,7 +36,7 @@ export default defineCommand<unknown, CLIInput<SnapshotFlags>, unknown>({
   description: 'Collect all quality metrics and save a snapshot for trend tracking',
 
   handler: {
-    async intent(_ctx: PluginContextV3, _input: CLIInput<SnapshotFlags>) {
+    async intent(_ctx: PluginCommandContextV3, _input: CLIInput<SnapshotFlags>) {
       return {
         summary: 'Collect all quality metrics and save snapshot for trend tracking',
         operations: [
@@ -45,7 +45,7 @@ export default defineCommand<unknown, CLIInput<SnapshotFlags>, unknown>({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<SnapshotFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<SnapshotFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QualityPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -92,9 +92,7 @@ export default defineCommand<unknown, CLIInput<SnapshotFlags>, unknown>({
         git: git ?? { commit: '', branch: '', message: '' },
       });
 
-      if (flags.json) {
-        ctx.ui?.json?.(snap);
-      } else {
+      if (!flags.json) {
         ctx.ui?.success?.(`Snapshot saved: score ${snap.score}/100 (${snap.grade})`, {
           sections: [{
             header: 'Dimensions',
@@ -105,7 +103,7 @@ export default defineCommand<unknown, CLIInput<SnapshotFlags>, unknown>({
         });
       }
 
-      return { ok: true };
+      return { ok: true, result: snap };
     },
   },
 });

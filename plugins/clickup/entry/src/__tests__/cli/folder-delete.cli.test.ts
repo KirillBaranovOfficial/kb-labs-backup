@@ -56,7 +56,7 @@ describe('clickup:folder.delete', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, deleted: true, folderId: 'folder-1' });
+    expect(result.result).toMatchObject({ deleted: true, folderId: 'folder-1' });
   });
 
   it('FD-03: missing folderId argv — exitCode 1, error shown', async () => {
@@ -68,7 +68,7 @@ describe('clickup:folder.delete', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('FD-04: missing --force — exitCode 1, error shown', async () => {
@@ -80,7 +80,7 @@ describe('clickup:folder.delete', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('FD-05: core function throws — exitCode 1, error shown', async () => {
@@ -94,7 +94,7 @@ describe('clickup:folder.delete', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('FD-06: --dry-run shows intent, deleteFolder is NOT called', async () => {

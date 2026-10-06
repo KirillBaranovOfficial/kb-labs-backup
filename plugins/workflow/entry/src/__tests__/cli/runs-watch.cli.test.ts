@@ -132,13 +132,16 @@ describe('workflow:runs watch', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await runsWatchCommand.execute(
+    const result = await runsWatchCommand.execute(
       ctx,
       mockCLIInput({ argv: ['run-abc'], flags: { json: true } }),
     );
 
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect((captured.json[0] as { data: { event: unknown } }).data.event).toBeTruthy();
+    expect(result.ok).toBe(true);
+    if (!result.ok) { throw new Error('expected workflow watch to succeed'); }
+    const payload = result.result as { events: Array<{ type: string }> };
+    expect(payload.events).toHaveLength(2);
+    expect(payload.events[0]?.type).toBe('run.snapshot');
   });
 
   it('CW-05: daemon connection refused — error message, exitCode 1', async () => {
@@ -152,7 +155,7 @@ describe('workflow:runs watch', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('CW-06: log.appended events are forwarded to ctx.ui.log()', async () => {

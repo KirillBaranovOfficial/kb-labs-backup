@@ -67,8 +67,8 @@ describe('marketplace:install', () => {
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect(captured.json[0]).toMatchObject({ installed: expect.any(Array) });
+    expect(result.result).toBeDefined();
+    expect(result.result).toMatchObject({ installed: expect.any(Array) });
   });
 
   it('CI-03: HTTP error — returns exitCode 1 with error captured', async () => {
@@ -79,7 +79,7 @@ describe('marketplace:install', () => {
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: ['bad-pkg'], flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it.each([false, true])('renders KB_PLUGIN_NOT_FOUND through the shared presenter (json=%s)', async (json) => {
@@ -99,10 +99,11 @@ describe('marketplace:install', () => {
 
     expect(result.ok).toBe(false);
     if (json) {
-      expect(captured.json[0]).toEqual({ ok: false, error: envelope });
+      expect(result).toMatchObject({ ok: false, error: envelope });
     } else {
-      expect(captured.errors[0]).toBe(`${envelope.message} [${envelope.code}]`);
-      expect(captured.warnings.at(-1)?.opts).toMatchObject({ hint: envelope.hint });
+      expect(result).toMatchObject({ ok: false, error: envelope });
+      expect(captured.errors).toHaveLength(0);
+      expect(captured.json).toHaveLength(0);
     }
   });
 

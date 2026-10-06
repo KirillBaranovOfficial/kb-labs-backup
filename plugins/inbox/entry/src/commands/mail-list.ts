@@ -31,7 +31,6 @@ export default defineCommand({
         });
 
         if (input.flags.json) {
-          ctx.ui?.json?.({ ok: true, result: messages });
           return { ok: true, result: messages };
         }
 
@@ -52,8 +51,7 @@ export default defineCommand({
 
         return { ok: true, result: messages };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

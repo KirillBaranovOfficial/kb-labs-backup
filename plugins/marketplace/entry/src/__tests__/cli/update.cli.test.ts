@@ -79,8 +79,8 @@ describe('marketplace:update', () => {
     const result = await updateCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect(captured.json[0]).toMatchObject({ installed: expect.any(Array) });
+    expect(result.result).toBeDefined();
+    expect(result.result).toMatchObject({ installed: expect.any(Array) });
   });
 
   it('CUP-04: HTTP error — returns exitCode 1 with error captured', async () => {
@@ -91,7 +91,7 @@ describe('marketplace:update', () => {
     const result = await updateCommand.execute(ctx, mockCLIInput({ argv: ['pkg'], flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('CUP-05: scope resolution failure — returns exitCode 1', async () => {

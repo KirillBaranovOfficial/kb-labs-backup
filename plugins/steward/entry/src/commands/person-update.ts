@@ -1,4 +1,4 @@
-import { defineCommand, handleError, validationError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { updatePerson } from '@kb-labs/steward-core';
 import { parseList } from '../utils/flags.js';
 
@@ -9,29 +9,25 @@ export default defineCommand({
   description: "Update a contact's name, topics, or company",
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<Flags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const [id] = input.argv;
       const { name, topics, company, json } = input.flags;
       if (!id) {
-        validationError(ctx, 'id is required', 'Usage: kb steward person update <id> [--name] [--topics] [--company]', json);
-        return { ok: false, error: 'INVALID_ARGS', result: null };
+        return validationError(ctx, 'id is required', 'Usage: kb steward person update <id> [--name] [--topics] [--company]', json);
       }
 
       try {
         const person = await updatePerson({ id, name, globalTopics: parseList(topics), companyId: company });
         if (!person) {
-          if (json) {ctx.ui?.json?.({ ok: false, error: { code: 'NOT_FOUND', message: `No person "${id}"` } });}
-          else {ctx.ui?.error?.(`No person "${id}"`);}
-          return { ok: false, error: 'NOT_FOUND', result: null };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No person "${id}"`, hint: "Run `kb steward person update --help` to review the failure and next steps." }, result: null };
         }
 
-        if (json) {ctx.ui?.json?.({ ok: true, result: person });}
+        if (json) {return { ok: true, result: person };}
         else {ctx.ui?.info?.(`Updated "${person.name}"`);}
         return { ok: true, result: person };
       } catch (err) {
         ctx.platform.logger?.error?.('steward:person.update failed', err instanceof Error ? err : new Error(String(err)));
-        handleError(ctx, err, json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: null };
+        return handleError(ctx, err, json);
       }
     },
   },

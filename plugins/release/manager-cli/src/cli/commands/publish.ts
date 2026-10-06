@@ -5,7 +5,7 @@
  * Token-first (programmatic), OTP fallback for interactive terminal.
  */
 
-import { defineCommand, type CLIInput, type PluginContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
 import { planRelease, type ReleaseConfig } from '@kb-labs/release-manager-core';
 import { findRepoRoot } from '../../shared/utils';
 import { publishPackagesProgrammatic, type ProgrammaticPublishResult } from '../../shared/publish-programmatic';
@@ -82,7 +82,7 @@ export default defineCommand({
   description: 'Publish packages to npm registry',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<PublishFlags>): Promise<PublishResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<PublishFlags>): Promise<PublishResult> {
       const { flags } = input;
       const { scope, otp: initialOtp, tag, access, json } = flags;
       const dryRun = flags['dry-run'];
@@ -108,11 +108,11 @@ export default defineCommand({
       if (packages.length === 0) {
         const msg = `No packages found to publish${scope ? ` matching scope: ${scope}` : ''}`;
         if (json) {
-          ctx.ui?.json?.({ error: msg });
+          return { ok: true, result: { error: msg } };
         } else {
           ctx.ui?.write?.(msg);
         }
-        return { ok: false, error: 'Command failed', result: { summary: { total: 0, successful: 0, failed: 0 } } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release publish --help` to review its inputs and recovery steps, then retry." }, result: { summary: { total: 0, successful: 0, failed: 0 } } };
       }
 
       let rawResult: ProgrammaticPublishResult | PublishWithOTPResult;
@@ -139,17 +139,11 @@ export default defineCommand({
 
       const publishResult = toPublishResult(rawResult.results);
 
-      console.log('::kb-output::' + JSON.stringify({
-        published: publishResult.published?.map(p => `${p.name}@${p.version}`) ?? [],
-        failed: publishResult.failed?.map(p => p.name) ?? [],
-      }));
-
       const response = publishResult.success
         ? { ok: true as const, result: publishResult }
-        : { ok: false as const, error: 'Publish failed', result: publishResult };
+        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Publish failed', hint: 'Inspect failed package details, resolve registry errors, then rerun `kb release publish`.' }, result: publishResult };
 
       if (json) {
-        ctx.ui?.json?.(response);
         return response;
       }
 

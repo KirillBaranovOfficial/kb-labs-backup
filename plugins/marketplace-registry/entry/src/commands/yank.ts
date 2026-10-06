@@ -1,4 +1,4 @@
-import { defineCommand, handleError, validationError, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { registryPost } from '../registry-http.js';
 
 interface YankFlags {
@@ -11,19 +11,17 @@ export default defineCommand<unknown, CLIInput<YankFlags>, unknown>({
   description: 'Yank a specific version (soft-remove — tarball stays, fresh installs blocked)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<YankFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<YankFlags>): Promise<CommandResult> {
       const { flags = {}, argv = [] } = input;
       const [pkg, version] = argv;
       const t0 = Date.now();
 
       if (!pkg || !version) {
-        validationError(ctx, 'Package spec and version are required', 'Usage: kb hub yank kb:handle/name <version>', flags.json);
-        return { ok: false, error: 'Package spec and version are required' };
+        return validationError(ctx, 'Package spec and version are required', 'Usage: kb hub yank kb:handle/name <version>', flags.json);
       }
 
       if (!pkg.startsWith('kb:')) {
-        validationError(ctx, 'Package must be a kb: spec', 'Example: kb:kirill/my-plugin', flags.json);
-        return { ok: false, error: 'Package must be a kb: spec' };
+        return validationError(ctx, 'Package must be a kb: spec', 'Example: kb:kirill/my-plugin', flags.json);
       }
 
       const sliced = pkg.slice(3);
@@ -31,15 +29,14 @@ export default defineCommand<unknown, CLIInput<YankFlags>, unknown>({
       const handle = slashIdx > 0 ? sliced.slice(0, slashIdx) : '';
       const name = slashIdx > 0 ? sliced.slice(slashIdx + 1) : '';
       if (!handle || !name) {
-        validationError(ctx, 'Invalid kb: spec — expected kb:handle/name', undefined, flags.json);
-        return { ok: false, error: 'Invalid kb: spec' };
+        return validationError(ctx, 'Invalid kb: spec — expected kb:handle/name', undefined, flags.json);
       }
 
       try {
         await registryPost(`/packages/${handle}/${encodeURIComponent(name)}/${version}/yank`, { reason: flags.reason });
 
         if (flags.json) {
-          ctx.ui?.json?.({ yanked: true, pkg, version });
+          return { ok: true, result: { yanked: true, pkg, version } };
           return { ok: true };
         }
 
@@ -59,8 +56,7 @@ export default defineCommand<unknown, CLIInput<YankFlags>, unknown>({
 
         return { ok: true };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

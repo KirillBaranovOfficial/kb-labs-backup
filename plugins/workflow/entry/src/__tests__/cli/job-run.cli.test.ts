@@ -62,10 +62,10 @@ describe('workflow job run', () => {
     const result = await jobRunCommand.execute(ctx, mockCLIInput({ flags: { handler: 'foo#default', json: true } }));
 
     expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: { id: string; status: string } };
+    const payload = result as { ok: boolean; result: { id: string; status: string } };
     expect(payload.ok).toBe(true);
-    expect(payload.data.id).toBe('job-abc');
-    expect(payload.data.status).toBe('queued');
+    expect(payload.result.id).toBe('job-abc');
+    expect(payload.result.status).toBe('queued');
   });
 
   it('CJR-03: --input passes parsed JSON to submitJob', async () => {
@@ -97,7 +97,7 @@ describe('workflow job run', () => {
     }));
 
     expect(result.ok).toBe(false);
-    expect(captured.json[0]).toMatchObject({
+    expect(result).toMatchObject({
       ok: false,
       error: { code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) },
     });
@@ -129,7 +129,7 @@ describe('workflow job run', () => {
     const result = await resultPromise;
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: { status: 'success' } });
+    expect(result).toMatchObject({ ok: true, result: { status: 'success' } });
   });
 
   it('CJR-05 failure: --wait reports a catalogued failure envelope', async () => {
@@ -150,7 +150,7 @@ describe('workflow job run', () => {
     const result = await resultPromise;
 
     expect(result.ok).toBe(false);
-    expect(captured.json[0]).toMatchObject({
+    expect(result).toMatchObject({
       ok: false,
       error: { code: 'KB_RUNTIME_COMMAND_FAILED', hint: expect.any(String) },
     });
@@ -162,7 +162,7 @@ describe('workflow job run', () => {
     const result = await jobRunCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(false);
-    expect(captured.json[0]).toMatchObject({
+    expect(result).toMatchObject({
       ok: false,
       error: { code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) },
     });
@@ -180,6 +180,6 @@ describe('workflow job run', () => {
     const result = await jobRunCommand.execute(ctx, mockCLIInput({ flags: { handler: 'foo#default' } }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 });

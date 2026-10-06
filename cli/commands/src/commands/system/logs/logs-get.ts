@@ -59,18 +59,18 @@ export const logsGet = defineSystemCommand<Flags, LogGetResult>({
     if (!reader) {
       return {
         ok: false,
-        error: "Log reader not available. Ensure platform is initialized.",
+        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log reader not available. Ensure platform is initialized.", hint: "Run `kb logs get --help` to review valid inputs and recovery steps, then retry." },
       };
     }
 
     const id = argv[0];
     if (!id) {
-      return { ok: false, error: "Log ID required. Usage: kb logs get <id>" };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log ID required. Usage: kb logs get <id>", hint: "Run `kb logs get --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     const log = await reader.getById(id);
     if (!log) {
-      return { ok: false, error: `Log not found: ${id}` };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Log not found: ${id}`, hint: "Run `kb logs get --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     let related: RelatedLogEntry[] | undefined;

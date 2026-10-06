@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import { QualitySnapshotStore } from '@kb-labs/quality-core';
@@ -14,7 +14,7 @@ export default defineCommand<unknown, CLIInput<HistoryFlags>, unknown>({
   description: 'Show quality snapshot history and trends',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<HistoryFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<HistoryFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QualityPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -31,7 +31,7 @@ export default defineCommand<unknown, CLIInput<HistoryFlags>, unknown>({
       const recent = snapshots.slice(-limit).reverse();
 
       if (flags.json) {
-        ctx.ui?.json?.({ snapshots: recent, delta, latest });
+        return { ok: true, result: { snapshots: recent, delta, latest } };
         return { ok: true };
       }
 

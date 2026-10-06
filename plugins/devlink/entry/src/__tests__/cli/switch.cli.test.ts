@@ -60,7 +60,7 @@ describe('devlink:switch', () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: '/project' });
 
-    const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'link' } }));
+    const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'local' } }));
 
     expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
@@ -74,7 +74,7 @@ describe('devlink:switch', () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: '/project' });
 
-    const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'link' } }));
+    const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'local' } }));
 
     expect(result.ok).toBe(true);
     expect(vi.mocked(applyPlan)).not.toHaveBeenCalled();
@@ -88,21 +88,21 @@ describe('devlink:switch', () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: '/project' });
 
-    const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'link' } }));
+    const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'local' } }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('SW-04: --dry-run shows intent, applyPlan is NOT called', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: '/project' });
 
-    const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'link', 'dry-run': true } }));
+    const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'local', 'dry-run': true } }));
 
     expect(result.ok).toBe(true);
     expect(vi.mocked(applyPlan)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
-    expect(captured.infos[0]?.message).toContain('link');
+    expect(captured.infos[0]?.message).toContain('local');
   });
 });

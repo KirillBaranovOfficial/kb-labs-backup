@@ -51,10 +51,10 @@ describe('steward:resource.add', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toBe('INVALID_ARGS');
+      expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddResource).not.toHaveBeenCalled();
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('requires at least one of --url/--content', async () => {
@@ -67,9 +67,9 @@ describe('steward:resource.add', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toBe('INVALID_ARGS');
+      expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddResource).not.toHaveBeenCalled();
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 });

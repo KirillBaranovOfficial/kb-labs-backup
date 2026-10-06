@@ -61,8 +61,8 @@ describe('clickup:list.update', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ id: 'list-1', name: 'Updated List' });
-    expect(Object.keys(captured.json[0] as object)).toEqual(['id', 'name']);
+    expect(result.result).toMatchObject({ id: 'list-1', name: 'Updated List' });
+    expect(Object.keys(result.result as object)).toEqual(['id', 'name']);
   });
 
   it('LU-02b: --json --full outputs raw updated list', async () => {
@@ -76,7 +76,7 @@ describe('clickup:list.update', () => {
     );
 
     expect(result.ok).toBe(true);
-    const raw = captured.json[0] as typeof mockUpdatedList;
+    const raw = result.result as typeof mockUpdatedList;
     expect(raw.orderindex).toBeDefined();
     expect(raw.taskCount).toBeDefined();
   });
@@ -90,7 +90,7 @@ describe('clickup:list.update', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LU-04: core function throws — exitCode 1, error shown', async () => {
@@ -104,7 +104,7 @@ describe('clickup:list.update', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LU-05: --dry-run shows intent, updateList is NOT called', async () => {

@@ -2,7 +2,7 @@
  * Release rollback command
  */
 
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { restoreSnapshot } from '@kb-labs/release-manager-core';
 import { findRepoRoot } from '../../shared/utils';
 
@@ -17,7 +17,7 @@ export default defineCommand({
   description: 'Rollback last release',
 
   handler: {
-    async intent(_ctx: PluginContextV3, _input: CLIInput<RollbackFlags>) {
+    async intent(_ctx: PluginCommandContextV3, _input: CLIInput<RollbackFlags>) {
       return {
         summary: 'Rollback last release from backup snapshot',
         operations: [
@@ -26,7 +26,7 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<RollbackFlags>): Promise<ReleaseRollbackResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RollbackFlags>): Promise<ReleaseRollbackResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -36,7 +36,7 @@ export default defineCommand({
       ctx.platform?.logger?.info?.('Release rollback completed');
 
       if (flags.json) {
-      ctx.ui?.json?.({ ok: true, result: { message: 'Rollback completed' } });
+      return { ok: true, result: { message: 'Rollback completed' } };
       } else {
         ctx.ui?.sideBox?.({
           title: 'Rollback',

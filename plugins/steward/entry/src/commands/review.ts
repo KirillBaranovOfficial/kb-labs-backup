@@ -1,4 +1,4 @@
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { getDailyReview } from '@kb-labs/steward-core';
 
 type Flags = { json?: boolean };
@@ -9,12 +9,12 @@ export default defineCommand({
     'Daily summary: stale commitments, upcoming reminders, active projects, and days since the last successful backup',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<Flags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const { json } = input.flags;
       try {
         const review = await getDailyReview();
         if (json) {
-          ctx.ui?.json?.({ ok: true, result: review });
+          return { ok: true, result: review };
         } else {
           const backupLine =
             review.lastBackupDaysAgo === null
@@ -29,8 +29,7 @@ export default defineCommand({
         return { ok: true, result: review };
       } catch (err) {
         ctx.platform.logger?.error?.('steward:review failed', err instanceof Error ? err : new Error(String(err)));
-        handleError(ctx, err, json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: null };
+        return handleError(ctx, err, json);
       }
     },
   },

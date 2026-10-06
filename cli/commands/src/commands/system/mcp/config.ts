@@ -90,7 +90,7 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
       } else {
         ctx.ui?.error(`${message} Next: kb mcp config <claude|codex|cursor>`);
       }
-      return { ok: false, error: message };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: message, hint: "Run `kb mcp config --help` to review valid inputs and recovery steps, then retry." } };
     }
     try {
       const cwd = getContextCwd(ctx);

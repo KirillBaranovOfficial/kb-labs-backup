@@ -13,6 +13,8 @@ import type {
   ErrorEnvelope,
 } from './types.js';
 
+export type ErrorCode = (typeof catalogData.codes)[number]['code'];
+
 // The JSON is validated structurally by the catalog lint test; the cast keeps
 // the literal union types (area, severity) that JSON inference widens to string.
 export const errorCatalog = catalogData as unknown as ErrorCatalog;

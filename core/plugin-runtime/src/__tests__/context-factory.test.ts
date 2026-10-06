@@ -168,7 +168,7 @@ describe('createPluginContextV3', () => {
     expect(typeof context.requestId).toBe('string');
 
     // Services
-    expect(context.ui).toBe(mockUI);
+    expect(context.ui).not.toBe(mockUI);
     expect(context.platform).toBeDefined();
     expect(context.runtime).toBeDefined();
     expect(context.api).toBeDefined();
@@ -176,6 +176,32 @@ describe('createPluginContextV3', () => {
 
     // Signal (optional - undefined if not provided)
     expect(context.signal).toBeUndefined();
+  });
+
+  // case: S-203.1
+  it('throws a catalogued contract error when JavaScript CLI handlers call forbidden JSON or error UI', () => {
+    const descriptor: PluginContextDescriptor = {
+      requestId: 'cli-result-request',
+      hostType: 'cli',
+      pluginId: '@kb-labs/test',
+      pluginVersion: '1.0.0',
+      permissions: {},
+      hostContext: { host: 'cli', argv: [], flags: {} },
+    };
+    const { context } = createPluginContextV3({
+      descriptor,
+      platform: mockPlatform,
+      ui: mockUI,
+      cwd: '/test',
+    });
+
+    const json = Reflect.get(context.ui, 'json') as (value: unknown) => void;
+    const error = Reflect.get(context.ui, 'error') as (value: unknown) => void;
+    expect(() => json({ raw: true })).toThrow(expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }));
+    expect(() => error('untyped failure')).toThrow(expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }));
+
+    expect(mockUI.json).not.toHaveBeenCalledWith({ raw: true });
+    expect(mockUI.error).not.toHaveBeenCalledWith('untyped failure');
   });
 
   it('should wire runtime API correctly', () => {

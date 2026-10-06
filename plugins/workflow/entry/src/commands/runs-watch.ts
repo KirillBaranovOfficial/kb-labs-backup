@@ -4,9 +4,8 @@
  * Streams run events in real-time via SSE endpoint.
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
-import { workflowCommandError } from './errors.js';
 
 interface RunsWatchFlags {
   'run-id'?: string;
@@ -30,11 +29,12 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
   description: 'Stream workflow run events in real-time',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<RunsWatchFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<RunsWatchFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const outputJson = flags?.json ?? false;
       const logsOnly = flags?.logs ?? false;
       let runId = flags?.['run-id'] ?? argv[0];
+      const events: Array<{ type: string; runId?: string; jobId?: string; stepId?: string; payload?: Record<string, unknown> }> = [];
 
       try {
         const client = new WorkflowDaemonClient();
@@ -43,14 +43,14 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
         if (!runId) {
           const latest = await client.listRuns({ limit: 1 });
           if (!latest.length) {
-            ctx.ui?.info?.('No runs found');
-            return { ok: true };
+            if (!outputJson) { ctx.ui?.info?.('No runs found'); }
+            return { ok: true, result: { events } };
           }
           runId = latest[0]!.id!;
-          ctx.ui?.info?.(`Watching latest run: ${runId}`);
+          if (!outputJson) { ctx.ui?.info?.(`Watching latest run: ${runId}`); }
         }
 
-        ctx.ui?.info?.(`Watching run ${runId} (Ctrl+C to stop)...`);
+        if (!outputJson) { ctx.ui?.info?.(`Watching run ${runId} (Ctrl+C to stop)...`); }
 
         // Use fetch with streaming to consume SSE
         const response = await client.fetchRunEvents(runId, {
@@ -81,44 +81,42 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
             try {
               const event = JSON.parse(raw) as { type: string; runId?: string; jobId?: string; stepId?: string; payload?: Record<string, unknown> };
 
-              if (outputJson) {
-                ctx.ui?.json?.({ ok: true, data: { event } });
-                continue;
-              }
-
               // Stream log lines from handler (ctx.logger.* / ctx.ui.* / console.log)
               // Rendered as compact single lines, not boxes.
               // See: plugins/workflow/docs/adr/0019-log-stream-separation.md
               if (event.type === 'log.appended') {
+                if (outputJson) { events.push(event); }
                 const p = event.payload as { level?: string; message?: string; stepName?: string } | undefined;
                 const label = p?.stepName ?? (event.stepId ? event.stepId.slice(0, 8) : '');
                 const prefix = label ? `[${label}] ` : '';
-                ctx.ui?.log?.({
-                  level: (p?.level ?? 'info') as 'info' | 'warn' | 'error' | 'debug',
-                  message: `${prefix}${p?.message ?? ''}`,
-                });
+                if (!outputJson) {
+                  ctx.ui?.log?.({
+                    level: (p?.level ?? 'info') as 'info' | 'warn' | 'error' | 'debug',
+                    message: `${prefix}${p?.message ?? ''}`,
+                  });
+                }
                 continue;
               }
 
               // --logs: suppress non-log events
               if (logsOnly) { continue; }
+              if (outputJson) { events.push(event); }
 
               const icon = STATUS_ICON[(event.payload?.['status'] as string) ?? ''] ?? '·';
               const step = event.stepId ? ` step:${event.stepId.slice(0, 8)}` : '';
               const job = event.jobId ? ` job:${event.jobId.slice(0, 8)}` : '';
               const summary = event.payload?.['summary'] ?? event.payload?.['error'] ?? '';
 
-              ctx.ui?.write?.(`${icon} ${event.type}${job}${step}${summary ? `  —  ${summary}` : ''}`);
+              if (!outputJson) { ctx.ui?.write?.(`${icon} ${event.type}${job}${step}${summary ? `  —  ${summary}` : ''}`); }
 
               // Terminal events
               if (event.type === 'run.finished' || event.type === 'run.failed' || event.type === 'run.cancelled') {
                 const finalStatus = event.payload?.['status'] as string ?? event.type.split('.')[1];
-                ctx.ui?.write?.(`Run ${finalStatus.toUpperCase()}. Use 'kb workflow runs-view ${runId}' for details.`);
+                if (!outputJson) { ctx.ui?.write?.(`Run ${finalStatus.toUpperCase()}. Use 'kb workflow runs view ${runId}' for details.`); }
                 if (finalStatus !== 'success') {
-                  workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', `Workflow run ${runId} ended with status ${finalStatus}.`, `Inspect the run with: kb workflow runs-view ${runId}`, outputJson);
-                  return { ok: false, error: 'Command failed' };
+                  return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Workflow run ${runId} ended with status ${finalStatus}.`, hint: `Inspect the run with: kb workflow runs view ${runId}` }, result: { events } };
                 }
-                return { ok: true };
+                return { ok: true, result: { events } };
               }
             } catch {
               // Ignore malformed events
@@ -126,10 +124,9 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
           }
         }
 
-        return { ok: true };
+        return { ok: true, result: { events } };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

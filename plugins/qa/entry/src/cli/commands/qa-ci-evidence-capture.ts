@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { defineCommand, useConfig, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, useConfig, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { GithubActionsProvider } from '@kb-labs/qa-core';
 import type { QAPluginConfig } from '@kb-labs/qa-contracts';
 import type { QaCiEvidenceCaptureFlags } from './flags.js';
@@ -9,13 +9,13 @@ export default defineCommand<unknown, CLIInput<QaCiEvidenceCaptureFlags>, unknow
   id: 'qa:ci-evidence-capture',
   description: 'Capture a compact GitHub Actions run dossier for later QA analysis',
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaCiEvidenceCaptureFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaCiEvidenceCaptureFlags>): Promise<CommandResult> {
       const config = await useConfig<QAPluginConfig>();
       const repository = input.flags.repository ?? config?.ci?.repository ?? process.env.GITHUB_REPOSITORY;
       const runId = input.flags.runId ?? process.env.GITHUB_RUN_ID;
       if (!repository || !runId) {
-        ctx.ui?.error?.('GitHub repository and run ID are required. Pass --repository/--run-id or run inside GitHub Actions.');
-        return { ok: false, error: 'GitHub repository and run ID are required' };
+
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'GitHub repository and run ID are required', hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' } };
       }
       try {
         const cwd = ctx.cwd ?? process.cwd();
@@ -35,7 +35,7 @@ export default defineCommand<unknown, CLIInput<QaCiEvidenceCaptureFlags>, unknow
         mkdirSync(dirname(output), { recursive: true });
         writeFileSync(output, `${JSON.stringify(dossier, null, 2)}\n`);
         if (input.flags.json) {
-          ctx.ui?.json?.(dossier);
+          return { ok: true, result: dossier };
         } else {
           ctx.ui?.success?.(`Captured CI evidence for run ${dossier.run.id}`, {
             sections: [
@@ -50,8 +50,8 @@ export default defineCommand<unknown, CLIInput<QaCiEvidenceCaptureFlags>, unknow
         }
         return { ok: true };
       } catch (error) {
-        ctx.ui?.error?.(`Unable to capture CI evidence: ${error instanceof Error ? error.message : String(error)}`);
-        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error instanceof Error ? error.message : String(error), hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' } };
       }
     },
   },

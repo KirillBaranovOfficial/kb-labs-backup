@@ -1,4 +1,4 @@
-import { defineCommand, handleError, confirmDestructive, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, confirmDestructive, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { DropRequestSchema, type DropFlags, type DropResponse } from '@kb-labs/mind-contracts';
 import { buildMind } from '../../platform';
@@ -10,7 +10,7 @@ export default defineCommand<unknown, CLIInput<DropFlags>, DropResponse>({
   description: 'Drop an entire index — remove all its vectors and its manifest',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<DropFlags>): Promise<DropResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<DropFlags>): Promise<DropResult> {
       const { flags } = input;
       const json = flags.json;
       try {
@@ -30,14 +30,22 @@ export default defineCommand<unknown, CLIInput<DropFlags>, DropResponse>({
           },
         });
         if (blocked) {
-          return blocked;
+          return {
+            ok: false,
+            error: {
+              code: 'KB_RUNTIME_CONFIRMATION_REQUIRED',
+              message: 'Dropping an index requires explicit confirmation.',
+              hint: `Verify index "${flags.index}", then rerun: kb mind drop --index ${flags.index} --yes`,
+            },
+            result: blocked.result,
+          };
         }
         const req = DropRequestSchema.parse({ indexId: flags.index });
         const mind = await buildMind(ctx.cwd);
         const res = await mind.drop(req);
 
         if (json) {
-          ctx.ui?.json?.(res);
+          return { ok: true, result: res };
           return { ok: true, result: res };
         }
         ctx.ui?.success?.(
@@ -45,8 +53,7 @@ export default defineCommand<unknown, CLIInput<DropFlags>, DropResponse>({
         );
         return { ok: true, result: res };
       } catch (err) {
-        handleError(ctx, err, json);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, err, json);
       }
     },
   },

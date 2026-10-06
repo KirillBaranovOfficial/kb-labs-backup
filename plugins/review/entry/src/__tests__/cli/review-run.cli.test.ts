@@ -20,7 +20,8 @@ vi.mock('@kb-labs/review-core', () => ({
 
 import { useLoader, useConfig } from '@kb-labs/sdk';
 import { runReview, resolveGitScope, getReposWithChanges } from '@kb-labs/review-core';
-import type { ReviewResult, ScopedFiles } from '@kb-labs/review-core';
+import type { ScopedFiles } from '@kb-labs/review-core';
+import type { ReviewResult } from '@kb-labs/review-contracts';
 import reviewRunCommand from '../../commands/run.js';
 
 const mockedUseLoader = vi.mocked(useLoader);
@@ -110,10 +111,10 @@ describe('review:run', () => {
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(result.result?.passed).toBe(false);
+    expect(result.result).toMatchObject({ passed: false });
   });
 
-  it('RR-04: --json flag — outputs ReviewResult via ctx.ui.json', async () => {
+  it('RR-04: --json flag — returns ReviewResult to the shared serializer', async () => {
     mockedGetReposWithChanges.mockResolvedValue(['packages/core']);
     mockedResolveGitScope.mockResolvedValue({
       files: [{ path: 'src/a.ts', content: '' }],
@@ -123,10 +124,10 @@ describe('review:run', () => {
 
     const { ui, captured } = createCapturedUI();
     const ctx = createMockContext({ ui });
-    await reviewRunCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
+    const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect(captured.json[0]).toMatchObject({ findings: [], metadata: { analyzedFiles: 3 } });
+    expect(captured.json).toHaveLength(0);
+    expect(result).toMatchObject({ ok: true, result: { findings: [], metadata: { analyzedFiles: 3 } } });
   });
 
   it('RR-05: --scope=staged uses includeStaged filter', async () => {

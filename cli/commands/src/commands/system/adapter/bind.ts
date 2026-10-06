@@ -4,11 +4,10 @@ import { configErrorEnvelope, setUserConfigValue } from '@kb-labs/core-config';
 import { DiagnosticCollector, readMarketplaceLock } from '@kb-labs/core-discovery';
 import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
-import { handleError } from '@kb-labs/shared-cli-ui';
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
-import { resolveConfigRoots, userConfigFileForScope } from '../config/shared';
+import { renderErrorEnvelope, resolveConfigRoots, userConfigFileForScope } from '../config/shared';
 
 type Flags = {
   json: { type: 'boolean'; description?: string };
@@ -49,7 +48,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
   async handler(ctx, argv, flags) {
     const [slot, packageId] = argv;
     if (!slot || !/^[a-z][a-zA-Z0-9-]*$/.test(slot) || !packageId) {
-      return { ok: false, error: 'Provide a valid adapter slot and an installed package ID.' };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Provide a valid adapter slot and an installed package ID.', hint: "Run `kb adapter bind --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     try {
@@ -61,7 +60,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
         });
         return {
           ok: false,
-          error: envelope.message,
+          error: { code: envelope.code, message: envelope.message, hint: `kb marketplace install ${packageId} --scope platform`, details: { package: packageId } },
           envelope,
         };
       }
@@ -83,16 +82,20 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
       };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: envelope.message, envelope };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb adapter bind --help` to review valid inputs and recovery steps, then retry." }, envelope };
     }
   },
   formatter(result, ctx, flags) {
     if (!result.ok && result.envelope) {
-      handleError(ctx, { envelope: result.envelope }, Boolean(flags.json));
+      renderErrorEnvelope(ctx, {
+        ...result.envelope,
+        hint: result.error.hint,
+        details: result.error.details,
+      }, Boolean(flags.json));
       return;
     }
     if (flags.json) {
-      ctx.ui?.json?.(result.ok ? result : { ok: false, error: result.error, hint: result.hint });
+      ctx.ui?.json?.(result.ok ? result : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: result.error, hint: "Run `kb adapter bind --help` to review valid inputs and recovery steps, then retry." }, hint: result.hint });
       return;
     }
     if (!result.ok) {

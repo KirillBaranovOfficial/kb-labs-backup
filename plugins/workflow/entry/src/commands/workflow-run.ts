@@ -2,7 +2,7 @@
  * workflow:run command - Run workflow by workflow ID
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import type { WorkflowRunRequest } from '@kb-labs/workflow-contracts';
 import { WorkflowDaemonClient } from '../http-client.js';
@@ -62,13 +62,12 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
   description: 'Run workflow by ID with optional target/isolation overrides and a JSON payload via --input.',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<WorkflowRunFlagsInput>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<WorkflowRunFlagsInput>): Promise<CommandResult> {
       const outputJson = input.flags.json ?? false;
       const workflowId = input.flags['workflow-id'];
 
       if (!workflowId) {
-        handleError(ctx, inputError('Missing required flag: --workflow-id.', 'Run `kb workflow run --help` to see the required flags.'), outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, inputError('Missing required flag: --workflow-id.', 'Run `kb workflow run --help` to see the required flags.'), outputJson);
       }
 
       try {
@@ -111,7 +110,7 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
         const result = await client.runWorkflow(workflowId, request);
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: result });
+          return { ok: true, result: result };
         } else {
           ctx.ui?.success?.('Workflow run submitted', {
             title: 'Workflow Engine',
@@ -132,8 +131,7 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
 
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

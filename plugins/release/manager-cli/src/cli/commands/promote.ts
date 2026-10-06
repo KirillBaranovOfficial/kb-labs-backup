@@ -12,7 +12,7 @@
  * deps); only the target registry/tag differ.
  */
 
-import { defineCommand, type CLIInput, type PluginContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
 import {
   discoverCurrentPackages,
   resolvePublishTag,
@@ -100,7 +100,7 @@ export default defineCommand({
   description: 'Promote already-released package versions to npm (no re-bump, no rebuild)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<PromoteFlags>): Promise<PromoteResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<PromoteFlags>): Promise<PromoteResult> {
       const { flags } = input;
       const { scope, otp: initialOtp, access, json } = flags;
       const dryRun = flags['dry-run'];
@@ -130,11 +130,11 @@ export default defineCommand({
       if (packages.length === 0) {
         const msg = `No packages found to promote${scope ? ` matching scope: ${scope}` : ''}`;
         if (json) {
-          ctx.ui?.json?.({ error: msg });
+          return { ok: true, result: { error: msg } };
         } else {
           ctx.ui?.write?.(msg);
         }
-        return { ok: false, error: 'Command failed', result: { summary: { total: 0, successful: 0, failed: 0, tag, registry } } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release promote --help` to review its inputs and recovery steps, then retry." }, result: { summary: { total: 0, successful: 0, failed: 0, tag, registry } } };
       }
 
       let rawResult: ProgrammaticPublishResult | PublishWithOTPResult;
@@ -163,19 +163,11 @@ export default defineCommand({
 
       const promoteResult = toPromoteResult(rawResult.results, tag, registry);
 
-      console.log('::kb-output::' + JSON.stringify({
-        promoted: promoteResult.published?.map(p => `${p.name}@${p.version}`) ?? [],
-        failed: promoteResult.failed?.map(p => p.name) ?? [],
-        tag,
-        registry,
-      }));
-
       const response = promoteResult.success
         ? { ok: true as const, result: promoteResult }
-        : { ok: false as const, error: 'Promotion failed', result: promoteResult };
+        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Promotion failed', hint: 'Inspect the failed package details, resolve registry errors, then rerun `kb release promote`.' }, result: promoteResult };
 
       if (json) {
-        ctx.ui?.json?.(response);
         return response;
       }
 

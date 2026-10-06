@@ -68,7 +68,7 @@ describe('workflow:runs view', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: { id: 'run-abc' } });
+    expect(result).toMatchObject({ ok: true, result: { id: 'run-abc' } });
   });
 
   it('RV-03: --json without value (boolean true) does not crash — treated as --json=all', async () => {
@@ -89,7 +89,7 @@ describe('workflow:runs view', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: { id: 'run-abc' } });
+    expect(result).toMatchObject({ ok: true, result: { id: 'run-abc' } });
   });
 
   it('RV-03b: --json before positional arg (--run-id explicit) does not crash', async () => {
@@ -108,7 +108,7 @@ describe('workflow:runs view', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true });
+    expect(result).toMatchObject({ ok: true });
   });
 
   it('RV-04: --json=status,jobs outputs only selected fields', async () => {
@@ -127,7 +127,7 @@ describe('workflow:runs view', () => {
     );
 
     expect(result.ok).toBe(true);
-    const data = (captured.json[0] as { ok: boolean; data: Record<string, unknown> })?.data;
+    const data = (result as { ok: boolean; result: Record<string, unknown> }).result;
     expect(data).toHaveProperty('status');
     expect(data).toHaveProperty('jobs');
     expect(data).not.toHaveProperty('name');
@@ -207,7 +207,7 @@ describe('workflow:runs view', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RV-07: failed run returns exitCode 1', async () => {
@@ -245,7 +245,7 @@ describe('workflow:runs view', () => {
 
     expect(result.ok).toBe(true);
     // durationMs=0 must be present in JSON output, not hidden
-    const data = (captured.json[0] as { ok: boolean; data: Record<string, unknown> })?.data;
+    const data = (result as { ok: boolean; result: Record<string, unknown> }).result;
     expect(data?.durationMs).toBe(0);
     // rendered sideBox path: verify formatDuration('0') => '0ms' via table-less path
     // We test the unit directly: a run with durationMs=0 must NOT silently hide the duration.

@@ -3,7 +3,7 @@
  * Atomic step: reads plan, runs checks, emits output marker for workflow.
  */
 
-import { defineCommand, type CLIInput, type CommandResult, type PluginContextV3, useLoader, useConfig } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type CommandResult, type PluginCommandContextV3, useLoader, useConfig } from '@kb-labs/sdk';
 import {
   planRelease,
   runReleaseChecks,
@@ -69,7 +69,7 @@ export default defineCommand({
   description: 'Run pre-release checks from release config',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ChecksFlags>): Promise<ReleaseChecksResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ChecksFlags>): Promise<ReleaseChecksResult> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -87,11 +87,10 @@ export default defineCommand({
       if (checks.length === 0) {
         const msg = 'No checks configured in release config';
         if (flags.json) {
-          ctx.ui?.json?.({ ok: true, failed: [], results: [], message: msg });
+          return { ok: true, result: { failed: [], results: [], message: msg } };
         } else {
           ctx.ui?.write?.(msg);
         }
-        console.log('::kb-output::' + JSON.stringify({ ok: true, failed: [] }));
         return { ok: true, result: { ok: true, failed: [], results: [] } };
       }
 
@@ -106,9 +105,11 @@ export default defineCommand({
         if (!pre.ok) {
           const preReport = buildReleaseRunReport({ results: [], preflight: pre, flow: flags.flow, scope: flags.scope });
           const failedPre = pre.checks.filter(c => c.status === 'failed').map(c => `preflight:${c.id}`);
-          console.log('::kb-output::' + JSON.stringify({ ok: false, failed: failedPre }));
+          const failure = preReport.failures[0]?.error;
           if (flags.json) {
-            ctx.ui?.json?.({ ok: false, failed: failedPre, results: [], report: preReport });
+            return failure
+              ? { ok: false, error: { code: failure.code, message: failure.message, hint: failure.hint ?? 'Resolve the failed preflight check, then retry `kb release checks`.' }, result: { ok: false, failed: failedPre, results: [], report: preReport } }
+              : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release preflight failed.', hint: "Run `kb release doctor` to see the failed preflight checks and exact recovery steps." }, result: { ok: false, failed: failedPre, results: [], report: preReport } };
           } else {
             ctx.ui?.sideBox?.({
               title: 'Preflight failed - checks not run',
@@ -116,7 +117,7 @@ export default defineCommand({
               status: 'error',
             });
           }
-          return { ok: false, error: 'Command failed', result: { ok: false, failed: failedPre, results: [], report: preReport } };
+          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release checks --help` to review its inputs and recovery steps, then retry." }, result: { ok: false, failed: failedPre, results: [], report: preReport } };
         }
       }
 
@@ -172,11 +173,10 @@ export default defineCommand({
         checksLoader.fail(`${failed.length} check(s) failed`);
       }
 
-      console.log('::kb-output::' + JSON.stringify({ ok, failed }));
-
       if (flags.json) {
-        ctx.ui?.json?.({ ok, failed, results, report: runReport });
-        return ok ? { ok: true, result: { ok, failed, results, report: runReport } } : { ok: false, error: 'Command failed', result: { ok, failed, results, report: runReport } };
+        return ok
+          ? { ok: true, result: { ok, failed, results, report: runReport } }
+          : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release checks failed.', hint: "Run `kb release doctor` to verify the environment, then inspect the failed checks and rerun `kb release checks`." }, result: { ok, failed, results, report: runReport } };
       }
 
       ctx.ui?.sideBox?.({
@@ -185,7 +185,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok: true, result: { ok, failed, results, report: runReport } } : { ok: false, error: 'Command failed', result: { ok, failed, results, report: runReport } };
+      return ok ? { ok: true, result: { ok, failed, results, report: runReport } } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release checks --help` to review its inputs and recovery steps, then retry." }, result: { ok, failed, results, report: runReport } };
     },
   },
 });

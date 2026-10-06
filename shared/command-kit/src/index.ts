@@ -3,11 +3,8 @@
  * Command Kit - High-level API and utilities for building CLI commands
  */
 
-import type {
-  CommandResult as PluginCommandResult,
-  PluginContextV3,
-} from "@kb-labs/plugin-contracts";
 import type { FlagSchemaDefinition, InferFlags } from "./flags/index";
+import type { CommandSuccess, CommandFailure, CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 // Re-exports
 export * from "./flags/index";
@@ -54,11 +51,11 @@ export * from "./ws-types";
  */
 export type SuccessResult<
   T extends Record<string, unknown> = Record<string, never>,
-> = CommandResult & { ok: true } & T;
+> = CommandSuccess<T> & T;
 export type ErrorResult<
   T extends Record<string, unknown> = Record<string, never>,
-> = CommandResult & { ok: false; error: string } & T;
-export type ResultWith<T extends Record<string, unknown>> = CommandResult & T;
+> = CommandFailure & T;
+export type ResultWith<T extends Record<string, unknown>> = CommandResult<T>;
 
 /**
  * Base command result contract - all command results must extend this
@@ -91,7 +88,7 @@ export type ResultWith<T extends Record<string, unknown>> = CommandResult & T;
  * };
  * ```
  */
-export type CommandResult<T = unknown> = PluginCommandResult<T>;
+export type { CommandResult, CommandSuccess, CommandFailure, CommandError } from '@kb-labs/plugin-contracts';
 
 /**
  * Command handler function signature

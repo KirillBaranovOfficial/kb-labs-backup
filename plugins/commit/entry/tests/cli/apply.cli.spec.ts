@@ -86,8 +86,7 @@ describe('commit:apply', () => {
     const result = await applyCommand.execute(ctx as never, { force: false, json: true, scope: 'root' } as ApplyInput);
 
     expect(result.ok).toBe(true);
-    expect(captured.json.length).toBeGreaterThan(0);
-    expect((captured.json[0] as Record<string, unknown>)?.success).toBe(true);
+    expect(result.result).toMatchObject({ success: true });
   });
 
   it('APPLY-03: --dry-run shows intent without executing', async () => {

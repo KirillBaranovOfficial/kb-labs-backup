@@ -235,13 +235,13 @@ describe('kb adapter bind', () => {
   });
 
   it('renders the missing adapter next step through the shared human presenter', async () => {
-    const { ctx, errors, hints } = context();
+    const { ctx, errors } = context();
 
     const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-missing'], {});
 
     expect(code).toBe(1);
     expect(errors.join('\n')).toContain('Adapter package @kb-labs/adapters-missing is not installed on this platform. [KB_ADAPTER_NOT_INSTALLED]');
-    expect(hints).toContain('kb marketplace install @kb-labs/adapters-missing --scope platform');
+    expect(errors.join('\n')).toContain('Hint:  kb marketplace install @kb-labs/adapters-missing --scope platform');
   });
 
   it('validates a binding without writing in dry-run mode', async () => {

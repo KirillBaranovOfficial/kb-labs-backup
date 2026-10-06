@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { defineCommand, useConfig, type CLIInput, type CommandResult, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, useConfig, type CLIInput, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { computeQACaseCoverage, parseQACatalog, scanQACaseClaims } from '@kb-labs/qa-core';
 import type { QACaseClaimKind, QACaseMode, QACaseRunResult, QAPluginConfig } from '@kb-labs/qa-contracts';
 import type { QaCasesCoverageFlags } from './flags.js';
@@ -29,7 +29,7 @@ function parseRunResult(value: unknown, knownSteps: Set<string>, declaredClaims:
 export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
   id: 'qa:cases:coverage',
   description: 'Compute QA case coverage from claims and run results',
-  handler: { async execute(ctx: PluginContextV3, input: CLIInput<QaCasesCoverageFlags>): Promise<CommandResult> {
+  handler: { async execute(ctx: PluginCommandContextV3, input: CLIInput<QaCasesCoverageFlags>): Promise<CommandResult> {
     const cwd = ctx.cwd ?? process.cwd();
     const config = await useConfig<QAPluginConfig>();
     const catalog = parseQACatalog(resolveCatalogPath(cwd, config?.casesPath));
@@ -53,21 +53,17 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
     }
     if (diagnostics.length) {
       const result = { schema: 'kb.qa-case-coverage/v1', mode, releasePassed: false, cases: [], diagnostics };
-      if (input.flags.json) ctx.ui?.json?.(result);
-      else ctx.ui?.error?.('QA case coverage could not be computed', { sections: [{ header: 'Fix these issues, then rerun `kb qa cases coverage`', items: diagnostics.map(item => `${item.file}:${item.line}: ${item.message}`) }] });
-      return { ok: false, error: 'QA case coverage input is invalid', result };
+      if (!input.flags.json) ctx.ui?.warn?.('QA case coverage input is invalid.');
+      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'QA case coverage input is invalid', hint: 'Run `kb qa cases coverage --help` to check inputs, then retry.' }, result };
     }
     const coverage = computeQACaseCoverage(catalog.cases, scanned.claims, runs, mode as QACaseMode);
     const ok = level === 'all' || coverage.releasePassed;
-    if (input.flags.json) ctx.ui?.json?.(coverage);
-    else {
+    if (!input.flags.json) {
       const passed = coverage.cases.filter(item => item.statusResult === 'PASS').length;
       const incomplete = coverage.cases.filter(item => item.statusResult !== 'PASS' && item.statusResult !== 'NOT REQUIRED').length;
       if (ok) ctx.ui?.success?.(`QA cases ${mode}: ${passed} passed, ${incomplete} incomplete.`);
-      else ctx.ui?.error?.(`Release coverage failed for ${mode}: ${incomplete} case(s) are incomplete.`, {
-        hint: 'Attach completed journey results with `--run <results.json>`, then rerun `kb qa cases coverage --level release`.',
-      });
+      else ctx.ui?.warn?.(`Release cases are not passing for ${mode}.`);
     }
-    return ok ? { ok: true, result: coverage } : { ok: false, error: `Release cases are not passing for ${mode}; rerun with completed results using \`kb qa cases coverage --level release --mode ${mode} --run <results.json>\``, result: coverage };
+    return ok ? { ok: true, result: coverage } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Release cases are not passing for ${mode}; rerun with completed results using \`kb qa cases coverage --level release --mode ${mode} --run <results.json>\``, hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' }, result: coverage };
   } },
 });

@@ -46,7 +46,7 @@ describe('clickup:task.delete', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, deleted: true, taskId: 'task-001' });
+    expect(result.result).toMatchObject({ deleted: true, taskId: 'task-001' });
   });
 
   it('TD-03: missing taskId returns exitCode 1', async () => {
@@ -58,7 +58,7 @@ describe('clickup:task.delete', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TD-04: missing --yes returns exitCode 1 with hint', async () => {
@@ -70,7 +70,7 @@ describe('clickup:task.delete', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TD-05: core error returns exitCode 1', async () => {
@@ -84,7 +84,7 @@ describe('clickup:task.delete', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TD-06: --dry-run shows intent, deleteTask is NOT called', async () => {

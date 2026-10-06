@@ -7,8 +7,8 @@
  * - Statistics about the graph
  */
 
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
-import type { UIFacade } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
+import type { PluginHandlerUIFacade } from '@kb-labs/sdk';
 import {
   buildDependencyGraph,
   getReverseDependencies,
@@ -34,7 +34,7 @@ export default defineCommand({
   description: 'Visualize dependency graph',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: VisualizeInput): Promise<CommandResult<{ graph: DependencyGraph }>> {
+    async execute(ctx: PluginCommandContextV3, input: VisualizeInput): Promise<CommandResult<{ graph: DependencyGraph }>> {
       const { ui } = ctx;
 
       // V3: Flags may come wrapped in input.flags or passed directly
@@ -69,12 +69,11 @@ export default defineCommand({
 /**
  * Output dependency tree for a package
  */
-function outputTree(graph: DependencyGraph, packageName: string, flags: VisualizeFlags, ui: UIFacade | undefined) {
+function outputTree(graph: DependencyGraph, packageName: string, flags: VisualizeFlags, ui: PluginHandlerUIFacade | undefined) {
   const { nodes } = graph;
   const node = nodes.get(packageName);
 
   if (!node) {
-    ui?.error?.(`Package not found: ${packageName}`);
     return;
   }
 
@@ -122,11 +121,10 @@ function outputTree(graph: DependencyGraph, packageName: string, flags: Visualiz
 /**
  * Output reverse dependencies (who depends on this package)
  */
-function outputReverse(graph: DependencyGraph, packageName: string, flags: VisualizeFlags, ui: UIFacade | undefined) {
+function outputReverse(graph: DependencyGraph, packageName: string, flags: VisualizeFlags, ui: PluginHandlerUIFacade | undefined) {
   const reverseDeps = getReverseDependencies(graph, packageName);
 
   if (flags.json) {
-    ui?.json?.({ package: packageName, reverseDependencies: Array.from(reverseDeps) });
     return;
   }
 
@@ -153,11 +151,10 @@ function outputReverse(graph: DependencyGraph, packageName: string, flags: Visua
 /**
  * Output impact analysis (all packages affected by changes)
  */
-function outputImpact(graph: DependencyGraph, packageName: string, flags: VisualizeFlags, ui: UIFacade | undefined) {
+function outputImpact(graph: DependencyGraph, packageName: string, flags: VisualizeFlags, ui: PluginHandlerUIFacade | undefined) {
   const affected = getImpactAnalysis(graph, packageName);
 
   if (flags.json) {
-    ui?.json?.({ package: packageName, affectedPackages: Array.from(affected) });
     return;
   }
 
@@ -197,7 +194,7 @@ function outputImpact(graph: DependencyGraph, packageName: string, flags: Visual
 /**
  * Output dependency graph statistics
  */
-function outputStats(graph: DependencyGraph, flags: VisualizeFlags, ui: UIFacade | undefined) {
+function outputStats(graph: DependencyGraph, flags: VisualizeFlags, ui: PluginHandlerUIFacade | undefined) {
   const { nodes } = graph;
 
   // Calculate statistics
@@ -221,13 +218,6 @@ function outputStats(graph: DependencyGraph, flags: VisualizeFlags, ui: UIFacade
   const avgDeps = nodes.size > 0 ? (totalDeps / nodes.size).toFixed(2) : '0';
 
   if (flags.json) {
-    ui?.json?.({
-      totalPackages: nodes.size,
-      totalDependencies: totalDeps,
-      averageDependencies: Number.parseFloat(avgDeps),
-      maxDependencies: maxDeps,
-      maxDependenciesPackage: maxDepsPackage,
-    });
     return;
   }
 
@@ -265,7 +255,7 @@ function outputStats(graph: DependencyGraph, flags: VisualizeFlags, ui: UIFacade
 /**
  * Output DOT format for graphviz
  */
-function outputDot(graph: DependencyGraph, flags: VisualizeFlags, ui: UIFacade | undefined) {
+function outputDot(graph: DependencyGraph, flags: VisualizeFlags, ui: PluginHandlerUIFacade | undefined) {
   const { nodes } = graph;
 
   const lines: string[] = [];
@@ -285,7 +275,6 @@ function outputDot(graph: DependencyGraph, flags: VisualizeFlags, ui: UIFacade |
   lines.push('}');
 
   if (flags.json) {
-    ui?.json?.({ dot: lines.join('\n') });
   } else {
     for (const line of lines) {
       ui?.write?.(line);

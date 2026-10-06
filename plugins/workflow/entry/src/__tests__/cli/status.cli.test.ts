@@ -64,10 +64,10 @@ describe('workflow job status', () => {
     const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-abc'], flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    const payload = captured.json[0] as { ok: boolean; data: JobStatusDetail };
+    const payload = result as { ok: boolean; result: JobStatusDetail };
     expect(payload.ok).toBe(true);
-    expect(payload.data.id).toBe('job-abc');
-    expect(payload.data.status).toBe('running');
+    expect(payload.result.id).toBe('job-abc');
+    expect(payload.result.status).toBe('running');
   });
 
   it('CS-03: missing --job-id returns exitCode 1 with error message', async () => {
@@ -76,7 +76,7 @@ describe('workflow job status', () => {
     const result = await statusCommand.execute(ctx, mockCLIInput({ argv: [] }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('CS-04: daemon unavailable returns exitCode 1 with readable message', async () => {
@@ -91,7 +91,7 @@ describe('workflow job status', () => {
     const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-abc'] }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('CS-05: job in running state renders status without throwing', async () => {

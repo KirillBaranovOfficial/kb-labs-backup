@@ -2,7 +2,7 @@
  * workflow:defs-view <id> command — view a single workflow definition's details
  */
 
-import { defineCommand, validationError, handleError, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 import type { DefsViewFlags } from '../flags.js';
 
@@ -11,14 +11,13 @@ export default defineCommand<unknown, CLIInput<DefsViewFlags>, unknown>({
   description: 'View workflow definition details',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<DefsViewFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<DefsViewFlags>): Promise<CommandResult> {
       const { flags, argv = [] } = input;
       const outputJson = flags?.json ?? false;
       const id = flags?.id ?? argv[0];
 
       if (!id) {
-        validationError(ctx, 'Missing workflow ID', 'Usage: kb workflow defs view <id> [--id=<id>]', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return validationError(ctx, 'Missing workflow ID', 'Usage: kb workflow defs view <id> [--id=<id>]', outputJson);
       }
 
       try {
@@ -26,7 +25,7 @@ export default defineCommand<unknown, CLIInput<DefsViewFlags>, unknown>({
         const workflow = await client.getWorkflow(id);
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: workflow });
+          return { ok: true, result: workflow };
           return { ok: true };
         }
 
@@ -65,8 +64,7 @@ export default defineCommand<unknown, CLIInput<DefsViewFlags>, unknown>({
 
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

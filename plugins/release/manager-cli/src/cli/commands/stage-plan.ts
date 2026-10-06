@@ -21,7 +21,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { defineCommand, type CLIInput, type PluginContextV3, useLoader, useConfig, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3, useLoader, useConfig, type CommandResult } from '@kb-labs/sdk';
 import {
   discoverCurrentPackages,
   type ReleaseConfig,
@@ -86,7 +86,7 @@ export default defineCommand({
   description: 'Publish a release plan\'s planned package versions to a local staging registry (Verdaccio)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<StagePlanFlags>): Promise<CommandResult<StagePlanPayload>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<StagePlanFlags>): Promise<CommandResult<StagePlanPayload>> {
       const { flags } = input;
       const cwd = ctx.cwd || process.cwd();
       const repoRoot = await findRepoRoot(cwd);
@@ -96,8 +96,7 @@ export default defineCommand({
 
       if (!planPath || !registry) {
         const msg = 'release:stage-plan requires --plan-path <path> and --registry <url>';
-        if (flags.json) { ctx.ui?.json?.({ error: msg }); } else { ctx.ui?.error?.(msg); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Provide both `--plan-path <path>` and `--registry <url>`, then retry.' } };
       }
 
       let plan: ReleasePlan;
@@ -105,13 +104,12 @@ export default defineCommand({
         plan = JSON.parse(readFileSync(planPath, 'utf-8')) as ReleasePlan;
       } catch (err) {
         const msg = `release:stage-plan could not read plan at ${planPath}: ${err instanceof Error ? err.message : String(err)}`;
-        if (flags.json) { ctx.ui?.json?.({ error: msg }); } else { ctx.ui?.error?.(msg); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: msg, hint: 'Check the plan path and JSON contents, then rerun `kb release stage plan`.' } };
       }
 
       if (plan.packages.length === 0) {
         const msg = 'No packages in release plan — nothing to stage';
-        if (flags.json) { ctx.ui?.json?.({ ok: true, result: { registry, published: [], alreadyPublished: [], failed: [] } }); } else { ctx.ui?.write?.(msg); }
+        if (!flags.json) ctx.ui?.write?.(msg);
         return { ok: true, result: { registry, published: [], alreadyPublished: [], failed: [] } };
       }
 
@@ -160,8 +158,7 @@ export default defineCommand({
       } catch (err) {
         packLoader.fail('Packing failed');
         const msg = err instanceof Error ? err.message : String(err);
-        if (flags.json) { ctx.ui?.json?.({ error: msg }); } else { ctx.ui?.error?.(msg); }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Packing failed: ${msg}`, hint: 'Inspect the release plan and package build output, then retry `kb release stage plan`.' } };
       }
       writeFileSync(
         join(outDir, 'manifest.json'),
@@ -183,11 +180,11 @@ export default defineCommand({
       if (result.failed.length > 0) {
         stageLoader.fail(`${result.failed.length}/${packagesToPublish.length} package(s) failed to stage`);
         if (flags.json) {
-          ctx.ui?.json?.({ ok: false, result: { registry, ...result } });
+          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'The command operation failed.', hint: "Run `kb release stage plan --help` to review the failure and next steps." }, result: { registry, ...result } };
         } else {
-          ctx.ui?.error?.(result.errors.join('\n'));
+
         }
-        return { ok: false, error: 'Command failed', result: { registry, published: result.published, alreadyPublished: result.alreadyPublished, failed: result.failed } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release stage plan --help` to review its inputs and recovery steps, then retry." }, result: { registry, published: result.published, alreadyPublished: result.alreadyPublished, failed: result.failed } };
       }
 
       stageLoader.succeed(`Staged ${result.published.length} package(s) (${result.alreadyPublished.length} already staged)`);
@@ -199,11 +196,8 @@ export default defineCommand({
         failed: result.failed,
       };
 
-      console.log('::kb-output::' + JSON.stringify({ ok: true, registry, staged: payload.published.length + payload.alreadyPublished.length }));
-
       if (flags.json) {
         const response = { ok: true as const, result: payload };
-        ctx.ui?.json?.(response);
         return response;
       }
 

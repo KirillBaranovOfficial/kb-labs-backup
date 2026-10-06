@@ -28,7 +28,7 @@ export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult &
     const fail = (error: string) => {
       if (flags.json) { ctx.ui?.json({ ok: false, error }); }
       else { ctx.ui?.error?.(error); }
-      return { ok: false, error };
+      return { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED' as const, message: error, hint: 'Run `kb auth reset-link --help` to review valid inputs and recovery steps, then retry.' } };
     };
     if (!flags['user-id']) { return fail('Provide --user-id. Run `kb auth reset-link --user-id <id>` after `kb auth login`.'); }
     try {
@@ -46,7 +46,7 @@ export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult &
           const permission = envelope.details?.permission;
           ctx.ui?.error?.(`${envelope.code}: ${envelope.message}${permission ? ` (permission: ${permission})` : ''} ${envelope.hint}`);
         }
-        return { ok: false, error: envelope.message };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb auth reset-link --help` to review valid inputs and recovery steps, then retry." } };
       }
       return fail(error instanceof Error ? error.message : String(error));
     }

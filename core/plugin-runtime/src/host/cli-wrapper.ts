@@ -76,6 +76,7 @@ export function wrapCliResult<T>(
       exitCode,
       ok,
       result: data.result as T | undefined,
+      error: data.ok ? undefined : data.error,
       meta: mergedMeta,
     };
   }

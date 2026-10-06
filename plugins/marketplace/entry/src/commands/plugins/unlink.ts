@@ -1,4 +1,4 @@
-import { defineCommand, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 
 import { post } from '../../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../../scope.js';
@@ -19,7 +19,7 @@ export default defineCommand<unknown, UnlinkInput, { packageId: string; scope: s
   description: 'Unlink a plugin',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: UnlinkInput) {
+    async intent(_ctx: PluginCommandContextV3, input: UnlinkInput) {
       const packageId = input.argv?.[0] ?? '(unknown)';
       return {
         summary: `Unlink plugin "${packageId}"`,
@@ -27,13 +27,12 @@ export default defineCommand<unknown, UnlinkInput, { packageId: string; scope: s
       };
     },
 
-    async execute(ctx: PluginContextV3, input: UnlinkInput): Promise<CommandResult<{ packageId: string; scope: string }>> {
+    async execute(ctx: PluginCommandContextV3, input: UnlinkInput): Promise<CommandResult<{ packageId: string; scope: string }>> {
       const packageId = input.argv?.[0];
       const flags = (input.flags ?? input) as UnlinkFlags;
 
       if (!packageId) {
-        validationError(ctx, 'Specify a package ID to unlink', 'Usage: kb marketplace plugins unlink <plugin-id>', flags.json);
-        return { ok: false, error: 'A package id is required', result: { packageId: '', scope: '' } };
+        return validationError(ctx, 'Specify a package ID to unlink', 'Usage: kb marketplace plugins unlink <plugin-id>', flags.json);
       }
 
       let scopeCtx;
@@ -41,24 +40,22 @@ export default defineCommand<unknown, UnlinkInput, { packageId: string; scope: s
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          validationError(ctx, err.message, undefined, flags.json);
+          return validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleError(ctx, err, flags.json);
+          return handleError(ctx, err, flags.json);
         }
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { packageId: '', scope: '' } };
-      }
+              }
 
       try {
         await post(`/packages/unlink`, { packageId, ...scopeBody(scopeCtx) });
         if (flags.json) {
-          ctx.ui?.json?.({ ok: true, packageId, scope: scopeCtx.scope });
+          return { ok: true, result: { packageId, scope: scopeCtx.scope } };
         } else {
           ctx.ui?.success?.(`Unlinked ${packageId} (${scopeCtx.scope})`);
         }
         return { ok: true, result: { packageId, scope: scopeCtx.scope } };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { packageId: '', scope: '' } };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

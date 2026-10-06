@@ -56,7 +56,7 @@ describe('clickup:list.delete', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, deleted: true, listId: 'list-1' });
+    expect(result.result).toMatchObject({ deleted: true, listId: 'list-1' });
   });
 
   it('LD-03: missing listId argv — exitCode 1, error shown', async () => {
@@ -68,7 +68,7 @@ describe('clickup:list.delete', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LD-04: missing --force — exitCode 1, error shown', async () => {
@@ -80,7 +80,7 @@ describe('clickup:list.delete', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LD-05: core function throws — exitCode 1, error shown', async () => {
@@ -94,7 +94,7 @@ describe('clickup:list.delete', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('LD-06: --dry-run shows intent, deleteList is NOT called', async () => {

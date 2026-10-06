@@ -111,9 +111,9 @@ describe('marketplace:link', () => {
 
     const result = await linkCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '/path/to/plugin' } }));
 
-    expect(result.ok).toBe(false);
+    if (result.ok) { throw new Error('expected invalid plugin link path to fail'); }
     expect(mockedPost).not.toHaveBeenCalled();
-    expect(captured.errors[0]).toContain('The --link path must be relative to the selected scope directory.');
+    expect(result.error.message).toContain('The --link path must be relative to the selected scope directory.');
   });
 });
 

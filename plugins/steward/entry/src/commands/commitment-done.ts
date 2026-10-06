@@ -1,4 +1,4 @@
-import { defineCommand, handleError, validationError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, validationError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { commitmentDone } from '@kb-labs/steward-core';
 
 type Flags = { json?: boolean };
@@ -8,28 +8,24 @@ export default defineCommand({
   description: 'Mark a commitment fulfilled',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<Flags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const [id] = input.argv;
       const { json } = input.flags;
       if (!id) {
-        validationError(ctx, 'id is required', 'Usage: kb steward commitment done <id>', json);
-        return { ok: false, error: 'INVALID_ARGS', result: null };
+        return validationError(ctx, 'id is required', 'Usage: kb steward commitment done <id>', json);
       }
 
       try {
         const commitment = await commitmentDone({ id });
         if (!commitment) {
-          if (json) {ctx.ui?.json?.({ ok: false, error: { code: 'NOT_FOUND', message: `No commitment "${id}"` } });}
-          else {ctx.ui?.error?.(`No commitment "${id}"`);}
-          return { ok: false, error: 'NOT_FOUND', result: null };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment done --help` to review the failure and next steps." }, result: null };
         }
-        if (json) {ctx.ui?.json?.({ ok: true, result: commitment });}
+        if (json) {return { ok: true, result: commitment };}
         else {ctx.ui?.info?.(`Done: "${commitment.text}"`);}
         return { ok: true, result: commitment };
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.done failed', err instanceof Error ? err : new Error(String(err)));
-        handleError(ctx, err, json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: null };
+        return handleError(ctx, err, json);
       }
     },
   },

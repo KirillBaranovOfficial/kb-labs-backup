@@ -4,7 +4,7 @@
  * Runs tests across monorepo packages and collects coverage statistics.
  */
 
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { runTests } from '@kb-labs/quality-core/tests';
 import { CACHE_KEYS, type TestRunResult } from '@kb-labs/quality-contracts';
 import { type CheckTestsFlags } from './flags.js';
@@ -18,7 +18,7 @@ export default defineCommand({
 
   handler: {
     async execute(
-      ctx: PluginContextV3,
+      ctx: PluginCommandContextV3,
       input: CheckTestsInput
     ): Promise<CommandResult<TestRunResult>> {
       const { ui, platform } = ctx;
@@ -36,7 +36,7 @@ export default defineCommand({
         if (cached) {
           outputTestResults({ ...cached, cached: true }, flags, ui);
           return cached.failing > 0
-            ? { ok: false, error: 'Test failures found', result: cached }
+            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Test failures found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: cached }
             : { ok: true, result: cached };
         }
       }
@@ -66,7 +66,7 @@ export default defineCommand({
       outputTestResults({ ...result, cached: false }, flags, ui);
 
       return result.failing > 0
-        ? { ok: false, error: 'Test failures found', result, meta: { cached: false } }
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Test failures found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result, meta: { cached: false } }
         : { ok: true, result, meta: { cached: false } };
     },
   },
@@ -78,10 +78,9 @@ export default defineCommand({
 function outputTestResults(
   result: TestRunResult & { cached: boolean },
   flags: CheckTestsInput,
-  ui: PluginContextV3['ui']
+  ui: PluginCommandContextV3['ui']
 ): void {
   if (flags.json) {
-    ui?.json?.(result);
     return;
   }
 

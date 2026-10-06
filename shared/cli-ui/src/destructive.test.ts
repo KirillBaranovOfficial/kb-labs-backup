@@ -23,27 +23,29 @@ describe('confirmDestructive', () => {
     expect(c.ui.warn).not.toHaveBeenCalled();
   });
 
-  it('blocks with a typed failure and warns the human when not confirmed', () => {
+  it('blocks with a typed failure for the shared human renderer when not confirmed', () => {
     const c = ctx();
-    expect(confirmDestructive(c, { confirmed: false, isJson: false, action: ACTION })).toMatchObject({
+    const result = confirmDestructive(c, { confirmed: false, isJson: false, action: ACTION });
+    expect(result).toMatchObject({
       ok: false,
-      error: { code: 'CONFIRMATION_REQUIRED', kind: 'validation' },
+      error: { code: 'KB_RUNTIME_CONFIRMATION_REQUIRED', kind: 'validation' },
       result: { confirmationRequired: true },
     });
-    expect(c.ui.warn).toHaveBeenCalledTimes(1);
+    expect(c.ui.warn).not.toHaveBeenCalled();
     expect(c.ui.json).not.toHaveBeenCalled();
   });
 
-  it('emits a machine-readable signal in json mode (agent sees blast radius)', () => {
+  it('returns a machine-readable signal in json mode (agent sees blast radius)', () => {
     const c = ctx();
     const res = confirmDestructive(c, { confirmed: false, isJson: true, action: ACTION });
     expect(res).toMatchObject({
       ok: false,
-      error: { code: 'CONFIRMATION_REQUIRED' },
+      error: { code: 'KB_RUNTIME_CONFIRMATION_REQUIRED' },
       result: { confirmationRequired: true },
     });
     expect(c.ui.warn).not.toHaveBeenCalled();
-    const sig = (c.ui.json as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+    expect(c.ui.json).not.toHaveBeenCalled();
+    const sig = res!.result as Record<string, unknown>;
     expect(sig).toMatchObject({
       ok: false,
       confirmationRequired: true,
@@ -62,20 +64,23 @@ describe('confirmDestructive', () => {
 
   it('marks irreversible actions and omits a recovery field when none', () => {
     const c = ctx();
-    confirmDestructive(c, {
+    const res = confirmDestructive(c, {
       confirmed: false,
       isJson: true,
       action: { ...ACTION, reversible: false, recovery: undefined },
     });
-    const sig = (c.ui.json as ReturnType<typeof vi.fn>).mock.calls[0]![0] as Record<string, unknown>;
+    expect(res).not.toBeNull();
+    expect(c.ui.json).not.toHaveBeenCalled();
+    const sig = res!.result as Record<string, unknown>;
     expect(sig.irreversible).toBe(true);
     expect('recovery' in sig).toBe(false);
   });
 
-  it('falls back to ui.error when ui.warn is absent', () => {
+  it('does not print errors directly; the shared renderer owns failure output', () => {
     const c = { ui: { error: vi.fn() } };
-    confirmDestructive(c, { confirmed: false, isJson: false, action: ACTION });
-    expect(c.ui.error).toHaveBeenCalledTimes(1);
+    const result = confirmDestructive(c, { confirmed: false, isJson: false, action: ACTION });
+    expect(result?.error).toMatchObject({ code: 'KB_RUNTIME_CONFIRMATION_REQUIRED', hint: expect.any(String) });
+    expect(c.ui.error).not.toHaveBeenCalled();
   });
 });
 

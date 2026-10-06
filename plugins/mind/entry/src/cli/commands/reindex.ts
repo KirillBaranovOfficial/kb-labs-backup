@@ -1,4 +1,4 @@
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { type ReindexFlags, type IndexResponse } from '@kb-labs/mind-contracts';
 import { buildMind } from '../../platform';
@@ -8,12 +8,12 @@ export default defineCommand<unknown, CLIInput<ReindexFlags>, IndexResponse>({
   description: 'Rebuild an index from source files',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<ReindexFlags>): Promise<CommandResult<IndexResponse>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ReindexFlags>): Promise<CommandResult<IndexResponse>> {
       try {
       const mind = await buildMind(ctx.cwd);
       const res = await mind.reindex({ indexId: input.flags.index, full: input.flags.full });
       if (input.flags.json) {
-        ctx.ui?.json?.(res);
+        return { ok: true, result: res };
         return { ok: true, result: res };
       }
       ctx.ui?.success?.(
@@ -21,8 +21,7 @@ export default defineCommand<unknown, CLIInput<ReindexFlags>, IndexResponse>({
       );
       return { ok: true, result: res };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

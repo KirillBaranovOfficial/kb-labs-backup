@@ -49,8 +49,8 @@ const PUBLISH_RESULT = {
 
 const FAKE_TARBALL = Buffer.from('fake-tarball-bytes');
 
-function createCtxWithHandle(ui?: ReturnType<typeof createCapturedUI>['ui']) {
-  const base = createMockContext({ ui });
+function createCtxWithHandle(ui?: ReturnType<typeof createCapturedUI>['ui'], cwd?: string) {
+  const base = createMockContext({ ui, cwd });
   return Object.assign(base, { handle: 'kirill' });
 }
 
@@ -84,7 +84,7 @@ describe('marketplace:publish', () => {
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ name: 'my-plugin', version: '1.0.0' });
+    expect(result.result).toMatchObject({ name: 'my-plugin', version: '1.0.0' });
   });
 
   it('PB-03: --private passes visibility=private to registry', async () => {
@@ -92,8 +92,9 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     await publishCommand.execute(ctx, mockCLIInput({ flags: { private: true } }));
 
-    const [, , fields] = mockedPostMultipart.mock.calls[0]!;
-    const meta = JSON.parse((fields as Record<string, string>).meta);
+    const fields = mockedPostMultipart.mock.calls[0]?.[2];
+    expect(fields).toBeDefined();
+    const meta = JSON.parse(fields!.meta!);
     expect(meta.visibility).toBe('private');
   });
 
@@ -105,7 +106,7 @@ describe('marketplace:publish', () => {
 
     expect(result.ok).toBe(false);
     expect(mockedPackPlugin).not.toHaveBeenCalled();
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('PB-05: package.json missing name/version — exitCode 1', async () => {
@@ -165,7 +166,7 @@ describe('marketplace:publish', () => {
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('PB-09: registry HTTP error — exitCode 1, error shown in chain', async () => {
@@ -184,8 +185,7 @@ describe('marketplace:publish', () => {
 
   it('PB-10: packPlugin called with resolved plugin dir', async () => {
     const { ui } = createCapturedUI();
-    const ctx = createCtxWithHandle(ui);
-    ctx.cwd = '/workspace';
+    const ctx = createCtxWithHandle(ui, '/workspace');
     await publishCommand.execute(ctx, mockCLIInput({ flags: { path: 'my-plugin' } }));
 
     expect(mockedPackPlugin).toHaveBeenCalledWith('/workspace/my-plugin');

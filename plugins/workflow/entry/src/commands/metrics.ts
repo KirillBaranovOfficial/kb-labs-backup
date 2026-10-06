@@ -2,7 +2,7 @@
  * workflow:metrics command - Get workflow metrics
  */
 
-import { defineCommand, handleError, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, handleError, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { type MetricsFlags } from '@kb-labs/workflow-contracts';
 import { WorkflowDaemonClient } from '../http-client.js';
 
@@ -13,7 +13,7 @@ export default defineCommand<unknown, MetricsInput, unknown>({
   description: 'Get workflow daemon metrics',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: MetricsInput): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: MetricsInput): Promise<CommandResult> {
       const flags = input.flags ?? input;
       const outputJson = flags.json ?? false;
 
@@ -22,7 +22,7 @@ export default defineCommand<unknown, MetricsInput, unknown>({
         const metrics = await client.getMetrics();
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: metrics });
+          return { ok: true, result: metrics };
         } else {
           const runsItems = [
             `Total: ${metrics.runs.total}`,
@@ -53,12 +53,12 @@ export default defineCommand<unknown, MetricsInput, unknown>({
         return { ok: true };
       } catch (error) {
         if (outputJson) {
-          handleError(ctx, error, true);
+          return handleError(ctx, error, true);
         } else {
           const message = error instanceof Error ? error.message : String(error);
-          ctx.ui?.error?.(message, { hint: 'Start with: kb-dev start workflow' });
+
         }
-        return { ok: false, error: 'Command failed' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb workflow metrics --help` to review its inputs and recovery steps, then retry." } };
       }
     },
   },

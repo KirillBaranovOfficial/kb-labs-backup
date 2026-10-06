@@ -50,7 +50,7 @@ describe('clickup:task comments add', () => {
     );
 
     expect(result.ok).toBe(true);
-    const slim = captured.json[0] as Record<string, unknown>;
+    const slim = result.result as Record<string, unknown>;
     expect(slim.id).toBe('comment-1');
     expect(slim).not.toHaveProperty('user');
     expect(slim).not.toHaveProperty('resolved');
@@ -68,7 +68,7 @@ describe('clickup:task comments add', () => {
     );
 
     expect(result.ok).toBe(true);
-    const slim = captured.json[0] as Record<string, unknown>;
+    const slim = result.result as Record<string, unknown>;
     expect(slim.id).toBe('comment-1');
     expect(typeof slim.user).toBe('string');
     expect(slim).not.toHaveProperty('resolved');
@@ -86,7 +86,7 @@ describe('clickup:task comments add', () => {
     );
 
     expect(result.ok).toBe(true);
-    const raw = captured.json[0] as typeof mockComment;
+    const raw = result.result as typeof mockComment;
     expect(typeof raw.user).toBe('object');
     expect(raw.resolved).toBeDefined();
   });
@@ -100,7 +100,7 @@ describe('clickup:task comments add', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TCA-04: missing --text returns exitCode 1', async () => {
@@ -112,7 +112,7 @@ describe('clickup:task comments add', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TCA-05: core error returns exitCode 1', async () => {
@@ -126,7 +126,7 @@ describe('clickup:task comments add', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TCA-06: --dry-run shows intent, addTaskComment is NOT called', async () => {

@@ -1,4 +1,4 @@
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import type { ImpactPluginConfig } from '@kb-labs/impact-contracts';
 import {
   findWorkspaceRoot,
@@ -25,7 +25,7 @@ export default defineCommand<unknown, DocsInput, unknown>({
 
   handler: {
     async execute(
-      ctx: PluginContextV3<unknown>,
+      ctx: PluginCommandContextV3<unknown>,
       input: DocsInput,
     ): Promise<CommandResult<unknown>> {
       const flags = input.flags ?? (input as unknown as DocsFlags);
@@ -34,15 +34,15 @@ export default defineCommand<unknown, DocsInput, unknown>({
       try {
         root = findWorkspaceRoot();
       } catch {
-        if (flags.json) {ctx.ui?.json?.({ docs: { stale: [], review: [], reindex: [] } });}
+        if (flags.json) {return { ok: true, result: { docs: { stale: [], review: [], reindex: [] } } };}
         else {ctx.ui?.warn?.('Could not find workspace root');}
-        return { ok: false, error: 'Could not find workspace root' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Could not find workspace root', hint: "Run `kb impact docs --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const changed = detectChangedPackages(root);
       if (changed.length === 0) {
         const empty = { docs: { stale: [], review: [], reindex: [] }, recommendations: [] };
-        if (flags.json) {ctx.ui?.json?.(empty);}
+        if (flags.json) {return { ok: true, result: empty };}
         else {ctx.ui?.success?.('No changes detected');}
         return { ok: true, result: empty };
       }
@@ -73,7 +73,7 @@ export default defineCommand<unknown, DocsInput, unknown>({
       const result = { docs, recommendations };
 
       if (flags.json) {
-        ctx.ui?.json?.(result);
+        return { ok: true, result: result };
       } else {
         ctx.ui?.write?.(formatHumanReadable({
           packages: { direct: [], dependent: [], transitive: [] },

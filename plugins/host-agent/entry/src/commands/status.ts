@@ -3,7 +3,7 @@
  * Show Workspace Agent daemon status via IPC socket.
  */
 
-import { defineCommand, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { HostAgentClient } from '@kb-labs/host-agent-client';
 import { createTransport } from '@kb-labs/host-agent-transport';
 
@@ -24,7 +24,7 @@ export default defineCommand({
   description: 'Show Workspace Agent daemon status',
 
   handler: {
-    async execute(ctx: PluginContextV3, rawInput: StatusInput): Promise<CommandResult<StatusResult>> {
+    async execute(ctx: PluginCommandContextV3, rawInput: StatusInput): Promise<CommandResult<StatusResult>> {
       const input: StatusInput = rawInput.flags ?? rawInput;
 
       let ipcStatus: { connected: boolean; hostId?: string; gatewayUrl?: string; reconnecting?: boolean } | null = null;
@@ -41,7 +41,7 @@ export default defineCommand({
 
       if (ipcStatus === null) {
         if (input.json) {
-          ctx.ui?.json?.({ running: false });
+          return { ok: true, result: { running: false } };
         } else {
           ctx.ui?.info?.('Workspace Agent is not running. Start with: kb-dev start host-agent');
         }
@@ -62,7 +62,7 @@ export default defineCommand({
       };
 
       if (input.json) {
-        ctx.ui?.json?.(result);
+        return { ok: true, result: result };
       } else {
         ctx.ui?.success?.('Workspace Agent Status', {
           sections: [{

@@ -86,7 +86,7 @@ describe('workflow:runs restart', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true });
+    expect(result).toMatchObject({ ok: true });
   });
 
   it('RST-05: missing run ID returns exitCode 1', async () => {
@@ -98,7 +98,7 @@ describe('workflow:runs restart', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RST-06: daemon error returns exitCode 1', async () => {
@@ -117,7 +117,7 @@ describe('workflow:runs restart', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('RST-07: --run-id flag works as alias for positional arg', async () => {

@@ -28,7 +28,7 @@ describe('workflow job list', () => {
     const result = await jobListCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ ok: true, data: { jobs: activeJobs } });
+    expect(result).toMatchObject({ ok: true, result: { jobs: activeJobs } });
   });
 
   it('filters by active job status', async () => {
@@ -39,6 +39,6 @@ describe('workflow job list', () => {
     const result = await jobListCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: { json: true, status: 'running' } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ data: { jobs: [activeJobs[0]] } });
+    expect(result).toMatchObject({ result: { jobs: [activeJobs[0]] } });
   });
 });

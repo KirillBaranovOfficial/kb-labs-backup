@@ -8,7 +8,7 @@
  */
 
 // Context
-export type { PluginContextV3, ExtractConfig } from "./context.js";
+export type { PluginContextV3, PluginCommandContextV3, ExtractConfig } from "./context.js";
 
 // Host Context
 export type {
@@ -67,6 +67,7 @@ export type {
   OutputSectionItem,
   RichOutputSectionItem,
   MessageOptions,
+  PluginHandlerUIFacade,
 } from "./ui.js";
 export { noopUI } from "./ui.js";
 
@@ -95,7 +96,7 @@ export {
   wrapError,
 } from "./errors.js";
 export type { SerializedError, ErrorCodeType } from "./errors.js";
-export { pluginErrorToEnvelope, toPluginErrorEnvelope } from "./error-envelope.js";
+export { pluginErrorToEnvelope, toPluginErrorEnvelope, isCataloguedErrorCode } from "./error-envelope.js";
 
 // Runtime
 export type {

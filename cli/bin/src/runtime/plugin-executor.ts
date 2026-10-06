@@ -219,14 +219,24 @@ export function renderUnavailableAdapterError(
 }
 
 /**
- * Return a UIFacade that suppresses all output except json().
- * Used when --json flag is active to keep stdout clean for machine parsing.
+ * Route human progress through the JSON-aware facade, which sends it to stderr.
+ * The command result itself is emitted once by the shared CLI executor.
  */
 function createJsonModeUI(base: UIFacade): UIFacade {
   return {
     ...noopUI,
     colors: base.colors,
     symbols: base.symbols,
+    write: base.write,
+    info: base.info,
+    success: base.success,
+    warn: base.warn,
+    debug: base.debug,
+    spinner: base.spinner,
+    table: base.table,
+    newline: base.newline,
+    divider: base.divider,
+    box: base.box,
     json: base.json,
   };
 }

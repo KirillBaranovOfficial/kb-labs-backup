@@ -2,7 +2,7 @@
  * workflow job list command — list active raw jobs
  */
 
-import { defineCommand, handleError, type CLIInput, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 
 interface JobListFlags {
@@ -15,7 +15,7 @@ export default defineCommand<unknown, CLIInput<JobListFlags>, unknown>({
   description: 'List active raw jobs',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<JobListFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<JobListFlags>): Promise<CommandResult> {
       const outputJson = input.flags?.json ?? false;
       const statusFilter = input.flags?.status;
 
@@ -25,7 +25,7 @@ export default defineCommand<unknown, CLIInput<JobListFlags>, unknown>({
         const filteredJobs = statusFilter ? jobs.filter((job) => job.status === statusFilter) : jobs;
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: { jobs: filteredJobs } });
+          return { ok: true, result: { jobs: filteredJobs } };
         } else if (filteredJobs.length === 0) {
           ctx.ui?.warn?.('No active jobs found');
         } else {
@@ -42,8 +42,7 @@ export default defineCommand<unknown, CLIInput<JobListFlags>, unknown>({
 
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

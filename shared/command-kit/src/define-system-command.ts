@@ -4,14 +4,13 @@
  */
 
 import {
-  type CommandResult,
   type FlagSchemaDefinition,
   type InferFlags,
   defineFlags,
   validateFlags,
   FlagValidationError,
 } from './index';
-import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { formatError } from './errors/index';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
 
@@ -124,12 +123,12 @@ function convertFlagSchema(schema: FlagSchemaDefinition): FlagDefinition[] {
       default: def.default,
       required: def.required,
     };
-    
+
     // Add choices if present (for string flags with choices)
     if (def.type === 'string' && 'choices' in def && Array.isArray(def.choices)) {
       result.choices = [...def.choices];
     }
-    
+
     return result;
   });
 }
@@ -187,14 +186,14 @@ export interface SystemCommandConfig<
 
 /**
  * Define a system command with full privileges
- * 
+ *
  * System commands are KB Labs official commands that run with full system access,
  * bypassing sandbox restrictions. They are architecturally separated from plugin
  * commands - plugins can NEVER gain system privileges.
- * 
+ *
  * TResult is REQUIRED - every command must explicitly declare its result contract.
  * This ensures type safety and enables future contract validation.
- * 
+ *
  * @example
  * ```typescript
  * import { defineSystemCommand, type CommandResult, type FlagSchemaDefinition } from '@kb-labs/shared-command-kit';
@@ -229,7 +228,7 @@ export interface SystemCommandConfig<
  *     return { ok: true, message };
  *   },
  * });
- * 
+ *
  * // Command with explicit result type and automatic flag inference
  * type WorkflowListResult = CommandResult & {
  *   workflows: Array<{ id: string }>;
@@ -265,7 +264,7 @@ export interface SystemCommandConfig<
  *     return { ok: true, workflows, total: workflows.length };
  *   },
  * });
- * 
+ *
  * // Command with explicit flag types (for complex cases)
  * export const wfRun = defineSystemCommand<
  *   { 'workflow-id': { type: 'string'; required: true } },
@@ -400,10 +399,10 @@ export function defineSystemCommand<
 
 /**
  * Create a system command group
- * 
+ *
  * Groups organize related system commands for better help organization
  * and registration.
- * 
+ *
  * @example
  * ```typescript
  * export const systemInfoGroup = defineSystemCommandGroup(

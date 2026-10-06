@@ -2,7 +2,7 @@
  * workflow job status command - Get raw job status
  */
 
-import { defineCommand, validationError, handleError, type PluginContextV3 , type CommandResult} from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3 , type CommandResult} from '@kb-labs/sdk';
 import { WorkflowDaemonClient } from '../http-client.js';
 
 type StatusInput = { json?: boolean; argv?: string[]; flags?: { json?: boolean } };
@@ -13,14 +13,13 @@ export default defineCommand<unknown, StatusInput, unknown>({
 
   handler: {
     // eslint-disable-next-line sonarjs/cognitive-complexity -- Job status display with deep run/job/step traversal, multiple output formats (JSON/human), timing calculations, status color coding, and error aggregation
-    async execute(ctx: PluginContextV3, input: StatusInput): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: StatusInput): Promise<CommandResult> {
       const flags = input.flags ?? input;
       const outputJson = flags.json ?? false;
       const jobId = input.argv?.[0];
 
       if (!jobId) {
-        validationError(ctx, 'Missing job ID', 'Usage: kb workflow job status <jobId>', outputJson);
-        return { ok: false, error: 'Command failed' };
+        return validationError(ctx, 'Missing job ID', 'Usage: kb workflow job status <jobId>', outputJson);
       }
 
       try {
@@ -28,7 +27,7 @@ export default defineCommand<unknown, StatusInput, unknown>({
         const status = await client.getJobStatus(jobId);
 
         if (outputJson) {
-          ctx.ui?.json?.({ ok: true, data: status });
+          return { ok: true, result: status };
         } else {
           const statusItems = [
             `ID: ${status.id}`,
@@ -101,8 +100,7 @@ export default defineCommand<unknown, StatusInput, unknown>({
 
         return { ok: true };
       } catch (error) {
-        handleError(ctx, error, outputJson);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, error, outputJson);
       }
     },
   },

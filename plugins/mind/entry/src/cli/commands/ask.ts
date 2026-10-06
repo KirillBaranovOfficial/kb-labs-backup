@@ -1,4 +1,4 @@
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
 import { QueryRequestSchema, type AskFlags, type AgentResponse } from '@kb-labs/mind-contracts';
 import { buildMind } from '../../platform';
@@ -10,7 +10,7 @@ export default defineCommand<unknown, CLIInput<AskFlags>, AgentResponse>({
   description: 'Ask a question and get a grounded answer with citations',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<AskFlags>): Promise<AskResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<AskFlags>): Promise<AskResult> {
       const { flags } = input;
       // `--agent` == `--format json`: the machine-readable agent contract.
       const json = flags.agent || flags.format === 'json' || flags.json;
@@ -25,7 +25,7 @@ export default defineCommand<unknown, CLIInput<AskFlags>, AgentResponse>({
         const res = await mind.ask(req);
 
         if (json) {
-          ctx.ui?.json?.(res);
+          return { ok: true, result: res };
           return { ok: true, result: res };
         }
 
@@ -45,8 +45,7 @@ export default defineCommand<unknown, CLIInput<AskFlags>, AgentResponse>({
         });
         return { ok: true, result: res };
       } catch (err) {
-        handleError(ctx, err, json);
-        return { ok: false, error: 'Command failed' };
+        return handleError(ctx, err, json);
       }
     },
   },

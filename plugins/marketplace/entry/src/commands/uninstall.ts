@@ -1,4 +1,4 @@
-import { defineCommand, validationError, handleError, type PluginContextV3, type CommandResult } from '@kb-labs/sdk';
+import { defineCommand, validationError, handleError, type PluginCommandContextV3, type CommandResult } from '@kb-labs/sdk';
 
 import { post } from '../http.js';
 import { resolveCliScope, scopeBody, CliScopeError } from '../scope.js';
@@ -19,7 +19,7 @@ export default defineCommand<unknown, UninstallInput, { removed: string[]; scope
   description: 'Uninstall package(s) from marketplace',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: UninstallInput) {
+    async intent(_ctx: PluginCommandContextV3, input: UninstallInput) {
       const argv = input.argv ?? [];
       const packages = argv.length > 0 ? argv : ['(no packages specified)'];
       return {
@@ -32,13 +32,12 @@ export default defineCommand<unknown, UninstallInput, { removed: string[]; scope
       };
     },
 
-    async execute(ctx: PluginContextV3, input: UninstallInput): Promise<CommandResult<{ removed: string[]; scope: string }>> {
+    async execute(ctx: PluginCommandContextV3, input: UninstallInput): Promise<CommandResult<{ removed: string[]; scope: string }>> {
       const argv = input.argv ?? [];
       const flags = (input.flags ?? input) as UninstallFlags;
 
       if (argv.length === 0) {
-        validationError(ctx, 'Please specify at least one package to uninstall', 'Usage: kb marketplace uninstall <package>', flags.json);
-        return { ok: false, error: 'Please specify at least one package to uninstall', result: { removed: [], scope: '' } };
+        return validationError(ctx, 'Please specify at least one package to uninstall', 'Usage: kb marketplace uninstall <package>', flags.json);
       }
 
       let scopeCtx;
@@ -46,11 +45,10 @@ export default defineCommand<unknown, UninstallInput, { removed: string[]; scope
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          validationError(ctx, err.message, undefined, flags.json);
+          return validationError(ctx, err.message, undefined, flags.json);
         } else {
-          handleError(ctx, err, flags.json);
+          return handleError(ctx, err, flags.json);
         }
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { removed: [], scope: '' } };
       }
 
       try {
@@ -62,14 +60,13 @@ export default defineCommand<unknown, UninstallInput, { removed: string[]; scope
         });
 
         if (flags.json) {
-          ctx.ui?.json?.({ ok: true, removed: argv, scope: scopeCtx.scope });
+          return { ok: true, result: { removed: argv, scope: scopeCtx.scope } };
         } else {
           ctx.ui?.success?.(`Removed from ${scopeCtx.scope}: ${argv.join(', ')}`);
         }
         return { ok: true, result: { removed: argv, scope: scopeCtx.scope } };
       } catch (err) {
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: { removed: [], scope: '' } };
+        return handleError(ctx, err, flags.json);
       }
     },
   },

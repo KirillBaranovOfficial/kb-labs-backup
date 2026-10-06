@@ -80,7 +80,7 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
         ok: false,
         status: 'error' as const,
         healthStatus: 'degraded' as const,
-        error: message,
+        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: message, hint: "Run `kb info health --help` to review valid inputs and recovery steps, then retry." },
       };
     } finally {
       await cliApi.dispose();

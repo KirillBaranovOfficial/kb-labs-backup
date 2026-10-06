@@ -1,5 +1,6 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, addTaskComment } from '@kb-labs/clickup-core';
+import type { ClickUpCommentCreateResult } from '@kb-labs/clickup-contracts';
 import { handleError, validationError } from '../utils/error.js';
 
 type TaskCommentAddFlags = {
@@ -11,12 +12,14 @@ type TaskCommentAddFlags = {
   'dry-run'?: boolean;
 };
 
-export default defineCommand({
+type TaskCommentSummary = Pick<ClickUpCommentCreateResult, 'id' | 'date' | 'comment_text'> & { user?: string };
+
+export default defineCommand<unknown, CLIInput<TaskCommentAddFlags>, ClickUpCommentCreateResult | TaskCommentSummary>({
   id: 'clickup:task.comment.add',
   description: 'Add a comment to a task',
 
   handler: {
-    async intent(_ctx: PluginContextV3, input: CLIInput<TaskCommentAddFlags>) {
+    async intent(_ctx: PluginCommandContextV3, input: CLIInput<TaskCommentAddFlags>) {
       const [taskId] = input.argv;
       return {
         summary: `Add comment to task ${taskId ?? '(unknown)'}`,
@@ -24,15 +27,13 @@ export default defineCommand({
       };
     },
 
-    async execute(ctx: PluginContextV3, input: CLIInput<TaskCommentAddFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<TaskCommentAddFlags>) {
       const [taskId] = input.argv;
       if (!taskId) {
-        validationError(ctx, 'Task ID is required', 'Usage: kb clickup task comment add <taskId> --text "message"', input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, 'Task ID is required', 'Usage: kb clickup task comment add <taskId> --text "message"', input.flags.json);
       }
       if (!input.flags.text) {
-        validationError(ctx, '--text is required', undefined, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return validationError(ctx, '--text is required', undefined, input.flags.json);
       }
 
       try {
@@ -43,14 +44,14 @@ export default defineCommand({
 
         if (input.flags.json) {
           if (input.flags.full) {
-            ctx.ui?.json?.(comment);
+            return { ok: true, result: comment };
           } else {
-            ctx.ui?.json?.({
+            return { ok: true, result: {
               id: comment.id,
               date: comment.date,
               ...(comment.comment_text !== undefined ? { comment_text: comment.comment_text } : {}),
               ...(comment.user?.username !== undefined ? { user: comment.user.username } : {}),
-            });
+            } };
           }
         } else {
           ctx.ui?.success?.(`Comment added (id: ${comment.id})`);
@@ -58,8 +59,7 @@ export default defineCommand({
 
         return { ok: true, result: comment };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

@@ -49,8 +49,8 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
 
     if (!credentials) {
       const msg = 'Not authenticated. Run "kb auth login" first.';
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
+      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     const qs = flags.plugin ? `?pluginId=${encodeURIComponent(flags.plugin)}` : '';
@@ -63,15 +63,15 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
       });
     } catch (err) {
       const msg = `Cannot reach Gateway at ${credentials.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
+      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       const msg = `List failed (HTTP ${response.status}): ${body}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: msg }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: msg };
+      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     const data = await readGatewaySuccessData<{ webhooks: WebhookEntry[] }>(response);

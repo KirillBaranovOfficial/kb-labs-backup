@@ -35,5 +35,14 @@ export function failWithEnvelope(ui: Ui | undefined, envelope: ErrorEnvelope, js
     ui?.error(`${envelope.message} [${envelope.code}]`);
     ui?.write(`Hint: ${envelope.hint}\n`);
   }
-  return { ok: false as const, error: envelope.message, result: { envelope } };
+  return {
+    ok: false as const,
+    error: {
+      code: envelope.code,
+      message: envelope.message,
+      hint: envelope.hint,
+      ...(envelope.details ? { details: envelope.details } : {}),
+    },
+    result: { envelope },
+  };
 }

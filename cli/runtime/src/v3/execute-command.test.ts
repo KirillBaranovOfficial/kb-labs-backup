@@ -34,3 +34,168 @@ describe('executeCommandV3 environment', () => {
     expect(process.env.KB_GATEWAY_URL).toBe(previousGatewayUrl);
   });
 });
+
+describe('executeCommandV3 plugin command result output', () => {
+  // case: S-203.1, S-203.2
+  it('renders a returned typed failure once as the shared envelope in JSON mode', async () => {
+    const json = vi.fn();
+    const error = vi.fn();
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      data: {
+        ok: false as const,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: 'The operation failed.',
+          hint: 'Resolve the reported command failure, then run the command again.',
+          details: { resource: 'record-17' },
+        },
+      },
+      executionTimeMs: 1,
+    }));
+    const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
+
+    const exitCode = await executeCommandV3({
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
+      handlerPath: 'dist/commands/test.js',
+      argv: [],
+      flags: { json: true },
+      ui: { ...noopUI, json, error },
+      platform: {} as unknown as PlatformServices,
+      platformContainer,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(json).toHaveBeenCalledOnce();
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({
+        code: 'KB_RUNTIME_COMMAND_FAILED',
+        message: 'The operation failed.',
+        hint: 'Resolve the reported command failure, then run the command again.',
+        details: { resource: 'record-17' },
+      }),
+    }));
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  // case: S-203.2
+  it('rejects a legacy string failure without treating it as a command error', async () => {
+    const json = vi.fn();
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      data: { ok: false, error: 'free text failure' },
+      executionTimeMs: 1,
+    }));
+    const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
+
+    const exitCode = await executeCommandV3({
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
+      handlerPath: 'dist/commands/test.js',
+      argv: [],
+      flags: { json: true },
+      ui: { ...noopUI, json },
+      platform: {} as unknown as PlatformServices,
+      platformContainer,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(json).toHaveBeenCalledOnce();
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({ code: 'KB_RUNTIME_UNEXPECTED' }),
+    }));
+  });
+
+  // case: S-203.2
+  it('renders a returned typed failure as the shared human error with its hint', async () => {
+    const json = vi.fn();
+    const error = vi.fn();
+    const execute = vi.fn(async () => ({
+      ok: true as const,
+      data: {
+        ok: false as const,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: 'The operation failed.',
+          hint: 'Run `kb test command --help`, then retry the operation.',
+        },
+      },
+      executionTimeMs: 1,
+    }));
+    const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
+
+    const exitCode = await executeCommandV3({
+      pluginId: '@kb-labs/test-plugin',
+      pluginVersion: '1.0.0',
+      handlerPath: 'dist/commands/test.js',
+      argv: [],
+      flags: {},
+      ui: { ...noopUI, json, error },
+      platform: {} as unknown as PlatformServices,
+      platformContainer,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(json).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith('KB_RUNTIME_COMMAND_FAILED: The operation failed.', {
+      hint: 'Run `kb test command --help`, then retry the operation.',
+    });
+  });
+
+  // case: S-203.2
+  it('keeps a catalogued execution error code and its message', async () => {
+    const json = vi.fn();
+    const execute = vi.fn(async () => ({
+      ok: false as const,
+      error: { code: 'KB_PLUGIN_NOT_FOUND', message: 'Plugin @acme/missing was not found.', hint: 'Install the plugin and retry.', correlationId: 'worker-correlation-17', details: { plugin: '@acme/missing' } },
+      executionTimeMs: 1,
+    }));
+    const platform = { logger: { error: vi.fn() } } as unknown as PlatformServices;
+    const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
+
+    const exitCode = await executeCommandV3({
+      pluginId: '@kb-labs/test-plugin', pluginVersion: '1.0.0', handlerPath: 'dist/commands/test.js',
+      argv: [], flags: { json: true }, ui: { ...noopUI, json }, platform, platformContainer,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({
+        code: 'KB_PLUGIN_NOT_FOUND',
+        message: 'Plugin @acme/missing was not found.',
+        hint: expect.any(String),
+        correlationId: 'worker-correlation-17',
+        details: { plugin: '@acme/missing' },
+      }),
+    }));
+    expect(platform.logger.error).not.toHaveBeenCalled();
+  });
+
+  // case: S-203.3
+  it('renders thrown uncatalogued errors as unexpected and logs the cause with its correlation ID', async () => {
+    const json = vi.fn();
+    const logError = vi.fn();
+    const execute = vi.fn(async () => { throw new Error('private worker cause'); });
+    const platform = { logger: { error: logError } } as unknown as PlatformServices;
+    const platformContainer = { executionBackend: { execute } } as unknown as PlatformContainer;
+
+    const exitCode = await executeCommandV3({
+      pluginId: '@kb-labs/test-plugin', pluginVersion: '1.0.0', handlerPath: 'dist/commands/test.js',
+      argv: [], flags: { json: true }, ui: { ...noopUI, json }, platform, platformContainer,
+    });
+
+    const envelope = json.mock.calls[0]?.[0] as { error: { code: string; correlationId: string; message: string } };
+    expect(exitCode).toBe(1);
+    expect(envelope.error.code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(envelope.error.message).not.toContain('private worker cause');
+    expect(logError).toHaveBeenCalledWith('Plugin command failed unexpectedly', expect.any(Error), {
+      correlationId: envelope.error.correlationId,
+      requestId: expect.any(String),
+    });
+  });
+});

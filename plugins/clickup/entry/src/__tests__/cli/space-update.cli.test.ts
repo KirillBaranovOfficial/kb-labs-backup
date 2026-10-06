@@ -61,8 +61,8 @@ describe('clickup:space.update', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ id: 'space-1', name: 'Updated Space' });
-    expect(Object.keys(captured.json[0] as object)).toEqual(['id', 'name']);
+    expect(result.result).toMatchObject({ id: 'space-1', name: 'Updated Space' });
+    expect(Object.keys(result.result as object)).toEqual(['id', 'name']);
   });
 
   it('SU-02b: --json --full outputs raw updated space', async () => {
@@ -76,7 +76,7 @@ describe('clickup:space.update', () => {
     );
 
     expect(result.ok).toBe(true);
-    const raw = captured.json[0] as typeof mockUpdatedSpace;
+    const raw = result.result as typeof mockUpdatedSpace;
     expect(raw.folders).toBeDefined();
     expect(raw.statuses).toBeDefined();
   });
@@ -90,7 +90,7 @@ describe('clickup:space.update', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('SU-04: core function throws — exitCode 1, error shown', async () => {
@@ -104,7 +104,7 @@ describe('clickup:space.update', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('SU-05: --dry-run shows intent, updateSpace is NOT called', async () => {

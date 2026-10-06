@@ -11,7 +11,7 @@ import {
   findRepoRoot,
   handleError,
   AdapterUnavailableError,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CLIInput,
 } from '@kb-labs/sdk';
 import type { CommandResult } from '@kb-labs/sdk';
@@ -36,7 +36,7 @@ import { resolveScopePath } from '../../rest/handlers/scope-resolver';
 
 type RunResult = CommandResult<CommitRunOutput>;
 
-async function resolveContext(ctx: PluginContextV3, flags: CommitFlags) {
+async function resolveContext(ctx: PluginCommandContextV3, flags: CommitFlags) {
   const llm = useLLM();
   const cwd = (await findRepoRoot(ctx.cwd || process.cwd())) ?? process.cwd();
   const fileConfig = await useConfig<Partial<CommitPluginConfig>>();
@@ -100,7 +100,7 @@ function createEmptyCommitPlan(
 }
 
 function renderPreview(
-  ctx: PluginContextV3,
+  ctx: PluginCommandContextV3,
   plan: CommitRunOutput['plan'],
   effectiveScope: string,
   outputJson: boolean,
@@ -109,7 +109,7 @@ function renderPreview(
   const output: CommitRunOutput = { plan, applied: false, pushed: false, commits: [] };
 
   if (outputJson) {
-    ctx.ui?.json?.(output);
+    return { ok: true, result: output };
   } else {
     const items = plan.commits.map(c => `${c.type}${c.scope ? `(${c.scope})` : ''}: ${c.message}`);
     ctx.ui?.success?.(plan.commits.length === 0 ? 'No changes to commit' : 'Commit plan generated (dry-run)', {
@@ -130,7 +130,7 @@ export default defineCommand({
   description: 'Generate and apply commits (default flow)',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<CommitFlags>): Promise<RunResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<CommitFlags>): Promise<RunResult> {
       const startTime = Date.now();
       const flags = input.flags;
       const { cwd, effectiveScope, scopeCwd, llmComplete, config } = await resolveContext(ctx, flags);
@@ -145,11 +145,7 @@ export default defineCommand({
         status = await getGitStatus(scopeCwd);
       } catch (err) {
         statusLoader.fail('Failed to check git status');
-        handleError(ctx, err, outputJson);
-        return {
-          ok: false,
-          error: 'Could not read Git status. Confirm this path is a Git repository, then rerun `kb commit commit`.',
-        };
+        return handleError(ctx, err, outputJson);
       }
 
       if (!hasChanges(status)) {
@@ -188,17 +184,12 @@ export default defineCommand({
 
       if (!applyResult.success) {
         applyLoader.fail('Failed to apply commits');
-        if (outputJson) {
-          ctx.ui?.json?.({ ok: false, error: { code: 'APPLY_FAILED', message: applyResult.errors.join('; ') } });
-        } else {
-          ctx.ui?.error?.('Failed to apply commits', {
-            hint: 'Check git status and resolve conflicts manually',
-            cause: applyResult.errors.join('; '),
-          });
+        if (!outputJson) {
+
         }
         return {
           ok: false,
-          error: 'Commit plan could not be applied. Review the Git errors above, resolve them, then rerun `kb commit apply`.',
+          error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit plan could not be applied. Review the Git errors above, resolve them, then rerun `kb commit apply`.', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' },
         };
       }
 
@@ -233,7 +224,7 @@ export default defineCommand({
       };
 
       if (outputJson) {
-        ctx.ui?.json?.(output);
+        return { ok: true, result: output };
       } else {
         const commitsItems = applyResult.appliedCommits.map((c) => {
           const shortSha = c.sha.substring(0, 7);

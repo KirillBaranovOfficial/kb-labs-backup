@@ -1,4 +1,4 @@
-import { defineCommand, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { requireApiKey, requireTeamId, searchTasks } from '@kb-labs/clickup-core';
 import { handleError } from '../utils/error.js';
 import { slimTask } from '../utils/slim.js';
@@ -18,7 +18,7 @@ export default defineCommand({
   description: 'Search tasks across the workspace',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<TaskSearchFlags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<TaskSearchFlags>) {
       try {
         const [query] = input.argv;
 
@@ -32,7 +32,7 @@ export default defineCommand({
         });
 
         if (input.flags.json) {
-          ctx.ui?.json?.(input.flags.full ? tasks : tasks.map(slimTask));
+          return { ok: true, result: input.flags.full ? tasks : tasks.map(slimTask) };
           return { ok: true, result: tasks };
         }
 
@@ -57,8 +57,7 @@ export default defineCommand({
 
         return { ok: true, result: tasks };
       } catch (err) {
-        handleError(ctx, err, input.flags.json);
-        return { ok: false, error: 'Command failed', result: null };
+        return handleError(ctx, err, input.flags.json);
       }
     },
   },

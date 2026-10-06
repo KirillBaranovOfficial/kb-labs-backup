@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -17,7 +17,7 @@ export default defineCommand<unknown, CLIInput<BaselineStatusFlags>, unknown>({
   description: 'Show current baseline',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<BaselineStatusFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<BaselineStatusFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -26,7 +26,7 @@ export default defineCommand<unknown, CLIInput<BaselineStatusFlags>, unknown>({
       const baseline = store.loadBaseline();
 
       if (flags.json) {
-        ctx.ui?.json?.(baseline);
+        return { ok: true, result: baseline };
       } else {
         for (const section of buildBaselineReport(baseline)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });

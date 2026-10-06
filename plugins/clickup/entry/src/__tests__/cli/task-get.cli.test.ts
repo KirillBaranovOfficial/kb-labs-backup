@@ -51,7 +51,7 @@ describe('clickup:task.get', () => {
     );
 
     expect(result.ok).toBe(true);
-    const slim = captured.json[0] as Record<string, unknown>;
+    const slim = result.result as Record<string, unknown>;
     expect(slim.id).toBe('task-001');
     expect(slim.status).toBe('open');
     expect(slim).toHaveProperty('description');
@@ -73,7 +73,7 @@ describe('clickup:task.get', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(captured.json[0]).toMatchObject({ task: { id: 'task-001' } });
+    expect(result.result).toMatchObject({ task: { id: 'task-001' } });
   });
 
   it('TG-03: missing taskId returns exitCode 1', async () => {
@@ -85,7 +85,7 @@ describe('clickup:task.get', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
   it('TG-04: core error returns exitCode 1', async () => {
@@ -100,6 +100,6 @@ describe('clickup:task.get', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

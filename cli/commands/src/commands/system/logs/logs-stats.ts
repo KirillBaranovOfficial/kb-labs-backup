@@ -59,7 +59,7 @@ export const logsStats = defineSystemCommand<Flags, Result>({
     if (!reader) {
       return {
         ok: false,
-        error: "Log reader not available. Ensure platform is initialized.",
+        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log reader not available. Ensure platform is initialized.", hint: "Run `kb logs stats --help` to review valid inputs and recovery steps, then retry." },
       };
     }
 

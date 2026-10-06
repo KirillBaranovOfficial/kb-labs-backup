@@ -7,7 +7,7 @@
 
 import type { HostContext, HostType } from './host-context.js';
 import type { TraceContext } from './trace.js';
-import type { UIFacade } from './ui.js';
+import type { PluginHandlerUIFacade, UIFacade } from './ui.js';
 import type { PluginServices } from './platform.js';
 import type { RuntimeAPI } from './runtime.js';
 import type { PluginAPI } from './api.js';
@@ -134,6 +134,11 @@ export interface PluginContextV3<TConfig = unknown> {
    */
   readonly api: PluginAPI;
 }
+
+/** Context contract passed specifically to CLI command handlers. */
+export type PluginCommandContextV3<TConfig = unknown> = Omit<PluginContextV3<TConfig>, 'ui'> & {
+  readonly ui: PluginHandlerUIFacade;
+};
 
 /**
  * Type helper to extract config type from context

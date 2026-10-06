@@ -1,7 +1,7 @@
 import {
   defineCommand,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import { calculateStats } from '@kb-labs/quality-core';
@@ -12,14 +12,14 @@ export default defineCommand<unknown, CLIInput<StatsFlags>, unknown>({
   description: 'Monorepo statistics: packages, lines of code, size',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<StatsFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<StatsFlags>): Promise<CommandResult> {
       const { flags } = input;
       const cwd = ctx.cwd ?? process.cwd();
 
       const stats = await calculateStats(cwd);
 
       if (flags.json) {
-        ctx.ui?.json?.(stats);
+        return { ok: true, result: stats };
         return { ok: true };
       }
 

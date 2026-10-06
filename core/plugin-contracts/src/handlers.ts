@@ -5,7 +5,8 @@
  */
 
 import type { PluginContextV3 } from './context.js';
-import type { FailureInfo, FailureKind } from '@kb-labs/core-contracts';
+import type { FailureKind } from '@kb-labs/core-contracts';
+import type { ErrorCode, ErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 
 /**
  * Standard metadata automatically injected by runtime
@@ -62,8 +63,10 @@ export interface StandardMeta {
  *
  * @template T Result data type
  */
-export interface CommandError extends Omit<FailureInfo, 'kind'> {
+export interface CommandError extends Pick<ErrorEnvelope, 'code' | 'message' | 'hint'> {
+  code: ErrorCode;
   kind?: FailureKind;
+  details?: Record<string, string>;
 }
 
 export interface CommandSuccess<T = unknown> {
@@ -74,7 +77,7 @@ export interface CommandSuccess<T = unknown> {
 
 export interface CommandFailure {
   ok: false;
-  error: string | CommandError;
+  error: CommandError;
   result?: unknown;
   meta?: Record<string, unknown>;
 }
@@ -102,6 +105,9 @@ export interface CommandResultWithMeta<T = unknown> {
    * Structured result data (optional)
    */
   result?: T;
+
+  /** Catalogued command failure when `ok` is false. */
+  error?: CommandError;
 
   /**
    * Metadata with both standard (injected by runtime) and custom (from handler) fields

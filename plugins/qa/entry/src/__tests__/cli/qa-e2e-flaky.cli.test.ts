@@ -69,8 +69,7 @@ describe('qa:e2e-flaky', () => {
     const result = await e2eFlakyCommand.execute(ctx as never, mockCLIInput<QaE2eFlakyFlags>({ flags: { agent: true } }));
 
     expect(result.ok).toBe(true);
-    expect(captured.json.length).toBe(1);
-    const overview = captured.json[0] as { top: unknown[]; totalCases: number };
+    const overview = result.result as { top: unknown[]; totalCases: number };
     expect(overview.totalCases).toBe(1);
     expect(Array.isArray(overview.top)).toBe(true);
     // Overview must stay compact — no raw per-attempt payload leaking into the default view.
@@ -87,7 +86,7 @@ describe('qa:e2e-flaky', () => {
     );
 
     expect(result.ok).toBe(true);
-    const timeline = captured.json[0] as { caseKey: string; history: unknown[] };
+    const timeline = result.result as { caseKey: string; history: unknown[] };
     expect(timeline.caseKey).toBe('gw/a.spec.ts#A-1');
     expect(timeline.history).toHaveLength(2);
     expect(JSON.stringify(timeline)).toContain('ECONNREFUSED');
@@ -103,7 +102,7 @@ describe('qa:e2e-flaky', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(captured.errors[0]).toContain('No history found');
+    if (!result.ok) expect(result.error.message).toContain('No history was found');
   });
 
   it('QEF-04: --ingest merges shard flaky-report.json files and saves a snapshot', async () => {
@@ -144,7 +143,7 @@ describe('qa:e2e-flaky', () => {
     const result = await e2eFlakyCommand.execute(ctx as never, mockCLIInput<QaE2eFlakyFlags>({ flags: { sync: true } }));
 
     expect(result.ok).toBe(false);
-    expect(captured.errors[0]).toContain('No flaky history yet');
+    expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Flaky report sync failed.', hint: expect.any(String) } });
   });
 
   it('QEF-06: --sync and --ingest compose — sync runs instead of being silently skipped by ingest', async () => {
@@ -187,7 +186,7 @@ describe('qa:e2e-flaky', () => {
       const result = await e2eFlakyCommand.execute(ctx as never, mockCLIInput<QaE2eFlakyFlags>({ flags: { ingest: dir } }));
 
       expect(result.ok).toBe(false);
-      expect(captured.errors[0]).toContain('No flaky-report.json files found');
+      if (!result.ok) expect(result.error.message).toContain('No flaky-report.json files were found');
       expect(mockSaveE2eFlaky).not.toHaveBeenCalled();
     } finally {
       rmSync(dir, { recursive: true, force: true });

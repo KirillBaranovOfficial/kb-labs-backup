@@ -117,7 +117,7 @@ describe('release:promote', () => {
     const result = await promoteCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
     expect(result.ok).toBe(true);
-    const out = captured.json[0] as { result: { summary: Record<string, unknown> } };
-    expect(out.result.summary).toMatchObject({ total: 2, successful: 2, failed: 0, tag: 'latest' });
+    const out = result.result as { summary: Record<string, unknown> };
+    expect(out.summary).toMatchObject({ total: 2, successful: 2, failed: 0, tag: 'latest' });
   });
 });

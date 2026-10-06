@@ -2,7 +2,7 @@ import {
   defineCommand,
   useConfig,
   type CLIInput,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
 } from '@kb-labs/sdk';
 import {
@@ -18,7 +18,7 @@ export default defineCommand<unknown, CLIInput<QaRegressionsFlags>, unknown>({
   description: 'Detect regressions since last run',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<QaRegressionsFlags>): Promise<CommandResult> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<QaRegressionsFlags>): Promise<CommandResult> {
       const { flags } = input;
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -28,7 +28,7 @@ export default defineCommand<unknown, CLIInput<QaRegressionsFlags>, unknown>({
       const detection = detectRegressions(history);
 
       if (flags.json) {
-        ctx.ui?.json?.(detection);
+        return { ok: true, result: detection };
       } else {
         for (const section of buildRegressionsReport(detection)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
@@ -36,7 +36,7 @@ export default defineCommand<unknown, CLIInput<QaRegressionsFlags>, unknown>({
       }
 
       return detection.hasRegressions
-        ? { ok: false, error: 'Regressions found', result: detection }
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Regressions found', hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' }, result: detection }
         : { ok: true, result: detection };
     },
   },

@@ -13,7 +13,7 @@ import {
   handleError,
   AdapterCredentialsMissingError,
   AdapterUnavailableError,
-  type PluginContextV3,
+  type PluginCommandContextV3,
   type CommandResult,
   type ArtifactInfo,
 } from '@kb-labs/sdk';
@@ -48,7 +48,7 @@ export default defineCommand({
   description: 'Generate commit plan from git changes',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: GenerateInput): Promise<GenerateResult> {
+    async execute(ctx: PluginCommandContextV3, input: GenerateInput): Promise<GenerateResult> {
       const startTime = Date.now();
       const flags = input.flags ?? input;
       const llm = useLLM();
@@ -78,7 +78,7 @@ export default defineCommand({
           statusLoader.stop();
           ctx.ui?.warn?.('No changes to commit');
         }
-        return { ok: false, error: 'No changes to commit' };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No changes to commit', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' } };
       }
       if (!flags.json) { statusLoader.succeed('Found changes to commit'); }
 
@@ -115,11 +115,9 @@ export default defineCommand({
       } catch (err) {
         if (!flags.json) { analyzeLoader.fail('Failed to generate commit plan'); }
         if ((err instanceof AdapterUnavailableError && err.reason === 'not-configured') || err instanceof AdapterCredentialsMissingError) {
-          handleError(ctx, err, Boolean(flags.json));
-          return { ok: false, error: 'Commit plan generation failed. Follow the adapter guidance above, then rerun `kb commit generate`.' };
+          return handleError(ctx, err, Boolean(flags.json));
         }
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: 'Could not generate a commit plan. Review the error details above, then rerun `kb commit generate`.' };
+        return handleError(ctx, err, flags.json);
       }
 
       // Save plan
@@ -129,8 +127,7 @@ export default defineCommand({
         await savePlan(cwd, plan, effectiveScope);
       } catch (err) {
         if (!flags.json) { saveLoader.fail('Failed to save plan'); }
-        handleError(ctx, err, flags.json);
-        return { ok: false, error: 'Could not save the commit plan. Check project storage permissions, then rerun `kb commit generate`.' };
+        return handleError(ctx, err, flags.json);
       }
       const planPath = getCurrentPlanPath(cwd, effectiveScope);
       if (!flags.json) { saveLoader.succeed('Plan saved'); }
@@ -145,7 +142,7 @@ export default defineCommand({
 
       // V3: Flags are auto-merged by bootstrap.ts, just use directly
       if (flags.json) {
-        ctx.ui?.json?.(output);
+        return { ok: true, result: output };
       } else {
         // Build commits section
         const commitsItems = plan.commits.map((commit) => {

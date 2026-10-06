@@ -1,4 +1,4 @@
-import { defineCommand, handleError, type CLIInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineCommand, handleError, type CLIInput, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { listEvents } from '@kb-labs/steward-core';
 
 type Flags = { 'subject-type'?: string; 'subject-id'?: string; kind?: string; json?: boolean };
@@ -8,7 +8,7 @@ export default defineCommand({
   description: 'Read the history log for a subject — "what happened with X"',
 
   handler: {
-    async execute(ctx: PluginContextV3, input: CLIInput<Flags>) {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const { json, kind } = input.flags;
       const subjectType = input.flags['subject-type'];
       const subjectId = input.flags['subject-id'];
@@ -18,14 +18,13 @@ export default defineCommand({
           subjectId,
           kind,
         });
-        if (json) {ctx.ui?.json?.({ ok: true, result: events });}
+        if (json) {return { ok: true, result: events };}
         else if (events.length === 0) {ctx.ui?.info?.('No events yet.');}
         else {ctx.ui?.chain?.(events.map((e) => ({ title: `[${e.kind}] ${new Date(e.at).toISOString()}`, sections: [{ items: [e.text ?? e.reason ?? '(no text)'] }] })));}
         return { ok: true, result: events };
       } catch (err) {
         ctx.platform.logger?.error?.('steward:event.list failed', err instanceof Error ? err : new Error(String(err)));
-        handleError(ctx, err, json);
-        return { ok: false, error: err instanceof Error ? err.message : String(err), result: null };
+        return handleError(ctx, err, json);
       }
     },
   },

@@ -118,7 +118,7 @@ export const logsSummarize = defineSystemCommand<Flags, LogSummarizeResult>({
   async handler(_ctx, argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return { ok: false, error: 'Log reader not available. Ensure platform is initialized.' };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Log reader not available. Ensure platform is initialized.', hint: "Run `kb logs summarize --help` to review valid inputs and recovery steps, then retry." } };
     }
 
     const question = argv[0] || 'What happened recently? Summarize errors and notable events.';

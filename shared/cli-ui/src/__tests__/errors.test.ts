@@ -1,43 +1,45 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { handleError } from '../utils/errors.js';
 
 describe('handleError', () => {
-  it('preserves the catalog error envelope in JSON and human output', () => {
-    const json = vi.fn();
-    const output = vi.fn();
+  it('preserves the catalog error envelope as a command failure for the shared renderer', () => {
     const envelope = {
       code: 'KB_AUTH_REQUIRED', area: 'auth', stage: 'run', severity: 'error', retryable: false,
       message: 'Authentication is required.', hint: 'Run "kb auth login".',
     };
     const error = Object.assign(new Error(envelope.message), { envelope });
 
-    handleError({ ui: { json, error: output } }, error, true);
-
-    expect(json).toHaveBeenCalledWith({ ok: false, error: envelope });
-
-    handleError({ ui: { json, error: output } }, error);
-    expect(output).toHaveBeenCalledWith('Authentication is required. [KB_AUTH_REQUIRED]', {
-      hint: 'Run "kb auth login".',
+    expect(handleError({ ui: {} }, error, true)).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_AUTH_REQUIRED',
+        message: 'Authentication is required.',
+        hint: 'Run "kb auth login".',
+      },
     });
   });
 
-  it('maps unexpected errors to the shared platform error envelope', () => {
-    const json = vi.fn();
-    handleError({ ui: { json } }, new Error('request failed'), true);
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+  it('maps unexpected errors to a command failure for the shared renderer', () => {
+    expect(handleError({ ui: {} }, new Error('request failed'), true)).toMatchObject({
       ok: false,
       error: expect.objectContaining({
         code: 'KB_RUNTIME_UNEXPECTED',
         message: expect.any(String),
         hint: expect.any(String),
       }),
-    }));
+    });
   });
 
-  it('shows a permission carried by an authorization envelope in human output', () => {
-    const output = vi.fn();
+  it('preserves a permission carried by an authorization envelope in details', () => {
     const envelope = { code: 'KB_AUTH_FORBIDDEN', message: 'No permission.', hint: 'Ask an administrator.', details: { permission: 'auth:users:write' } };
-    handleError({ ui: { error: output } }, Object.assign(new Error(envelope.message), { envelope }));
-    expect(output).toHaveBeenCalledWith('No permission. (permission: auth:users:write) [KB_AUTH_FORBIDDEN]', { hint: 'Ask an administrator.' });
+    expect(handleError({ ui: {} }, Object.assign(new Error(envelope.message), { envelope }))).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_AUTH_FORBIDDEN',
+        message: 'No permission.',
+        hint: 'Ask an administrator.',
+        details: { permission: 'auth:users:write' },
+      },
+    });
   });
 });

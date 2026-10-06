@@ -8,12 +8,17 @@
 import {
   createErrorEnvelope,
   createProductErrorEnvelope,
+  getCatalogEntry,
   stringifyDetails,
   toErrorEnvelope as platformToErrorEnvelope,
   type ErrorEnvelope,
   type ToEnvelopeOptions,
 } from '@kb-labs/core-platform';
 import { ErrorCode, PluginError, RateLimitError } from './errors.js';
+
+export function isCataloguedErrorCode(code: string): boolean {
+  return getCatalogEntry(code) !== undefined;
+}
 
 export function pluginErrorToEnvelope(error: PluginError, options: ToEnvelopeOptions = {}): ErrorEnvelope {
   const details = stringifyDetails(error.details);
