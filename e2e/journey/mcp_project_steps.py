@@ -260,7 +260,7 @@ def secured_project_catalog_isolation(project_a: str, project_b: str, token: str
     for project_id in (project_a, project_b):
         path = f"/api/v1/projects/{project_id}/mcp"
         payload = {"jsonrpc": "2.0", "id": 1995, "method": "tools/list", "params": {}}
-        with invocation_context(step_id="S-199.5"):
+        with invocation_context(step_id="mcp.secured-catalog"):
             missing_status, missing_body, _ = _request(
                 path, method="POST", payload=payload, accept="application/json, text/event-stream",
             )
@@ -274,7 +274,7 @@ def secured_project_catalog_isolation(project_a: str, project_b: str, token: str
                     and missing_body["result"].get("tools"))):
             return f"secured tools/list for {project_id} did not return a 401 KB_AUTH_REQUIRED envelope without a catalog"
 
-        with invocation_context(step_id="S-199.5"):
+        with invocation_context(step_id="mcp.secured-catalog"):
             status, body, _ = _request(
                 path, method="POST", token=token, payload=payload,
                 accept="application/json, text/event-stream",
@@ -400,7 +400,7 @@ def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str)
     """Check that a project-only Commit tool appears in A's catalog, not B's."""
     catalogs: dict[str, set[str]] = {}
     for project_id in (project_a, project_b):
-        with invocation_context(step_id="S-199.3"):
+        with invocation_context(step_id="mcp.project-catalog"):
             status, body, _ = _request(
                 f"/api/v1/projects/{project_id}/mcp", method="POST", token=token,
                 accept="application/json, text/event-stream",
@@ -425,7 +425,7 @@ def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str)
 def project_readonly_tool_isolation(project_a: str, project_b: str, token: str) -> str | None:
     """Read Project A's Commit plan, then verify the same read-only tool is absent from B (S-199.4)."""
     tool_name = "kb-labs-commit__commit_open"
-    with invocation_context(step_id="S-199.4"):
+    with invocation_context(step_id="mcp.project-readonly-tool"):
         status_a, body_a, _ = _request(
             f"/api/v1/projects/{project_a}/mcp", method="POST", token=token,
             accept="application/json, text/event-stream",
@@ -444,7 +444,7 @@ def project_readonly_tool_isolation(project_a: str, project_b: str, token: str) 
     if not isinstance(result_data, dict) or result_data.get("hasPlan") is not True:
         return "Project A's read-only Commit plan tool did not return its project plan"
 
-    with invocation_context(step_id="S-199.4"):
+    with invocation_context(step_id="mcp.project-readonly-tool"):
         status_b, body_b, _ = _request(
             f"/api/v1/projects/{project_b}/mcp", method="POST", token=token,
             accept="application/json, text/event-stream",

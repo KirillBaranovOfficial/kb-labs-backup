@@ -112,9 +112,6 @@ def expected_root(payload: dict) -> str:
     return str(receipt.get("plan", {}).get("request", {}).get("platformRoot", ""))
 
 
-def _record(journey: Journey, case_id: str, name: str, check) -> None:
-    journey.step(name, "auth.secured", check, cases=[case_id])
-
 
 def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> None:
     """Register exact S-005, S-031, and S-042 journey claims.
@@ -171,9 +168,9 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         validate_case_response("S-042.3", status, value)
         return None
 
-    _record(journey, "S-042.1", "invite member with admin session", invite)
-    _record(journey, "S-042.2", "activate invitation and resolve member session", activate)
-    _record(journey, "S-042.3", "reject consumed activation token", replay_invite)
+    journey.step("invite member with admin session", "auth.secured", invite, cases=["S-042.1"])
+    journey.step("activate invitation and resolve member session", "auth.secured", activate, cases=["S-042.2"])
+    journey.step("reject consumed activation token", "auth.secured", replay_invite, cases=["S-042.3"])
 
     def reset_link():
         started = datetime.now(timezone.utc)
@@ -221,9 +218,9 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         validate_case_response("S-042.6", status, value)
         return None
 
-    _record(journey, "S-042.4", "issue CLI password reset link", reset_link)
-    _record(journey, "S-042.5", "consume reset link and verify revoked sessions", perform_reset)
-    _record(journey, "S-042.6", "reject consumed password reset token", replay_reset)
+    journey.step("issue CLI password reset link", "auth.secured", reset_link, cases=["S-042.4"])
+    journey.step("consume reset link and verify revoked sessions", "auth.secured", perform_reset, cases=["S-042.5"])
+    journey.step("reject consumed password reset token", "auth.secured", replay_reset, cases=["S-042.6"])
 
     # Keep the secured CLI profile independent from the reset-link flow.
     def apply_isolated_platform():
@@ -245,7 +242,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
             _expect(actual == str(root), "kb-create apply did not report the requested isolated platform root")
         return None
 
-    _record(journey, "S-005.1", "apply isolated client platform", apply_isolated_platform)
+    journey.step("apply isolated client platform", "auth.secured", apply_isolated_platform, cases=["S-005.1"])
 
     def member_login():
         result = _cli(cli, env, "auth", "login", "--gateway-url", base,
@@ -274,10 +271,10 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         validate_case_response("S-005.5", status, value)
         return None
 
-    _record(journey, "S-005.2", "member signs in to secured gateway", member_login)
-    _record(journey, "S-005.3", "member auth status identifies gateway", member_status)
-    _record(journey, "S-005.4", "member reads authorized permissions", member_permissions)
-    _record(journey, "S-005.5", "member cannot read tenant users", member_users_denied)
+    journey.step("member signs in to secured gateway", "auth.secured", member_login, cases=["S-005.2"])
+    journey.step("member auth status identifies gateway", "auth.secured", member_status, cases=["S-005.3"])
+    journey.step("member reads authorized permissions", "auth.secured", member_permissions, cases=["S-005.4"])
+    journey.step("member cannot read tenant users", "auth.secured", member_users_denied, cases=["S-005.5"])
 
     def expired_status():
         with invocation_context(step_id="journey.setup"):
@@ -318,7 +315,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         validate_cli_case("S-031.4", result.returncode, output)
         return None
 
-    _record(journey, "S-031.1", "report expired saved CLI session", expired_status)
-    _record(journey, "S-031.2", "refresh expired CLI session", refresh_session)
-    _record(journey, "S-031.3", "report revoked CLI session", revoked_session)
-    _record(journey, "S-031.4", "report removed CLI session", removed_session)
+    journey.step("report expired saved CLI session", "auth.secured", expired_status, cases=["S-031.1"])
+    journey.step("refresh expired CLI session", "auth.secured", refresh_session, cases=["S-031.2"])
+    journey.step("report revoked CLI session", "auth.secured", revoked_session, cases=["S-031.3"])
+    journey.step("report removed CLI session", "auth.secured", removed_session, cases=["S-031.4"])

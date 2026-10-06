@@ -4,8 +4,71 @@ import type { QACase, QACaseClaim, QACaseClaimKind } from '@kb-labs/qa-contracts
 import type { QACatalogDiagnostic } from './catalog.js';
 
 const CLAIM_ID = /^(?:S|PC)-\d{3}\.\d+$/;
+const CLAIM_ID_LITERAL = /["']((?:S|PC)-\d{3}\.\d+)["']/g;
 const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.kb', '.venv', '.tox', '.pytest_cache', 'vendor', 'coverage']);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.go', '.py']);
+
+function maskPythonCommentsAndDocstrings(source: string): string {
+  const characters = source.split('');
+  const mask = (start: number, end: number) => {
+    for (let position = start; position < end; position += 1) {
+      if (characters[position] !== '\n' && characters[position] !== '\r') {characters[position] = ' ';}
+    }
+  };
+  let index = 0;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === '#') {
+      const end = source.indexOf('\n', index);
+      const stop = end < 0 ? source.length : end;
+      mask(index, stop);
+      index = stop;
+      continue;
+    }
+    if (character !== '"' && character !== "'") {
+      index += 1;
+      continue;
+    }
+
+    const triple = source.slice(index, index + 3) === character.repeat(3);
+    const delimiter = triple ? character.repeat(3) : character;
+    let end = index + delimiter.length;
+    while (end < source.length) {
+      if (source[end] === '\\') {
+        end += 2;
+        continue;
+      }
+      if (source.slice(end, end + delimiter.length) === delimiter) {
+        end += delimiter.length;
+        break;
+      }
+      end += 1;
+    }
+    if (triple) {mask(index, end);}
+    index = end;
+  }
+  return characters.join('');
+}
+
+function pythonCallEnd(source: string, openParen: number): number {
+  let depth = 0;
+  let quote = '';
+  for (let index = openParen; index < source.length; index += 1) {
+    const character = source[index] ?? '';
+    if (quote) {
+      if (character === '\\') {index += 1; continue;}
+      if (character === quote) {quote = '';}
+      continue;
+    }
+    if (character === '"' || character === "'") {quote = character; continue;}
+    if (character === '(') {depth += 1;}
+    if (character === ')') {
+      depth -= 1;
+      if (depth === 0) {return index + 1;}
+    }
+  }
+  return source.length;
+}
 
 function filesUnder(root: string, diagnostics: QACatalogDiagnostic[]): string[] {
   const result: string[] = [];
@@ -57,15 +120,32 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
       claims.push(claim);
     };
     if (isJourneySource) {
-      for (const match of source.matchAll(/\bcases\s*=\s*\[([^\]]*)\]/g)) {
-        const claimLine = source.slice(0, match.index).split(/\r?\n/).length;
-        for (const step of (match[1] ?? '').matchAll(/["']((?:S|PC)-\d{3}\.\d+)["']/g)) {add(step[1]!, 'journey', claimLine);}
+      const journeySource = maskPythonCommentsAndDocstrings(source);
+      const claimSpans: Array<{ start: number; end: number }> = [];
+      const declaredStepIds = new Set<string>();
+      for (const match of journeySource.matchAll(/\bcases\s*=\s*\[([^\]]*)\]/g)) {
+        const claimLine = journeySource.slice(0, match.index).split(/\r?\n/).length;
+        claimSpans.push({ start: match.index!, end: match.index! + match[0].length });
+        for (const step of (match[1] ?? '').matchAll(/["']((?:S|PC)-\d{3}\.\d+)["']/g)) {
+          declaredStepIds.add(step[1]!);
+          add(step[1]!, 'journey', claimLine);
+        }
       }
       // Installer fixture steps use a helper that turns a positional step ID
       // into Journey.step(..., cases=[step_id]); preserve its callsite claim.
-      for (const match of source.matchAll(/\bexact_step\s*\(\s*["']((?:S|PC)-\d{3}\.\d+)["']/g)) {
-        const claimLine = source.slice(0, match.index).split(/\r?\n/).length;
+      for (const match of journeySource.matchAll(/\bexact_step\s*\(\s*["']((?:S|PC)-\d{3}\.\d+)["']/g)) {
+        const claimLine = journeySource.slice(0, match.index).split(/\r?\n/).length;
+        declaredStepIds.add(match[1]!);
         add(match[1]!, 'journey', claimLine);
+        const openParen = journeySource.indexOf('(', match.index);
+        claimSpans.push({ start: match.index, end: pythonCallEnd(journeySource, openParen) });
+      }
+      for (const match of journeySource.matchAll(CLAIM_ID_LITERAL)) {
+        if (claimSpans.some(span => match.index! >= span.start && match.index! < span.end)
+            || declaredStepIds.has(match[1]!)) {continue;}
+        const claimLine = journeySource.slice(0, match.index).split(/\r?\n/).length;
+        diagnostics.push({ file, line: claimLine,
+          message: 'case claim outside a literal cases=[...]; the validator cannot see it' });
       }
     }
     for (let index = 0; index < lines.length; index += 1) {

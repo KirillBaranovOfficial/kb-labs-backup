@@ -70,24 +70,10 @@ OUTER_GROUP_DEPENDENCIES = {
     "studio": ("host-running", "project-registered", "workflow-ready", "fixtures-installed", "adapter-defaults"),
     "uninstall": (),
 }
-OUTER_GROUP_CLAIMS = {
-    "auth": ["S-041.1"],
-    "update": ["S-024.1", "S-024.2", "S-024.3"],
-    "project": ["S-043.1"],
-    "marketplace": ["S-010.1"],
-    "marketplace-fixtures": ["S-140.2", "S-199.3"],
-    "adapters": ["S-054.1", "S-048.1"],
-    "plugin-author": ["S-014.1", "S-015.1", "S-003.1"],
-    "workflow": ["S-002.1", "S-008.1", "S-027.1", "S-028.1", "S-143.1"],
-    "analytics": ["S-191.1", "S-017.1", "S-018.1"],
-    "studio": ["S-106.1", "S-107.1"],
-}
-
-
 def block_outer_dependents(graph: FlowGraph, groups: list[str]) -> None:
     for group in groups:
         graph.flow(f"{group} flow", group, group,
-                   lambda: None, cases=OUTER_GROUP_CLAIMS.get(group, []))
+                   lambda: None, record_empty_success=False)
 
 
 def cleanup_partial_install(graph: FlowGraph, env: dict[str, str], launcher: str) -> None:
@@ -117,11 +103,10 @@ def probe_platform_state(graph: FlowGraph, env: dict[str, str], launcher: str,
 
     if include_installed:
         graph.probe_state("platform-installed", "install", "platform bootstrap",
-                          lambda: None if receipt_path.is_file() else "installed V2 receipt is missing",
-                          cases=["PC-001.1"])
+                          lambda: None if receipt_path.is_file() else "installed V2 receipt is missing")
     if include_version:
         graph.probe_state("platform-version-known", mutator_group, mutator_step,
-                          version_probe, cases=["S-024.1"])
+                          version_probe)
 
     def host_probe() -> str | None:
         result, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
@@ -139,7 +124,7 @@ def probe_platform_state(graph: FlowGraph, env: dict[str, str], launcher: str,
 
     if include_host:
         graph.probe_state("host-running", mutator_group, mutator_step,
-                          host_probe, cases=["PC-002.1", "PC-002.2"])
+                          host_probe)
 
 
 def record_case(name: str, passed: bool, message: str, *, cases: list[str]) -> None:
@@ -1257,7 +1242,7 @@ def main():
             return None if project_id else "project registration did not return a project ID"
 
         outer_graph.flow("kb project add", "project", "projects", add_journey_project,
-                         cases=["PC-002.8"])
+                         record_empty_success=False)
         capture_case_failure()
         project_id = project_result.get("id", "")
         service_env["KB_JOURNEY_PROJECT_ID"] = project_id
@@ -1273,7 +1258,7 @@ def main():
             encoded = json.dumps(payload)
             return None if project_id in encoded else f"kb project list did not contain registered ID {project_id}"
         outer_graph.probe_state("project-registered", "project", "kb project add/list",
-                                project_registered_probe, cases=["PC-002.8"])
+                                project_registered_probe)
         def lint_workflow_fixture() -> str | None:
             lint, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow lint --json'],
                           env=service_env, cwd=PROJECT, timeout=120)
@@ -1286,7 +1271,6 @@ def main():
             "workflow-ready", "project", "workflow fixture preparation",
             lambda: None if (workflow_dir / "e2e-hello.yml").is_file()
             else "workflow fixture e2e-hello.yml is missing",
-            cases=["S-002.1"],
         )
         auth_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-auth-{mode}.json")
         auth_journey = Journey(mode, f"auth-{mode}")
@@ -1388,11 +1372,9 @@ def main():
                                 service_env["KB_JOURNEY_ADMIN_PASSWORD"]],
                                env=service_env, cwd=PROJECT, timeout=90)
                 return None if login.returncode == 0 else "fresh admin login was rejected after the auth journey"
-            outer_graph.probe_state("session", "auth", "fresh admin login", session_probe,
-                                    cases=["S-041.18"])
+            outer_graph.probe_state("session", "auth", "fresh admin login", session_probe)
         else:
-            outer_graph.probe_state("session", "auth", "local auth mode", lambda: None,
-                                    cases=["S-041.1"])
+            outer_graph.probe_state("session", "auth", "local auth mode", lambda: None)
         prepare_workflow_fixtures(PROJECT)
         service_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(f"service-{mode}.json")
         studio_fixture_file = service_report.with_name("studio-analytics-fixtures.json")
@@ -1632,7 +1614,7 @@ def main():
             studio_shell_passed = False
         if mode == "secured":
             try:
-                with invocation_context(step_id="S-106.2"):
+                with invocation_context(step_id="journey.setup"):
                     member_email, member_password = create_studio_member(
                         "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
                         service_env["KB_JOURNEY_ADMIN_PASSWORD"])
@@ -1702,7 +1684,7 @@ if __name__ == "__main__":
             stream.write(traceback.format_exc())
         if CASE_JOURNEY is not None:
             CASE_JOURNEY.step("outer journey orchestration", "journey.runner",
-                              lambda: str(error) or error.__class__.__name__, cases=["PC-002.3"])
+                              lambda: str(error) or error.__class__.__name__)
         fail(f"outer journey orchestration: {error}")
         if (ACTIVE_OUTER_GRAPH is not None and ACTIVE_MAIN_ENV is not None and ACTIVE_LAUNCHER
                 and (PLATFORM / ".kb" / "v2" / "receipt.json").is_file()):

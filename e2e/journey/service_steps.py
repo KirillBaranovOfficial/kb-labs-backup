@@ -130,8 +130,7 @@ class FlowGraph:
                 return state, result
         return None
 
-    def probe_state(self, state: str, group: str, step: str, check: Callable[[], str | None],
-                    cases: Iterable[str] = ()) -> StepResult:
+    def probe_state(self, state: str, group: str, step: str, check: Callable[[], str | None]) -> StepResult:
         """Run and record an explicit state precondition probe."""
         def checked() -> str | None:
             try:
@@ -140,14 +139,13 @@ class FlowGraph:
                 self._write_traceback(group, f"state probe: {state}")
                 raise
 
-        result = self.journey.step(f"state probe: {state}", "journey.state", checked, cases=cases)
-        claim = next(iter(result.cases), "no case claim")
+        result = self.journey.step(f"state probe: {state}", "journey.state", checked)
         self.states[state] = {
             "passed": result.status == "PASS",
             "evidence": "probe passed" if result.status == "PASS" else result.message,
             "group": group,
             "step": step,
-            "claim": claim,
+            "claim": "no case claim",
         }
         return result
 
@@ -201,7 +199,7 @@ class FlowGraph:
             outcome = action()
         except Exception as error:
             self._write_traceback(group, name)
-            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__, cases=case_ids)
+            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__)
             outcome = None
         emitted = self.journey.steps[start:]
         if isinstance(outcome, str):

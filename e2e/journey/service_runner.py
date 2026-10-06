@@ -333,8 +333,24 @@ def expect_json(path: str, capability: str, *, token="") -> str | None:
     return None
 
 
+def service_check(name, capability, check, *, cases=()):
+    return name, capability, check, list(cases)
+
+
 def checks(mode: str):
-    yield ("gateway readiness", "gateway", lambda: expect_json("/ready", "gateway readiness"))
+    pid = PROJECT_ID or "{projectId}"
+    token = os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")
+    auth_token = lambda: os.getenv("KB_JOURNEY_SERVICE_TOKEN", token)
+
+    def platform_readiness() -> str | None:
+        gateway_error = expect_json("/ready", "gateway readiness")
+        workflow_error = expect_json(
+            f"/api/v1/projects/{pid}/workflow/health", "project-aware workflow health", token=auth_token())
+        errors = [error for error in (gateway_error, workflow_error) if error]
+        return "; ".join(errors) if errors else None
+
+    yield service_check("platform readiness (gateway + project workflow)", "gateway", platform_readiness,
+                        cases=["PC-002.3"])
     if mode == "secured":
         def admin_login():
             if not ADMIN_PASSWORD:
@@ -353,17 +369,29 @@ def checks(mode: str):
             if me_status != 200:
                 return f"secured admin CLI token did not authenticate /auth/me (HTTP {me_status})"
             return None
-        yield ("secured admin CLI login", "auth.secured", admin_login)
+        yield service_check("secured admin CLI login", "auth.secured", admin_login)
 
-    token = os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")
     if not PROJECT_ID:
         project = lambda: "BLOCKED: no project is registered; run `kb project add <path> --json` and set KB_JOURNEY_PROJECT_ID"
     else:
         project = lambda: expect(f"/api/v1/projects/{PROJECT_ID}", {200}, "project registry lookup", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
-    yield ("project registration", "projects", project)
+    yield service_check("project registration", "projects", project)
     def project_runtime_identity() -> str | None:
         if not PROJECT_ID:
             return "BLOCKED: project runtime identity needs KB_JOURNEY_PROJECT_ID from project registration"
+        project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT", "")
+        if not project_root:
+            return "BLOCKED: project runtime identity needs KB_JOURNEY_PROJECT_ROOT from project registration"
+        expected_root = str(Path(project_root).resolve())
+        try:
+            registry_status, registered_project, _ = request_ux_success(
+                f"/api/v1/projects/{PROJECT_ID}", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
+        except ValueError as error:
+            return f"project registry returned an invalid UX result envelope: {error}"
+        if registry_status != 200 or not isinstance(registered_project, dict):
+            return f"project registry could not verify registered project {PROJECT_ID} and its canonical path"
+        if registered_project.get("path") != expected_root:
+            return f"project registry path for {PROJECT_ID} did not match canonical root {expected_root}"
         try:
             health_status, health_body, _ = request_ux_success("/health", token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
         except ValueError as error:
@@ -386,55 +414,75 @@ def checks(mode: str):
         if not isinstance(body, dict):
             return "registered project runtime REST health returned no JSON object"
         return None
-    yield ("registered project runtime identity", "projects", project_runtime_identity)
-    yield ("project plugin settings isolation and clean repositories", "projects",
-           project_plugin_settings_isolation)
-    pid = PROJECT_ID or "{projectId}"
-    auth_token = lambda: os.getenv("KB_JOURNEY_SERVICE_TOKEN", token)
-    yield ("workflow health", "workflow", lambda: expect_json(
-        f"/api/v1/projects/{pid}/workflow/health", "project-aware workflow health", token=auth_token()))
-    yield ("workflow discovery", "workflow", lambda: discover_workflow(pid, auth_token()))
-    yield ("workflow execution endpoint", "workflow", lambda: expect(
+    yield service_check("registered project runtime identity", "projects", project_runtime_identity,
+                        cases=["PC-002.8", "S-124.11", "S-124.13"])
+    yield service_check("project plugin settings isolation and clean repositories", "projects",
+                        project_plugin_settings_isolation,
+                        cases=["S-204.1", "S-204.2", "S-204.8", "S-204.9", "S-204.10", "S-204.11"])
+    yield service_check("workflow discovery", "workflow", lambda: discover_workflow(pid, auth_token()))
+    yield service_check("workflow execution endpoint", "workflow", lambda: expect(
         f"/api/v1/projects/{pid}/workflow/api/v1/workflows/e2e-hello/runs", {200, 201, 202},
         "project-aware workflow run endpoint", method="POST", payload={"trigger": {"type": "manual"}}, token=auth_token()))
-    yield ("project-scoped MCP initialize", "mcp", lambda: mcp_initialize(pid, auth_token()))
-    yield ("project-scoped MCP tools/list", "mcp", lambda: mcp_probe(pid, auth_token()))
-    yield ("project-scoped MCP diagnostics", "mcp", lambda: mcp_diagnostics(pid, auth_token()))
+    yield service_check("project-scoped MCP initialize", "mcp", lambda: mcp_initialize(pid, auth_token()),
+                        cases=["S-045.1"])
+    yield service_check("project-scoped MCP tools/list", "mcp", lambda: mcp_probe(pid, auth_token()),
+                        cases=["S-045.2"])
+    yield service_check("project-scoped MCP diagnostics", "mcp", lambda: mcp_diagnostics(pid, auth_token()),
+                        cases=["S-045.3"])
     if mode == "local":
-        yield ("project MCP tokenless local access", "mcp", lambda: local_auth(pid))
+        yield service_check("project MCP tokenless local access", "mcp", lambda: local_auth(pid),
+                            cases=["S-045.4"])
     else:
-        yield ("project MCP secured missing and invalid token rejection", "mcp", lambda: secured_auth(pid))
-    yield ("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid, auth_token()))
+        yield service_check("project MCP secured missing and invalid token rejection", "mcp",
+                            lambda: secured_auth(pid), cases=["S-045.5", "S-140.6"])
+    yield service_check("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid, auth_token()),
+                        cases=["S-140.1"])
     project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT", "")
     if project_root:
-        yield ("project MCP commit mutation", "mcp", lambda: apply_commit_plan(pid, auth_token(), project_root))
+        yield service_check("project MCP commit mutation", "mcp",
+                            lambda: apply_commit_plan(pid, auth_token(), project_root), cases=["S-140.2"])
     else:
-        yield ("project MCP commit mutation", "mcp", lambda: "BLOCKED: provide KB_JOURNEY_PROJECT_ROOT for the disposable commit fixture")
-    yield ("project MCP unknown tool error", "mcp", lambda: unknown_tool(pid, auth_token()))
-    yield ("project MCP invalid argument error", "mcp", lambda: invalid_arguments(pid, auth_token()))
-    yield ("MCP UX result contract from live registry", "mcp", lambda: mcp_ux_result_contract(
-        pid, auth_token(), secured=mode == "secured"))
+        yield service_check("project MCP commit mutation", "mcp",
+                            lambda: "BLOCKED: provide KB_JOURNEY_PROJECT_ROOT for the disposable commit fixture",
+                            cases=["S-140.2"])
+    yield service_check("project MCP unknown tool error", "mcp", lambda: unknown_tool(pid, auth_token()),
+                        cases=["S-140.3"])
+    yield service_check("project MCP invalid argument error", "mcp", lambda: invalid_arguments(pid, auth_token()),
+                        cases=["S-140.4"])
+    if mode == "secured":
+        yield service_check("MCP UX result contract from live registry", "mcp",
+                            lambda: mcp_ux_result_contract(pid, auth_token(), secured=True),
+                            cases=["S-203.2", "S-203.6", "S-045.6", "S-140.7"])
+    else:
+        yield service_check("MCP UX result contract from live registry", "mcp",
+                            lambda: mcp_ux_result_contract(pid, auth_token(), secured=False),
+                            cases=["S-203.2", "S-203.6"])
     project_b_id = os.getenv("KB_JOURNEY_PROJECT_B_ID", "")
     project_b_root = os.getenv("KB_JOURNEY_PROJECT_B_ROOT", "")
     if project_b_id and project_b_root:
-        yield ("project MCP cross-project isolation", "mcp",
-               lambda: project_isolation(pid, project_b_id, project_b_root, auth_token()))
-        yield ("project plugin catalog isolation", "mcp",
-               lambda: project_plugin_catalog_isolation(pid, project_b_id, auth_token()))
-        yield ("project MCP read-only tool isolation", "mcp",
-               lambda: project_readonly_tool_isolation(pid, project_b_id, auth_token()))
+        yield service_check("project MCP cross-project isolation", "mcp",
+                            lambda: project_isolation(pid, project_b_id, project_b_root, auth_token()),
+                            cases=["S-140.5"])
+        yield service_check("project plugin catalog isolation", "mcp",
+                            lambda: project_plugin_catalog_isolation(pid, project_b_id, auth_token()),
+                            cases=["S-199.3"])
+        yield service_check("project MCP read-only tool isolation", "mcp",
+                            lambda: project_readonly_tool_isolation(pid, project_b_id, auth_token()),
+                            cases=["S-199.4"])
         if mode == "secured":
-            yield ("secured project MCP catalog selection", "mcp",
-                   lambda: secured_project_catalog_isolation(pid, project_b_id, auth_token()))
+            yield service_check("secured project MCP catalog selection", "mcp",
+                                lambda: secured_project_catalog_isolation(pid, project_b_id, auth_token()),
+                                cases=["S-199.5"])
     else:
-        yield ("project MCP cross-project isolation", "mcp",
-               lambda: "BLOCKED: register project B and provide KB_JOURNEY_PROJECT_B_ID and KB_JOURNEY_PROJECT_B_ROOT")
-    yield ("Studio shell", "studio", lambda: expect("/", {200}, "Studio shell"))
-    yield ("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
-    yield ("marketplace registry", "marketplace", lambda: expect(f"/api/v1/projects/{pid}/rest/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
+        yield service_check("project MCP cross-project isolation", "mcp",
+                            lambda: "BLOCKED: register project B and provide KB_JOURNEY_PROJECT_B_ID and KB_JOURNEY_PROJECT_B_ROOT",
+                            cases=["S-140.5"])
+    yield service_check("Studio shell", "studio", lambda: expect("/", {200}, "Studio shell"))
+    yield service_check("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
+    yield service_check("marketplace registry", "marketplace", lambda: expect(f"/api/v1/projects/{pid}/rest/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
 def declared_capabilities(mode: str) -> set[str]:
     """Return every capability the selected service profile promises to check."""
-    capabilities = {capability for _, capability, _ in checks(mode)}
+    capabilities = {capability for _, capability, _, _ in checks(mode)}
     capabilities.add("auth.local" if mode == "local" else "auth.invite-reset")
     capabilities.add("plugin-author")
     return capabilities
@@ -523,43 +571,6 @@ def mcp_diagnostics(project_id: str, token: str) -> str | None:
     return None
 
 
-def _case_claims(name: str, mode: str = "local") -> list[str]:
-    if name in {"gateway readiness", "workflow health"}:
-        return ["PC-002.3"]
-    if name == "registered project runtime identity":
-        return ["PC-002.8", "S-124.11", "S-124.13"]
-    case_by_name = {
-        "project plugin settings isolation and clean repositories": "S-204.1",
-        "project-scoped MCP initialize": "S-045.1",
-        "project-scoped MCP tools/list": "S-045.2",
-        "project-scoped MCP diagnostics": "S-045.3",
-        "project MCP tokenless local access": "S-045.4",
-        "project MCP secured missing and invalid token rejection": "S-045.5",
-        "project MCP commit schema": "S-140.1",
-        "project MCP commit mutation": "S-140.2",
-        "project MCP unknown tool error": "S-140.3",
-        "project MCP invalid argument error": "S-140.4",
-        "MCP UX result contract from live registry": "S-203.2",
-        "project MCP cross-project isolation": "S-140.5",
-        "project plugin catalog isolation": "S-199.3",
-        "project MCP read-only tool isolation": "S-199.4",
-        "secured project MCP catalog selection": "S-199.5",
-    }
-    case_id = case_by_name.get(name)
-    if name == "project MCP secured missing and invalid token rejection":
-        return ["S-045.5", "S-140.6"]
-    if name == "MCP UX result contract from live registry":
-        claims = ["S-203.2", "S-203.6"]
-        if mode == "secured":
-            return [*claims, "S-045.6", "S-140.7"]
-        return claims
-    if not case_id:
-        return []
-    if name == "project plugin settings isolation and clean repositories":
-        return ["S-204.1", "S-204.2", "S-204.8", "S-204.9", "S-204.10", "S-204.11"]
-    return [case_id]
-
-
 SERVICE_GROUPS = {
     "platform": {"capabilities": {"gateway"}, "depends_on": ("host-running",)},
     "auth": {"capabilities": {"auth.local", "auth.secured"}, "depends_on": ("host-running",)},
@@ -596,9 +607,9 @@ def run_grouped_service_steps(journey: Journey, steps, mode: str = "local", grou
     }
     flow_graph = graph or FlowGraph(
         journey, {name: spec["depends_on"] for name, spec in group_specs.items()}, states=states)
-    for name, capability, check in steps:
+    for name, capability, check, cases in steps:
         group = capability_groups.get(capability, capability)
-        flow_graph.step(name, group, capability, check, cases=_case_claims(name, mode))
+        flow_graph.step(name, group, capability, check, cases=cases)
 
 
 def run_service_steps(journey: Journey, steps, mode: str = "local", states=None,
@@ -639,7 +650,7 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                cases=["S-043.1", "S-196.1"], record_empty_success=False)
     graph.flow("project identity flows", "project-identity", "projects",
                lambda: run_project_identity_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root))),
-               cases=["S-043.1", "S-124.11", "S-196.1"], record_empty_success=False)
+               cases=["S-043.1", "S-196.1"], record_empty_success=False)
     graph.flow("workspace CLI flows", "workspace", "workspace",
                lambda: run_workspace_cli_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root))),
                cases=["S-179.2", "S-179.3", "S-179.5", "S-203.1"], record_empty_success=False)
@@ -667,7 +678,7 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
             return "adapter journey left its platform storage binding or options configured"
         return None
     graph.probe_state("adapter-defaults", "adapters", "unbind platform storage and restore built-in default",
-                      adapter_defaults_probe, cases=["S-048.6"])
+                      adapter_defaults_probe)
     graph.flow("plugin author flow", "plugin-author", "plugin-author",
                lambda: run_plugin_author_flow(journey, Path(project_root),
                                               Path.home() / ".local/bin/kb", registry,
@@ -874,16 +885,19 @@ def main() -> int:
         if args.mode == "secured":
             graph.probe_state("session", "auth", "fresh secured CLI login",
                               lambda: restore_secured_cli_login(
-                                  Path.home() / ".local/bin/kb", os.environ.copy()),
-                              cases=["S-041.18"])
+                                  Path.home() / ".local/bin/kb", os.environ.copy()))
         project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")
         registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
         if project_root:
             env = os.environ.copy()
-            marketplace_claims = ["S-010.1"] if args.mode == "local" else ["S-041.7"]
-            graph.flow("marketplace flow", "marketplace", "marketplace",
-                       lambda: run_marketplace_steps(journey, project_root, registry, env),
-                       cases=marketplace_claims, record_empty_success=False)
+            if args.mode == "local":
+                graph.flow("marketplace flow", "marketplace", "marketplace",
+                           lambda: run_marketplace_steps(journey, project_root, registry, env),
+                           cases=["S-010.1"], record_empty_success=False)
+            else:
+                graph.flow("marketplace flow", "marketplace", "marketplace",
+                           lambda: run_marketplace_steps(journey, project_root, registry, env),
+                           cases=["S-041.7"], record_empty_success=False)
             project_lock = Path(project_root) / ".kb" / "plugins.lock.json"
             def marketplace_probe() -> str | None:
                 try:
@@ -893,10 +907,10 @@ def main() -> int:
                 entry = lock.get("plugins", {}).get("@kb-labs/commit-entry")
                 return None if isinstance(entry, dict) and entry.get("version") else "Commit fixture is absent from the project plugin lock"
             graph.probe_state("marketplace-available", "marketplace", "marketplace install",
-                              marketplace_probe, cases=marketplace_claims)
+                              marketplace_probe)
             graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
                        lambda: _prepare_and_export_mcp_projects(project_root, registry, env),
-                       cases=["S-140.2", "S-199.3"], record_empty_success=False)
+                       record_empty_success=False)
             fixture_file = env.get("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
             def fixtures_probe() -> str | None:
                 if not fixture_file:
@@ -908,7 +922,7 @@ def main() -> int:
                 required = ("projectAId", "projectARoot", "projectBId", "projectBRoot")
                 return None if all(fixtures.get(key) for key in required) else "project fixture handoff omitted a registered project field"
             graph.probe_state("fixtures-installed", "marketplace-fixtures", "project fixture handoff",
-                              fixtures_probe, cases=["S-140.2", "S-199.3"])
+                              fixtures_probe)
         run_service_steps(journey, checks(args.mode), args.mode, graph=graph)
         if PROJECT_ID:
             graph.flow("project agent session flows", "agent-session", "agent-session",

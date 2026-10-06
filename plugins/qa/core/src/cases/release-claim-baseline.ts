@@ -3,9 +3,7 @@ import type { QACatalogDiagnostic } from './catalog.js';
 
 /** Active release steps retained here until the installed journey can prove them. */
 export const RELEASE_CASE_CLAIM_BASELINE = [
-  'PC-002.3',
   'PC-002.4',
-  'PC-002.8',
   'S-003.7',
   'S-003.8',
   'S-039.4',
@@ -15,18 +13,6 @@ export const RELEASE_CASE_CLAIM_BASELINE = [
   'S-041.14',
   'S-041.15',
   'S-041.16',
-  'S-042.1',
-  'S-042.2',
-  'S-042.3',
-  'S-042.4',
-  'S-042.5',
-  'S-042.6',
-  'S-045.1',
-  'S-045.2',
-  'S-045.3',
-  'S-045.4',
-  'S-045.5',
-  'S-045.6',
   'S-045.7',
   'S-045.8',
   'S-051.1',
@@ -49,18 +35,7 @@ export const RELEASE_CASE_CLAIM_BASELINE = [
   'S-124.6',
   'S-124.8',
   'S-124.9',
-  'S-124.11',
   'S-124.12',
-  'S-124.13',
-  'S-140.1',
-  'S-140.2',
-  'S-140.3',
-  'S-140.4',
-  'S-140.5',
-  'S-140.6',
-  'S-140.7',
-  'S-181.1',
-  'S-181.2',
 ] as const;
 
 const BASELINE_SOURCE = 'plugins/qa/core/src/cases/release-claim-baseline.ts';

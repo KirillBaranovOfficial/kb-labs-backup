@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -17,7 +18,8 @@ from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_ar
                                run_agent_session_steps,
                                secured_auth, secured_project_catalog_isolation, unknown_tool)
 from service_steps import Journey
-from service_runner import _case_claims, checks
+import service_runner
+from service_runner import checks
 
 
 def tool_error(code: str, message: str, hint: str):
@@ -154,17 +156,41 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def test_live_registry_ux_step_is_registered_as_s203_claim(self):
         step = "MCP UX result contract from live registry"
-        self.assertIn(step, {name for name, _, _ in checks("local")})
-        self.assertEqual(_case_claims(step), ["S-203.2", "S-203.6"])
+        local = {name: cases for name, _, _, cases in checks("local")}
+        secured = {name: cases for name, _, _, cases in checks("secured")}
+        self.assertEqual(local[step], ["S-203.2", "S-203.6"])
+        self.assertEqual(secured[step], ["S-203.2", "S-203.6", "S-045.6", "S-140.7"])
+
+    def test_platform_readiness_claims_both_gateway_and_project_workflow_checks(self):
+        name, capability, check, cases = next(
+            row for row in checks("local") if row[0] == "platform readiness (gateway + project workflow)")
+        self.assertEqual((name, capability, cases), (
+            "platform readiness (gateway + project workflow)", "gateway", ["PC-002.3"]))
+        with patch("service_runner.expect_json", side_effect=[None, None]) as expect_json:
+            self.assertIsNone(check())
+
         self.assertEqual(
-            _case_claims(step, "secured"),
-            ["S-203.2", "S-203.6", "S-045.6", "S-140.7"],
+            [call.args[0] for call in expect_json.call_args_list],
+            ["/ready", f"/api/v1/projects/{service_runner.PROJECT_ID or '{projectId}'}/workflow/health"],
         )
 
-    def test_installed_project_runtime_step_claims_registered_identity_cases(self):
+    def test_registered_runtime_identity_checks_canonical_registry_path(self):
+        project_root = "/tmp/journey-project"
+        canonical_root = str(Path(project_root).resolve())
+        responses = [
+            (200, {"id": "prj_a", "path": canonical_root}, {}),
+            (200, {"projectRuntimes": {"runtimes": [{"projectId": "prj_a", "state": "ready"}]}}, {}),
+            (200, {"status": "healthy"}, {}),
+        ]
+        checks_by_name = {name: check for name, _, check, _ in checks("local")}
+        with patch("service_runner.PROJECT_ID", "prj_a"), \
+                patch.dict(os.environ, {"KB_JOURNEY_PROJECT_ROOT": project_root}), \
+                patch("service_runner.request_ux_success", side_effect=responses) as request:
+            self.assertIsNone(checks_by_name["registered project runtime identity"]())
+
         self.assertEqual(
-            _case_claims("registered project runtime identity"),
-            ["PC-002.8", "S-124.11", "S-124.13"],
+            [call.args[0] for call in request.call_args_list],
+            ["/api/v1/projects/prj_a", "/health", "/api/v1/projects/prj_a/rest/api/v1/health"],
         )
 
     def test_ux_contract_claim_discovers_and_checks_every_live_registry_tool(self):

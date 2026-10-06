@@ -111,6 +111,30 @@ describe('QA case claim scanning', () => {
     expect(scanned.diagnostics).toEqual([expect.objectContaining({ file: expect.stringContaining('invalid.spec.ts'), message: 'claim references unknown case S-999' })]);
   });
 
+  it('rejects journey case ids outside literal claim declarations and ignores comments and docstrings', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const journeySource = join(directory, 'e2e/journey');
+    mkdirSync(journeySource, { recursive: true });
+    writeFileSync(join(journeySource, 'journey.py'), [
+      '"""Documentation example: S-010.2 is not a claim."""',
+      '# S-010.2 is only a comment.',
+      'step("assertion", cases=["S-010.1"])',
+      'step_id = "S-010.2"',
+    ].join('\n'));
+
+    const scanned = scanQACaseClaims(directory, [testCase]);
+
+    expect(scanned.claims.map(claim => claim.stepId)).toEqual(['S-010.1']);
+    expect(scanned.diagnostics).toEqual([
+      expect.objectContaining({
+        file: expect.stringContaining('journey.py'),
+        line: 4,
+        message: 'case claim outside a literal cases=[...]; the validator cannot see it',
+      }),
+    ]);
+  });
+
   it('reports source traversal errors instead of silently skipping the claim scan', () => {
     const directory = fixture();
     const sourceRoot = join(directory, 'not-a-directory');
