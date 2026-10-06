@@ -122,11 +122,14 @@ class CaseScoreboardTests(unittest.TestCase):
             data = {"observedModes": ["local"], "releaseCases": {"fullyGreen": int(green == "S-001"), "total": 1},
                     "activeCases": {"fullyGreen": 1, "total": 2}, "plannedCount": 1, "historicalCount": 1,
                     "cases": [{"id": claim_id, "status": "Fully green" if claim_id == green else "Red",
-                               "caseStatus": "active", "release": claim_id == "S-001", "modes": ["local"]}
+                               "caseStatus": "active", "release": claim_id == "S-001", "modes": ["local"],
+                               "claims": [f"{claim_id}.1", f"{claim_id}.2"],
+                               "passingClaims": [f"{claim_id}.1", f"{claim_id}.2"] if claim_id == green else []}
                               for claim_id in ("S-001", "S-002")]}
             (directory / "case-scoreboard-local.json").write_text(json.dumps(data), encoding="utf-8")
         delta = render_delta(before, after)
         self.assertIn("local release cases: fully green 1/1 → 0/1", delta)
+        self.assertIn("Claims passing: 2/4 → 2/4", delta)
         self.assertIn("Regressed: S-001", delta)
         self.assertIn("All active: fully green 1/2 → 1/2", delta)
         self.assertLess(delta.index("local release cases:"), delta.index("All active:"))
