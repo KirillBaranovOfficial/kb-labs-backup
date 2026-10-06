@@ -26,7 +26,8 @@ from service_steps import FlowGraph, Journey, record_candidate_provenance, recor
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
 from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status,
                         run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
-from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
+from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps, run_invite_lifecycle_steps,
+                            run_last_admin_guard_steps, run_password_and_session_steps)
 from platform_state_dump import PlatformStateDumpOnce
 from scoreboard import release_claims_for_case, write_scoreboards
 from invocations import (decode_ux_error_result, decode_ux_success_result,
@@ -1023,18 +1024,30 @@ def main():
                 return result
 
             verify_admin = None
+            expire_admin_session = None
             if access_mode == "secured":
                 admin_email = env.get("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
                 admin_password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyPassw0rd!")
 
                 def verify_admin():
-                    with tempfile.TemporaryDirectory(prefix="kb-journey-admin-login-") as auth_home:
-                        auth_env = {**env, "HOME": auth_home}
-                        result, _ = run([str(BIN / "kb"), "auth", "login", "--gateway-url",
-                                         "http://127.0.0.1:4000", "--email", admin_email,
-                                         "--password", admin_password],
-                                        env=auth_env, cwd=PROJECT, timeout=90)
+                    result, _ = run([str(BIN / "kb"), "auth", "login", "--gateway-url",
+                                     "http://127.0.0.1:4000", "--email", admin_email,
+                                     "--password-stdin"],
+                                    env=env, cwd=PROJECT, timeout=90,
+                                    input_text=admin_password + "\n")
                     return result
+
+                def expire_admin_session():
+                    status, _ = run([str(BIN / "kb"), "auth", "status", "--json"],
+                                    env=env, cwd=PROJECT, timeout=30)
+                    envelope = json.loads(status.stdout)
+                    session_path = envelope.get("data", {}).get("session", {}).get("path")
+                    if not session_path:
+                        raise RuntimeError("kb auth status omitted session.path")
+                    session_file = Path(session_path)
+                    session = json.loads(session_file.read_text())
+                    session["expiresAt"] = 0
+                    session_file.write_text(json.dumps(session) + "\n")
 
             platform_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 f"platform-update-{access_mode}.json")
@@ -1050,6 +1063,7 @@ def main():
                     updated_version=str(updated_version),
                     run_command=update_command,
                     verify_user=verify_admin,
+                    expire_user_session=expire_admin_session,
                 )
                 update_result = platform_journey.write_json(platform_report)
             except Exception as error:
@@ -1345,17 +1359,34 @@ def main():
                 cases=["S-100.2", "S-100.3", "S-100.4"],
             )
             auth_journey.step(
-                "tenant roles, API token lifecycle, last-admin guard, and invite revocation",
+                "tenant API token lifecycle",
                 "auth.accounts",
-                lambda: run_secured_account_steps(
+                lambda: run_api_token_lifecycle_steps(
                     "http://127.0.0.1:4000",
                     service_env["KB_JOURNEY_ADMIN_EMAIL"],
                     service_env["KB_JOURNEY_ADMIN_PASSWORD"],
                     "auth-reset-member@example.test",
                     "JourneyReplacement123!",
                 ),
-                cases=["S-103.1", "S-103.2", "S-103.3", "S-103.4", "S-103.5",
-                       "S-104.7", "S-105.1", "S-105.2", "S-105.3", "S-105.4"],
+                cases=["S-103.1", "S-103.2", "S-103.3", "S-103.4", "S-103.5"],
+            )
+            auth_journey.step(
+                "last active administrator cannot be disabled or demoted",
+                "auth.accounts",
+                lambda: run_last_admin_guard_steps(
+                    "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                ),
+                cases=["S-104.7"],
+            )
+            auth_journey.step(
+                "revoke pending invites and reject invalid activation tokens",
+                "auth.accounts",
+                lambda: run_invite_lifecycle_steps(
+                    "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                ),
+                cases=["S-105.1", "S-105.2", "S-105.3", "S-105.4"],
             )
             auth_journey.step(
                 "member CLI login and token listing", "auth.accounts",

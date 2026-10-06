@@ -634,8 +634,9 @@ def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runne
         raise RuntimeError("secured service journey needs admin credentials; rerun with KB_JOURNEY_ADMIN_EMAIL and KB_JOURNEY_ADMIN_PASSWORD")
     command = [str(kb_path), "auth", "login", "--gateway-url",
                env.get("KB_JOURNEY_BASE_URL", BASE_URL), "--email", email,
-               "--password", password]
-    result = run_with_runner(runner, command, cwd=env.get("HOME"), env=env, timeout=90)
+               "--password-stdin"]
+    result = run_with_runner(runner, command, cwd=env.get("HOME"), env=env, timeout=90,
+                             input=password + "\n")
     if result.returncode != 0:
         detail = " ".join((result.stdout + " " + result.stderr).split())
         suffix = f"; {detail}" if detail else ""

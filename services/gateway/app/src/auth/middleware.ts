@@ -107,7 +107,11 @@ export function createAuthMiddleware(
   const authEnabled = options.authEnabled !== false;
   const userAuth = options.userAuth ? createUserAuthMiddleware(options.userAuth) : undefined;
   return async function authMiddleware(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-    const unauthorized = () => reply.code(401).send({ ok: false, error: authRejectionEnvelope(undefined, gatewayRequestUrl(request), String(request.id)) });
+    const unauthorized = () => {
+      request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason: 'missing' },
+        'Gateway authentication rejected');
+      return reply.code(401).send({ ok: false, error: authRejectionEnvelope(undefined, gatewayRequestUrl(request), String(request.id)) });
+    };
     if (isCorsPreflight(request)) { sendCorsPreflight(request, reply); return; }
     if (!request.url.startsWith('/internal/')) { stripForwardedIdentityHeaders(request.headers); }
     if (!authEnabled) {

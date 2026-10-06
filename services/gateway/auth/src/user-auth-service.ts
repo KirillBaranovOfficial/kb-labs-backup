@@ -51,9 +51,9 @@ export type AuthErrorCode =
   | 'user_disabled'
   | 'invalid_current_password'
   | 'weak_password'
-  | 'invalid_invite'
+  | 'KB_AUTH_INVALID_INVITE'
   | 'unknown_invite'
-  | 'invalid_password_reset';
+  | 'KB_AUTH_INVALID_PASSWORD_RESET';
 
 export class AuthError extends Error {
   public override readonly name = 'AuthError';
@@ -274,7 +274,7 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
   const activate = async (input: ActivateInput): Promise<SessionResult> => {
     const tokenResult = await opts.invites.findByToken(input.activationToken);
     if (tokenResult.kind === 'not_found') {throw new AuthError('unknown_invite');}
-    if (tokenResult.kind === 'invalid') {throw new AuthError('invalid_invite');}
+    if (tokenResult.kind === 'invalid') {throw new AuthError('KB_AUTH_INVALID_INVITE');}
     const invite = tokenResult.invite;
 
     const policyResult = await opts.passwordPolicy.validate(input.password);
@@ -292,7 +292,7 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
     const consumed = await opts.invites.consume(invite.inviteId);
     if (!consumed) {
       // Lost the race (or invite was used/revoked between findByToken and now).
-      throw new AuthError('invalid_invite');
+      throw new AuthError('KB_AUTH_INVALID_INVITE');
     }
 
     // Create the user, credential, and membership. The invite is already
@@ -340,7 +340,7 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
     const polErr = mapPolicyResultToError(policyResult);
     if (polErr) {throw polErr;}
     const reset = await opts.passwordResets.consume(input.token);
-    if (!reset) {throw new AuthError('invalid_password_reset');}
+    if (!reset) {throw new AuthError('KB_AUTH_INVALID_PASSWORD_RESET');}
     const hash = await bcrypt.hash(input.newPassword, opts.bcryptCost);
     await opts.credentials.setCredential({ userId: reset.userId, providerId: 'email-password', hash });
     await opts.sessions.revokeAllUserSessions(reset.userId);

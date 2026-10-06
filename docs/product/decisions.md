@@ -315,6 +315,15 @@ next command.
 Cases: PC-002.7, S-003.7, S-017.5, S-018.3, S-054.2, S-054.18, S-199.6,
 S-201.1–S-201.2, S-203.7–S-203.8.
 
+## 2026-10-07
+
+### 2026-10-07: Human CLI passwords stay out of process arguments
+
+`kb auth login` accepts `--password-stdin` for automation and prompts securely
+when a human omits `--password`. Auth catalog hints show the login command
+without a password argument. There is no password environment-variable
+fallback. Cases: S-007.4, S-010.6, S-031.4, S-041.6, S-041.7.
+
 ## 2026-10-06
 
 ### Enabled plugin identity must match its manifest

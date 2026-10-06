@@ -102,12 +102,30 @@ def run_cli_logout_steps(cli_path: str, env: dict[str, str]) -> None:
 
 def run_secured_account_steps(base_url: str, admin_email: str, admin_password: str,
                               member_email: str, member_password: str) -> None:
+    """Exercise the account API journeys as separate behavior groups."""
+    run_api_token_lifecycle_steps(base_url, admin_email, admin_password, member_email, member_password)
+    run_last_admin_guard_steps(base_url, admin_email, admin_password)
+    run_invite_lifecycle_steps(base_url, admin_email, admin_password)
+
+
+def run_last_admin_guard_steps(base_url: str, admin_email: str, admin_password: str) -> None:
     admin_access, _ = _login(base_url, admin_email, admin_password)
-    member_access, _ = _login(base_url, member_email, member_password)
-    admin_user_id = _request(base_url, "/auth/me", token=admin_access).get("userId")
+    admin = _request(base_url, "/auth/me", token=admin_access)
+    admin_user_id = admin.get("userId")
     if not admin_user_id:
         raise AssertionError("admin profile did not include userId")
+    disabled = _request(base_url, f"/auth/users/{admin_user_id}/disable", method="POST",
+                        token=admin_access, expected=409)
+    demoted = _request(base_url, f"/auth/users/{admin_user_id}/role", method="POST",
+                       token=admin_access, body={"role": "member"}, expected=409)
+    if disabled.get("code") != "KB_AUTH_LAST_ADMIN" or demoted.get("code") != "KB_AUTH_LAST_ADMIN":
+        raise AssertionError("last-admin guard did not return KB_AUTH_LAST_ADMIN for both operations")
 
+
+def run_api_token_lifecycle_steps(base_url: str, admin_email: str, admin_password: str,
+                                 member_email: str, member_password: str) -> None:
+    admin_access, _ = _login(base_url, admin_email, admin_password)
+    member_access, _ = _login(base_url, member_email, member_password)
     users = _request(base_url, "/auth/users", token=admin_access).get("users", [])
     member = next((user for user in users if user.get("email") == member_email), None)
     if not member or member.get("role") != "member":
@@ -122,14 +140,14 @@ def run_secured_account_steps(base_url: str, admin_email: str, admin_password: s
     profile = _request(base_url, "/auth/me", token=token)
     if profile.get("email") != member_email or not profile.get("tenantId"):
         raise AssertionError("personal token did not identify its owner and tenant")
-    member_permissions = _request(base_url, "/auth/permissions", token=token).get("permissions", [])
-    if "users:read" in member_permissions:
+    permissions = _request(base_url, "/auth/permissions", token=token).get("permissions", [])
+    if "users:read" in permissions:
         raise AssertionError("member API token unexpectedly has users:read")
 
     _request(base_url, f"/auth/users/{member['userId']}/role", method="POST", token=admin_access,
              body={"role": "admin"})
-    admin_permissions = _request(base_url, "/auth/permissions", token=token).get("permissions", [])
-    if "users:read" not in admin_permissions:
+    permissions = _request(base_url, "/auth/permissions", token=token).get("permissions", [])
+    if "users:read" not in permissions:
         raise AssertionError("API token did not inherit the user's updated admin role")
     _request(base_url, f"/auth/users/{member['userId']}/role", method="POST", token=admin_access,
              body={"role": "member"})
@@ -147,40 +165,32 @@ def run_secured_account_steps(base_url: str, admin_email: str, admin_password: s
     no_expiry_id = no_expiry.get("tokenRecord", {}).get("tokenId")
     if not no_expiry_token or not no_expiry_id or "expiresAt" in no_expiry.get("tokenRecord", {}):
         raise AssertionError("token created without an expiry option unexpectedly has expiresAt")
-    no_expiry_profile = _request(base_url, "/auth/me", token=no_expiry_token)
-    if no_expiry_profile.get("email") != member_email:
+    if _request(base_url, "/auth/me", token=no_expiry_token).get("email") != member_email:
         raise AssertionError("non-expiring personal token could not authenticate as its owner")
     _request(base_url, f"/auth/tokens/{no_expiry_id}/revoke", method="POST", token=member_access)
 
-    disabled_admin = _request(base_url, f"/auth/users/{admin_user_id}/disable", method="POST",
-                              token=admin_access, expected=409)
-    if disabled_admin.get("error") != "last_admin":
-        raise AssertionError("last-admin disable did not return error=last_admin")
-    demoted_admin = _request(base_url, f"/auth/users/{admin_user_id}/role", method="POST", token=admin_access,
-                             body={"role": "member"}, expected=409)
-    if demoted_admin.get("error") != "last_admin":
-        raise AssertionError("last-admin demotion did not return error=last_admin")
 
+def run_invite_lifecycle_steps(base_url: str, admin_email: str, admin_password: str) -> None:
+    admin_access, _ = _login(base_url, admin_email, admin_password)
     invite = _request(base_url, "/auth/invites", method="POST", token=admin_access,
                       body={"email": "accounts-expiry@example.test", "role": "member"}, expected=201)
     invite_id = invite.get("inviteId")
-    invite_records = _request(base_url, "/auth/invites", token=admin_access).get("invites", [])
-    invite_record = next((record for record in invite_records if record.get("inviteId") == invite_id), None)
+    records = _request(base_url, "/auth/invites", token=admin_access).get("invites", [])
+    invite_record = next((record for record in records if record.get("inviteId") == invite_id), None)
     if not invite_record or not 6.99 * 24 * 60 * 60 * 1000 <= invite_record.get("expiresAt", 0) - invite_record.get("createdAt", 0) <= 7.01 * 24 * 60 * 60 * 1000:
         raise AssertionError("invite did not have the seven-day default lifetime")
-    token_value = invite["activationUrl"].rsplit("/activate/", 1)[1]
+    token = invite["activationUrl"].rsplit("/activate/", 1)[1]
     _request(base_url, f"/auth/invites/{invite_id}/revoke", method="POST", token=admin_access)
     rejected = _request(base_url, "/auth/activate", method="POST",
-                         body={"token": token_value, "password": "JourneyMember123!"}, expected=422)
-    if rejected.get("error") != "invalid_invite":
-        raise AssertionError("revoked invite did not return error=invalid_invite")
+                        body={"token": token, "password": "JourneyMember123!"}, expected=422)
+    if rejected.get("code") != "KB_AUTH_INVALID_INVITE":
+        raise AssertionError("revoked invite did not return KB_AUTH_INVALID_INVITE")
 
     expiring = _request(base_url, "/auth/invites", method="POST", token=admin_access,
                         body={"email": "accounts-expiring@example.test", "role": "member", "ttlMs": 1000},
                         expected=201)
-    expiring_id = expiring.get("inviteId")
-    expiring_records = _request(base_url, "/auth/invites", token=admin_access).get("invites", [])
-    expiring_record = next((record for record in expiring_records if record.get("inviteId") == expiring_id), None)
+    records = _request(base_url, "/auth/invites", token=admin_access).get("invites", [])
+    expiring_record = next((record for record in records if record.get("inviteId") == expiring.get("inviteId")), None)
     if not expiring_record:
         raise AssertionError("short-lived invite did not appear in the admin invite list")
     while expiring_record["expiresAt"] > time.time() * 1000:
@@ -188,5 +198,5 @@ def run_secured_account_steps(base_url: str, admin_email: str, admin_password: s
     expired = _request(base_url, "/auth/activate", method="POST",
                        body={"token": expiring["activationUrl"].rsplit("/activate/", 1)[1],
                              "password": "JourneyMember123!"}, expected=422)
-    if expired.get("error") != "invalid_invite":
-        raise AssertionError("expired invite did not return error=invalid_invite")
+    if expired.get("code") != "KB_AUTH_INVALID_INVITE":
+        raise AssertionError("expired invite did not return KB_AUTH_INVALID_INVITE")

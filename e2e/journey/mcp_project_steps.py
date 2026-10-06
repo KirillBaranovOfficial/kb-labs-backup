@@ -244,7 +244,7 @@ def secured_auth(project_id: str) -> str | None:
         if (not isinstance(envelope, dict)
                 or machine_result.get("ok") is not False
                 or envelope.get("code") != "KB_AUTH_REQUIRED"
-                or envelope.get("hint") != 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".'
+                or envelope.get("hint") != 'Run "kb auth login --gateway-url <url> --email <email>".'
                 or not isinstance(envelope.get("correlationId"), str)
                 or not envelope["correlationId"].strip()):
             return f"secured tools/list with {'missing' if not token else 'invalid'} token returned no KB_AUTH_REQUIRED envelope"
