@@ -5,10 +5,13 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from secured_connection_steps import validate_case_response, validate_cli_case
+from secured_connection_steps import _journey_home, validate_case_response, validate_cli_case
 
 
 class SecuredConnectionContractTests(unittest.TestCase):
+    def test_isolated_platform_paths_use_the_journey_child_home(self):
+        self.assertEqual(_journey_home({"HOME": "/tmp/journey-child-home"}), Path("/tmp/journey-child-home"))
+
     # The fake gateway/CLI failure is deliberately supplied to every exact claim
     # validator; each documented step must turn that failure into a red claim.
     def test_fake_gateway_failures_make_each_http_claim_red(self):

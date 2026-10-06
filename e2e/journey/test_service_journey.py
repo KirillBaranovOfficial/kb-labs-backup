@@ -102,6 +102,7 @@ class ServiceJourneyTests(unittest.TestCase):
                 stdout = io.StringIO()
                 with patch("service_runner.archive_service_logs") as archive, \
                         patch("service_runner.checks", side_effect=RuntimeError("simulated orchestration error")), \
+                        patch.dict(os.environ, {"KB_JOURNEY_PLATFORM_ROOT": str(Path(directory) / "platform")}), \
                         patch("sys.argv", ["service_runner.py", "--mode", mode, "--output", str(output)]), \
                         redirect_stdout(stdout):
                     status = service_main()
@@ -115,6 +116,7 @@ class ServiceJourneyTests(unittest.TestCase):
                 self.assertEqual(result["steps"][-1]["status"], "PASS")
                 archive.assert_called_once()
                 self.assertEqual(archive.call_args.kwargs["mode"], mode)
+                self.assertEqual(archive.call_args.kwargs["platform_root"], str(Path(directory) / "platform"))
                 self.assertNotIn("Traceback", stdout.getvalue())
 
     def test_pre_service_failure_is_saved_with_step_and_message(self):
