@@ -9,7 +9,8 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { GatewayCredentials, ICredentialsManager } from './types.js';
-import { readGatewaySuccessData } from './result.js';
+import { GatewayAuthResponseError, readGatewaySuccessData } from './result.js';
+import { isSavedCredentialBase, readSavedAuthFile } from './saved-auth-file.js';
 
 /** Default credentials file path */
 const CREDENTIALS_PATH = path.join(os.homedir(), '.kb', 'credentials.json');
@@ -25,12 +26,7 @@ export class CredentialsManager implements ICredentialsManager {
   }
 
   async load(): Promise<GatewayCredentials | null> {
-    try {
-      const raw = await fs.readFile(this.filePath, 'utf-8');
-      return JSON.parse(raw) as GatewayCredentials;
-    } catch {
-      return null;
-    }
+    return readSavedAuthFile(this.filePath, '.kb/credentials.json', isGatewayCredentials);
   }
 
   async save(credentials: GatewayCredentials): Promise<void> {
@@ -63,7 +59,7 @@ export class CredentialsManager implements ICredentialsManager {
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new Error(`Token refresh failed (${response.status}): ${body}`);
+      throw new GatewayAuthResponseError('Token refresh', response.status, body);
     }
 
     const data = await readGatewaySuccessData<{
@@ -82,4 +78,11 @@ export class CredentialsManager implements ICredentialsManager {
     await this.save(updated);
     return updated;
   }
+}
+
+function isGatewayCredentials(value: unknown): value is GatewayCredentials {
+  if (!isSavedCredentialBase(value)) return false;
+  const record = value as GatewayCredentials;
+  return (record.handle === undefined || typeof record.handle === 'string')
+    && (record.namespaceId === undefined || typeof record.namespaceId === 'string');
 }

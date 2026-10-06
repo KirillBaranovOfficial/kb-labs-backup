@@ -11,7 +11,8 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { SessionCredentials, ISessionManager } from './types.js';
-import { readGatewaySuccessData } from './result.js';
+import { GatewayAuthResponseError, readGatewaySuccessData } from './result.js';
+import { isSavedCredentialBase, readSavedAuthFile } from './saved-auth-file.js';
 
 /** Default session file path */
 const SESSION_PATH = path.join(os.homedir(), '.kb', 'session.json');
@@ -27,12 +28,7 @@ export class SessionManager implements ISessionManager {
   }
 
   async load(): Promise<SessionCredentials | null> {
-    try {
-      const raw = await fs.readFile(this.filePath, 'utf-8');
-      return JSON.parse(raw) as SessionCredentials;
-    } catch {
-      return null;
-    }
+    return readSavedAuthFile(this.filePath, '.kb/session.json', isSessionCredentials);
   }
 
   async save(session: SessionCredentials): Promise<void> {
@@ -65,7 +61,7 @@ export class SessionManager implements ISessionManager {
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new Error(`Session refresh failed (${response.status}): ${body}`);
+      throw new GatewayAuthResponseError('Session refresh', response.status, body);
     }
 
     const data = await readGatewaySuccessData<{
@@ -86,4 +82,11 @@ export class SessionManager implements ISessionManager {
     await this.save(updated);
     return updated;
   }
+}
+
+function isSessionCredentials(value: unknown): value is SessionCredentials {
+  if (!isSavedCredentialBase(value)) return false;
+  const record = value as SessionCredentials;
+  return (record.email === undefined || typeof record.email === 'string')
+    && (record.tenantId === undefined || typeof record.tenantId === 'string');
 }

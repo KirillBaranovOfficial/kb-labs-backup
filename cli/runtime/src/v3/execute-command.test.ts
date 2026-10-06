@@ -109,7 +109,7 @@ describe('executeCommandV3 plugin command result output', () => {
     }));
   });
 
-  // case: S-203.2
+  // case: S-203.2, S-051.2
   it('renders a returned typed failure as the shared human error with its hint', async () => {
     const json = vi.fn();
     const error = vi.fn();
@@ -118,9 +118,9 @@ describe('executeCommandV3 plugin command result output', () => {
       data: {
         ok: false as const,
         error: {
-          code: 'KB_RUNTIME_COMMAND_FAILED',
-          message: 'The operation failed.',
-          hint: 'Run `kb test command --help`, then retry the operation.',
+          code: 'KB_PLUGIN_NOT_FOUND',
+          message: 'Plugin @kb-labs/not-published was not found in the registry.',
+          hint: 'kb marketplace search',
         },
       },
       executionTimeMs: 1,
@@ -141,8 +141,8 @@ describe('executeCommandV3 plugin command result output', () => {
     expect(exitCode).toBe(1);
     expect(json).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledOnce();
-    expect(error).toHaveBeenCalledWith('KB_RUNTIME_COMMAND_FAILED: The operation failed.', {
-      hint: 'Run `kb test command --help`, then retry the operation.',
+    expect(error).toHaveBeenCalledWith('Plugin @kb-labs/not-published was not found in the registry. [KB_PLUGIN_NOT_FOUND]', {
+      hint: 'kb marketplace search',
     });
   });
 

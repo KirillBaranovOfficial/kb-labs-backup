@@ -20,6 +20,17 @@ describe('CLI UI adapter errors', () => {
     expect(errorOutput.mock.calls[0]?.[0]).not.toContain(' at ');
   });
 
+  // case: S-051.2
+  it('keeps the typed failure message intact when stderr is not a terminal', () => {
+    const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const message = 'Plugin @kb-labs/not-published was not found in the registry. [KB_PLUGIN_NOT_FOUND]';
+
+    createCLIUIFacade().error(message, { hint: 'kb marketplace search' });
+
+    expect(errorOutput).toHaveBeenCalledOnce();
+    expect(String(errorOutput.mock.calls[0]?.[0])).toContain(message);
+  });
+
   it('keeps diagnostics on stderr and writes one success envelope in JSON mode', () => {
     process.env.KB_OUTPUT_MODE = 'json';
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});

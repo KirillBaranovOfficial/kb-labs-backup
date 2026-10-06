@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { toErrorEnvelope } from './error-envelope/index.js';
 import {
   GATEWAY_SERVICE_NETWORK,
+  resolveGatewayServiceAddress,
   resolveServiceListenAddress,
 } from './service-listen-address.js';
 
@@ -14,6 +15,36 @@ describe('resolveServiceListenAddress', () => {
       hostEnvVar: 'GATEWAY_HOST',
       defaultHost: '0.0.0.0',
     });
+  });
+
+  it('resolves the gateway URL from the host override before listener settings', () => {
+    expect(resolveGatewayServiceAddress(undefined, {
+      gatewayUrl: 'https://gateway.example.test/',
+      netOffset: 500,
+    })).toBe('https://gateway.example.test');
+  });
+
+  it('uses the same transport, GATEWAY_PORT, and offset rules as plugin Gateway calls', () => {
+    expect(resolveGatewayServiceAddress(undefined, {
+      gatewayPort: '4300',
+      netOffset: 200,
+    })).toBe('http://127.0.0.1:4500');
+    expect(resolveGatewayServiceAddress({
+      listenAddress: () => ({ host: '0.0.0.0', port: 43323 }),
+    }, {
+      gatewayPort: '4300',
+      netOffset: 200,
+    })).toBe('http://127.0.0.1:43323');
+  });
+
+  it('surfaces invalid GATEWAY_PORT as the catalogued configuration error', () => {
+    let failure: unknown;
+    try {
+      resolveGatewayServiceAddress(undefined, { gatewayPort: '4000oops', netOffset: 0 });
+    } catch (error) {
+      failure = error;
+    }
+    expect(toErrorEnvelope(failure)).toMatchObject({ code: 'KB_CONFIG_INVALID' });
   });
 
   // case: S-010.7

@@ -23,7 +23,8 @@ from installer_case_steps import run_doctor_root_isolation_step, run_installer_c
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import Journey, record_runner_failure
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
-from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status, run_local_auth_steps, run_secured_auth_steps
+from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status,
+                        run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
 from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
 from platform_state_dump import PlatformStateDumpOnce
 from scoreboard import release_claims_for_case, write_scoreboards
@@ -1034,6 +1035,11 @@ def main():
                               lambda: run_cli_auth_status(str(BIN / "kb"), env, authenticated=False),
                               cases=["S-041.5"])
         else:
+            auth_journey.step(
+                "corrupt saved CLI session returns the repair envelope", "auth.accounts",
+                lambda: run_cli_corrupt_session_file(str(BIN / "kb"), service_env),
+                cases=["S-041.18"],
+            )
             auth_journey.step("admin invite, reset, and restart persistence", auth_capability, run_auth_flow,
                               cases=["S-041.2", "S-041.3"])
             auth_journey.step(

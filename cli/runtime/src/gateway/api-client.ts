@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { CredentialsManager } from './credentials.js';
 import { SessionManager } from './session.js';
 import type { GatewayCredentials, SessionCredentials } from './types.js';
+import { isGatewayConnectionFailure } from './connection-errors.js';
+import { SavedAuthFileError, savedAuthFileErrorEnvelope } from './saved-auth-file.js';
 
 type AuthState = {
   gatewayUrl: string;
@@ -62,13 +64,17 @@ function authenticatedUrl(input: string, gatewayUrl: string): URL {
 export async function gatewayApiFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
   let auth: AuthState | null;
   try { auth = await loadAuth(); }
-  catch { throw new GatewayApiError(requiredAuthEnvelope()); }
+  catch (error) {
+    throw new GatewayApiError(error instanceof SavedAuthFileError
+      ? savedAuthFileErrorEnvelope(error)
+      : requiredAuthEnvelope());
+  }
   const send = (current: AuthState | null): Promise<Response> => {
     const target = current ? authenticatedUrl(String(input), current.gatewayUrl) : new URL(String(input));
     const headers = new Headers(init.headers);
     if (current) { headers.set('Authorization', `Bearer ${current.accessToken}`); }
     return fetch(target, { ...init, headers }).catch((error: unknown) => {
-      if (isConnectionFailure(error)) {
+      if (isGatewayConnectionFailure(error)) {
         throw new GatewayApiError(createErrorEnvelope('KB_HOST_UNREACHABLE', {
           details: { address: target.origin },
           correlationId: randomUUID(),
@@ -101,19 +107,4 @@ export async function gatewayApiFetch(input: string | URL, init: RequestInit = {
     }));
   }
   return response;
-}
-
-function isConnectionFailure(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  const cause = 'cause' in error ? error.cause : undefined;
-  const code = cause && typeof cause === 'object' && 'code' in cause
-    ? cause.code
-    : undefined;
-  return code === 'ECONNREFUSED'
-    || code === 'ECONNRESET'
-    || code === 'EHOSTUNREACH'
-    || code === 'ENETUNREACH'
-    || code === 'ETIMEDOUT';
 }

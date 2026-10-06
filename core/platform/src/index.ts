@@ -27,7 +27,7 @@
 export { AdapterUnavailableError, AdapterCredentialsMissingError, AdapterOperationError, AdapterConfigError, AdapterProjectScopeError, PlatformConfigError, ServicePortConfigError } from "./errors.js";
 export { getHostServiceAddress, HostServiceAddressError } from "./host-service-address.js";
 export type { HostServiceEnvironment, HostServiceId } from "./host-service-address.js";
-export { GATEWAY_SERVICE_NETWORK, resolveServiceListenAddress } from "./service-listen-address.js";
+export { GATEWAY_SERVICE_NETWORK, resolveGatewayServiceAddress, resolveServiceListenAddress } from "./service-listen-address.js";
 export type {
   ResolvedServiceListenAddress,
   ServiceNetworkSettings,

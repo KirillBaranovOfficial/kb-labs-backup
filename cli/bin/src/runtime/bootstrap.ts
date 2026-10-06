@@ -34,7 +34,7 @@ import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, createErrorEnvelope, getHostServiceAddress, toErrorEnvelope } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope, resolveGatewayServiceAddress, toErrorEnvelope } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
@@ -54,12 +54,13 @@ type RuntimeInitOptions = RuntimeSetupOptions;
 type CliRuntimeInstance = Awaited<ReturnType<typeof createCliRuntime>>;
 type CliExecutionContext = CliRuntimeInstance["context"];
 
-function configuredGatewayUrl(): string | undefined {
-  try {
-    return getHostServiceAddress("gateway");
-  } catch {
-    return undefined;
-  }
+export function configuredGatewayUrl(): string {
+  return resolveGatewayServiceAddress(undefined, {
+    gatewayUrl: process.env.KB_GATEWAY_URL,
+    gatewayPort: process.env.GATEWAY_PORT,
+    gatewayHost: process.env.GATEWAY_HOST,
+    netOffset: Number(process.env.KB_NET_OFFSET) || 0,
+  });
 }
 
 export function createUnknownCommandError(input: string, suggestions: string[] = []) {
@@ -129,14 +130,26 @@ export async function executeCli(
     ? authRoute.cmd.category ? `${authRoute.cmd.category} ${authRoute.cmd.name}` : authRoute.cmd.name
     : cmdPath.join(" ");
   const accessMode = resolveCliAccessMode();
+  let gatewayUrl: string | undefined;
+  if (accessMode === 'secured') {
+    try {
+      gatewayUrl = configuredGatewayUrl();
+    } catch (error) {
+      return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
+    }
+  }
+  const authCheck: Awaited<ReturnType<typeof hasUsablePlatformAuth>> = accessMode === 'secured'
+    ? await hasUsablePlatformAuth()
+    : { authenticated: true };
   const authResult = global.version && isPlatformAuthExemptFlag("version")
     ? { value: true }
     : await dispatchWithPlatformAuthGate({
       accessMode,
       commandPath: authCommandPath,
       commandKind: authCommandKind,
-      hasAuth: accessMode !== 'secured' || await hasUsablePlatformAuth(),
-      gatewayUrl: configuredGatewayUrl(),
+      hasAuth: authCheck.authenticated,
+      ...(authCheck.error ? { authError: authCheck.error } : {}),
+      gatewayUrl,
       help: global.help,
     }, async () => true);
   if ("error" in authResult) {
