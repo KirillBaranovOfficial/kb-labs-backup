@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 import tempfile
 
-from invocations import invocation_context, run_command
+from invocations import (decode_ux_success_result, invocation_context, read_ux_cli_result,
+                         run_command)
 from service_steps import Journey
 
 
@@ -86,10 +87,10 @@ def run_project_plugin_availability_steps(journey: Journey, cli: str, project_a:
             if result.returncode != 0:
                 return f"heuristic Review failed in Project B: {(result.stderr or result.stdout).strip()}"
             try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                return "heuristic Review returned invalid JSON"
-            result_data = payload.get("data", payload) if isinstance(payload, dict) else None
+                payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+            except ValueError as error:
+                return f"heuristic Review returned an invalid UX result: {error}"
+            result_data = payload
             metadata = result_data.get("metadata") if isinstance(result_data, dict) else None
             analyzed = metadata.get("analyzedFiles") if isinstance(metadata, dict) else None
             if (not isinstance(metadata, dict) or metadata.get("mode") != "heuristic"

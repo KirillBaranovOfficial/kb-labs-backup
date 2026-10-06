@@ -104,16 +104,18 @@ class WorkflowJourneyTests(unittest.TestCase):
         authenticated = [False]
         calls = []
         call_homes = []
+        call_cwds = []
         call_envs = []
 
         def fake_run(args, *, env, cwd, timeout=120):
             args = list(args)
             calls.append(args)
             call_homes.append(env["HOME"])
+            call_cwds.append(cwd)
             call_envs.append({key: env.get(key) for key in ("KB_JOURNEY_CLI_PATH", "KB_PLATFORM_ROOT", "KB_PROJECT_ROOT")})
             if args == ["auth", "status", "--json"]:
                 return CompletedProcess(args, 0, json.dumps({
-                    "ok": True, "authenticated": False, "session": {"authenticated": False},
+                    "ok": True, "data": {"authenticated": False, "session": {"authenticated": False}},
                 }))
             if args in (["auth", "login", "--help"], ["version"], ["health", "--json"]):
                 return CompletedProcess(args, 0, json.dumps({"ok": True}))
@@ -153,23 +155,27 @@ class WorkflowJourneyTests(unittest.TestCase):
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
-        self.assertEqual(calls[:4], [["auth", "status", "--json"], ["auth", "login", "--help"], ["version"], ["health", "--json"]])
-        self.assertEqual(calls[4:8], [
+        self.assertEqual(calls[:1], [["config", "show", "--json"]])
+        self.assertEqual(calls[1:5], [["auth", "status", "--json"], ["auth", "login", "--help"], ["version"], ["health", "--json"]])
+        self.assertEqual(calls[5:9], [
             ["config", "show", "--json"],
             ["workflow", "defs", "list", "--json"],
             ["marketplace", "plugins", "list", "--json"],
             ["qa", "cases", "validate", "--json"],
         ])
-        self.assertEqual(calls[8][:2], ["auth", "login"])
-        self.assertEqual(calls[9:], calls[4:8])
-        self.assertTrue(all(call_home != shared_home for call_home in call_homes[:8]))
-        self.assertTrue(all(call_home == shared_home for call_home in call_homes[8:]))
-        self.assertTrue(all(call_env["KB_JOURNEY_CLI_PATH"] == "/installed/bin/kb" for call_env in call_envs[:8]))
+        self.assertEqual(calls[9][:2], ["auth", "login"])
+        self.assertEqual(calls[10:], calls[5:9])
+        self.assertNotEqual(call_cwds[0], Path("/tmp/project"))
+        self.assertTrue(all(call_home != shared_home for call_home in call_homes[:9]))
+        self.assertTrue(all(call_home == shared_home for call_home in call_homes[9:]))
+        self.assertTrue(all(call_env["KB_JOURNEY_CLI_PATH"] == "/installed/bin/kb" for call_env in call_envs[:9]))
+        self.assertTrue(call_envs[0]["KB_PROJECT_ROOT"] is None)
         self.assertTrue(all(call_env["KB_PLATFORM_ROOT"] == "/installed/platform"
-                            and call_env["KB_PROJECT_ROOT"] == "/tmp/project" for call_env in call_envs[:8]))
+                            and call_env["KB_PROJECT_ROOT"] == "/tmp/project" for call_env in call_envs[1:9]))
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-007.4", "kind": "journey", "status": "PASS"},
             {"claimId": "S-041.12", "kind": "journey", "status": "PASS"},
+            {"claimId": "S-041.17", "kind": "journey", "status": "PASS"},
             {"claimId": "S-041.7", "kind": "journey", "status": "PASS"},
             {"claimId": "S-041.8", "kind": "journey", "status": "PASS"},
         ])

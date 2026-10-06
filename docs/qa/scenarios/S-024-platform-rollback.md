@@ -21,7 +21,7 @@ plan or manually editing generated configuration.
 |---|---|---|
 | S-024.1 | Update the running host to N+1 and record the snapshot ID returned by the update | The immutable recovery snapshot captures version N before the update |
 | S-024.2 | `kb-create rollback --platform-root "$PLATFORM_ROOT" --snapshot SNAPSHOT_ID --yes --json` | JSON result includes the restored snapshot and log path, and the host restarts |
-| S-024.3 | Inspect the receipt, generated config and `kb-create status --json`; run `kb project list --json` from the existing project and log in again in secured mode | The host and receipt return to N, the generated config bytes exactly match their state before the update, the core project command exits successfully with `ok: true` and a `projects` array, and the existing admin account still authenticates |
+| S-024.3 | Inspect the receipt, generated config and `kb-create status --json`; run `kb project list --json` from the existing project using the saved session, then sign in again as the existing administrator | The host and receipt return to N, the generated config bytes exactly match their state before the update, the protected core project command exits successfully with `ok: true` and a `projects` array using the session saved before rollback, and a fresh login with the existing admin account succeeds after rollback. |
 | S-024.4 | Request a missing/unknown snapshot with `--yes --json` | Non-zero structured recovery error includes a hint; active install remains unchanged |
 | S-024.5 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | The restored platform is reported healthy |
 

@@ -181,9 +181,9 @@ class StudioJourneyTests(unittest.TestCase):
 
     def test_secured_member_is_created_through_invite_and_activation(self):
         responses = [
-            FakeResponse({"accessToken": "admin-token"}),
-            FakeResponse({"activationUrl": "http://localhost/activate/one-time-token"}, 201),
-            FakeResponse({}, 200),
+            FakeResponse({"data": {"accessToken": "admin-token"}, "ok": True}),
+            FakeResponse({"data": {"activationUrl": "http://localhost/activate/one-time-token"}, "ok": True}, 201),
+            FakeResponse({"data": {}, "ok": True}, 200),
         ]
         with patch("studio_steps.urllib.request.urlopen", side_effect=responses) as open_url:
             email, password = create_studio_member("http://127.0.0.1:4000", "admin@example.test", "secret")

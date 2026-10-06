@@ -104,22 +104,25 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         gateway_manifest.parent.mkdir(parents=True, exist_ok=True)
                         gateway_manifest.write_text(json.dumps({"schema": "kb.create.artifact-manifest/v2", "id": "gateway-app",
                             "package": "@kb-labs/gateway-app", "version": "1.0.0"}))
-                        return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "operation": "doctor-fix"}), "")
+                        return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                            "operation": "doctor-fix", "findings": []}}), "")
                     if not gateway_manifest.exists():
-                        result = {"ok": False, "findings": [{"code": "KB_INSTALL_MANIFEST_PROJECTION_INVALID",
+                        result = {"ok": True, "data": {"operation": "doctor", "status": "unhealthy",
+                            "findings": [{"code": "KB_INSTALL_MANIFEST_PROJECTION_INVALID",
                             "component": "@kb-labs/gateway-app", "path": "node_modules/@kb-labs/gateway-app/kb-create.manifest.json",
-                            "hint": "Run `kb-create doctor --fix`."}], "platform": {"ok": True, "checks": []}}
-                        return subprocess.CompletedProcess(command, 1, json.dumps(result), "")
+                            "hint": "Run `kb-create doctor --fix`."}], "platform": {"ok": True, "checks": []}}}
+                        return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
                     if not host_running:
-                        result = {"ok": False, "platform": {"checks": [
+                        result = {"ok": True, "data": {"operation": "doctor", "status": "unhealthy",
+                            "findings": [], "platform": {"checks": [
                             {"id": "adapters", "detail": "Adapter status cannot be checked while the host is stopped.",
                              "hint": f'Run `kb-create start --platform-root "{platform_root}"`.'}
-                        ]}}
+                        ]}}}
                         if args[-1] == "--json":
-                            result["findings"] = [{"code": "KB_ADAPTER_CREDENTIALS_MISSING", "component": "openai",
+                            result["data"]["findings"] = [{"code": "KB_ADAPTER_CREDENTIALS_MISSING", "component": "openai",
                                 "path": "/platform/adapterOptions/llm/apiKey", "hint": "set OPENAI_API_KEY"}]
-                            return subprocess.CompletedProcess(command, 1, json.dumps(result), "")
-                        return subprocess.CompletedProcess(command, 1,
+                            return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
+                        return subprocess.CompletedProcess(command, 0,
                             f'Finding KB_ADAPTER_CREDENTIALS_MISSING: package=openai path=/platform/adapterOptions/llm/apiKey\nAdapters: Adapter status cannot be checked while the host is stopped.\nNext: Run `kb-create start --platform-root "{platform_root}"`.\n', "")
                     analytics_provider = config(platform_root).get("platform", {}).get("adapters", {}).get(
                         "analytics", "@kb-labs/adapters-analytics-sqlite")
@@ -140,7 +143,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     ]
                     if args[-1] == "--json":
                         findings = [{"code": "KB_ADAPTER_CREDENTIALS_MISSING", "severity": "warning", "component": "openai", "path": "/platform/adapterOptions/llm/apiKey", "action": "set OPENAI_API_KEY to enable LLM features", "hint": "set OPENAI_API_KEY"}]
-                        result = {"ok": True, "findings": findings, "platform": {"ok": True, "checks": statuses}}
+                        result = {"ok": True, "data": {"findings": findings, "platform": {"ok": True, "checks": statuses}}}
                         return subprocess.CompletedProcess(command, 0, json.dumps(result), "")
                     return subprocess.CompletedProcess(command, 0,
                         "Warnings:\nKB_ADAPTER_CREDENTIALS_MISSING: set OPENAI_API_KEY to enable LLM features\nAdapter storage: mode=real implementation=@kb-labs/adapters-fs\n", "")
@@ -239,7 +242,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                              "hint": "Set OPENAI_API_KEY or run `kb config set --scope platform platform.adapterOptions.llm.apiKey '${OPENAI_API_KEY}' --allow-missing-env`. No request was sent."}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["mind", "search"]:
-                    error = {"code": "KB_ADAPTER_NOT_CONFIGURED", "details": {"service": "vectorStore"},
+                    error = {"code": "KB_ADAPTER_NOT_CONFIGURED", "message": "Adapter is not configured.",
+                             "details": {"service": "vectorStore"},
                              "actions": [{"command": "kb adapter bind vectorStore @kb-labs/adapters-qdrant"}]}
                     return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
                 if args[:2] == ["marketplace", "install"] and args[2] == "@kb-labs/mind-entry":
@@ -264,6 +268,21 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 if args[:2] == ["project", "remove"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command}")
+
+            raw_fake_run = fake_run
+
+            def fake_run(command, *, cwd, env, capture_output, text, timeout):
+                result = raw_fake_run(command, cwd=cwd, env=env, capture_output=capture_output,
+                                      text=text, timeout=timeout)
+                if result.returncode == 0 and "--json" in command and result.stdout:
+                    try:
+                        envelope = json.loads(result.stdout)
+                    except json.JSONDecodeError:
+                        return result
+                    if isinstance(envelope, dict) and envelope.get("ok") is True and "data" not in envelope:
+                        envelope = {"ok": True, "data": {key: value for key, value in envelope.items() if key != "ok"}}
+                        return subprocess.CompletedProcess(command, result.returncode, json.dumps(envelope), result.stderr)
+                return result
 
             journey = Journey("local", "adapter-defaults-fixture")
             runtime_adapters = [

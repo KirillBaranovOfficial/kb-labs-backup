@@ -14,7 +14,7 @@ from steps.auth import (assert_platform_auth_required, run_bootstrap_recovery_st
 
 
 class CliAuthJourneyTests(unittest.TestCase):
-    # case: S-041.7
+    # case: S-041.7, S-041.17
     def test_cli_gate_requires_the_complete_case_error_envelope(self):
         result = subprocess.CompletedProcess(
             ["kb", "config", "show", "--json"], 1,
@@ -42,13 +42,13 @@ class CliAuthJourneyTests(unittest.TestCase):
     def test_anonymous_auth_status_is_verified_through_the_cli_product(self):
         result = subprocess.CompletedProcess(
             ["kb", "auth", "status", "--json"], 0,
-            json.dumps({"ok": True, "authenticated": False, "session": {"authenticated": False}}), "",
+            json.dumps({"ok": True, "data": {"authenticated": False, "session": {"authenticated": False}}}), "",
         )
         assert_cli_session_absent(result)
 
         authenticated = subprocess.CompletedProcess(
             ["kb", "auth", "status", "--json"], 0,
-            json.dumps({"ok": True, "authenticated": True, "session": {"authenticated": True}}), "",
+            json.dumps({"ok": True, "data": {"authenticated": True, "session": {"authenticated": True}}}), "",
         )
         with self.assertRaisesRegex(AssertionError, "session is authenticated"):
             assert_cli_session_absent(authenticated)
@@ -60,13 +60,13 @@ class CliAuthJourneyTests(unittest.TestCase):
         def invoke(args, **_kwargs):
             calls.append(args)
             if args[1:3] == ["auth", "status"]:
-                payload = {"ok": True, "session": {"authenticated": bool(state["email"]),
-                                                       **({"email": state["email"]} if state["email"] else {})}}
+                payload = {"ok": True, "data": {"session": {"authenticated": bool(state["email"]),
+                                                               **({"email": state["email"]} if state["email"] else {})}}}
             elif args[1:3] == ["auth", "login"]:
                 state["email"] = "member@example.test" if "member@example.test" in args else "admin@example.test"
-                payload = {"ok": True}
+                payload = {"ok": True, "data": {}}
             elif args[1:3] == ["auth", "tokens"]:
-                payload = {"ok": True, "tokens": []}
+                payload = {"ok": True, "data": {"tokens": []}}
             else:
                 raise AssertionError(args)
             return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
@@ -89,6 +89,7 @@ class CliAuthJourneyTests(unittest.TestCase):
         args = ["/isolated/bin/kb", "auth", "reset-link", "--user-id", "member-1", "--json"]
         response = {"ok": False, "error": {
             "code": "KB_AUTH_FORBIDDEN", "details": {"permission": "users:write"},
+            "message": "Permission denied.",
         }}
         with patch("steps.auth.subprocess.run", return_value=subprocess.CompletedProcess(
                 args, 1, json.dumps(response), "")) as invoke:
@@ -180,8 +181,8 @@ class CliAuthJourneyTests(unittest.TestCase):
 
         def invoke(args, **_kwargs):
             commands.append(args)
-            payload = {"ok": True, "message": "Logged out. Credentials removed."} if args[2] == "logout" else {
-                "ok": True, "session": {"authenticated": False}}
+            payload = {"ok": True, "data": {"message": "Logged out. Credentials removed."}} if args[2] == "logout" else {
+                "ok": True, "data": {"session": {"authenticated": False}}}
             return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
 
         with patch("steps.accounts.subprocess.run", side_effect=invoke):

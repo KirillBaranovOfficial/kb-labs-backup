@@ -29,7 +29,12 @@ class ProjectIdentityStepsTest(unittest.TestCase):
     # case: S-043.1-.7, S-196.1-.4, S-199.1, S-199.6
     def test_project_registry_steps_reject_fake_registration_failure_then_claim_scope_checks(self):
         with tempfile.TemporaryDirectory(prefix="c07-project-identity-home-") as home:
-            env = {"HOME": home, "KB_HOME": str(Path(home) / ".kb"), "KB_PLATFORM_ROOT": str(Path.cwd())}
+            platform_root = Path(home) / "platform"
+            (platform_root / ".kb").mkdir(parents=True)
+            (platform_root / ".kb" / "marketplace.lock").write_text(json.dumps({
+                "plugins": {"@kb-labs/workflow": {"version": "2.120.1"}},
+            }))
+            env = {"HOME": home, "KB_HOME": str(Path(home) / ".kb"), "KB_PLATFORM_ROOT": str(platform_root)}
             Path(env["KB_HOME"]).mkdir()
             calls = []
             registrations = {}
@@ -45,11 +50,11 @@ class ProjectIdentityStepsTest(unittest.TestCase):
                     identifier = f"prj_{len(registrations) + 1}"
                     registrations[project] = identifier
                     return subprocess.CompletedProcess(command, 0, json.dumps({
-                        "ok": True, "project": {"id": identifier, "path": str(project)},
+                        "ok": True, "data": {"project": {"id": identifier, "path": str(project)}},
                     }), "")
                 if args[:2] == ["project", "list"]:
                     rows = [{"id": identifier, "path": str(project)} for project, identifier in registrations.items()]
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "projects": rows}), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"projects": rows}}), "")
                 if args[:2] == ["marketplace", "install"]:
                     package = args[2].split("@2.120.1")[0]
                     manifest_id = {
@@ -68,7 +73,7 @@ class ProjectIdentityStepsTest(unittest.TestCase):
                     root = next((path for path in registrations if cwd == path or path in cwd.parents), cwd)
                     project = registrations.get(root)
                     row = {"id": project, "path": str(root)}
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "project": row}), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"project": row}}), "")
                 if args[:2] == ["config", "set"]:
                     root = next((path for path in registrations if cwd == path or path in cwd.parents), cwd)
                     project_configs[root] = json.loads(args[3])
@@ -76,19 +81,20 @@ class ProjectIdentityStepsTest(unittest.TestCase):
                 if args[:2] == ["config", "show"]:
                     root = next((path for path in registrations if cwd == path or path in cwd.parents), None)
                     if root is None:
-                        return subprocess.CompletedProcess(command, 1, json.dumps({"error": {
-                            "code": "KB_PROJECT_UNKNOWN", "hint": "Run kb project add <path> or cd into a registered project.",
+                        return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {
+                            "code": "KB_PROJECT_UNKNOWN", "message": "Project is not registered.",
+                            "hint": "Run kb project add <path> or cd into a registered project.",
                         }}), "")
                     return subprocess.CompletedProcess(command, 0, json.dumps({
-                        "project": {"id": registrations[root]},
-                        "rows": [{"field": "plugins.commit.scope.scopes", "source": "project",
-                                  "value": project_configs[root]}],
+                        "ok": True, "data": {"project": {"id": registrations[root]},
+                            "rows": [{"field": "plugins.commit.scope.scopes", "source": "project",
+                                      "value": project_configs[root]}]},
                     }), "")
                 if args[:3] == ["mcp", "config", "codex"]:
-                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
                         "projectId": registrations[cwd],
                         "url": f"http://localhost:4000/api/v1/projects/{registrations[cwd]}/mcp",
-                    }), "")
+                    }}), "")
                 if args == ["--version"]:
                     return subprocess.CompletedProcess(command, 0, "2.120.1\n", "")
                 return subprocess.CompletedProcess(command, 0, "command help\n", "")

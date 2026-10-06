@@ -7,7 +7,8 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-from invocations import run_command
+from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
+                         run_command)
 from service_steps import Journey
 
 
@@ -60,9 +61,10 @@ def run_worktree_steps(
             if add.returncode != 0:
                 return f"kb project add failed for worktree fixture: {(add.stderr or add.stdout).strip()}"
             try:
-                project_id = json.loads(add.stdout)["project"]["id"]
-            except (json.JSONDecodeError, KeyError, TypeError):
-                return "kb project add returned no project ID for worktree fixture"
+                project_data = decode_ux_success_result(read_ux_cli_result(add.stdout, add.returncode))
+                project_id = project_data["project"]["id"]
+            except (ValueError, KeyError, TypeError) as error:
+                return f"kb project add returned no project ID for worktree fixture: {error}"
 
             def remove_registered_project() -> str | None:
                 remove = runner([str(cli), "project", "remove", project_id, "--yes", "--json"], cwd=repo,
@@ -92,12 +94,12 @@ def run_worktree_steps(
             if run.returncode != 0:
                 return fail_and_remove(f"workflow run from registered worktree failed: {(run.stderr or run.stdout).strip()}")
             try:
-                run_payload = json.loads(run.stdout)
-                run_id = run_payload.get("data", {}).get("runId")
+                run_payload = decode_ux_success_result(read_ux_cli_result(run.stdout, run.returncode))
+                run_id = run_payload.get("runId") if isinstance(run_payload, dict) else None
                 if not run_id:
                     return fail_and_remove("workflow run from worktree returned no run ID")
-            except (json.JSONDecodeError, AttributeError):
-                return fail_and_remove("workflow run from worktree returned invalid JSON")
+            except ValueError as error:
+                return fail_and_remove(f"workflow run from worktree returned an invalid UX result: {error}")
             watch = runner([str(cli), "workflow", "runs", "watch", run_id], cwd=checkout,
                            env=step_env, capture_output=True, text=True, check=False, timeout=180)
             if watch.returncode != 0 or "Run SUCCESS." not in watch.stdout:
@@ -114,9 +116,9 @@ def run_worktree_steps(
             unknown = runner([str(cli), "project", "show", "--json"], cwd=unregistered_checkout,
                              env=child_env, capture_output=True, text=True, check=False, timeout=90)
             try:
-                error = json.loads(unknown.stdout)["error"]
-            except (json.JSONDecodeError, KeyError, TypeError):
-                return fail_and_remove("unregistered worktree did not return a typed project error")
+                error = decode_ux_error_result(read_ux_cli_result(unknown.stdout, unknown.returncode))
+            except (ValueError, KeyError, TypeError) as error:
+                return fail_and_remove(f"unregistered worktree did not return a typed project error: {error}")
             if unknown.returncode == 0 or error.get("code") != "KB_PROJECT_UNKNOWN":
                 return fail_and_remove("unregistered worktree did not return KB_PROJECT_UNKNOWN")
             if "kb project add" not in error.get("hint", ""):

@@ -60,6 +60,7 @@ class PlatformChannelStepsTest(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, json.dumps(output), "")
         if args[1] == "update":
             output = {"ok": False, "error": {"code": "KB_UPDATE_DOWNGRADE_REFUSED",
+                                               "message": "The requested update is older than the installed platform.",
                                                "hint": "use `kb-create rollback`",
                                                "meta": {"installedVersion": "3.0.2-canary.1", "targetVersion": "3.0.0"}, "correlationId": "c-down"}}
             return subprocess.CompletedProcess(args, 2, json.dumps(output), "")

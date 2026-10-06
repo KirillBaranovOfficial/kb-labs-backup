@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, NoReturn
 from urllib.error import HTTPError, URLError
 
 from platform_state_dump import _redact_text
@@ -22,13 +22,67 @@ _STEP_ID: ContextVar[str] = ContextVar("journey_step_id", default="journey.setup
 _REPORT_ROOT: ContextVar[Path | None] = ContextVar("journey_report_root", default=None)
 
 
+def _invalid_ux_result(message: str) -> NoReturn:
+    evidence = invocation_link(_STEP_ID.get())
+    suffix = f" ({evidence})" if evidence else ""
+    raise ValueError(f"{message}{suffix}")
+
+
 def decode_ux_success_result(value: Any) -> Any:
     """Validate a shared success envelope and return its payload."""
     if (not isinstance(value, dict) or value.get("ok") is not True
             or "data" not in value or set(value) - {"ok", "data", "meta"}
             or ("meta" in value and not isinstance(value["meta"], dict))):
-        raise ValueError("HTTP response is not a valid UX success envelope")
+        _invalid_ux_result("response is not a valid UX success envelope")
     return value["data"]
+
+
+def decode_ux_error_result(value: Any) -> Any:
+    """Validate a shared failure envelope and return its error payload."""
+    error = value.get("error") if isinstance(value, dict) else None
+    if (not isinstance(value, dict) or value.get("ok") is not False
+            or set(value) != {"ok", "error"} or not isinstance(error, dict)
+            or not isinstance(error.get("code"), str) or not isinstance(error.get("message"), str)):
+        _invalid_ux_result("response is not a valid UX error envelope")
+    return error
+
+
+def read_ux_cli_result(stdout: str, returncode: int) -> dict[str, Any]:
+    """Parse a CLI JSON result and validate its UX success or error envelope."""
+    try:
+        value = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        try:
+            _invalid_ux_result("CLI response is not JSON")
+        except ValueError as failure:
+            raise failure from error
+    if not isinstance(value, dict):
+        _invalid_ux_result("CLI response is not an object")
+    if value.get("ok") is True:
+        decode_ux_success_result(value)
+    else:
+        decode_ux_error_result(value)
+    if (returncode == 0) != (value["ok"] is True):
+        _invalid_ux_result("CLI exit code does not match its UX result envelope")
+    return value
+
+
+def read_ux_http_result(body: bytes, status: int) -> dict[str, Any]:
+    """Parse an HTTP JSON result and require its status to carry a UX envelope."""
+    try:
+        value = json.loads(body)
+    except (json.JSONDecodeError, TypeError) as error:
+        try:
+            _invalid_ux_result("HTTP response is not JSON")
+        except ValueError as failure:
+            raise failure from error
+    if not isinstance(value, dict):
+        _invalid_ux_result("HTTP response is not an object")
+    if 200 <= status < 300:
+        decode_ux_success_result(value)
+    else:
+        decode_ux_error_result(value)
+    return value
 
 
 def invocation_context(*, step_id: str | None = None, report_root: str | Path | None = None):

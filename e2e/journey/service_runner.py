@@ -19,7 +19,8 @@ from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
 from service_steps import Journey
-from invocations import decode_ux_success_result, open_http, run_command, run_with_runner
+from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
+                         read_ux_cli_result, read_ux_http_result, run_command, run_with_runner)
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
 from marketplace_steps import _registry_version, _output
@@ -67,8 +68,8 @@ def project_plugin_settings_isolation() -> str | None:
 
     def project_id(result: subprocess.CompletedProcess[str]) -> str:
         try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError:
+            payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+        except (json.JSONDecodeError, ValueError):
             return ""
         queue = [payload]
         while queue:
@@ -109,8 +110,9 @@ def project_plugin_settings_isolation() -> str | None:
         scopes = '[{"id":"journey-shared","label":"Shared","path":"."}]'
         manifest_default = run_cli(projects[0], "config", "get", "plugins.commit.llm.maxTokens", "--json")
         try:
-            default_payload = json.loads(manifest_default.stdout)
-        except json.JSONDecodeError:
+            default_payload = decode_ux_success_result(
+                read_ux_cli_result(manifest_default.stdout, manifest_default.returncode))
+        except (json.JSONDecodeError, ValueError):
             return "config get did not return JSON for the manifest default"
         if (manifest_default.returncode != 0 or not isinstance(default_payload, dict)
                 or default_payload.get("value") != 2000 or default_payload.get("layer") != "manifest"):
@@ -121,8 +123,9 @@ def project_plugin_settings_isolation() -> str | None:
             return f"could not set the platform Commit token default: {(platform_tokens.stderr or platform_tokens.stdout).strip()}"
         platform_token_read = run_cli(projects[1], "config", "get", "plugins.commit.llm.maxTokens", "--json")
         try:
-            platform_token_payload = json.loads(platform_token_read.stdout)
-        except json.JSONDecodeError:
+            platform_token_payload = decode_ux_success_result(
+                read_ux_cli_result(platform_token_read.stdout, platform_token_read.returncode))
+        except (json.JSONDecodeError, ValueError):
             return "config get did not return JSON for the platform setting"
         if (platform_token_read.returncode != 0 or not isinstance(platform_token_payload, dict)
                 or platform_token_payload.get("value") != 1900 or platform_token_payload.get("layer") != "platform"):
@@ -132,8 +135,9 @@ def project_plugin_settings_isolation() -> str | None:
             return f"could not set Project A's token override: {(project_tokens.stderr or project_tokens.stdout).strip()}"
         project_token_read = run_cli(projects[0], "config", "get", "plugins.commit.llm.maxTokens", "--json")
         try:
-            project_token_payload = json.loads(project_token_read.stdout)
-        except json.JSONDecodeError:
+            project_token_payload = decode_ux_success_result(
+                read_ux_cli_result(project_token_read.stdout, project_token_read.returncode))
+        except (json.JSONDecodeError, ValueError):
             return "config get did not return JSON for the project setting"
         if (project_token_read.returncode != 0 or not isinstance(project_token_payload, dict)
                 or project_token_payload.get("value") != 1800 or project_token_payload.get("layer") != "project"):
@@ -152,10 +156,10 @@ def project_plugin_settings_isolation() -> str | None:
         def effective_scopes(project: Path) -> tuple[object, str | None, str | None, str | None]:
             result = run_cli(project, "config", "get", "plugins.commit.scope.scopes", "--json")
             try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError:
+                payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+            except (json.JSONDecodeError, ValueError):
                 return None, None, None, f"config get returned invalid JSON in {project.name}"
-            if result.returncode != 0 or not isinstance(payload, dict) or payload.get("ok") is not True:
+            if result.returncode != 0 or not isinstance(payload, dict):
                 return None, None, None, f"config get failed in {project.name}: {(result.stderr or result.stdout).strip()}"
             return payload.get("value"), payload.get("layer"), payload.get("source"), None
 
@@ -195,10 +199,10 @@ def project_plugin_settings_isolation() -> str | None:
 
         outside = run_cli(root, "config", "get", "plugins.commit.scope.scopes", "--json")
         try:
-            outside_payload = json.loads(outside.stdout)
-        except json.JSONDecodeError:
+            outside_payload = decode_ux_error_result(read_ux_cli_result(outside.stdout, outside.returncode))
+        except (json.JSONDecodeError, ValueError):
             return "config get outside registered projects returned invalid JSON"
-        outside_error = outside_payload.get("error") if isinstance(outside_payload, dict) else None
+        outside_error = outside_payload
         if (outside.returncode == 0 or not isinstance(outside_error, dict)
                 or outside_error.get("code") != "KB_PROJECT_UNKNOWN"
                 or not isinstance(outside_error.get("hint"), str)
@@ -214,8 +218,9 @@ def project_plugin_settings_isolation() -> str | None:
             root, "config", "get", "plugins.commit.scope.scopes", "--scope", "platform", "--json",
         )
         try:
-            outside_platform_payload = json.loads(outside_platform_read.stdout)
-        except json.JSONDecodeError:
+            outside_platform_payload = decode_ux_success_result(
+                read_ux_cli_result(outside_platform_read.stdout, outside_platform_read.returncode))
+        except (json.JSONDecodeError, ValueError):
             return "platform-scoped config get outside registered projects returned invalid JSON"
         if (outside_platform_read.returncode != 0 or not isinstance(outside_platform_payload, dict)
                 or outside_platform_payload.get("value") != json.loads(scopes)
@@ -242,8 +247,8 @@ def project_plugin_settings_isolation() -> str | None:
                 return set(), f"Commit settings for {project_name} returned HTTP {status}"
             try:
                 value = decode_ux_success_result(body)
-            except ValueError:
-                return set(), f"Commit settings for {project_name} returned an invalid UX success envelope"
+            except ValueError as error:
+                return set(), f"Commit settings for {project_name} returned an invalid UX success envelope: {error}"
             options = value.get("options") if isinstance(value, dict) else None
             if not isinstance(options, list):
                 return set(), f"Commit settings for {project_name} returned no scope options"
@@ -286,17 +291,17 @@ def request(path: str, *, method="GET", payload=None, token="", accept="applicat
     except (urllib.error.URLError, TimeoutError) as error:
         raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
     try:
-        parsed = json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        parsed = raw.decode(errors="replace")
+        envelope = read_ux_http_result(raw, status)
+        parsed = (decode_ux_success_result(envelope) if 200 <= status < 300
+                  else decode_ux_error_result(envelope))
+    except ValueError as error:
+        raise RuntimeError(f"HTTP {method} {path} did not return a UX JSON envelope: {error}") from error
     return status, parsed, response_headers
 
 
 def request_ux_success(path: str, *, token="") -> tuple[int, object, dict[str, str]]:
     """Read a Gateway health-style success response through the UX envelope."""
     status, body, headers = request(path, token=token)
-    if status == 200:
-        body = decode_ux_success_result(body)
     return status, body, headers
 
 
@@ -738,8 +743,8 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
                     text=True, timeout=120)
     raw = _output(result, register)
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as error:
+        payload = decode_ux_success_result(read_ux_cli_result(raw, result.returncode))
+    except (json.JSONDecodeError, ValueError) as error:
         raise RuntimeError("registering MCP isolation project B returned invalid JSON") from error
     project_b_id, project_b_root = _find_project_registration(payload)
     if not project_b_id or not project_b_root:

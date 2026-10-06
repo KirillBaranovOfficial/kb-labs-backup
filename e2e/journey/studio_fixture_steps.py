@@ -6,7 +6,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from invocations import invocation_context, run_command, run_with_runner
+from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context, read_ux_cli_result,
+                         run_command, run_with_runner)
 
 
 GREET_WORKFLOW = """name: greet
@@ -39,13 +40,11 @@ def _install(package: str, *, cwd: Path, env: dict[str, str], runner) -> None:
     command = ["kb", "marketplace", "install", package, "--json"]
     result = _cli(command, cwd=cwd, env=env, runner=runner)
     try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"marketplace install {package} did not return JSON") from error
-    data = payload.get("data", {}) if isinstance(payload, dict) else {}
-    installed = data.get("installed", []) if isinstance(data, dict) else []
-    if (result.returncode != 0 or not isinstance(payload, dict) or payload.get("ok") is not True
-            or not isinstance(installed, list)
+        payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+    except ValueError as error:
+        raise RuntimeError(f"marketplace install {package} returned an invalid UX result: {error}") from error
+    installed = payload.get("installed", []) if isinstance(payload, dict) else []
+    if (result.returncode != 0 or not isinstance(installed, list)
             or not any(isinstance(item, dict) and item.get("id") == package for item in installed)):
         detail = " ".join((result.stderr or result.stdout).split())[-400:]
         raise RuntimeError(f"marketplace install {package} failed: {detail or 'plugin was not installed'}")
@@ -55,14 +54,12 @@ def _verify_greet(*, cwd: Path, env: dict[str, str], runner) -> None:
     command = ["kb", "workflow", "defs", "list", "--json"]
     result = _cli(command, cwd=cwd, env=env, runner=runner)
     try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError("workflow defs list did not return JSON after installing greet") from error
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if (result.returncode != 0 or not isinstance(payload, dict) or payload.get("ok") is not True
-            or not isinstance(data, list)
+        payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+    except ValueError as error:
+        raise RuntimeError(f"workflow defs list returned an invalid UX result after installing greet: {error}") from error
+    if (result.returncode != 0 or not isinstance(payload, list)
             or not any(isinstance(item, dict) and item.get("id") == "greet"
-                       and item.get("status") == "active" for item in data)):
+                       and item.get("status") == "active" for item in payload)):
         raise RuntimeError("workflow defs list did not report greet as active")
 
 
@@ -70,13 +67,11 @@ def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner)
     list_command = ["kb", "marketplace", "plugins", "list", "--json"]
     listed = _cli(list_command, cwd=cwd, env=env, runner=runner)
     try:
-        payload = json.loads(listed.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError("marketplace plugins list did not return JSON") from error
-    data = payload.get("data") if isinstance(payload, dict) else None
-    entries = data.get("entries") if isinstance(data, dict) else None
-    if (listed.returncode != 0 or not isinstance(payload, dict) or payload.get("ok") is not True
-            or not isinstance(entries, list)
+        payload = decode_ux_success_result(read_ux_cli_result(listed.stdout, listed.returncode))
+    except ValueError as error:
+        raise RuntimeError(f"marketplace plugins list returned an invalid UX result: {error}") from error
+    entries = payload.get("entries") if isinstance(payload, dict) else None
+    if (listed.returncode != 0 or not isinstance(entries, list)
             or any(not isinstance(item, dict) or not isinstance(item.get("id"), str) for item in entries)):
         raise RuntimeError("marketplace plugins list returned no valid project entries")
     for entry in entries:
@@ -86,21 +81,23 @@ def _ensure_only_plugin(package: str, *, cwd: Path, env: dict[str, str], runner)
         uninstall = ["kb", "marketplace", "uninstall", installed_id, "--json"]
         removed = _cli(uninstall, cwd=cwd, env=env, runner=runner)
         try:
-            removal = json.loads(removed.stdout)
-        except json.JSONDecodeError as error:
-            raise RuntimeError(f"marketplace uninstall {installed_id} did not return JSON") from error
-        if removed.returncode != 0 or not isinstance(removal, dict) or removal.get("ok") is not True:
+            envelope = read_ux_cli_result(removed.stdout, removed.returncode)
+        except ValueError as error:
+            raise RuntimeError(f"marketplace uninstall {installed_id} returned an invalid UX result: {error}") from error
+        if removed.returncode != 0:
+            removal = decode_ux_error_result(envelope)
             detail = " ".join((removed.stderr or removed.stdout).split())[-400:]
-            raise RuntimeError(f"marketplace uninstall {installed_id} failed: {detail or 'unsuccessful result'}")
+            raise RuntimeError(f"marketplace uninstall {installed_id} failed: {removal!r}: {detail}")
+        removal = decode_ux_success_result(envelope)
+        if not isinstance(removal, dict):
+            raise RuntimeError(f"marketplace uninstall {installed_id} returned non-object UX data")
     verified = _cli(list_command, cwd=cwd, env=env, runner=runner)
     try:
-        final_payload = json.loads(verified.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError("marketplace plugins list did not return JSON after attachment setup") from error
-    final_data = final_payload.get("data") if isinstance(final_payload, dict) else None
-    final_entries = final_data.get("entries") if isinstance(final_data, dict) else None
-    if (verified.returncode != 0 or not isinstance(final_payload, dict)
-            or final_payload.get("ok") is not True or not isinstance(final_entries, list)
+        final_payload = decode_ux_success_result(read_ux_cli_result(verified.stdout, verified.returncode))
+    except ValueError as error:
+        raise RuntimeError(f"marketplace plugins list returned an invalid UX result after attachment setup: {error}") from error
+    final_entries = final_payload.get("entries") if isinstance(final_payload, dict) else None
+    if (verified.returncode != 0 or not isinstance(final_entries, list)
             or [item.get("id") for item in final_entries if isinstance(item, dict)] != [package]):
         raise RuntimeError(f"project plugin attachments do not contain only {package}")
 

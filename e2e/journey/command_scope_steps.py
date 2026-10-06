@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from invocations import run_command
+from invocations import decode_ux_success_result, read_ux_cli_result, run_command
 from service_steps import Journey
 
 
@@ -31,9 +31,9 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                     timeout=120,
                 )
                 try:
-                    return result.returncode, json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    raise AssertionError(f"{args!r} did not return JSON: {result.stderr or result.stdout}")
+                    return result.returncode, read_ux_cli_result(result.stdout, result.returncode)
+                except ValueError as error:
+                    raise AssertionError(f"{args!r} returned an invalid UX result: {error}") from error
 
             code, added = invoke(["project", "add", project, "--json"])
             if code != 0 or added.get("ok") is not True:
@@ -122,15 +122,14 @@ def run_command_scope_steps(journey: Journey, repo_root: Path) -> None:
                 if result.returncode != 0:
                     return f"platform command {args!r} failed outside a registered project: {result.stderr or result.stdout}"
                 try:
-                    payload = json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    return f"platform command {args!r} did not return JSON: {result.stderr or result.stdout}"
+                    envelope = read_ux_cli_result(result.stdout, result.returncode)
+                    payload = decode_ux_success_result(envelope)
+                except ValueError as error:
+                    return f"platform command {args!r} returned an invalid UX result: {error}"
                 if args[0] == "hello":
-                    data = payload.get("data", {})
-                    if data.get("message") != "Hello World" or data.get("status") != "ready":
+                    if (not isinstance(payload, dict) or payload.get("message") != "Hello World"
+                            or payload.get("status") != "ready"):
                         return f"platform command {args!r} returned unexpected greeting: {payload}"
-                elif payload.get("ok") is not True:
-                    return f"platform command {args!r} returned failure: {payload}"
             if (Path(cwd) / ".kb").exists():
                 return "platform commands created project state in the unregistered cwd"
             return None
@@ -160,9 +159,9 @@ def run_config_failure_steps(journey: Journey, repo_root: Path) -> None:
                     capture_output=True, text=True, check=False, timeout=120,
                 )
                 try:
-                    return result.returncode, json.loads(result.stdout)
-                except json.JSONDecodeError:
-                    raise AssertionError(f"{args!r} did not return JSON: {result.stderr or result.stdout}")
+                    return result.returncode, read_ux_cli_result(result.stdout, result.returncode)
+                except ValueError as error:
+                    raise AssertionError(f"{args!r} returned an invalid UX result: {error}") from error
 
             project = Path(projects) / "registered"
             project.mkdir()

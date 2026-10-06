@@ -15,7 +15,8 @@ from typing import Callable
 
 from service_steps import Journey
 from marketplace_steps import _platform_snapshot
-from invocations import decode_ux_success_result, open_http, run_command, run_with_runner
+from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
+                         read_ux_cli_result, read_ux_http_result, run_command, run_with_runner)
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -30,12 +31,14 @@ def _run(runner: CommandRunner, command: list[str], cwd: Path, env: dict[str, st
 
 def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
     try:
-        value = json.loads(result.stdout)
+        value = read_ux_cli_result(result.stdout, result.returncode)
     except json.JSONDecodeError as error:
         raise RuntimeError(f"`{' '.join(command)}` did not return JSON") from error
     if not isinstance(value, dict):
         raise RuntimeError(f"`{' '.join(command)}` returned a non-object JSON value")
-    return value
+    if value.get("ok") is True:
+        return {"ok": True, **decode_ux_success_result(value)}
+    return {"ok": False, "error": decode_ux_error_result(value)}
 
 
 def config(root: Path) -> dict:
@@ -122,7 +125,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     def run_workflow(cwd: Path) -> tuple[str, Path, dict]:
         run_command = ["workflow", "run", "--workflow-id=e2e-hello", "--json"]
         payload = _json(cli(run_command, cwd), run_command)
-        run_id = payload.get("data", {}).get("runId") if isinstance(payload.get("data"), dict) else None
+        run_id = payload.get("runId")
         if not isinstance(run_id, str) or not run_id:
             raise RuntimeError("`kb workflow run --workflow-id=e2e-hello --json` returned no runId")
         watch_command = ["workflow", "runs", "watch", run_id]
@@ -266,7 +269,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         if health_status != 200:
             raise RuntimeError(f"GET {health_request.full_url} returned HTTP {health_status}")
         try:
-            runtime_adapters = decode_ux_success_result(json.loads(health_body))
+            runtime_adapters = decode_ux_success_result(read_ux_http_result(health_body, health_status))
         except (json.JSONDecodeError, ValueError) as error:
             raise RuntimeError(f"GET /health/adapters returned an invalid UX result envelope: {error}") from error
         if not isinstance(runtime_adapters, list):
@@ -326,16 +329,21 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         result = runner(doctor_command, cwd=str(project_a), env=base_env, capture_output=True, text=True, timeout=300)
         payload = _json(result, doctor_command)
         findings = payload.get("findings")
-        if result.returncode == 0 or not isinstance(findings, list) or not any(
+        if (result.returncode != 0 or payload.get("operation") != "doctor"
+                or payload.get("status") != "unhealthy"
+                or not isinstance(findings, list) or not any(
             isinstance(row, dict) and row.get("code") == "KB_INSTALL_MANIFEST_PROJECTION_INVALID" and
             row.get("component") == "@kb-labs/gateway-app" and "kb-create doctor --fix" in row.get("hint", "")
             for row in findings
-        ):
+        )):
             raise RuntimeError("read-only doctor did not report the missing gateway manifest projection")
         if manifest.exists():
             raise RuntimeError("plain doctor recreated the missing manifest projection")
         fix_command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--fix", "--json"]
-        _run(runner, fix_command, project_a, base_env)
+        fixed = runner(fix_command, cwd=str(project_a), env=base_env, capture_output=True, text=True, timeout=300)
+        fix_payload = _json(fixed, fix_command)
+        if fixed.returncode != 0 or fix_payload.get("operation") != "doctor-fix":
+            raise RuntimeError("kb-create doctor --fix did not return its successful repair result")
         if not manifest.is_file():
             raise RuntimeError("kb-create doctor --fix did not restore the missing manifest projection")
 
@@ -453,10 +461,10 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             result = runner(command, cwd=str(project_a), env=base_env,
                             capture_output=True, text=True, timeout=300)
             try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError as error:
+                payload = read_ux_cli_result(result.stdout, result.returncode)
+            except (json.JSONDecodeError, ValueError) as error:
                 raise RuntimeError("marketplace did not return JSON for a platform missing sealed artifact pins") from error
-            failure = payload.get("error") if isinstance(payload, dict) else None
+            failure = decode_ux_error_result(payload)
             hint = failure.get("hint", "") if isinstance(failure, dict) else ""
             expected_hint_prefix = f'Run "kb-create update --platform-root {platform_root}" and retry "kb marketplace install @kb-labs/adapters-analytics-file@'
             if (result.returncode == 0 or not isinstance(failure, dict)
@@ -490,15 +498,17 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             ):
                 result = runner(command, cwd=str(project_a), env=base_env,
                                 capture_output=True, text=True, timeout=300)
-                if result.returncode == 0:
-                    raise RuntimeError(f"`{' '.join(command)}` unexpectedly reports adapter status while the host is stopped")
                 if command[-1] == "--json":
                     payload = _json(result, command)
+                    if (result.returncode != 0 or payload.get("operation") != "doctor"
+                            or payload.get("status") != "unhealthy"):
+                        raise RuntimeError("stopped-host doctor did not return an exit-0 unhealthy diagnosis")
                     checks = payload.get("platform", {}).get("checks", [])
                     adapter_check = next((item for item in checks if isinstance(item, dict) and item.get("id") == "adapters"), None)
                     if not adapter_check or "cannot be checked" not in adapter_check.get("detail", "") or str(platform_root) not in adapter_check.get("hint", ""):
                         raise RuntimeError("stopped-host JSON does not explain missing adapter status and exact start command")
-                elif "cannot be checked" not in result.stdout or f"kb-create start --platform-root \"{platform_root}\"" not in result.stdout:
+                elif (result.returncode != 0 or "cannot be checked" not in result.stdout
+                      or f"kb-create start --platform-root \"{platform_root}\"" not in result.stdout):
                     raise RuntimeError("stopped-host text output omits the adapter limitation or exact start command")
         finally:
             if stopped:
@@ -727,12 +737,12 @@ def _assert_adapter_error(
     command = ["kb", *args]
     result = runner(command, cwd=str(project), env=env, capture_output=True, text=True, timeout=300)
     try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
+        payload = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
+    except (json.JSONDecodeError, ValueError) as error:
         raise RuntimeError(f"`{' '.join(command)}` did not return an error envelope") from error
-    envelope = payload.get("error") if isinstance(payload, dict) else None
-    action = envelope.get("actions", [{}])[0] if isinstance(envelope, dict) else {}
-    if result.returncode == 0 or not isinstance(envelope, dict):
+    envelope = payload
+    action = envelope.get("actions", [{}])[0]
+    if result.returncode == 0:
         raise RuntimeError(f"`{' '.join(command)}` did not fail with the expected typed error")
     if envelope.get("code") != "KB_ADAPTER_NOT_CONFIGURED" or envelope.get("details", {}).get("service") != slot:
         raise RuntimeError(f"`{' '.join(command)}` identified the wrong missing capability: {envelope!r}")

@@ -12,41 +12,37 @@ from pathlib import Path
 from typing import Callable
 
 from platform_update_steps import _json_command
+from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result)
 from service_steps import Journey
 
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
 
 
 def _data(result: subprocess.CompletedProcess, label: str) -> dict:
-    if result.returncode == 0:
-        try:
-            envelope = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise RuntimeError(f"{label}: expected JSON output") from error
-        payload = envelope.get("data", {}) if isinstance(envelope, dict) else {}
-        if isinstance(envelope, dict) and envelope.get("ok") is True and isinstance(payload, dict):
-            return payload
+    try:
+        envelope = read_ux_cli_result(result.stdout, result.returncode)
+        payload = decode_ux_success_result(envelope) if result.returncode == 0 else decode_ux_error_result(envelope)
+    except ValueError as error:
+        raise RuntimeError(f"{label}: expected an ADR-0049 JSON result: {error}") from error
+    if result.returncode == 0 and isinstance(payload, dict):
+        return payload
     raise RuntimeError(f"{label}: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
 
 
 def _payload(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dict]:
     try:
-        envelope = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"{label}: expected JSON output") from error
-    if not isinstance(envelope, dict):
-        raise RuntimeError(f"{label}: expected a JSON object")
-    data = envelope.get("data", envelope)
+        envelope = read_ux_cli_result(result.stdout, result.returncode)
+        data = (decode_ux_success_result(envelope) if result.returncode == 0
+                else decode_ux_error_result(envelope))
+    except ValueError as error:
+        raise RuntimeError(f"{label}: expected an ADR-0049 JSON result: {error}") from error
     return envelope, data if isinstance(data, dict) else {}
 
 
 def _diagnostic(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dict]:
-    envelope, _ = _payload(result, label)
-    error = envelope.get("error", {})
-    if not isinstance(error, dict):
+    envelope, error = _payload(result, label)
+    if result.returncode == 0 or not isinstance(error, dict):
         raise RuntimeError(f"{label}: expected a structured error")
-    if "meta" not in error and isinstance(error.get("details"), dict):
-        error["meta"] = error["details"]
     return envelope, error
 
 

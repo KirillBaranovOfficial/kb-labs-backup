@@ -12,8 +12,8 @@ from typing import Callable
 
 from service_steps import Journey
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
-from invocations import run_command
-from invocations import invocation_context, run_pty_command
+from invocations import (decode_ux_error_result, invocation_context, read_ux_cli_result,
+                         run_command, run_pty_command)
 
 
 def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120):
@@ -33,10 +33,10 @@ def _json_cli(args: list[str], *, env: dict[str, str], cwd: Path) -> object:
     if result.returncode:
         raise AssertionError(f"`kb {' '.join(args)}` exited {result.returncode}: {' '.join(result.stdout.split())[-500:]}")
     try:
-        payload = json.loads(result.stdout)
+        payload = read_ux_cli_result(result.stdout, result.returncode)
     except json.JSONDecodeError as error:
         raise AssertionError(f"`kb {' '.join(args)}` did not return JSON: {' '.join(result.stdout.split())[-500:]}") from error
-    if not isinstance(payload, dict) or payload.get("ok") is not True:
+    if payload.get("ok") is not True:
         raise AssertionError(f"`kb {' '.join(args)}` returned an unsuccessful result: {payload!r}")
     if "data" not in payload:
         raise AssertionError(f"`kb {' '.join(args)}` JSON envelope is missing required `data`")
@@ -55,11 +55,11 @@ def _case_json_cli(step_id: str, args: list[str], *, env: dict[str, str], cwd: P
     if result.returncode:
         raise AssertionError(f"`kb {' '.join(args)}` exited {result.returncode}: {' '.join(result.stdout.split())[-500:]}")
     try:
-        payload = json.loads(result.stdout)
+        payload = read_ux_cli_result(result.stdout, result.returncode)
     except json.JSONDecodeError as error:
         raise AssertionError(f"`kb {' '.join(args)}` did not return JSON: {' '.join(result.stdout.split())[-500:]}") from error
     command = f"kb {' '.join(args)}"
-    if not isinstance(payload, dict) or payload.get("ok") is not True:
+    if payload.get("ok") is not True:
         raise AssertionError(f"`kb {' '.join(args)}` returned an unsuccessful result: {payload!r}")
     if "data" not in payload:
         raise AssertionError(f"`{command}` JSON envelope is missing required `data`")
@@ -382,6 +382,24 @@ def _case_terminal_run(step_id: str, run_id: str, *, env: dict[str, str], cwd: P
 
 def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
     """Check deny-by-default plugin dispatch, then restore the admin CLI session."""
+    def verify_unregistered_project_auth() -> None:
+        with tempfile.TemporaryDirectory(prefix="kb-unregistered-cli-project-") as anonymous_home:
+            unregistered_project = Path(anonymous_home) / "fresh-project"
+            unregistered_project.mkdir()
+            anonymous_env = env.copy()
+            anonymous_env["HOME"] = anonymous_home
+            anonymous_env["KB_JOURNEY_HOME_LABEL"] = "anonymous-unregistered-project"
+            anonymous_env["KB_PLATFORM_ROOT"] = env["KB_JOURNEY_PLATFORM_ROOT"]
+            anonymous_env.pop("KB_PROJECT_ROOT", None)
+            command = ["config", "show", "--json"]
+            with invocation_context(step_id="S-041.17"):
+                result = run_cli(command, env=anonymous_env, cwd=unregistered_project)
+            assert_platform_auth_required(
+                result, command, env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000"))
+
+    journey.step("secured auth precedes unregistered project resolution", "workflow",
+                 verify_unregistered_project_auth, cases=["S-041.17"])
+
     def verify_auth() -> None:
         commands = [
             ["config", "show", "--json"],
@@ -425,10 +443,7 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
             raise AssertionError(f"admin CLI login failed: {' '.join(login.stdout.split())[-400:]}")
         for command in commands:
             resumed = run_cli(command, env=env, cwd=project)
-            try:
-                payload = json.loads(resumed.stdout)
-            except json.JSONDecodeError as error:
-                raise AssertionError(f"authenticated {' '.join(command)} did not return JSON") from error
+            payload = read_ux_cli_result(resumed.stdout, resumed.returncode)
             error = payload.get("error") if isinstance(payload, dict) else None
             if isinstance(error, dict) and error.get("code") == "KB_AUTH_REQUIRED":
                 raise AssertionError(f"authenticated {' '.join(command)} still returned KB_AUTH_REQUIRED")
@@ -662,8 +677,9 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
         result = _case_cli("S-143.4", ["workflow", "runs", "rerun", "run-does-not-exist", "--json"],
                            env=env, cwd=project)
         try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
+            envelope = read_ux_cli_result(result.stdout, result.returncode)
+            payload = {"ok": False, "error": decode_ux_error_result(envelope)}
+        except ValueError as error:
             raise AssertionError(f"unknown rerun did not return its typed error envelope: {result.stdout!r}") from error
         error = _workflow_error_data(payload, "kb workflow runs rerun run-does-not-exist --json")
         if (result.returncode == 0 or "run-does-not-exist" not in error["message"]

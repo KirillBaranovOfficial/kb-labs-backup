@@ -32,7 +32,7 @@ class SecuredAccountsJourneyTests(unittest.TestCase):
 
             @staticmethod
             def read():
-                return b"{}"
+                return b'{"ok":true,"data":{}}'
 
         class Opener:
             def open(self, request, timeout):

@@ -157,7 +157,7 @@ class MarketplaceStepTests(unittest.TestCase):
 
             def fake_run(command, **kwargs):
                 calls.append(command)
-                return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
+                return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
 
             wait_for_marketplace_ready(Path(directory), {"HOME": directory}, fake_run)
             self.assertEqual(calls, [["kb", "marketplace", "plugins", "doctor", "--scope", "project", "--json"]])
@@ -219,7 +219,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 args = command[1:]
                 if args[:3] == ["marketplace", "plugins", "list"]:
                     if logged_in:
-                        return subprocess.CompletedProcess(command, 0, json.dumps({"entries": []}), "")
+                        return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"entries": []}}), "")
                     return subprocess.CompletedProcess(command, 1, json.dumps({
                         "ok": False,
                         "error": {
@@ -233,10 +233,10 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
                 if args[:2] == ["auth", "status"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({
-                        "ok": True, "session": {"authenticated": logged_in},
+                        "ok": True, "data": {"session": {"authenticated": logged_in}},
                     }), "")
                 if args[:3] == ["marketplace", "plugins", "list"] and logged_in:
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"entries": []}), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"entries": []}}), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command[1:3]}")
 
             journey = Journey("secured", "marketplace-auth-fixture")
@@ -343,6 +343,7 @@ class MarketplaceStepTests(unittest.TestCase):
                             "ok": False,
                             "error": {
                                 "code": "KB_HOST_UNREACHABLE",
+                                "message": "The platform host is unreachable.",
                                 "hint": 'Run "kb-create start", or "kb-create doctor" if the host should already be running.',
                             },
                         }), "")
@@ -397,8 +398,8 @@ class MarketplaceStepTests(unittest.TestCase):
                     stdout = json.dumps({"scope": "project", "warnings": [],
                         "installed": [{"id": "@kb-labs/commit", "version": "2.120.2", "primaryKind": "plugin"}]})
                 elif args[:3] == ["marketplace", "update", "@kb-labs/not-published"]:
-                    return subprocess.CompletedProcess(command, 0, json.dumps({"scope": "project",
-                        "warnings": ["Plugin @kb-labs/not-published was not found in the registry."]}), "")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"scope": "project",
+                        "warnings": ["Plugin @kb-labs/not-published was not found in the registry."]}}), "")
                 elif args[:2] == ["commit", "--help"]:
                     if lock(cwd_path)["plugins"].get("@kb-labs/commit-entry", {}).get("enabled") is False:
                         return subprocess.CompletedProcess(command, 1, "", "Command not found: commit")
@@ -406,7 +407,11 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:2] == ["commit", "open"]:
                     value = lock(cwd_path)
                     if "@kb-labs/commit-entry" not in value["plugins"]:
-                        return subprocess.CompletedProcess(command, 1, "Command not found: commit open", "")
+                        return subprocess.CompletedProcess(command, 2, json.dumps({"ok": False, "error": {
+                            "code": "KB_RUNTIME_INPUT_INVALID",
+                            "message": "Unknown command: commit open",
+                            "hint": 'Check the command name or run "kb --help" to list available commands.',
+                        }}), "")
                     stdout = json.dumps({"hasPlan": False})
                 elif args[:2] == ["marketplace", "uninstall"]:
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
@@ -451,6 +456,13 @@ class MarketplaceStepTests(unittest.TestCase):
                     stdout = json.dumps({"ok": True})
                 else:
                     return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command}")
+                if "--json" in args and stdout.lstrip().startswith("{"):
+                    envelope = json.loads(stdout)
+                    if envelope.get("ok") is True and "data" not in envelope:
+                        envelope = {"ok": True, "data": {key: value for key, value in envelope.items() if key != "ok"}}
+                    elif "ok" not in envelope:
+                        envelope = {"ok": True, "data": envelope}
+                    stdout = json.dumps(envelope)
                 return subprocess.CompletedProcess(command, 0, stdout, "")
 
             http_calls = []

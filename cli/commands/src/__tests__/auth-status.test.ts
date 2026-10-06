@@ -53,10 +53,16 @@ function makeCtx(captured: { errors: string[]; output: string[]; json: unknown[]
   };
 }
 
+function expectSuccessEnvelope(captured: { json: unknown[] }, data: object): void {
+  expect(captured.json[0]).toMatchObject({ ok: true, data });
+  expect(Object.keys(captured.json[0] as object).sort()).toEqual(['data', 'ok']);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
+// case: S-041.5, S-041.6, S-041.8, S-100.1
 describe('kb auth status', () => {
   it('ST-01: neither store — authenticated false, session.authenticated false', async () => {
     mockCredLoad.mockResolvedValueOnce(null);
@@ -66,7 +72,7 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({ authenticated: false, session: { authenticated: false } });
+    expectSuccessEnvelope(captured, { authenticated: false, session: { authenticated: false } });
   });
 
   it('ST-02: machine only — top-level authenticated true, session.authenticated false', async () => {
@@ -78,7 +84,7 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({
+    expectSuccessEnvelope(captured, {
       authenticated: true,
       gatewayUrl: 'http://localhost:4000',
       session: { authenticated: false },
@@ -94,7 +100,7 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({
+    expectSuccessEnvelope(captured, {
       authenticated: false,
       session: { authenticated: true, email: 'admin@bootstrap.local', tokenExpired: false },
     });
@@ -110,8 +116,11 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({
+    expectSuccessEnvelope(captured, {
       authenticated: true,
+      gatewayUrl: 'http://localhost:4000',
+      tokenExpired: false,
+      expiresAt: expect.any(String),
       session: { authenticated: true, tokenExpired: true },
     });
   });

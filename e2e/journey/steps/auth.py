@@ -14,7 +14,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
-from invocations import open_http, run_command
+from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
+                         read_ux_cli_result, read_ux_http_result, run_command)
 
 
 def _request(base_url: str, path: str, *, method: str = "GET", token: str | None = None,
@@ -29,9 +30,9 @@ def _request(base_url: str, path: str, *, method: str = "GET", token: str | None
     status, raw, _ = open_http(urllib.request.urlopen, request, timeout=15, env=os.environ)
     if status != expected:
         raise AssertionError(f"{method} {path}: expected HTTP {expected}, got {status}: {raw[:300]!r}")
-    if not raw:
-        return {}
-    return json.loads(raw)
+    envelope = read_ux_http_result(raw, status)
+    return (decode_ux_success_result(envelope) if 200 <= status < 300
+            else decode_ux_error_result(envelope))
 
 
 def _login(base_url: str, email: str, password: str) -> tuple[str, str]:
@@ -62,21 +63,21 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
             raise AssertionError(f"kb auth login failed: {(login.stdout + login.stderr)[-400:]}")
     status = invoke(["auth", "status", "--json"])
     try:
-        status_payload = json.loads(status.stdout)
-    except json.JSONDecodeError as error:
+        status_payload = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))
+    except (json.JSONDecodeError, ValueError) as error:
         raise AssertionError(f"kb auth status --json did not return JSON: {status.stdout[-400:]}") from error
     session = status_payload.get("session", {})
-    if status.returncode != 0 or status_payload.get("ok") is not True or session.get("authenticated") is not authenticated:
+    if status.returncode != 0 or session.get("authenticated") is not authenticated:
         raise AssertionError(f"kb auth status returned unexpected JSON: {status_payload!r}")
     if email and session.get("email") != email:
         raise AssertionError(f"kb auth status returned the wrong email: {session!r}")
     if authenticated:
         tokens = invoke(["auth", "tokens", "--json"])
         try:
-            tokens_payload = json.loads(tokens.stdout)
-        except json.JSONDecodeError as error:
+            tokens_payload = decode_ux_success_result(read_ux_cli_result(tokens.stdout, tokens.returncode))
+        except (json.JSONDecodeError, ValueError) as error:
             raise AssertionError(f"kb auth tokens --json did not return JSON: {tokens.stdout[-400:]}") from error
-        if tokens.returncode != 0 or tokens_payload.get("ok") is not True:
+        if tokens.returncode != 0:
             raise AssertionError(f"kb auth tokens returned unexpected JSON: {tokens_payload!r}")
 
 
@@ -85,10 +86,10 @@ def run_cli_auth_forbidden(cli_path: str, env: dict[str, str], *, user_id: str =
     args = [cli_path, "auth", "reset-link", "--user-id", user_id, "--json"]
     result = run_command(args, env=env)
     try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
+        payload = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
+    except (json.JSONDecodeError, ValueError) as error:
         raise AssertionError("member auth reset-link did not return JSON") from error
-    error = payload.get("error") if isinstance(payload, dict) else None
+    error = payload
     if (result.returncode == 0 or not isinstance(error, dict)
             or error.get("code") != "KB_AUTH_FORBIDDEN"
             or error.get("details", {}).get("permission") != "users:write"):
@@ -104,10 +105,10 @@ def assert_platform_auth_required(result: subprocess.CompletedProcess[str], comm
                                   gateway: str = "<url>") -> None:
     """Require the exact anonymous CLI auth envelope promised by S-041.7."""
     try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
+        payload = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
+    except (json.JSONDecodeError, ValueError) as error:
         raise AssertionError(f"unauthenticated {' '.join(command)} did not return JSON") from error
-    failure = payload.get("error") if isinstance(payload, dict) else None
+    failure = payload
     if (result.returncode == 0 or not isinstance(failure, dict)
             or failure.get("code") != "KB_AUTH_REQUIRED"
             or failure.get("message") != "Authentication is required."
@@ -118,11 +119,11 @@ def assert_platform_auth_required(result: subprocess.CompletedProcess[str], comm
 def assert_cli_session_absent(result: subprocess.CompletedProcess[str]) -> None:
     """Confirm the CLI product reports no authenticated human session."""
     try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
+        payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
+    except (json.JSONDecodeError, ValueError) as error:
         raise AssertionError("kb auth status --json did not return JSON") from error
     session = payload.get("session") if isinstance(payload, dict) else None
-    if result.returncode != 0 or not isinstance(payload, dict) or payload.get("ok") is not True:
+    if result.returncode != 0 or not isinstance(payload, dict):
         raise AssertionError(f"kb auth status --json did not report an unauthenticated session: {payload!r}")
     if not isinstance(session, dict) or session.get("authenticated") is not False:
         raise AssertionError("kb auth status --json reported that the CLI session is authenticated")

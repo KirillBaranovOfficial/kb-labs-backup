@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Callable
 
 from service_steps import Journey
-from invocations import invocation_context, open_http, run_command, run_with_runner
+from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
+                         read_ux_cli_result, read_ux_http_result,
+                         open_http, run_command, run_with_runner)
 from plugin_author_steps import run_commit_case_steps
 
 
@@ -34,12 +36,13 @@ def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str
 def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
     raw = _output(result, command)
     try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"`{' '.join(command)}` did not return JSON: {raw[:300]!r}") from error
-    if not isinstance(value, dict):
-        raise RuntimeError(f"`{' '.join(command)}` returned a non-object JSON value")
-    return value
+        value = read_ux_cli_result(raw, result.returncode)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise RuntimeError(f"`{' '.join(command)}` returned an invalid UX result: {error}") from error
+    data = decode_ux_success_result(value)
+    if not isinstance(data, dict):
+        raise RuntimeError(f"`{' '.join(command)}` returned non-object UX data")
+    return data
 
 
 def validate_commit_status_response(status: int, payload: object) -> None:
@@ -82,9 +85,10 @@ def wait_for_marketplace_ready(project: Path, env: dict[str, str], runner: Comma
     while time.monotonic() < deadline:
         result = _run(command, cwd=project, env=env, runner=runner)
         try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            payload = {}
+            payload = read_ux_cli_result(result.stdout, result.returncode)
+        except ValueError as error:
+            last_problem = str(error)
+            raise RuntimeError(f"marketplace doctor returned an invalid UX result: {last_problem}") from error
         if result.returncode == 0 and isinstance(payload, dict) and payload.get("ok") is True:
             return
         last_problem = (result.stderr or result.stdout or f"exit {result.returncode}").strip()[-800:]
@@ -110,8 +114,7 @@ def _project_config(root: Path) -> tuple[Path, dict]:
 
 
 def _entries(payload: dict) -> list[dict]:
-    data = payload.get("data", payload)
-    entries = data.get("entries") if isinstance(data, dict) else None
+    entries = payload.get("entries")
     if not isinstance(entries, list):
         raise RuntimeError("`kb marketplace plugins list --json` returned no entries array")
     return entries
@@ -123,10 +126,8 @@ def validate_shared_failure(result: subprocess.CompletedProcess[str], *, json_mo
     if result.returncode == 0:
         raise AssertionError("failing command unexpectedly exited successfully")
     if json_mode:
-        payload = json.loads(result.stdout)
-        if payload != {"ok": False, "error": payload.get("error")}:
-            raise AssertionError("JSON result does not use the shared {ok:false,error} shape")
-        error = payload.get("error")
+        payload = read_ux_cli_result(result.stdout, result.returncode)
+        error = decode_ux_error_result(payload)
         if not isinstance(error, dict) or (error.get("code"), error.get("message"), error.get("hint")) != (code, message, hint):
             raise AssertionError(f"JSON failure does not match {code}")
         return
@@ -165,13 +166,11 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         with invocation_context(step_id=step_id):
             result = _run(command, cwd=project, env=env, runner=runner)
         try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
-            raise RuntimeError("unauthenticated marketplace list did not return JSON") from error
-        failure = payload.get("error") if isinstance(payload, dict) else None
-        if (result.returncode == 0 or not isinstance(payload, dict)
-                or set(payload) != {"ok", "error"} or payload.get("ok") is not False
-                or not isinstance(failure, dict)
+            payload = read_ux_cli_result(result.stdout, result.returncode)
+        except (json.JSONDecodeError, ValueError) as error:
+            raise RuntimeError(f"unauthenticated marketplace list returned an invalid UX result: {error}") from error
+        failure = decode_ux_error_result(payload) if result.returncode else None
+        if (result.returncode == 0 or not isinstance(failure, dict)
                 or failure.get("code") != "KB_AUTH_REQUIRED"
                 or failure.get("message") != "Authentication is required."
                 or failure.get("hint") != f'Run "kb auth login --gateway-url {env.get("KB_JOURNEY_BASE_URL", "<url>")} --email <email> --password <password>".'):
@@ -209,10 +208,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     command = ["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"]
     with invocation_context(step_id="S-041.12"):
         resumed = _run(command, cwd=project, env=env, runner=runner)
-    try:
-        payload = json.loads(resumed.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError("authenticated marketplace list did not return JSON") from error
+    payload = read_ux_cli_result(resumed.stdout, resumed.returncode)
     failure = payload.get("error") if isinstance(payload, dict) else None
     if isinstance(failure, dict) and failure.get("code") == "KB_AUTH_REQUIRED":
         raise RuntimeError("authenticated marketplace list still returned KB_AUTH_REQUIRED")
@@ -366,7 +362,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         request = urllib.request.Request(route, headers=headers)
         status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
         try:
-            payload = json.loads(raw)
+            payload = read_ux_http_result(raw, status)
         except json.JSONDecodeError as error:
             raise RuntimeError("Commit status route did not return JSON") from error
         validate_commit_status_response(status, payload)
@@ -408,8 +404,6 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     gateway_doctor = ["marketplace", "plugins", "doctor", "--scope", "project", "--json"]
     def assert_cli_plugin_gateway() -> None:
         payload = _json(cli(gateway_doctor), gateway_doctor)
-        if payload.get("ok") is not True:
-            raise RuntimeError("installed CLI plugin command did not return a successful gateway result")
     journey.step("invoke gateway-backed plugin command through installed CLI", "marketplace",
                  assert_cli_plugin_gateway, cases=["S-010.7"])
     if journey.steps[-1].status != "PASS":
@@ -424,10 +418,10 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             with invocation_context(step_id="S-203.14"):
                 result = _run(command, cwd=project, env=base_env, runner=runner)
             try:
-                payload = json.loads(result.stdout)
-            except json.JSONDecodeError as error:
+                payload = read_ux_cli_result(result.stdout, result.returncode)
+            except ValueError as error:
                 raise RuntimeError("gateway-backed plugin command did not return a JSON error envelope") from error
-            failure = payload.get("error") if isinstance(payload, dict) else None
+            failure = decode_ux_error_result(payload)
             if (result.returncode != 1 or not isinstance(failure, dict)
                     or failure.get("code") != "KB_HOST_UNREACHABLE"
                     or failure.get("hint") != 'Run "kb-create start", or "kb-create doctor" if the host should already be running.'):
@@ -452,8 +446,6 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         with invocation_context(step_id="S-203.15"):
             result = _run(command, cwd=project, env=base_env, runner=runner)
         payload = _json(result, command)
-        if payload.get("ok") is not True:
-            raise RuntimeError("gateway-backed CLI plugin command failed with the default gateway port")
 
     journey.step("resolve the default gateway address for CLI plugins", "marketplace",
                  assert_default_gateway_config, cases=["S-203.15"])
@@ -466,10 +458,10 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         with invocation_context(step_id="S-203.16"):
             result = _run(command, cwd=project, env=invalid_env, runner=runner)
         try:
-            payload = json.loads(result.stdout)
-        except json.JSONDecodeError as error:
+            payload = read_ux_cli_result(result.stdout, result.returncode)
+        except ValueError as error:
             raise RuntimeError("invalid gateway port did not return a JSON config error") from error
-        failure = payload.get("error") if isinstance(payload, dict) else None
+        failure = decode_ux_error_result(payload)
         if (result.returncode != 1 or not isinstance(failure, dict)
                 or failure.get("code") != "KB_CONFIG_INVALID"
                 or "GATEWAY_PORT" not in failure.get("message", "")
@@ -621,9 +613,9 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         command = ["marketplace", "update", "@kb-labs/not-published", "--scope", "project", "--json"]
         with invocation_context(step_id="S-012.4"):
             result = cli(command)
-        payload = json.loads(result.stdout)
+        payload = _json(result, command)
         after = json.loads(lock_file.read_text()).get("plugins", {}).get(commit_package)
-        warnings = payload.get("warnings") if isinstance(payload, dict) else None
+        warnings = payload.get("warnings")
         if (result.returncode != 0 or not isinstance(warnings, list)
                 or not any("@kb-labs/not-published" in str(warning) for warning in warnings)
                 or before != after):
@@ -643,7 +635,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
                 "Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"})
             status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
         try:
-            payload = json.loads(raw)
+            payload = read_ux_http_result(raw, status)
         except json.JSONDecodeError as error:
             raise RuntimeError("unmounted Commit status route did not return a JSON gateway envelope") from error
         validate_unmounted_commit_response(status, payload)
@@ -670,12 +662,13 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         lock = json.loads(lock_file.read_text())
         if commit_package in lock.get("plugins", {}):
             raise RuntimeError("project lock still pins the uninstalled target plugin")
-        unavailable = cli(["commit", "open", "--json"])
-        if unavailable.returncode == 0:
-            raise RuntimeError("`kb commit open --json` still succeeds after its project plugin was uninstalled")
-        unavailable_detail = " ".join((unavailable.stdout + " " + unavailable.stderr).split()).lower()
-        if "not found" not in unavailable_detail and "no plugin" not in unavailable_detail:
-            raise RuntimeError(f"removed commit command failed without a command-not-found result: {unavailable_detail[-400:]}")
+        command = ["commit", "open", "--json"]
+        with invocation_context(step_id="S-047.3"):
+            unavailable = cli(command)
+        failure = decode_ux_error_result(read_ux_cli_result(unavailable.stdout, unavailable.returncode))
+        if (unavailable.returncode != 2 or failure.get("code") != "KB_RUNTIME_INPUT_INVALID"
+                or "commit open" not in failure.get("message", "")):
+            raise RuntimeError(f"removed command did not return its typed unknown-command error: {failure!r}")
         qa_list = ["qa", "cases", "list", "--json"]
         payload = _json(cli(qa_list), qa_list)
         if (payload.get("schema") != "kb.qa-case-list/v1"
@@ -702,7 +695,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             "Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"})
         status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
         try:
-            payload = json.loads(raw)
+            payload = read_ux_http_result(raw, status)
         except json.JSONDecodeError as error:
             raise RuntimeError("reinstalled Commit status route did not return JSON") from error
         validate_commit_status_response(status, payload)

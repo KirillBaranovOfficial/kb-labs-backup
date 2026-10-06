@@ -20,19 +20,19 @@ class WorktreeStepsTest(unittest.TestCase):
         def fake_run(args, *, cwd, env, **kwargs):
             commands.append((args, Path(cwd), env))
             if args[1:3] == ["project", "add"]:
-                stdout = json.dumps({"project": {"id": "prj_fixture"}})
+                stdout = json.dumps({"ok": True, "data": {"project": {"id": "prj_fixture"}}})
                 return subprocess.CompletedProcess(args, 0, stdout, "")
             if args[1:3] == ["workflow", "lint"]:
                 return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True}), "")
             if args[1:3] == ["workflow", "run"]:
-                return subprocess.CompletedProcess(args, 0, json.dumps({"data": {"runId": "run-fixture"}}), "")
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"runId": "run-fixture"}}), "")
             if args[1:3] == ["workflow", "runs"]:
                 return subprocess.CompletedProcess(args, 0, "Run SUCCESS.\n", "")
             if args[1:3] == ["project", "remove"]:
                 return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True}), "")
             return subprocess.CompletedProcess(
                 args, 1,
-                json.dumps({"error": {"code": "KB_PROJECT_UNKNOWN", "hint": "Register it with kb project add <path>."}}),
+                json.dumps({"ok": False, "error": {"code": "KB_PROJECT_UNKNOWN", "message": "Project is not registered.", "hint": "Register it with kb project add <path>."}}),
                 "",
             )
 

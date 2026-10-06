@@ -185,6 +185,10 @@ Cases: S-054.1, S-054.2, S-054.9, S-054.10, S-054.11.
 
 Every JWT carries an explicit token kind. User access, user refresh, machine access, and machine refresh tokens use distinct `type` values, and each verifier accepts only its own kind. There is no compatibility for tokens issued before this contract. When an update crosses this contract change, saved user sessions become invalid and the CLI reports `KB_AUTH_REQUIRED` with the `kb auth login` hint so users can sign in again. Machine credentials are re-established automatically: hosts register and obtain fresh machine tokens on start, including after rollback to a release that does not recognize the new token contract. Cases: S-041.4, S-023, S-024.
 
+### 2026-10-06: Saved user sessions survive same-contract platform lifecycle changes
+
+A saved CLI user session survives platform update, rollback, and host restart while the token contract remains unchanged. If a host rejects a saved token, protected commands return `KB_AUTH_REQUIRED` with the login hint. The host machine connection still authenticates from stored machine registration credentials on every start. No legacy token compatibility path is retained. This supersedes the 2026-10-01 lifecycle expectation for updates that do not change the token contract. Cases: S-041.4, S-023, S-024.
+
 ### Platform members: core plugins only
 
 The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.

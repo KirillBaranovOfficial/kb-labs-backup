@@ -27,7 +27,8 @@ from steps.auth import run_bootstrap_recovery_steps, run_cli_auth_forbidden, run
 from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
 from platform_state_dump import PlatformStateDumpOnce
 from scoreboard import release_claims_for_case, write_scoreboards
-from invocations import (invocation_context, open_http, run_command, run_pty_command,
+from invocations import (decode_ux_error_result, decode_ux_success_result,
+                         invocation_context, open_http, read_ux_cli_result, run_command, run_pty_command,
                          start_background_command)
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
@@ -49,15 +50,6 @@ CASE_JOURNEY: Journey | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
-
-
-def result_payload(value: object) -> dict:
-    if not isinstance(value, dict):
-        return {}
-    if value.get("ok") is True:
-        data = value.get("data")
-        return data if isinstance(data, dict) else {}
-    return value
 
 
 def record_case(name: str, passed: bool, message: str, *, cases: list[str]) -> None:
@@ -248,7 +240,7 @@ def verify_project_mcp(env: dict[str, str], local: bool):
     if not require(registered, step="register project for MCP"):
         return
     try:
-        project = json.loads(registered.stdout)["project"]
+        project = decode_ux_success_result(read_ux_cli_result(registered.stdout, registered.returncode))["project"]
         project_id = project["id"]
         url = f"http://127.0.0.1:4000/api/v1/projects/{project_id}/mcp"
         token = None
@@ -455,7 +447,7 @@ def uninstall_removed_platform_root():
 def restart_host(launcher: str, env: dict[str, str]) -> str:
     result, _ = run([launcher, "restart", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=180)
     try:
-        payload = result_payload(json.loads(result.stdout))
+        payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
     except json.JSONDecodeError:
         payload = {}
     restarted = (result.returncode == 0 and payload.get("operation") == "restart"
@@ -477,7 +469,7 @@ def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     try:
         result, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
         try:
-            diagnostic = json.loads(result.stdout).get("error", {})
+            diagnostic = decode_ux_error_result(read_ux_cli_result(result.stdout, result.returncode))
         except (json.JSONDecodeError, AttributeError):
             diagnostic = {}
         human, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM)], env=env, timeout=120)
@@ -492,7 +484,7 @@ def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
         os.replace(hidden_receipt, receipt)
     restored, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
     try:
-        restored_payload = result_payload(json.loads(restored.stdout))
+        restored_payload = decode_ux_success_result(read_ux_cli_result(restored.stdout, restored.returncode))
     except json.JSONDecodeError:
         restored_payload = {}
     restored_ok = (restored.returncode == 0 and restored_payload.get("installed") is True and restored_payload.get("running") is True
@@ -640,7 +632,7 @@ def main():
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
             try:
-                payload = json.loads(result.stdout)
+                payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
                 root = payload.get("plan", {}).get("request", {}).get("platformRoot", "")
             except json.JSONDecodeError:
                 root = ""
@@ -654,7 +646,8 @@ def main():
             return failure_exit()
         if operation == "install":
             try:
-                records = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+                records = [read_ux_cli_result(line, result.returncode)
+                           for line in result.stdout.splitlines() if line.strip()]
             except json.JSONDecodeError:
                 records = []
             terminal = records[-1] if records else {}
@@ -672,7 +665,7 @@ def main():
             payload = {}
         else:
             try:
-                envelope = json.loads(result.stdout)
+                envelope = read_ux_cli_result(result.stdout, result.returncode)
             except json.JSONDecodeError:
                 fail(f"kb-create {operation} --json: output was not valid JSON")
                 append_summary(False)
@@ -710,7 +703,8 @@ def main():
                     append_summary(False)
                     return failure_exit()
                 try:
-                    if json.loads(result.stdout).get("ok") is not True:
+                    read_ux_cli_result(result.stdout, result.returncode)
+                    if result.returncode != 0:
                         fail("kb-create apply --input: result did not report ok=true")
                 except json.JSONDecodeError:
                     fail("kb-create apply --input: output was not one JSON document")
@@ -804,24 +798,13 @@ def main():
                 admin_password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyPassw0rd!")
 
                 def verify_admin():
-                    result, _ = run(["bash", "-c", '. "$HOME/.profile"; kb auth login --gateway-url http://127.0.0.1:4000 --email "$1" --password "$2"',
-                                     "journey", admin_email, admin_password],
-                                    env=env, cwd=PROJECT, timeout=90)
+                    with tempfile.TemporaryDirectory(prefix="kb-journey-admin-login-") as auth_home:
+                        auth_env = {**env, "HOME": auth_home}
+                        result, _ = run([str(BIN / "kb"), "auth", "login", "--gateway-url",
+                                         "http://127.0.0.1:4000", "--email", admin_email,
+                                         "--password", admin_password],
+                                        env=auth_env, cwd=PROJECT, timeout=90)
                     return result
-
-                def verify_contract_transition():
-                    result, _ = run(["bash", "-c", '. "$HOME/.profile"; kb config show --json'],
-                                    env=env, cwd=PROJECT, timeout=90)
-                    try:
-                        payload = json.loads(result.stdout)
-                    except json.JSONDecodeError as error:
-                        raise RuntimeError("saved CLI session check did not return JSON") from error
-                    failure = payload.get("error") if isinstance(payload, dict) else None
-                    if (result.returncode == 0 or not isinstance(failure, dict)
-                            or failure.get("code") != "KB_AUTH_REQUIRED"
-                            or failure.get("message") != "Authentication is required."
-                            or failure.get("hint") != 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email> --password <password>".'):
-                        raise RuntimeError("saved CLI session did not return KB_AUTH_REQUIRED with the login hint")
 
             platform_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 f"platform-update-{access_mode}.json")
@@ -836,7 +819,6 @@ def main():
                 updated_version=str(updated_version),
                 run_command=update_command,
                 verify_user=verify_admin,
-                verify_contract_transition=verify_contract_transition if access_mode == "secured" else None,
             )
             update_result = platform_journey.write_json(platform_report)
             if update_result.status != "PASS":
@@ -882,7 +864,7 @@ def main():
                     stream.write(f"\n== {FRONT_DOOR}/{SCENARIO}: doctor-json (exit {diagnostic.returncode}) ==\n{(diagnostic.stdout or '')[-12000:]}\n{(diagnostic.stderr or '')[-4000:]}\n")
         elif command == "doctor":
             try:
-                health = result_payload(json.loads(result.stdout))
+                health = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
                 passed = (result.returncode == 0 and health.get("installed") is True and health.get("running") is True
                           and health.get("reachable") is True and health.get("platform", {}).get("ok") is True)
             except json.JSONDecodeError:
@@ -904,7 +886,7 @@ def main():
             fail(f"kb-create {command}: expected human summary '{key}'")
         if command == "status":
             try:
-                status_payload = result_payload(json.loads(result.stdout))
+                status_payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
                 active_receipt = json.loads((PLATFORM / ".kb/v2/receipt.json").read_text())
                 host_status = status_payload.get("host", {})
                 installation = status_payload.get("installation", {})
@@ -1014,7 +996,7 @@ def main():
         project_add, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add "$1" --json', "journey", str(PROJECT)],
                              env=env, cwd=PROJECT, timeout=90)
         try:
-            project_payload = json.loads(project_add.stdout)
+            project_payload = decode_ux_success_result(read_ux_cli_result(project_add.stdout, project_add.returncode))
             project_id = find_project_id(project_payload)
         except json.JSONDecodeError:
             project_payload = {}
@@ -1169,8 +1151,8 @@ def main():
                     definitions_result, _ = run(["bash", "-c", '. "$HOME/.profile"; kb workflow defs list --json'],
                                                 env=service_env, cwd=project_b_fixture_root, timeout=90)
                 try:
-                    definitions_payload = json.loads(definitions_result.stdout)
-                    definitions_data = definitions_payload.get("data", definitions_payload)
+                    definitions_data = decode_ux_success_result(
+                        read_ux_cli_result(definitions_result.stdout, definitions_result.returncode))
                     healthy_workflow_ready = isinstance(definitions_data, list) and any(
                         isinstance(item, dict) and item.get("id") == "journey-hello" for item in definitions_data)
                 except json.JSONDecodeError:
@@ -1185,8 +1167,8 @@ def main():
                         ["bash", "-c", '. "$HOME/.profile"; kb workflow run --workflow-id=journey-hello --input=\'{"message":"studio-healthy-project"}\' --json'],
                         env=service_env, cwd=project_b_fixture_root, timeout=120)
             try:
-                healthy_payload = json.loads(healthy_result.stdout) if healthy_result else {}
-                healthy_data = healthy_payload.get("data", healthy_payload)
+                healthy_data = (decode_ux_success_result(
+                    read_ux_cli_result(healthy_result.stdout, healthy_result.returncode)) if healthy_result else {})
                 healthy_run_id = healthy_data.get("runId", "") if isinstance(healthy_data, dict) else ""
             except json.JSONDecodeError:
                 healthy_run_id = ""
@@ -1198,8 +1180,7 @@ def main():
                                          "journey", healthy_run_id], env=service_env,
                                         cwd=project_b_fixture_root, timeout=90)
                     try:
-                        detail_payload = json.loads(viewed.stdout)
-                        detail = detail_payload.get("data", detail_payload)
+                        detail = decode_ux_success_result(read_ux_cli_result(viewed.stdout, viewed.returncode))
                     except json.JSONDecodeError:
                         detail = {}
                     if isinstance(detail, dict) and detail.get("status") in {"success", "failed", "cancelled"}:
@@ -1248,7 +1229,9 @@ def main():
                 ["bash", "-c", '. "$HOME/.profile"; kb workflow crons list --json'],
                 env=studio_env, cwd=PROJECT, timeout=120)
             try:
-                project_a_crons = json.loads(project_a_cron_list.stdout)["data"]["crons"]
+                cron_payload = decode_ux_success_result(
+                    read_ux_cli_result(project_a_cron_list.stdout, project_a_cron_list.returncode))
+                project_a_crons = cron_payload["crons"]
                 project_a_plugin_cron_ids = [str(cron["id"]) for cron in project_a_crons
                                              if isinstance(cron, dict) and cron.get("source") == "plugin"]
                 project_a_user_cron_ids = [str(cron["id"]) for cron in project_a_crons
@@ -1375,10 +1358,10 @@ def main():
         dump_failure_state()
     refused, _ = run([*uninstall_args, "--json"], env=env, timeout=120)
     try:
-        refusal_payload = json.loads(refused.stdout)
+        refusal_payload = read_ux_cli_result(refused.stdout, refused.returncode)
     except json.JSONDecodeError:
         refusal_payload = {}
-    refusal_error = refusal_payload.get("error", {})
+    refusal_error = decode_ux_error_result(refusal_payload)
     expected_hint = (f'rerun `kb-create uninstall --platform-root "{PLATFORM}" '
                      f"--registry {REGISTRY} --json --yes`")
     refusal_ok = (refused.returncode == 2 and refusal_error.get("code") == "KB_INSTALL_CONFIRMATION_REQUIRED"
@@ -1419,7 +1402,7 @@ def main():
                        cases=["S-050.5"])
         else:
             try:
-                uninstall_payload = result_payload(json.loads(result.stdout))
+                uninstall_payload = decode_ux_success_result(read_ux_cli_result(result.stdout, result.returncode))
             except json.JSONDecodeError:
                 uninstall_payload = {}
             uninstall_ok = (result.returncode == 0 and uninstall_payload.get("operation") == "uninstall"
