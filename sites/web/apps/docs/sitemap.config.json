@@ -251,7 +251,7 @@
       "pages": [
         { "slug": "operations/index",             "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "operations/deployment",        "type": "manual", "owners": ["tools/kb-deploy/**", "services/host/app/src/host.ts"] },
-        { "slug": "operations/observability",     "type": "manual", "owners": ["adapters/analytics-duckdb/**", "adapters/analytics-sqlite/**", "adapters/pino/**"] },
+        { "slug": "operations/observability",     "type": "manual", "owners": ["adapters/analytics-duckdb/**", "adapters/analytics-sqlite/**", "adapters/pino/**", "core/platform/src/adapters/analytics.ts", "core/plugin-runtime/src/platform/adapter-registry.ts"] },
         { "slug": "operations/security",          "type": "manual", "owners": ["plugins/gateway/auth/**", "core/policy/**", "services/gateway/app/src/auth/**", "services/rest-api/app/src/routes/adapter-call.ts", "plugins/marketplace-registry/api/src/auth-middleware.ts"] },
         { "slug": "operations/incident-response", "type": "manual", "static": true },
         { "slug": "operations/runbooks",          "type": "manual", "static": true }

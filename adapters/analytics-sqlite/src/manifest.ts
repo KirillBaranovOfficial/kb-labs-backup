@@ -37,5 +37,10 @@ export const manifest: AdapterManifest = {
       type: 'string',
       description: 'Alias for dbPath — accepted for config compatibility',
     },
+    retentionDays: {
+      type: 'number',
+      default: 90,
+      description: 'Delete analytics events older than this many days on startup',
+    },
   },
 };

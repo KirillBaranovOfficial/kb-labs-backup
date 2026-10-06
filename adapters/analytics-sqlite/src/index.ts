@@ -57,6 +57,8 @@ const CREATE_INDEXES = [
   `CREATE INDEX IF NOT EXISTS events_type_ts_idx ON events (type, ts)`,
 ];
 
+const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 // ─── groupBy mappings ─────────────────────────────────────────────────────────
 
 const GROUP_BY_FORMAT: Record<string, string> = {
@@ -87,19 +89,6 @@ const KNOWN_METRICS: Record<string, string> = {
   estimatedCost: `SUM(CAST(json_extract(payload, '$.estimatedCost') AS REAL)) as estimatedCost`,
   durationMs: `AVG(CAST(json_extract(payload, '$.durationMs') AS REAL)) as durationMs`,
   textLength: `SUM(CAST(json_extract(payload, '$.textLength') AS REAL)) as textLength`,
-  vectorCount: `SUM(CAST(json_extract(payload, '$.vectorCount') AS REAL)) as vectorCount`,
-  resultsCount: `AVG(CAST(json_extract(payload, '$.resultsCount') AS REAL)) as resultsCount`,
-  // VectorStore — event counts by type
-  totalSearches: `SUM(CASE WHEN type = 'vectorstore.search.completed' THEN 1 ELSE 0 END) as totalSearches`,
-  totalUpserts: `SUM(CASE WHEN type = 'vectorstore.upsert.completed' THEN 1 ELSE 0 END) as totalUpserts`,
-  totalDeletes: `SUM(CASE WHEN type = 'vectorstore.delete.completed' THEN 1 ELSE 0 END) as totalDeletes`,
-  // Cache — event counts by type + hit rate
-  totalHits: `SUM(CASE WHEN type = 'cache.get.hit' THEN 1 ELSE 0 END) as totalHits`,
-  totalMisses: `SUM(CASE WHEN type = 'cache.get.miss' THEN 1 ELSE 0 END) as totalMisses`,
-  hitRate: `CAST(SUM(CASE WHEN type = 'cache.get.hit' THEN 1 ELSE 0 END) AS REAL) / NULLIF(SUM(CASE WHEN type IN ('cache.get.hit', 'cache.get.miss') THEN 1 ELSE 0 END), 0) * 100 as hitRate`,
-  // Storage — sum payload byte fields
-  totalBytesRead: `SUM(CAST(json_extract(payload, '$.bytesRead') AS REAL)) as totalBytesRead`,
-  totalBytesWritten: `SUM(CAST(json_extract(payload, '$.bytesWritten') AS REAL)) as totalBytesWritten`,
 };
 
 function buildMetricsSelect(metrics: string[]): string[] {
@@ -113,15 +102,6 @@ function getDefaultMetrics(typeFilter?: string | string[]): string[] {
   }
   if (types.some((t) => t.startsWith('embeddings.'))) {
     return ['textLength', 'estimatedCost', 'durationMs'];
-  }
-  if (types.some((t) => t.startsWith('vectorstore.'))) {
-    return ['totalSearches', 'totalUpserts', 'totalDeletes', 'resultsCount', 'durationMs', 'vectorCount'];
-  }
-  if (types.some((t) => t.startsWith('cache.'))) {
-    return ['totalHits', 'totalMisses', 'hitRate', 'durationMs'];
-  }
-  if (types.some((t) => t.startsWith('storage.'))) {
-    return ['totalBytesRead', 'totalBytesWritten', 'durationMs'];
   }
   return ['durationMs'];
 }
@@ -139,6 +119,8 @@ export interface SQLiteAnalyticsOptions {
   workspace?: { cwd: string };
   /** Analytics context injected by core-runtime (for auto-enrichment) */
   analytics?: AnalyticsContext;
+  /** Delete events older than this many days on startup and at least daily. Default: 90. */
+  retentionDays?: number;
 }
 
 // ─── Adapter ──────────────────────────────────────────────────────────────────
@@ -152,6 +134,8 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
   private readonly dbPath: string;
   private context: AnalyticsContext;
   private db: Database.Database;
+  private retentionDays = 90;
+  private retentionTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: SQLiteAnalyticsOptions = {}) {
     const cwd = options.workspace?.cwd ?? process.cwd();
@@ -183,6 +167,11 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
       for (const idx of CREATE_INDEXES) {
         this.db.exec(idx);
       }
+      this.retentionDays = options.retentionDays ?? 90;
+      if (!Number.isInteger(this.retentionDays) || this.retentionDays < 1) {
+        throw new Error('analytics retentionDays must be a positive integer');
+      }
+      this.pruneExpiredEvents();
     } catch (error) {
       try {
         this.db.close();
@@ -206,6 +195,19 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
       throw error;
     }
 
+    this.retentionTimer = setInterval(() => {
+      try {
+        this.pruneExpiredEvents();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        process.emitWarning(
+          `Failed to apply ${this.retentionDays}-day analytics retention to ${this.dbPath}: ${detail}`,
+          { code: 'KB_ANALYTICS_RETENTION_FAILED' },
+        );
+      }
+    }, RETENTION_INTERVAL_MS);
+    this.retentionTimer.unref();
+
     // Platform shutdown closes this adapter after service teardown. Process
     // listeners remain a final cleanup path for one-shot runtimes.
     this._onExit = () => this.close();
@@ -217,10 +219,19 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
   private _onExit: () => void;
   private _closed = false;
 
+  private pruneExpiredEvents(): void {
+    const cutoff = new Date(Date.now() - this.retentionDays * RETENTION_INTERVAL_MS).toISOString();
+    this.db.prepare('DELETE FROM events WHERE ts < ?').run(cutoff);
+  }
+
   /** Checkpoint WAL and close the database connection cleanly. */
   close(): void {
     if (this._closed) {return;}
     this._closed = true;
+    if (this.retentionTimer) {
+      clearInterval(this.retentionTimer);
+      this.retentionTimer = undefined;
+    }
     try {
       this.db.pragma('wal_checkpoint(TRUNCATE)');
       this.db.close();
