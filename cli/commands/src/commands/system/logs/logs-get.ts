@@ -2,8 +2,7 @@
  * logs get — Get single log by ID with optional related logs
  */
 
-import {
-  defineSystemCommand,
+import { defineSystemCommand, throwSystemCommandError,
   type CommandResult,
 } from "@kb-labs/shared-command-kit";
 import { generateExamples } from "../../../utils/generate-examples";
@@ -30,11 +29,9 @@ interface RelatedLogEntry {
 }
 
 type LogGetResult = CommandResult & {
+  data: { log: Record<string, unknown>; correlationKeys: CorrelationKeys; related?: RelatedLogEntry[] };
   _rawLog?: LogRecord;
   _rawRelated?: RelatedLogEntry[];
-  log?: Record<string, unknown>;
-  correlationKeys?: CorrelationKeys;
-  related?: RelatedLogEntry[];
 };
 
 export const logsGet = defineSystemCommand<Flags, LogGetResult>({
@@ -57,20 +54,17 @@ export const logsGet = defineSystemCommand<Flags, LogGetResult>({
   async handler(_ctx, argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return {
-        ok: false,
-        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log reader not available. Ensure platform is initialized.", hint: "Run `kb logs get --help` to review valid inputs and recovery steps, then retry." },
-      };
+      throwSystemCommandError("Log reader not available. Ensure platform is initialized.", "Run `kb logs get --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const id = argv[0];
     if (!id) {
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log ID required. Usage: kb logs get <id>", hint: "Run `kb logs get --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError("Log ID required. Usage: kb logs get <id>", "Run `kb logs get --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const log = await reader.getById(id);
     if (!log) {
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Log not found: ${id}`, hint: "Run `kb logs get --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(`Log not found: ${id}`, "Run `kb logs get --help` to review valid inputs and recovery steps, then retry.");
     }
 
     let related: RelatedLogEntry[] | undefined;
@@ -79,33 +73,22 @@ export const logsGet = defineSystemCommand<Flags, LogGetResult>({
       related = relatedLogs.map(formatLogJson) as RelatedLogEntry[];
     }
 
-    return {
-      ok: true,
-      log: formatLogJson(log) as Record<string, unknown>,
-      correlationKeys: extractCorrelationKeys(log),
-      related,
+    const data = {
+      ok: true as const,
+      data: {
+        log: formatLogJson(log) as Record<string, unknown>,
+        correlationKeys: extractCorrelationKeys(log),
+        related,
+      },
       _rawLog: log,
       _rawRelated: flags.related ? related : undefined,
     };
+    return data;
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      const { _rawLog, _rawRelated, ...jsonResult } = result;
-      ctx.ui.json(jsonResult);
-      return;
-    }
-
-    if (!result.ok) {
-      const error = typeof result.error === "string" ? result.error : "Unknown";
-      ctx.ui.error("Log Get", {
-        sections: [{ header: "Error", items: [error] }],
-      });
-      return;
-    }
-
     const rawLog = result._rawLog;
-    const logJson = result.log;
-    const keys = result.correlationKeys;
+    const logJson = result.data.log;
+    const keys = result.data.correlationKeys;
 
     if (!rawLog || !logJson || !keys) {
       return;
@@ -152,7 +135,7 @@ export const logsGet = defineSystemCommand<Flags, LogGetResult>({
     });
 
     // Related logs
-    const { related } = result;
+    const { related } = result.data;
     if (related && related.length > 0) {
       ctx.ui.write(`\nRelated Logs (${related.length}):\n`);
       for (const r of related) {

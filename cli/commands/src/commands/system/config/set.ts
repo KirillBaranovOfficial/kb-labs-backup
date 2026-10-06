@@ -25,7 +25,7 @@ import {
 } from '@kb-labs/core-config';
 import { loadPlatformConfig, PlatformUserConfigSchema } from '@kb-labs/core-runtime';
 import { AdapterProjectScopeError, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 
 import { generateExamples } from '../../../utils/generate-examples';
@@ -33,7 +33,6 @@ import {
   CONFIG_SCOPES,
   parseKeyPath,
   parseValueArg,
-  renderErrorEnvelope,
   resolveConfigRoots,
   userConfigFileForScope,
   valueAtPath,
@@ -262,31 +261,10 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
       };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb config set --help` to review valid inputs and recovery steps, then retry." }, envelope };
+      throwSystemCataloguedError(envelope);
     }
   },
   formatter(result, ctx, flags) {
-    if (!result.ok && result.envelope) {
-      renderErrorEnvelope(ctx, result.envelope, Boolean(flags.json));
-      return;
-    }
-    if (flags.json) {
-      ctx.ui?.json?.({
-        ok: true,
-        key: result.key,
-        scope: result.scope,
-        file: result.file,
-        dryRun: result.dryRun,
-        created: result.created,
-        changed: result.changed,
-        previous: result.previous ?? null,
-        value: result.value ?? null,
-        adapterSchemaChecked: result.adapterSchemaChecked,
-        shadowedBy: result.shadowedBy,
-        ...(result.nextCommand ? { nextCommand: result.nextCommand } : {}),
-      });
-      return;
-    }
     const shown = typeof result.value === 'string' ? result.value : JSON.stringify(result.value);
     const items = [`Key:   ${result.key}`, `Value: ${shown}`, `File:  ${result.file}`, `Scope: ${result.scope}`];
     if (result.changed && result.previous !== undefined) {

@@ -48,12 +48,6 @@ export const version = defineSystemCommand<VersionFlags, VersionResult>({
       ctx.ui?.write(`KB Labs CLI v${cliVersion}\n`);
       ctx.ui?.write(`Node: ${nodeVersion}\n`);
       ctx.ui?.write(`Platform: ${platform}\n`);
-    } else {
-      ctx.ui?.json({
-        version: cliVersion,
-        nodeVersion,
-        platform,
-      });
     }
 
     return {

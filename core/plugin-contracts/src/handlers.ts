@@ -63,8 +63,9 @@ export interface StandardMeta {
  *
  * @template T Result data type
  */
-export interface CommandError extends Pick<ErrorEnvelope, 'code' | 'message' | 'hint'> {
+export interface CommandError extends Pick<ErrorEnvelope, 'code' | 'message' | 'hint' | 'diagnostics'> {
   code: ErrorCode;
+  correlationId?: string;
   kind?: FailureKind;
   details?: Record<string, string>;
 }

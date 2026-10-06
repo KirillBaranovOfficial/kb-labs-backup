@@ -27,13 +27,13 @@ describe('toErrorEnvelope (command-kit adapter)', () => {
     expect(timeout.retryable).toBe(true);
   });
 
-  it('stringifies PluginError details and normalizes odd codes', () => {
+  it('rejects structured PluginError details with a catalogued contract violation', () => {
     const envelope = toErrorEnvelope(
       new PluginError('weird code!', 'Nope', 400, { field: 'cwd', limits: { max: 3 } }),
     );
     expect(validateErrorEnvelope(envelope)).toEqual([]);
-    expect(envelope.code).toBe('WEIRD_CODE');
-    expect(envelope.details).toEqual({ field: 'cwd', limits: '{"max":3}', statusCode: '400' });
+    expect(envelope.code).toBe('KB_PLUGIN_CONTRACT_VIOLATION');
+    expect(envelope.hint).toContain('error.diagnostics');
   });
 
   it('uses the catalog when a PluginError carries a catalog code', () => {

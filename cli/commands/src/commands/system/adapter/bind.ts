@@ -4,10 +4,10 @@ import { configErrorEnvelope, setUserConfigValue } from '@kb-labs/core-config';
 import { DiagnosticCollector, readMarketplaceLock } from '@kb-labs/core-discovery';
 import { PlatformUserConfigSchema } from '@kb-labs/core-runtime';
 import { createErrorEnvelope } from '@kb-labs/core-platform';
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
-import { renderErrorEnvelope, resolveConfigRoots, userConfigFileForScope } from '../config/shared';
+import { resolveConfigRoots, userConfigFileForScope } from '../config/shared';
 
 type Flags = {
   json: { type: 'boolean'; description?: string };
@@ -48,23 +48,28 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
   async handler(ctx, argv, flags) {
     const [slot, packageId] = argv;
     if (!slot || !/^[a-z][a-zA-Z0-9-]*$/.test(slot) || !packageId) {
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Provide a valid adapter slot and an installed package ID.', hint: "Run `kb adapter bind --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError('Provide a valid adapter slot and an installed package ID.', "Run `kb adapter bind --help` to review valid inputs and recovery steps, then retry.");
+    }
+
+    let roots: Awaited<ReturnType<typeof resolveConfigRoots>>;
+    let lock;
+    try {
+      roots = await resolveConfigRoots(getContextCwd(ctx));
+      lock = await readMarketplaceLock(roots.platformRoot, new DiagnosticCollector());
+    } catch (error) {
+      throwSystemCataloguedError(configErrorEnvelope(error));
+    }
+    if (!lock?.adapters?.[packageId]) {
+      const envelope = createErrorEnvelope('KB_ADAPTER_NOT_INSTALLED', {
+        details: { package: packageId },
+      });
+      throwSystemCataloguedError({
+        ...envelope,
+        hint: `kb marketplace install ${packageId} --scope platform`,
+      });
     }
 
     try {
-      const roots = await resolveConfigRoots(getContextCwd(ctx));
-      const lock = await readMarketplaceLock(roots.platformRoot, new DiagnosticCollector());
-      if (!lock?.adapters?.[packageId]) {
-        const envelope = createErrorEnvelope('KB_ADAPTER_NOT_INSTALLED', {
-          details: { package: packageId },
-        });
-        return {
-          ok: false,
-          error: { code: envelope.code, message: envelope.message, hint: `kb marketplace install ${packageId} --scope platform`, details: { package: packageId } },
-          envelope,
-        };
-      }
-
       const result = await setUserConfigValue({
         filePath: await userConfigFileForScope(roots, 'platform'),
         path: ['platform', 'adapters', slot],
@@ -82,26 +87,10 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
       };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb adapter bind --help` to review valid inputs and recovery steps, then retry." }, envelope };
+      throwSystemCataloguedError(envelope);
     }
   },
   formatter(result, ctx, flags) {
-    if (!result.ok && result.envelope) {
-      renderErrorEnvelope(ctx, {
-        ...result.envelope,
-        hint: result.error.hint,
-        details: result.error.details,
-      }, Boolean(flags.json));
-      return;
-    }
-    if (flags.json) {
-      ctx.ui?.json?.(result.ok ? result : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: result.error, hint: "Run `kb adapter bind --help` to review valid inputs and recovery steps, then retry." }, hint: result.hint });
-      return;
-    }
-    if (!result.ok) {
-      ctx.ui?.error(`${result.error}\n${result.hint ?? ''}`.trim());
-      return;
-    }
     ctx.ui?.success(result.dryRun ? 'Adapter binding is valid; no config written' : 'Adapter bound to platform', {
       sections: [{ header: 'Adapter', items: [`Slot: ${result.slot}`, `Package: ${result.packageId}`, `Config: ${result.file}`] }],
     });

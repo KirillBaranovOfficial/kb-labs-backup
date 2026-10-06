@@ -5,7 +5,7 @@
  * The secret is shown only here — it cannot be recovered after this call.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
 import { CredentialsManager } from '@kb-labs/cli-runtime/gateway';
 
@@ -48,13 +48,11 @@ export const webhookProvision = defineSystemCommand<ProvisionFlags, ProvisionRes
 
     if (!pluginId) {
       const msg = '--plugin is required';
-      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
     }
     if (!event) {
       const msg = '--event is required';
-      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const credentialsManager = new CredentialsManager();
@@ -62,8 +60,7 @@ export const webhookProvision = defineSystemCommand<ProvisionFlags, ProvisionRes
 
     if (!credentials) {
       const msg = 'Not authenticated. Run "kb auth login" first.';
-      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const url = `${credentials.gatewayUrl}/api/v1/webhooks/provision`;
@@ -83,8 +80,7 @@ export const webhookProvision = defineSystemCommand<ProvisionFlags, ProvisionRes
       });
     } catch (err) {
       const msg = `Cannot reach Gateway at ${credentials.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
     }
 
     if (!response.ok) {
@@ -92,21 +88,18 @@ export const webhookProvision = defineSystemCommand<ProvisionFlags, ProvisionRes
       let detail = '';
       try { detail = JSON.parse(body)?.message ?? body; } catch { detail = body; }
       const msg = `Provision failed (HTTP ${response.status})${detail ? ': ' + detail : ''}`;
-      if (flags.json) { ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } }); } else { ctx.ui?.error?.(msg); }
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry." } };
+      throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const data = await readGatewaySuccessData<{ url: string; secret: string; rotated: boolean }>(response);
 
-    if (flags.json) {
-      ctx.ui?.json({ ok: true, url: data.url, secret: data.secret, rotated: data.rotated });
-    } else {
+    if (!flags.json) {
       ctx.ui?.write?.(data.rotated ? '⟳  Secret rotated (old secret valid for 24h grace period)\n' : '✓  Webhook provisioned\n');
       ctx.ui?.write?.(`URL:    ${data.url}\n`);
       ctx.ui?.write?.(`Secret: ${data.secret}\n`);
       ctx.ui?.write?.('\n⚠  Save the secret now — it will not be shown again.\n');
     }
 
-    return { ok: true, url: data.url, rotated: data.rotated };
+    return { ok: true, url: data.url, secret: data.secret, rotated: data.rotated };
   },
 });

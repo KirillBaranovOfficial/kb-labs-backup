@@ -8,7 +8,7 @@
  * project root holds only a pointer + mergeable overrides.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { loadPlatformConfig } from '@kb-labs/core-runtime';
 import {
   configErrorEnvelope,
@@ -18,7 +18,7 @@ import {
 } from '@kb-labs/core-config';
 import { generateExamples } from '../../../utils/generate-examples';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
-import { manifestSettingsLayers, renderErrorEnvelope, resolveConfigRoots } from './shared';
+import { manifestSettingsLayers, resolveConfigRoots } from './shared';
 
 // ── Redaction ────────────────────────────────────────────────────────────────
 
@@ -222,7 +222,7 @@ type ConfigShowFlags = {
 
 type ConfigShowResult = CommandResult & {
   envelope?: import('@kb-labs/core-platform').ErrorEnvelope;
-  rows?: ConfigRow[];
+  fields?: ConfigRow[];
   sameLocation?: boolean;
   platformRoot?: string;
   projectRoot?: string;
@@ -274,8 +274,7 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
 
       return {
         ok: true,
-        status: 'success' as const,
-        rows,
+        fields: rows,
         sameLocation: result.sameLocation,
         platformRoot: result.platformRoot,
         projectRoot: result.projectRoot,
@@ -283,26 +282,11 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb config show --help` to review valid inputs and recovery steps, then retry." }, envelope };
+      throwSystemCataloguedError(envelope);
     }
   },
   formatter(result, ctx, flags) {
-    if (!result.ok && result.envelope) {
-      renderErrorEnvelope(ctx, result.envelope, Boolean(flags.json));
-      return;
-    }
-    const rows = result.rows ?? [];
-
-    if (flags.json) {
-      ctx.ui?.json?.({
-        sameLocation: result.sameLocation,
-        platformRoot: result.platformRoot,
-        projectRoot: result.projectRoot,
-        generated: result.generated,
-        fields: rows,
-      });
-      return;
-    }
+    const rows = result.fields ?? [];
 
     if (rows.length === 0) {
       ctx.ui.success('Effective Config', {

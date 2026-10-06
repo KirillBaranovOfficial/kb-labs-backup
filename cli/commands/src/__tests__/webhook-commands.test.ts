@@ -54,7 +54,7 @@ function makeEmptyResponse(status: number): Response {
   } as unknown as Response;
 }
 
-type Captured = { errors: string[]; output: string[]; json: unknown[] };
+type Captured = { errors: string[]; output: string[]; json: unknown[]; logs?: string[] };
 
 function makeCtx(captured: Captured): PluginContextV3 {
   return {
@@ -71,8 +71,8 @@ function makeCtx(captured: Captured): PluginContextV3 {
     },
     platform: {
       logger: {
-        trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(),
-        error: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(),
+        trace: vi.fn(), debug: vi.fn(), info: (...args: unknown[]) => { captured.logs?.push(JSON.stringify(args)); }, warn: vi.fn(),
+        error: (...args: unknown[]) => { captured.logs?.push(JSON.stringify(args)); }, fatal: vi.fn(), child: vi.fn().mockReturnThis(),
       },
       llm: {} as any, embeddings: {} as any, vectorStore: {} as any,
       cache: {} as any, storage: {} as any, analytics: {} as any,
@@ -101,7 +101,7 @@ describe('kb webhook provision', () => {
       rotated: false,
     }));
 
-    const captured: Captured = { errors: [], output: [], json: [] };
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
     const exitCode = await webhookProvision.run(makeCtx(captured), [], {
       plugin: '@kb-labs/rollout',
       event: 'alert',
@@ -109,7 +109,30 @@ describe('kb webhook provision', () => {
 
     expect(exitCode).toBe(0);
     expect(captured.output.join('')).toContain('abc123');
+    expect(captured.output.join('').split('abc123').length - 1).toBe(1);
     expect(captured.output.join('')).toContain('http://localhost:4000/webhooks/@kb-labs/rollout/alert');
+    expect(captured.logs?.join('')).not.toContain('abc123');
+  });
+
+  it('returns the secret once in the success envelope and never logs it in JSON mode', async () => {
+    mockFetch.mockResolvedValueOnce(makeJsonResponse({
+      url: 'http://localhost:4000/webhooks/@kb-labs/rollout/alert',
+      secret: 'json_secret_once',
+      rotated: false,
+    }));
+
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
+    const exitCode = await webhookProvision.run(makeCtx(captured), [], {
+      plugin: '@kb-labs/rollout',
+      event: 'alert',
+      json: true,
+    });
+
+    expect(exitCode).toBe(0);
+    const output = JSON.stringify(captured.json[0]);
+    expect(captured.json[0]).toMatchObject({ ok: true, data: { secret: 'json_secret_once' } });
+    expect(output.split('json_secret_once')).toHaveLength(2);
+    expect(captured.logs?.join('')).not.toContain('json_secret_once');
   });
 
   it('WP-02: rotation — prints rotation notice', async () => {
@@ -119,7 +142,7 @@ describe('kb webhook provision', () => {
       rotated: true,
     }));
 
-    const captured: Captured = { errors: [], output: [], json: [] };
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
     const exitCode = await webhookProvision.run(makeCtx(captured), [], {
       plugin: '@kb-labs/rollout',
       event: 'alert',
@@ -138,7 +161,7 @@ describe('kb webhook provision', () => {
       rotated: false,
     }));
 
-    const captured: Captured = { errors: [], output: [], json: [] };
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
     await webhookProvision.run(makeCtx(captured), [], {
       plugin: '@kb-labs/rollout',
       event: 'alert',
@@ -157,7 +180,7 @@ describe('kb webhook provision', () => {
       rotated: false,
     }));
 
-    const captured: Captured = { errors: [], output: [], json: [] };
+    const captured: Captured = { errors: [], output: [], json: [], logs: [] };
     const exitCode = await webhookProvision.run(makeCtx(captured), [], {
       plugin: '@kb-labs/rollout',
       event: 'alert',
@@ -165,7 +188,11 @@ describe('kb webhook provision', () => {
     });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({ ok: true, secret: 'json_secret', rotated: false });
+    expect(captured.json[0]).toMatchObject({ ok: true, data: { secret: 'json_secret', rotated: false } });
+    expect((captured.json[0] as { data: { secret: string } }).data.secret).toBe('json_secret');
+    expect(JSON.stringify(captured.json[0]).split('json_secret').length - 1).toBe(1);
+    expect(captured.output.join('')).not.toContain('json_secret');
+    expect(captured.logs?.join('')).not.toContain('json_secret');
     expect(captured.output.length).toBe(0);
   });
 
@@ -264,7 +291,7 @@ describe('kb webhook list', () => {
     const exitCode = await webhookList.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expect(captured.json[0]).toMatchObject({ ok: true, webhooks: WEBHOOKS });
+    expect(captured.json[0]).toMatchObject({ ok: true, data: { webhooks: WEBHOOKS } });
     expect(captured.output.length).toBe(0);
   });
 

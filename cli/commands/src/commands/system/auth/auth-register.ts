@@ -17,7 +17,7 @@
  * GATEWAY_BOOTSTRAP_ADMIN_PASSWORD).
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { CredentialsManager, readGatewaySuccessData, SessionManager } from '@kb-labs/cli-runtime/gateway';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 
@@ -35,13 +35,8 @@ type RegisterResult = CommandResult & {
 };
 
 /** Sends the same {ok:false, error} shape whether --json is set or not, and returns it. */
-function fail(ctx: PluginContextV3, json: boolean | undefined, msg: string): RegisterResult {
-  if (json) {
-    ctx.ui?.json({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth register --help` to review valid inputs and recovery steps, then retry." } });
-  } else {
-    ctx.ui?.error?.(msg);
-  }
-  return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: msg, hint: "Run `kb auth register --help` to review valid inputs and recovery steps, then retry." } };
+function fail(_ctx: PluginContextV3, _json: boolean | undefined, msg: string): RegisterResult {
+  throwSystemCommandError(msg, "Run `kb auth register --help` to review valid inputs and recovery steps, then retry.");
 }
 
 /**
@@ -151,14 +146,7 @@ export const authRegister = defineSystemCommand<RegisterFlags, RegisterResult>({
       hostId: string;
     }>(response);
 
-    if (flags.json) {
-      ctx.ui?.json({
-        ok: true,
-        clientId: data.clientId,
-        clientSecret: data.clientSecret,
-        hostId: data.hostId,
-      });
-    } else {
+    if (!flags.json) {
       ctx.ui?.write?.('Service account created successfully.\n\n');
       ctx.ui?.write?.(`  Client ID:     ${data.clientId}\n`);
       ctx.ui?.write?.(`  Client Secret: ${data.clientSecret}\n`);

@@ -22,18 +22,22 @@ import { ValidationError } from '../helpers/validation';
 import { PluginError } from './factory';
 
 function pluginErrorToEnvelope(error: PluginError, options: ToEnvelopeOptions): ErrorEnvelope {
-  const details = { ...stringifyDetails(error.details), statusCode: String(error.statusCode) };
-  const entry = getCatalogEntry(error.errorCode);
-  if (entry) {
-    return createErrorEnvelope(entry.code, { ...options, cause: error.message, details });
+  try {
+    const details = { ...stringifyDetails(error.details), statusCode: String(error.statusCode) };
+    const entry = getCatalogEntry(error.errorCode);
+    if (entry) {
+      return createErrorEnvelope(entry.code, { ...options, cause: error.message, details });
+    }
+    return createProductErrorEnvelope({
+      ...options,
+      code: error.errorCode,
+      message: error.message,
+      retryable: isRetryableStatus(error.statusCode),
+      details,
+    });
+  } catch (invalidDetails) {
+    return platformToErrorEnvelope(invalidDetails, options);
   }
-  return createProductErrorEnvelope({
-    ...options,
-    code: error.errorCode,
-    message: error.message,
-    retryable: isRetryableStatus(error.statusCode),
-    details,
-  });
 }
 
 /**

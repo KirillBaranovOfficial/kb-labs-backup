@@ -39,9 +39,7 @@ function makeCtx(cwd: string): { ctx: PluginContextV3; out: Captured } {
     cwd,
     ui: {
       ...noopUI,
-      json: (data: unknown) => {
-        out.json.push(data as Record<string, unknown>);
-      },
+      json: (data: unknown) => out.json.push(data as Record<string, unknown>),
       error: (message: unknown) => {
         out.errors.push(String(message));
       },
@@ -61,6 +59,11 @@ function makeCtx(cwd: string): { ctx: PluginContextV3; out: Captured } {
     trace: noopTraceContext,
   };
   return { ctx, out };
+}
+
+function dataOf(output: Record<string, unknown> | undefined): Record<string, unknown> {
+  expect(output).toMatchObject({ ok: true, data: expect.anything() });
+  return output?.data as Record<string, unknown>;
 }
 
 let tmp: string;
@@ -178,8 +181,7 @@ describe('config set', () => {
     const { code, out } = await run(configSet, ['plugins.commit.scope.default', 'My commit']);
 
     expect(code).toBe(0);
-    expect(out.json[0]).toMatchObject({
-      ok: true,
+    expect(dataOf(out.json[0])).toMatchObject({
       key: 'plugins.commit.scope.default',
       scope: 'project',
       file: PROJECT_SETTINGS_FILE(),
@@ -187,7 +189,7 @@ describe('config set', () => {
       dryRun: false,
       value: 'My commit',
     });
-    const written = await fsp.readFile(String(out.json[0]?.file), 'utf8');
+    const written = await fsp.readFile(String(dataOf(out.json[0])?.file), 'utf8');
     expect(JSON.parse(written.replace(/\/\/.*$/gm, ''))).toMatchObject({
       plugins: { commit: { scope: { default: 'My commit' } } },
     });
@@ -213,12 +215,11 @@ describe('config set', () => {
     ], { scope: 'platform' });
 
     expect(code).toBe(0);
-    expect(out.json[0]).toMatchObject({
-      ok: true,
+    expect(dataOf(out.json[0])).toMatchObject({
       scope: 'platform',
       nextCommand: `kb-create restart --platform-root ${JSON.stringify(platformRoot)}`,
     });
-    expect(await fsp.realpath(String(out.json[0]?.file))).toBe(await fsp.realpath(PLATFORM_FILE()));
+    expect(await fsp.realpath(String(dataOf(out.json[0])?.file))).toBe(await fsp.realpath(PLATFORM_FILE()));
     expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toContain('https://llm.example.test/v1');
     expect(await fsp.readFile(PROJECT_FILE(), 'utf8')).toBe(PROJECT_CONFIG);
   });
@@ -252,24 +253,24 @@ describe('config set', () => {
   // case: S-204.11
   it('merges and attributes manifest, platform, then project settings', async () => {
     const manifestDefault = await run(configGet, ['plugins.commit.llm.maxTokens']);
-    expect(manifestDefault.out.json[0]).toMatchObject({ value: 2000, layer: 'manifest' });
+    expect(dataOf(manifestDefault.out.json[0])).toMatchObject({ value: 2000, layer: 'manifest' });
 
     expect((await run(configSet, ['plugins.commit.llm.maxTokens', '1900'], { scope: 'platform' })).code).toBe(0);
-    expect((await run(configGet, ['plugins.commit.llm.maxTokens'])).out.json[0])
+    expect(dataOf((await run(configGet, ['plugins.commit.llm.maxTokens'])).out.json[0]))
       .toMatchObject({ value: 1900, layer: 'platform' });
 
     expect((await run(configSet, ['plugins.commit.llm.maxTokens', '1800'])).code).toBe(0);
-    expect((await run(configGet, ['plugins.commit.llm.maxTokens'])).out.json[0])
+    expect(dataOf((await run(configGet, ['plugins.commit.llm.maxTokens'])).out.json[0]))
       .toMatchObject({ value: 1800, layer: 'project' });
-    expect((await run(configGet, ['plugins.commit.llm.temperature'])).out.json[0])
+    expect(dataOf((await run(configGet, ['plugins.commit.llm.temperature'])).out.json[0]))
       .toMatchObject({ value: 0.3, layer: 'manifest' });
   });
 
   it('--dry-run reports the outcome and writes nothing', async () => {
     const { code, out } = await run(configSet, ['plugins.commit.scope.default', 'Dry run'], { 'dry-run': true });
     expect(code).toBe(0);
-    expect(out.json[0]).toMatchObject({ ok: true, dryRun: true, changed: true });
-    await expect(fsp.access(String(out.json[0]?.file))).rejects.toThrow();
+    expect(out.json[0]).toMatchObject({ ok: true, data: { dryRun: true, changed: true } });
+    await expect(fsp.access(String(dataOf(out.json[0])?.file))).rejects.toThrow();
   });
 
   it('parses JSON values and lets --string keep the text', async () => {
@@ -369,7 +370,7 @@ describe('config set', () => {
       vi.stubEnv('KB_TEST_LLM_KEY', 'present');
       const { code, out } = await run(configSet, ['platform.adapterOptions.llm.apiKey', '${KB_TEST_LLM_KEY}'], { scope: 'platform' });
       expect(code).toBe(0);
-      expect(out.json[0]?.value).toBe('${KB_TEST_LLM_KEY}');
+      expect(dataOf(out.json[0])?.value).toBe('${KB_TEST_LLM_KEY}');
       expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toContain('"apiKey": "${KB_TEST_LLM_KEY}"');
     });
 
@@ -395,7 +396,7 @@ describe('config set', () => {
         'allow-plain-secret': true,
       });
       expect(code).toBe(0);
-      expect(out.json[0]?.value).toBe('***REDACTED***');
+      expect(dataOf(out.json[0])?.value).toBe('***REDACTED***');
       expect(await fsp.readFile(PLATFORM_FILE(), 'utf8')).toContain('"apiKey": "throwaway-local"');
     });
   });
@@ -441,7 +442,7 @@ describe('config set', () => {
       expect((await run(configSet, ['platform.adapterOptions.llm.temperature', '0.4'], { scope: 'platform' })).code).toBe(0);
       expect((await run(configSet, ['platform.adapterOptions.llm.somethingElse', 'x'], { scope: 'platform' })).code).toBe(0);
       const ok = await run(configSet, ['platform.adapterOptions.llm.mode', 'fast'], { scope: 'platform' });
-      expect(ok.out.json[0]?.adapterSchemaChecked).toBe(true);
+      expect(dataOf(ok.out.json[0])?.adapterSchemaChecked).toBe(true);
     });
 
     it('skips the manifest check when the adapter package is not installed', async () => {
@@ -472,28 +473,26 @@ describe('config get', () => {
 
     const written = await runAt(outsideRoot, configSet, ['plugins.commit.scope.scopes', '[]'], { scope: 'platform' })
     expect(written.code).toBe(0)
-    expect(written.out.json[0]).toMatchObject({ ok: true, scope: 'platform' })
-    expect(await fsp.realpath(String(written.out.json[0]?.file))).toBe(await fsp.realpath(PLATFORM_FILE()))
+    expect(written.out.json[0]).toMatchObject({ ok: true, data: { scope: 'platform' } })
+    expect(await fsp.realpath(String(dataOf(written.out.json[0])?.file))).toBe(await fsp.realpath(PLATFORM_FILE()))
     await expect(fsp.access(PROJECT_SETTINGS_FILE())).rejects.toThrow()
 
     const read = await runAt(outsideRoot, configGet, ['plugins.commit.scope.scopes'], { scope: 'platform' })
     expect(read.code).toBe(0)
-    expect(read.out.json[0]).toMatchObject({
-      ok: true,
+    expect(dataOf(read.out.json[0])).toMatchObject({
       scope: 'platform',
       found: true,
       value: [],
       layer: 'platform',
     })
-    expect(await fsp.realpath(String(read.out.json[0]?.source))).toBe(await fsp.realpath(PLATFORM_FILE()))
+    expect(await fsp.realpath(String(dataOf(read.out.json[0])?.source))).toBe(await fsp.realpath(PLATFORM_FILE()))
     await expect(fsp.access(PROJECT_SETTINGS_FILE())).rejects.toThrow()
   });
 
   it('returns the effective value with layer and file provenance', async () => {
     const { code, out } = await run(configGet, ['platform.adapterOptions.llm.defaultModel']);
     expect(code).toBe(0);
-    expect(out.json[0]).toMatchObject({
-      ok: true,
+    expect(dataOf(out.json[0])).toMatchObject({
       key: 'platform.adapterOptions.llm.defaultModel',
       scope: 'effective',
       found: true,
@@ -506,9 +505,9 @@ describe('config get', () => {
   it('attributes platform values to the platform layer and generated values to the generated layer', async () => {
     await write(platformRoot, '.kb/generated/topology.json', '{ "gateway": { "port": 4000 } }');
     const platformValue = await run(configGet, ['platform.adapters.llm']);
-    expect(platformValue.out.json[0]).toMatchObject({ value: '@kb-labs/adapters-openai', layer: 'platform', source: PLATFORM_FILE() });
+    expect(dataOf(platformValue.out.json[0])).toMatchObject({ value: '@kb-labs/adapters-openai', layer: 'platform', source: PLATFORM_FILE() });
     const generatedValue = await run(configGet, ['gateway.port']);
-    expect(generatedValue.out.json[0]).toMatchObject({
+    expect(dataOf(generatedValue.out.json[0])).toMatchObject({
       value: 4000,
       layer: 'generated',
       source: path.join(platformRoot, '.kb/generated/topology.json'),
@@ -520,18 +519,18 @@ describe('config get', () => {
     expect(rejected.code).toBe(1);
     expect((rejected.out.json[0] as { error: { code: string } }).error.code).toBe('KB_ADAPTER_PROJECT_SCOPE');
     const { out } = await run(configGet, ['platform.adapters.llm']);
-    expect(out.json[0]).toMatchObject({ value: '@kb-labs/adapters-openai', layer: 'platform', source: PLATFORM_FILE() });
+    expect(dataOf(out.json[0])).toMatchObject({ value: '@kb-labs/adapters-openai', layer: 'platform', source: PLATFORM_FILE() });
   });
 
   it('a container reports the highest layer beneath it', async () => {
     const { out } = await run(configGet, ['platform.adapters']);
-    expect(out.json[0]).toMatchObject({ found: true, layer: 'platform', value: { llm: '@kb-labs/adapters-openai', cache: null } });
+    expect(dataOf(out.json[0])).toMatchObject({ found: true, layer: 'platform', value: { llm: '@kb-labs/adapters-openai', cache: null } });
   });
 
   it('a valid key that is not set is not an error', async () => {
     const { code, out } = await run(configGet, ['platform.execution.mode']);
     expect(code).toBe(0);
-    expect(out.json[0]).toMatchObject({ ok: true, found: false, value: null });
+    expect(out.json[0]).toMatchObject({ ok: true, data: { found: false, value: null } });
   });
 
   it('an unknown key is KB_CONFIG_UNKNOWN_KEY with a suggestion', async () => {
@@ -550,10 +549,10 @@ describe('config get', () => {
       `{ "platform": { "adapterOptions": { "llm": { "apiKey": "raw-secret-value", "orgKey": "\${ORG_KEY}" } } } }\n`,
     );
     const raw = await run(configGet, ['platform.adapterOptions.llm.apiKey']);
-    expect(raw.out.json[0]?.value).toBe('***REDACTED***');
+    expect(dataOf(raw.out.json[0])?.value).toBe('***REDACTED***');
     expect(JSON.stringify(raw.out.json)).not.toContain('raw-secret-value');
     const ref = await run(configGet, ['platform.adapterOptions.llm.orgKey']);
-    expect(ref.out.json[0]?.value).toBe('${ORG_KEY}');
+    expect(dataOf(ref.out.json[0])?.value).toBe('${ORG_KEY}');
     const container = await run(configGet, ['platform.adapterOptions.llm']);
     expect(JSON.stringify(container.out.json)).not.toContain('raw-secret-value');
   });
@@ -573,7 +572,7 @@ describe('config show provenance', () => {
     await write(platformRoot, '.kb/generated/topology.json', '{ "gateway": { "port": 4000 } }');
     const { code, out } = await run(configShow, []);
     expect(code).toBe(0);
-    const payload = out.json[0] as { generated?: string[]; fields: Array<{ field: string; layer?: string; file?: string }> };
+    const payload = dataOf(out.json[0]) as { generated?: string[]; fields: Array<{ field: string; layer?: string; file?: string }> };
     const byField = new Map(payload.fields.map((row) => [row.field, row]));
 
     expect(byField.get('adapters.llm')).toMatchObject({ layer: 'platform', file: PLATFORM_FILE() });

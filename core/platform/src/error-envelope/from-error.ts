@@ -10,7 +10,7 @@
 
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError, ServicePortConfigError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
-import { createErrorEnvelope, type CreateEnvelopeOptions } from './catalog.js';
+import { createErrorDetailsContractViolation, createErrorEnvelope, getCatalogEntry, isSerializedStructuredValue, type CreateEnvelopeOptions } from './catalog.js';
 import type { ErrorEnvelope } from './types.js';
 
 export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'actions' | 'docs'>;
@@ -118,10 +118,89 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
       hint: `Run "kb logs query" to inspect the ${error.slot} adapter failure, correct the underlying issue, then retry the operation.`,
     });
   }
-  return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
-    ...options,
-    cause: error instanceof Error ? error.message : String(error),
-  });
+  const source = getErrorRecord(error);
+  const code = typeof source?.code === 'string' && getCatalogEntry(source.code)
+    ? source.code
+    : 'KB_RUNTIME_UNEXPECTED';
+  const details = getDetails(source?.details);
+  if (details === null) {
+    return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+      message: 'Error details must be a flat map of string identifiers.',
+      hint: 'Keep error.details values as identifiers; return structured reports in data or gate findings in error.diagnostics.',
+    });
+  }
+
+  const correlationId = typeof source?.correlationId === 'string'
+    ? source.correlationId
+    : options.correlationId ?? (code === 'KB_RUNTIME_UNEXPECTED' ? globalThis.crypto.randomUUID() : undefined);
+  const cause = code === 'KB_RUNTIME_UNEXPECTED'
+    ? typeof error === 'string' ? error : undefined
+    : typeof source?.cause === 'string'
+    ? source.cause
+    : error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : undefined;
+  const message = code !== 'KB_RUNTIME_UNEXPECTED' && typeof source?.message === 'string'
+    ? source.message
+    : undefined;
+  const hint = code !== 'KB_RUNTIME_UNEXPECTED' && typeof source?.hint === 'string'
+    ? source.hint
+    : undefined;
+  const diagnostics = Array.isArray(source?.diagnostics)
+    ? source.diagnostics as ErrorEnvelope['diagnostics']
+    : undefined;
+
+  try {
+    return createErrorEnvelope(code, {
+      ...options,
+      ...(cause ? { cause } : {}),
+      ...(message ? { message } : {}),
+      ...(hint ? { hint } : {}),
+      ...(details && Object.keys(details).length > 0 ? { details } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
+      ...(correlationId ? { correlationId } : {}),
+    });
+  } catch (error) {
+    if (isContractViolation(error)) {
+      return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+        message: error.message,
+        hint: error.hint,
+      });
+    }
+    throw error;
+  }
+}
+
+type ErrorRecord = Record<string, unknown>;
+
+function getErrorRecord(error: unknown): ErrorRecord | undefined {
+  if (error instanceof Error) {
+    return error as Error & ErrorRecord;
+  }
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+  if ('error' in error && typeof error.error === 'object' && error.error !== null) {
+    return error.error as ErrorRecord;
+  }
+  return error as ErrorRecord;
+}
+
+function getDetails(value: unknown): Record<string, string> | null | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.some(([key, item]) => typeof item !== 'string' || isSerializedStructuredValue(item))) {
+    return null;
+  }
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function isContractViolation(error: unknown): error is Error & { code: string; hint: string } {
+  return error instanceof Error && 'code' in error && error.code === 'KB_PLUGIN_CONTRACT_VIOLATION'
+    && 'hint' in error && typeof error.hint === 'string';
 }
 
 function getAdapterConfigurationCommand(slot: string): string {
@@ -154,23 +233,25 @@ export function normalizeProductCode(code: string): string {
   return candidate.includes('_') ? candidate : `PLUGIN_${candidate}`;
 }
 
-/** Stringify arbitrary plugin details into the envelope's string-only `details`. */
+/** Convert scalar plugin details to strings and reject nested report values. */
 export function stringifyDetails(details: Record<string, unknown> | undefined): Record<string, string> {
   const result: Record<string, string> = {};
+  if (details !== undefined && (typeof details !== 'object' || details === null || Array.isArray(details))) {
+    throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
+  }
   for (const [key, value] of Object.entries(details ?? {})) {
     if (value === undefined) {
       continue;
     }
     if (typeof value === 'string') {
+      if (isSerializedStructuredValue(value)) {
+        throw createErrorDetailsContractViolation(key, 'contains serialized JSON');
+      }
       result[key] = value;
     } else if (typeof value === 'number' || typeof value === 'boolean') {
       result[key] = String(value);
     } else {
-      try {
-        result[key] = JSON.stringify(value) ?? String(value);
-      } catch {
-        result[key] = String(value);
-      }
+      throw createErrorDetailsContractViolation(key, 'must be a string identifier');
     }
   }
   return result;
@@ -187,6 +268,17 @@ export interface ProductErrorInput extends ToEnvelopeOptions {
 
 /** Envelope for a product-plugin code that is not in the platform catalog. */
 export function createProductErrorEnvelope(input: ProductErrorInput): ErrorEnvelope {
+  if (input.details !== undefined && (typeof input.details !== 'object' || input.details === null || Array.isArray(input.details))) {
+    throw createErrorDetailsContractViolation('details', 'must be a flat map of string identifiers');
+  }
+  for (const [key, value] of Object.entries(input.details ?? {})) {
+    if (typeof value !== 'string') {
+      throw createErrorDetailsContractViolation(key, 'must be a string identifier');
+    }
+    if (isSerializedStructuredValue(value)) {
+      throw createErrorDetailsContractViolation(key, 'contains serialized JSON');
+    }
+  }
   const envelope: ErrorEnvelope = {
     code: normalizeProductCode(input.code),
     area: 'product',

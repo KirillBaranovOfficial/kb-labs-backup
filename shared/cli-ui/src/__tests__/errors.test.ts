@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { handleError } from '../utils/errors.js';
+import { handleError, renderErrorEnvelope } from '../utils/errors.js';
 
 describe('handleError', () => {
+  it('renders structured gate diagnostics as a list before the next-step hint', () => {
+    expect(renderErrorEnvelope({
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      message: 'Validation failed.',
+      hint: 'Fix the listed findings, then retry.',
+      diagnostics: [{ code: 'QA_CASE_INVALID', message: 'Missing case claim.', severity: 'error', path: 'cases/S-1.md', line: 4 }],
+    })).toContain('  - QA_CASE_INVALID (error) cases/S-1.md:4: Missing case claim.\n  Hint:  Fix the listed findings, then retry.');
+  });
+
   it('preserves the catalog error envelope as a command failure for the shared renderer', () => {
     const envelope = {
       code: 'KB_AUTH_REQUIRED', area: 'auth', stage: 'run', severity: 'error', retryable: false,

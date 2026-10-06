@@ -4,6 +4,7 @@
 
 import {
   defineSystemCommand,
+  throwSystemCommandError,
   type CommandResult,
 } from "@kb-labs/shared-command-kit";
 import { generateExamples } from "../../../utils/generate-examples";
@@ -57,10 +58,7 @@ export const logsStats = defineSystemCommand<Flags, Result>({
   async handler() {
     const reader = platform.logs;
     if (!reader) {
-      return {
-        ok: false,
-        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log reader not available. Ensure platform is initialized.", hint: "Run `kb logs stats --help` to review valid inputs and recovery steps, then retry." },
-      };
+      throwSystemCommandError("Log reader not available. Ensure platform is initialized.", "Run `kb logs stats --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const stats = await reader.getStats();
@@ -99,20 +97,6 @@ export const logsStats = defineSystemCommand<Flags, Result>({
     };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui.json(result);
-      return;
-    }
-
-    if (!result.ok) {
-      const error =
-        typeof result.error === "string" ? result.error : "Unknown error";
-      ctx.ui.error("Log Stats", {
-        sections: [{ header: "Error", items: [error] }],
-      });
-      return;
-    }
-
     const sections: Array<{ header: string; items: string[] }> = [];
 
     const caps = result.capabilities;

@@ -10,6 +10,7 @@
 
 // CLI Host
 export { wrapCliResult } from './cli-wrapper.js';
+export { normalizeJsonResult } from './json-result.js';
 
 // REST Host
 export { wrapRestResult, unwrapRestData } from './rest-wrapper.js';

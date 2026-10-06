@@ -4,7 +4,7 @@
  * Revokes Gateway refresh tokens, then clears both local identity stores.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
 
 type LogoutFlags = {
@@ -46,35 +46,29 @@ export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
         });
       } catch {
         const error = 'Could not reach a Gateway to revoke saved credentials. Check the Gateway and run `kb auth logout` again.';
-        if (flags.json) {ctx.ui?.json({ ok: false, error });}
-        else {ctx.ui?.error?.(error);}
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error, hint: 'Check the Gateway connection and retry `kb auth logout`.' } };
+        throwSystemCommandError(error, 'Check the Gateway connection and retry `kb auth logout`.');
       }
       if (!response.ok) {
         const error = `Gateway rejected token revocation (HTTP ${response.status}). Run 'kb auth status', then 'kb auth logout' again.`;
-        if (flags.json) {ctx.ui?.json({ ok: false, error });}
-        else {ctx.ui?.error?.(error);}
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error, hint: 'Run `kb auth status` to inspect the session, then retry `kb auth logout`.' } };
+        throwSystemCommandError(error, 'Run `kb auth status` to inspect the session, then retry `kb auth logout`.');
       }
     }
 
     if (!existingCredentials && !existingSession) {
-      if (flags.json) {
-        ctx.ui?.json({ ok: true, message: 'No credentials found — already logged out.' });
-      } else {
-        ctx.ui?.write?.('No credentials found — already logged out.\n');
+      const message = 'No credentials found — already logged out.';
+      if (!flags.json) {
+        ctx.ui?.write?.(`${message}\n`);
       }
-      return { ok: true };
+      return { ok: true, message };
     }
 
     await Promise.all([credentialsManager.clear(), sessionManager.clear()]);
 
-    if (flags.json) {
-      ctx.ui?.json({ ok: true, message: 'Logged out. Credentials removed.' });
-    } else {
-      ctx.ui?.write?.('Logged out. Credentials removed.\n');
+    const message = 'Logged out. Credentials removed.';
+    if (!flags.json) {
+      ctx.ui?.write?.(`${message}\n`);
     }
 
-    return { ok: true };
+    return { ok: true, message };
   },
 });

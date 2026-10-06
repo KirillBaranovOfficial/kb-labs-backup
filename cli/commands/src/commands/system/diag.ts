@@ -41,6 +41,7 @@ type DiagSummary = {
 };
 
 type DiagResult = CommandResult & {
+  status: 'healthy' | 'degraded' | 'unhealthy';
   diagnostics: DiagDetails[];
   summary: DiagSummary;
 };
@@ -57,6 +58,7 @@ type TraceStage = {
 
 /** Full result returned from runTrace(). */
 type CommandTraceResult = CommandResult & {
+  status: 'healthy' | 'degraded' | 'unhealthy';
   command: string;
   stages: TraceStage[];
   verdict: { rootCause: string; remediation?: string };
@@ -480,7 +482,7 @@ async function runTrace(ctx: TraceCtx): Promise<CommandTraceResult> {
     if (enrich) { Object.assign(ctx, enrich); }
   }
 
-  const failing =
+    const failing =
     stages.find(s => s.status === 'error') ??
     stages.find(s => s.status === 'warning');
 
@@ -492,9 +494,8 @@ async function runTrace(ctx: TraceCtx): Promise<CommandTraceResult> {
       : { rootCause: 'NONE' },
   };
 
-  return failing
-    ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: failing.message, hint: "Run `kb info diag --help` to review valid inputs and recovery steps, then retry." }, ...result }
-    : { ok: true, ...result };
+  const status = stages.some((stage) => stage.status === 'error') ? 'unhealthy' : failing ? 'degraded' : 'healthy';
+  return { ok: true, status, ...result };
 }
 
 // ── Command ────────────────────────────────────────────────────────────────────
@@ -687,25 +688,17 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
 
     ctx.platform?.logger?.info('Diag command completed', summary);
 
-    return summary.errors === 0
-      ? { ok: true, diagnostics, summary }
-      : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${summary.errors} diagnostic error(s) found`, hint: "Run `kb info diag --help` to review valid inputs and recovery steps, then retry." }, diagnostics, summary };
+    const status = summary.errors > 0 ? 'unhealthy' : summary.warnings > 0 ? 'degraded' : 'healthy';
+    return { ok: true, status, diagnostics, summary };
   },
 
   // eslint-disable-next-line sonarjs/cognitive-complexity
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui?.json?.(result);
-      return;
-    }
-
     // ── Trace mode output ──────────────────────────────────────────────────────
     if ('stages' in result) {
       const trace = result as CommandTraceResult;
-      const verdictStatus = trace.ok ? 'success' : 'error' as const;
-      const verdictMsg = trace.ok
-        ? 'Command is fully operational'
-        : `Root cause: ${trace.verdict.rootCause}`;
+      const verdictStatus = trace.status === 'healthy' ? 'success' : trace.status === 'degraded' ? 'warning' : 'error';
+      const verdictMsg = trace.status === 'healthy' ? 'Command is fully operational' : `Root cause: ${trace.verdict.rootCause}`;
 
       ctx.ui.chain([
         ...trace.stages.map(stageToChainItem),
@@ -767,9 +760,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
       { header: 'Next Steps', items: nextSteps },
     ];
 
-    if (hasErrors) {
-      ctx.ui.error('System Diagnostics', { sections });
-    } else if (hasWarnings) {
+    if (hasErrors || hasWarnings) {
       ctx.ui.warn('System Diagnostics', { sections });
     } else {
       ctx.ui.success('System Diagnostics', { sections });

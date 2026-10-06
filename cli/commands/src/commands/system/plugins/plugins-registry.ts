@@ -34,6 +34,7 @@ interface PluginManifestWithPath {
 }
 
 type PluginsRegistryResult = CommandResult & {
+  data?: { manifests: ManifestV3[]; manifestsWithPaths: PluginManifestWithPath[]; total: number };
   manifests?: ManifestV3[];
   manifestsWithPaths?: PluginManifestWithPath[];
   total?: number;
@@ -299,18 +300,15 @@ export const pluginsRegistry = defineSystemCommand<PluginsRegistryFlags, Plugins
     ctx.platform?.logger?.info('Plugins registry scan completed', { count: manifests.length });
 
     if (flags.json) {
-      ctx.ui.json({
-        ok: true,
+      const jsonData = {
         manifests: manifests.map((p) => p.manifest),
         manifestsWithPaths,
         total: manifests.length,
-      });
+      };
+
       return {
         ok: true,
-        manifests: manifests.map((p) => p.manifest),
-        manifestsWithPaths,
-        total: manifests.length,
-        plugins: manifests,
+        data: jsonData,
       };
     }
 

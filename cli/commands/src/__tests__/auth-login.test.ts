@@ -200,8 +200,10 @@ describe('kb auth login', () => {
     expect(exitCode).toBe(0);
     expect(captured.json[0]).toMatchObject({
       ok: true,
-      gatewayUrl: 'http://localhost:4000',
-      handle: 'kirill',
+      data: {
+        gatewayUrl: 'http://localhost:4000',
+        handle: 'kirill',
+      },
     });
     expect(captured.output.length).toBe(0);
   });

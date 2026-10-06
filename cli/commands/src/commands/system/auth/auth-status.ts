@@ -29,6 +29,7 @@ type StatusResult = CommandResult & {
   gatewayUrl?: string;
   tokenExpired?: boolean;
   expiresAt?: string;
+  minutesLeft?: number;
   session: SessionStatus;
 };
 
@@ -64,14 +65,8 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
       }
       : { authenticated: false };
 
-    const emitStatusJson = (data: Omit<StatusResult, 'ok'> & { minutesLeft?: number }) => {
-      ctx.ui?.json({ ok: true, data });
-    };
-
     if (!credentials) {
-      if (flags.json) {
-        emitStatusJson({ authenticated: false, session: sessionStatus });
-      } else {
+      if (!flags.json) {
         if (session) {
           ctx.ui?.write?.(`Session (human): ${session.email ?? session.gatewayUrl}${sessionStatus.tokenExpired ? ' — token expired (will auto-refresh)' : ''}\n`);
         } else {
@@ -86,16 +81,7 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
     const timeLeft = credentials.expiresAt - Date.now();
     const minutesLeft = Math.max(0, Math.floor(timeLeft / 60000));
 
-    if (flags.json) {
-      emitStatusJson({
-        authenticated: true,
-        gatewayUrl: credentials.gatewayUrl,
-        tokenExpired: expired,
-        expiresAt,
-        minutesLeft,
-        session: sessionStatus,
-      });
-    } else {
+    if (!flags.json) {
       ctx.ui?.write?.(`Machine credentials: ${credentials.gatewayUrl}\n`);
       if (expired) {
         ctx.ui?.write?.(`  Token: expired (will auto-refresh on next request)\n`);
@@ -114,6 +100,7 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
       gatewayUrl: credentials.gatewayUrl,
       tokenExpired: expired,
       expiresAt,
+      minutesLeft,
       session: sessionStatus,
     };
   },

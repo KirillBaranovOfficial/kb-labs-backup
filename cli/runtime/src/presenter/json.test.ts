@@ -31,7 +31,7 @@ describe('JSON presenter envelope', () => {
       ok: false,
       error: {
         code: 'KB_RUNTIME_UNEXPECTED',
-        message: 'Unknown command: workflow lint',
+        message: 'An unexpected error occurred.',
         hint: expect.any(String),
         correlationId: expect.any(String),
       },

@@ -19,7 +19,7 @@ type DiagnosticsFlags = {
 };
 
 type DiagnosticsResult = CommandResult & {
-  report: DiagnosticReport;
+  data: DiagnosticReport & { status: 'healthy' | 'degraded' | 'unhealthy' };
 };
 
 export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, DiagnosticsResult>({
@@ -51,25 +51,15 @@ export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, Diagnos
 
     await registry.dispose();
 
-    if (report.summary.errors === 0) {
-      return { ok: true, report };
-    }
-
-    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${report.summary.errors} diagnostic error(s) found`, hint: "Run `kb registry diagnostics --help` to review valid inputs and recovery steps, then retry." }, report };
+    const status = report.summary.errors > 0 ? 'unhealthy' : report.summary.warnings > 0 ? 'degraded' : 'healthy';
+    return { ok: true, data: { ...report, status } };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui.json({ ok: true, data: result.report });
-      return;
-    }
-
-    const text = formatDiagnosticReport(result.report);
+    const text = formatDiagnosticReport(result.data);
     ctx.ui.info(text);
 
-    if (result.report.summary.errors > 0) {
-      ctx.ui.error(`${result.report.summary.errors} error(s) found — see details above`);
-    } else if (result.report.summary.warnings > 0) {
-      ctx.ui.warn(`${result.report.summary.warnings} warning(s) — no blockers`);
+    if (result.data.summary.errors > 0 || result.data.summary.warnings > 0) {
+      ctx.ui.warn(`${result.data.summary.warnings} warning(s) — no blockers`);
     } else {
       ctx.ui.success('Registry is healthy — no issues found');
     }

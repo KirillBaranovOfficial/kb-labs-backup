@@ -5,6 +5,7 @@
 
 import {
   defineSystemCommand,
+  throwSystemCommandError,
   type CommandResult,
 } from "@kb-labs/shared-command-kit";
 import { generateExamples } from "../../../utils/generate-examples";
@@ -20,7 +21,18 @@ type Flags = {
   json: { type: "boolean"; description?: string };
 };
 
-export const logsContext = defineSystemCommand<Flags, CommandResult>({
+type LogContextResult = CommandResult & {
+  data: {
+    correlationKey: Record<string, string | undefined>;
+    timeline: { total: number; from: string | null; to: string | null; durationMs: number };
+    byLevel: Record<string, number>;
+    bySource: Record<string, number>;
+    logs: ReturnType<typeof formatLogJson>[];
+  };
+  _raw?: LogRecord[];
+};
+
+export const logsContext = defineSystemCommand<Flags, LogContextResult>({
   name: "context",
   scope: 'platform',
   jsonTest: { safeArgs: ["--request-id", "__fixture_request_id__"] },
@@ -46,10 +58,7 @@ export const logsContext = defineSystemCommand<Flags, CommandResult>({
   async handler(_ctx, _argv, flags) {
     const reader = platform.logs;
     if (!reader) {
-      return {
-        ok: false,
-        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: "Log reader not available. Ensure platform is initialized.", hint: "Run `kb logs context --help` to review valid inputs and recovery steps, then retry." },
-      };
+      throwSystemCommandError("Log reader not available. Ensure platform is initialized.", "Run `kb logs context --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const executionId = flags["execution-id"];
@@ -57,11 +66,7 @@ export const logsContext = defineSystemCommand<Flags, CommandResult>({
     const requestId = flags["request-id"];
 
     if (!executionId && !traceId && !requestId) {
-      return {
-        ok: false,
-        error:
-          { code: 'KB_RUNTIME_COMMAND_FAILED', message: "At least one correlation key required: --execution-id, --trace-id, or --request-id", hint: "Run `kb logs context --help` to review valid inputs and recovery steps, then retry." },
-      };
+      throwSystemCommandError("At least one correlation key required: --execution-id, --trace-id, or --request-id", "Run `kb logs context --help` to review valid inputs and recovery steps, then retry.");
     }
 
     const maxLogs = flags.limit ?? 200;
@@ -84,57 +89,30 @@ export const logsContext = defineSystemCommand<Flags, CommandResult>({
     }
 
     return {
-      ok: true,
-      correlationKey: executionId
-        ? { executionId }
-        : traceId
-          ? { traceId }
-          : { requestId },
-      timeline: {
-        total: matched.length,
-        from: firstTs ? new Date(firstTs).toISOString() : null,
-        to: lastTs ? new Date(lastTs).toISOString() : null,
-        durationMs: lastTs - firstTs,
+      ok: true as const,
+      data: {
+        correlationKey: executionId
+          ? { executionId }
+          : traceId
+            ? { traceId }
+            : { requestId },
+        timeline: {
+          total: matched.length,
+          from: firstTs ? new Date(firstTs).toISOString() : null,
+          to: lastTs ? new Date(lastTs).toISOString() : null,
+          durationMs: lastTs - firstTs,
+        },
+        byLevel: levelCounts,
+        bySource: sourceCounts,
+        logs: matched.map(formatLogJson),
       },
-      byLevel: levelCounts,
-      bySource: sourceCounts,
-      logs: matched.map(formatLogJson),
       _raw: matched,
     };
   },
   formatter(result, ctx, flags) {
-    type LogContextResult = CommandResult & {
-      correlationKey?: Record<string, unknown>;
-      timeline?: {
-        total: number;
-        from: string | null;
-        to: string | null;
-        durationMs: number;
-      };
-      byLevel?: Record<string, number>;
-      bySource?: Record<string, number>;
-      logs?: unknown[];
-      _raw?: LogRecord[];
-    };
-
-    const data = result as LogContextResult;
-
-    if (flags.json) {
-      const { _raw: _ignored, ...jsonResult } = data;
-      ctx.ui.json(jsonResult);
-      return;
-    }
-
-    if (!result.ok) {
-      const error = typeof result.error === "string" ? result.error : "Unknown";
-      ctx.ui.error("Log Context", {
-        sections: [{ header: "Error", items: [error] }],
-      });
-      return;
-    }
-
+    const { data } = result;
     const { timeline, correlationKey, byLevel } = data;
-    const raw = data._raw ?? [];
+    const raw = result._raw ?? [];
 
     // Header
     const keyStr = correlationKey

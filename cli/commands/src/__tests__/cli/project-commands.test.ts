@@ -19,9 +19,8 @@ let cwd: string;
 
 type Payload = Record<string, unknown> & {
   ok?: boolean;
+  data?: { projects?: Array<{ id: string; name: string; path: string; pathExists: boolean }>; project?: { id: string; name: string; path: string }; [key: string]: unknown };
   error?: { code: string; hint: string; message: string };
-  projects?: Array<{ id: string; name: string; path: string; pathExists: boolean }>;
-  project?: { id: string; name: string; path: string };
 };
 
 function makeCtx(): { ctx: PluginContextV3; json: Payload[]; text: string[] } {
@@ -35,9 +34,7 @@ function makeCtx(): { ctx: PluginContextV3; json: Payload[]; text: string[] } {
     cwd,
     ui: {
       ...noopUI,
-      json: (data: unknown) => {
-        json.push(data as Payload);
-      },
+      json: (data: unknown) => json.push(data as Payload),
       write: (t: string) => {
         text.push(t);
       },
@@ -61,6 +58,11 @@ function makeCtx(): { ctx: PluginContextV3; json: Payload[]; text: string[] } {
     trace: noopTraceContext,
   };
   return { ctx, json, text };
+}
+
+function dataOf(output: Payload | undefined): NonNullable<Payload['data']> | undefined {
+  expect(output).toMatchObject({ ok: true, data: expect.anything() });
+  return output?.data;
 }
 
 function makeProject(name: string, withKb: boolean): string {
@@ -104,11 +106,11 @@ describe('project add / list', () => {
     const addB = await run(projectAdd, [b], { name: 'second' });
     expect(addA.code).toBe(0);
     expect(addB.code).toBe(0);
-    expect(addB.json[0]?.project?.name).toBe('second');
+    expect(dataOf(addB.json[0])?.project?.name).toBe('second');
 
     const list = await run(projectList, []);
     expect(list.code).toBe(0);
-    expect(list.json[0]?.projects?.map((p) => p.path).sort()).toEqual([a, b].sort());
+    expect(dataOf(list.json[0])?.projects?.map((p) => p.path).sort()).toEqual([a, b].sort());
     expect(existsSync(join(kbHome, 'projects.json'))).toBe(true);
   });
 
@@ -120,10 +122,17 @@ describe('project add / list', () => {
     expect(list.text.join('')).toContain(a);
   });
 
+  it('does not print human text beside the JSON envelope for an empty registry', async () => {
+    const list = await run(projectList, []);
+    expect(list.code).toBe(0);
+    expect(list.json).toEqual([{ ok: true, data: { projects: [], total: 0 } }]);
+    expect(list.text).toEqual([]);
+  });
+
   it('registers the current folder without requiring or creating .kb/', async () => {
     const res = await run(projectAdd, []);
     expect(res.code).toBe(0);
-    expect(res.json[0]?.project?.path).toBe(cwd);
+    expect(dataOf(res.json[0])?.project?.path).toBe(cwd);
     expect(existsSync(join(cwd, '.kb'))).toBe(false);
   });
 
@@ -134,12 +143,20 @@ describe('project add / list', () => {
     const res = await run(projectAdd, [bare]);
 
     expect(res.code).toBe(0);
-    expect(res.json[0]).toMatchObject({ ok: true, project: { path: bare } });
+    expect(res.json[0]).toMatchObject({ ok: true, data: { project: { path: bare } } });
     expect(Object.keys(res.json[0] ?? {})).not.toContain('initialized');
     expect(readdirSync(bare)).toEqual(filesBefore);
     expect(existsSync(join(bare, '.kb'))).toBe(false);
     const list = await run(projectList, []);
-    expect(list.json[0]?.projects).toHaveLength(1);
+    expect(dataOf(list.json[0])?.projects).toHaveLength(1);
+  });
+
+  it('does not print human text beside project add JSON output', async () => {
+    const bare = makeProject('add-json', false);
+    const added = await run(projectAdd, [bare]);
+    expect(added.code).toBe(0);
+    expect(added.json).toHaveLength(1);
+    expect(added.text).toEqual([]);
   });
 
   it('--dry-run plans registration without requiring or creating .kb/', async () => {
@@ -149,8 +166,8 @@ describe('project add / list', () => {
     const plain = await run(projectAdd, [declared], { 'dry-run': true });
     const uninitialized = await run(projectAdd, [bare], { 'dry-run': true });
 
-    expect(plain.json[0]).toMatchObject({ ok: true, dryRun: true, project: { path: declared } });
-    expect(uninitialized.json[0]).toMatchObject({ ok: true, dryRun: true, project: { path: bare } });
+    expect(plain.json[0]).toMatchObject({ ok: true, data: { dryRun: true, project: { path: declared } } });
+    expect(uninitialized.json[0]).toMatchObject({ ok: true, data: { dryRun: true, project: { path: bare } } });
     expect(readdirSync(bare)).toEqual([]);
     expect(existsSync(join(kbHome, 'projects.json'))).toBe(false);
   });
@@ -200,19 +217,31 @@ describe('project add / list', () => {
 });
 
 describe('project show', () => {
+  it('does not print human text beside project show JSON output', async () => {
+    const project = makeProject('show-json', true);
+    const added = await run(projectAdd, [project]);
+    const id = dataOf(added.json[0])?.project?.id ?? '';
+
+    const shown = await run(projectShow, [id]);
+
+    expect(shown.code).toBe(0);
+    expect(shown.json).toHaveLength(1);
+    expect(shown.text).toEqual([]);
+  });
+
   it('finds a project by name, id, path and the current folder', async () => {
     const a = makeProject('alpha', true);
     const added = await run(projectAdd, [a]);
-    const id = added.json[0]?.project?.id ?? '';
+    const id = dataOf(added.json[0])?.project?.id ?? '';
 
     for (const ref of ['alpha', id, a]) {
       const res = await run(projectShow, [ref]);
       expect(res.code).toBe(0);
-      expect(res.json[0]?.project?.path).toBe(a);
+      expect(dataOf(res.json[0])?.project?.path).toBe(a);
     }
     cwd = a;
     const here = await run(projectShow, []);
-    expect(here.json[0]?.project?.id).toBe(id);
+    expect(dataOf(here.json[0])?.project?.id).toBe(id);
   });
 
   it('reports an unknown project (e.g. a moved folder) with a hint to add it', async () => {
@@ -252,7 +281,7 @@ describe('project remove', () => {
         details: { action: 'project remove', reversible: 'true', confirmWith: '--yes' },
       },
     });
-    expect((await run(projectList, [])).json[0]?.projects).toHaveLength(1);
+    expect(dataOf((await run(projectList, [])).json[0])?.projects).toHaveLength(1);
   });
 
   it('--dry-run reports the plan and changes nothing', async () => {
@@ -262,8 +291,8 @@ describe('project remove', () => {
     const res = await run(projectRemove, ['alpha'], { 'dry-run': true });
 
     expect(res.code).toBe(0);
-    expect(res.json[0]).toMatchObject({ ok: true, dryRun: true });
-    expect((await run(projectList, [])).json[0]?.projects).toHaveLength(1);
+    expect(res.json[0]).toMatchObject({ ok: true, data: { dryRun: true } });
+    expect(dataOf((await run(projectList, [])).json[0])?.projects).toHaveLength(1);
   });
 
   it('--yes unregisters the project but never deletes files', async () => {
@@ -273,8 +302,8 @@ describe('project remove', () => {
     const res = await run(projectRemove, ['alpha'], { yes: true });
 
     expect(res.code).toBe(0);
-    expect(res.json[0]).toMatchObject({ ok: true });
-    expect((await run(projectList, [])).json[0]?.projects).toEqual([]);
+    expect(res.json[0]).toMatchObject({ ok: true, data: expect.anything() });
+    expect(dataOf((await run(projectList, [])).json[0])?.projects).toEqual([]);
     expect(existsSync(join(a, '.kb'))).toBe(true);
   });
 

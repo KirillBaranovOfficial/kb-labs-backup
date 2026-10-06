@@ -11,11 +11,13 @@ import type {
   PlatformServices,
 } from "@kb-labs/plugin-contracts";
 import { wrapCliResult } from "@kb-labs/plugin-runtime";
-import { createErrorEnvelope, getCatalogEntry } from "@kb-labs/core-platform";
+import { normalizeJsonResult } from "@kb-labs/plugin-runtime";
+import { toErrorEnvelope } from "@kb-labs/core-platform";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import type { ExecutionRequest } from "@kb-labs/plugin-execution-factory";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { renderErrorEnvelope } from "@kb-labs/shared-cli-ui";
 
 export interface ExecuteCommandV3Options {
   /** Explicit plugin environment values for this invocation. */
@@ -255,13 +257,13 @@ export async function executeCommandV3(
 
     if (flags.json) {
       if (cliResult.ok) {
-        ui.json({ ok: true, data: cliResult.result ?? null, meta: cliResult.meta });
+        ui.json(normalizeJsonResult({ ok: true, data: cliResult.result ?? null, meta: cliResult.meta }));
       } else {
-        ui.json({ ok: false, error: toPluginErrorEnvelope(cliResult.error) });
+        ui.json(normalizeJsonResult({ ok: false, error: cliResult.error }, { correlationId: requestId }));
       }
     } else if (!cliResult.ok) {
-      const error = toPluginErrorEnvelope(cliResult.error);
-      ui.error(`${error.message} [${error.code}]`, { hint: error.hint });
+      const error = toErrorEnvelope(cliResult.error, { correlationId: requestId });
+      ui.error(renderErrorEnvelope(error), { hint: error.hint });
     }
 
     // Return exit code from wrapped result
@@ -279,87 +281,19 @@ function presentExecutionError(
   requestId: string,
   jsonMode: boolean,
 ): void {
-  const typed = extractExecutionError(cause);
-  const correlationId = typed?.correlationId ?? randomUUID();
-  const details = typed?.details && isStringMap(typed.details) ? typed.details : undefined;
-  const code = typed?.code && getCatalogEntry(typed.code) ? typed.code : 'KB_RUNTIME_UNEXPECTED';
-  const error = createErrorEnvelope(code, {
-    correlationId,
-    ...(code !== 'KB_RUNTIME_UNEXPECTED' && typed?.message ? { message: typed.message } : {}),
-    ...(code !== 'KB_RUNTIME_UNEXPECTED' && details ? { details } : {}),
-    ...(code !== 'KB_RUNTIME_UNEXPECTED' && typed?.hint ? { hint: typed.hint } : {}),
-    ...(code === 'KB_RUNTIME_UNEXPECTED'
-      ? { hint: `Run the command with --debug, then include correlation ID ${correlationId} in a report if it persists.` }
-      : {}),
-  });
-  if (code === 'KB_RUNTIME_UNEXPECTED') {
+  const error = toErrorEnvelope(cause, { correlationId: requestId });
+  if (error.code === 'KB_RUNTIME_UNEXPECTED') {
     const loggedCause = cause instanceof Error ? cause : new Error(String(cause));
     platform.logger.error('Plugin command failed unexpectedly', loggedCause, {
-      correlationId,
+      correlationId: error.correlationId,
       requestId,
     });
   }
   if (jsonMode) {
     ui.json({ ok: false, error });
   } else {
-    ui.error(`${error.message} [${error.code}]`, { hint: error.hint });
+    ui.error(renderErrorEnvelope(error), { hint: error.hint });
   }
-}
-
-function extractExecutionError(value: unknown): {
-  code?: string;
-  message?: string;
-  hint?: string;
-  correlationId?: string;
-  details?: unknown;
-} | undefined {
-  if (value instanceof Error) {
-    const error = value as Error & { code?: unknown; hint?: unknown; correlationId?: unknown; details?: unknown };
-    return {
-      code: typeof error.code === 'string' ? error.code : undefined,
-      message: error.message,
-      hint: typeof error.hint === 'string' ? error.hint : undefined,
-      correlationId: typeof error.correlationId === 'string' ? error.correlationId : undefined,
-      details: error.details,
-    };
-  }
-  if (typeof value !== 'object' || value === null) return undefined;
-  const error = 'error' in value ? value.error : value;
-  if (typeof error !== 'object' || error === null) return undefined;
-  const record = error as Record<string, unknown>;
-  return {
-    code: typeof record.code === 'string' ? record.code : undefined,
-    message: typeof record.message === 'string' ? record.message : undefined,
-    hint: typeof record.hint === 'string' ? record.hint : undefined,
-    correlationId: typeof record.correlationId === 'string' ? record.correlationId : undefined,
-    details: record.details,
-  };
-}
-
-function toPluginErrorEnvelope(error: unknown) {
-  if (
-    typeof error === 'object' && error !== null &&
-    'code' in error && typeof error.code === 'string' && getCatalogEntry(error.code) &&
-    'message' in error && typeof error.message === 'string' &&
-    'hint' in error && typeof error.hint === 'string'
-  ) {
-    const details = 'details' in error && isStringMap(error.details) ? error.details : undefined;
-    return createErrorEnvelope(error.code, {
-      message: error.message,
-      hint: error.hint,
-      correlationId: randomUUID(),
-      ...(details ? { details } : {}),
-    });
-  }
-  return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
-    message: 'Plugin command returned an invalid failure result.',
-    hint: 'Update the plugin command to return a catalogued error code, message, and actionable hint.',
-  });
-}
-
-function isStringMap(value: unknown): value is Record<string, string> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) &&
-    Object.values(value).every((item) => typeof item === 'string');
 }
 
 /**

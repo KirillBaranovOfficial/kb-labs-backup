@@ -32,6 +32,6 @@ describe('kb auth reset-link', () => {
     const result = await authResetLink.run(context(errors, json), [], { 'user-id': 'user-1', json: true });
     expect(gatewayApiFetch).toHaveBeenCalledWith('http://127.0.0.1:4000/auth/users/user-1/password-reset-link', { method: 'POST' });
     expect(result).toBe(0);
-    expect(json[0]).toMatchObject({ ok: true, resetUrl: 'https://gateway.test/reset' });
+    expect(json[0]).toMatchObject({ ok: true, data: { resetUrl: 'https://gateway.test/reset' } });
   });
 });

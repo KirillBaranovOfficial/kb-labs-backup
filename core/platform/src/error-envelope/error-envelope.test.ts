@@ -123,6 +123,38 @@ describe('renderTemplate', () => {
   });
 });
 
+describe('structured error diagnostics', () => {
+  it('keeps gate findings as typed diagnostics', () => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      diagnostics: [{ code: 'CONFIG_INVALID', message: 'Invalid setting.', severity: 'error', path: 'config.json', line: 3, hint: 'Fix the setting.' }],
+    });
+    expect(envelope.diagnostics).toEqual([{ code: 'CONFIG_INVALID', message: 'Invalid setting.', severity: 'error', path: 'config.json', line: 3, hint: 'Fix the setting.' }]);
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+  });
+
+  it.each(['{"findings":[]}', '[{"message":"bad"}]'])('rejects serialized structured detail values: %s', (value) => {
+    try {
+      createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', { details: { report: value } });
+      throw new Error('expected serialized JSON detail to be rejected');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'KB_PLUGIN_CONTRACT_VIOLATION', hint: expect.stringContaining('error.diagnostics') });
+    }
+  });
+
+  it.each(['{"findings":[]}', '[{"message":"bad"}]'])('rejects serialized structured details during envelope validation: %s', (value) => {
+    const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED');
+    expect(validateErrorEnvelope({ ...envelope, details: { report: value } })).toContain(
+      'details.report must not contain serialized JSON; use data or diagnostics',
+    );
+  });
+
+  it('rejects non-string details in the builder with a catalogued contract violation', () => {
+    expect(() => createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
+      details: { report: ['finding'] as unknown as string },
+    })).toThrow(expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }));
+  });
+});
+
 describe('toErrorEnvelope (platform errors)', () => {
   // case: S-191.7
   it('maps invalid adapter options to an actionable KB_CONFIG_INVALID envelope', () => {
@@ -264,6 +296,32 @@ describe('toErrorEnvelope (platform errors)', () => {
     const envelope = toErrorEnvelope('boom');
     expect(envelope.code).toBe('KB_RUNTIME_UNEXPECTED');
     expect(envelope.cause).toBe('boom');
+    expect(envelope.correlationId).toEqual(expect.any(String));
+  });
+
+  it('keeps catalogued thrown error fields and converts malformed details to a contract violation', () => {
+    const catalogued = Object.assign(new Error('Invalid input.'), {
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      hint: 'Fix the input.',
+      details: { field: 'name' },
+      correlationId: 'catalogued-correlation',
+    });
+    expect(toErrorEnvelope(catalogued)).toMatchObject({
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      message: 'Invalid input.',
+      hint: 'Fix the input.',
+      details: { field: 'name' },
+      correlationId: 'catalogued-correlation',
+    });
+
+    const malformed = Object.assign(new Error('Bad details.'), {
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      details: { report: 17 },
+    });
+    expect(toErrorEnvelope(malformed)).toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      hint: expect.stringContaining('error.diagnostics'),
+    });
   });
 
   // case: S-054.19

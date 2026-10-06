@@ -15,13 +15,11 @@ type PluginsCommandsFlags = {
 };
 
 type PluginsCommandsResult = CommandResult & {
-  message: string;
+  message?: string;
   sections?: SectionContent[];
-  json: {
-    groups: Record<string, Array<{ name: string; description: string; category?: string }>>;
-    totalGroups: number;
-    totalCommands: number;
-  };
+  groups?: Record<string, Array<{ name: string; description: string; category?: string }>>;
+  totalGroups?: number;
+  totalCommands?: number;
 };
 
 type GroupedCommands = Record<string, RegisteredCommand[]>;
@@ -90,9 +88,9 @@ export const pluginsCommands = defineSystemCommand<PluginsCommandsFlags, Plugins
       }
       return {
         ok: true,
-        status: 'success',
-        message: `Found ${totalCommands} commands in ${totalGroups} groups`,
-        json: { groups: output, totalGroups, totalCommands },
+        groups: output,
+        totalGroups,
+        totalCommands,
       };
     }
 
@@ -161,9 +159,7 @@ export const pluginsCommands = defineSystemCommand<PluginsCommandsFlags, Plugins
     };
   },
   formatter(result, ctx, flags) {
-    if (flags.json) {
-      ctx.ui?.json?.(result.json);
-    } else {
+    {
       ctx.ui.success('Plugin Commands Registry', { sections: result.sections ?? [] });
     }
   },

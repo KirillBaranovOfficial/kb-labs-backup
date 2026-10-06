@@ -196,6 +196,13 @@ export class TrieRouter {
         }
         aliasNode = aliasNode.children.get(alias)!;
         aliasNode.systemCommand = cmd;
+
+        let rootAliasNode = this.root;
+        if (!rootAliasNode.children.has(alias)) {
+          rootAliasNode.children.set(alias, makeNode());
+        }
+        rootAliasNode = rootAliasNode.children.get(alias)!;
+        rootAliasNode.systemCommand = cmd;
       }
     }
 

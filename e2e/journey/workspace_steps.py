@@ -64,6 +64,34 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
 
         journey.step("validate QA cases with the workspace CLI", "workspace-cli", validate_cases, cases=["S-179.2", "S-203.1"])
 
+        def check_system_command_envelopes() -> str | None:
+            commands = (
+                (("version",), "version"),
+                (("auth", "status"), "authenticated"),
+                (("project", "list"), "projects"),
+                (("webhook", "list"), "webhooks"),
+            )
+            for command, expected_field in commands:
+                result = run(*command, "--json")
+                try:
+                    envelope = read_ux_cli_result(result.stdout, result.returncode)
+                    if envelope["ok"]:
+                        payload = decode_ux_success_result(envelope)
+                        if not isinstance(payload, dict) or expected_field not in payload:
+                            return f"{' '.join(('kb', *command, '--json'))} did not place {expected_field!r} in data"
+                    else:
+                        decode_ux_error_result(envelope)
+                except (KeyError, ValueError) as error:
+                    return f"{' '.join(('kb', *command, '--json'))} did not return one ADR-0049 envelope: {error}"
+            return None
+
+        journey.step(
+            "read JSON results from installed system commands",
+            "workspace-cli",
+            check_system_command_envelopes,
+            cases=["S-203.19"],
+        )
+
         def list_workspace_adapters() -> str | None:
             result = run("adapter", "list", "--json")
             if result.returncode != 0:

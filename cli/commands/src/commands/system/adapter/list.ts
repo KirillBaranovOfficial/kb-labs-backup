@@ -3,10 +3,9 @@
 import path from 'node:path';
 import { ADAPTER_DEFAULTS, toErrorEnvelope, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { discoverAdapters, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
-import { renderErrorEnvelope } from '../config/shared';
 
 type AdapterRow = {
   slot: string;
@@ -61,7 +60,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       loaded = await loadPlatformConfig({ startDir: getContextCwd(ctx), loadEnvFile: false });
     } catch (error) {
       const envelope = toErrorEnvelope(error);
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb adapter list --help` to review valid inputs and recovery steps, then retry." }, envelope };
+      throwSystemCataloguedError(envelope);
     }
     const config = loaded.platformConfig;
     const resolvedDefaults = await resolveInstalledAdapterDefaults({
@@ -124,14 +123,9 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     return { ok: true, adapters: rows, projectRoot: loaded.projectRoot };
   },
   formatter(result, ctx, flags) {
-    if (!result.ok && result.envelope) {
-      renderErrorEnvelope(ctx, result.envelope, Boolean(flags.json));
-      return;
-    }
-    if (flags.json) { ctx.ui?.json?.(result); return; }
     if (!result.ok) {
       const error = result.error;
-      ctx.ui?.error(typeof error === 'string' ? error : error?.message ?? 'Could not list adapters');
+
       return;
     }
     ctx.ui?.table?.(result.adapters ?? []);

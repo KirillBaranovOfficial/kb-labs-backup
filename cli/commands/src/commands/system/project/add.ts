@@ -20,9 +20,7 @@ function reportPlanned(
     dryRun: true,
     project: outcome.project,
   };
-  if (json) {
-    ui?.json(payload);
-  } else {
+  if (!json) {
     ui?.info(`Dry run: would register ${outcome.project.name} (${outcome.project.id}) at ${outcome.project.path}`);
   }
   return payload;
@@ -31,9 +29,7 @@ function reportPlanned(
 function reportAdded(ui: Ui | undefined, outcome: Extract<AddProjectOutcome, { status: 'added' }>, json: boolean) {
   const { project } = outcome;
   const payload = { ok: true as const, project };
-  if (json) {
-    ui?.json(payload);
-  } else {
+  if (!json) {
     ui?.success(`Registered ${project.name} (${project.id})`);
     ui?.write(`  path: ${project.path}\n`);
   }
@@ -92,7 +88,7 @@ export const projectAdd = defineSystemCommand<AddFlags, ProjectAddResult>({
       }
       return reportAdded(ui, outcome, json);
     } catch (error) {
-      return failWithEnvelope(ui, projectErrorEnvelope(error), json);
+      return failWithEnvelope(projectErrorEnvelope(error));
     }
   },
 });

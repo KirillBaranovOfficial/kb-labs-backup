@@ -23,7 +23,7 @@ import {
 } from '@kb-labs/core-config';
 import { loadPlatformConfig, PlatformUserConfigSchema } from '@kb-labs/core-runtime';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { promises as fsp } from 'node:fs';
 
@@ -32,7 +32,6 @@ import {
   CONFIG_SCOPES,
   layerLabel,
   parseKeyPath,
-  renderErrorEnvelope,
   resolveConfigRoots,
   userConfigFileForScope,
   valueAtPath,
@@ -171,7 +170,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       const merged = mergeOverlay(platform?.data ?? {}, projectSettings) as Record<string, unknown>;
       const hit = valueAtPath(merged, segments);
       if (!hit.found) {
-        return { ok: true, key, scope: 'effective', found: false };
+        return { ok: true, key, scope: 'effective', found: false, value: null };
       }
       const projectFile = projectSettingsPath({ projectId: roots.projectId });
       const projectHit = valueAtPath(projectSettings, segments);
@@ -197,27 +196,10 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: envelope.message, hint: "Run `kb config get --help` to review valid inputs and recovery steps, then retry." }, envelope };
+      throwSystemCataloguedError(envelope);
     }
   },
   formatter(result, ctx, flags) {
-    if (!result.ok && result.envelope) {
-      renderErrorEnvelope(ctx, result.envelope, Boolean(flags.json));
-      return;
-    }
-    if (flags.json) {
-      ctx.ui?.json?.({
-        ok: true,
-        key: result.key,
-        scope: result.scope,
-        found: result.found,
-        value: result.value ?? null,
-        layer: result.layer ?? null,
-        source: result.source ?? null,
-        contributors: result.contributors,
-      });
-      return;
-    }
     if (!result.found) {
       ctx.ui.info(`${result.key} is not set${result.scope === 'effective' ? '' : ` in the ${result.scope} scope`}.`);
       return;

@@ -189,6 +189,20 @@ Every JWT carries an explicit token kind. User access, user refresh, machine acc
 
 A saved CLI user session survives platform update, rollback, and host restart while the token contract remains unchanged. If a host rejects a saved token, protected commands return `KB_AUTH_REQUIRED` with the login hint. The host machine connection still authenticates from stored machine registration credentials on every start. No legacy token compatibility path is retained. This supersedes the 2026-10-01 lifecycle expectation for updates that do not change the token contract. Cases: S-041.4, S-023, S-024.
 
+### 2026-10-06: Diagnostic reports succeed and gates return structured findings
+
+Commands whose purpose is to inspect and report (doctor, diag, logs diagnose,
+registry diagnostics, and equivalent report commands) succeed even when they
+find problems. Their result is `{status: "healthy"|"degraded"|"unhealthy", ...report}`
+inside the success `data`, and they exit 0; this follows the existing doctor
+decision that diagnosis is read-only. Gate commands such as validate and sync
+that reject an operation return a catalogued failure envelope and put findings
+in its `error.diagnostics` array (`code`, `message`, `severity`, optional
+`path`, `line`, and `hint`). `error.details` remains a flat string map of
+identifiers and must not encode objects or arrays as JSON strings. The shared
+human renderer presents the same diagnostic records as a list.
+Cases: S-203.1, S-203.2.
+
 ### Platform members: core plugins only
 
 The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.

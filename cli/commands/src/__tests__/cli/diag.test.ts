@@ -90,13 +90,22 @@ function makeCtx(overrides: Partial<PluginContextV3['ui']> = {}): PluginContextV
     pluginId: '@kb-labs/system',
     pluginVersion: '1.0.0',
     cwd: '/test/workspace',
-    ui: { ...noopUI, ...overrides },
+    ui: {
+      ...noopUI,
+      ...overrides,
+    },
     platform: makeMockPlatform() as never,
     runtime: { fs: {} as never, fetch: vi.fn(), env: vi.fn() },
     api: {} as never,
     hostContext: { host: 'cli' as const, argv: [], flags: {} },
     trace: noopTraceContext,
   };
+}
+
+function readData<T>(jsonSpy: ReturnType<typeof vi.fn>): T {
+  const envelope = jsonSpy.mock.calls[0]?.[0] as { ok?: boolean; data?: T };
+  expect(envelope).toMatchObject({ ok: true });
+  return envelope.data as T;
 }
 
 // Lazy import after mocks are set up
@@ -140,8 +149,8 @@ describe('diag — base (no --command)', () => {
     const code = await diag.run(ctx, [], { json: true });
     expect(code).toBe(0);
     expect(jsonSpy).toHaveBeenCalledOnce();
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean };
-    expect(result.ok).toBe(true);
+    const result = readData<{ status: string }> (jsonSpy);
+    expect(result.status).toBe('degraded');
   });
 
   it('surfaces unavailable commands from registry with unavailableReason + hint', async () => {
@@ -162,7 +171,7 @@ describe('diag — base (no --command)', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { diagnostics: Array<{ code?: string; remediation?: string; status: string }> };
+    const result = readData<{ diagnostics: Array<{ code?: string; remediation?: string; status: string }> }> (jsonSpy);
     const unavailable = result.diagnostics.filter(d => d.code === 'REQUIRES_MISSING');
     expect(unavailable).toHaveLength(1);
     expect(unavailable[0]?.remediation).toBe('pnpm add @kb-labs/review-engine');
@@ -188,7 +197,7 @@ describe('diag — base (no --command)', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { diagnostics: Array<{ code?: string; status: string }> };
+    const result = readData<{ diagnostics: Array<{ code?: string; status: string }> }> (jsonSpy);
     const lockEvents = result.diagnostics.filter(d => d.code === 'INTEGRITY_MISMATCH');
     expect(lockEvents).toHaveLength(1);
     expect(lockEvents[0]?.status).toBe('error');
@@ -221,7 +230,7 @@ describe('diag — base (no --command)', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { diagnostics: Array<{ code?: string; status: string; remediation?: string }> };
+    const result = readData<{ diagnostics: Array<{ code?: string; status: string; remediation?: string }> }> (jsonSpy);
     const failures = result.diagnostics.filter(d => d.code === 'MANIFEST_LOAD_FAILED');
     expect(failures).toHaveLength(1);
     expect(failures[0]?.status).toBe('error');
@@ -246,7 +255,7 @@ describe('diag — base (no --command)', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { diagnostics: Array<{ code?: string }> };
+    const result = readData<{ diagnostics: Array<{ code?: string }> }> (jsonSpy);
     const withCode = result.diagnostics.filter(d => d.code !== undefined);
     expect(withCode.length).toBeGreaterThan(0);
   });
@@ -286,8 +295,8 @@ describe('diag --command', () => {
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'marketplace plugins list' });
 
     expect(code).toBe(0);
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean; stages: Array<{ code: string; status: string }>; verdict: { rootCause: string } };
-    expect(result.ok).toBe(true);
+    const result = readData<{ status: string; stages: Array<{ code: string; status: string }>; verdict: { rootCause: string } }> (jsonSpy);
+    expect(result.status).toBe('healthy');
     expect(result.verdict.rootCause).toBe('NONE');
     const registryStage = result.stages.find(s => s.code === 'REGISTRY_OK');
     expect(registryStage).toBeDefined();
@@ -313,9 +322,9 @@ describe('diag --command', () => {
     const diag = await getDiag();
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'review run' });
 
-    expect(code).toBe(1);
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean; stages: Array<{ code: string; status: string; remediation?: string }>; verdict: { rootCause: string; remediation?: string } };
-    expect(result.ok).toBe(false);
+    expect(code).toBe(0);
+    const result = readData<{ status: string; stages: Array<{ code: string; status: string; remediation?: string }>; verdict: { rootCause: string; remediation?: string } }> (jsonSpy);
+    expect(result.status).toBe('unhealthy');
     const stage = result.stages.find(s => s.code === 'REQUIRES_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.status).toBe('error');
@@ -349,7 +358,7 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'deploy run' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; details?: Record<string, unknown> }> };
+    const result = readData<{ stages: Array<{ code: string; details?: Record<string, unknown> }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'SHADOWED_BY');
     expect(stage).toBeDefined();
     expect(stage?.details?.ownerPackage).toBe('@kb-labs/infra-worker-entry');
@@ -366,8 +375,8 @@ describe('diag --command', () => {
     const diag = await getDiag();
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'nonexistent foo' });
 
-    expect(code).toBe(1);
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string }> };
+    expect(code).toBe(0);
+    const result = readData<{ stages: Array<{ code: string }> }> (jsonSpy);
     const codes = result.stages.map(s => s.code);
     expect(codes).toContain('REGISTRY_NOT_FOUND');
     expect(codes).toContain('NOT_IN_LOCK');
@@ -388,8 +397,8 @@ describe('diag --command', () => {
     const diag = await getDiag();
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'workflow run' });
 
-    expect(code).toBe(1);
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; remediation?: string }>; verdict: { rootCause: string; remediation?: string } };
+    expect(code).toBe(0);
+    const result = readData<{ stages: Array<{ code: string; remediation?: string }>; verdict: { rootCause: string; remediation?: string } }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'PLUGIN_DISABLED');
     expect(stage).toBeDefined();
     expect(stage?.remediation).toMatch(/marketplace plugins enable/);
@@ -437,7 +446,7 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'quality report' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; remediation?: string; details?: Record<string, unknown> }> };
+    const result = readData<{ stages: Array<{ code: string; remediation?: string; details?: Record<string, unknown> }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'MANIFEST_LOAD_FAILED');
     expect(stage).toBeDefined();
     expect(stage?.remediation).toMatch(/pnpm.*build/);
@@ -473,7 +482,7 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'workflow rum' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; details?: { availablePaths?: string[] } }> };
+    const result = readData<{ stages: Array<{ code: string; details?: { availablePaths?: string[] } }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'COMMAND_PATH_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.details?.availablePaths).toContain('workflow run');
@@ -514,9 +523,9 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'myplug go' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as {
+    const result = readData<{
       stages: Array<{ code: string; details?: { failures?: Array<{ command: string; reason: string }> } }>;
-    };
+    }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'MANIFEST_STRUCT_INVALID');
     expect(stage).toBeDefined();
     expect(stage?.details?.failures?.[0]?.reason).toContain('Missing describe');
@@ -548,7 +557,7 @@ describe('diag --command', () => {
       discoverState.diagnostics = [];
     }
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string }> };
+    const result = readData<{ stages: Array<{ code: string }> }> (jsonSpy);
     expect(result.stages.find(s => s.code === 'PLUGIN_BLOCKLISTED')).toBeDefined();
   });
 
@@ -583,7 +592,7 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'state get' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; remediation?: string }> };
+    const result = readData<{ stages: Array<{ code: string; remediation?: string }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'PATH_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.remediation).toMatch(/pnpm install/);
@@ -636,12 +645,12 @@ describe('diag --command', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'review run' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as {
+    const result = readData<{
       ok: boolean;
       command: string;
       stages: unknown[];
       verdict: { rootCause: string; remediation?: string };
-    };
+    }> (jsonSpy);
     expect(result.command).toBe('review run');
     expect(Array.isArray(result.stages)).toBe(true);
     expect(result.verdict.rootCause).toBe('REQUIRES_MISSING');
@@ -686,8 +695,8 @@ describe('diag --command (review-fix scenarios)', () => {
 
     // Command works — ok: true despite no lock entry
     expect(code).toBe(0);
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean; stages: Array<{ code: string; status: string }> };
-    expect(result.ok).toBe(true);
+    const result = readData<{ status: string; stages: Array<{ code: string; status: string }> }> (jsonSpy);
+    expect(result.status).toBe('healthy');
     const lockStage = result.stages.find(s => s.code === 'NOT_IN_MARKETPLACE');
     expect(lockStage).toBeDefined();
     expect(lockStage?.status).toBe('info');
@@ -704,9 +713,9 @@ describe('diag --command (review-fix scenarios)', () => {
     const diag = await getDiag();
     const code = await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'missingplug cmd' });
 
-    expect(code).toBe(1);
-    const result = jsonSpy.mock.calls[0]?.[0] as { ok: boolean; stages: Array<{ code: string; status: string }> };
-    expect(result.ok).toBe(false);
+    expect(code).toBe(0);
+    const result = readData<{ status: string; stages: Array<{ code: string; status: string }> }> (jsonSpy);
+    expect(result.status).toBe('degraded');
     const lockStage = result.stages.find(s => s.code === 'NO_LOCK');
     expect(lockStage).toBeDefined();
     expect(lockStage?.status).toBe('warning');
@@ -744,7 +753,7 @@ describe('diag --command (review-fix scenarios)', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'bigplug typo' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; remediation?: string }> };
+    const result = readData<{ stages: Array<{ code: string; remediation?: string }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'COMMAND_PATH_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.remediation).toMatch(/and 3 more/);
@@ -767,7 +776,7 @@ describe('diag --command (review-fix scenarios)', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'workflow nonexistentleaf' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; details?: Record<string, unknown> }> };
+    const result = readData<{ stages: Array<{ code: string; details?: Record<string, unknown> }> }> (jsonSpy);
     const stage = result.stages.find(s => s.code === 'GROUP_EXISTS_LEAF_MISSING');
     expect(stage).toBeDefined();
     expect(stage?.details?.availableChildren).toEqual(['run', 'list', 'abort']);
@@ -795,7 +804,7 @@ describe('diag --command (review-fix scenarios)', () => {
     const diag = await getDiag();
     await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'nopathplug run' });
 
-    const result = jsonSpy.mock.calls[0]?.[0] as { stages: Array<{ code: string; status: string; stage: string }> };
+    const result = readData<{ stages: Array<{ code: string; status: string; stage: string }> }> (jsonSpy);
     const fsStage = result.stages.find(s => s.stage === 'filesystem');
     expect(fsStage?.code).toBe('FS_NO_PATH');
     expect(fsStage?.status).toBe('info');
