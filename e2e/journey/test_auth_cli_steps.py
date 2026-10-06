@@ -10,7 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 from steps.accounts import run_cli_logout_steps
 from steps.auth import (assert_platform_auth_required, run_bootstrap_recovery_steps, run_cli_auth_forbidden,
-                        run_cli_auth_status, assert_cli_session_absent)
+                        run_cli_auth_status, assert_cli_session_absent, run_cli_corrupt_session_file)
 
 
 class CliAuthJourneyTests(unittest.TestCase):
@@ -37,6 +37,32 @@ class CliAuthJourneyTests(unittest.TestCase):
             )
             with self.subTest(error=error), self.assertRaises(AssertionError):
                 assert_platform_auth_required(malformed, ["config", "show", "--json"])
+
+    # case: S-041.18
+    def test_corrupt_saved_session_uses_a_disposable_home_and_requires_repair_envelope(self):
+        homes = []
+
+        def invoke(args, *, env, **_kwargs):
+            home = Path(env["HOME"])
+            homes.append(home)
+            self.assertEqual(args, ["/isolated/bin/kb", "config", "show", "--json"])
+            self.assertEqual((home / ".kb" / "session.json").read_text(encoding="utf-8"), "{ invalid json")
+            self.assertNotIn("KB_PLATFORM_ROOT", env)
+            self.assertNotIn("KB_HOME", env)
+            self.assertNotIn("KB_NET_OFFSET", env)
+            payload = {"ok": False, "error": {
+                "code": "KB_CONFIG_INVALID",
+                "message": "Saved authentication file .kb/session.json is invalid.",
+                "hint": 'Run "kb auth login" to replace the saved authentication data, then retry the command.',
+                "details": {"path": ".kb/session.json", "reason": "invalid"},
+            }}
+            return subprocess.CompletedProcess(args, 1, json.dumps(payload), "")
+
+        with patch("steps.auth.run_command", side_effect=invoke):
+            run_cli_corrupt_session_file("/isolated/bin/kb", {})
+
+        self.assertEqual(len(homes), 1)
+        self.assertFalse(homes[0].exists())
 
     # case: S-041.7, S-041.8
     def test_anonymous_auth_status_is_verified_through_the_cli_product(self):

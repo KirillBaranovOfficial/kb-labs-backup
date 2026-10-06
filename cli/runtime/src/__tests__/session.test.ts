@@ -54,6 +54,29 @@ describe('SessionManager', () => {
     expect(await manager.load()).toBeNull();
   });
 
+  it('SM-08: load() classifies malformed JSON instead of treating it as a missing session', async () => {
+    await fs.writeFile(filePath, '{bad json');
+    await expect(manager.load()).rejects.toMatchObject({
+      name: 'SavedAuthFileError', reason: 'invalid', filePath: '.kb/session.json',
+    });
+  });
+
+  it('SM-09: load() rejects a session with missing required fields', async () => {
+    await fs.writeFile(filePath, JSON.stringify({ gatewayUrl: 'http://localhost:4000' }));
+    await expect(manager.load()).rejects.toMatchObject({ name: 'SavedAuthFileError', reason: 'invalid' });
+    await fs.writeFile(filePath, JSON.stringify({ ...SESSION, accessToken: '' }));
+    await expect(manager.load()).rejects.toMatchObject({ name: 'SavedAuthFileError', reason: 'invalid' });
+  });
+
+  it('SM-10: load() classifies unreadable paths rather than treating them as missing', async () => {
+    const blocker = path.join(tmpDir, 'not-a-directory');
+    await fs.writeFile(blocker, 'file');
+    manager = new SessionManager(path.join(blocker, 'session.json'));
+    await expect(manager.load()).rejects.toMatchObject({
+      name: 'SavedAuthFileError', reason: 'unreadable', filePath: '.kb/session.json',
+    });
+  });
+
   it('SM-02: save() then load() round-trips the session', async () => {
     await manager.save(SESSION);
     expect(await manager.load()).toEqual(SESSION);

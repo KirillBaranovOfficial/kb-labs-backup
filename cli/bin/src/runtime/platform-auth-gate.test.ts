@@ -3,7 +3,7 @@ import { dispatchWithPlatformAuthGate } from './platform-auth-gate.js';
 import { isPlatformAuthExemptFlag } from './platform-auth-policy.js';
 
 describe('platform authentication gate', () => {
-  // case: S-041.4, S-041.7
+  // case: S-041.7
   it('blocks an undeclared plugin before its handler is called', async () => {
     const handler = vi.fn(async () => 0);
     const result = await dispatchWithPlatformAuthGate({
@@ -12,7 +12,7 @@ describe('platform authentication gate', () => {
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
       message: 'Authentication is required.',
-      hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
+      hint: 'Run "kb auth login --help" to configure the Gateway URL and credentials.',
     } });
     expect(handler).not.toHaveBeenCalled();
   });
@@ -22,13 +22,28 @@ describe('platform authentication gate', () => {
     const handler = vi.fn(async () => 0);
     const result = await dispatchWithPlatformAuthGate({
       accessMode: 'secured', commandPath: 'project list', commandKind: 'system', hasAuth: false,
+      gatewayUrl: 'http://127.0.0.1:4000',
     }, handler);
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
       message: 'Authentication is required.',
-      hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
+      hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email> --password <password>".',
     } });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  // case: S-203.14
+  it('returns a host connectivity error when auth verification cannot reach the Gateway', async () => {
+    const hostError = {
+      code: 'KB_HOST_UNREACHABLE', area: 'host', stage: 'run', severity: 'error', retryable: true,
+      message: 'The KB Labs host is not running: cannot connect to http://127.0.0.1:4000.',
+      hint: 'Run "kb-create start", or "kb-create doctor" if the host should already be running.',
+      details: { address: 'http://127.0.0.1:4000' }, correlationId: 'host-down',
+    } as const;
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'secured', commandPath: 'project list', commandKind: 'system', hasAuth: false, authError: hostError,
+    }, async () => 0);
+    expect(result).toEqual({ error: hostError });
   });
 
   // case: S-041.7
@@ -40,7 +55,7 @@ describe('platform authentication gate', () => {
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
       message: 'Authentication is required.',
-      hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
+      hint: 'Run "kb auth login --help" to configure the Gateway URL and credentials.',
     } });
     expect(handler).not.toHaveBeenCalled();
   });
@@ -58,7 +73,7 @@ describe('platform authentication gate', () => {
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
       message: 'Authentication is required.',
-      hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
+      hint: 'Run "kb auth login --help" to configure the Gateway URL and credentials.',
     } });
     expect(handler).not.toHaveBeenCalled();
   });
@@ -73,6 +88,18 @@ describe('platform authentication gate', () => {
       code: 'KB_AUTH_REQUIRED',
       hint: 'Run "kb auth login --gateway-url https://gateway.example.test --email <email> --password <password>".',
     } });
+  });
+
+  // case: S-041.7
+  it('does not show an unresolved URL placeholder when no Gateway address is configured', async () => {
+    const result = await dispatchWithPlatformAuthGate({
+      accessMode: 'secured', commandPath: 'config show', commandKind: 'system', hasAuth: false,
+    }, async () => 0);
+    expect(result).toMatchObject({ error: {
+      code: 'KB_AUTH_REQUIRED',
+      hint: 'Run "kb auth login --help" to configure the Gateway URL and credentials.',
+    } });
+    expect(JSON.stringify(result)).not.toContain('<url>');
   });
 
   // case: S-041.8

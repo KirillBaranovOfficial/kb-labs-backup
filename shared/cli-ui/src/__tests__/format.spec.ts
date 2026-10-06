@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { formatTimestamp, formatRelativeTime } from '../format';
+import { sideBorderBox } from '../modern-format';
 
 describe('format helpers', () => {
   const baseDate = new Date('2025-01-01T00:05:30Z');
@@ -42,3 +43,11 @@ describe('format helpers', () => {
   });
 });
 
+describe('sideBorderBox', () => {
+  it('keeps complete message text on a single line when wrapping is disabled', () => {
+    const message = 'Plugin @kb-labs/not-published was not found in the registry. [KB_PLUGIN_NOT_FOUND]';
+    const output = sideBorderBox({ title: 'Error', sections: [{ items: [message] }], wrap: false });
+
+    expect(output).toContain(message);
+  });
+});
