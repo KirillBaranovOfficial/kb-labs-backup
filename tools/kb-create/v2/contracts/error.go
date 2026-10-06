@@ -63,22 +63,6 @@ const (
 	CodeHostStateDirUnwritable = "KB_HOST_STATE_DIR_UNWRITABLE"
 )
 
-// CodeInfo is the catalog data kb-create needs to build an envelope offline.
-type CodeInfo struct {
-	Area      string
-	Stage     string
-	Retryable bool
-}
-
-// LookupCode returns the launcher's catalog data for a code.
-func LookupCode(code string) (CodeInfo, bool) {
-	entry, ok := diag.LookupCatalog(code)
-	if !ok {
-		return CodeInfo{}, false
-	}
-	return CodeInfo{Area: entry.Area, Stage: entry.Stage, Retryable: entry.Retryable}, true
-}
-
 // NewDiag constructs the shared clikit diagnostic for a kb-create error code.
 // The wrapped cause remains available through Unwrap; callers may add safe
 // machine-envelope cause text explicitly with clikit's WithCause option.

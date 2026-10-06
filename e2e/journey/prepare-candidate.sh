@@ -6,6 +6,7 @@ OUT="$ROOT/.journey"
 PACKAGES="$ROOT/e2e/packages"
 TAG="journey-candidate"
 TARGET="$OUT/release/$TAG"
+COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 
 mkdir -p "$PACKAGES" "$TARGET"
 if [[ -f "$TARGET/update-packages/generated-packages.txt" ]]; then
@@ -27,9 +28,9 @@ fi
 
 (
   cd "$ROOT/tools/kb-create"
-  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
+  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.commit=$COMMIT" \
     -o "$TARGET/kb-create-linux-amd64" .
-  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' \
+  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.commit=$COMMIT" \
     -o "$TARGET/kb-create-linux-arm64" .
   # The installer artifact targets the Linux runner; the sealer runs on the
   # machine preparing the candidate (macOS locally, Linux in CI).

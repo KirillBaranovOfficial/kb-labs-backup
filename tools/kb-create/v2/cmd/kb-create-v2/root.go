@@ -97,6 +97,15 @@ func newRootCommand() *cobra.Command {
 		}
 		root.AddCommand(child)
 	}
+	root.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Show launcher build identity",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Fprintf(cmd.OutOrStdout(), "kb-create %s (commit %s)\n", buildVersion, buildCommit)
+			return result.Return(map[string]string{"version": buildVersion, "commit": buildCommit})
+		},
+	})
 	return root
 }
 
