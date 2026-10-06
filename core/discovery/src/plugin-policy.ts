@@ -1,15 +1,14 @@
 /**
  * @module @kb-labs/core-discovery/plugin-policy
  * Governance gate from `plugins.allow` / `plugins.block` / `plugins.linked`
- * in `<scopeRoot>/.kb/kb.config.json`.
+ * in the canonical user config file under `<scopeRoot>`.
  *
  * The gate applies to third-party (not `@kb-labs/*`) packages installed from the
  * marketplace (`node_modules` origin). First-party packages, linked and workspace
  * plugins are never gated by `allow`; `block` always wins for gated packages.
  */
 
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
+import { readJsonWithDiagnostics, resolveUserConfigFile } from '@kb-labs/core-config';
 
 export interface PluginPolicy {
   /** When set, only these third-party packages (or linked ones) are discovered. */
@@ -26,12 +25,19 @@ function names(value: unknown): string[] | undefined {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined;
 }
 
-/** Read the `plugins` section of `<root>/.kb/kb.config.json`. Missing or invalid file: no policy. */
-export async function readPluginPolicy(root: string): Promise<PluginPolicy> {
+/** Read the `plugins` section from the root's canonical user config file. */
+export async function readPluginPolicy(
+  root: string,
+  onInputRead?: (filePath: string) => void,
+): Promise<PluginPolicy> {
   try {
-    const raw = JSON.parse(await fs.readFile(path.join(root, '.kb', 'kb.config.json'), 'utf-8')) as {
+    const configPath = await resolveUserConfigFile(root);
+    onInputRead?.(configPath);
+    const result = await readJsonWithDiagnostics<{
       plugins?: { allow?: unknown; block?: unknown; linked?: unknown };
-    };
+    }>(configPath);
+    if (!result.ok) return {};
+    const raw = result.data;
     return {
       allow: names(raw.plugins?.allow),
       block: names(raw.plugins?.block),

@@ -19,14 +19,18 @@ uninstall it and verify that its route is no longer available.
 
 - [ ] A registered project and authenticated project API client.
 - [ ] A published `@kb-labs/commit` marketplace version compatible with the platform.
+- [ ] Commit is absent from the platform marketplace lock. When needed, remove
+  it through `kb marketplace uninstall @kb-labs/commit-entry --scope platform`
+  before starting the project-scoped flow.
 
 ## Steps
 
 | # | Action | Expected |
 |---|---|---|
 | S-192.1 | Run `kb marketplace install @kb-labs/commit-entry@<version>` in the registered project | The selected Commit version is installed and enabled in that project's marketplace state. |
-| S-192.2 | GET `/api/v1/projects/<project-id>/rest/api/v1/plugins/commit/status` for the registered project | The Commit handler answers successfully with its status response. |
-| S-192.3 | Run `kb marketplace uninstall @kb-labs/commit-entry` in the project, then GET `/api/v1/projects/<project-id>/rest/api/v1/plugins/commit/status` again | The request returns HTTP 404 with the gateway UX envelope `{ok:false,error:{code:"KB_RUNTIME_UNEXPECTED",message:"An unexpected error occurred.",hint:"Re-run with --debug and include the correlationId in a report.",correlationId:<non-empty>}}`. The code is the catalogued gateway fallback for an unrecognized 404. |
+| S-192.2 | After S-192.1 completes, GET `/api/v1/projects/<project-id>/rest/api/v1/plugins/commit/status` for the registered project without restarting any service | The Commit handler answers successfully with its status response. |
+| S-192.3 | Run `kb marketplace uninstall @kb-labs/commit-entry` in the project, then GET `/api/v1/projects/<project-id>/rest/api/v1/plugins/commit/status` again | The request returns HTTP 404 with the typed envelope `{ok:false,error:{code:"KB_PLUGIN_NOT_INSTALLED",message:"Plugin is not installed in this project.",hint:"Run `kb marketplace install @kb-labs/commit-entry` in this project.",correlationId:<non-empty>}}`. |
+| S-192.4 | Run `kb marketplace install @kb-labs/commit-entry@<version>` again, then GET `/api/v1/projects/<project-id>/rest/api/v1/plugins/commit/status` | The Commit handler answers successfully without restarting any service. |
 
 ## Pass criteria
 
@@ -38,14 +42,12 @@ contract (`plugins/commit/entry/src/manifest.ts:227-247`;
 `plugins/commit/contracts/src/routes.ts:7-24`). REST route mounting replaces
 the manifest `/v1` prefix with the configured `/api/v1` base path
 (`services/rest-api/app/src/routes/plugins.ts:404-450`), giving the request
-path in this case. Gateway UX boundary maps unrecognized HTTP 404 responses to
-the catalogued `KB_RUNTIME_UNEXPECTED` error envelope
-(`services/gateway/app/src/ux-boundary.ts:16-38`,
-`services/gateway/app/src/errors.catalog.json:1050`). However, after the server
-starts listening, a marketplace registry change cannot remount plugin routes;
-the implementation logs that a restart is required
-(`services/rest-api/app/src/routes/index.ts:209-237`). Keep the case planned
-until install and uninstall make the Commit route appear and disappear without
-an undocumented manual router change or restart. The case is release-scoped
-because Commit is the release plugin and REST routes are part of its advertised
-plugin surface.
+path in this case. `KB_PLUGIN_NOT_INSTALLED` is the typed response for a route whose plugin is
+absent from the effective discovered plugin set. For the known Commit prefix,
+the handler resolves `@kb-labs/commit-entry` from the extension store and gives
+the exact project install command. For an unknown prefix with no matching stored
+manifest, it gives `kb marketplace plugins list` without guessing a package name.
+Both branches use the catalogued `KB_PLUGIN_NOT_INSTALLED` message; the known
+Commit install hint is asserted by S-192.3. The case is release-scoped because
+Commit is the release plugin and REST routes are part of its advertised plugin
+surface.

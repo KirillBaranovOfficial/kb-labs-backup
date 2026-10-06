@@ -11,6 +11,19 @@
 // Discovery manager
 export { DiscoveryManager, extractEntityKinds } from './discovery-manager.js';
 export type { DiscoveryOptions } from './discovery-manager.js';
+export {
+  DISCOVERY_MARKETPLACE_LOCK,
+  DISCOVERY_WORKSPACE_FILE,
+  DISCOVERY_PACKAGE_MANIFEST,
+  DISCOVERY_ROOT_INPUT_PATHS,
+  getDiscoveryInputPaths,
+  createDiscoveryInputFingerprinter,
+} from './discovery-inputs.js';
+export type {
+  DiscoveryInputStat,
+  DiscoveryInputFileSystem,
+  DiscoveryInputFingerprinter,
+} from './discovery-inputs.js';
 
 // Marketplace lock CRUD
 export {

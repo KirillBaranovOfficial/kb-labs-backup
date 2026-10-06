@@ -52,9 +52,9 @@ def validate_unmounted_commit_response(status: int, payload: object) -> None:
     failure = payload.get("error") if isinstance(payload, dict) else None
     if (status != 404 or not isinstance(payload, dict) or payload.get("ok") is not False
             or not isinstance(failure, dict)
-            or failure.get("code") != "KB_RUNTIME_UNEXPECTED"
-            or failure.get("message") != "An unexpected error occurred."
-            or failure.get("hint") != "Re-run with --debug and include the correlationId in a report."
+            or failure.get("code") != "KB_PLUGIN_NOT_INSTALLED"
+            or failure.get("message") != "Plugin is not installed in this project."
+            or failure.get("hint") != "Run `kb marketplace install @kb-labs/commit-entry` in this project."
             or not isinstance(failure.get("correlationId"), str) or not failure["correlationId"]):
         raise RuntimeError(f"unmounted Commit route returned an unexpected gateway failure: HTTP {status} {payload!r}")
 
@@ -312,10 +312,38 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         if _platform_snapshot(platform_root) != sealed_platform_before:
             raise RuntimeError("marketplace install changed the platform receipt or installed package versions")
     journey.step(
-        "install exact marketplace plugin into the project store", "marketplace",
+        "install exact marketplace plugin into both scopes", "marketplace",
         install_exact_commit,
-        cases=["S-010.1", "S-192.1"],
+        cases=["S-010.1"],
     )
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def prepare_project_only_commit_scope() -> None:
+        for scope in ("platform", "project"):
+            command = ["marketplace", "uninstall", commit_package, "--scope", scope, "--json"]
+            _output(cli(command), command)
+        platform_lock = json.loads((platform_root / ".kb" / "marketplace.lock").read_text())
+        if commit_package in platform_lock.get("plugins", {}):
+            raise RuntimeError("S-192 requires Commit to be absent from the platform marketplace lock")
+        if commit_package in json.loads(lock_file.read_text()).get("plugins", {}):
+            raise RuntimeError("S-192 project setup did not remove the prior Commit pin")
+
+    journey.step("remove platform and project Commit pins before the S-192 project lifecycle", "marketplace",
+                 prepare_project_only_commit_scope)
+    if journey.steps[-1].status != "PASS":
+        return
+
+    def install_commit_for_project_lifecycle() -> None:
+        result = _json(cli(install_commit), install_commit)
+        installed = result.get("installed")
+        if (result.get("scope") != "project" or not isinstance(installed, list)
+                or not any(isinstance(item, dict) and item.get("id") == commit_package
+                           and item.get("version") == commit_version for item in installed)):
+            raise RuntimeError("project marketplace install did not return the selected plugin version as JSON")
+
+    journey.step("install Commit into the project for the route lifecycle", "marketplace",
+                 install_commit_for_project_lifecycle, cases=["S-192.1"])
     if journey.steps[-1].status != "PASS":
         return
 
@@ -658,3 +686,25 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
              cases=["S-047.3"])
     if journey.steps[-1].status != "PASS":
         return
+
+    def reinstall_commit_and_assert_route() -> None:
+        reinstall = ["marketplace", "install", f"{commit_package}@{commit_version}", "--json"]
+        installed = _json(cli(reinstall), reinstall)
+        entries = installed.get("installed")
+        if not isinstance(entries, list) or not any(
+            isinstance(item, dict) and item.get("id") == commit_package
+            and item.get("version") == commit_version for item in entries
+        ):
+            raise RuntimeError("S-192 reinstall did not restore the selected Commit version")
+        if not project_id:
+            raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+        request = urllib.request.Request(route, headers={
+            "Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"})
+        status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("reinstalled Commit status route did not return JSON") from error
+        validate_commit_status_response(status, payload)
+    journey.step("reinstall Commit and call its project REST route", "marketplace",
+                 reinstall_commit_and_assert_route, cases=["S-192.4"])

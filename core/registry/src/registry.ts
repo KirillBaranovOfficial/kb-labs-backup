@@ -204,6 +204,10 @@ export class EntityRegistry implements IEntityRegistry {
     return this.buildSnapshot();
   }
 
+  findStoredPluginPackageForRestPrefix(requestedPrefix: string, basePath: string): Promise<string | undefined> {
+    return this.discovery.findStoredPluginPackageForRestPrefix(requestedPrefix, basePath);
+  }
+
   onChange(cb: (diff: RegistryDiff) => void): () => void {
     this.changeListeners.push(cb);
     return () => {

@@ -588,6 +588,15 @@
       "hint": "Read the reason in the log and include the correlationId if you report it."
     },
     {
+      "code": "KB_PROJECT_RUNTIME_RELOAD_FAILED",
+      "area": "project",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "The runtime of project {projectId} could not reload after its plugin set changed.",
+      "hint": "Inspect project runtime logs with `kb logs query` or under the project's `.kb/logs`, then run `kb marketplace plugins doctor --scope project`."
+    },
+    {
       "code": "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH",
       "area": "project",
       "stage": "start",
@@ -982,6 +991,15 @@
       "retryable": false,
       "message": "Plugin {plugin} was not found in the registry.",
       "hint": "kb marketplace search"
+    },
+    {
+      "code": "KB_PLUGIN_NOT_INSTALLED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin is not installed in this project.",
+      "hint": "Run `kb marketplace install {package}` in this project."
     },
     {
       "code": "KB_ADAPTER_NOT_CONFIGURED",

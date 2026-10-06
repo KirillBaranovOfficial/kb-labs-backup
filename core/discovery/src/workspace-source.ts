@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { glob } from 'glob';
 import { parse as parseYaml } from 'yaml';
 import { pathToFileURL } from 'node:url';
+import { DISCOVERY_PACKAGE_MANIFEST, DISCOVERY_WORKSPACE_FILE } from './discovery-inputs.js';
 
 export interface WorkspaceCandidate {
   /** `name` from package.json */
@@ -26,7 +27,7 @@ export async function loadAdapterManifest(packageRoot: string): Promise<{
   requires?: { adapters?: Array<string | { id: string; alias?: string }> };
 } | null> {
   try {
-    const rawPackage = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf-8')) as {
+    const rawPackage = JSON.parse(await fs.readFile(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST), 'utf-8')) as {
       kb?: { manifest?: unknown };
       kbLabs?: { manifest?: unknown };
     };
@@ -80,7 +81,7 @@ async function exists(file: string): Promise<boolean> {
  * a fresh checkout has hundreds of them and none is an error.
  */
 async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | null> {
-  const pkg = await readPackageJson(path.join(packageRoot, 'package.json'));
+  const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST));
   if (!pkg || typeof pkg.name !== 'string') {return null;}
   const manifestRel = declaredManifest(pkg);
   if (!manifestRel) {return null;}
@@ -92,12 +93,17 @@ async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | nu
   return built ? { packageName: pkg.name, packageRoot } : null;
 }
 
-async function workspacePackageRoots(root: string): Promise<string[]> {
+async function workspacePackageRoots(
+  root: string,
+  onInputRead?: (filePath: string) => void,
+): Promise<string[]> {
   const absRoot = path.resolve(root);
 
   let patterns: string[] | null = null;
   try {
-    const parsed = parseYaml(await fs.readFile(path.join(absRoot, 'pnpm-workspace.yaml'), 'utf-8')) as
+    const workspaceFile = path.join(absRoot, DISCOVERY_WORKSPACE_FILE);
+    onInputRead?.(workspaceFile);
+    const parsed = parseYaml(await fs.readFile(workspaceFile, 'utf-8')) as
       | { packages?: unknown }
       | null;
     if (Array.isArray(parsed?.packages)) {
@@ -115,7 +121,7 @@ async function workspacePackageRoots(root: string): Promise<string[]> {
   const exclude = patterns.filter(p => p.startsWith('!')).map(p => `${p.slice(1).replace(/\/$/, '')}/**`);
   const roots = new Set<string>();
   for (const pattern of include) {
-    const files = await glob(path.posix.join(pattern.replace(/\/$/, ''), 'package.json'), {
+    const files = await glob(path.posix.join(pattern.replace(/\/$/, ''), DISCOVERY_PACKAGE_MANIFEST), {
       cwd: absRoot,
       ignore: [...IGNORED_DIRS, ...exclude],
     });
@@ -129,7 +135,7 @@ async function workspacePackageRoots(root: string): Promise<string[]> {
 /** Enumerate every package matched by a workspace, whether built or not. */
 export async function findWorkspacePackages(root: string): Promise<WorkspaceCandidate[]> {
   const packages = await Promise.all((await workspacePackageRoots(root)).map(async packageRoot => {
-    const pkg = await readPackageJson(path.join(packageRoot, 'package.json'));
+    const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST));
     return pkg && typeof pkg.name === 'string' ? { packageName: pkg.name, packageRoot } : null;
   }));
   return packages.filter((candidate): candidate is WorkspaceCandidate => candidate !== null);
@@ -145,7 +151,14 @@ export async function findWorkspacePackages(root: string): Promise<WorkspaceCand
  *
  * Results are sorted by package root for a deterministic order.
  */
-export async function findWorkspaceCandidates(root: string): Promise<WorkspaceCandidate[]> {
-  const candidates = await Promise.all((await workspacePackageRoots(root)).map(toCandidate));
+export async function findWorkspaceCandidates(
+  root: string,
+  onInputRead?: (filePath: string) => void,
+): Promise<WorkspaceCandidate[]> {
+  const candidates = await Promise.all((await workspacePackageRoots(root, onInputRead)).map(async (packageRoot) => {
+    const packagePath = path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST);
+    onInputRead?.(packagePath);
+    return toCandidate(packageRoot);
+  }));
   return candidates.filter((c): c is WorkspaceCandidate => c !== null);
 }

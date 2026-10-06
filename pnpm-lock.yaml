@@ -1412,6 +1412,9 @@ importers:
 
   core/discovery:
     dependencies:
+      '@kb-labs/core-config':
+        specifier: workspace:*
+        version: link:../config
       '@kb-labs/core-extension-store':
         specifier: workspace:*
         version: link:../extension-store

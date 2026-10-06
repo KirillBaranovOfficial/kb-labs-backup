@@ -10,6 +10,7 @@ import {
 import type { ReadinessState } from '../readiness';
 import * as fs from 'node:fs/promises';
 import { platform } from '@kb-labs/core-runtime';
+import { resolveWorkspaceRoot } from '@kb-labs/core-workspace';
 import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 
 // Mock dependencies
@@ -127,6 +128,7 @@ function createMockSnapshot(manifests: Array<{
   manifest: ManifestV3;
   pluginRoot: string;
   source?: string;
+  scope?: 'platform' | 'project';
 }>, options?: {
   diagnostics?: Array<{
     severity: 'error' | 'warning' | 'info' | 'debug';
@@ -157,7 +159,7 @@ function createMockSnapshot(manifests: Array<{
       pluginRoot: entry.pluginRoot,
       source: { kind: 'local' as const, path: entry.source ?? 'test' },
       packageName: entry.pluginId,
-      scope: 'project' as const,
+      scope: (entry.scope ?? 'project') as 'platform' | 'project',
       origin: 'workspace' as const,
       manifestPath: `${entry.pluginRoot}/manifest.json`,
       manifestKind: 'static' as const,
@@ -194,6 +196,64 @@ describe('registerPluginRoutes', () => {
 
   afterEach(async () => {
     await app.close();
+  });
+
+  // case: S-192.2
+  it('uses the host KB_HOME when resolving a registered project for plugin route mounting', async () => {
+    const previousKbHome = process.env.KB_HOME;
+    process.env.KB_HOME = '/tmp/kb-home-route-mount-test';
+    try {
+      const registry = { snapshot: () => createMockSnapshot([]) } as unknown as IEntityRegistry;
+      await registerPluginRoutes(app, BASE_CONFIG, '/mock/repo', registry, readiness);
+
+      expect(vi.mocked(resolveWorkspaceRoot)).toHaveBeenCalledWith(expect.objectContaining({
+        env: expect.objectContaining({ KB_HOME: '/tmp/kb-home-route-mount-test' }),
+      }));
+    } finally {
+      if (previousKbHome === undefined) delete process.env.KB_HOME;
+      else process.env.KB_HOME = previousKbHome;
+    }
+  });
+
+  it('mounts a platform-scope plugin route in the effective discovered set', async () => {
+    const manifest = createMockManifest({
+      id: '@kb-labs/test-platform-plugin',
+      rest: {
+        basePath: '/v1/plugins/test-platform-plugin',
+        routes: [{ method: 'GET', path: '/status', handler: './handlers/status.js#default' }],
+      },
+    });
+    const registry = { snapshot: () => createMockSnapshot([{
+      pluginId: manifest.id,
+      manifest,
+      pluginRoot: '/mock/plugins/platform',
+      scope: 'platform',
+    }]) } as unknown as IEntityRegistry;
+
+    await registerPluginRoutes(app, BASE_CONFIG, '/mock/repo', registry, readiness);
+
+    expect(readiness.pluginRoutesCount).toBe(1);
+  });
+
+  it('mounts platform-scope routes in single-root development discovery', async () => {
+    const manifest = createMockManifest({
+      id: '@kb-labs/dev-plugin',
+      rest: {
+        basePath: '/v1/plugins/dev-plugin',
+        routes: [{ method: 'GET', path: '/status', handler: './handlers/status.js#default' }],
+      },
+    });
+    // Discovery reports every plugin as platform scope when projectRoot === platformRoot.
+    const registry = { snapshot: () => createMockSnapshot([{
+      pluginId: manifest.id,
+      manifest,
+      pluginRoot: '/mock/plugins/dev',
+      scope: 'platform',
+    }]) } as unknown as IEntityRegistry;
+
+    await registerPluginRoutes(app, BASE_CONFIG, '/mock/repo', registry, readiness);
+
+    expect(readiness.pluginRoutesCount).toBe(1);
   });
 
   it('successfully mounts plugin routes with REST endpoints', async () => {

@@ -21,7 +21,7 @@
  */
 
 import type { IContextLogger } from "@kb-labs/core-platform";
-import { runtimeLimitReached, runtimeStartFailed } from "./errors.js";
+import { runtimeLimitReached, runtimeReloadFailed, runtimeStartFailed } from "./errors.js";
 
 export interface RuntimeProject {
   id: string;
@@ -75,7 +75,7 @@ export interface RestartPolicy {
   resetAfterMs: number;
 }
 
-export type RuntimeState = "starting" | "ready" | "restarting" | "stopping";
+export type RuntimeState = "starting" | "ready" | "restarting" | "reloading" | "stopping";
 
 export interface RuntimeLease {
   projectId: string;
@@ -125,6 +125,8 @@ export interface ProjectRuntimeManagerOptions {
   restart?: Partial<RestartPolicy>;
   /** Called once each time a runtime became ready for a project. */
   onStarted?: (project: RuntimeProject) => void;
+  /** Fingerprints every input that determines the project's discovered plugin set. */
+  getPluginSetDigest?: (project: RuntimeProject) => Promise<string>;
   /** Clock, injectable for tests. */
   now?: () => number;
 }
@@ -173,6 +175,9 @@ interface Entry {
   stopped?: Promise<void>;
   healthTimer?: NodeJS.Timeout;
   healthFailures: number;
+  pluginSetDigest?: string;
+  reloadTask?: Promise<void>;
+  drained?: Deferred;
   /** Wakes a backoff sleep when the entry is being stopped. */
   wake?: () => void;
 }
@@ -248,11 +253,31 @@ export class ProjectRuntimeManager {
       }
       const entry = existing;
       switch (entry.state) {
-        case "ready":
+        case "ready": {
+          let digest: string | undefined;
+          try {
+            digest = await this.options.getPluginSetDigest?.(project);
+          } catch (error) {
+            throw runtimeReloadFailed(
+              project.id,
+              `could not read the plugin-set digest: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+          if (this.entries.get(project.id) !== entry || entry.state !== "ready") {
+            continue;
+          }
+          if (digest !== undefined && digest !== entry.pluginSetDigest) {
+            await this.reload(entry, digest);
+            continue;
+          }
           return this.lease(entry);
+        }
         case "starting":
         case "restarting":
           await this.awaitReady(entry);
+          continue;
+        case "reloading":
+          await entry.reloadTask;
           continue;
         case "stopping":
           await entry.stopped;
@@ -369,6 +394,12 @@ export class ProjectRuntimeManager {
       await this.stopEntry(victim, "evicted");
     }
     this.failures.delete(project.id);
+    let pluginSetDigest: string | undefined;
+    try {
+      pluginSetDigest = await this.options.getPluginSetDigest?.(project);
+    } catch (error) {
+      throw runtimeStartFailed(project.id, `could not read the plugin-set digest: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const entry: Entry = {
       project,
       state: "starting",
@@ -378,6 +409,7 @@ export class ProjectRuntimeManager {
       ready: deferred(),
       task: Promise.resolve(),
       healthFailures: 0,
+      pluginSetDigest,
     };
     this.entries.set(project.id, entry);
     entry.task = this.bringUp(entry);
@@ -418,8 +450,50 @@ export class ProjectRuntimeManager {
         released = true;
         entry.inflight -= 1;
         entry.lastUsed = this.now();
+        if (entry.inflight === 0) entry.drained?.resolve();
       },
     };
+  }
+
+  /** One reload promise gates acquisitions while leases on the old runtime drain. */
+  private reload(entry: Entry, digest: string): Promise<void> {
+    if (entry.state === "reloading") return entry.reloadTask ?? Promise.resolve();
+    entry.state = "reloading";
+    entry.drained = entry.inflight > 0 ? deferred() : undefined;
+    entry.reloadTask = this.reloadProcess(entry, digest);
+    return entry.reloadTask;
+  }
+
+  private async reloadProcess(entry: Entry, digest: string): Promise<void> {
+    const previous = entry.process;
+    try {
+      if (entry.drained) await entry.drained.promise;
+      if (entry.state !== "reloading") return;
+      this.clearHealthMonitor(entry);
+      await previous?.stop();
+      if (entry.state !== "reloading") return;
+      entry.process = undefined;
+      await this.startOnce(entry);
+      if (entry.state === "reloading") {
+        entry.pluginSetDigest = digest;
+        entry.restarts += 1;
+        this.markReady(entry);
+      }
+    } catch (error) {
+      if (entry.state !== "reloading") return;
+      const cause = error instanceof Error ? error.message : String(error);
+      this.clearHealthMonitor(entry);
+      await entry.process?.stop().catch(() => undefined);
+      entry.process = undefined;
+      entry.state = "stopping";
+      this.failures.set(entry.project.id, {
+        at: this.now(),
+        error: cause,
+        restarts: entry.restarts,
+      });
+      if (this.entries.get(entry.project.id) === entry) this.entries.delete(entry.project.id);
+      throw runtimeReloadFailed(entry.project.id, cause);
+    }
   }
 
   /**
@@ -697,10 +771,12 @@ export class ProjectRuntimeManager {
     entry.state = "stopping";
     this.clearHealthMonitor(entry);
     entry.wake?.();
+    entry.drained?.resolve();
     entry.stopped = (async () => {
       try {
         // Let a start/restart in progress notice the state change first.
         await entry.task;
+        await entry.reloadTask?.catch(() => undefined);
         await entry.process?.stop();
       } catch (error) {
         this.options.logger.warn("Stopping a project runtime failed", {

@@ -6,7 +6,7 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import { type ManifestV3 } from '@kb-labs/plugin-contracts';
+import { resolvePluginBasePath, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import { createExtensionStore } from '@kb-labs/core-extension-store';
 import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import type {
@@ -52,6 +52,8 @@ export interface DiscoveryOptions {
   workspace?: boolean;
   /** Machine-local extension store used to resolve project version pins. */
   extensionStore?: IExtensionStore;
+  /** Observe root input reads; used to verify discovery and fingerprint inputs stay aligned. */
+  onInputRead?: (filePath: string) => void;
 }
 
 /** Shadowing priority within one scope: workspace > linked > node_modules. */
@@ -122,6 +124,7 @@ export class DiscoveryManager {
   private readonly verifyIntegrity: boolean;
   private readonly workspace: boolean;
   private readonly extensionStore: IExtensionStore;
+  private readonly onInputRead?: (filePath: string) => void;
   /** plugins.allow/block/linked per scope root, read at the start of discover() */
   private policies = new Map<string, PluginPolicy>();
 
@@ -134,6 +137,7 @@ export class DiscoveryManager {
     this.verifyIntegrity = opts.verifyIntegrity ?? true;
     this.workspace = opts.workspace ?? true;
     this.extensionStore = opts.extensionStore ?? createExtensionStore();
+    this.onInputRead = opts.onInputRead;
   }
 
   /**
@@ -147,7 +151,7 @@ export class DiscoveryManager {
   async discover(): Promise<DiscoveryResult> {
     const diag = new DiagnosticCollector();
     this.policies = new Map(
-      await Promise.all(this.scopes.map(async ({ root }) => [root, await readPluginPolicy(root)] as const)),
+      await Promise.all(this.scopes.map(async ({ root }) => [root, await readPluginPolicy(root, this.onInputRead)] as const)),
     );
     const candidates = await this.collectCandidates(diag);
 
@@ -170,6 +174,24 @@ export class DiscoveryManager {
     return { plugins, manifests, failures, diagnostics: diag.getEvents() };
   }
 
+  /** Resolve an unmounted REST namespace to the package that declares it in the extension store. */
+  async findStoredPluginPackageForRestPrefix(
+    requestedPrefix: string,
+    basePath: string,
+  ): Promise<string | undefined> {
+    const entries = await this.extensionStore.listEntries();
+    for (const entry of entries) {
+      if (entry.kind !== 'plugin' || !entry.manifest) {continue;}
+      const rest = entry.manifest.rest;
+      if (!rest || (!rest.basePath && !rest.routes?.length)) {continue;}
+      const prefix = resolvePluginBasePath(entry.manifest, 'rest', basePath);
+      if (prefix === requestedPrefix || prefix.startsWith(`${requestedPrefix}/`)) {
+        return entry.name;
+      }
+    }
+    return undefined;
+  }
+
   // -------------------------------------------------------------------------
   // Candidates
   // -------------------------------------------------------------------------
@@ -179,7 +201,7 @@ export class DiscoveryManager {
     // with the same lock key (project overrides platform).
     const locked = new Map<string, Candidate>();
     for (const { scope, root } of this.scopes) {
-      const lock = await readMarketplaceLock(root, diag);
+      const lock = await readMarketplaceLock(root, diag, this.onInputRead);
       if (!lock) {continue;}
       for (const [id, entry] of Object.entries(lock.plugins)) {
         let packageRoot: string | undefined;
@@ -220,7 +242,7 @@ export class DiscoveryManager {
 
     if (this.workspace) {
       for (const { scope, root } of this.scopes) {
-        for (const found of await findWorkspaceCandidates(root)) {
+        for (const found of await findWorkspaceCandidates(root, this.onInputRead)) {
           candidates.push({
             id: found.packageName,
             scope,
