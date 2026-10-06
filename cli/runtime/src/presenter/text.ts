@@ -27,6 +27,8 @@ export function createTextPresenter(isQuiet: boolean = false): Presenter {
         title: 'Error',
         sections: [{ items: [String(line)] }],
         status: 'error',
+        wrap: process.stderr.isTTY === true,
+        width: process.stderr.columns,
       });
       console.error(box);
     },

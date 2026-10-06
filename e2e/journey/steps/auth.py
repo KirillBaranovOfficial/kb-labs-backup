@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -127,6 +128,31 @@ def assert_cli_session_absent(result: subprocess.CompletedProcess[str]) -> None:
         raise AssertionError(f"kb auth status --json did not report an unauthenticated session: {payload!r}")
     if not isinstance(session, dict) or session.get("authenticated") is not False:
         raise AssertionError("kb auth status --json reported that the CLI session is authenticated")
+
+
+def run_cli_corrupt_session_file(cli_path: str, env: dict[str, str]) -> None:
+    """A malformed saved session must produce the catalogued repair envelope."""
+    with tempfile.TemporaryDirectory(prefix="kb-journey-auth-home-") as home:
+        session_path = Path(home) / ".kb" / "session.json"
+        session_path.parent.mkdir(parents=True)
+        session_path.write_text("{ invalid json", encoding="utf-8")
+        isolated_env = dict(env)
+        isolated_env["HOME"] = home
+        isolated_env["KB_JOURNEY_HOME_LABEL"] = "corrupt-auth-session"
+        command = [cli_path, "config", "show", "--json"]
+        result = run_command(command, env=isolated_env)
+        try:
+            envelope = read_ux_cli_result(result.stdout, result.returncode)
+        except (json.JSONDecodeError, ValueError) as error:
+            raise AssertionError("corrupt saved session did not return one ADR-0049 JSON envelope") from error
+        failure = decode_ux_error_result(envelope)
+        expected_hint = 'Run "kb auth login" to replace the saved authentication data, then retry the command.'
+        if (result.returncode != 1 or failure.get("code") != "KB_CONFIG_INVALID"
+                or failure.get("details", {}).get("path") != ".kb/session.json"
+                or failure.get("details", {}).get("reason") != "invalid"
+                or ".kb/session.json" not in failure.get("message", "")
+                or failure.get("hint") != expected_hint):
+            raise AssertionError(f"corrupt saved session returned an unexpected result: {envelope!r}")
 
 
 def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,

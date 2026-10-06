@@ -1,5 +1,6 @@
 import type { IServiceTransport } from './adapters/service-transport.js';
 import { ServicePortConfigError } from './errors.js';
+import { getHostServiceAddress } from './host-service-address.js';
 
 /** Canonical listener settings for the Gateway service across all launchers. */
 export const GATEWAY_SERVICE_NETWORK = {
@@ -23,6 +24,32 @@ export interface ServiceNetworkSettings {
 export interface ResolvedServiceListenAddress {
   port: number;
   host: string;
+}
+
+export interface GatewayServiceAddressOptions {
+  gatewayUrl?: string;
+  gatewayPort?: string;
+  gatewayHost?: string;
+  netOffset: number;
+}
+
+/** Resolve the HTTP URL that CLI children use to reach the Gateway listener. */
+export function resolveGatewayServiceAddress(
+  transport: Pick<IServiceTransport, 'listenAddress'> | undefined,
+  options: GatewayServiceAddressOptions,
+): string {
+  if (options.gatewayUrl) {
+    return getHostServiceAddress('gateway', { KB_GATEWAY_URL: options.gatewayUrl });
+  }
+  const address = resolveServiceListenAddress(transport, {
+    serviceId: GATEWAY_SERVICE_NETWORK.serviceId,
+    portEnvVar: GATEWAY_SERVICE_NETWORK.portEnvVar,
+    portEnvValue: options.gatewayPort,
+    defaultPort: GATEWAY_SERVICE_NETWORK.defaultPort,
+    hostEnvValue: options.gatewayHost,
+    defaultHost: GATEWAY_SERVICE_NETWORK.defaultHost,
+  }, options.netOffset);
+  return `http://127.0.0.1:${address.port}`;
 }
 
 /**

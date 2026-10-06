@@ -161,6 +161,8 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
         title: options?.title ?? 'Error',
         sections,
         status: 'error',
+        wrap: process.stderr.isTTY === true,
+        width: process.stderr.columns,
         timing: options?.timing,
         summary: options?.summary,
       });

@@ -1,5 +1,12 @@
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 
+export class GatewayAuthResponseError extends Error {
+  constructor(readonly operation: string, readonly status: number, body: string) {
+    super(`${operation} failed (${status}): ${body}`);
+    this.name = 'GatewayAuthResponseError';
+  }
+}
+
 /** Decode the canonical success envelope returned by Gateway JSON routes. */
 export async function readGatewaySuccessData<T>(response: Response): Promise<T> {
   const result: unknown = await response.json();

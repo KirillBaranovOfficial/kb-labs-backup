@@ -56,7 +56,10 @@ export class TerminalEventRenderer implements IEventRenderer {
         if (event.code) {
           errSections.push({ header: 'Code', items: [event.code] });
         }
-        process.stderr.write('\n' + sideBorderBox({ title: 'Error', sections: errSections, status: 'error' }) + '\n');
+        process.stderr.write('\n' + sideBorderBox({
+          title: 'Error', sections: errSections, status: 'error',
+          wrap: process.stderr.isTTY === true, width: process.stderr.columns,
+        }) + '\n');
         break;
       }
 

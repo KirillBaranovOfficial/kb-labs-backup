@@ -261,7 +261,7 @@ export async function executeCommandV3(
       }
     } else if (!cliResult.ok) {
       const error = toPluginErrorEnvelope(cliResult.error);
-      ui.error(`${error.code}: ${error.message}`, { hint: error.hint });
+      ui.error(`${error.message} [${error.code}]`, { hint: error.hint });
     }
 
     // Return exit code from wrapped result
@@ -302,7 +302,7 @@ function presentExecutionError(
   if (jsonMode) {
     ui.json({ ok: false, error });
   } else {
-    ui.error(`${error.code}: ${error.message}`, { hint: error.hint });
+    ui.error(`${error.message} [${error.code}]`, { hint: error.hint });
   }
 }
 

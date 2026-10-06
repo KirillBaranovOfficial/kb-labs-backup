@@ -24,8 +24,7 @@ import { randomUUID } from "node:crypto";
 import {
   AdapterUnavailableError,
   createContextLogger,
-  GATEWAY_SERVICE_NETWORK,
-  resolveServiceListenAddress,
+  resolveGatewayServiceAddress,
 } from "@kb-labs/core-platform";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
@@ -99,21 +98,15 @@ export async function executePlugin(
     permissions.env?.read,
     "KB_GATEWAY_URL",
   )
-    ? (() => {
-        const address = resolveServiceListenAddress(
-          platform.getAdapter<IServiceTransport>("serviceTransport"),
-          {
-            serviceId: GATEWAY_SERVICE_NETWORK.serviceId,
-            portEnvVar: GATEWAY_SERVICE_NETWORK.portEnvVar,
-            portEnvValue: process.env[GATEWAY_SERVICE_NETWORK.portEnvVar],
-            defaultPort: GATEWAY_SERVICE_NETWORK.defaultPort,
-            hostEnvValue: process.env[GATEWAY_SERVICE_NETWORK.hostEnvVar],
-            defaultHost: GATEWAY_SERVICE_NETWORK.defaultHost,
-          },
-          options.netOffset ?? 0,
-        );
-        return `http://127.0.0.1:${address.port}`;
-      })()
+    ? resolveGatewayServiceAddress(
+        platform.getAdapter<IServiceTransport>("serviceTransport"),
+        {
+          gatewayUrl: process.env.KB_GATEWAY_URL,
+          gatewayPort: process.env.GATEWAY_PORT,
+          gatewayHost: process.env.GATEWAY_HOST,
+          netOffset: options.netOffset ?? 0,
+        },
+      )
     : undefined;
 
   try {
