@@ -24,7 +24,7 @@ changes the active platform.
 
 | # | Action | Expected |
 |---|---|---|
-| S-214.1 | Run `kb-create plan --index MISSING_INDEX --request-platform-root ROOT --json` | Returns `KB_INSTALL_RELEASE_INDEX_INVALID`; `details.gate` is `read`, `details.path` names `MISSING_INDEX`, and the cause names the OS read failure. Human output includes a `Why:` line with the gate and path. |
+| S-214.1 | Run `kb-create plan --index MISSING_INDEX --request-platform-root ROOT --json` | Returns non-retryable `KB_INSTALL_RELEASE_INDEX_UNREADABLE`; `details.gate` is `read`, `details.path` names `MISSING_INDEX`, and the cause names the OS read failure. The hint tells the operator to check the index path and permissions. Human output includes a `Why:` line with the gate and path. |
 | S-214.2 | Run the same plan command with an index containing malformed JSON | Returns `KB_INSTALL_RELEASE_INDEX_INVALID`; `details.gate` is `parse`, `details.path` names the index, and the cause describes the JSON parse failure. |
 | S-214.3 | Run the same plan command with an unsupported index schema | Returns `KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED`; details name the `schema version` gate, index path, supported schema, and actual schema. |
 | S-214.4 | Run the same plan command with a validly structured index whose digest does not match | Returns `KB_INSTALL_RELEASE_INDEX_INVALID`; `details.gate` is `digest`, and `details.expected` and `details.actual` contain the digest values. |
