@@ -13,7 +13,8 @@ surfaces: [api]
 ## Goal
 
 Emit an analytics event, query it by type, source, and date range, and confirm
-the default local SQLite adapter retains it across a platform restart.
+the default local SQLite adapter retains it across a platform restart and prunes
+events outside the configured retention period.
 
 ## Prerequisites
 
@@ -27,6 +28,18 @@ the default local SQLite adapter retains it across a platform restart.
 | S-191.1 | Have the fixture plugin call `platform.analytics.track("case.analytics.persist", { source: "case-fixture" })` | The event is accepted by the configured analytics adapter and stored with the generated event type, timestamp, and analytics context. |
 | S-191.2 | GET `/api/v1/analytics/events?type=case.analytics.persist&source=case-fixture&from=<before-event>&to=<after-event>` | The response includes the emitted event and excludes fixture events outside the requested type, source, or date range. |
 | S-191.3 | Restart the platform with `kb-create restart --platform-root "$PLATFORM_ROOT"`, then repeat the same analytics query | The same event remains queryable after restart from the default local SQLite adapter. |
+| S-191.4 | Inspect `platform.adapterOptions.analytics` in `.kb/kb.config.jsonc`, then query for an event older than 90 days after startup and again after a day of uptime | The default retention is 90 days; events older than that age are absent after startup and at least daily while recent events remain queryable. |
+| S-191.5 | Set `platform.adapterOptions.analytics.retentionDays` to `30`, restart the platform, and query for an event older than 30 days after startup and again after a day of uptime | SQLite analytics removes events older than the configured 30-day age on startup and at least daily. |
+| S-191.6 | Have the fixture plugin perform cache, storage, and vector-store operations, then query `/api/v1/analytics/events?from=<before-operations>&to=<after-operations>` | The time range contains no raw cache, storage, or vector-store operation events; fixture LLM and embeddings usage events remain queryable with their usage metrics. |
+
+## Analytics boundary
+
+`platform.analytics.track` stores product events and usage events that carry
+user value, including LLM token/cost usage and embeddings usage. Raw cache,
+storage, and vector-store adapter calls are operational telemetry: they do not
+create rows in the product analytics event table. Adapter errors remain
+fail the calling operation; whether a backend also emits a contextual operational
+log remains backend-specific and is not represented as a product analytics row.
 
 ## Pass criteria
 
@@ -39,4 +52,6 @@ and `to` and forwards them to the analytics adapter
 (`services/rest-api/app/src/routes/analytics.ts:33-93`); SQLite applies those
 filters (`adapters/analytics-sqlite/src/index.ts:408-445`). S-121 covers the
 Studio analytics views and filters, not ingestion, durable local persistence,
-or the query API lifecycle covered here.
+or the query API lifecycle covered here. SQLite retention defaults to 90 days
+and is enforced on start and at least daily;
+`platform.adapterOptions.analytics.retentionDays` configures that age in days.
