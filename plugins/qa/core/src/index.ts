@@ -15,6 +15,7 @@ export { SnapshotStore } from './snapshot/snapshot-store.js';
 export { parseQACatalog } from './cases/catalog.js';
 export type { QACatalogDiagnostic, QACatalogResult } from './cases/catalog.js';
 export { scanQACaseClaims } from './cases/claims.js';
+export { RELEASE_CASE_CLAIM_BASELINE, validateReleaseCaseClaims } from './cases/release-claim-baseline.js';
 export { computeQACaseCoverage } from './cases/coverage.js';
 
 // Analysis
