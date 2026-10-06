@@ -701,8 +701,7 @@ class FileAnalytics implements IAnalytics {
 
       return events;
     } catch (error) {
-      console.warn("Failed to read events:", error);
-      return [];
+      throw error;
     }
   }
 

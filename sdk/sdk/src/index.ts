@@ -261,6 +261,9 @@ export {
 export {
   AdapterUnavailableError,
   AdapterCredentialsMissingError,
+  AdapterOperationError,
+  AdapterConfigError,
+  PlatformConfigError,
   toErrorEnvelope,
 } from "@kb-labs/core-platform";
 

@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // In-memory fake of @qdrant/js-client-rest: upsert stores points, search /
 // retrieve / scroll echo them back with their payloads (incl. the reserved id).
 const store = new Map<string | number, { id: string | number; vector: number[]; payload: Record<string, unknown> }>();
+let upsertFailure: Error | undefined;
 
 vi.mock("@qdrant/js-client-rest", () => ({
   QdrantClient: class {
@@ -23,6 +24,7 @@ vi.mock("@qdrant/js-client-rest", () => ({
       return true;
     }
     async upsert(_c: string, { points }: { points: Array<{ id: string | number; vector: number[]; payload: Record<string, unknown> }> }) {
+      if (upsertFailure) { throw upsertFailure; }
       for (const p of points) {
         store.set(p.id, p);
       }
@@ -43,7 +45,7 @@ vi.mock("@qdrant/js-client-rest", () => ({
 import { QdrantVectorStore } from "./index";
 
 describe("QdrantVectorStore — id round-trip", () => {
-  beforeEach(() => store.clear());
+  beforeEach(() => { store.clear(); upsertFailure = undefined; });
 
   const original = "src/Feature/Service.cs#10-42";
 
@@ -65,5 +67,18 @@ describe("QdrantVectorStore — id round-trip", () => {
 
     expect(hits[0]?.metadata).toEqual({ path: "src/Feature/Service.cs" });
     expect(Object.keys(hits[0]?.metadata ?? {}).some((k) => k.startsWith("__kb"))).toBe(false);
+  });
+
+  // case: S-211.1, S-211.4
+  it("surfaces a persistent upsert failure after bounded retries", async () => {
+    upsertFailure = Object.assign(new Error("Qdrant unavailable"), { status: 503 });
+    const vs = new QdrantVectorStore({
+      url: "http://localhost:6333",
+      dimension: 3,
+      retry: { maxAttempts: 1 },
+    });
+
+    await expect(vs.upsert([{ id: original, vector: [0.1, 0.2, 0.3] }]))
+      .rejects.toMatchObject({ code: "KB_ADAPTER_OPERATION_FAILED", slot: "vectorStore" });
   });
 });

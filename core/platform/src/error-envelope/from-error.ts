@@ -8,7 +8,7 @@
  * `@kb-labs/plugin-contracts`; both delegate here for the rest.
  */
 
-import { AdapterCredentialsMissingError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError, ServicePortConfigError } from '../errors.js';
+import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError, ServicePortConfigError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
 import { createErrorEnvelope, type CreateEnvelopeOptions } from './catalog.js';
 import type { ErrorEnvelope } from './types.js';
@@ -17,6 +17,15 @@ export type ToEnvelopeOptions = Pick<CreateEnvelopeOptions, 'correlationId' | 'a
 
 /** Convert any thrown value to an envelope. Unknown values become `KB_RUNTIME_UNEXPECTED`. */
 export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {}): ErrorEnvelope {
+  if (error instanceof AdapterConfigError) {
+    return createErrorEnvelope('KB_CONFIG_INVALID', {
+      ...options,
+      details: { path: error.optionPath },
+      cause: error.detail,
+      message: error.message,
+      hint: error.hint,
+    });
+  }
   if (error instanceof ServicePortConfigError) {
     return createErrorEnvelope('KB_CONFIG_INVALID', {
       ...options,
@@ -99,6 +108,14 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
         label: `Configure ${error.slot}`,
         command,
       }],
+    });
+  }
+  if (error instanceof AdapterOperationError) {
+    return createErrorEnvelope('KB_ADAPTER_OPERATION_FAILED', {
+      ...options,
+      cause: error.message,
+      details: { slot: error.slot, operation: error.operation },
+      hint: `Run "kb logs query" to inspect the ${error.slot} adapter failure, correct the underlying issue, then retry the operation.`,
     });
   }
   return createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {

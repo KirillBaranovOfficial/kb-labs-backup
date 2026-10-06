@@ -3,9 +3,9 @@
  * Qdrant adapter implementing IVectorStore interface.
  *
  * All Qdrant client calls that touch the network are wrapped with
- * exponential-backoff retry logic ({@link withRetry}) so that transient
- * failures (ECONNREFUSED, ETIMEDOUT, HTTP 503, etc.) are handled
- * automatically without propagating to callers.
+ * exponential-backoff retry logic ({@link withRetry}) so transient failures
+ * (ECONNREFUSED, ETIMEDOUT, HTTP 503, etc.) are retried. Exhausted operations
+ * fail with a catalogued adapter error.
  *
  * @example
  * ```typescript
@@ -33,6 +33,7 @@ import type {
   VectorSearchResult,
   VectorFilter,
 } from "@kb-labs/sdk/adapters";
+import { AdapterOperationError } from "@kb-labs/sdk";
 
 // Re-export manifest
 export { manifest } from "./manifest.js";
@@ -214,8 +215,11 @@ export class QdrantVectorStore implements IVectorStore {
 
       this.initializedCollections.add(collection);
     } catch (error) {
-      throw new Error(
-        `Failed to initialize Qdrant collection '${collection}': ${error instanceof Error ? error.message : String(error)}`,
+      throw new AdapterOperationError(
+        "vectorStore",
+        "initialize",
+        `Failed to initialize Qdrant collection '${collection}'.`,
+        error,
       );
     }
   }
@@ -367,9 +371,13 @@ export class QdrantVectorStore implements IVectorStore {
       try {
         await Promise.all(batchPromises);
         batchIndex += batchGroup.length;
-      } catch (_error) {
-        // If group fails, retry with reduced concurrency (already adjusted above)
-        // Don't increment batchIndex — retry same batches
+      } catch (error) {
+        throw new AdapterOperationError(
+          "vectorStore",
+          "upsert",
+          "Qdrant rejected a vector upsert after the configured retry policy was exhausted.",
+          error,
+        );
       }
     }
   }

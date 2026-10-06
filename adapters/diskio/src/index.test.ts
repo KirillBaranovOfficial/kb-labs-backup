@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createAdapter } from "./index.js";
@@ -31,6 +31,14 @@ describe("disk storage", () => {
     expect(await store.read("missing.txt")).toBeNull();
     await expect(store.delete("missing.txt")).resolves.toBeUndefined();
     expect(await store.exists("missing.txt")).toBe(false);
+  });
+
+  // case: S-211.5
+  it("surfaces non-missing filesystem errors from exists", async () => {
+    const store = createAdapter({ baseDir: root });
+    await symlink('loop', join(root, 'loop'));
+
+    await expect(store.exists('loop')).rejects.toMatchObject({ code: 'ELOOP' });
   });
 
   it("rejects paths that resolve outside the configured root", async () => {

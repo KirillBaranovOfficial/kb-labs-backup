@@ -40,6 +40,9 @@ As a KB Labs user or automation author, I can tell whether an operation succeede
 | S-203.15 | On a fresh installed platform whose `.kb/kb.config.jsonc` has no `gateway.port`, invoke `kb marketplace plugins doctor --scope project --json` while the host is running | The host starts with the Gateway's default port. The CLI plugin command succeeds and reaches that Gateway using the same service transport address and network offset as the host. No manual `gateway.port` setting is required. |
 | S-203.16 | Set `GATEWAY_PORT` to a non-integer or a value outside `1` through `65535`, then invoke `kb marketplace plugins doctor --scope project --json` | The command exits 1 with a `KB_CONFIG_INVALID` envelope naming `GATEWAY_PORT`, explaining that it must be an integer from 1 through 65535, and hinting `unset GATEWAY_PORT` before retrying with the service default. The plugin does not start, and no NaN or raw error is shown. |
 
+The adapter-specific failure behavior previously recorded as S-203.17 and
+S-203.18 is covered by [S-211.4–S-211.5](S-211-optional-adapter-failure-visibility.md#steps).
+
 ## Contract reference
 
 Machine results use the shared schema and fixtures in `contracts/ux-result/`. Every CLI and HTTP/MCP machine result is an envelope: success is `{ "ok": true, "data": <payload>, "meta"?: {...} }`; failure is `{ "ok": false, "error": <ErrorEnvelope> }`. The platform error type is defined in `core/platform/src/error-envelope`.

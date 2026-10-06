@@ -5,7 +5,7 @@
  * Implements ADR-0043: Adapter Manifest System
  */
 
-import type { AdapterManifest, AdapterDependency } from '@kb-labs/core-platform';
+import type { AdapterManifest, AdapterDependency, ILogger } from '@kb-labs/core-platform';
 
 /**
  * Adapter configuration from kb.config.json
@@ -299,7 +299,8 @@ export class AdapterLoader {
    */
   async loadAdapters(
     configs: Record<string, AdapterConfig>,
-    loadModule: (modulePath: string) => Promise<LoadedAdapterModule>
+    loadModule: (modulePath: string) => Promise<LoadedAdapterModule>,
+    sharedDeps: { logger?: ILogger } = {},
   ): Promise<Map<string, unknown>> {
     // Step 1: Build dependency graph
     const graph = await this.buildDependencyGraph(configs, loadModule);
@@ -312,7 +313,7 @@ export class AdapterLoader {
 
     for (const node of sorted) {
       // Build deps object for factory function
-      const deps: Record<string, unknown> = {};
+      const deps: Record<string, unknown> = sharedDeps.logger ? { logger: sharedDeps.logger } : {};
 
       // Get dependency aliases
       const aliases = this.getDependencyAliases(node.manifest);

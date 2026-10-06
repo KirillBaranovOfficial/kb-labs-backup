@@ -850,7 +850,7 @@ export async function initPlatform(
     // Load adapters with dependency resolution. Configured adapters that
     // fail to load surface in the next pass via `fillAdapterFallbacksAndRecord`,
     // which throws a single combined error listing every failed slot.
-    const loadedAdapters = await loader.loadAdapters(adapterConfigs, loadModule);
+    const loadedAdapters = await loader.loadAdapters(adapterConfigs, loadModule, { logger: platform.logger });
 
     // CRITICAL: Set analytics adapter FIRST (without wrapping) so wrapWithAnalytics() can use it
     if (loadedAdapters.has('analytics')) {

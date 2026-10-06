@@ -1047,6 +1047,15 @@
       "hint": "Set {credential} or configure it at platform scope at {path} with `{command}`. No request was sent."
     },
     {
+      "code": "KB_ADAPTER_OPERATION_FAILED",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The {slot} adapter failed during {operation}.",
+      "hint": "Run `kb logs query` to inspect the adapter failure, correct the underlying issue, then retry the operation."
+    },
+    {
       "code": "KB_RUNTIME_INPUT_INVALID",
       "area": "runtime",
       "stage": "run",

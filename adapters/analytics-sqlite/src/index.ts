@@ -14,7 +14,8 @@ import Database from 'better-sqlite3';
 import { join, isAbsolute, dirname } from 'node:path';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { mkdirSync } from 'node:fs';
-import { AdapterUnavailableError } from '@kb-labs/sdk';
+import { AdapterConfigError, AdapterUnavailableError } from '@kb-labs/sdk';
+import type { ILogger } from '@kb-labs/sdk/adapters';
 import type {
   IAnalytics,
   IDisposable,
@@ -121,6 +122,7 @@ export interface SQLiteAnalyticsOptions {
   analytics?: AnalyticsContext;
   /** Delete events older than this many days on startup and at least daily. Default: 90. */
   retentionDays?: number;
+  logger?: ILogger;
 }
 
 // ─── Adapter ──────────────────────────────────────────────────────────────────
@@ -136,8 +138,10 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
   private db: Database.Database;
   private retentionDays = 90;
   private retentionTimer?: ReturnType<typeof setInterval>;
+  private readonly logger?: ILogger;
 
   constructor(options: SQLiteAnalyticsOptions = {}) {
+    this.logger = options.logger;
     const cwd = options.workspace?.cwd ?? process.cwd();
     const rawPath = options.dbPath ?? options.filename;
     // No explicit path: per-project runtime state lives outside the repository (ADR-0044).
@@ -169,7 +173,11 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
       }
       this.retentionDays = options.retentionDays ?? 90;
       if (!Number.isInteger(this.retentionDays) || this.retentionDays < 1) {
-        throw new Error('analytics retentionDays must be a positive integer');
+        throw new AdapterConfigError(
+          'platform.adapterOptions.analytics.retentionDays',
+          'must be a positive integer',
+          'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90',
+        );
       }
       this.pruneExpiredEvents();
     } catch (error) {
@@ -199,11 +207,12 @@ export class SQLiteAnalytics implements IAnalytics, IDisposable {
       try {
         this.pruneExpiredEvents();
       } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        process.emitWarning(
-          `Failed to apply ${this.retentionDays}-day analytics retention to ${this.dbPath}: ${detail}`,
-          { code: 'KB_ANALYTICS_RETENTION_FAILED' },
-        );
+        this.logger?.error('Analytics retention pruning failed', error instanceof Error ? error : new Error(String(error)), {
+          adapter: 'analytics-sqlite',
+          operation: 'retention-prune',
+          retentionDays: this.retentionDays,
+          dbPath: this.dbPath,
+        });
       }
     }, RETENTION_INTERVAL_MS);
     this.retentionTimer.unref();
@@ -513,8 +522,8 @@ export { manifest } from './manifest.js';
 /**
  * Factory function required by core-runtime adapter discovery.
  */
-export function createAdapter(options?: SQLiteAnalyticsOptions): IAnalytics {
-  return new SQLiteAnalytics(options);
+export function createAdapter(options: SQLiteAnalyticsOptions = {}, deps: { logger?: ILogger } = {}): IAnalytics {
+  return new SQLiteAnalytics({ ...options, logger: deps.logger });
 }
 
 export default createAdapter;

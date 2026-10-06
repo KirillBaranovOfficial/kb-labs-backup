@@ -84,6 +84,22 @@ export class AdapterCredentialsMissingError extends Error {
   }
 }
 
+/** An adapter operation failed after its own retry policy was exhausted. */
+export class AdapterOperationError extends Error {
+  public readonly code = 'KB_ADAPTER_OPERATION_FAILED';
+
+  constructor(
+    public readonly slot: string,
+    public readonly operation: string,
+    message: string,
+    cause?: unknown,
+  ) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = 'AdapterOperationError';
+    Object.setPrototypeOf(this, AdapterOperationError.prototype);
+  }
+}
+
 /** A present platform configuration layer could not be loaded or validated. */
 export class PlatformConfigError extends Error {
   public readonly configPath: string;
@@ -97,6 +113,22 @@ export class PlatformConfigError extends Error {
     this.reason = reason;
     this.detail = detail;
     Object.setPrototypeOf(this, PlatformConfigError.prototype);
+  }
+}
+
+/** A typed adapter option failed validation before the adapter could start. */
+export class AdapterConfigError extends Error {
+  public readonly optionPath: string;
+  public readonly detail: string;
+  public readonly hint: string;
+
+  constructor(optionPath: string, detail: string, hint: string) {
+    super(`Adapter option "${optionPath}" is invalid: ${detail}.`);
+    this.name = 'AdapterConfigError';
+    this.optionPath = optionPath;
+    this.detail = detail;
+    this.hint = hint;
+    Object.setPrototypeOf(this, AdapterConfigError.prototype);
   }
 }
 

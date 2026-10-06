@@ -166,6 +166,39 @@ def _without_jsonc_comments(source: str) -> str:
     return "".join(output)
 
 
+def run_analytics_invalid_retention_step(*, mode: str, launcher: str, platform_root: Path,
+                                         run_command: CommandRunner) -> Journey:
+    """Prove invalid SQLite retention config fails a real installed host start."""
+    journey = Journey(mode, f"analytics-invalid-retention-{mode}")
+    config_path = platform_root / ".kb/kb.config.jsonc"
+
+    def invalid_retention() -> None:
+        config = json.loads(_without_jsonc_comments(config_path.read_text()))
+        platform_config = config.setdefault("platform", {})
+        options = platform_config.setdefault("adapterOptions", {})
+        options.setdefault("analytics", {})["retentionDays"] = 0
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+
+        result = run_command([launcher, "start", "--platform-root", str(platform_root), "--json"])
+        envelope, error = _diagnostic(result, "invalid analytics retention")
+        detail = json.dumps(error, sort_keys=True)
+        expected_hint = (
+            "kb config set --scope platform "
+            "platform.adapterOptions.analytics.retentionDays 90"
+        )
+        if (result.returncode != 1 or envelope.get("ok") is not False
+                or error.get("code") != "KB_CONFIG_INVALID"
+                or "platform.adapterOptions.analytics.retentionDays" not in detail
+                or "positive integer" not in detail
+                or expected_hint not in str(error.get("hint", ""))
+                or error.get("code") == "KB_RUNTIME_UNEXPECTED"):
+            raise RuntimeError(f"invalid analytics retention did not return its catalogued config error: {error}")
+
+    journey.step("reject invalid SQLite retention during installed host startup", "platform.install",
+                 invalid_retention, cases=["S-191.7"])
+    return journey
+
+
 def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                              canary_index: Path, platform_root: Path,
                              secret_value: str, run_command: CommandRunner) -> Journey:
@@ -235,6 +268,13 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     journey.step("inspect generated runtime config and service declarations", "platform.install",
                  inspect_generated_config, cases=["PC-001.5"])
+
+    for step in run_analytics_invalid_retention_step(mode=mode, launcher=launcher,
+                                                     platform_root=apply_root,
+                                                     run_command=run_command).steps:
+        journey.step(step.name, step.capability,
+                     lambda step=step: None if step.status == "PASS" else step.message,
+                     cases=step.cases)
 
     def repeat_plan() -> None:
         before = {str(path.relative_to(platform_root)): path.read_bytes()

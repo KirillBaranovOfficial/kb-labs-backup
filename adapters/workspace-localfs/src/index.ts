@@ -165,8 +165,11 @@ export class LocalFsWorkspaceAdapter implements IWorkspaceProvider {
       const parsed = JSON.parse(raw) as WorkspaceRecord;
       this.records.set(workspaceId, parsed);
       return parsed;
-    } catch {
-      throw new Error(`Workspace not found: ${workspaceId}`);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        throw new Error(`Workspace not found: ${workspaceId}`);
+      }
+      throw error;
     }
   }
 }

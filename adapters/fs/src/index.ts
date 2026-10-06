@@ -116,8 +116,11 @@ export class FilesystemStorageAdapter implements IStorage {
     try {
       await fs.access(absolutePath);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return false;
+      }
+      throw error;
     }
   }
 
