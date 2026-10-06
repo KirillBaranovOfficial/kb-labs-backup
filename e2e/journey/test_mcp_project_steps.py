@@ -42,6 +42,26 @@ def tool_error(code: str, message: str, hint: str):
 
 
 class ProjectMcpJourneyTests(unittest.TestCase):
+    def setUp(self):
+        def read_installed_contract(*parts: str) -> bytes:
+            root = Path(__file__).resolve().parents[2]
+            paths = {
+                ("ux-result", "machine-result.schema.json"):
+                    root / "contracts/ux-result/machine-result.schema.json",
+                ("error-envelope.schema.json",):
+                    root / "core/platform/src/error-envelope/error-envelope.schema.json",
+            }
+            return paths[parts].read_bytes()
+
+        self.installed_contract_patch = patch(
+            "mcp_project_steps.read_installed_platform_resource",
+            side_effect=read_installed_contract,
+        )
+        self.installed_contract_patch.start()
+
+    def tearDown(self):
+        self.installed_contract_patch.stop()
+
     # case: S-141.1, S-141.2, S-141.3, S-141.4, S-141.5
     def test_agent_session_steps_reject_fake_failures_then_claim_full_lifecycle(self):
         journey = Journey("local", "agent-session")

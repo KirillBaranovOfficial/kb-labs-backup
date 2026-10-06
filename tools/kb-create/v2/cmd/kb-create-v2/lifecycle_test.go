@@ -324,6 +324,27 @@ func TestRollbackWithoutASnapshotIsRefusedWithTheCatalogError(t *testing.T) {
 	}
 }
 
+// case: S-025.6
+func TestRollbackFailureIncludesOperationLogAndDiagnosticDossier(t *testing.T) {
+	inst := newInstallation(t)
+	payload, code, raw := invoke(t, invocation{Operation: "rollback", PlatformRoot: inst.root,
+		Snapshot: "fixture-missing-snapshot", Yes: true, JSON: true})
+	if code != 1 || errorCode(payload) != contracts.CodeUpdateApplyFailed {
+		t.Fatalf("rollback failure: %d %s", code, raw)
+	}
+	logPath, _ := payload["logPath"].(string)
+	diagnosticPath, _ := payload["diagnosticPath"].(string)
+	if logPath == "" || diagnosticPath == "" {
+		t.Fatalf("rollback failure omitted its log or dossier path: %s", raw)
+	}
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("rollback operation log is not available: %v", err)
+	}
+	if _, err := os.Stat(diagnosticPath); err != nil {
+		t.Fatalf("rollback diagnostic dossier is not available: %v", err)
+	}
+}
+
 func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 	t.Setenv(host.KBHomeEnv, t.TempDir())
 	for _, operation := range []string{"rollback", "uninstall"} {

@@ -564,11 +564,13 @@ class ServiceJourneyTests(unittest.TestCase):
             for source in tokens[1:-1]:
                 for path in root.glob(source):
                     target = Path(destination)
+                    if path.is_dir() and str(target) == "/opt/kb-journey/e2e/journey":
+                        copied_into_package.update(child.name for child in path.glob("*.py"))
                     if destination.endswith("/"):
                         target /= path.name
                     if str(target) == "/usr/local/bin/kb-journey-runner" and path.name == "entrypoint.py":
                         wrapper_copied = True
-                    if str(target.parent) == "/opt/kb-journey":
+                    if str(target.parent) == "/opt/kb-journey/e2e/journey":
                         copied_into_package.add(path.name)
 
         local_modules = {path.stem for path in journey_dir.glob("*.py")}
@@ -585,9 +587,9 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertTrue(wrapper_copied, "Dockerfile.runner must install entrypoint.py as kb-journey-runner")
         self.assertTrue(required_modules <= copied_into_package,
                         f"Dockerfile.runner misses journey modules: {sorted(required_modules - copied_into_package)}")
-        self.assertIn("COPY e2e/journey/steps /opt/kb-journey/steps",
+        self.assertIn("COPY e2e/journey /opt/kb-journey/e2e/journey",
                       (journey_dir / "Dockerfile.runner").read_text(),
-                      "Dockerfile.runner must copy the auth step package imported by runner.py")
+                      "Dockerfile.runner must mirror the journey package under the repository resource root")
 
     def test_aggregate_compares_previous_status_and_uses_stable_fingerprint(self):
         bad = {"capability": "workflow", "mode": "local", "name": "run", "status": "FAIL",

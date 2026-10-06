@@ -31,7 +31,7 @@ func TestMigratedBuiltinsCompileToSharedV2Requests(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			base := contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible}
+			base := contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible}
 			request, err := Compile(scenario, state, base)
 			if err != nil {
 				t.Fatal(err)
@@ -84,7 +84,7 @@ func TestScenarioValueRendersIntoManifestOwnedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: root, Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible})
+	request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: root, Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestSecuredCustomScenarioSelectsPersistentAuthStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible})
+	request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestScenarioRejectsUndeclaredConfigAndOption(t *testing.T) {
 		t.Fatal("expected option validation")
 	}
 	state.Answers["unknown"] = []byte(`"value"`)
-	request, err := Compile(scenario, state, contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible})
+	request, err := Compile(scenario, state, contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestPagedScenarioCompilesConditionalAndSecretFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible})
+	request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestRequiredFieldIsOnlyRequiredWhileVisible(t *testing.T) {
 			{ID: "email", Requirement: "gateway.bootstrap.adminEmail", Type: "string", Required: true, When: &Predicate{Path: "mode", Equals: "secured"}},
 		}}}}},
 	}
-	base := contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible}
+	base := contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible}
 	compile := func(answers map[string]string) (contracts.InstallRequest, error) {
 		state, err := New(definition)
 		if err != nil {
@@ -306,7 +306,7 @@ func TestBlankOptionalStringIsUnsetNotAnEmptyValue(t *testing.T) {
 		{ID: "email", Requirement: "gateway.bootstrap.adminEmail", Type: "string", Validators: []Validator{{Kind: "pattern", Arg: `^[a-z]+@[a-z]+\.[a-z]{2,}$`}}},
 		{ID: "name", Requirement: "some.name", Type: "string", Required: true},
 	}}
-	base := contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible}
+	base := contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible}
 	state, err := New(definition)
 	if err != nil {
 		t.Fatal(err)
