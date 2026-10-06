@@ -86,19 +86,25 @@ def run_platform_update_steps(
     root = str(platform_root)
     receipt_path = platform_root / ".kb/v2/receipt.json"
     config_paths = [platform_root / ".kb/kb.config.jsonc"]
+    secrets_path = platform_root / ".kb/v2/secrets.env"
     snapshot_id = ""
     updated_plan_hash = ""
     updated_plan: dict = {}
     config_checkpoints: dict[str, str | None] = {}
+    secret_checkpoints: dict[str, str | None] = {}
     saved_user_session_established = False
     saved_session_succeeded_after_update = False
 
     def checkpoint_details() -> dict[str, dict[str, str | None]]:
-        return {"configSha256": dict(config_checkpoints)}
+        return {"configSha256": dict(config_checkpoints),
+                "installationSecretsSha256": dict(secret_checkpoints)}
 
     def record_config_checkpoint(name: str) -> None:
         digest = _hash(config_paths[0])
         config_checkpoints[name] = digest
+
+    def record_secret_checkpoint(name: str) -> None:
+        secret_checkpoints[name] = _hash(secrets_path)
 
     def save_known_good_state() -> None:
         nonlocal saved_user_session_established
@@ -111,6 +117,7 @@ def run_platform_update_steps(
             raise RuntimeError("initial kb-create status did not confirm a running, reachable host")
         before_update = _hash(config_paths[0])
         config_checkpoints["beforeUpdate"] = before_update
+        record_secret_checkpoint("beforeUpdate")
         if before_update is None:
             raise RuntimeError(f"generated platform config is missing: {config_paths[0]}")
         if verify_user is not None:
@@ -151,6 +158,7 @@ def run_platform_update_steps(
             raise RuntimeError("update result did not include its operation log path")
         snapshot_id = str(snapshot["id"])
         record_config_checkpoint("afterUpdateHostRestart")
+        record_secret_checkpoint("afterUpdateHostRestart")
         human = run_command([launcher, "update", "--index", str(update_index), "--input", str(request_file)])
         if human.returncode != 0 or "Platform update completed." not in human.stdout:
             raise RuntimeError("human update did not show its completion summary")
@@ -170,6 +178,15 @@ def run_platform_update_steps(
         verified_hash = receipt.get("verification", {}).get("configSha256")
         if not config_hash or config_hash != verified_hash:
             raise RuntimeError("generated config is missing or does not match the updated receipt verification hash")
+        before_secret = secret_checkpoints.get("beforeUpdate")
+        after_secret = secret_checkpoints.get("afterUpdateHostRestart")
+        if before_secret is None or after_secret is None:
+            raise RuntimeError("installation-secret fingerprint is unavailable before or after update")
+        if before_secret != after_secret:
+            raise RuntimeError(
+                "installation-secret fingerprint changed during update: "
+                f"beforeUpdate={before_secret}, afterUpdateHostRestart={after_secret}"
+            )
 
     journey.step("verify updated receipt, config, and host status", "platform.update", verify_updated_install,
                  cases=["S-023.4"])
@@ -190,7 +207,7 @@ def run_platform_update_steps(
         saved_session_succeeded_after_update = True
 
     journey.step("run the core project list command after update", "platform.update", project_command,
-                 cases=["S-023.5"])
+                 cases=["S-023.4", "S-023.5"])
 
     if verify_user is not None:
         def login_after_update() -> None:
@@ -251,6 +268,7 @@ def run_platform_update_steps(
         if result.get("hostRestarted") is not True or not result.get("logPath"):
             raise RuntimeError("rollback did not report host restart and an operation log")
         record_config_checkpoint("afterRollbackHostRestart")
+        record_secret_checkpoint("afterRollbackHostRestart")
 
     journey.step("roll back to version N with explicit non-TTY confirmation", "platform.rollback", rollback,
                  cases=["S-024.2", "S-203.10"], details=checkpoint_details)
@@ -271,6 +289,7 @@ def run_platform_update_steps(
         if receipt_path.read_bytes() != before:
             raise RuntimeError("unknown-snapshot rollback changed the active receipt")
         record_config_checkpoint("afterMissingSnapshotRecovery")
+        record_secret_checkpoint("afterMissingSnapshotRecovery")
 
     journey.step("reject a missing snapshot without changing the active install", "platform.rollback",
                  reject_unknown_snapshot, cases=["S-024.4", "S-203.11"], details=checkpoint_details)
@@ -301,6 +320,30 @@ def run_platform_update_steps(
             raise RuntimeError(
                 "generated config first differed at after missing-snapshot recovery: "
                 f"afterRollbackHostRestart={after_rollback}, afterMissingSnapshotRecovery={after_recovery}"
+            )
+        before_secret = secret_checkpoints.get("beforeUpdate")
+        after_update_secret = secret_checkpoints.get("afterUpdateHostRestart")
+        after_rollback_secret = secret_checkpoints.get("afterRollbackHostRestart")
+        after_recovery_secret = secret_checkpoints.get("afterMissingSnapshotRecovery")
+        if before_secret is None:
+            return "BLOCKED: installation-secret fingerprint is unavailable before update"
+        if after_update_secret is None or after_rollback_secret is None or after_recovery_secret is None:
+            return "BLOCKED: installation-secret fingerprint is unavailable at an update or rollback checkpoint"
+        if before_secret != after_update_secret:
+            raise RuntimeError(
+                "installation-secret fingerprint changed during update: "
+                f"beforeUpdate={before_secret}, afterUpdateHostRestart={after_update_secret}"
+            )
+        if before_secret != after_rollback_secret:
+            raise RuntimeError(
+                "installation-secret fingerprint changed during rollback: "
+                f"beforeUpdate={before_secret}, afterRollbackHostRestart={after_rollback_secret}"
+            )
+        if after_recovery_secret != after_rollback_secret:
+            raise RuntimeError(
+                "installation-secret fingerprint changed during missing-snapshot recovery: "
+                f"afterRollbackHostRestart={after_rollback_secret}, "
+                f"afterMissingSnapshotRecovery={after_recovery_secret}"
             )
         if verify_user is not None:
             if not saved_user_session_established:

@@ -94,11 +94,11 @@ export function createBaseStdoutUI(
       }
 
       if (options?.hint) {
-        const hintItems: Array<string | { text: string; dim: boolean }> = [options.hint];
+        const hintItems: Array<string | { text: string; dim: boolean }> = [`Hint: ${options.hint}`];
         if (options.command) { hintItems.push({ text: `$ ${options.command}`, dim: true }); }
-        sections.push({ header: 'Hint', items: hintItems });
+        sections.push({ items: hintItems });
       } else if (options?.command) {
-        sections.push({ header: 'Hint', items: [{ text: `$ ${options.command}`, dim: true }] });
+        sections.push({ items: [{ text: `Hint: $ ${options.command}`, dim: true }] });
       }
 
       console.error(sideBorderBox({

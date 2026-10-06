@@ -829,7 +829,9 @@ def main() -> int:
         kb_home = Path(os.getenv("KB_HOME", str(Path.home() / ".kb")))
         def archive_logs() -> None:
             archive_service_logs(
-                kb_home, Path(args.output).resolve().parent, mode=args.mode, run_id=journey.run_id,
+                kb_home, Path(args.output).resolve().parent,
+                platform_root=os.environ["KB_JOURNEY_PLATFORM_ROOT"],
+                mode=args.mode, run_id=journey.run_id,
             )
 
         journey.step(

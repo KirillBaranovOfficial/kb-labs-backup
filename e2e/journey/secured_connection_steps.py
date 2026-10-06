@@ -25,6 +25,11 @@ def _cli(cli: str, env: dict[str, str], *args: str):
     return run_command([cli, *args], env=env, timeout=90)
 
 
+def _journey_home(env: dict[str, str]) -> Path:
+    """Return the isolated HOME passed to child commands, not the runner's HOME."""
+    return Path(env["HOME"])
+
+
 def _json(result, description: str) -> dict:
     try:
         value = read_ux_cli_result(result.stdout, result.returncode)
@@ -197,17 +202,16 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         return None
 
     def perform_reset():
-        with invocation_context(step_id="journey.setup"):
+        with invocation_context(step_id="S-042.5"):
             old_access, old_refresh = _login(base, member_email, member_password)
-        reset = _request(base, "/auth/password/reset", method="POST",
-                         body={"token": state["reset_token"], "newPassword": "NewMemberPass123!"})
-        validate_case_response("S-042.5", 200, reset)
-        old_status, _ = _response(base, "/auth/me", token=old_access)
-        _expect(old_status == 401, "password reset did not revoke the member access session")
-        status, _ = _response(base, "/auth/refresh/cli", method="POST",
-                              body={"refreshToken": old_refresh})
-        _expect(status == 401, "password reset did not revoke the member refresh session")
-        with invocation_context(step_id="journey.setup"):
+            reset = _request(base, "/auth/password/reset", method="POST",
+                             body={"token": state["reset_token"], "newPassword": "NewMemberPass123!"})
+            validate_case_response("S-042.5", 200, reset)
+            old_status, _ = _response(base, "/auth/me", token=old_access)
+            _expect(old_status == 401, "password reset did not revoke the member access session")
+            status, _ = _response(base, "/auth/refresh/cli", method="POST",
+                                  body={"refreshToken": old_refresh})
+            _expect(status == 401, "password reset did not revoke the member refresh session")
             _login(base, member_email, "NewMemberPass123!")
         return None
 
@@ -223,7 +227,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
 
     # Keep the secured CLI profile independent from the reset-link flow.
     def apply_isolated_platform():
-        home = Path.home()
+        home = _journey_home(env)
         receipt = json.loads((Path(env["KB_JOURNEY_PLATFORM_ROOT"]) / ".kb/v2/receipt.json").read_text())
         request_data = json.loads(json.dumps(receipt["plan"]["request"]))
         with tempfile.TemporaryDirectory(prefix="s005-platform-", dir=home) as temp:
