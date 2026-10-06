@@ -303,6 +303,17 @@ S-201.1–S-201.2, S-203.7–S-203.8.
 
 ## 2026-10-06
 
+### macOS user temp directories are valid plugin workspaces
+
+The hardcoded filesystem boundary denies operating-system paths such as `/etc`,
+`/usr`, and system-owned `/var` content. macOS places the current user's private
+temporary directory under `/var/folders`, often exposed through `/var` while
+resolving to `/private/var`; that directory is valid project cwd and output
+storage. Resolve paths through symlinks before checking the boundary and exempt
+only paths inside the canonical macOS user temp directory. Other `/var` paths
+remain denied.
+Cases: S-210.
+
 ### Product analytics excludes raw adapter operation telemetry
 
 `IAnalytics` stores product actions and usage that answers a product question.

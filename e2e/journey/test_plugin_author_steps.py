@@ -31,8 +31,11 @@ if args[:6] == ["scaffold", "run", "plugin", "demo", "--mode", "standalone"] and
     entry = plugin / "packages/demo-entry"
     core = plugin / "packages/demo-core/src/hello.ts"
     entry.mkdir(parents=True)
+    (entry / "src/commands").mkdir(parents=True)
     core.parent.mkdir(parents=True, exist_ok=True)
     (entry / "package.json").write_text('{"name":"demo-entry","version":"0.1.0"}')
+    (entry / "src/commands/hello.ts").write_text(
+        "const { greeting } = hello({ who: input.flags.who ?? 'World' });\n")
     core.write_text('return { greeting: `Hello, ${who} from demo!` };\n')
 elif args[:3] == ["marketplace", "link", "--link"]:
     if os.environ.get("FAIL_MARKETPLACE_LINK"):
@@ -118,6 +121,9 @@ elif args == ["demo", "hello"]:
     built = plugin / ".built-output"
     if not built.exists():
         raise SystemExit("plugin has not been built")
+    probe = root / ".kb/output/runtime-temp-probe.txt"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.write_text("plugin temp fs ok")
     print(built.read_text())
 else:
     raise SystemExit("unexpected kb command: " + " ".join(args))
@@ -218,18 +224,21 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         })
 
     # case: S-003.1
+    # case: S-210.1
     def test_scaffold_link_edit_invoke_and_unlink_records_all_case_steps(self):
         result = self.run_flow()
 
         self.assertEqual(result.status, "PASS")
         self.assertEqual(
             [step["cases"] for step in result.steps],
-            [[f"S-003.{step}"] for step in range(1, 7)],
+            [["S-003.1"], ["S-003.2"], ["S-003.3"], ["S-003.4", "S-210.1"],
+             ["S-003.5"], ["S-003.6"]],
         )
         self.assertEqual(
             result.case_run["claims"],
             [{"claimId": f"S-003.{step}", "kind": "journey", "status": "PASS"}
-             for step in range(1, 7)],
+             for step in range(1, 7)] +
+            [{"claimId": "S-210.1", "kind": "journey", "status": "PASS"}],
         )
         self.assertEqual(self.log.read_text().splitlines(), [
             "kb scaffold run plugin demo --mode standalone --yes",
@@ -252,7 +261,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
         self.assertEqual(result.status, "PASS")
         self.assertTrue(all(step["mode"] == "secured" for step in result.steps))
-        self.assertEqual(len(result.case_run["claims"]), 6)
+        self.assertEqual(len(result.case_run["claims"]), 7)
 
     def test_build_failure_is_reported_and_generated_files_are_cleaned(self):
         result = self.run_flow(fail_build=True)

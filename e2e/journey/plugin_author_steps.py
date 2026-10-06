@@ -446,6 +446,16 @@ def run_plugin_author_flow(
              cwd=project, env=child_env, command_runner=command_runner)
         if not entry.is_dir() or not (entry / "package.json").is_file() or not core_source.is_file():
             raise RuntimeError("kb scaffold run did not create .kb/plugins/demo with entry and core packages")
+        command_source = entry / "src/commands/hello.ts"
+        source = command_source.read_text(encoding="utf-8")
+        marker = "const { greeting } = hello({ who: input.flags.who ?? 'World' });"
+        if marker not in source:
+            raise RuntimeError("generated demo command no longer matches the scaffold template")
+        command_source.write_text(source.replace(
+            marker,
+            "await ctx.runtime.fs.writeFile('.kb/output/runtime-temp-probe.txt', 'plugin temp fs ok');\n        " + marker,
+            1,
+        ), encoding="utf-8")
 
     def _build() -> None:
         _run(["pnpm", "install"], cwd=plugin_root, env=child_env, command_runner=command_runner)
@@ -475,6 +485,9 @@ def run_plugin_author_flow(
                       command_runner=command_runner)
         if "Hello, World from demo!" not in output:
             raise RuntimeError("kb demo hello did not print its documented greeting")
+        probe = project / ".kb/output/runtime-temp-probe.txt"
+        if not probe.is_file() or probe.read_text(encoding="utf-8") != "plugin temp fs ok":
+            raise RuntimeError("S-210.1 did not write and persist the plugin temp filesystem probe")
 
     def _edit_build_invoke() -> None:
         source = core_source.read_text(encoding="utf-8")
@@ -534,7 +547,7 @@ def run_plugin_author_flow(
         return
 
     try:
-        record("invoke generated plugin", cases=["S-003.4"], check=_invoke_original)
+        record("invoke generated plugin", cases=["S-003.4", "S-210.1"], check=_invoke_original)
         record("rebuild edited plugin", cases=["S-003.5"], check=_edit_build_invoke)
     finally:
         if linked:
