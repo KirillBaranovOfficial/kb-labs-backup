@@ -154,7 +154,7 @@ func ValidateCatalog(source catalog.Catalog) error {
 			channel = contracts.Channel(channels[0])
 			platformVersion = source.Channels[channel]
 		}
-		request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: "/tmp/kb-create-scenario-validation", Platform: contracts.VersionSelector{Version: platformVersion}, SDK: contracts.VersionSelector{Version: sdkVersionFor(source, platformVersion)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceOffline})
+		request, err := Compile(definition, state, contracts.InstallRequest{PlatformRoot: "/tmp/kb-create-scenario-validation", Platform: contracts.VersionSelector{Version: platformVersion}, SDK: contracts.VersionSelector{Version: sdkVersionFor(source, platformVersion)}, ServiceProfile: profile, Policy: contracts.PolicyCompatible, Source: contracts.SourceRegistry})
 		if err != nil {
 			return fmt.Errorf("scenario %q: %w", id, err)
 		}

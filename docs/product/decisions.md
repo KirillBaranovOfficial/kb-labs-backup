@@ -4,6 +4,18 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-07
+
+### Offline plans show artifact resolution per artifact
+
+`kb-create plan --offline` exposes the actual source selected for each resolved
+artifact. An artifact is marked `resolvedFrom: "cache"` only when its
+checksum-verified cache entry exists; the plan omits a resolved network URL in
+that case. An offline plan with a missing or corrupt cache entry fails during
+planning, before apply. Online plans identify registry resolution explicitly.
+This keeps offline selection inspectable without treating the request flag as
+proof of where the artifacts can be fetched. Case: S-181.4.
+
 ## 2026-10-01
 
 ### Project membership comes from the platform registry

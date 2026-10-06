@@ -3,7 +3,9 @@ package journey_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -23,6 +25,53 @@ import (
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/wizard"
 )
+
+func primeOfflineCatalog(t *testing.T, root string, source *catalog.Catalog) {
+	t.Helper()
+	write := func(kind, id string, hash *string) {
+		payload := []byte(kind + ":" + id)
+		sum := sha256.Sum256(payload)
+		*hash = fmt.Sprintf("%x", sum)
+		directory := "packages"
+		name := *hash + ".tgz"
+		if kind == "binary" {
+			directory, name = "binaries", *hash
+		}
+		path := filepath.Join(root, ".kb", "v2", "cache", directory, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, payload, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index := range source.Platforms {
+		platform := &source.Platforms[index]
+		write("package", platform.ID, &platform.SHA256)
+		for memberIndex := range platform.Members {
+			write("package", platform.Members[memberIndex].ID, &platform.Members[memberIndex].SHA256)
+		}
+		for binaryIndex := range platform.Binaries {
+			write("binary", platform.Binaries[binaryIndex].ID, &platform.Binaries[binaryIndex].SHA256)
+		}
+	}
+	for index := range source.SDKs {
+		write("package", source.SDKs[index].ID, &source.SDKs[index].SHA256)
+	}
+	for index := range source.Plugins {
+		write("package", source.Plugins[index].ID, &source.Plugins[index].SHA256)
+	}
+	for index := range source.Adapters {
+		write("package", source.Adapters[index].ID, &source.Adapters[index].SHA256)
+	}
+	if source.Digest != "" {
+		sealed, err := catalog.Seal(*source)
+		if err != nil {
+			t.Fatalf("seal offline test catalog: %v", err)
+		}
+		*source = sealed
+	}
+}
 
 // These journeys are the installer's install and secret contract, exercised the way
 // a user reaches it: the wizard (or a machine request) -> resolver -> runtime
@@ -121,6 +170,7 @@ func install(t *testing.T, answers string) journeyResult {
 	t.Helper()
 	root := t.TempDir()
 	source := sealedGatewayCatalog(t)
+	primeOfflineCatalog(t, root, &source)
 	var terminal bytes.Buffer
 	request, err := wizard.RequestScenario(source, root, "custom", "", wizard.IO{In: bytes.NewBufferString("\n" + answers), Out: &terminal})
 	if err != nil {
@@ -343,7 +393,7 @@ func TestDefaultScenarioPlansAgainstTheRealGatewayRequirements(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		request, err := scenario.Compile(definition, state, contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceOffline, Policy: contracts.PolicyCompatible})
+		request, err := scenario.Compile(definition, state, contracts.InstallRequest{PlatformRoot: t.TempDir(), Platform: contracts.VersionSelector{Channel: contracts.ChannelStable}, ServiceProfile: "default", Source: contracts.SourceRegistry, Policy: contracts.PolicyCompatible})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -358,6 +408,7 @@ func TestDefaultScenarioPlansAgainstTheRealGatewayRequirements(t *testing.T) {
 func TestMachineRequestSecuredInstallDeliversSecretsThroughTheSameStore(t *testing.T) {
 	root := t.TempDir()
 	source := sealedGatewayCatalog(t)
+	primeOfflineCatalog(t, root, &source)
 	store := secrets.Store{PlatformRoot: root}
 	if err := store.Put("gateway.bootstrap.password", adminPassword); err != nil {
 		t.Fatal(err)
@@ -385,6 +436,7 @@ func TestMachineRequestSecuredInstallDeliversSecretsThroughTheSameStore(t *testi
 func TestSecretInputWithNoStoredValueFailsBeforeAnythingIsInstalled(t *testing.T) {
 	root := t.TempDir()
 	source := sealedGatewayCatalog(t)
+	primeOfflineCatalog(t, root, &source)
 	plan, err := resolve.Plan(contracts.InstallRequest{
 		PlatformRoot: root, Source: contracts.SourceOffline, ServiceProfile: "default",
 		SecretInputs: []string{"gateway.jwtSecret"},
@@ -450,6 +502,7 @@ func TestFreshFixtureInstallRendersInternalSecretForEveryConsumer(t *testing.T) 
 		t.Fatalf("decode journey release fixture: %v", err)
 	}
 	root := t.TempDir()
+	primeOfflineCatalog(t, root, &source)
 	plan, err := resolve.Plan(contracts.InstallRequest{
 		PlatformRoot: root, Platform: contracts.VersionSelector{Channel: contracts.ChannelStable},
 		SDK: contracts.VersionSelector{Version: "2.120.1"}, ServiceProfile: "default",

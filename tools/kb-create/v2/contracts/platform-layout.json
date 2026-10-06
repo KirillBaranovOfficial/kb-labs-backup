@@ -1,0 +1,8 @@
+{
+  "schema": "kb.create.platform-layout/v1",
+  "runtimeStatePaths": [
+    ".kb/data",
+    ".kb/logs",
+    ".kb/v2/scenarios"
+  ]
+}

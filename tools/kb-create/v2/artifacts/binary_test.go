@@ -27,6 +27,25 @@ func TestBinariesInstallsOnlyVerifiedReleaseAsset(t *testing.T) {
 	}
 }
 
+func TestBinariesInstallPrimesChecksumKeyedOfflineCache(t *testing.T) {
+	payload := []byte("kb-dev-binary")
+	sum := fmt.Sprintf("%x", sha256.Sum256(payload))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(payload) }))
+	defer server.Close()
+	root := t.TempDir()
+	item := contracts.Artifact{ID: "kb-dev", Kind: "binary", URL: server.URL, SHA256: sum, Target: "kb-dev"}
+	if err := (Binaries{Root: root}).Install([]contracts.Artifact{item}); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(root, ".kb", "v2", "cache", "binaries", sum)
+	if data, err := os.ReadFile(cachePath); err != nil || string(data) != string(payload) {
+		t.Fatalf("cached binary/error = %q / %v", data, err)
+	}
+	if err := (Binaries{Root: root, Offline: true}).Install([]contracts.Artifact{item}); err != nil {
+		t.Fatalf("cached binary was not available offline: %v", err)
+	}
+}
+
 func TestBinariesRejectsChecksumMismatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("wrong")) }))
 	defer server.Close()

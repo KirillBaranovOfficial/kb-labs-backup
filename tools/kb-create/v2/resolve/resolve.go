@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
 	"maps"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 
@@ -202,6 +204,9 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		artifacts = append(artifacts, artifact(adapter.Component, "adapter"))
 	}
 	artifacts = uniqueArtifacts(artifacts)
+	if err := annotateArtifactResolution(request, artifacts); err != nil {
+		return contracts.ResolvedInstallPlan{}, err
+	}
 	bindings = uniqueBindings(bindings)
 	patches, err := configPatches(platform, artifacts, bindings, source, request)
 	if err != nil {
@@ -217,6 +222,44 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version), ProviderBindings: bindings, Host: selectedHost, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
 	plan.PlanHash = hash(plan)
 	return plan, nil
+}
+
+func annotateArtifactResolution(request contracts.InstallRequest, artifacts []contracts.Artifact) error {
+	for index := range artifacts {
+		item := &artifacts[index]
+		if request.Source == contracts.SourceOffline {
+			cachePath := filepath.Join(request.PlatformRoot, ".kb", "v2", "cache")
+			if item.Kind == "binary" {
+				cachePath = filepath.Join(cachePath, "binaries", item.SHA256)
+			} else {
+				cachePath = filepath.Join(cachePath, "packages", item.SHA256+".tgz")
+			}
+			data, err := os.ReadFile(cachePath)
+			if err != nil {
+				failure := contracts.NewDiag(contracts.CodeOfflineArtifactMissing,
+					fmt.Sprintf("Artifact %s is unavailable from the local cache at %s.", item.ID, cachePath),
+					"Run without --offline to download the artifact, or restore its checksum-verified entry in the V2 cache.", err)
+				failure.Meta = map[string]any{"artifact": item.ID, "cachePath": cachePath}
+				return failure
+			}
+			if fmt.Sprintf("%x", sha256.Sum256(data)) != item.SHA256 {
+				failure := contracts.NewDiag(contracts.CodeOfflineArtifactMissing,
+					fmt.Sprintf("Artifact %s has a corrupt local cache entry at %s.", item.ID, cachePath),
+					"Run without --offline to download the artifact, or restore its checksum-verified entry in the V2 cache.", nil)
+				failure.Meta = map[string]any{"artifact": item.ID, "cachePath": cachePath}
+				return failure
+			}
+			item.ResolvedFrom = "cache"
+			continue
+		}
+		item.ResolvedFrom = "registry"
+		if item.Kind == "binary" {
+			item.ResolvedURL = item.URL
+		} else {
+			item.ResolvedURL = item.Tarball
+		}
+	}
+	return nil
 }
 
 func memberContains(members []catalog.Component, request contracts.ComponentRequest) bool {

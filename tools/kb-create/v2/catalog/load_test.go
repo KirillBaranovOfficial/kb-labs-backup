@@ -15,7 +15,7 @@ import (
 
 // case: S-214.1
 func TestLoadFileReadFailureDiagnostic(t *testing.T) {
-	assertLoadFileDiagnostic(t, "read", "", "no such file or directory", contracts.CodeReleaseIndexInvalid, nil)
+	assertLoadFileDiagnostic(t, "read", "", "no such file or directory", contracts.CodeReleaseIndexUnreadable, nil)
 }
 
 // case: S-214.2
@@ -98,6 +98,9 @@ func assertLoadFileDiagnostic(t *testing.T, gate, expected, actual, code string,
 	}
 	if envelope.Details["gate"] != gate || envelope.Details["path"] != path {
 		t.Fatalf("serialized details = %#v", envelope.Details)
+	}
+	if gate == "read" && (envelope.Retryable || !strings.Contains(envelope.Hint, "--index path and file permissions")) {
+		t.Fatalf("read failure is not actionable and non-retryable: retryable=%v hint=%q", envelope.Retryable, envelope.Hint)
 	}
 	if !strings.Contains(envelope.Cause, gate) || !strings.Contains(envelope.Cause, path) {
 		t.Fatalf("serialized cause lacks gate/path: %q", envelope.Cause)

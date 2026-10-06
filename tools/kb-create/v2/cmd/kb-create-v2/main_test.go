@@ -145,7 +145,7 @@ func TestWriteIndexFailureSerializesCanonicalDetails(t *testing.T) {
 	if err := json.NewDecoder(output).Decode(&payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.OK || payload.Error.Code != contracts.CodeReleaseIndexInvalid || payload.Error.Details["gate"] != "read" ||
+	if payload.OK || payload.Error.Code != contracts.CodeReleaseIndexUnreadable || payload.Error.Details["gate"] != "read" ||
 		payload.Error.Details["path"] != path || !strings.Contains(payload.Error.Cause, "no such file or directory") {
 		t.Fatalf("failure envelope omitted loader diagnostics: %#v", payload)
 	}
@@ -488,7 +488,7 @@ func TestInstallEarlyFailuresUseDiagRendering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != 2 || !strings.Contains(string(data), "Install failed [KB_INSTALL_RELEASE_INDEX_INVALID]") || !strings.Contains(string(data), "Next:") {
+	if code != 2 || !strings.Contains(string(data), "Install failed [KB_INSTALL_RELEASE_INDEX_UNREADABLE]") || !strings.Contains(string(data), "Next:") {
 		t.Fatalf("code/output = %d / %s", code, data)
 	}
 }

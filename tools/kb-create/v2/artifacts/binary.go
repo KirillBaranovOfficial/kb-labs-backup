@@ -35,6 +35,15 @@ func (b Binaries) Install(items []contracts.Artifact) error {
 		if sum != item.SHA256 {
 			return fmt.Errorf("binary %s checksum mismatch", item.ID)
 		}
+		if !b.Offline {
+			cachePath := filepath.Join(b.Root, ".kb", "v2", "cache", "binaries", item.SHA256)
+			if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
+				return err
+			}
+			if err := os.WriteFile(cachePath, data, 0o600); err != nil {
+				return err
+			}
+		}
 		path := filepath.Join(b.Root, ".kb", "v2", "bin", filepath.Base(item.Target))
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return err

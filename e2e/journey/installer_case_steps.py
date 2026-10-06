@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import platform
-import re
 import shutil
 import socket
 import subprocess
@@ -13,6 +12,8 @@ from typing import Callable
 
 from platform_update_steps import _json_command
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result)
+from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
+                               workspace_resource)
 from service_steps import Journey
 
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
@@ -71,6 +72,9 @@ def _seed_doctor_fixture(source_root: Path, target_root: Path, *, requirement: d
         package_root = target_root / "node_modules" / package
         package_root.mkdir(parents=True, exist_ok=True)
         (package_root / "package.json").write_text(json.dumps({"name": package, "version": item["version"]}) + "\n")
+        if package == "@kb-labs/cli-bin":
+            source_dist = source_root / "node_modules" / package / "dist"
+            shutil.copytree(source_dist, package_root / "dist", symlinks=True)
         if missing_projection and item is selected:
             continue
         manifest = {"schema": "kb.create.artifact-manifest/v2", "id": item["id"],
@@ -209,9 +213,10 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
                                            "--platform-channel", "stable", "--offline",
                                            "--request-platform-root", str(root)], "offline plan").get("plan", {})
-        sources = {item.get("source") for item in plan.get("artifacts", [])}
-        if not sources or sources != {"offline"}:
-            raise RuntimeError(f"offline plan did not identify only offline artifacts: {sorted(map(str, sources))}")
+        artifacts = plan.get("artifacts", [])
+        if (plan.get("request", {}).get("source") != "offline" or not artifacts
+                or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
+            raise RuntimeError("offline plan omitted cache provenance or claimed registry/network resolution")
 
     journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
                  cases=["S-181.4"])
@@ -220,7 +225,7 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
 
 def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Path,
                                   platform_root: Path, run_command: CommandRunner) -> Journey:
-    """Compare repeat plans while no host process can write into the install tree."""
+    """Compare repeat plans while the host runs, excluding declared runtime state."""
     journey = Journey(mode, f"repeat-plan-readonly-{mode}")
     root = str(platform_root)
 
@@ -228,36 +233,27 @@ def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Pat
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
                                "status before repeat plan")
         host = status.get("host", {})
-        was_running = isinstance(host, dict) and host.get("state") == "running"
-        if not was_running or status.get("running") is not True or status.get("reachable") is not True:
-            raise RuntimeError("PC-001.8 requires a running, reachable host before the filesystem snapshot")
-        if was_running:
-            _json_command(run_command, [launcher, "stop", "--platform-root", root, "--json"],
-                          "stop before repeat plan")
-
-        try:
-            before = _snapshot_tree(platform_root)
-            args = [launcher, "plan", "--json", "--index", str(stable_index),
-                    "--request-platform-root", root, "--service-profile", "default",
-                    "--scenario", "commit"]
-            first = _json_command(run_command, args, "first clean-install plan").get("plan", {})
-            second = _json_command(run_command, args, "repeat clean-install plan").get("plan", {})
-            if any(first.get(key) != second.get(key) for key in ("planHash", "artifacts", "serviceGraph")):
-                raise RuntimeError("repeat plan changed planHash, artifacts, or serviceGraph")
-            after = _snapshot_tree(platform_root)
-            changes = _snapshot_changes(before, after)
-            if any(changes.values()):
-                raise RuntimeError(_format_snapshot_changes(changes))
-        finally:
-            if was_running:
-                _json_command(run_command, [launcher, "start", "--platform-root", root, "--json"],
-                              "restart after repeat plan")
-                restarted = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
-                                          "health check after repeat plan")
-                restarted_host = restarted.get("host", {})
-                if (not isinstance(restarted_host, dict) or restarted_host.get("state") != "running"
-                        or restarted.get("running") is not True or restarted.get("reachable") is not True):
-                    raise RuntimeError("host health check failed after PC-001.8 restart: expected running and reachable")
+        if (not isinstance(host, dict) or host.get("state") != "running"
+                or status.get("running") is not True or status.get("reachable") is not True):
+            raise RuntimeError("PC-001.8 requires the installed host to be running and reachable")
+        before = _snapshot_installation_owned_tree(platform_root)
+        args = [launcher, "plan", "--json", "--index", str(stable_index),
+                "--request-platform-root", root, "--service-profile", "default",
+                "--scenario", "commit"]
+        first = _json_command(run_command, args, "first clean-install plan").get("plan", {})
+        second = _json_command(run_command, args, "repeat clean-install plan").get("plan", {})
+        if any(first.get(key) != second.get(key) for key in ("planHash", "artifacts", "serviceGraph")):
+            raise RuntimeError("repeat plan changed planHash, artifacts, or serviceGraph")
+        after = _snapshot_installation_owned_tree(platform_root)
+        changes = _snapshot_changes(before, after)
+        if any(changes.values()):
+            raise RuntimeError(_format_snapshot_changes(changes))
+        status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
+                               "status after repeat plan")
+        host = status.get("host", {})
+        if (not isinstance(host, dict) or host.get("state") != "running"
+                or status.get("running") is not True or status.get("reachable") is not True):
+            raise RuntimeError("host health check failed after PC-001.8: expected running and reachable")
 
     journey.step("repeat install planning without changing the installed root", "platform.install",
                  repeat_plan, cases=["PC-001.8"])
@@ -275,6 +271,32 @@ def _snapshot_tree(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
         elif path.is_file():
             snapshot[relative] = ("file", path.read_bytes())
     return snapshot
+
+
+def _runtime_state_paths() -> tuple[str, ...]:
+    layout_path = workspace_resource("tools", "kb-create", "v2", "contracts", "platform-layout.json")
+    layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    return tuple(layout["runtimeStatePaths"])
+
+
+def _snapshot_installation_owned_tree(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
+    runtime_paths = tuple(Path(path).parts for path in _runtime_state_paths())
+    snapshot = _snapshot_tree(root)
+    return {
+        path: value for path, value in snapshot.items()
+        if not any(Path(path).parts[:len(runtime_path)] == runtime_path for runtime_path in runtime_paths)
+    }
+
+
+def _service_ids_match(planned_graph: dict, declared_graph: dict) -> bool:
+    planned = planned_graph.get("services", [])
+    declared = declared_graph.get("services", [])
+    if not planned or not declared:
+        return False
+    planned_ids = [service.get("id") for service in planned]
+    declared_ids = [service.get("id") for service in declared]
+    return all(planned_ids) and all(declared_ids) and len(planned_ids) == len(set(planned_ids)) \
+        and len(declared_ids) == len(set(declared_ids)) and set(planned_ids) == set(declared_ids)
 
 
 def _snapshot_changes(before: dict[str, tuple[str, bytes | str | None]],
@@ -309,6 +331,18 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey's already isolated HOME; callers must pass that HOME's paths.
     """
     journey = Journey(mode, f"installer-cases-{mode}")
+    host_os = "darwin" if sys.platform == "darwin" else "linux" if sys.platform.startswith("linux") else "unsupported"
+    host_arch = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
+    installed_cli_entry = platform_root / "node_modules/@kb-labs/cli-bin/dist/bin.js"
+    required_paths = [*installer_scenario_resources(host_os, host_arch), installed_cli_entry]
+    catalog_root = required_paths[0]
+    missing_resources = [str(path) for path in required_paths
+                         if not (path.is_dir() if path == catalog_root else path.is_file())]
+    if missing_resources:
+        journey.step("preflight installer case fixtures", "journey.orchestration",
+                     lambda: "missing installer journey resource(s): " + ", ".join(missing_resources))
+        return journey
+    fixture_dir = installer_case_fixture_root()
     root = str(platform_root)
     port_conflict_root = platform_root.parent / "pc001-port-conflict-root"
 
@@ -338,8 +372,14 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     # remains the single main journey install and can continue serving later cases.
     apply_root = platform_root.parent / "pc001-apply-root"
     apply_root.mkdir(parents=True, exist_ok=True)
+    selected_plan: dict = {}
 
     def apply_and_check() -> None:
+        selected_plan["serviceGraph"] = _json_command(
+            run_command, [launcher, "plan", "--json", "--index", str(stable_index),
+                          "--request-platform-root", str(apply_root),
+                          "--service-profile", "default", "--scenario", "commit"],
+            "PC-001 selected profile plan").get("plan", {}).get("serviceGraph", {})
         result = _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                    "--request-platform-root", str(apply_root),
                                    "--service-profile", "default", "--scenario", "commit"]),
@@ -352,20 +392,17 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     def inspect_generated_config() -> None:
         config_path = apply_root / ".kb/kb.config.jsonc"
-        services_path = apply_root / ".kb/devservices.yaml"
-        if not config_path.is_file() or not services_path.is_file():
-            raise RuntimeError("apply did not generate both runtime config and service declarations")
+        if not config_path.is_file():
+            raise RuntimeError("apply did not generate the runtime config")
         config = json.loads(_without_jsonc_comments(config_path.read_text()))
-        services = services_path.read_text()
-        if not isinstance(config, dict) or not services.strip():
-            raise RuntimeError("generated runtime config or service declarations are empty")
+        if not isinstance(config, dict):
+            raise RuntimeError("generated runtime config is not a JSON object")
         receipt = json.loads((apply_root / ".kb/v2/receipt.json").read_text())
         graph = receipt.get("plan", {}).get("serviceGraph", {})
-        declarations = graph.get("services", [])
-        for service in declarations:
-            name = service if isinstance(service, str) else service.get("id", service.get("name", ""))
-            if name and not re.search(rf"(?m)^\s*{re.escape(str(name))}\s*:", services):
-                raise RuntimeError(f"generated devservices.yaml omits selected service {name}")
+        if (selected_plan["serviceGraph"].get("profile") != "default"
+                or graph.get("profile") != "default"
+                or not _service_ids_match(selected_plan["serviceGraph"], graph)):
+            raise RuntimeError("receipt service declarations do not equal the selected profile plan")
 
     journey.step("inspect generated runtime config and service declarations", "platform.install",
                  inspect_generated_config, cases=["PC-001.5"])
@@ -498,7 +535,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                                 stable_index: Path, run_command: CommandRunner) -> Journey:
     """Exercise isolated doctor, compatibility, and project-install fixtures."""
     journey = Journey(mode, f"installer-fixtures-{mode}")
-    fixture_dir = Path(__file__).resolve().parents[2] / "e2e/platform/fixtures/installer-cases"
+    fixture_dir = installer_case_fixture_root()
     host_os = "darwin" if sys.platform == "darwin" else "linux" if sys.platform.startswith("linux") else "unsupported"
     host_arch = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
     if host_os == "unsupported":

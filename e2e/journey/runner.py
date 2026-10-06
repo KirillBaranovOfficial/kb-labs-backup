@@ -21,6 +21,7 @@ from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import run_doctor_root_isolation_step, run_installer_case_steps, run_uninstall_decline_step
+from journey_resources import case_catalog_root
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import FlowGraph, Journey, record_candidate_provenance, record_runner_failure
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
@@ -460,9 +461,7 @@ def append_summary(passed: bool):
                 stream.write(f"tree {path}: exists={path.exists()} symlink={path.is_symlink()} target={target!r} resolved={path.resolve(strict=False)}\n")
                 if path.is_file() and path.name in {"kb", "bin.js"}:
                     stream.write(f"file {path}: {path.read_text(errors='replace')[:3000]}\n")
-    copied_catalog = Path(__file__).with_name("scenarios")
-    catalog = copied_catalog if copied_catalog.is_dir() else Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
-    write_scoreboards(report.parent, catalog)
+    write_scoreboards(report.parent, case_catalog_root())
     print("\n".join(lines))
 
 
@@ -1242,7 +1241,7 @@ def main():
             service_env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
             service_env["KB_JOURNEY_ADMIN_PASSWORD"] = "JourneyPassw0rd!"
             oauth_claims = release_claims_for_case(
-                "S-109", Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios")
+                "S-109", case_catalog_root())
             configured = login_and_configure_secured_admin(
                 service_env, launcher, configure_oidc=bool(oauth_claims))
             if configured is not None:
@@ -1568,7 +1567,7 @@ def main():
             studio_env.pop(key, None)
         if mode == "secured":
             oauth_claims = release_claims_for_case(
-                "S-109", Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios")
+                "S-109", case_catalog_root())
             if oauth_claims:
                 studio_env["KB_STUDIO_OAUTH_JOURNEY"] = "1"
                 studio_env["KB_STUDIO_OIDC_PROVIDER_ID"] = "corp"

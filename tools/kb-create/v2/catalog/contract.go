@@ -77,8 +77,13 @@ func wrapIndexError(path, gate, expected, actual string, err error) error {
 		}
 		return typed
 	}
-	diagnostic := contracts.NewDiag(contracts.CodeReleaseIndexInvalid,
-		"The release index is corrupted or invalid.", indexInvalidHint, err)
+	code, message, hint := contracts.CodeReleaseIndexInvalid, "The release index is corrupted or invalid.", indexInvalidHint
+	if gate == "read" {
+		code, message, hint = contracts.CodeReleaseIndexUnreadable,
+			"The release index at "+path+" cannot be read.", "Check the --index path and file permissions."
+	}
+	diagnostic := contracts.NewDiag(code,
+		message, hint, err)
 	diagnostic.Reason = reason
 	diagnostic.Cause = reason
 	diagnostic.Meta = map[string]any{"gate": gate, "path": path}

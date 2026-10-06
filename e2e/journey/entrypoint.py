@@ -12,14 +12,12 @@ from pathlib import Path
 
 from platform_state_dump import dump_platform_state
 from scoreboard import write_scoreboards
+from journey_resources import case_catalog_root
 
 
 def write_case_scoreboards(summary_path: str | Path) -> None:
     report_dir = Path(summary_path).parent
-    catalog = Path(__file__).resolve().parent / "scenarios"
-    if not catalog.is_dir():
-        catalog = Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
-    write_scoreboards(report_dir, catalog)
+    write_scoreboards(report_dir, case_catalog_root())
 
 
 def record_runner_failure(summary_path: str | Path, mode: str, error: Exception, phase: str) -> None:
