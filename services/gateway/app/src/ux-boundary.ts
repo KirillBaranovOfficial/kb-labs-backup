@@ -53,6 +53,16 @@ export function registerGatewayUxErrorResponses(app: FastifyInstance, logger?: I
 /** Install the final JSON result boundary before registering route plugins. */
 export function registerGatewayUxBoundary(app: FastifyInstance, logger: ILogger): void {
   registerGatewayUxErrorResponses(app, logger);
+  app.setNotFoundHandler((request, reply) => {
+    const route = `${request.method} ${request.url.split('?', 1)[0] ?? request.url}`;
+    const error = createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', {
+      details: { route },
+      message: `Gateway route ${route} was not found.`,
+      correlationId: String(request.id || randomUUID()),
+      hint: 'Check the Gateway route and method, then use a registered route.',
+    });
+    return reply.code(404).send(createUxFailureResult(error));
+  });
   app.addHook('onSend', async (request, reply, payload) => {
     if (request.routeOptions.config.ux === 'raw' && reply.statusCode < 400) return payload;
     if (typeof payload !== 'string') return payload;

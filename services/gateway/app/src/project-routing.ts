@@ -22,7 +22,8 @@ import {
   type IncomingMessage,
 } from "node:http";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { ErrorEnvelope } from "@kb-labs/core-platform";
+import { createErrorEnvelope, getCatalogEntry, isErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform";
+import { createUxFailureResult, isUxResult } from "@kb-labs/core-platform/ux-result";
 
 /** Path prefix under which project-scoped APIs are served. */
 export const PROJECT_ROUTE_PREFIX = "/api/v1/projects";
@@ -210,6 +211,56 @@ export async function registerProjectRoutes(
             .send({ error: "Bad Gateway", reason: "project_runtime_unreachable" });
         }
         response.once("close", () => upstream.release());
+
+        if ((response.statusCode ?? 502) >= 400) {
+          for (const [name, value] of Object.entries(response.headers)) {
+            const lowerName = name.toLowerCase();
+            if (value !== undefined && !HOP_BY_HOP.has(lowerName) && lowerName !== "content-length" && lowerName !== "content-type") {
+              reply.header(name, value);
+            }
+          }
+          const chunks: Buffer[] = [];
+          for await (const chunk of response) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          }
+          const body = Buffer.concat(chunks).toString("utf8");
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(body);
+          } catch {
+            parsed = undefined;
+          }
+          const upstreamErrorCandidate = isUxResult(parsed) && !parsed.ok && isErrorEnvelope(parsed.error)
+            ? parsed.error
+            : parsed && typeof parsed === "object" && "error" in parsed && isErrorEnvelope(parsed.error)
+              ? parsed.error
+              : undefined;
+          const upstreamError = upstreamErrorCandidate && getCatalogEntry(upstreamErrorCandidate.code)
+            ? upstreamErrorCandidate
+            : undefined;
+          if (upstreamError) {
+            return reply.code(response.statusCode ?? 502).send(createUxFailureResult({
+              ...upstreamError,
+              correlationId: upstreamError.correlationId || String(request.id),
+            }));
+          }
+          const upstreamStatus = response.statusCode ?? 502;
+          const code = upstreamStatus === 404 ? "KB_RUNTIME_RESOURCE_NOT_FOUND"
+            : upstreamStatus === 400 ? "KB_RUNTIME_INPUT_INVALID"
+              : upstreamStatus === 401 ? "KB_AUTH_REQUIRED"
+                : upstreamStatus === 403 ? "KB_AUTH_FORBIDDEN"
+                  : "KB_RUNTIME_COMMAND_FAILED";
+          const route = `${request.method} ${path}`;
+          const error = createErrorEnvelope(code, {
+            details: { upstreamStatus: String(upstreamStatus), route },
+            message: `Project runtime returned HTTP ${upstreamStatus} without an error envelope.`,
+            correlationId: String(request.id),
+            hint: upstreamStatus === 404
+              ? "Run `kb marketplace plugins doctor --scope project` to inspect project plugin routes, then retry the request."
+              : "Inspect the project runtime response for this route and status, then retry the request.",
+          });
+          return reply.code(upstreamStatus).send(createUxFailureResult(error));
+        }
 
         for (const [name, value] of Object.entries(response.headers)) {
           if (value !== undefined && !HOP_BY_HOP.has(name.toLowerCase())) {

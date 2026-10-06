@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/host"
@@ -372,6 +373,9 @@ func (i invocation) runRecover(output *os.File) int {
 	runner, state, setupErr := command.setup()
 	if setupErr != nil {
 		return command.fail(2, setupErr)
+	}
+	if code := confirmDestructiveOperation(i, "recover", i.PlatformRoot, os.Stdin, os.Stdout, term.IsTerminal(os.Stdin.Fd()), output); code != 0 {
+		return code
 	}
 	release, err := state.AcquireOperation("recover")
 	if err != nil {

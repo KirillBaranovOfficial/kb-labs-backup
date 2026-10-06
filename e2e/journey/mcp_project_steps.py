@@ -460,7 +460,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
                             agent_id: str = "orchestrator") -> None:
     """Exercise the documented project Agents session REST lifecycle (S-141)."""
     session_id = ""
-    base = f"/api/v1/projects/{project_id}/rest/v1/plugins/agents/sessions"
+    base = f"/api/v1/projects/{project_id}/rest/api/v1/plugins/agents/sessions"
 
     def create() -> str | None:
         nonlocal session_id
@@ -551,3 +551,18 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
         return None
 
     journey.step("reject undefined project agent ID", "agents", unknown_agent, cases=["S-141.5"])
+
+    def unknown_route() -> str | None:
+        path = f"/api/v1/projects/{project_id}/rest/api/v1/plugins/agents/unknown-route"
+        with invocation_context(step_id="S-141.6"):
+            status, body, _ = _request(path, token=token)
+        error = body.get("error") if isinstance(body, dict) else None
+        if (status != 404 or not isinstance(error, dict)
+                or error.get("code") != "KB_RUNTIME_RESOURCE_NOT_FOUND"
+                or "@kb-labs/agents" not in str(error.get("message", ""))
+                or "unknown-route" not in str(error.get("message", ""))
+                or "kb marketplace plugins doctor --scope project" not in str(error.get("hint", ""))):
+            return "unknown project Agents REST route did not return a catalogued route-specific 404"
+        return None
+
+    journey.step("report an unknown project Agents REST route", "agents", unknown_route, cases=["S-141.6"])

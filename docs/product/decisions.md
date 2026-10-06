@@ -393,3 +393,12 @@ target root has no valid receipt. User-owned files at the shim path are never
 modified. The decision is enforced in the shared `shim.Ensure` and
 `shim.Remove` boundary used by apply, uninstall, and doctor.
 Cases: PC-001.10–PC-001.11, S-025.9.
+
+### Destructive confirmation without a TTY is invalid usage
+
+Destructive `kb-create` operations require explicit `--yes` when no terminal is
+available. Missing confirmation is invalid command usage and exits 2; a
+terminal cancellation remains an operation cancellation and exits 1. A shared
+confirmation boundary applies this rule to uninstall, rollback, and account
+recovery before any destructive action runs.
+Cases: S-050.3–S-050.4, S-024.4, S-203.12.
