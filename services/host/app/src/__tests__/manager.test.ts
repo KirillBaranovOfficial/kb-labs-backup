@@ -147,6 +147,62 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     expect(subject.status().runtimes[0]?.inflight).toBe(0);
   });
 
+  // case: S-192.2
+  it("keeps the runtime when the discovered plugin-set digest is unchanged", async () => {
+    const a = await project();
+    const launcher = countingLauncher();
+    const subject = manager({ getPluginSetDigest: async () => "lock-a" }, launcher);
+
+    (await subject.acquire(a)).release();
+    (await subject.acquire(a)).release();
+
+    expect(launcher.launches).toBe(1);
+  });
+
+  // case: S-192.2
+  it("reloads once for concurrent requests after the plugin-set digest changes and drains old leases", async () => {
+    const a = await project();
+    const launcher = countingLauncher();
+    let digest = "lock-a";
+    const subject = manager({ getPluginSetDigest: async () => digest }, launcher);
+    const oldLease = await subject.acquire(a);
+    const oldPid = pidOf(subject, a.id);
+    const oldRequest = callRuntime(oldLease, "/rest/slow?delay=100");
+
+    digest = "lock-b";
+    const next = Promise.all([subject.acquire(a), subject.acquire(a)]);
+    await waitFor(() => subject.status().runtimes[0]?.state === "reloading", "runtime reload to begin");
+    expect(launcher.launches).toBe(1);
+    expect(isAlive(oldPid)).toBe(true);
+
+    expect((await oldRequest).status).toBe(200);
+    oldLease.release();
+    const leases = await next;
+    expect(launcher.launches).toBe(2);
+    expect(new Set(leases.map((lease) => lease.address.port)).size).toBe(1);
+    expect(isAlive(oldPid)).toBe(false);
+    for (const lease of leases) lease.release();
+  });
+
+  // case: S-192.2
+  it("reports a typed reload failure and retries the changed digest on the next request", async () => {
+    const a = await project();
+    const launcher = countingLauncher();
+    let digest = "lock-a";
+    const subject = manager({ getPluginSetDigest: async () => digest }, launcher);
+    (await subject.acquire(a)).release();
+
+    digest = "lock-b";
+    await a.behave({ exitBeforeReady: 1 });
+    const failed = await expectRuntimeError(subject.acquire(a), "KB_PROJECT_RUNTIME_RELOAD_FAILED");
+    expect(failed.envelope.hint).toContain("kb marketplace plugins doctor");
+
+    await a.behave({});
+    const retried = await subject.acquire(a);
+    expect(launcher.launches).toBe(3);
+    retried.release();
+  });
+
   it("rejects a runtime that never speaks the secret protocol", async () => {
     const a = await project();
     const subject = manager();

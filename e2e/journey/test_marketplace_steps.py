@@ -19,9 +19,9 @@ from invocations import invocation_context, open_http, run_command
 
 class MarketplaceStepTests(unittest.TestCase):
     def test_commit_route_http_claims_accept_documented_success_and_not_found(self):
-        response = {"ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED",
-            "message": "An unexpected error occurred.",
-            "hint": "Re-run with --debug and include the correlationId in a report.",
+        response = {"ok": False, "error": {"code": "KB_PLUGIN_NOT_INSTALLED",
+            "message": "Plugin is not installed in this project.",
+            "hint": "Run `kb marketplace install @kb-labs/commit-entry` in this project.",
             "correlationId": "request-fixture"}}
         validate_commit_status_response(200, {"ok": True, "data": {"scope": "project"}})
         validate_unmounted_commit_response(404, response)
@@ -31,10 +31,11 @@ class MarketplaceStepTests(unittest.TestCase):
             validate_commit_status_response(404, {"ok": False, "error": {"code": "KB_RUNTIME_UNEXPECTED"}})
         with self.assertRaisesRegex(RuntimeError, "unexpected gateway failure: HTTP 200"):
             validate_unmounted_commit_response(200, {"ok": True, "data": {"scope": "project"}})
-        with self.assertRaisesRegex(RuntimeError, "correlationId"):
+        with self.assertRaisesRegex(RuntimeError, "unexpected gateway failure: HTTP 404"):
             validate_unmounted_commit_response(404, {"ok": False, "error": {
                 "code": "KB_RUNTIME_UNEXPECTED", "message": "An unexpected error occurred.",
-                "hint": "Re-run with --debug and include the correlationId in a report."}})
+                "hint": "Re-run with --debug and include the correlationId in a report.",
+                "correlationId": "request-fixture"}})
 
     def test_fake_failures_are_rejected_for_both_shared_error_renderings(self):
         for json_mode in (False, True):
@@ -408,9 +409,11 @@ class MarketplaceStepTests(unittest.TestCase):
                         return subprocess.CompletedProcess(command, 1, "Command not found: commit open", "")
                     stdout = json.dumps({"hasPlan": False})
                 elif args[:2] == ["marketplace", "uninstall"]:
-                    value = lock(cwd_path)
+                    platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
+                    lock_root = platform_root if platform else cwd_path
+                    value = lock(lock_root, platform=platform)
                     value["plugins"].pop(args[2], None)
-                    save_lock(cwd_path, value)
+                    save_lock(lock_root, value)
                     stdout = json.dumps({"ok": True})
                 elif args[:2] == ["workflow", "health"]:
                     stdout = json.dumps({"ok": True, "data": {"status": "healthy"}})
@@ -471,12 +474,12 @@ class MarketplaceStepTests(unittest.TestCase):
 
             def fake_http(request, timeout):
                 http_calls.append((request.full_url, request.get_header("Authorization"), timeout))
-                if len(http_calls) == 1:
+                if len(http_calls) in (1, 3):
                     return FakeResponse(200, {"ok": True, "data": {"scope": "project", "hasPlan": False}})
                 return FakeResponse(404, {"ok": False, "error": {
-                    "code": "KB_RUNTIME_UNEXPECTED",
-                    "message": "An unexpected error occurred.",
-                    "hint": "Re-run with --debug and include the correlationId in a report.",
+                    "code": "KB_PLUGIN_NOT_INSTALLED",
+                    "message": "Plugin is not installed in this project.",
+                    "hint": "Run `kb marketplace install @kb-labs/commit-entry` in this project.",
                     "correlationId": "request-fixture"}})
 
             def fake_commit_case_hook():
@@ -487,7 +490,7 @@ class MarketplaceStepTests(unittest.TestCase):
             run_marketplace_steps(journey, project, "http://registry.test", env, fake_run, fake_http,
                                   commit_case_hook=fake_commit_case_hook)
 
-            expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 4))) for step in steps}
+            expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 5))) for step in steps}
             expected.update({
                 "S-010.7",
                 "S-051.2", "S-051.3", "S-051.4",
@@ -500,7 +503,10 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1",
                            "--scope", "platform", "--json"), calls)
+            self.assertIn(("kb", "marketplace", "uninstall", "@kb-labs/commit-entry",
+                           "--scope", "platform", "--json"), calls)
             self.assertEqual([call[0] for call in http_calls], [
+                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",
                 "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",
                 "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",
             ])

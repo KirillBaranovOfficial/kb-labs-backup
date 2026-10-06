@@ -4,7 +4,8 @@
  * runtime script standing in for `kb-project-runtime`.
  */
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,8 +34,14 @@ interface HealthBody {
   projectRuntimes: {
     limit: number;
     active: number;
-    runtimes: Array<{ projectId: string; state: string; inflight: number; keptRunningSchedules?: number; pid?: number }>;
+    runtimes: Array<{ projectId: string; state: string; inflight: number; keptRunningSchedules?: number; restarts?: number; pid?: number }>;
   };
+}
+
+interface PluginRouteBody {
+  ok: boolean;
+  data?: { scope?: string };
+  error?: { code: string; hint: string };
 }
 
 interface ReadyBody {
@@ -132,12 +139,27 @@ describe("kb-host project routing", () => {
     expect(fromA.path).toBe("/rest/whoami");
   });
 
-  // case: S-124.13
-  it("starts the registered project's runtime on an installed layout and serves its REST health route", async () => {
+  // case: S-124.13, S-192.2, S-192.3, S-192.4
+  it("reloads the registered project runtime when its Commit lock changes", async () => {
     const project = await registered();
+    execFileSync("git", ["init", "--quiet"], { cwd: project.root });
+    await writeFile(join(project.root, "package.json"), JSON.stringify({
+      name: "route-lifecycle-fixture",
+      version: "1.0.0",
+      private: true,
+    }));
+    await writeFile(join(project.root, ".kb", "kb.config.jsonc"), JSON.stringify({
+      plugins: { commit: { enabled: true } },
+    }));
+    await writeFile(join(project.root, ".kb", "marketplace.lock"), JSON.stringify({
+      schema: "kb.marketplace/3",
+      plugins: {},
+    }));
     const installedPlatformRoot = join(kbHome, "installed-platform");
     await mkdir(join(installedPlatformRoot, ".kb"), { recursive: true });
     const workspaceRoot = join(process.cwd(), "../../..");
+    await mkdir(join(installedPlatformRoot, "node_modules", "@kb-labs"), { recursive: true });
+    await symlink(join(workspaceRoot, "sdk/sdk"), join(installedPlatformRoot, "node_modules", "@kb-labs", "sdk"), "dir");
     const installedAdapters = {
       storage: "@kb-labs/adapters-fs",
       cache: "@kb-labs/adapters-state-broker",
@@ -190,6 +212,7 @@ describe("kb-host project routing", () => {
           entry: PROJECT_RUNTIME_ENTRY,
           env: {
             KB_PLATFORM_ROOT: installedPlatformRoot,
+            KB_HOME: kbHome,
             KB_MCP_AUTH_MODE: "local",
             KB_GATEWAY_URL: `http://127.0.0.1:${running!.gatewayPort}`,
             KB_STATE_DAEMON_URL: running!.internalUrl("state-daemon"),
@@ -219,9 +242,43 @@ describe("kb-host project routing", () => {
           String((body as ErrorBody).error.cause).slice(-900));
       }
       expect(body).toEqual(expect.any(Object));
+
+      const routePath = `/api/v1/projects/${project.id}/rest/api/v1/plugins/commit/status`;
+      const absentBeforeInstall = await running.fetchGateway(routePath);
+      expect(absentBeforeInstall.status).toBe(404);
+      expect((await absentBeforeInstall.json() as PluginRouteBody).error?.code).toBe("KB_PLUGIN_NOT_INSTALLED");
+
+      const projectLockPath = join(project.root, ".kb", "marketplace.lock");
+      const commitLink = relative(project.root, join(workspaceRoot, "plugins/commit/entry"));
+      const installedLock = {
+        schema: "kb.marketplace/3",
+        plugins: {
+          "@kb-labs/commit": { source: "local", link: commitLink, enabled: true },
+        },
+      };
+      await writeFile(projectLockPath, JSON.stringify(installedLock));
+      const installedRoute = await running.fetchGateway(routePath);
+      const installedBody = await installedRoute.json() as PluginRouteBody;
+      expect(installedRoute.status, JSON.stringify(installedBody)).toBe(200);
+      expect(installedBody).toMatchObject({ ok: true, data: { scope: "root" } });
+
+      await writeFile(projectLockPath, JSON.stringify({ schema: "kb.marketplace/3", plugins: {} }));
+      const removedRoute = await running.fetchGateway(routePath);
+      expect(removedRoute.status).toBe(404);
+      expect((await removedRoute.json() as PluginRouteBody).error).toMatchObject({
+        code: "KB_PLUGIN_NOT_INSTALLED",
+        hint: "Run `kb marketplace plugins list` to discover available plugins.",
+      });
+
+      await writeFile(projectLockPath, JSON.stringify(installedLock));
+      const reinstalledRoute = await running.fetchGateway(routePath);
+      const reinstalledBody = await reinstalledRoute.json() as PluginRouteBody;
+      expect(reinstalledRoute.status, JSON.stringify(reinstalledBody)).toBe(200);
+      expect(reinstalledBody).toMatchObject({ ok: true, data: { scope: "root" } });
+
       const health = await readUxSuccessResult<HealthBody>(await running.fetchGateway("/health"));
       expect(health.projectRuntimes.runtimes).toContainEqual(
-        expect.objectContaining({ projectId: project.id, state: "ready" }),
+        expect.objectContaining({ projectId: project.id, state: "ready", restarts: 3 }),
       );
     } finally {
       await running?.stop().catch(() => undefined);
