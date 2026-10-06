@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from invocations import invocation_context, run_command
+from journey_resources import read_installed_platform_resource
 from service_steps import Journey
 
 
@@ -18,16 +19,9 @@ def _request(*args, **kwargs):
 
 
 def _ux_contracts() -> tuple[dict, dict]:
-    installed = Path("/opt/kb-contracts/ux-result")
-    root = installed if installed.is_dir() else Path(__file__).resolve().parents[2] / "contracts" / "ux-result"
-    error_schema_path = (
-        root.parent / "error-envelope.schema.json"
-        if installed.is_dir()
-        else Path(__file__).resolve().parents[2] / "core" / "platform" / "src" / "error-envelope" / "error-envelope.schema.json"
-    )
     return (
-        json.loads((root / "machine-result.schema.json").read_text(encoding="utf-8")),
-        json.loads(error_schema_path.read_text(encoding="utf-8")),
+        json.loads(read_installed_platform_resource("ux-result", "machine-result.schema.json")),
+        json.loads(read_installed_platform_resource("error-envelope.schema.json")),
     )
 
 

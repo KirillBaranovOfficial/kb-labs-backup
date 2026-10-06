@@ -39,6 +39,15 @@
       "hint": "Check your network or proxy settings and retry."
     },
     {
+      "code": "KB_INSTALL_RELEASE_INDEX_UNREADABLE",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The release index at {path} cannot be read.",
+      "hint": "Check the --index path and file permissions."
+    },
+    {
       "code": "KB_INSTALL_RELEASE_INDEX_INVALID",
       "area": "install",
       "stage": "resolve",
@@ -46,6 +55,15 @@
       "retryable": true,
       "message": "The release index is corrupted or its signature does not match.",
       "hint": "Retry the command; if it persists report the correlationId (this is a KB Labs problem)."
+    },
+    {
+      "code": "KB_INSTALL_OFFLINE_ARTIFACT_MISSING",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "Artifact {artifact} is unavailable from the local cache.",
+      "hint": "Run without --offline to download the artifact, or restore its checksum-verified entry in the V2 cache."
     },
     {
       "code": "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED",

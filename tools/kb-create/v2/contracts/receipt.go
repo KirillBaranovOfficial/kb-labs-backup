@@ -17,6 +17,8 @@ type Artifact struct {
 	URL           string              `json:"url,omitempty"`
 	Tarball       string              `json:"tarball,omitempty"`
 	Target        string              `json:"target,omitempty"`
+	ResolvedFrom  string              `json:"resolvedFrom"`
+	ResolvedURL   string              `json:"resolvedUrl,omitempty"`
 	PlatformRange string              `json:"platformRange,omitempty"`
 	SDKRange      string              `json:"sdkRange,omitempty"`
 	Config        []ConfigRequirement `json:"config,omitempty"`
