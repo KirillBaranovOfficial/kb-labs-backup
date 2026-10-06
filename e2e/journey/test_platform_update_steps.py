@@ -15,8 +15,12 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="journey-update-test-")
         self.root = Path(self.temp.name)
         (self.root / ".kb/v2").mkdir(parents=True)
+        (self.root / ".kb/v2/secrets.env").write_text(
+            "gateway.jwtSecret=install-secret\nGATEWAY_JWT_SECRET=install-secret\n"
+        )
         (self.root / ".kb/kb.config.jsonc").write_text('{"stable":true}\n')
         self.config = self.root / ".kb/kb.config.jsonc"
+        self.secrets = self.root / ".kb/v2/secrets.env"
         self.receipt = self.root / ".kb/v2/receipt.json"
         self._write_receipt("3.0.0")
         self.commands: list[list[str]] = []
@@ -97,6 +101,10 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             hashlib.sha256(b'{"stable":true}\n').hexdigest(),
         )
         self.assertEqual(
+            steps["save installed receipt, config, and host status"]["details"]["installationSecretsSha256"]["beforeUpdate"],
+            hashlib.sha256(self.secrets.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(
             set(steps["verify restored receipt, config, host, and project command"]["details"]["configSha256"]),
             {"beforeUpdate", "afterUpdateHostRestart", "afterRollbackHostRestart", "afterMissingSnapshotRecovery"},
         )
@@ -104,6 +112,11 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertNotEqual(checkpoints["beforeUpdate"], checkpoints["afterUpdateHostRestart"])
         self.assertEqual(checkpoints["beforeUpdate"], checkpoints["afterRollbackHostRestart"])
         self.assertEqual(checkpoints["afterRollbackHostRestart"], checkpoints["afterMissingSnapshotRecovery"])
+        secret_checkpoints = steps["verify restored receipt, config, host, and project command"][
+            "details"]["installationSecretsSha256"]
+        self.assertEqual(secret_checkpoints["beforeUpdate"], secret_checkpoints["afterUpdateHostRestart"])
+        self.assertEqual(secret_checkpoints["beforeUpdate"], secret_checkpoints["afterRollbackHostRestart"])
+        self.assertEqual(secret_checkpoints["afterRollbackHostRestart"], secret_checkpoints["afterMissingSnapshotRecovery"])
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
         self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} |
                          {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.10", "S-203.11"})
@@ -206,6 +219,39 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertIn("after missing-snapshot recovery", verification["message"])
         self.assertIn("afterRollbackHostRestart=", verification["message"])
         self.assertIn("afterMissingSnapshotRecovery=", verification["message"])
+
+    def test_s023_4_fails_when_update_changes_installation_secrets(self):
+        def mutate_during_update(args: list[str]) -> subprocess.CompletedProcess:
+            result = self.fake_kb(args)
+            if (args[1] == "update" and "--json" in args
+                    and sum(command[1] == "update" for command in self.commands) == 1):
+                self.secrets.write_text("gateway.jwtSecret=changed-secret\nGATEWAY_JWT_SECRET=changed-secret\n")
+            return result
+
+        result = run_platform_update_steps(
+            mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_update,
+        )
+        failure = result.result().first_failure
+        self.assertEqual(failure["cases"], ["S-023.4"])
+        self.assertIn("installation-secret fingerprint changed during update", failure["message"])
+
+    def test_s024_3_fails_when_rollback_changes_installation_secrets(self):
+        def mutate_during_rollback(args: list[str]) -> subprocess.CompletedProcess:
+            result = self.fake_kb(args)
+            if args[1] == "rollback" and "missing-journey-snapshot" not in args and result.returncode == 0:
+                self.secrets.write_text("gateway.jwtSecret=changed-secret\nGATEWAY_JWT_SECRET=changed-secret\n")
+            return result
+
+        result = run_platform_update_steps(
+            mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_rollback,
+        )
+        failure = result.result().first_failure
+        self.assertEqual(failure["cases"], ["S-024.3"])
+        self.assertIn("installation-secret fingerprint changed during rollback", failure["message"])
 
     def test_failed_update_reports_the_first_failed_case_step(self):
         def broken(args: list[str]) -> subprocess.CompletedProcess:

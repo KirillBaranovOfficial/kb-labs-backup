@@ -87,7 +87,7 @@ func TestRenderDiag_HumanShowsReasonAndHint(t *testing.T) {
 	var out, herr bytes.Buffer
 	RenderDiag(&out, &herr, d, ModeHuman)
 	h := herr.String()
-	for _, want := range []string{"KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", "why:", "shipped without", "next:", "Re-run with --debug", "correlationId:", "corr-human"} {
+	for _, want := range []string{"KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", "why:", "shipped without", "Hint: Re-run with --debug", "correlationId:", "corr-human"} {
 		if !strings.Contains(h, want) {
 			t.Errorf("human diag missing %q in:\n%s", want, h)
 		}

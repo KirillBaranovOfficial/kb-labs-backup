@@ -1,6 +1,7 @@
 """Bounded, secret-redacted snapshot of an installed journey platform."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -87,14 +88,33 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
         return 0
 
 
-def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, mode: str,
-                         run_id: str) -> Path:
+def _write_secret_fingerprints(source: Path, target: Path) -> int:
+    """Record secret names and one-way fingerprints without copying secret values."""
+    try:
+        entries = []
+        for line in source.read_text().splitlines():
+            name, separator, value = line.partition("=")
+            if separator and name and value:
+                entries.append({"name": name, "sha256": hashlib.sha256(value.encode()).hexdigest()})
+        if not entries:
+            return 0
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"entries": entries}, indent=2) + "\n")
+        return target.stat().st_size
+    except OSError:
+        return 0
+
+
+def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platform_root: str | Path,
+                         mode: str, run_id: str) -> Path:
     """Copy bounded structured service logs from installed runtime state to the run report."""
     home = Path(kb_home)
     destination = Path(reports_dir) / f"service-logs-{mode}-{run_id}"
     destination.mkdir(parents=True, exist_ok=True)
     used = 0
-    for database in sorted(home.glob("state/*/database/kb.sqlite")):
+    platform_database = Path(platform_root) / ".kb" / "database" / "kb.sqlite"
+    databases = {*home.glob("state/*/database/kb.sqlite"), platform_database}
+    for database in sorted(databases):
         try:
             connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=1)
             try:
@@ -121,6 +141,7 @@ def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, mode: 
             application_id = str(fields.get("applicationId") or fields.get("application_id") or "")
             normalized = f"{service} {app_id} {component} {application_id} {record.get('source', '')}".lower()
             category = next((candidate for needle, candidate in (
+                ("cli", "cli"),
                 ("workflow", "workflow-daemon"), ("project-runtime", "project-runtime"),
                 ("gateway", "gateway"), ("host", "host"),
             ) if needle in normalized), None)
@@ -192,6 +213,14 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
         for relative in (Path(".kb/marketplace.lock"), Path(".kb/kb.config.jsonc"),
                          Path(".kb/v2/receipt.json")):
             add(root / relative, relative)
+        fingerprint_bytes = _write_secret_fingerprints(
+            root / ".kb/v2/secrets.env", destination / "installation-secret-fingerprints.json"
+        )
+        if fingerprint_bytes and used + fingerprint_bytes <= CONTENT_BUDGET:
+            used += fingerprint_bytes
+            entries.append(f"- `installation-secret-fingerprints.json` ({fingerprint_bytes} bytes)")
+        elif fingerprint_bytes:
+            (destination / "installation-secret-fingerprints.json").unlink(missing_ok=True)
         for source in sorted((root / ".kb/v2/snapshots").glob("*.json")):
             add(source, Path(".kb/v2/snapshots") / source.name)
         home_value = (env or os.environ).get("HOME")

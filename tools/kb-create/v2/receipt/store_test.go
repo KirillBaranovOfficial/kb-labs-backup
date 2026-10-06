@@ -57,7 +57,7 @@ func TestSnapshotRestoresManagedFilesWithoutTouchingProjectFiles(t *testing.T) {
 	}
 }
 
-// case: S-038.6
+// case: S-024.3
 func TestRollbackLeavesInstallerManagedSecretsAvailable(t *testing.T) {
 	root := t.TempDir()
 	if err := Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "receipt-1", Plan: contracts.ResolvedInstallPlan{PlanHash: "plan"}}); err != nil {
@@ -73,6 +73,9 @@ func TestRollbackLeavesInstallerManagedSecretsAvailable(t *testing.T) {
 	}
 	snapshot, err := CreateSnapshot(root, time.Unix(2, 0))
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secretPath, []byte("GATEWAY_INTERNAL_SECRET=updated-value\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := RestoreSnapshot(root, snapshot.ID); err != nil {

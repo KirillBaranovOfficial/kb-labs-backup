@@ -34,12 +34,42 @@ class PlatformStateDumpTests(unittest.TestCase):
                                 "source": "platform", "fields": {**service_fields, "token": "secret-value"}}
                         connection.execute("INSERT INTO doc_logs VALUES (?, ?, ?, ?)",
                                            (f"log-{index}", json.dumps(data), index, index))
-                destination = archive_service_logs(kb_home, root / "reports", mode=mode, run_id="run-1")
+                destination = archive_service_logs(
+                    kb_home, root / "reports", platform_root=root / "platform", mode=mode, run_id="run-1",
+                )
                 for service in ("host", "gateway", "project-runtime", "workflow-daemon"):
                     archived = list(destination.rglob(f"{service}.jsonl"))
                     self.assertEqual(len(archived), 1)
                     self.assertIn(f"failure from {service}", archived[0].read_text())
                     self.assertNotIn("secret-value", archived[0].read_text())
+
+    def test_service_log_archive_reads_platform_document_database(self):
+        with tempfile.TemporaryDirectory(prefix="journey-platform-service-logs-") as temporary:
+            root = Path(temporary)
+            kb_home = root / "home" / ".kb"
+            platform_root = root / "platform"
+            database = platform_root / ".kb" / "database" / "kb.sqlite"
+            database.parent.mkdir(parents=True)
+            with sqlite3.connect(database) as connection:
+                connection.execute("CREATE TABLE doc_logs (id TEXT, data TEXT, created_at INT, updated_at INT)")
+                record = {
+                    "source": "platform",
+                    "message": "unexpected plugin failure",
+                    "error": {"stack": "Error: fixture failure\\n    at command.js:12"},
+                    "fields": {"serviceId": "kb-host", "component": "cli-runtime",
+                               "correlationId": "corr-platform-log"},
+                }
+                connection.execute("INSERT INTO doc_logs VALUES (?, ?, ?, ?)",
+                                   ("platform-log-1", json.dumps(record), 1, 1))
+
+            destination = archive_service_logs(
+                kb_home, root / "reports", platform_root=platform_root, mode="secured", run_id="run-2",
+            )
+            archived = list(destination.rglob("*.jsonl"))
+            self.assertEqual(len(archived), 1)
+            contents = archived[0].read_text()
+            self.assertIn("corr-platform-log", contents)
+            self.assertIn("fixture failure", contents)
 
     def test_dump_once_then_continue_to_uninstall(self):
         dump_guard = PlatformStateDumpOnce()
@@ -77,6 +107,9 @@ class PlatformStateDumpTests(unittest.TestCase):
             binaries = root / "bin"
             binaries.mkdir()
             (platform / ".kb/v2").mkdir(parents=True)
+            (platform / ".kb/v2/secrets.env").write_text(
+                "gateway.jwtSecret=signing-value\nGATEWAY_JWT_SECRET=signing-value\n"
+            )
             (platform / ".kb/logs").mkdir(parents=True)
             (platform / ".kb/diagnostics").mkdir(parents=True)
             (platform / "node_modules/@kb-labs/sample").mkdir(parents=True)
@@ -127,6 +160,12 @@ class PlatformStateDumpTests(unittest.TestCase):
 
             self.assertTrue((destination / ".kb/marketplace.lock").is_file())
             self.assertTrue((destination / ".kb/v2/receipt.json").is_file())
+            fingerprints_path = destination / "installation-secret-fingerprints.json"
+            self.assertTrue(fingerprints_path.is_file())
+            fingerprints = json.loads(fingerprints_path.read_text())
+            self.assertEqual({entry["name"] for entry in fingerprints["entries"]},
+                             {"gateway.jwtSecret", "GATEWAY_JWT_SECRET"})
+            self.assertNotIn("signing-value", fingerprints_path.read_text())
             snapshot = destination / ".kb/v2/snapshots/snapshot-good.json"
             self.assertTrue(snapshot.is_file())
             self.assertNotIn("snapshot-secret", snapshot.read_text())
