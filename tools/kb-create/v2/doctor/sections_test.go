@@ -130,7 +130,7 @@ func gatewayDouble(t *testing.T, health, auth string) host.Status {
 		case "/health":
 			_, _ = w.Write([]byte(health))
 		case "/health/adapters":
-			_, _ = w.Write([]byte(`{"ok":true,"data":[{"slot":"storage","mode":"real","implementation":"@kb-labs/adapters-fs"},{"slot":"cache","mode":"inmemory","implementation":"StateBroker"}]}`))
+			_, _ = w.Write([]byte(`{"ok":true,"data":[{"slot":"storage","mode":"real","implementation":"@kb-labs/adapters-fs","configuredPackage":"@kb-labs/adapters-fs","recordedAt":"2026-10-06T00:00:00.000Z"},{"slot":"cache","mode":"inmemory","implementation":"StateBroker","reason":"not-configured","recordedAt":"2026-10-06T00:00:00.000Z"}]}`))
 		case "/health/auth":
 			if auth == "" {
 				http.NotFound(w, r)
@@ -145,6 +145,33 @@ func gatewayDouble(t *testing.T, health, auth string) host.Status {
 	return host.Status{State: host.StateRunning, PID: 9, Healthy: true, HealthURL: server.URL + "/health"}
 }
 
+func TestAdapterChecksDistinguishUnreadableResponseFromUnreachableHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health/adapters" {
+			_, _ = w.Write([]byte(`[{"slot":"storage","mode":"real"}]`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"data":{"upstreams":{}}}`))
+	}))
+	status := host.Status{State: host.StateRunning, PID: 9, Healthy: true, HealthURL: server.URL + "/health"}
+	section := InspectPlatform(context.Background(), status, server.Client(), nil)
+	server.Close()
+
+	unreadable := check(t, section, "adapters")
+	if unreadable.OK || unreadable.Detail != "The running host returned an unreadable adapter status response." || strings.Contains(unreadable.Hint, "restart") {
+		t.Fatalf("unreadable response check = %+v", unreadable)
+	}
+
+	unreachable := InspectPlatform(context.Background(), status, nil, nil)
+	// The closed server is still not reachable; the connection failure has a
+	// restart hint, unlike an HTTP 200 response that violates the UX contract.
+	unreachableCheck := check(t, unreachable, "adapters")
+	if unreachableCheck.OK || !strings.Contains(unreachableCheck.Detail, "host is unreachable") || !strings.Contains(unreachableCheck.Hint, "kb-create restart") {
+		t.Fatalf("unreachable response check = %+v", unreachableCheck)
+	}
+}
+
+// case: S-054.2
 func TestPlatformSectionReportsPerSlotAdapterModeAndImplementation(t *testing.T) {
 	status := gatewayDouble(t, `{"ok":true,"data":{"upstreams":{}}}`, "")
 	section := InspectPlatform(context.Background(), status, nil, nil)

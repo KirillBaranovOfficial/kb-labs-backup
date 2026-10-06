@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
-from runner import configure_secured_platform
+from runner import login_and_configure_secured_admin
 from service_runner import (checks, configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             PROJECT_ID,
@@ -160,26 +160,79 @@ class ServiceJourneyTests(unittest.TestCase):
             self.assertIn("RuntimeError: simulated run crash", diagnostics)
             self.assertIn("Journey runner crashed: RuntimeError: simulated run crash", stderr.getvalue())
 
-    def test_secured_pre_project_config_does_not_touch_project_before_setup(self):
+    def test_secured_release_admin_signs_in_without_unneeded_platform_config(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             home = root / "home"
             home.mkdir()
             project = home / "fresh-project"
+            project.mkdir()
             commands = []
 
             def fake_run(args, *, env, cwd, timeout):
                 commands.append((args, cwd))
                 return subprocess.CompletedProcess(args, 0, "{}", ""), 0.0
 
-            configure_secured_platform(env={"HOME": str(home)}, run_command=fake_run)
+            result = login_and_configure_secured_admin(
+                env={"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
+                     "KB_JOURNEY_PLATFORM_ROOT": str(root / "platform"),
+                     "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+                     "KB_JOURNEY_ADMIN_PASSWORD": "password"},
+                launcher="kb-create", run_command=fake_run)
 
-        self.assertFalse(project.exists())
-        self.assertEqual(len(commands), 2)
-        self.assertTrue(all(cwd == home for _, cwd in commands))
-        self.assertEqual([args[-2] for args, _ in commands], [
-            "gateway.auth.providers", "gateway.auth.cookieSecure",
-        ])
+        self.assertIsNone(result)
+        self.assertEqual(len(commands), 1)
+        self.assertIn("kb auth login", commands[0][0][2])
+        self.assertEqual(commands[0][1], project)
+
+    def test_secured_admin_signs_in_before_authenticated_provider_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            home.mkdir()
+            project = home / "fresh-project"
+            project.mkdir()
+            commands = []
+
+            def fake_run(args, *, env, cwd, timeout):
+                commands.append((args, cwd))
+                return subprocess.CompletedProcess(args, 0, "{}", ""), 0.0
+
+            result = login_and_configure_secured_admin(
+                env={"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project),
+                     "KB_JOURNEY_PLATFORM_ROOT": str(root / "platform"),
+                     "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+                     "KB_JOURNEY_ADMIN_PASSWORD": "password"},
+                launcher="kb-create", configure_oidc=True, run_command=fake_run)
+
+        self.assertIsNone(result)
+        self.assertEqual(len(commands), 3)
+        self.assertIn("kb auth login", commands[0][0][2])
+        self.assertIn("gateway.auth.providers", commands[1][0])
+        self.assertEqual(commands[1][1], home)
+        self.assertEqual(commands[2][0], ["kb-create", "restart", "--platform-root", str(root / "platform")])
+
+    def test_secured_platform_config_is_not_attempted_when_admin_login_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / "project"
+            project.mkdir()
+            commands = []
+
+            def fake_run(args, *, env, cwd, timeout):
+                commands.append(args)
+                return subprocess.CompletedProcess(args, 1, "login denied", ""), 0.0
+
+            result = login_and_configure_secured_admin(
+                env={"HOME": str(root), "KB_JOURNEY_PROJECT_ROOT": str(project),
+                     "KB_JOURNEY_PLATFORM_ROOT": str(root / "platform"),
+                     "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+                     "KB_JOURNEY_ADMIN_PASSWORD": "password"},
+                launcher="kb-create", run_command=fake_run)
+
+        self.assertEqual(result[0], "kb auth login")
+        self.assertEqual(len(commands), 1)
+        self.assertIn("kb auth login", commands[0][2])
 
     def test_mcp_probe_sends_streamable_http_accept_and_parses_sse(self):
         import json

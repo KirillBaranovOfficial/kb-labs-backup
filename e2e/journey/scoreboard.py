@@ -41,6 +41,14 @@ def load_cases(catalog: Path) -> list[dict]:
     return cases
 
 
+def release_claims_for_case(case_id: str, catalog: Path) -> list[str]:
+    """Return claims only when the catalog marks the case active and release-ready."""
+    case = next((item for item in load_cases(catalog) if item["id"] == case_id), None)
+    if case is None or case["status"] != "active" or not case["release"]:
+        return []
+    return case["claims"]
+
+
 def claim_sort_key(claim: str) -> tuple[str, int]:
     case, step = claim.rsplit(".", 1)
     return case, int(step)

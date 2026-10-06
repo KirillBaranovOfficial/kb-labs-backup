@@ -139,8 +139,11 @@ func adapterChecks(ctx context.Context, client *http.Client, healthURL string, b
 		Implementation string `json:"implementation"`
 	}
 	status, err := getJSON(ctx, client, parsed.String(), &statuses)
+	if status == 0 {
+		return []Check{{ID: "adapters", Detail: "Adapter status cannot be checked because the running host is unreachable.", Hint: "Run \"kb-create restart\"; read the host log if it persists."}}
+	}
 	if err != nil || status != http.StatusOK {
-		return []Check{{ID: "adapters", Detail: "Adapter status cannot be read from the running host.", Hint: "Run \"kb-create restart\"; read the host log if it persists."}}
+		return []Check{{ID: "adapters", Detail: "The running host returned an unreadable adapter status response."}}
 	}
 	if len(statuses) == 0 {
 		return []Check{{ID: "adapters", Detail: "The running host has not reported any adapter slots."}}

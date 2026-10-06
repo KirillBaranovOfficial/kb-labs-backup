@@ -412,6 +412,23 @@ describe('Gateway /health/adapters endpoint', () => {
     expect(body[1]).toMatchObject({ slot: 'llm', mode: 'noop' });
   });
 
+  it('serializes real adapter records without an optional degradation reason', async () => {
+    mockAdapters = {};
+    mockAdapterStatuses = [
+      { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs', recordedAt: new Date().toISOString() },
+    ];
+    app = await buildHealthApp();
+
+    const res = await app.inject({ method: 'GET', url: '/health/adapters' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      ok: true,
+      data: [{ slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs' }],
+    });
+    expect(res.json().data[0]).not.toHaveProperty('reason');
+  });
+
   it('returns empty array when no statuses recorded', async () => {
     mockAdapters = {};
     mockAdapterStatuses = [];
