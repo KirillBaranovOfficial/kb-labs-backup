@@ -12,20 +12,22 @@ from pathlib import Path
 import subprocess
 import shutil
 import tempfile
+import traceback
 import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timezone
 from urllib.request import build_opener, HTTPCookieProcessor
 
-from service_steps import Journey
+from service_steps import FlowGraph, Journey
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
                          read_ux_cli_result, read_ux_http_result, run_command, run_with_runner)
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import run_marketplace_steps
 from marketplace_steps import _registry_version, _output
 from adapter_defaults_steps import run_adapter_default_steps
-from analytics_steps import run_analytics_and_gateway_steps
+from analytics_steps import run_analytics_steps
+from gateway_steps import run_gateway_steps
 from worktree_steps import run_worktree_steps
 from project_identity_steps import run_project_identity_steps, run_project_registry_steps
 from workspace_steps import run_workspace_cli_steps
@@ -558,10 +560,51 @@ def _case_claims(name: str, mode: str = "local") -> list[str]:
     return [case_id]
 
 
-def run_service_steps(journey: Journey, steps, mode: str = "local") -> None:
-    """Run capability checks through Journey so raised checks are recorded."""
+SERVICE_GROUPS = {
+    "platform": {"capabilities": {"gateway"}, "depends_on": ("host-running",)},
+    "auth": {"capabilities": {"auth.local", "auth.secured"}, "depends_on": ("host-running",)},
+    "projects": {"capabilities": {"projects"}, "depends_on": ("host-running",)},
+    "workflow": {"capabilities": {"workflow"}, "depends_on": ("host-running", "project-registered")},
+    "marketplace": {"capabilities": {"marketplace"}, "depends_on": ("host-running", "project-registered")},
+    "marketplace-fixtures": {"capabilities": set(),
+                             "depends_on": ("host-running", "project-registered", "marketplace-available")},
+    "mcp": {"capabilities": {"mcp"}, "depends_on": ("host-running", "project-registered", "fixtures-installed")},
+    "studio": {"capabilities": {"studio"}, "depends_on": ("host-running", "project-registered")},
+    "analytics": {"capabilities": {"analytics"}, "depends_on": ("host-running", "project-registered", "fixtures-installed")},
+    "gateway-extra": {"capabilities": {"gateway-extra"}, "depends_on": ("host-running", "session")},
+    "agent-session": {"capabilities": {"agent-session"}, "depends_on": ("host-running", "project-registered")},
+    "project-registry": {"capabilities": {"project-registry"}, "depends_on": ("host-running", "project-registered")},
+    "project-identity": {"capabilities": {"project-identity"}, "depends_on": ("host-running", "project-registered")},
+    "workspace": {"capabilities": {"workspace"}, "depends_on": ("host-running",)},
+    "plugin-availability": {"capabilities": {"plugin-availability"},
+                            "depends_on": ("project-registered", "fixtures-installed")},
+    "adapters": {"capabilities": {"adapter"}, "depends_on": ("host-running", "project-registered")},
+    "plugin-author": {"capabilities": {"plugin-author"},
+                       "depends_on": ("host-running", "project-registered", "fixtures-installed", "session")},
+    "worktree": {"capabilities": {"worktree"}, "depends_on": ("host-running", "project-registered")},
+}
+
+
+def run_grouped_service_steps(journey: Journey, steps, mode: str = "local", groups=None,
+                              states=None, graph: FlowGraph | None = None) -> None:
+    """Run declared capability groups, gating only on explicit state probes."""
+    group_specs = groups or SERVICE_GROUPS
+    capability_groups = {
+        capability: group
+        for group, spec in group_specs.items()
+        for capability in spec["capabilities"]
+    }
+    flow_graph = graph or FlowGraph(
+        journey, {name: spec["depends_on"] for name, spec in group_specs.items()}, states=states)
     for name, capability, check in steps:
-        journey.step(name, capability, check, cases=_case_claims(name, mode))
+        group = capability_groups.get(capability, capability)
+        flow_graph.step(name, group, capability, check, cases=_case_claims(name, mode))
+
+
+def run_service_steps(journey: Journey, steps, mode: str = "local", states=None,
+                      graph: FlowGraph | None = None) -> None:
+    """Run capability checks through Journey so raised checks are recorded."""
+    run_grouped_service_steps(journey, steps, mode, states=states, graph=graph)
 
 
 def configure_installed_cli_path() -> None:
@@ -588,28 +631,53 @@ def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runne
         raise RuntimeError(f"`kb auth login` failed while restoring the secured service journey session{suffix}")
 
 
-def _run_installed_flows(journey: Journey, project_root: str, registry: str) -> None:
+def _run_installed_flows(journey: Journey, project_root: str, registry: str, graph: FlowGraph) -> None:
     env = os.environ.copy()
     cli_path = Path.home() / ".local/bin/kb"
-    journey.step("project registry and current-project flows", "projects",
-                 lambda: run_project_registry_steps(journey, str(cli_path), env, registry))
-    run_project_identity_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root)))
-    run_workspace_cli_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root)))
+    graph.flow("project registry and current-project flows", "project-registry", "projects",
+               lambda: run_project_registry_steps(journey, str(cli_path), env, registry),
+               cases=["S-043.1", "S-196.1"], record_empty_success=False)
+    graph.flow("project identity flows", "project-identity", "projects",
+               lambda: run_project_identity_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root))),
+               cases=["S-043.1", "S-124.11", "S-196.1"], record_empty_success=False)
+    graph.flow("workspace CLI flows", "workspace", "workspace",
+               lambda: run_workspace_cli_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root))),
+               cases=["S-179.2", "S-179.3", "S-179.5", "S-203.1"], record_empty_success=False)
     project_b_root = os.environ.get("KB_JOURNEY_PROJECT_B_ROOT", "")
     if project_b_root:
-        run_project_plugin_availability_steps(
-            journey, str(cli_path), Path(project_root), Path(project_b_root), env,
-        )
-    journey.step("adapter defaults flow", "adapter",
-                 lambda: run_adapter_default_steps(journey, project_root, env))
-    journey.step("plugin author flow", "plugin-author",
-                 lambda: run_plugin_author_flow(journey, Path(project_root),
-                                                Path.home() / ".local/bin/kb", registry,
-                                                base_env=env))
-    journey.step("worktree workflow identity flow", "workflow",
-                 lambda: run_worktree_steps(journey, Path.home() / ".local/bin/kb",
-                                            platform_root=os.environ.get("KB_PLATFORM_ROOT", str(Path.home() / "kb-platform")),
-                                            env=env))
+        graph.flow("project plugin availability", "plugin-availability", "plugins",
+                   lambda: run_project_plugin_availability_steps(
+                       journey, str(cli_path), Path(project_root), Path(project_b_root), env),
+                   cases=["S-197.3", "S-197.5"], record_empty_success=False)
+    graph.flow("adapter defaults flow", "adapters", "adapter",
+               lambda: run_adapter_default_steps(journey, project_root, env),
+               cases=["S-054.1", "S-048.1"], record_empty_success=False)
+    platform_root = Path(env.get("KB_JOURNEY_PLATFORM_ROOT", project_root))
+    def adapter_defaults_probe() -> str | None:
+        config_path = platform_root / ".kb" / "kb.config.jsonc"
+        if not config_path.is_file():
+            config_path = platform_root / ".kb" / "kb.config.json"
+        try:
+            value = json.loads(config_path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            return f"platform adapter config is missing or unreadable after the adapter journey: {error}"
+        platform_config = value.get("platform", {})
+        if ("storage" in platform_config.get("adapters", {})
+                or "storage" in platform_config.get("adapterOptions", {})):
+            return "adapter journey left its platform storage binding or options configured"
+        return None
+    graph.probe_state("adapter-defaults", "adapters", "unbind platform storage and restore built-in default",
+                      adapter_defaults_probe, cases=["S-048.6"])
+    graph.flow("plugin author flow", "plugin-author", "plugin-author",
+               lambda: run_plugin_author_flow(journey, Path(project_root),
+                                              Path.home() / ".local/bin/kb", registry,
+                                              base_env=env),
+               cases=["S-014.1", "S-015.1", "S-003.1"], record_empty_success=False)
+    graph.flow("worktree workflow identity flow", "worktree", "workflow",
+               lambda: run_worktree_steps(journey, Path.home() / ".local/bin/kb",
+                                          platform_root=os.environ.get("KB_PLATFORM_ROOT", str(Path.home() / "kb-platform")),
+                                          env=env),
+               cases=["S-198.5"], record_empty_success=False)
 
 
 def _find_project_id(payload: object) -> str:
@@ -795,35 +863,82 @@ def main() -> int:
     args = parser.parse_args()
     os.environ.setdefault("KB_JOURNEY_INVOCATIONS", str(Path(args.output).resolve().parent))
     journey = Journey(args.mode, args.run_id or str(uuid.uuid4()))
+    inherited_states = json.loads(os.getenv("KB_JOURNEY_STATES", "{}"))
+    graph = FlowGraph(
+        journey, {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+        diagnostics_path=Path(args.output).resolve().with_name("journey-diagnostics.log"),
+        states=inherited_states,
+    )
     try:
         configure_installed_cli_path()
         if args.mode == "secured":
-            journey.step("restore secured CLI login", "auth.secured",
-                         lambda: restore_secured_cli_login(
-                             Path.home() / ".local/bin/kb", os.environ.copy()))
+            graph.probe_state("session", "auth", "fresh secured CLI login",
+                              lambda: restore_secured_cli_login(
+                                  Path.home() / ".local/bin/kb", os.environ.copy()),
+                              cases=["S-041.18"])
         project_root = os.getenv("KB_JOURNEY_PROJECT_ROOT")
         registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
         if project_root:
             env = os.environ.copy()
-            journey.step("marketplace flow", "marketplace",
-                         lambda: run_marketplace_steps(journey, project_root, registry, env))
-            def prepare_projects() -> None:
-                _prepare_and_export_mcp_projects(project_root, registry, env)
-            journey.step("prepare MCP project fixtures", "mcp", prepare_projects)
-        run_service_steps(journey, checks(args.mode), args.mode)
+            marketplace_claims = ["S-010.1"] if args.mode == "local" else ["S-041.7"]
+            graph.flow("marketplace flow", "marketplace", "marketplace",
+                       lambda: run_marketplace_steps(journey, project_root, registry, env),
+                       cases=marketplace_claims, record_empty_success=False)
+            project_lock = Path(project_root) / ".kb" / "plugins.lock.json"
+            def marketplace_probe() -> str | None:
+                try:
+                    lock = json.loads(project_lock.read_text())
+                except (OSError, json.JSONDecodeError) as error:
+                    return f"project plugin lock is missing or unreadable: {error}"
+                entry = lock.get("plugins", {}).get("@kb-labs/commit-entry")
+                return None if isinstance(entry, dict) and entry.get("version") else "Commit fixture is absent from the project plugin lock"
+            graph.probe_state("marketplace-available", "marketplace", "marketplace install",
+                              marketplace_probe, cases=marketplace_claims)
+            graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
+                       lambda: _prepare_and_export_mcp_projects(project_root, registry, env),
+                       cases=["S-140.2", "S-199.3"], record_empty_success=False)
+            fixture_file = env.get("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
+            def fixtures_probe() -> str | None:
+                if not fixture_file:
+                    return "project fixture handoff file path was not configured"
+                try:
+                    fixtures = json.loads(Path(fixture_file).read_text())
+                except (OSError, json.JSONDecodeError) as error:
+                    return f"project fixture handoff is missing or unreadable: {error}"
+                required = ("projectAId", "projectARoot", "projectBId", "projectBRoot")
+                return None if all(fixtures.get(key) for key in required) else "project fixture handoff omitted a registered project field"
+            graph.probe_state("fixtures-installed", "marketplace-fixtures", "project fixture handoff",
+                              fixtures_probe, cases=["S-140.2", "S-199.3"])
+        run_service_steps(journey, checks(args.mode), args.mode, graph=graph)
         if PROJECT_ID:
-            run_agent_session_steps(
-                journey, PROJECT_ID, os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
-                os.getenv("KB_JOURNEY_AGENT_ID", "orchestrator"),
-            )
-        run_analytics_and_gateway_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""))
+            graph.flow("project agent session flows", "agent-session", "agent-session",
+                       lambda: run_agent_session_steps(
+                           journey, PROJECT_ID, os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
+                           os.getenv("KB_JOURNEY_AGENT_ID", "orchestrator")),
+                       cases=["S-141.1", "S-141.2"], record_empty_success=False)
+        graph.flow("analytics extras", "analytics", "analytics",
+                   lambda: run_analytics_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")),
+                   cases=["S-191.1", "S-201.3"], record_empty_success=False)
+        graph.flow("gateway extras", "gateway-extra", "gateway-extra",
+                   lambda: run_gateway_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")),
+                   cases=["S-017.1", "S-017.2", "S-017.3", "S-017.4", "S-017.5",
+                          "S-018.1", "S-018.2", "S-018.3", "S-189.1", "S-189.2",
+                          "S-189.3", "S-189.4", "S-189.5", "S-189.6", "S-190.1", "S-190.2"],
+                   record_empty_success=False)
         if project_root:
-            _run_installed_flows(journey, project_root, registry)
+            _run_installed_flows(journey, project_root, registry, graph)
         else:
             reason = "journey runner did not receive KB_JOURNEY_PROJECT_ROOT from the installed project setup"
-            journey.blocked("marketplace and adapter user flows", "marketplace", reason)
-            journey.blocked("plugin author flow", "plugin-author", reason)
+            journey.blocked("marketplace and adapter user flows", "marketplace", reason,
+                            cases=["S-010.1", "S-054.1"])
+            journey.blocked("plugin author flow", "plugin-author", reason,
+                            cases=["S-014.1", "S-015.1"])
     except Exception as error:
+        diagnostics = Path(args.output).resolve().with_name("journey-diagnostics.log")
+        diagnostics.parent.mkdir(parents=True, exist_ok=True)
+        with diagnostics.open("a", encoding="utf-8") as stream:
+            stream.write("\n== unexpected exception in service runner ==\n")
+            stream.write(traceback.format_exc())
         journey.step("service runner", "journey.runner", lambda: str(error) or error.__class__.__name__)
     finally:
         kb_home = Path(os.getenv("KB_HOME", str(Path.home() / ".kb")))
@@ -840,7 +955,9 @@ def main() -> int:
             archive_logs,
         )
         result = journey.write_json(args.output)
-    print(json.dumps(result.__dict__, indent=2))
+        output_payload = {**result.__dict__, "states": graph.states}
+        Path(args.output).write_text(json.dumps(output_payload, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(output_payload, indent=2))
     return 0 if result.status == "PASS" else 1
 
 

@@ -17,12 +17,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
 from runner import login_and_configure_secured_admin
-from service_runner import (checks, configure_installed_cli_path, declared_capabilities,
+from service_runner import (SERVICE_GROUPS, checks, configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             PROJECT_ID,
                             _prepare_and_export_mcp_projects,
-                            main as service_main, mcp_probe, run_service_steps)
-from service_steps import Journey, record_runner_failure
+                            main as service_main, mcp_probe, run_grouped_service_steps, run_service_steps)
+from service_steps import FlowGraph, Journey, record_runner_failure
 from steps.auth import run_secured_auth_steps
 
 
@@ -70,7 +70,10 @@ class ServiceJourneyTests(unittest.TestCase):
         run_service_steps(journey, [
             ("marketplace registry", "marketplace", broken_check),
             ("gateway readiness", "gateway", lambda: None),
-        ])
+        ], states={
+            "host-running": {"passed": True, "evidence": "healthy", "group": "install", "step": "start", "claim": "PC-002.1"},
+            "project-registered": {"passed": True, "evidence": "registered", "group": "project", "step": "add", "claim": "PC-002.8"},
+        })
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "service-local.json"
             result = journey.write_json(path)
@@ -89,6 +92,140 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(journey.steps[0].status, "BLOCKED")
         self.assertEqual(journey.result().case_run["claims"], [])
 
+    def test_product_failure_with_healthy_state_probes_does_not_block_later_groups(self):
+        journey = Journey("local", "product-failure-healthy-state")
+        calls = []
+        graph = FlowGraph(journey, {"update": (), "auth": ("host-running", "platform-version-known")},
+                          states={
+                              "host-running": {"passed": True, "evidence": "healthy",
+                                               "group": "update", "step": "rollback", "claim": "S-024.1"},
+                              "platform-version-known": {"passed": True, "evidence": "version N restored",
+                                                          "group": "update", "step": "rollback", "claim": "S-024.1"},
+                          })
+        graph.flow("update product assertion", "update", "platform.update",
+                   lambda: journey.step("saved session assertion", "platform.update",
+                                         lambda: "saved session was rejected", cases=["S-023.5"]),
+                   cases=["S-023.5"])
+        graph.flow("auth-dependent group", "auth", "auth", lambda: calls.append("auth"),
+                   cases=["S-041.1"])
+
+        self.assertEqual(calls, ["auth"])
+        self.assertEqual([step.status for step in journey.steps], ["FAIL", "PASS"])
+        self.assertEqual(journey.steps[0].cases, ["S-023.5"])
+
+    def test_failed_host_probe_blocks_dependents_with_probe_evidence_and_claim(self):
+        journey = Journey("local", "host-state-block")
+        calls = []
+        graph = FlowGraph(
+            journey, {"update": ("host-running",), "auth": ("host-running",)},
+            states={"host-running": {"passed": True, "evidence": "healthy before update",
+                                     "group": "install", "step": "start/status", "claim": "PC-002.2"}},
+        )
+        graph.flow("update journey", "update", "platform.update",
+                   lambda: journey.step("update product assertion", "platform.update",
+                                        lambda: "saved session rejected", cases=["S-023.5"]),
+                   cases=["S-023.5"])
+        graph.probe_state("host-running", "update", "rollback/status",
+                          lambda: "kb-create status reports running=False; gateway /ready returned HTTP 503",
+                          cases=["PC-002.2"])
+        graph.flow("auth group", "auth", "auth", lambda: calls.append("auth"), cases=["S-041.1"])
+
+        self.assertEqual(calls, [])
+        self.assertEqual([step.status for step in journey.steps], ["FAIL", "FAIL", "BLOCKED"])
+        self.assertIn("blocked by state host-running:", journey.steps[2].message)
+        self.assertIn("running=False", journey.steps[2].message)
+        self.assertIn("update/rollback/status (PC-002.2)", journey.steps[2].message)
+
+    def test_saved_session_assertion_does_not_block_after_fresh_login_probe(self):
+        journey = Journey("secured", "saved-session-failure-fresh-login")
+        calls = []
+        graph = FlowGraph(journey, {"auth": (), "plugin-author": ("session",)})
+        graph.flow("saved session product assertion", "auth", "auth",
+                   lambda: journey.step("saved session rejected", "auth", lambda: "saved token rejected",
+                                        cases=["S-023.5"]), cases=["S-023.5"])
+        graph.probe_state("session", "auth", "fresh admin login", lambda: None, cases=["S-041.18"])
+        graph.flow("plugin author group", "plugin-author", "plugin-author",
+                   lambda: calls.append("plugin-author"), cases=["S-014.1"])
+
+        self.assertEqual(calls, ["plugin-author"])
+        self.assertEqual([step.status for step in journey.steps], ["FAIL", "PASS", "PASS"])
+
+    def test_platform_prerequisite_failure_blocks_each_dependent_group_with_claim(self):
+        journey = Journey("local", "platform-stop")
+        calls = []
+        groups = {
+            "platform": {"capabilities": {"gateway"}, "depends_on": ()},
+            "auth": {"capabilities": {"auth.local"}, "depends_on": ("host-running",)},
+            "projects": {"capabilities": {"projects"}, "depends_on": ("host-running",)},
+        }
+        graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in groups.items()})
+        graph.probe_state("host-running", "install", "gateway readiness", lambda: "host is down",
+                          cases=["PC-002.3"])
+        run_grouped_service_steps(journey, [
+            ("local identity", "auth.local", lambda: calls.append("auth")),
+            ("project registration", "projects", lambda: calls.append("projects")),
+        ], groups=groups, graph=graph)
+
+        self.assertEqual(calls, [])
+        self.assertEqual([step.status for step in journey.steps], ["FAIL", "BLOCKED", "BLOCKED"])
+        self.assertIn("blocked by state host-running", journey.steps[1].message)
+        self.assertIn("PC-002.3", journey.steps[1].message)
+        self.assertIn("gateway readiness", journey.steps[2].message)
+
+    def test_fixture_probe_blocks_only_groups_that_need_the_fixture(self):
+        journey = Journey("local", "fixture-state")
+        calls = []
+        graph = FlowGraph(journey, {"workflow": (), "mcp": ("fixtures-installed",), "studio": ()})
+        graph.flow("marketplace install assertion", "marketplace", "marketplace",
+                   lambda: journey.step("marketplace product assertion", "marketplace",
+                                        lambda: "route returned 500", cases=["S-010.1"]), cases=["S-010.1"])
+        graph.probe_state("fixtures-installed", "marketplace-fixtures", "fixture handoff",
+                          lambda: "project B fixture ID is missing", cases=["S-140.2"])
+        graph.flow("workflow health", "workflow", "workflow", lambda: calls.append("workflow"))
+        graph.flow("project-scoped MCP initialize", "mcp", "mcp", lambda: calls.append("mcp"),
+                   cases=["S-140.2"])
+        graph.flow("Studio shell", "studio", "studio", lambda: calls.append("studio"))
+
+        self.assertEqual(calls, ["workflow", "studio"])
+        self.assertEqual([step.status for step in journey.steps], ["FAIL", "FAIL", "PASS", "BLOCKED", "PASS"])
+        self.assertIn("blocked by state fixtures-installed:", journey.steps[3].message)
+
+    def test_flow_graph_isolates_failures_blocks_dependents_and_always_runs_cleanup(self):
+        journey = Journey("local", "outer-flow-graph")
+        calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            graph = FlowGraph(
+                journey,
+                {"install": (), "host": ("platform-installed",), "adapter": (),
+                 "analytics": ("host-running",), "adapter-dependent": ("adapter-defaults",),
+                 "uninstall": ("install",)},
+                states={"platform-installed": {"passed": True, "evidence": "receipt present", "group": "install", "step": "apply", "claim": "PC-001.1"},
+                        "host-running": {"passed": True, "evidence": "healthy", "group": "install", "step": "start", "claim": "PC-002.1"}},
+                diagnostics_path=Path(directory) / "journey-diagnostics.log",
+            )
+
+            graph.flow("install platform", "install", "platform.install",
+                       lambda: calls.append("install"), cases=["PC-001.1"])
+            graph.flow("adapter defaults", "adapter", "adapter",
+                       lambda: (_ for _ in ()).throw(RuntimeError("adapter fixture broke")),
+                       cases=["S-054.1"])
+            graph.probe_state("adapter-defaults", "adapter", "adapter default verification",
+                              lambda: "configured adapter default is unavailable", cases=["S-054.1"])
+            graph.flow("analytics extras", "analytics", "analytics",
+                       lambda: calls.append("analytics"), cases=["S-191.1"])
+            graph.flow("workflow depending on adapter", "adapter-dependent", "workflow",
+                       lambda: calls.append("dependent"), cases=["S-054.3"])
+            graph.flow("uninstall platform", "uninstall", "platform.uninstall",
+                       lambda: calls.append("uninstall"), cases=["S-050.6"], always_run=True)
+
+            diagnostic = (Path(directory) / "journey-diagnostics.log").read_text()
+
+        self.assertEqual(calls, ["install", "analytics", "uninstall"])
+        self.assertEqual([step.status for step in journey.steps], ["PASS", "FAIL", "FAIL", "PASS", "BLOCKED", "PASS"])
+        self.assertIn("RuntimeError: adapter fixture broke", diagnostic)
+        self.assertIn("blocked by state adapter-defaults:", journey.steps[4].message)
+        self.assertIn("adapter/adapter default verification (S-054.1)", journey.steps[4].message)
+
     def test_installed_cli_bin_is_added_to_service_path(self):
         with tempfile.TemporaryDirectory() as directory, patch("pathlib.Path.home", return_value=Path(directory)), \
                 patch.dict("os.environ", {"PATH": "/usr/bin"}):
@@ -99,6 +236,7 @@ class ServiceJourneyTests(unittest.TestCase):
         for mode in ("local", "secured"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / f"service-{mode}.json"
+                diagnostics = output.with_name("journey-diagnostics.log")
                 stdout = io.StringIO()
                 with patch("service_runner.archive_service_logs") as archive, \
                         patch("service_runner.checks", side_effect=RuntimeError("simulated orchestration error")), \
@@ -109,9 +247,11 @@ class ServiceJourneyTests(unittest.TestCase):
                 result = json.loads(output.read_text())
 
                 self.assertEqual(status, 1)
+                self.assertIn("states", result)
                 runner_step = next(step for step in result["steps"] if step["name"] == "service runner")
                 self.assertEqual(runner_step["status"], "FAIL")
                 self.assertEqual(runner_step["message"], "simulated orchestration error")
+                self.assertIn("RuntimeError: simulated orchestration error", diagnostics.read_text())
                 self.assertEqual(result["steps"][-1]["name"], "archive runtime service logs")
                 self.assertEqual(result["steps"][-1]["status"], "PASS")
                 archive.assert_called_once()

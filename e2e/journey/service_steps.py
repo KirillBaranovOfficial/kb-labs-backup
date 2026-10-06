@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import traceback
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,6 +107,116 @@ class Journey:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(asdict(result), indent=2) + "\n")
         return result
+
+
+class FlowGraph:
+    """Gate journey groups on probed state, independent of product assertions."""
+
+    def __init__(self, journey: Journey, dependencies: dict[str, tuple[str, ...]],
+                 diagnostics_path: str | Path | None = None,
+                 states: dict[str, dict[str, object]] | None = None):
+        self.journey = journey
+        self.dependencies = dependencies
+        self.diagnostics_path = Path(diagnostics_path) if diagnostics_path else None
+        self.states = dict(states or {})
+
+    def _blocker(self, group: str) -> tuple[str, dict[str, object]] | None:
+        for state in self.dependencies.get(group, ()):
+            result = self.states.get(state)
+            if result is None:
+                return state, {"passed": False, "evidence": "state probe has not run",
+                               "group": "journey", "step": "missing probe", "claim": "no case claim"}
+            if result.get("passed") is not True:
+                return state, result
+        return None
+
+    def probe_state(self, state: str, group: str, step: str, check: Callable[[], str | None],
+                    cases: Iterable[str] = ()) -> StepResult:
+        """Run and record an explicit state precondition probe."""
+        def checked() -> str | None:
+            try:
+                return check()
+            except Exception:
+                self._write_traceback(group, f"state probe: {state}")
+                raise
+
+        result = self.journey.step(f"state probe: {state}", "journey.state", checked, cases=cases)
+        claim = next(iter(result.cases), "no case claim")
+        self.states[state] = {
+            "passed": result.status == "PASS",
+            "evidence": "probe passed" if result.status == "PASS" else result.message,
+            "group": group,
+            "step": step,
+            "claim": claim,
+        }
+        return result
+
+    def _write_traceback(self, group: str, name: str) -> None:
+        if self.diagnostics_path:
+            self.diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.diagnostics_path.open("a", encoding="utf-8") as stream:
+                stream.write(f"\n== unexpected exception in {group}/{name} ==\n")
+                stream.write(traceback.format_exc())
+
+    def step(self, name: str, group: str, capability: str, check: Callable[[], str | None],
+             cases: Iterable[str] = ()) -> StepResult:
+        blocker = self._blocker(group)
+        case_ids = list(cases)
+        if blocker:
+            state, evidence = blocker
+            result = self.journey.blocked(
+                name, capability,
+                f"blocked by state {state}: {evidence['evidence']} (last mutated by "
+                f"{evidence['group']}/{evidence['step']} ({evidence['claim']}))",
+                cases=case_ids,
+            )
+            return result
+
+        def checked() -> str | None:
+            try:
+                return check()
+            except Exception:
+                self._write_traceback(group, name)
+                raise
+
+        result = self.journey.step(name, capability, checked, cases=case_ids)
+        return result
+
+    def flow(self, name: str, group: str, capability: str, action: Callable[[], object],
+             cases: Iterable[str] = (), *, always_run: bool = False,
+             record_empty_success: bool = True) -> str:
+        """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
+        case_ids = list(cases)
+        blocker = None if always_run else self._blocker(group)
+        if blocker:
+            state, evidence = blocker
+            self.journey.blocked(name, capability,
+                                 f"blocked by state {state}: {evidence['evidence']} (last mutated by "
+                                 f"{evidence['group']}/{evidence['step']} ({evidence['claim']}))",
+                                 cases=case_ids)
+            return "BLOCKED"
+
+        start = len(self.journey.steps)
+        try:
+            outcome = action()
+        except Exception as error:
+            self._write_traceback(group, name)
+            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__, cases=case_ids)
+            outcome = None
+        emitted = self.journey.steps[start:]
+        if isinstance(outcome, str):
+            self.journey.step(name, capability, lambda: outcome, cases=case_ids)
+        elif not emitted and record_empty_success:
+            self.journey.step(name, capability, lambda: None, cases=case_ids)
+
+        group_steps = self.journey.steps[start:]
+        failed = next((step for step in group_steps if step.status == "FAIL"), None)
+        blocked = next((step for step in group_steps if step.status == "BLOCKED"), None)
+        if failed:
+            return "FAIL"
+        if blocked:
+            return "BLOCKED"
+        return "PASS"
 
 
 def run_steps(journey: Journey, steps: Iterable[tuple[str, str, Callable[[], str | None]]]) -> JourneyResult:
