@@ -9,6 +9,7 @@ import { writeMarketplaceLock } from '@kb-labs/core-discovery';
 import { adapterBind } from '../../commands/system/adapter/bind.js';
 import { adapterList } from '../../commands/system/adapter/list.js';
 import { adapterUnbind } from '../../commands/system/adapter/unbind.js';
+import { configSet } from '../../commands/system/config/set.js';
 
 let sandbox: string;
 let platformRoot: string;
@@ -46,6 +47,10 @@ function dataOf<T>(envelope: unknown): T {
   return (envelope as { data: T }).data;
 }
 
+function mockAdapterHealth(ctx: PluginContextV3, statuses: Array<Record<string, unknown>>): void {
+  vi.spyOn(ctx.runtime, 'fetch').mockResolvedValue(new Response(JSON.stringify(statuses), { status: 200 }));
+}
+
 beforeEach(async () => {
   sandbox = await mkdtemp(join(tmpdir(), 'kb-adapter-bind-'));
   const kbHome = join(sandbox, 'kb-home');
@@ -67,6 +72,58 @@ afterEach(async () => {
 });
 
 describe('kb adapter list', () => {
+  // case: S-211.6
+  it('reports a runtime adapter load failure with its recovery command', async () => {
+    const { ctx, outputs } = context();
+    vi.spyOn(ctx.runtime, 'env').mockImplementation((name: string) => name === 'KB_GATEWAY_URL' ? 'http://127.0.0.1:4000' : undefined);
+    vi.spyOn(ctx.runtime, 'fetch').mockResolvedValue(new Response(JSON.stringify([
+      {
+        slot: 'llm',
+        mode: 'degraded',
+        implementation: '@kb-labs/adapters-vibeproxy',
+        configuredPackage: '@kb-labs/adapters-vibeproxy',
+        reason: 'load-failed',
+        correlationId: 'load-123',
+        action: {
+          id: 'install-adapter',
+          label: 'Install @kb-labs/adapters-vibeproxy',
+          command: 'kb marketplace install @kb-labs/adapters-vibeproxy --scope platform',
+        },
+        recordedAt: '2026-10-06T00:00:00.000Z',
+      },
+    ]), { status: 200 }));
+
+    const code = await adapterList.run(ctx, [], { json: true });
+    expect(code).toBe(0);
+    const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
+    expect(adapters.find(({ slot }) => slot === 'llm')).toMatchObject({
+      implementation: '@kb-labs/adapters-vibeproxy',
+      mode: 'degraded',
+      reason: 'load-failed',
+      correlationId: 'load-123',
+      action: { command: 'kb marketplace install @kb-labs/adapters-vibeproxy --scope platform' },
+    });
+  });
+
+  // case: S-211.6
+  it('reports runtime status as unknown when the resolved local host is not running', async () => {
+    const { ctx, outputs } = context();
+    vi.spyOn(ctx.runtime, 'env').mockReturnValue(undefined);
+    const fetch = vi.spyOn(ctx.runtime, 'fetch').mockRejectedValue(new Error('connection refused'));
+
+    const code = await adapterList.run(ctx, [], { json: true });
+
+    expect(code).toBe(0);
+    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:4000/health/adapters');
+    const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
+    expect(adapters.find(({ slot }) => slot === 'llm')).toMatchObject({
+      mode: 'unknown',
+      runtimeStatus: 'unknown',
+      action: { command: 'kb-create start' },
+    });
+    expect(adapters.find(({ slot }) => slot === 'llm')?.mode).not.toBe('real');
+  });
+
   it('shows installed platform adapters for the current project', async () => {
     await writeFile(join(platformRoot, '.kb', 'kb.config.json'), JSON.stringify({
       platform: { adapters: {
@@ -79,6 +136,15 @@ describe('kb adapter list', () => {
       }, adapterOptions: { storage: { baseDir: '.kb/data' } } },
     }));
     const { ctx, outputs } = context();
+    mockAdapterHealth(ctx, [
+      { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs', configuredPackage: '@kb-labs/adapters-fs' },
+      { slot: 'llm', mode: 'noop', implementation: 'NoOpLLM' },
+      { slot: 'cache', mode: 'real', implementation: '@kb-labs/adapters-state-broker', configuredPackage: '@kb-labs/adapters-state-broker' },
+      { slot: 'vectorStore', mode: 'noop', implementation: 'unavailable' },
+      { slot: 'logs', mode: 'real', implementation: 'HybridLogReader' },
+      { slot: 'documentDatabase', mode: 'real', implementation: '@kb-labs/adapters-sqlite', configuredPackage: '@kb-labs/adapters-sqlite' },
+      { slot: 'kvStore', mode: 'real', implementation: '@kb-labs/adapters-sqlite/kv', configuredPackage: '@kb-labs/adapters-sqlite' },
+    ]);
 
     const code = await adapterList.run(ctx, [], { json: true });
 
@@ -130,6 +196,9 @@ describe('kb adapter list', () => {
       platform: { adapterOptions: { storage: { baseDir: '.kb/data' } } },
     }));
     const { ctx, outputs } = context();
+    mockAdapterHealth(ctx, [
+      { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs', configuredPackage: '@kb-labs/adapters-fs' },
+    ]);
 
     const code = await adapterList.run(ctx, [], { json: true });
 
@@ -160,6 +229,9 @@ describe('kb adapter list', () => {
     });
     vi.stubEnv('OPENAI_API_KEY', '');
     const { ctx, outputs } = context();
+    mockAdapterHealth(ctx, [
+      { slot: 'llm', mode: 'real', implementation: '@kb-labs/adapters-openai', configuredPackage: '@kb-labs/adapters-openai' },
+    ]);
 
     const code = await adapterList.run(ctx, [], { json: true });
 
@@ -192,6 +264,10 @@ describe('kb adapter bind', () => {
         },
       },
     });
+    const adapterPackageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-memory-cache');
+    await mkdir(adapterPackageRoot, { recursive: true });
+    await writeFile(join(adapterPackageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-memory-cache', type: 'module', exports: './manifest.js' }));
+    await writeFile(join(adapterPackageRoot, 'manifest.js'), 'export const manifest = { implements: "ICache", defaultFor: ["cache"] };');
     const { ctx, outputs } = context();
 
     const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-memory-cache'], { json: true });
@@ -215,6 +291,10 @@ describe('kb adapter bind', () => {
         },
       },
     });
+    const adapterPackageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-qdrant');
+    await mkdir(adapterPackageRoot, { recursive: true });
+    await writeFile(join(adapterPackageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-qdrant', type: 'module', exports: './manifest.js' }));
+    await writeFile(join(adapterPackageRoot, 'manifest.js'), 'export const manifest = { implements: "IVectorStore", defaultFor: ["vectorStore"] };');
     const { ctx, outputs } = context();
 
     const code = await adapterBind.run(ctx, ['vectorStore', '@kb-labs/adapters-qdrant'], { json: true });
@@ -223,30 +303,96 @@ describe('kb adapter bind', () => {
     expect(outputs[0]).toMatchObject({ ok: true, data: { slot: 'vectorStore', packageId: '@kb-labs/adapters-qdrant' } });
   });
 
-  // case: S-051.3, S-051.4
-  it('returns the shared adapter install error envelope when the adapter is not installed', async () => {
-    const { ctx, outputs } = context();
-
-    const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-missing'], { json: true });
-
-    expect(code).toBe(1);
-    expect(outputs[0]).toMatchObject({
-      ok: false, error: {
-        code: 'KB_ADAPTER_NOT_INSTALLED',
-        message: 'Adapter package @kb-labs/adapters-missing is not installed on this platform.',
-        hint: 'kb marketplace install @kb-labs/adapters-missing --scope platform',
+  // case: S-211.7
+  it('does not persist a lock-listed adapter that is absent from platform node_modules', async () => {
+    await writeMarketplaceLock(platformRoot, {
+      schema: 'kb.marketplace/3', plugins: {},
+      adapters: {
+        '@kb-labs/adapters-vibeproxy': {
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-vibeproxy',
+          enabled: true, source: 'platform',
+        },
       },
     });
+    const before = await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8');
+    const { ctx, outputs } = context();
+
+    const code = await adapterBind.run(ctx, ['llm', '@kb-labs/adapters-vibeproxy'], { json: true });
+
+    expect(code).toBe(1);
+    expect(outputs[0]).toMatchObject({ ok: false, error: {
+      code: 'KB_ADAPTER_NOT_INSTALLED',
+      message: 'Adapter package @kb-labs/adapters-vibeproxy is not installed on this platform.',
+      hint: 'kb marketplace install @kb-labs/adapters-vibeproxy --scope platform',
+    } });
+    expect(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8')).toBe(before);
   });
 
+  // case: S-211.7
+  it('does not bind an installed adapter whose manifest does not declare the requested slot', async () => {
+    await writeMarketplaceLock(platformRoot, {
+      schema: 'kb.marketplace/3', plugins: {},
+      adapters: {
+        '@kb-labs/adapters-storage-fixture': {
+          version: '1.0.0', integrity: 'sha256-fixture', resolvedPath: 'node_modules/@kb-labs/adapters-storage-fixture',
+          enabled: true, source: 'platform',
+        },
+      },
+    });
+    const packageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-storage-fixture');
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-storage-fixture', type: 'module', exports: './manifest.js' }));
+    await writeFile(join(packageRoot, 'manifest.js'), 'export const manifest = { implements: "IStorage", defaultFor: ["storage"] };');
+    const before = await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8');
+    const { ctx, outputs } = context();
+
+    const code = await adapterBind.run(ctx, ['llm', '@kb-labs/adapters-storage-fixture'], { json: true });
+
+    expect(code).toBe(1);
+    expect(outputs[0]).toMatchObject({ ok: false, error: {
+      code: 'KB_ADAPTER_SLOT_MISMATCH',
+      message: 'Adapter package @kb-labs/adapters-storage-fixture does not declare platform slot llm.',
+      details: { package: '@kb-labs/adapters-storage-fixture', slot: 'llm' },
+      hint: 'Install a provider that declares llm with `kb marketplace install <pkg> --scope platform`, then retry.',
+    } });
+    expect(await readFile(join(platformRoot, '.kb', 'kb.config.json'), 'utf8')).toBe(before);
+  });
+
+  // case: S-051.4, S-211.7
+  it('returns the catalogued install error for an absent package through both binding commands', async () => {
+    const { ctx, outputs } = context();
+
+    const code = await adapterBind.run(ctx, ['storage', '@kb-labs/not-installed'], { json: true });
+    const bindError = (outputs[0] as { error: Record<string, unknown> }).error;
+
+    expect(code).toBe(1);
+    expect(bindError).toMatchObject({
+      code: 'KB_ADAPTER_NOT_INSTALLED',
+      message: 'Adapter package @kb-labs/not-installed is not installed on this platform.',
+      hint: 'kb marketplace install @kb-labs/not-installed --scope platform',
+    });
+
+    const configContext = context();
+    const configCode = await configSet.run(configContext.ctx, [
+      'platform.adapters.storage', '@kb-labs/not-installed',
+    ], { scope: 'platform', json: true });
+    const configError = (configContext.outputs[0] as { error: Record<string, unknown> }).error;
+
+    expect(configCode).toBe(1);
+    expect(configError).toEqual(bindError);
+  });
+
+  // case: S-051.3
   it('renders the missing adapter next step through the shared human presenter', async () => {
     const { ctx, errors } = context();
 
-    const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-missing'], {});
+    const code = await adapterBind.run(ctx, ['storage', '@kb-labs/not-installed'], {});
 
     expect(code).toBe(1);
-    expect(errors.join('\n')).toContain('Adapter package @kb-labs/adapters-missing is not installed on this platform. [KB_ADAPTER_NOT_INSTALLED]');
-    expect(errors.join('\n')).toContain('Hint:  kb marketplace install @kb-labs/adapters-missing --scope platform');
+    expect(errors.join('\n')).toContain(
+      'Adapter package @kb-labs/not-installed is not installed on this platform. [KB_ADAPTER_NOT_INSTALLED]\n' +
+      '  Hint:  kb marketplace install @kb-labs/not-installed --scope platform',
+    );
   });
 
   it('validates a binding without writing in dry-run mode', async () => {
@@ -260,6 +406,10 @@ describe('kb adapter bind', () => {
         },
       },
     });
+    const adapterPackageRoot = join(platformRoot, 'node_modules', '@kb-labs', 'adapters-memory-cache');
+    await mkdir(adapterPackageRoot, { recursive: true });
+    await writeFile(join(adapterPackageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-memory-cache', type: 'module', exports: './manifest.js' }));
+    await writeFile(join(adapterPackageRoot, 'manifest.js'), 'export const manifest = { implements: "ICache", defaultFor: ["cache"] };');
     const { ctx, outputs } = context();
 
     const code = await adapterBind.run(ctx, ['cache', '@kb-labs/adapters-memory-cache'], { json: true, 'dry-run': true });

@@ -129,6 +129,36 @@ describe('DependencyGraph', () => {
 });
 
 describe('AdapterLoader', () => {
+  // case: S-211.6
+  it('isolates an adapter factory failure and continues loading other slots when requested', async () => {
+    const failedFactory = vi.fn(() => { throw new Error('bad adapter configuration'); });
+    const healthyFactory = vi.fn(() => ({ ready: true }));
+    const failures: Array<{ slot: string; packageName: string; message: string }> = [];
+    const loader = new AdapterLoader();
+    const loaded = await loader.loadAdapters({
+      broken: { module: '@example/broken', config: {} },
+      healthy: { module: '@example/healthy', config: {} },
+    }, async (modulePath) => ({
+      manifest: {
+        manifestVersion: '1.0.0',
+        id: modulePath.includes('broken') ? 'broken' : 'healthy',
+        name: modulePath,
+        version: '1.0.0',
+        type: 'core',
+        implements: 'ITest',
+      },
+      createAdapter: modulePath.includes('broken') ? failedFactory : healthyFactory,
+    }), {
+      onAdapterLoadFailure: (slot, packageName, error) => {
+        failures.push({ slot, packageName, message: error instanceof Error ? error.message : String(error) });
+      },
+    });
+
+    expect(failures).toEqual([{ slot: 'broken', packageName: '@example/broken', message: 'bad adapter configuration' }]);
+    expect(loaded.has('broken')).toBe(false);
+    expect(loaded.get('healthy')).toEqual({ ready: true });
+  });
+
   it('provides the platform logger to adapter factories through shared dependencies', async () => {
     let logger: ILogger;
     logger = {
