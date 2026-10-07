@@ -256,11 +256,23 @@ func StartFailure(state State, cause error, evidence map[string]string) *diag.Di
 	}
 	if startup := startupEnvelope(details["stderrTail"]); startup != nil {
 		details["hostStartupCode"] = startup.Error.Code
-		reason := startup.Error.Code + ": " + startup.Error.Message
-		if startup.Error.Cause != "" {
-			reason += " (" + startup.Error.Cause + ")"
+		meta := make(map[string]any, len(startup.Error.Details)+len(details))
+		for key, value := range startup.Error.Details {
+			meta[key] = value
 		}
-		cause = errors.New(reason)
+		for key, value := range details {
+			meta[key] = value
+		}
+		typed := diag.New(startup.Error.Code, startup.Error.Message,
+			diag.WithHint(startup.Error.Hint), diag.WithCause(startup.Error.Cause))
+		typed.Meta = meta
+		if startup.Error.Cause != "" {
+			typed.Reason = startup.Error.Cause
+		}
+		if err := appendLauncherFailure(state, typed); err != nil {
+			typed.Meta["launcherLogError"] = err.Error()
+		}
+		return typed
 	}
 	reason := "host startup failed"
 	if cause != nil {
@@ -423,9 +435,11 @@ func processExitDetails(err error) map[string]string {
 
 type hostStartupEnvelope struct {
 	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		Cause   string `json:"cause"`
+		Code    string         `json:"code"`
+		Message string         `json:"message"`
+		Cause   string         `json:"cause"`
+		Hint    string         `json:"hint"`
+		Details map[string]any `json:"details"`
 	} `json:"error"`
 }
 

@@ -78,7 +78,6 @@ func updateIncompatible(kind, id, version, rangeValue, reason string) *diag.Diag
 	if kind == "adapter" && id != "" {
 		hint = fmt.Sprintf("Update or remove adapter %s first, then rerun `kb-create update`.", id)
 	}
-	failure := contracts.NewDiag(contracts.CodeUpdateIncompatible, message, hint, nil)
-	failure.Meta = map[string]any{"component": id, "kind": kind, "version": version, "range": rangeValue}
-	return failure
+	return compatibilityFailure(contracts.CodeUpdateIncompatible, id, kind, id, version, rangeValue,
+		message, hint, nil)
 }

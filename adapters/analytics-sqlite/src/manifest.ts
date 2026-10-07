@@ -39,7 +39,11 @@ export const manifest: AdapterManifest = {
     },
     retentionDays: {
       type: 'number',
+      integer: true,
+      minimum: 1,
+      minimumMessage: 'Must be a positive integer',
       default: 90,
+      hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90',
       description: 'Delete analytics events older than this many days on startup',
     },
   },

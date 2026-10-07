@@ -418,6 +418,16 @@ export interface AdapterManifest {
       /** Environment variable that supplies this secret option. */
       env?: string;
       enum?: unknown[];
+      /** Require an integral numeric value. */
+      integer?: boolean;
+      /** Inclusive lower bound for a numeric option. */
+      minimum?: number;
+      /** User-facing explanation when the lower bound is violated. */
+      minimumMessage?: string;
+      /** Inclusive upper bound for a numeric option. */
+      maximum?: number;
+      /** Copy-ready correction for an invalid value. */
+      hint?: string;
       properties?: Record<string, unknown>;
     }
   >;

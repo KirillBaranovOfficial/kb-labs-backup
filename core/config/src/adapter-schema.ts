@@ -24,6 +24,11 @@ import type { ConfigIssue } from './user-config/write-user-config.js';
 export interface ManifestFieldSchema {
   type?: string;
   enum?: unknown[];
+  integer?: boolean;
+  minimum?: number;
+  maximum?: number;
+  minimumMessage?: string;
+  hint?: string;
 }
 
 export type ManifestConfigSchema = Record<string, ManifestFieldSchema>;
@@ -172,6 +177,53 @@ export function validateAdapterOptions(
       issues.push({ path: fieldPath, message: `Expected ${field.type}` });
     } else if (field.enum && !field.enum.includes(value)) {
       issues.push({ path: fieldPath, message: `Expected one of: ${field.enum.map(String).join(', ')}` });
+    } else if (field.integer && typeof value === 'number' && !Number.isInteger(value)) {
+      issues.push({ path: fieldPath, message: 'Expected an integer', hint: field.hint });
+    } else if (field.minimum !== undefined && typeof value === 'number' && value < field.minimum) {
+      issues.push({ path: fieldPath, message: field.minimumMessage ?? `Must be at least ${field.minimum}`, hint: field.hint });
+    } else if (field.maximum !== undefined && typeof value === 'number' && value > field.maximum) {
+      issues.push({ path: fieldPath, message: `Must be at most ${field.maximum}`, hint: field.hint });
+    }
+  }
+  return issues;
+}
+
+/** Validate every bound platform adapter option set before the host starts. */
+export async function validatePlatformAdapterOptions(
+  platformRoot: string,
+  platformConfig: Record<string, unknown>,
+): Promise<ConfigIssue[]> {
+  const adapters = isRecord(platformConfig.adapters) ? platformConfig.adapters : {};
+  const options = isRecord(platformConfig.adapterOptions) ? platformConfig.adapterOptions : {};
+  const issues: ConfigIssue[] = [];
+
+  for (const [slot, binding] of Object.entries(adapters)) {
+    const slotOptions = options[slot];
+    if (!isRecord(slotOptions)) {
+      continue;
+    }
+    const specs = typeof binding === 'string'
+      ? [binding]
+      : Array.isArray(binding) ? binding.filter((entry): entry is string => typeof entry === 'string') : [];
+    if (specs.length === 0) {
+      issues.push({
+        path: `platform.adapterOptions.${slot}`,
+        message: `Cannot validate adapter options because no package is bound for ${slot}.`,
+        hint: `Run \`kb adapter bind ${slot} <package>\` with an installed adapter, then retry.`,
+      });
+      continue;
+    }
+    for (const spec of specs) {
+      const manifest = await loadAdapterManifest(spec, platformRoot);
+      if (!manifest?.configSchema) {
+        issues.push({
+          path: `platform.adapterOptions.${slot}`,
+          message: `Cannot load a configSchema for configured adapter ${spec}.`,
+          hint: `Repair the installed adapter manifest for ${spec}, then run \`kb-create start\` again.`,
+        });
+        continue;
+      }
+      issues.push(...validateAdapterOptions(`platform.adapterOptions.${slot}`, slotOptions, manifest.configSchema));
     }
   }
   return issues;
