@@ -38,6 +38,7 @@ type Item struct {
 	Version      string `json:"version"`
 	Integrity    string `json:"integrity"`
 	ResolvedPath string `json:"resolvedPath"`
+	Package      string `json:"package,omitempty"`
 	// Source identifies machine-installed platform artifacts.
 	Source  string `json:"source"`
 	Enabled bool   `json:"enabled"`
@@ -52,7 +53,10 @@ type Item struct {
 // Integrity matches core-discovery's package.json hash contract, not the
 // artifact tarball digest in the resolved plan.
 func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Time) error {
-	existing, _ := readLock(platformRoot) // best-effort: preserve `enabled` across re-applies
+	existing, err := readLock(platformRoot)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read existing marketplace lock: %w", err)
+	}
 
 	lock := Lock{Schema: Schema, Plugins: make(map[string]Item), Adapters: make(map[string]Item)}
 	_ = now // retained for call-site compatibility; lock declarations have no timestamp.
@@ -88,6 +92,7 @@ func WriteLock(platformRoot string, artifacts []contracts.Artifact, now time.Tim
 		if kind == "adapter" {
 			lock.Adapters[a.ID] = item
 		} else {
+			item.Package = a.Package
 			lock.Plugins[a.ID] = item
 		}
 	}
@@ -137,6 +142,14 @@ func readLock(platformRoot string) (*Lock, error) {
 	var lock Lock
 	if err := json.Unmarshal(data, &lock); err != nil {
 		return nil, err
+	}
+	if lock.Schema != Schema {
+		return nil, fmt.Errorf("invalid marketplace lock schema %q", lock.Schema)
+	}
+	for id, entry := range lock.Plugins {
+		if entry.Source != "platform" || entry.Package == "" {
+			return nil, fmt.Errorf("invalid marketplace lock plugin %q: platform entries require a package", id)
+		}
 	}
 	return &lock, nil
 }

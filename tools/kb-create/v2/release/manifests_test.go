@@ -1,6 +1,7 @@
 package release
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,7 +9,37 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/doctor"
+	"github.com/kb-labs/create/v2/installed"
 )
+
+// case: S-179.14
+func TestEnrichWithManifestsRejectsPluginIdentityMismatch(t *testing.T) {
+	root := t.TempDir()
+	packageRoot := filepath.Join(root, "node_modules", "@kb-labs", "plugin-entry")
+	if err := os.MkdirAll(packageRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	manifest := installed.Manifest{
+		Schema: installed.ManifestSchema,
+		ID: "@kb-labs/manifest-id",
+		Package: "@kb-labs/plugin-entry",
+		Version: "1.0.0",
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packageRoot, "kb-create.manifest.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = EnrichWithManifests(catalog.Catalog{
+		Plugins: []catalog.Component{{ID: "@kb-labs/wrong-id", Package: manifest.Package, Version: manifest.Version}},
+	}, root)
+	if err == nil {
+		t.Fatal("expected plugin identity mismatch to be rejected before sealing")
+	}
+}
 
 func TestEnrichWithManifestsReplacesReleaseConfigProjection(t *testing.T) {
 	root := t.TempDir()

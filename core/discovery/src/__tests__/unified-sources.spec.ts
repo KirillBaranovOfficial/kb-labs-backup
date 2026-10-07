@@ -60,6 +60,7 @@ async function lockEntry(
   const entry = createMarketplaceEntry({
     version: '1.0.0',
     integrity: await computePackageIntegrity(dir),
+    package: JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8')).name,
     resolvedPath: path.relative(root, dir) || '.',
     // These discovery fixtures test the location-based runtime path. v3
     // project marketplace pins are exercised by the store integration test.

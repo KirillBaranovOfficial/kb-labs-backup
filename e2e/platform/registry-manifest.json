@@ -102,67 +102,67 @@
   ],
   "plugins": [
     {
-      "id": "workflow",
+      "id": "@kb-labs/workflow",
       "pkg": "@kb-labs/workflow-entry",
       "description": "Workflow engine plugin — CLI, REST routes and WS channels for the workflow daemon",
       "default": true
     },
     {
-      "id": "marketplace",
+      "id": "@kb-labs/marketplace",
       "pkg": "@kb-labs/marketplace-entry",
       "description": "Install, list, enable plugins",
       "default": true
     },
     {
-      "id": "mind",
+      "id": "@kb-labs/mind",
       "pkg": "@kb-labs/mind-entry",
       "description": "AI code search (RAG)",
       "default": false
     },
     {
-      "id": "agents",
+      "id": "@kb-labs/agents",
       "pkg": "@kb-labs/agent-entry",
       "description": "Autonomous agents",
       "default": false
     },
     {
-      "id": "review",
+      "id": "@kb-labs/review",
       "pkg": "@kb-labs/review-entry",
       "description": "AI code review",
       "default": false
     },
     {
-      "id": "commit",
+      "id": "@kb-labs/commit",
       "pkg": "@kb-labs/commit-entry",
       "description": "AI commit generation",
       "default": false
     },
     {
-      "id": "scaffold",
+      "id": "@kb-labs/scaffold",
       "pkg": "@kb-labs/scaffold",
       "description": "Scaffold plugins and adapters",
       "default": true
     },
     {
-      "id": "release",
+      "id": "@kb-labs/release",
       "pkg": "@kb-labs/release-manager-cli",
       "description": "Release manager — plan, publish, workflow templates",
       "default": false
     },
     {
-      "id": "quality",
+      "id": "@kb-labs/quality",
       "pkg": "@kb-labs/quality-entry",
       "description": "Code quality, architecture analysis",
       "default": false
     },
     {
-      "id": "steward",
+      "id": "@kb-labs/steward",
       "pkg": "@kb-labs/steward-entry",
       "description": "Project memory and daily review",
       "default": false
     },
     {
-      "id": "case-fixture",
+      "id": "@kb-labs/e2e-analytics-emitter",
       "pkg": "@kb-labs/e2e-analytics-emitter",
       "description": "Journey fixture for analytics and LLM provider coverage",
       "default": false

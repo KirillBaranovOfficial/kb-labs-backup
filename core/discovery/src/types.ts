@@ -78,11 +78,8 @@ export interface MarketplaceEntry {
   provides?: EntityKind[];
   /** Whether the entity is active (default: true) */
   enabled?: boolean;
-  /**
-   * Canonical install spec (e.g. 'kb:handle/name', '@scope/pkg@version').
-   * Optional, populated when the source preserves the original spec form.
-   */
-  spec?: string;
+  /** npm package name recorded separately from the canonical manifest ID. */
+  package?: string;
 }
 
 // ---------------------------------------------------------------------------

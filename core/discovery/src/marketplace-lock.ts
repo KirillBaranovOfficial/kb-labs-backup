@@ -92,8 +92,8 @@ export async function writeMarketplaceLock(
       entry.source === 'local'
         ? { link: entry.link, enabled: entry.enabled ?? true, source: entry.source }
         : entry.source === 'platform'
-          ? { version: entry.version, integrity: entry.integrity, resolvedPath: entry.resolvedPath, enabled: entry.enabled ?? true, source: entry.source }
-          : { version: entry.version, integrity: entry.integrity, enabled: entry.enabled ?? true, source: entry.source },
+          ? { version: entry.version, integrity: entry.integrity, package: entry.package, resolvedPath: entry.resolvedPath, enabled: entry.enabled ?? true, source: entry.source }
+          : { version: entry.version, integrity: entry.integrity, package: entry.package, enabled: entry.enabled ?? true, source: entry.source },
     ])),
     ...(lock.adapters && Object.keys(lock.adapters).length > 0 ? {
       adapters: Object.fromEntries(Object.entries(lock.adapters).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([id, entry]) => [id, {
@@ -177,7 +177,7 @@ export function createMarketplaceEntry(opts: {
   provides: EntityKind[];
   signature?: EntitySignature;
   trust?: 'trusted' | 'untrusted';
-  spec?: string;
+  package?: string;
 }): MarketplaceEntry {
   return {
     version: opts.version,
@@ -190,7 +190,7 @@ export function createMarketplaceEntry(opts: {
     enabled: true,
     signature: opts.signature,
     trust: opts.trust ?? 'untrusted',
-    spec: opts.spec,
+    package: opts.package,
   };
 }
 
@@ -252,13 +252,13 @@ function isValidLock(value: unknown): value is MarketplaceLock {
       if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id) || typeof raw !== 'object' || raw === null) {return false;}
       const entry = raw as Record<string, unknown>;
       if (typeof entry.enabled !== 'boolean' || !['marketplace', 'local', 'platform'].includes(String(entry.source))) {return false;}
-      const allowed = entry.source === 'marketplace' ? ['version', 'integrity', 'enabled', 'source']
+      const allowed = entry.source === 'marketplace' ? ['version', 'integrity', 'package', 'enabled', 'source']
         : entry.source === 'local' ? ['link', 'enabled', 'source']
-          : ['version', 'integrity', 'resolvedPath', 'enabled', 'source'];
+          : ['version', 'integrity', 'package', 'resolvedPath', 'enabled', 'source'];
       if (Object.keys(entry).some((key) => !allowed.includes(key))) {return false;}
-      if (entry.source === 'marketplace') {return typeof entry.version === 'string' && validIntegrity(entry.integrity);}
+      if (entry.source === 'marketplace') {return typeof entry.version === 'string' && validIntegrity(entry.integrity) && typeof entry.package === 'string' && VALID_PACKAGE.test(entry.package);}
       if (entry.source === 'local') {return typeof entry.link === 'string' && !path.isAbsolute(entry.link);}
-      return typeof entry.resolvedPath === 'string' && typeof entry.version === 'string' && validIntegrity(entry.integrity);
+      return typeof entry.package === 'string' && VALID_PACKAGE.test(entry.package) && typeof entry.resolvedPath === 'string' && typeof entry.version === 'string' && validIntegrity(entry.integrity);
     }) &&
     Object.entries((obj.adapters ?? {}) as Record<string, unknown>).every(([id, raw]) => {
       if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id) || typeof raw !== 'object' || raw === null) {return false;}
@@ -273,3 +273,5 @@ function isValidLock(value: unknown): value is MarketplaceLock {
 function validIntegrity(value: unknown): value is string {
   return typeof value === 'string' && /^sha(256|512)-[A-Za-z0-9+/=]+$/.test(value);
 }
+
+const VALID_PACKAGE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;

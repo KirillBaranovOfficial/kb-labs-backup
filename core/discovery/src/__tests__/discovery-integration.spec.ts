@@ -87,6 +87,7 @@ describe('Discovery Integration: install → discover → available', () => {
     lock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '1.5.0',
       integrity,
+      package: '@kb-labs/commit',
       resolvedPath: relPath,
       source: 'platform',
       primaryKind: 'plugin',
@@ -208,6 +209,7 @@ describe('Discovery Integration: install → discover → available', () => {
     lock.plugins['@kb-labs/tampered'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-WRONGHASH',
+      package: '@kb-labs/tampered',
       resolvedPath: relPath,
       source: 'platform', // marketplace = strict integrity check
       primaryKind: 'plugin',

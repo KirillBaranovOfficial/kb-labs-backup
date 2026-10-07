@@ -213,7 +213,7 @@ export class DiscoveryManager {
           packageRoot = path.resolve(root, entry.resolvedPath);
         } else if (entry.source === 'marketplace' && entry.version && entry.integrity) {
           try {
-            packageRoot = (await this.extensionStore.lookup({ name: id, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
+            packageRoot = (await this.extensionStore.lookup({ name: entry.package!, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
           } catch (error) {
             diag.error('INTEGRITY_MISMATCH', `Pinned package ${id}@${entry.version} does not match the shared store: ${error instanceof Error ? error.message : String(error)}`, {
               pluginId: id,

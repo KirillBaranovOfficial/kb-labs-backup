@@ -73,6 +73,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     platformLock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: await integrity(pluginDir),
+      package: '@kb-labs/commit-entry',
       resolvedPath: './node_modules/@kb-labs/commit-entry',
       source: 'platform',
       primaryKind: 'plugin',
@@ -101,6 +102,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     platformLock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: await integrity(platformPluginDir),
+      package: '@kb-labs/commit-entry',
       resolvedPath: './node_modules/@kb-labs/commit-entry',
       source: 'platform',
       primaryKind: 'plugin',
@@ -140,6 +142,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     platformLock.plugins['@kb-labs/commit'] = createMarketplaceEntry({
       version: '0.1.0',
       integrity: await integrity(platformCommitDir),
+      package: '@kb-labs/commit-entry',
       resolvedPath: './node_modules/@kb-labs/commit-entry',
       source: 'platform',
       primaryKind: 'plugin',
@@ -184,6 +187,7 @@ describe('DiscoveryManager — two-root mode (platformRoot + root)', () => {
     platformLock.plugins['@kb-labs/workflow'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: await integrity(platformPluginDir),
+      package: '@kb-labs/workflow-entry',
       resolvedPath: './node_modules/@kb-labs/workflow-entry',
       source: 'platform',
       primaryKind: 'plugin',

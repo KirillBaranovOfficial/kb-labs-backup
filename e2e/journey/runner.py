@@ -142,11 +142,11 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
     child_env = env or BASE_ENV
     started = time.monotonic()
     result = run_command(args, cwd=cwd or Path.cwd(), env=child_env, timeout=timeout,
-                         input=input_text, stderr=subprocess.STDOUT,
+                         input=input_text,
                          monitor_process=lambda pid: _sample_pnpm_rss_for_run(pid))
     duration = time.monotonic() - started
     return subprocess.CompletedProcess(args, result.returncode,
-                                       stdout=(result.stdout or "") + (result.stderr or ""),
+                                       stdout=result.stdout or "",
                                        stderr=result.stderr or ""), duration
 
 

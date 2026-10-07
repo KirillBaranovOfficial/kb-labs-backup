@@ -387,7 +387,7 @@
   ],
   "plugins": [
     {
-      "id": "agents",
+      "id": "@kb-labs/agents",
       "version": "2.120.1",
       "package": "@kb-labs/agent-entry",
       "sha256": "f0d123bb372b024b664ce0d69231e7e9416db5e73c3c1f342c1971dc368722ec",
@@ -395,12 +395,12 @@
       "requires": [
         {
           "capability": "llm",
-          "requiredBy": "agents"
+          "requiredBy": "@kb-labs/agents"
         }
       ]
     },
     {
-      "id": "commit",
+      "id": "@kb-labs/commit",
       "version": "2.120.1",
       "package": "@kb-labs/commit-entry",
       "sha256": "9fa8230d6a40f8ff11eee30fd20f0d453bebf542e85d12932932772067db4969",
@@ -408,23 +408,23 @@
       "requires": [
         {
           "capability": "storage",
-          "requiredBy": "commit"
+          "requiredBy": "@kb-labs/commit"
         },
         {
           "capability": "cache",
-          "requiredBy": "commit"
+          "requiredBy": "@kb-labs/commit"
         }
       ]
     },
     {
-      "id": "marketplace",
+      "id": "@kb-labs/marketplace",
       "version": "2.120.1",
       "package": "@kb-labs/marketplace-entry",
       "sha256": "24564c97735c6cdf6be584227c1f784c3898ece42355da828d0c4ca4840abe07",
       "tarball": "http://verdaccio:4873/@kb-labs/marketplace-entry/-/marketplace-entry-2.120.1.tgz"
     },
     {
-      "id": "mind",
+      "id": "@kb-labs/mind",
       "version": "2.120.1",
       "package": "@kb-labs/mind-entry",
       "sha256": "31ca362c310a29bfdf267743b35b43bee2fc1ef01532238fda378d423d1d6660",
@@ -432,16 +432,16 @@
       "requires": [
         {
           "capability": "cache",
-          "requiredBy": "mind"
+          "requiredBy": "@kb-labs/mind"
         },
         {
           "capability": "storage",
-          "requiredBy": "mind"
+          "requiredBy": "@kb-labs/mind"
         }
       ]
     },
     {
-      "id": "quality",
+      "id": "@kb-labs/quality",
       "version": "2.120.1",
       "package": "@kb-labs/quality-entry",
       "sha256": "c289f282aef2bbcccd31840e1c17cf7adec5eea407351a0b09c5ed5b3216de8a",
@@ -449,16 +449,16 @@
       "requires": [
         {
           "capability": "storage",
-          "requiredBy": "quality"
+          "requiredBy": "@kb-labs/quality"
         },
         {
           "capability": "cache",
-          "requiredBy": "quality"
+          "requiredBy": "@kb-labs/quality"
         }
       ]
     },
     {
-      "id": "release",
+      "id": "@kb-labs/release",
       "version": "2.120.1",
       "package": "@kb-labs/release-manager-cli",
       "sha256": "df2be71c7204d96b479698b715edfccf0960f2813d25443da2fb11c7177feb9c",
@@ -466,16 +466,16 @@
       "requires": [
         {
           "capability": "storage",
-          "requiredBy": "release"
+          "requiredBy": "@kb-labs/release"
         },
         {
           "capability": "cache",
-          "requiredBy": "release"
+          "requiredBy": "@kb-labs/release"
         }
       ]
     },
     {
-      "id": "review",
+      "id": "@kb-labs/review",
       "version": "2.120.1",
       "package": "@kb-labs/review-entry",
       "sha256": "f743687e445e357d32594c778e2817a6a1ed32fc123540300f8eb01e031db2d1",
@@ -483,23 +483,23 @@
       "requires": [
         {
           "capability": "storage",
-          "requiredBy": "review"
+          "requiredBy": "@kb-labs/review"
         },
         {
           "capability": "cache",
-          "requiredBy": "review"
+          "requiredBy": "@kb-labs/review"
         }
       ]
     },
     {
-      "id": "scaffold",
+      "id": "@kb-labs/scaffold",
       "version": "2.120.1",
       "package": "@kb-labs/scaffold",
       "sha256": "36cf599986cf0cfe55398508af7493c81ee38cafd50eef3750d1fadfcd98ab14",
       "tarball": "http://verdaccio:4873/@kb-labs/scaffold/-/scaffold-2.120.1.tgz"
     },
     {
-      "id": "workflow",
+      "id": "@kb-labs/workflow",
       "version": "2.120.1",
       "package": "@kb-labs/workflow-entry",
       "sha256": "bcc7b676fbe98729f7ef62a9a9fafe7c03668306378448db4b4c8a4f4dc243ad",

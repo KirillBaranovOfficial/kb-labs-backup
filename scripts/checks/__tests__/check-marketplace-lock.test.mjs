@@ -26,11 +26,22 @@ async function runCheck(lock) {
 test('accepts a v3 project pin without machine paths', async () => {
   const result = await runCheck({
     schema: 'kb.marketplace/3',
-    plugins: { '@scope/plugin': { version: '1.2.3', integrity: 'sha512-abc', enabled: true, source: 'marketplace' } },
+    plugins: { '@scope/plugin': { version: '1.2.3', integrity: 'sha512-abc', package: '@scope/plugin', enabled: true, source: 'marketplace' } },
   });
   try {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /schema v3/);
+  } finally { await rm(result.root, { recursive: true, force: true }); }
+});
+
+test('rejects a v3 marketplace pin without its package name', async () => {
+  const result = await runCheck({
+    schema: 'kb.marketplace/3',
+    plugins: { '@kb-labs/commit': { version: '1.2.3', integrity: 'sha512-abc', enabled: true, source: 'marketplace' } },
+  });
+  try {
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /expected version, integrity, package, enabled, source/);
   } finally { await rm(result.root, { recursive: true, force: true }); }
 });
 
