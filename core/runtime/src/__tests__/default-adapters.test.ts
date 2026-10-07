@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { findWorkspacePackages } from '@kb-labs/core-discovery';
+import { findWorkspacePackages, loadAdapterManifest } from '@kb-labs/core-discovery';
 import { validatePlatformAdapterOptions } from '@kb-labs/core-config';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { resolveDiscoveredAdapterDefaults } from '../default-adapters.js';
@@ -11,33 +11,19 @@ import type { DiscoveredAdapter } from '../discover-adapters.js';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 
-function isWorkspaceAdapterPackage(packageRoot: string): boolean {
-  const relativeRoot = path.relative(workspaceRoot, packageRoot);
-  return relativeRoot.split(path.sep)[0] === 'adapters';
-}
-
 async function workspaceAdapterManifests(): Promise<Map<string, Record<string, unknown>>> {
   const packages = await findWorkspacePackages(workspaceRoot);
-  const adapterPackages = packages.filter(({ packageRoot }) => isWorkspaceAdapterPackage(packageRoot));
   const manifests = new Map<string, Record<string, unknown>>();
-  const registeredPackages: string[] = [];
 
-  for (const candidate of adapterPackages) {
+  for (const candidate of packages) {
+    if (!(await loadAdapterManifest(candidate.packageRoot))) {continue;}
     const packageJson = JSON.parse(await readFile(path.join(candidate.packageRoot, 'package.json'), 'utf8')) as {
       kb?: { manifest?: string };
+      kbLabs?: { manifest?: string };
     };
-    const manifestPath = packageJson.kb?.manifest;
-    if (!manifestPath) {continue;}
+    const manifestPath = packageJson.kbLabs?.manifest ?? packageJson.kb?.manifest;
+    if (!manifestPath) {throw new Error(`${candidate.packageName} has no declared adapter manifest path`);}
     const modulePath = path.resolve(candidate.packageRoot, manifestPath);
-    const sourcePath = path.resolve(candidate.packageRoot, manifestPath
-      .replace(/^\.\/dist\//, './src/')
-      .replace(/\.[cm]?js$/, '.ts'));
-    try {
-      await access(sourcePath);
-    } catch {
-      continue;
-    }
-    registeredPackages.push(candidate.packageName);
     await access(modulePath);
     const loaded = await import(pathToFileURL(modulePath).href) as { manifest?: Record<string, unknown> };
     if (!loaded.manifest) {throw new Error(`${candidate.packageName} does not export its declared adapter manifest`);}
@@ -45,7 +31,7 @@ async function workspaceAdapterManifests(): Promise<Map<string, Record<string, u
     manifests.set(candidate.packageName, loaded.manifest);
   }
 
-  expect([...manifests.keys()].sort()).toEqual(registeredPackages.sort());
+  expect(manifests.size).toBeGreaterThan(0);
   return manifests;
 }
 
@@ -54,7 +40,8 @@ async function makePlatformRoot(): Promise<string> {
   const scopePath = path.join(platformRoot, 'node_modules', '@kb-labs');
   await mkdir(scopePath, { recursive: true });
   const packages = await findWorkspacePackages(workspaceRoot);
-  for (const candidate of packages.filter(({ packageRoot }) => isWorkspaceAdapterPackage(packageRoot))) {
+  for (const candidate of packages) {
+    if (!(await loadAdapterManifest(candidate.packageRoot))) {continue;}
     await symlink(candidate.packageRoot, path.join(scopePath, candidate.packageName.slice('@kb-labs/'.length)));
   }
   return platformRoot;
