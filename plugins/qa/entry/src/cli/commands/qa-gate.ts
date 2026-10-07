@@ -37,7 +37,7 @@ export default defineCommand<unknown, CLIInput<QaGateFlags>, unknown>({
       if (flags.save) store.saveGate(raw, durationMs, git);
 
       if (flags.json) {
-        return { ok: true, result: raw };
+        return raw;
       } else if (raw.ok) {
         ctx.ui?.success?.(`Gate passed. ${raw.staged_files} staged file(s), no violations.`);
       } else {
@@ -45,7 +45,7 @@ export default defineCommand<unknown, CLIInput<QaGateFlags>, unknown>({
 
       }
 
-      return raw.ok ? { ok: true, result: raw } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'QA gate failed', hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' }, result: raw };
+      return raw.ok ? raw : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'QA gate failed', hint: 'Review the reported gate violations, then rerun `kb qa gate`.', diagnostics: raw.violations.map((violation) => ({ code: 'KB_QA_GATE_VIOLATION', severity: violation.severity, path: violation.package, message: `${violation.check}: ${violation.message}` })) } };
     },
   },
 });

@@ -111,7 +111,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
         }
 
         if (outputJson) {
-          return { ok: true, result: result };
+          return result;
         } else {
           const resultItems = [
             `Job ID: ${result.id}`,
@@ -130,7 +130,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

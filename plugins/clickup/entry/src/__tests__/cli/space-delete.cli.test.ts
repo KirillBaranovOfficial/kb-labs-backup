@@ -40,7 +40,7 @@ describe('clickup:space.delete', () => {
       mockCLIInput({ argv: ['space-1'], flags: { force: true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(vi.mocked(deleteSpace)).toHaveBeenCalledWith('test-api-key', 'space-1');
   });
@@ -55,8 +55,8 @@ describe('clickup:space.delete', () => {
       mockCLIInput({ argv: ['space-1'], flags: { force: true, json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ deleted: true, spaceId: 'space-1' });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ deleted: true, spaceId: 'space-1' });
   });
 
   it('SD-03: missing spaceId argv — exitCode 1, error shown', async () => {
@@ -67,7 +67,7 @@ describe('clickup:space.delete', () => {
       mockCLIInput({ argv: [], flags: { force: true } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -79,7 +79,7 @@ describe('clickup:space.delete', () => {
       mockCLIInput({ argv: ['space-1'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -93,7 +93,7 @@ describe('clickup:space.delete', () => {
       mockCLIInput({ argv: ['space-1'], flags: { force: true } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -105,7 +105,7 @@ describe('clickup:space.delete', () => {
       mockCLIInput({ argv: ['space-1'], flags: { 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(deleteSpace)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('space-1');

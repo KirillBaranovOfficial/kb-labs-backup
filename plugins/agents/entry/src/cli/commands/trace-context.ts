@@ -127,14 +127,13 @@ export default defineCommand({
         }
 
         if (flags.json) {
-          return { ok: true, result: { success: true, iterations: filtered } };
+          return { success: true, iterations: filtered };
         } else {
           printTimeline(ctx, filtered);
         }
 
-        return { ok: true };
+        return {  };
       } catch (err) {
-        return { ok: true, result: error('TRACE_NOT_FOUND', `Trace not found: ${taskId}`) };
         return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Trace not found: ${taskId ?? '(missing task ID)'}`, hint: 'Check the task ID, then rerun `kb agents trace context --task-id <id>`.' } };
       }
     },

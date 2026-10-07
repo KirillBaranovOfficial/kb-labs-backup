@@ -73,7 +73,7 @@ export default defineCommand<unknown, StatusInput, StatusResult>({
       };
 
       if (outputJson) {
-        return { ok: true, result: result };
+        return result;
       } else {
         const sections = [
           {
@@ -123,7 +123,7 @@ export default defineCommand<unknown, StatusInput, StatusResult>({
         });
       }
 
-      return { ok: true, result, meta: { timing: tracker.total() } };
+      return result;
     },
   },
 });

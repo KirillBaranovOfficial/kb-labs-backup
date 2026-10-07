@@ -1,8 +1,6 @@
 import type { Presenter } from "./types";
 import type { SystemContext } from "../cli-context";
-import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
-
-export { normalizeJsonResult } from '@kb-labs/plugin-runtime';
+import { toErrorEnvelope } from '@kb-labs/core-platform';
 
 export function createJsonPresenter(): Presenter & {
   setContext(context: SystemContext): void;
@@ -16,10 +14,9 @@ export function createJsonPresenter(): Presenter & {
     write: (_line) => {},
     info: (_line) => {},
     warn: (_line) => {},
-    error: (line) =>
-      console.log(JSON.stringify(normalizeJsonResult({ ok: false, error: { message: line } }))),
+    error: (line) => console.log(JSON.stringify({ ok: false, error: toErrorEnvelope(new Error(line)) })),
     json: (payload) => {
-      console.log(JSON.stringify(normalizeJsonResult(payload)));
+      console.log(JSON.stringify(payload));
       // System commands use simple JSON output
     },
     setContext(ctx: SystemContext) {

@@ -17,10 +17,10 @@ export default defineCommand({
           projectId: project,
           staleOnly,
         });
-        if (json) {return { ok: true, result: commitments };}
+        if (json) {return commitments;}
         else if (commitments.length === 0) {ctx.ui?.info?.('Nothing here.');}
         else {ctx.ui?.chain?.(commitments.map((c) => ({ title: `[${c.status}] ${c.text}`, sections: [{ items: [c.id] }] })));}
-        return { ok: true, result: commitments };
+        return commitments;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.list failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

@@ -34,7 +34,6 @@ describe('workflow job logs', () => {
     const ctx = createMockContext({ ui });
     const result = await logsCommand.execute(ctx, mockCLIInput({ argv: ['j-abc'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.logs.length).toBe(3);
   });
 
@@ -49,11 +48,9 @@ describe('workflow job logs', () => {
     const ctx = createMockContext({ ui });
     const result = await logsCommand.execute(ctx, mockCLIInput({ argv: ['j-abc'], flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = result as { ok: boolean; result: { logs: typeof sampleLogs } };
-    expect(payload.ok).toBe(true);
-    expect(Array.isArray(payload.result.logs)).toBe(true);
-    expect(payload.result.logs.length).toBe(3);
+    const payload = result as { logs: typeof sampleLogs };
+    expect(Array.isArray(payload.logs)).toBe(true);
+    expect(payload.logs.length).toBe(3);
   });
 
   it('CLG-03: missing positional job ID returns exitCode 1', async () => {
@@ -61,8 +58,8 @@ describe('workflow job logs', () => {
     const ctx = createMockContext({ ui });
     const result = await logsCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('CLG-04: empty logs renders empty state without throwing', async () => {
@@ -76,7 +73,6 @@ describe('workflow job logs', () => {
     const ctx = createMockContext({ ui });
     const result = await logsCommand.execute(ctx, mockCLIInput({ argv: ['j-empty'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.errors.length).toBe(0);
     expect(captured.warnings.length).toBeGreaterThan(0);
   });
@@ -92,8 +88,8 @@ describe('workflow job logs', () => {
     const ctx = createMockContext({ ui });
     const result = await logsCommand.execute(ctx, mockCLIInput({ argv: ['j-123'] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
 });

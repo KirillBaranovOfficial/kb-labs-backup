@@ -39,8 +39,8 @@ describe('workspace:status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ result: { running: false } });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ running: false });
     expect(captured.infos.length).toBeGreaterThan(0);
   });
 
@@ -52,8 +52,8 @@ describe('workspace:status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ result: { running: true, connected: true, hostId: 'host-123' } });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ running: true, connected: true, hostId: 'host-123' });
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -65,8 +65,8 @@ describe('workspace:status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ result: { running: true, connected: false } });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ running: true, connected: false });
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -78,9 +78,9 @@ describe('workspace:status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ result: { running: false } });
-    expect(result.result).toMatchObject({ running: false });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ running: false });
+    expect(result).toMatchObject({ running: false });
   });
 
   it('CS-05: --json flag with connected daemon outputs full status JSON', async () => {
@@ -91,8 +91,8 @@ describe('workspace:status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({
       running: true,
       connected: true,
       hostId: 'host-789',

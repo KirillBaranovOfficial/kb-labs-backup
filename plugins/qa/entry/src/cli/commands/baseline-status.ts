@@ -26,14 +26,14 @@ export default defineCommand<unknown, CLIInput<BaselineStatusFlags>, unknown>({
       const baseline = store.loadBaseline();
 
       if (flags.json) {
-        return { ok: true, result: baseline };
+        return baseline;
       } else {
         for (const section of buildBaselineReport(baseline)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return { ok: true };
+      return {  };
     },
   },
 });

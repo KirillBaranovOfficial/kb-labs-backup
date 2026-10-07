@@ -29,11 +29,11 @@ export default defineCommand({
         await deleteMessage(account, uid, input.flags.folder ?? 'INBOX');
 
         if (input.flags.json) {
-          return { ok: true, result: { uid, deleted: true } };
+          return { uid, deleted: true };
         }
 
         ctx.ui?.success?.(`Deleted uid=${uid}`);
-        return { ok: true, result: null };
+        return null;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

@@ -27,8 +27,7 @@ describe('workflow job list', () => {
     const { ui, captured } = createCapturedUI();
     const result = await jobListCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true, result: { jobs: activeJobs } });
+    expect(result).toMatchObject({ jobs: activeJobs });
   });
 
   it('filters by active job status', async () => {
@@ -38,7 +37,6 @@ describe('workflow job list', () => {
     const { ui, captured } = createCapturedUI();
     const result = await jobListCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: { json: true, status: 'running' } }));
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ result: { jobs: [activeJobs[0]] } });
+    expect(result).toMatchObject({ jobs: [activeJobs[0]] });
   });
 });

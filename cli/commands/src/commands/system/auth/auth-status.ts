@@ -75,7 +75,7 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
           ctx.ui?.write?.('Not authenticated. Run "kb auth login" to configure Gateway connection.\n');
         }
       }
-      return { ok: true, authenticated: false, session: sessionStatus };
+      return {  authenticated: false, session: sessionStatus };
     }
 
     const expired = credentialsManager.isExpired(credentials);
@@ -97,7 +97,7 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
     }
 
     return {
-      ok: true,
+
       authenticated: true,
       gatewayUrl: credentials.gatewayUrl,
       tokenExpired: expired,

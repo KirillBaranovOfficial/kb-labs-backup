@@ -37,8 +37,7 @@ export default defineCommand<unknown, CLIInput<BuildOrderFlags>, unknown>({
       }
 
       if (flags.json) {
-        return { ok: true, result: result };
-        return { ok: true };
+        return result;
       }
 
       if (flags.script) {
@@ -47,7 +46,7 @@ export default defineCommand<unknown, CLIInput<BuildOrderFlags>, unknown>({
           if (!layer) continue;
           ctx.ui?.success?.(`# Layer ${i + 1}`, { sections: [{ header: '', items: layer.map(p => `pnpm --filter "${p}" run build`) }] });
         }
-        return { ok: true };
+        return {  };
       }
 
       const sections = flags.layers
@@ -63,7 +62,7 @@ export default defineCommand<unknown, CLIInput<BuildOrderFlags>, unknown>({
       });
 
       ctx.ui?.success?.(flags.package ? `Build order for ${flags.package}` : 'Monorepo build order', { sections });
-      return { ok: true };
+      return {  };
     },
   },
 });

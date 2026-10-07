@@ -13,13 +13,12 @@ export default defineCommand<unknown, CLIInput<ReindexFlags>, IndexResponse>({
       const mind = await buildMind(ctx.cwd);
       const res = await mind.reindex({ indexId: input.flags.index, full: input.flags.full });
       if (input.flags.json) {
-        return { ok: true, result: res };
-        return { ok: true, result: res };
+        return res;
       }
       ctx.ui?.success?.(
         `Reindexed "${res.indexId}": ${res.filesIndexed} file(s), ${res.chunks} chunk(s) (${res.durationMs}ms)`,
       );
-      return { ok: true, result: res };
+      return res;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

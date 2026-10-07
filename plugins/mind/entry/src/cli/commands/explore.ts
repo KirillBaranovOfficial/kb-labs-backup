@@ -24,8 +24,7 @@ export default defineCommand<unknown, CLIInput<ExploreFlags>, ExploreResponse>({
         const res = await mind.explore(req);
 
         if (json) {
-          return { ok: true, result: res };
-          return { ok: true, result: res };
+          return res;
         }
         if (res.files.length === 0) {
           ctx.ui?.warn?.(`No relevant files in index "${res.indexId}"`);
@@ -47,7 +46,7 @@ export default defineCommand<unknown, CLIInput<ExploreFlags>, ExploreResponse>({
             },
           );
         }
-        return { ok: true, result: res };
+        return res;
       } catch (err) {
         return handleError(ctx, err, json);
       }

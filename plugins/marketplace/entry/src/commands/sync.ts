@@ -56,7 +56,6 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
         } else {
           return handleError(ctx, err, flags.json);
         }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Marketplace scope is not configured', hint: "Run `kb marketplace sync --help` to review its inputs and recovery steps, then retry." }, result: { added: [], skipped: [], total: 0 } };
       }
 
       // Sync reads include/exclude patterns from the config file located at
@@ -75,7 +74,6 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
           undefined,
           flags.json,
         );
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No marketplace.sync.include configured', hint: "Run `kb marketplace sync --help` to review its inputs and recovery steps, then retry." }, result: { added: [], skipped: [], total: 0 } };
       }
 
       try {
@@ -88,7 +86,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
         });
 
         if (flags.json) {
-          return { ok: true, result: result };
+          return result;
         } else if (result.added.length === 0) {
           ctx.ui?.info?.(`Lock is up to date — ${scopeCtx.scope} (${result.total} entries)`);
         } else {
@@ -100,7 +98,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
           });
         }
 
-        return { ok: true, result };
+        return result;
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

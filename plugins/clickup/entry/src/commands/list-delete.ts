@@ -34,12 +34,12 @@ export default defineCommand({
         await deleteList(requireApiKey(), listId);
 
         if (input.flags.json) {
-          return { ok: true, result: { deleted: true, listId } };
+          return { deleted: true, listId };
         } else {
           ctx.ui?.success?.(`Deleted list ${listId}`);
         }
 
-        return { ok: true, result: { deleted: true, listId } };
+        return { deleted: true, listId };
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

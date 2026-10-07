@@ -18,15 +18,15 @@ export default defineCommand({
       try {
         const card = await getProject(idOrName);
         if (!card) {
-          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No project matching "${idOrName}"`, hint: "Run `kb steward project get --help` to review the failure and next steps." }, result: null };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No project matching "${idOrName}"`, hint: "Run `kb steward project get --help` to review the failure and next steps." } };
         }
 
         if (json) {
-          return { ok: true, result: card };
+          return card;
         } else {
           ctx.ui?.info?.(`${card.project.name} [${card.project.status}] — ${card.resources.length} resources, ${card.members.length} members`);
         }
-        return { ok: true, result: card };
+        return card;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:project.get failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

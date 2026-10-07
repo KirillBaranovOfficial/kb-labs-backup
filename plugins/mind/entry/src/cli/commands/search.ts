@@ -27,8 +27,7 @@ export default defineCommand<unknown, CLIInput<SearchFlags>, SearchResponse>({
         const res = await mind.search(req);
 
         if (json) {
-          return { ok: true, result: res };
-          return { ok: true, result: res };
+          return res;
         }
         if (res.results.length === 0) {
           ctx.ui?.warn?.(`No results in index "${res.indexId}"`);
@@ -46,7 +45,7 @@ export default defineCommand<unknown, CLIInput<SearchFlags>, SearchResponse>({
             ],
           });
         }
-        return { ok: true, result: res };
+        return res;
       } catch (err) {
         return handleError(ctx, err, json);
       }

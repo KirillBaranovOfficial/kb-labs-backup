@@ -51,7 +51,7 @@ export default defineCommand<unknown, ListInput, ListResultData>({
         const data = await get<ListResultData>('/packages', query);
 
         if (flags.json) {
-          return { ok: true, result: data };
+          return data;
         } else {
           const enabled = data.entries.filter(e => e.enabled !== false).length;
           const disabled = data.total - enabled;
@@ -68,7 +68,7 @@ export default defineCommand<unknown, ListInput, ListResultData>({
           });
         }
 
-        return { ok: true, result: data };
+        return data;
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

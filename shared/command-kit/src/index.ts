@@ -4,7 +4,7 @@
  */
 
 import type { FlagSchemaDefinition, InferFlags } from "./flags/index";
-import type { CommandSuccess, CommandFailure, CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
+import type { CommandFailure, CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 // Re-exports
 export * from "./flags/index";
@@ -37,25 +37,18 @@ export * from "./ws-types";
 /**
  * Helper types for command results (optional - use when convenient)
  *
- * These types make it easier to define command results without repeating `CommandResult &`.
- * They are completely optional - you can still use `CommandResult & { ... }` directly.
+ * `CommandResult<T>` is plain success data or the shared typed failure.
  *
  * @example
  * ```typescript
  * // Using helper types (optional)
- * type MyResult = SuccessResult<{ items: Item[]; total: number }>;
+ * type MyResult = CommandResult<{ items: Item[]; total: number }>;
  *
- * // Direct usage (also works)
- * type MyResult = CommandResult & { ok: true; items: Item[]; total: number };
  * ```
  */
-export type SuccessResult<
-  T extends Record<string, unknown> = Record<string, never>,
-> = CommandSuccess<T> & T;
 export type ErrorResult<
   T extends Record<string, unknown> = Record<string, never>,
 > = CommandFailure & T;
-export type ResultWith<T extends Record<string, unknown>> = CommandResult<T>;
 
 /**
  * Base command result contract - all command results must extend this
@@ -63,13 +56,7 @@ export type ResultWith<T extends Record<string, unknown>> = CommandResult<T>;
  * This defines the minimal contract that every command must fulfill.
  * Every command MUST explicitly declare its result type via generic TResult parameter.
  *
- * Required fields:
- * - `ok: boolean` - execution success status
- *
- * Recommended fields:
- * - `error?: string` - error message when ok === false
- *
- * Additional fields should be added via generic TResult type parameter.
+ * Success is plain command data. Operation failures use CommandFailure.
  *
  * @example
  * ```typescript
@@ -77,27 +64,19 @@ export type ResultWith<T extends Record<string, unknown>> = CommandResult<T>;
  * type MyResult = CommandResult;
  *
  * // Extended result with custom fields (RECOMMENDED)
- * type WorkflowRunResult = CommandResult & {
- *   run: WorkflowRun;
- *   timingMs: number;
- * };
+ * type WorkflowRunResult = { run: WorkflowRun; timingMs: number };
  *
- * type ListResult = CommandResult & {
- *   items: Item[];
- *   total: number;
- * };
+ * type ListResult = { items: Item[]; total: number };
  * ```
  */
-export type { CommandResult, CommandSuccess, CommandFailure, CommandError } from '@kb-labs/plugin-contracts';
+export type { CommandResult, CommandFailure, CommandError } from '@kb-labs/plugin-contracts';
 
 /**
  * Command handler function signature
  *
  * TConfig is the product configuration type (auto-loaded from kb.config.json)
  * TEnv is the environment variables type (validated at runtime)
- * TResult must extend CommandResult ({ ok: boolean }) and represents the contract
- * for what the command returns. This ensures type safety and enables future contract
- * validation.
+ * TResult is plain success data or the typed CommandFailure.
  *
  * TArgv is optional - by default it's `string[]`, but you can provide a tuple type
  * for strict argument typing if needed.
@@ -198,7 +177,7 @@ export type CommandFormatter<
  * const cmd = defineCommand<MyFlags, MyResult>({
  *   handler: (ctx, argv, flags) => {
  *     // flags are typed as InferFlags<MyFlags>
- *     return { ok: true, ...result };
+ *     return result;
  *   }
  * });
  *
@@ -308,7 +287,7 @@ export interface CommandConfig<
  *     ctx.platform?.logger?.info('Release started', { scope: flags.scope });
  *     ctx.tracker.checkpoint('planning');
  *     // ... business logic
- *     return { ok: true, published: 5 };
+ *     return { published: 5 };
  *   },
  * });
  *
@@ -338,7 +317,7 @@ export interface CommandConfig<
  *     // flags.mode is typed as string | undefined
  *
  *     const answer = await query(flags.text, { provider, maxTokens });
- *     return { ok: true, answer, confidence: 0.85 };
+ *     return { answer, confidence: 0.85 };
  *   },
  * });
  *
@@ -359,7 +338,7 @@ export interface CommandConfig<
  *     const apiKey = ctx.env.OPENAI_API_KEY;
  *     // ctx.env.DEBUG is typed as string | undefined
  *     const debug = ctx.env.DEBUG;
- *     return { ok: true };
+ *     return { connected: true };
  *   },
  * });
  *
@@ -394,7 +373,7 @@ export interface CommandConfig<
  *     }
  *
  *     // Return value (for invoke/REST/workflow)
- *     return { ok: true, ...result };
+ *     return result;
  *   },
  * });
  *

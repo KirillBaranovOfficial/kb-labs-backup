@@ -17,10 +17,10 @@ export default defineCommand({
 
       try {
         const members = await listMembers(projectId);
-        if (json) {return { ok: true, result: members };}
+        if (json) {return members;}
         else if (members.length === 0) {ctx.ui?.info?.('No members yet.');}
         else {ctx.ui?.chain?.(members.map((m) => ({ title: `${m.role} (priority ${m.priority})`, sections: [{ items: [m.personId] }] })));}
-        return { ok: true, result: members };
+        return members;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:member.list failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

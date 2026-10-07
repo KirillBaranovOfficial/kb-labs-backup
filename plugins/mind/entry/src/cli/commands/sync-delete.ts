@@ -31,24 +31,15 @@ export default defineCommand<unknown, CLIInput<SyncDeleteFlags>, SyncResponse>({
         },
       });
       if (blocked) {
-        return {
-          ok: false,
-          error: {
-            code: 'KB_RUNTIME_CONFIRMATION_REQUIRED',
-            message: 'Removing indexed documents requires explicit confirmation.',
-            hint: `Verify the ${paths.length} document path(s), then rerun: kb mind sync delete ${paths.join(' ')} --yes`,
-          },
-          result: blocked.result,
-        };
+        return blocked;
       }
       const mind = await buildMind(ctx.cwd);
       const res = await mind.syncDelete(paths, input.flags.index);
       if (input.flags.json) {
-        return { ok: true, result: res };
-        return { ok: true, result: res };
+        return res;
       }
       ctx.ui?.success?.(`Sync delete → "${res.indexId}": ${res.deleted} chunk(s) removed`);
-      return { ok: true, result: res };
+      return res;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

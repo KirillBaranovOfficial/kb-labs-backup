@@ -105,6 +105,6 @@ export const authRegister = defineSystemCommand<RegisterFlags, RegisterResult>({
       ctx.ui?.write?.(`  kb auth login --gateway-url ${gatewayUrl} --client-id ${data.clientId} --client-secret ${data.clientSecret}\n`);
     }
 
-    return { ok: true, clientId: data.clientId, clientSecret: data.clientSecret, hostId: data.hostId };
+    return {  clientId: data.clientId, clientSecret: data.clientSecret, hostId: data.hostId };
   },
 });

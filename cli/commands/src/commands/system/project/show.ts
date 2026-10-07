@@ -65,7 +65,7 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
         ctx.ui?.write(`  last used:   ${project.lastUsedAt ?? 'never'}\n`);
         ctx.ui?.write(`  state dir:   ${project.stateDir}\n`);
       }
-      return { ok: true, project };
+      return {  project };
     } catch (error) {
       return failWithEnvelope(projectErrorEnvelope(error));
     }

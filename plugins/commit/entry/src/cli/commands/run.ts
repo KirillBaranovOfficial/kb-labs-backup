@@ -109,7 +109,7 @@ function renderPreview(
   const output: CommitRunOutput = { plan, applied: false, pushed: false, commits: [] };
 
   if (outputJson) {
-    return { ok: true, result: output };
+    return output;
   } else {
     const items = plan.commits.map(c => `${c.type}${c.scope ? `(${c.scope})` : ''}: ${c.message}`);
     ctx.ui?.success?.(plan.commits.length === 0 ? 'No changes to commit' : 'Commit plan generated (dry-run)', {
@@ -122,7 +122,7 @@ function renderPreview(
     });
   }
 
-  return { ok: true, result: output, meta: { timing: Date.now() - startTime } };
+  return output;
 }
 
 export default defineCommand({
@@ -224,7 +224,7 @@ export default defineCommand({
       };
 
       if (outputJson) {
-        return { ok: true, result: output };
+        return output;
       } else {
         const commitsItems = applyResult.appliedCommits.map((c) => {
           const shortSha = c.sha.substring(0, 7);
@@ -257,11 +257,7 @@ export default defineCommand({
         });
       }
 
-      return {
-        ok: true,
-        result: output,
-        meta: { timing: Date.now() - startTime },
-      };
+      return output;
     },
   },
 });

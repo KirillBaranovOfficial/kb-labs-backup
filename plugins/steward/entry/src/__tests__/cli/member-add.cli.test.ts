@@ -33,7 +33,7 @@ describe('steward:member.add', () => {
       mockCLIInput({ flags: { person: 'per_1', project: 'prj_1', role: 'lead', priority: 0 } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedAddMember).toHaveBeenCalledWith({
       personId: 'per_1',
       projectId: 'prj_1',
@@ -49,11 +49,11 @@ describe('steward:member.add', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
       expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddMember).not.toHaveBeenCalled();
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

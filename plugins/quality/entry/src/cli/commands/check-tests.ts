@@ -36,8 +36,8 @@ export default defineCommand({
         if (cached) {
           outputTestResults({ ...cached, cached: true }, flags, ui);
           return cached.failing > 0
-            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Test failures found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: cached }
-            : { ok: true, result: cached };
+            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Test failures found', hint: 'Review the failed package tests, then rerun `kb quality check-tests`.', diagnostics: cached.failures.map((failure) => ({ code: 'KB_QUALITY_TESTS_FAILED', severity: 'error', path: failure.package, message: failure.error })) } }
+            : cached;
         }
       }
 
@@ -66,8 +66,8 @@ export default defineCommand({
       outputTestResults({ ...result, cached: false }, flags, ui);
 
       return result.failing > 0
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Test failures found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result, meta: { cached: false } }
-        : { ok: true, result, meta: { cached: false } };
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Test failures found', hint: 'Review the failed package tests, then rerun `kb quality check-tests`.', diagnostics: result.failures.map((failure) => ({ code: 'KB_QUALITY_TESTS_FAILED', severity: 'error', path: failure.package, message: failure.error })) } }
+        : result;
     },
   },
 });

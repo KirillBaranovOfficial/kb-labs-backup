@@ -65,7 +65,7 @@ export const logsStats = defineSystemCommand<Flags, Result>({
     const caps = reader.getCapabilities();
 
     return {
-      ok: true,
+
       capabilities: caps,
       buffer: stats.buffer
         ? {

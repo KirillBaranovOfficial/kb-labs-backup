@@ -42,7 +42,7 @@ describe('clickup:workspace', () => {
       mockCLIInput({ flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.infos.length).toBeGreaterThan(0);
     expect(vi.mocked(getWorkspaceHierarchy)).toHaveBeenCalledWith('test-api-key', 'team-123');
   });
@@ -57,10 +57,10 @@ describe('clickup:workspace', () => {
       mockCLIInput({ flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ id: 'ws-1', name: 'My Workspace' });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ id: 'ws-1', name: 'My Workspace' });
     // Compact format: spaces array should be present
-    expect((result.result as typeof mockWorkspace).spaces).toBeDefined();
+    expect((result as typeof mockWorkspace).spaces).toBeDefined();
   });
 
   it('W-03: --json --full outputs full workspace object', async () => {
@@ -73,9 +73,9 @@ describe('clickup:workspace', () => {
       mockCLIInput({ flags: { json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     // Full mode returns the raw workspace object
-    expect(result.result).toMatchObject({ id: 'ws-1', name: 'My Workspace' });
+    expect(result).toMatchObject({ id: 'ws-1', name: 'My Workspace' });
   });
 
   it('W-04: core function throws — exitCode 1, error shown', async () => {
@@ -88,7 +88,7 @@ describe('clickup:workspace', () => {
       mockCLIInput({ flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

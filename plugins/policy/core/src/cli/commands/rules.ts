@@ -28,14 +28,15 @@ export default defineCommand({
         }
       }
 
+      const output = Object.entries(policyConfig.rules).map(([name, ruleDef]) => ({
+        name,
+        description: ruleDef.description,
+        severity: ruleDef.severity,
+        appliedTo: ruleToCategories.get(name) ?? [],
+      }));
+
       if (flags.json) {
-        const output = Object.entries(policyConfig.rules).map(([name, ruleDef]) => ({
-          name,
-          description: ruleDef.description,
-          severity: ruleDef.severity,
-          appliedTo: ruleToCategories.get(name) ?? [],
-        }));
-        return { ok: true, result: { rules: output } };
+        return { rules: output };
       } else {
         const items = Object.entries(policyConfig.rules).map(([name, ruleDef]) => {
           const categories = ruleToCategories.get(name) ?? [];
@@ -45,7 +46,7 @@ export default defineCommand({
         ctx.ui.success?.('Policy Rules', { sections: [{ header: 'Rules', items }] });
       }
 
-      return { ok: true };
+      return {};
     },
   },
 });

@@ -366,7 +366,7 @@ export default defineCommand<unknown, CLIInput<RunFlags>, ReviewResult | AgentRe
 
         // Output results
         if (flags.json) {
-          return { ok: true, result: result };
+          return result;
         } else {
           // Build sections
           const sections: Array<{ header?: string; items: string[] }> = [];
@@ -490,15 +490,45 @@ export default defineCommand<unknown, CLIInput<RunFlags>, ReviewResult | AgentRe
         const agentReport = toAgentReport(result);
 
         if (blockerCount > 0) {
-          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb review run --help` to review its inputs and recovery steps, then retry." }, result: agentReport };
+          return {
+            ok: false,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: 'Command failed',
+              hint: "Run `kb review run --help` to review its inputs and recovery steps, then retry.",
+              diagnostics: agentReport.issues.map((issue) => ({
+                code: 'KB_REVIEW_FINDING',
+                severity: issue.severity === 'blocker' || issue.severity === 'high' ? 'error' as const : 'warning' as const,
+                path: issue.file,
+                line: issue.line,
+                message: issue.problem,
+                hint: issue.fix,
+              })),
+            },
+          };
         }
 
         if (mode === 'heuristic' && highCount > 0) {
           // In CI mode (heuristic), fail on high severity
-          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb review run --help` to review its inputs and recovery steps, then retry." }, result: agentReport };
+          return {
+            ok: false,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: 'Command failed',
+              hint: "Run `kb review run --help` to review its inputs and recovery steps, then retry.",
+              diagnostics: agentReport.issues.map((issue) => ({
+                code: 'KB_REVIEW_FINDING',
+                severity: issue.severity === 'blocker' || issue.severity === 'high' ? 'error' as const : 'warning' as const,
+                path: issue.file,
+                line: issue.line,
+                message: issue.problem,
+                hint: issue.fix,
+              })),
+            },
+          };
         }
 
-        return { ok: true, result: agentReport };
+        return agentReport;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         loader.fail(`Review failed: ${message}`);

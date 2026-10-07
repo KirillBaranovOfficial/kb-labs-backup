@@ -95,7 +95,7 @@ export const logsSearch = defineSystemCommand<Flags, LogSearchResult>({
     });
 
     return {
-      ok: true as const,
+
       data: {
         query: searchText,
         logs: result.logs.map(formatLogJson),

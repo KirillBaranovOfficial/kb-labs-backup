@@ -49,7 +49,6 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
   });
 
   it('RV-02: --json=all outputs full run object (BUG-004 path)', async () => {
@@ -67,8 +66,7 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { json: 'all' } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true, result: { id: 'run-abc' } });
+    expect(result).toMatchObject({ id: 'run-abc' });
   });
 
   it('RV-03: --json without value (boolean true) does not crash — treated as --json=all', async () => {
@@ -88,8 +86,7 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { json: true as unknown as string } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true, result: { id: 'run-abc' } });
+    expect(result).toMatchObject({ id: 'run-abc' });
   });
 
   it('RV-03b: --json before positional arg (--run-id explicit) does not crash', async () => {
@@ -107,8 +104,6 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: [], flags: { 'run-id': 'run-abc', json: true as unknown as string } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true });
   });
 
   it('RV-04: --json=status,jobs outputs only selected fields', async () => {
@@ -126,8 +121,7 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { json: 'status,jobs' } }),
     );
 
-    expect(result.ok).toBe(true);
-    const data = (result as { ok: boolean; result: Record<string, unknown> }).result;
+    const data = result as Record<string, unknown>;
     expect(data).toHaveProperty('status');
     expect(data).toHaveProperty('jobs');
     expect(data).not.toHaveProperty('name');
@@ -148,7 +142,6 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: [], flags: { 'run-id': 'run-abc' } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(captured.json.length).toBe(0); // no --json, so sideBox path
   });
 
@@ -167,7 +160,6 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: [], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
     expect(captured.infos.some(i => i.message.includes('No runs found'))).toBe(true);
   });
 
@@ -187,7 +179,6 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: [], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
     expect(captured.infos.some(i => i.message.includes('run-latest'))).toBe(true);
   });
 
@@ -206,8 +197,8 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: ['run-bad'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RV-07: failed run returns exitCode 1', async () => {
@@ -225,7 +216,7 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
   });
 
   it('RV-08: formatDuration returns "0ms" for durationMs=0 (BUG-007)', async () => {
@@ -243,9 +234,8 @@ describe('workflow:runs view', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { json: 'all' } }),
     );
 
-    expect(result.ok).toBe(true);
     // durationMs=0 must be present in JSON output, not hidden
-    const data = (result as { ok: boolean; result: Record<string, unknown> }).result;
+    const data = result as Record<string, unknown>;
     expect(data?.durationMs).toBe(0);
     // rendered sideBox path: verify formatDuration('0') => '0ms' via table-less path
     // We test the unit directly: a run with durationMs=0 must NOT silently hide the duration.
@@ -342,7 +332,6 @@ describe('workflow:runs view', () => {
     const ctx = createMockContext({ ui });
     const result = await runsViewCommand.execute(ctx, mockCLIInput({ argv: ['run-abc'], flags: { output: true } }));
 
-    expect(result.ok).toBe(true);
     const allText = sideBoxSpy.mock.calls
       .flatMap(([opts]) => (opts.sections ?? []).flatMap(sec => sec.items.map(item => typeof item === 'string' ? item : item.text)))
       .join('\n');
@@ -395,7 +384,6 @@ describe('workflow:runs view', () => {
     const ctx = createMockContext({ ui });
     const result = await runsViewCommand.execute(ctx, mockCLIInput({ argv: ['run-abc'], flags: { output: true } }));
 
-    expect(result.ok).toBe(true);
     // sideBox must be called — tree is rendered even without matching logs
     expect(sideBoxSpy).toHaveBeenCalled();
     const allText = sideBoxSpy.mock.calls
@@ -422,7 +410,6 @@ describe('workflow:runs view', () => {
     const result = await runsViewCommand.execute(ctx, mockCLIInput({ argv: ['run-abc'], flags: { output: true } }));
 
     // must NOT crash to exitCode 1 — degraded tree without logs is acceptable
-    expect(result.ok).toBe(true);
     expect(sideBoxSpy).toHaveBeenCalled();
     const allText = sideBoxSpy.mock.calls
       .flatMap(([opts]) => (opts.sections ?? []).flatMap(sec => sec.items.map(item => typeof item === 'string' ? item : item.text)))
@@ -460,7 +447,6 @@ describe('workflow:runs view', () => {
     // must not throw — circular must render as [circular], not crash
     const result = await runsViewCommand.execute(ctx, mockCLIInput({ argv: ['run-abc'], flags: {} }));
 
-    expect(result.ok).toBe(true);
     const allText = sideBoxSpy.mock.calls
       .flatMap(([opts]) => (opts.sections ?? []).flatMap(sec => sec.items.map(item => typeof item === 'string' ? item : item.text)))
       .join('\n');
@@ -524,7 +510,6 @@ describe('workflow:runs view', () => {
     const ctx = createMockContext({ ui });
     const result = await runsViewCommand.execute(ctx, mockCLIInput({ argv: ['run-abc'], flags: {} }));
 
-    expect(result.ok).toBe(true);
     const allText = sideBoxSpy.mock.calls
       .flatMap(([o]) => (o.sections ?? []).flatMap(sec => sec.items.map(item => typeof item === 'string' ? item : item.text)))
       .join('\n');

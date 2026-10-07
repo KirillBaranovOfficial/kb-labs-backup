@@ -19,12 +19,12 @@ export default defineCommand({
       try {
         const person = await updatePerson({ id, name, globalTopics: parseList(topics), companyId: company });
         if (!person) {
-          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No person "${id}"`, hint: "Run `kb steward person update --help` to review the failure and next steps." }, result: null };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No person "${id}"`, hint: "Run `kb steward person update --help` to review the failure and next steps." } };
         }
 
-        if (json) {return { ok: true, result: person };}
+        if (json) {return person;}
         else {ctx.ui?.info?.(`Updated "${person.name}"`);}
-        return { ok: true, result: person };
+        return person;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:person.update failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

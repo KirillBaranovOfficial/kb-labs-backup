@@ -63,7 +63,7 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
         const response = await request(`/auth/tokens/${encodeURIComponent(flags.revoke)}/revoke`, 'POST');
         if (!response.ok) {return fail(`Gateway could not revoke token (HTTP ${response.status}). Check the token ID and retry kb auth tokens --revoke <token-id>.`);}
         if (!flags.json) { ctx.ui?.write?.(`Revoked API token ${flags.revoke}.\n`); }
-        return { ok: true, revoked: flags.revoke };
+        return {  revoked: flags.revoke };
       }
       if (flags.name) {
         const expiresFlag = flags['expires-in-days'];
@@ -78,14 +78,14 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
         if (!response.ok) {return fail(`Gateway could not create the API token (HTTP ${response.status}). Retry kb auth tokens --name <name>.`);}
         const result = await readGatewaySuccessData<{ token: string; tokenRecord: TokenRecord }>(response);
         if (!flags.json) { ctx.ui?.write?.(`Token ${result.tokenRecord.name}${result.tokenRecord.expiresAt ? ` (expires ${new Date(result.tokenRecord.expiresAt).toISOString()})` : ' (no expiry)'}:\n${result.token}\n`); }
-        return { ok: true, token: result.token, tokenRecord: result.tokenRecord };
+        return {  token: result.token, tokenRecord: result.tokenRecord };
       }
       const response = await request('/auth/tokens');
       if (!response.ok) {return fail(`Gateway could not list API tokens (HTTP ${response.status}). Retry kb auth tokens.`);}
       const result = await readGatewaySuccessData<{ tokens: TokenRecord[] }>(response);
       if (!flags.json && result.tokens.length === 0) {ctx.ui?.write?.('No API tokens. Create one with `kb auth tokens --name "nightly CI"`.\n');}
       else if (!flags.json) {ctx.ui?.write?.(result.tokens.map((token) => `${token.tokenId}  ${token.name}  ${token.expiresAt ? `expires ${new Date(token.expiresAt).toISOString()}` : 'no expiry'}${token.revokedAt ? '  revoked' : ''}`).join('\n') + '\n');}
-      return { ok: true, tokens: result.tokens };
+      return {  tokens: result.tokens };
     } catch (error) {
       return showGatewayError(error);
     }

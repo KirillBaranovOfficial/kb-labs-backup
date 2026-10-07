@@ -19,6 +19,7 @@ import { loadPlatformConfig } from '@kb-labs/core-runtime';
 import { resolveProjectRoot, resolveRoots } from '@kb-labs/core-workspace';
 import type { ConfigLayerFile } from '@kb-labs/core-config';
 import type { LoadPlatformConfigResult } from '@kb-labs/core-runtime';
+import { throwSystemCataloguedFailure } from '@kb-labs/shared-command-kit';
 
 export const CONFIG_SCOPES = ['platform', 'project'] as const;
 export type ConfigScope = (typeof CONFIG_SCOPES)[number];
@@ -48,7 +49,7 @@ export async function resolveConfigRoots(
   const projects = await createProjectRegistry().list();
   const project = projects.find(({ project }) => project.path === projectRoot)?.project;
   if (!project) {
-    throw new Error(`Registered project ${projectRoot} disappeared while resolving config roots.`);
+    throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', `Registered project ${projectRoot} is no longer in the project registry.`, `Run "kb project add ${projectRoot}" to register the current project, then retry the config command.`, { path: projectRoot });
   }
   const loaded = await loadPlatformConfig({ moduleUrl, startDir: cwd, loadEnvFile: false });
   return {
@@ -63,7 +64,7 @@ export async function resolveConfigRoots(
 export async function userConfigFileForScope(roots: ConfigRoots, scope: ConfigScope): Promise<string> {
   if (scope === 'project') {
     if (!roots.projectId) {
-      throw new Error('Project config requires a registered project.');
+      throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Project config requires a registered project.', `Run "kb project add ${roots.projectRoot}" to register it, then retry the config command.`, { path: roots.projectRoot });
     }
     return projectSettingsPath({ projectId: roots.projectId });
   }

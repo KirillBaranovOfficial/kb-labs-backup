@@ -56,7 +56,7 @@ describe('CLI ↔ REST parity (search)', () => {
       ctx,
       mockCLIInput({ flags: { text: 'login authenticate user', index: 'code', json: true } }),
     );
-    const cliResult = cliRes.result;
+    const cliResult = cliRes;
 
     const restResult = await searchHandler.execute(
       ctx,

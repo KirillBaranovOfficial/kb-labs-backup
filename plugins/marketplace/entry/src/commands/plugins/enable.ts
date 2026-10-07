@@ -41,11 +41,11 @@ export default defineCommand<unknown, EnableInput, { packageId: string; scope: s
       try {
         await post(`/packages/enable`, { packageId, ...scopeBody(scopeCtx) });
         if (flags.json) {
-          return { ok: true, result: { packageId, scope: scopeCtx.scope } };
+          return { packageId, scope: scopeCtx.scope };
         } else {
           ctx.ui?.success?.(`Enabled ${packageId} (${scopeCtx.scope})`);
         }
-        return { ok: true, result: { packageId, scope: scopeCtx.scope } };
+        return { packageId, scope: scopeCtx.scope };
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

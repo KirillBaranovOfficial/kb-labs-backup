@@ -25,7 +25,7 @@ import {
 } from '@kb-labs/core-config';
 import { loadPlatformConfig, PlatformUserConfigSchema } from '@kb-labs/core-runtime';
 import { AdapterProjectScopeError, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCataloguedFailure, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 
 import { generateExamples } from '../../../utils/generate-examples';
@@ -125,7 +125,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
 
       const roots = await resolveConfigRoots(getContextCwd(ctx), scope === 'platform' ? 'platform' : 'required');
       if (scope === 'project' && !roots.projectId) {
-        throw new Error('Project config requires a registered project.');
+        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Project config requires a registered project.', `Run "kb project add ${roots.projectRoot}" and retry "kb config set".`, { path: roots.projectRoot });
       }
       const file = await userConfigFileForScope(roots, scope);
       const runtimeConfig = await loadPlatformConfig({
@@ -242,7 +242,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
       }
 
       return {
-        ok: true,
+
         key,
         scope,
         file: result.filePath,

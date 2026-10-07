@@ -30,28 +30,19 @@ export default defineCommand<unknown, CLIInput<DropFlags>, DropResponse>({
           },
         });
         if (blocked) {
-          return {
-            ok: false,
-            error: {
-              code: 'KB_RUNTIME_CONFIRMATION_REQUIRED',
-              message: 'Dropping an index requires explicit confirmation.',
-              hint: `Verify index "${flags.index}", then rerun: kb mind drop --index ${flags.index} --yes`,
-            },
-            result: blocked.result,
-          };
+          return blocked;
         }
         const req = DropRequestSchema.parse({ indexId: flags.index });
         const mind = await buildMind(ctx.cwd);
         const res = await mind.drop(req);
 
         if (json) {
-          return { ok: true, result: res };
-          return { ok: true, result: res };
+          return res;
         }
         ctx.ui?.success?.(
           `Dropped "${res.indexId}" — removed ${res.droppedChunks} vector(s), ${res.droppedFiles} doc(s)`,
         );
-        return { ok: true, result: res };
+        return res;
       } catch (err) {
         return handleError(ctx, err, json);
       }

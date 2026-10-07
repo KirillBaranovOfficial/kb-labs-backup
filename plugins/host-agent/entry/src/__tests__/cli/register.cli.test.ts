@@ -49,8 +49,8 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ result: { configPath: expect.stringContaining('agent.json') } });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ configPath: expect.stringContaining('agent.json') });
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -69,8 +69,8 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'], json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({
       hostId: MOCK_REGISTER_RESPONSE.hostId,
       clientId: MOCK_REGISTER_RESPONSE.clientId,
     });
@@ -84,7 +84,7 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: '', workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -96,7 +96,7 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: 'localhost:4000', workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -110,7 +110,7 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/nonexistent/path'] } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -128,7 +128,7 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -142,7 +142,7 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -154,7 +154,7 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'], 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
     expect(vi.mocked(writeFile)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
@@ -176,7 +176,7 @@ describe('workspace:register', () => {
       mockCLIInput({ flags: { gateway: VALID_GATEWAY, workspace: ['/tmp'] } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

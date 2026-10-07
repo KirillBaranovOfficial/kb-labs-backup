@@ -46,7 +46,6 @@ describe('workflow job run', () => {
     const ctx = createMockContext({ ui });
     const result = await jobRunCommand.execute(ctx, mockCLIInput({ flags: { handler: 'foo#default' } }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -61,11 +60,9 @@ describe('workflow job run', () => {
     const ctx = createMockContext({ ui });
     const result = await jobRunCommand.execute(ctx, mockCLIInput({ flags: { handler: 'foo#default', json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = result as { ok: boolean; result: { id: string; status: string } };
-    expect(payload.ok).toBe(true);
-    expect(payload.result.id).toBe('job-abc');
-    expect(payload.result.status).toBe('queued');
+    const payload = result as { id: string; status: string };
+    expect(payload.id).toBe('job-abc');
+    expect(payload.status).toBe('queued');
   });
 
   it('CJR-03: --input passes parsed JSON to submitJob', async () => {
@@ -85,7 +82,6 @@ describe('workflow job run', () => {
       flags: { handler: 'foo#default', input: '{"key":"val"}' },
     }));
 
-    expect(result.ok).toBe(true);
     expect(capturedPayload).toEqual({ key: 'val' });
   });
 
@@ -96,7 +92,7 @@ describe('workflow job run', () => {
       flags: { handler: 'foo#default', input: '{not-valid-json', json: true },
     }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({
       ok: false,
       error: { code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) },
@@ -128,8 +124,7 @@ describe('workflow job run', () => {
     await vi.advanceTimersByTimeAsync(120_000);
     const result = await resultPromise;
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true, result: { status: 'success' } });
+    expect(result).toMatchObject({ status: 'success' });
   });
 
   it('CJR-05 failure: --wait reports a catalogued failure envelope', async () => {
@@ -149,7 +144,7 @@ describe('workflow job run', () => {
     await vi.advanceTimersByTimeAsync(2_000);
     const result = await resultPromise;
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({
       ok: false,
       error: { code: 'KB_RUNTIME_COMMAND_FAILED', hint: expect.any(String) },
@@ -161,7 +156,7 @@ describe('workflow job run', () => {
     const ctx = createMockContext({ ui });
     const result = await jobRunCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({
       ok: false,
       error: { code: 'KB_RUNTIME_INPUT_INVALID', hint: expect.any(String) },
@@ -179,7 +174,7 @@ describe('workflow job run', () => {
     const ctx = createMockContext({ ui });
     const result = await jobRunCommand.execute(ctx, mockCLIInput({ flags: { handler: 'foo#default' } }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 });

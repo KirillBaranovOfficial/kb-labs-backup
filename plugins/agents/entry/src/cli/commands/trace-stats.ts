@@ -59,9 +59,7 @@ export default defineCommand({
           loaded.error.kind === 'not_found' ? 'TRACE_NOT_FOUND' :
           loaded.error.kind === 'too_large' ? 'FILE_TOO_LARGE' :
           'CORRUPTED_TRACE';
-        const err = error(code, formatTraceLoadError(loaded.error));
-        return { ok: true, result: err };
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? 'The trace task ID is invalid.', hint: 'Check the task ID, then rerun `kb agents trace stats --task-id <id>`.' }, result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: formatTraceLoadError(loaded.error), hint: 'Check the task ID, then rerun `kb agents trace stats --task-id <id>`.' } };
       }
 
       const { events } = loaded;
@@ -84,17 +82,15 @@ export default defineCommand({
 
       // Output
       if (flags.json) {
-        return { ok: true, result: response };
+        return response;
       } else {
         printHumanReadable(ctx, stats);
       }
 
-      return { ok: true, result: response };
+      return response;
     } catch (err) {
       logger.error('trace:stats error:', err instanceof Error ? err : undefined);
-      const errResponse = error('IO_ERROR', err instanceof Error ? err.message : String(err));
-      return { ok: true, result: errResponse };
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: errResponse.error?.message ?? 'The trace statistics could not be calculated.', hint: 'Check the trace file, then rerun `kb agents trace stats --task-id <id>`.' }, result: errResponse };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: err instanceof Error ? err.message : String(err), hint: 'Check the trace file, then rerun `kb agents trace stats --task-id <id>`.' } };
     }
     },
   },

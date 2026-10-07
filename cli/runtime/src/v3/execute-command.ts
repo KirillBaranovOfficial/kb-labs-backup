@@ -11,7 +11,6 @@ import type {
   PlatformServices,
 } from "@kb-labs/plugin-contracts";
 import { wrapCliResult } from "@kb-labs/plugin-runtime";
-import { normalizeJsonResult } from "@kb-labs/plugin-runtime";
 import { toErrorEnvelope } from "@kb-labs/core-platform";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import type { ExecutionRequest } from "@kb-labs/plugin-execution-factory";
@@ -257,9 +256,9 @@ export async function executeCommandV3(
 
     if (flags.json) {
       if (cliResult.ok) {
-        ui.json(normalizeJsonResult({ ok: true, data: cliResult.result ?? null, meta: cliResult.meta }));
+        ui.json({ ok: true, data: cliResult.result ?? null, ...(cliResult.meta === undefined ? {} : { meta: cliResult.meta }) });
       } else {
-        ui.json(normalizeJsonResult({ ok: false, error: cliResult.error }, { correlationId: requestId }));
+        ui.json({ ok: false, error: toErrorEnvelope(cliResult.error, { correlationId: requestId }) });
       }
     } else if (!cliResult.ok) {
       const error = toErrorEnvelope(cliResult.error, { correlationId: requestId });

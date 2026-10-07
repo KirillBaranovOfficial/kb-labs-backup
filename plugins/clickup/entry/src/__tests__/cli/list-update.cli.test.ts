@@ -44,7 +44,7 @@ describe('clickup:list.update', () => {
       mockCLIInput({ argv: ['list-1'], flags: { name: 'Updated List' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('List updated');
     expect(vi.mocked(updateList)).toHaveBeenCalledWith('test-api-key', 'list-1', { name: 'Updated List' });
@@ -60,9 +60,9 @@ describe('clickup:list.update', () => {
       mockCLIInput({ argv: ['list-1'], flags: { name: 'Updated List', json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ id: 'list-1', name: 'Updated List' });
-    expect(Object.keys(result.result as object)).toEqual(['id', 'name']);
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ id: 'list-1', name: 'Updated List' });
+    expect(Object.keys(result as object)).toEqual(['id', 'name']);
   });
 
   it('LU-02b: --json --full outputs raw updated list', async () => {
@@ -75,8 +75,8 @@ describe('clickup:list.update', () => {
       mockCLIInput({ argv: ['list-1'], flags: { name: 'Updated List', json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const raw = result.result as typeof mockUpdatedList;
+    expect(result).not.toHaveProperty('ok');
+    const raw = result as typeof mockUpdatedList;
     expect(raw.orderindex).toBeDefined();
     expect(raw.taskCount).toBeDefined();
   });
@@ -89,7 +89,7 @@ describe('clickup:list.update', () => {
       mockCLIInput({ argv: [], flags: { name: 'Updated List' } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -103,7 +103,7 @@ describe('clickup:list.update', () => {
       mockCLIInput({ argv: ['list-1'], flags: { name: 'Updated List' } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -115,7 +115,7 @@ describe('clickup:list.update', () => {
       mockCLIInput({ argv: ['list-1'], flags: { name: 'New Name', 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(updateList)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('list-1');

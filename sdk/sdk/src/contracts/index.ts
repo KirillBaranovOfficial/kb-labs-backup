@@ -44,7 +44,6 @@ export type {
 
 export type {
   CommandResult,
-  CommandSuccess,
   CommandFailure,
   CommandError,
 } from '@kb-labs/plugin-contracts';

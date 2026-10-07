@@ -15,13 +15,12 @@ export default defineCommand<unknown, CLIInput<StatusFlags>, StatusResponse>({
         const res = await mind.status(flags.index);
 
         if (flags.json) {
-          return { ok: true, result: res };
-          return { ok: true, result: res };
+          return res;
         }
 
         if (res.indexes.length === 0) {
           ctx.ui?.warn?.('No indexes built yet. Run `kb mind index` first.');
-          return { ok: true, result: res };
+          return res;
         }
 
         ctx.ui?.success?.('Mind indexes', {
@@ -39,7 +38,7 @@ export default defineCommand<unknown, CLIInput<StatusFlags>, StatusResponse>({
             },
           ],
         });
-        return { ok: true, result: res };
+        return res;
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

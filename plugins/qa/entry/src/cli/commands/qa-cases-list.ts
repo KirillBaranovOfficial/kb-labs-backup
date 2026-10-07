@@ -13,9 +13,23 @@ export default defineCommand<unknown, CLIInput<QaCasesListFlags>, unknown>({
     const result = { schema: 'kb.qa-case-list/v1', cases: catalog.cases, diagnostics: catalog.diagnostics };
     if (catalog.diagnostics.length) {
       if (!input.flags.json) ctx.ui?.warn?.(`QA case catalog contains ${catalog.diagnostics.length} issue(s).`);
-      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'QA case catalog is invalid', hint: 'Run `kb qa cases list --help` to check command inputs, then retry.' }, result };
+      return {
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_INPUT_INVALID',
+          message: 'QA case catalog is invalid',
+          hint: 'Run `kb qa cases list --help` to check command inputs, then retry.',
+          diagnostics: catalog.diagnostics.map((diagnostic) => ({
+            code: 'QA_CASE_INVALID',
+            severity: 'error' as const,
+            path: diagnostic.file,
+            line: diagnostic.line,
+            message: diagnostic.message,
+          })),
+        },
+      };
     }
     if (!input.flags.json) ctx.ui?.success?.(`${catalog.cases.length} QA case(s)`, { sections: [{ items: catalog.cases.map(item => `${item.id} [${item.priority}] ${item.title} (${item.steps.length} steps)`) }] });
-    return { ok: true, result };
+    return result;
   } },
 });

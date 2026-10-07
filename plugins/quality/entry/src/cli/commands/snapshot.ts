@@ -103,7 +103,7 @@ export default defineCommand<unknown, CLIInput<SnapshotFlags>, unknown>({
         });
       }
 
-      return { ok: true, result: snap };
+      return snap;
     },
   },
 });

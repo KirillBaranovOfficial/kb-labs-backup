@@ -92,8 +92,7 @@ describe('scaffold:run', () => {
       mockCLIInput({ flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    if (result.ok) { throw new Error('expected missing scaffold entity to fail'); }
+    if (!('ok' in result) || result.ok) { throw new Error('expected missing scaffold entity to fail'); }
     expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     expect(result.error.hint).toContain('kb scaffold run --help');
   });
@@ -107,7 +106,7 @@ describe('scaffold:run', () => {
       mockCLIInput({ flags: { 'dry-run': true }, argv: ['plugin', 'my-plugin'] }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ outRoot: MOCK_BUILD_RESULT.outRoot, files: MOCK_BUILD_RESULT.files.length });
     expect(mockedWriteFiles).not.toHaveBeenCalled();
   });
 
@@ -135,7 +134,7 @@ describe('scaffold:run', () => {
       mockCLIInput({ flags: {}, argv: ['plugin', 'my-plugin'] }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ outRoot: MOCK_BUILD_RESULT.outRoot, files: MOCK_BUILD_RESULT.files.length });
     expect(captured.success.length).toBeGreaterThan(0);
     expect(mockedWriteFiles).toHaveBeenCalled();
   });
@@ -149,28 +148,23 @@ describe('scaffold:run', () => {
       mockCLIInput({ flags: {}, argv: ['plugin', 'my-plugin'] }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ outRoot: MOCK_BUILD_RESULT.outRoot, files: MOCK_BUILD_RESULT.files.length });
     expect(fetch).not.toHaveBeenCalled();
     expect(JSON.stringify(captured.success)).toContain('kb marketplace link --link');
   });
 
-  it('SS-05: --dry-run with --json — captured.json contains result', async () => {
+  it('SS-05: --dry-run returns the plain scaffold result', async () => {
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui });
 
-    // json flag is not directly used by scaffold:run for dry-run output,
-    // but the command writes success output — verify the result and file count
     const result = await scaffoldCommand.execute(
       ctx,
       mockCLIInput({ flags: { 'dry-run': true }, argv: ['plugin', 'my-plugin'] }),
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      throw new Error(String(result.error));
-    }
-    const scaffoldResult = result.result as { files: number; outRoot: string };
-    expect(scaffoldResult.files).toBe(MOCK_BUILD_RESULT.files.length);
-    expect(scaffoldResult.outRoot).toBe(MOCK_BUILD_RESULT.outRoot);
+    expect(result).toMatchObject({
+      files: MOCK_BUILD_RESULT.files.length,
+      outRoot: MOCK_BUILD_RESULT.outRoot,
+    });
   });
 });

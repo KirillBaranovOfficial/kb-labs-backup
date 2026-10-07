@@ -51,7 +51,7 @@ describe('marketplace:plugins:enable', () => {
 
     const result = await enableCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -61,7 +61,7 @@ describe('marketplace:plugins:enable', () => {
 
     const result = await enableCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedPost).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('my-plugin');
@@ -76,7 +76,7 @@ describe('marketplace:plugins:disable', () => {
 
     const result = await disableCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -86,7 +86,7 @@ describe('marketplace:plugins:disable', () => {
 
     const result = await disableCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedPost).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });
@@ -100,7 +100,7 @@ describe('marketplace:link', () => {
 
     const result = await linkCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '.kb/plugins/my-plugin/packages/my-plugin-entry' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -111,7 +111,7 @@ describe('marketplace:link', () => {
 
     const result = await linkCommand.execute(ctx, mockCLIInput({ argv: [], flags: { link: '/path/to/plugin' } }));
 
-    if (result.ok) { throw new Error('expected invalid plugin link path to fail'); }
+    if (!('error' in result)) { throw new Error('expected invalid plugin link path to fail'); }
     expect(mockedPost).not.toHaveBeenCalled();
     expect(result.error.message).toContain('The --link path must be relative to the selected scope directory.');
   });
@@ -125,7 +125,7 @@ describe('marketplace:plugins:unlink', () => {
 
     const result = await unlinkCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -135,7 +135,7 @@ describe('marketplace:plugins:unlink', () => {
 
     const result = await unlinkCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedPost).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

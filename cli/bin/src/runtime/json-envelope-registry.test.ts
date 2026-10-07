@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { glob } from 'glob';
+import ts from 'typescript';
 import { registerBuiltinCommands, registerBuiltinSystemCommands, registry, type RouteResult } from '@kb-labs/cli-commands';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
@@ -51,11 +53,6 @@ const mocks = vi.hoisted(() => {
       errors: [],
       lockMissing: true,
     }),
-    loadCredentials: vi.fn().mockResolvedValue({
-      gatewayUrl: 'https://gateway.test',
-      accessToken: 'registry-test-token',
-      expiresAt: Date.now() + 60 * 60 * 1000,
-    }),
   };
 });
 
@@ -72,21 +69,47 @@ vi.mock('@kb-labs/core-runtime', async (importOriginal) => ({
 vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => ({
   ...await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>(),
   resolveActiveGateway: async () => ({ gatewayUrl: 'https://gateway.test' }),
-  gatewayApiFetch: async (input: string | URL) => {
-    const data = String(input).includes('/api/v1/webhooks') ? { webhooks: [] } : { tokens: [] };
-    return new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-  },
-  CredentialsManager: class {
-    load() { return mocks.loadCredentials(); }
-    isExpired() { return false; }
-  },
 }));
 
 import { executeCli } from './bootstrap.js';
 
 const workspaceRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+function isSuccessMarker(node: ts.Expression): boolean {
+  return node.kind === ts.SyntaxKind.TrueKeyword ||
+    (ts.isAsExpression(node) && isSuccessMarker(node.expression)) ||
+    (ts.isTypeAssertionExpression(node) && isSuccessMarker(node.expression));
+}
+
+function isReturnedObjectLiteral(node: ts.ObjectLiteralExpression): boolean {
+  let expression: ts.Expression = node;
+  let parent = node.parent;
+  while (parent && (ts.isAsExpression(parent) || ts.isTypeAssertionExpression(parent) || ts.isSatisfiesExpression(parent) || ts.isParenthesizedExpression(parent))) {
+    expression = parent;
+    parent = parent.parent;
+  }
+  while (parent && ts.isConditionalExpression(parent) && (parent.whenTrue === expression || parent.whenFalse === expression)) {
+    expression = parent;
+    parent = parent.parent;
+  }
+  return Boolean(parent && ts.isReturnStatement(parent) && parent.expression === expression);
+}
+
+function isCommandHandlerReturn(node: ts.ObjectLiteralExpression): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current && !ts.isFunctionLike(current)) current = current.parent;
+  if (!current) return false;
+  const name = current.name;
+  return !!name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) && ['handler', 'execute'].includes(name.text);
+}
+
+function matchesCataloguedCondition(message: string, conditions: string[]): boolean {
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  return conditions.some((condition) => normalized.includes(condition));
+}
+
 let isolatedHome: string;
 let fixtureProjectId: string;
+let rejectUnauthenticatedWebhookRequests = false;
 const originalEnvironment = {
   HOME: process.env.HOME,
   KB_HOME: process.env.KB_HOME,
@@ -143,7 +166,15 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     delete process.env.KB_NET_OFFSET;
     process.env.KB_LOG_LEVEL = 'silent';
     process.env.KB_LOG_STREAM = 'stderr';
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, data: { webhooks: [] } }) }) as typeof fetch;
+    globalThis.fetch = vi.fn((input: string | URL | Request) => {
+      if (rejectUnauthenticatedWebhookRequests && String(input).includes('/api/v1/webhooks')) {
+        return Promise.resolve(new Response('', { status: 401 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { webhooks: [], tokens: [] } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }) as typeof fetch;
     const projects = await createProjectRegistry({ env: process.env });
     fixtureProjectId = (await projects.add(workspaceRoot)).project.id;
     const platformConfig = {
@@ -187,6 +218,89 @@ describe('JSON envelope coverage for the live CLI registry', () => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  });
+
+  // case: S-203.1
+  it('rejects handler-built envelopes, extra failure fields, and envelope-like status values', async () => {
+    const sources = await glob([
+      'cli/commands/src/commands/system/**/*.ts',
+      'plugins/*/entry/src/cli/**/*.ts',
+      'plugins/*/entry/src/commands/**/*.ts',
+      'plugins/infra-worker/plugin-template-core/src/cli/commands/**/*.ts',
+    ], { cwd: workspaceRoot, ignore: ['**/*.test.ts', '**/*.spec.ts'] });
+    const catalog = JSON.parse(await readFile(path.join(workspaceRoot, 'core/platform/src/error-envelope/errors.catalog.json'), 'utf8')) as {
+      codes: Array<{ code: string; message: string; hint: string }>;
+    };
+    const catalogConditions = catalog.codes.flatMap((entry) => [
+      entry.code,
+      entry.message.replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim(),
+      entry.hint.replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim(),
+    ]).filter((condition) => condition.length > 0);
+    expect(matchesCataloguedCondition('Authentication is required.', catalogConditions)).toBe(true);
+    const violations: string[] = [];
+
+    for (const relativePath of sources) {
+      const text = await readFile(path.join(workspaceRoot, relativePath), 'utf8');
+      const source = ts.createSourceFile(relativePath, text, ts.ScriptTarget.Latest, true);
+      const visit = (node: ts.Node) => {
+        if (ts.isObjectLiteralExpression(node) && isReturnedObjectLiteral(node) && isCommandHandlerReturn(node)) {
+          const okProperty = node.properties.find((property) =>
+            ts.isPropertyAssignment(property) &&
+            (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+            property.name.text === 'ok' &&
+            isSuccessMarker(property.initializer),
+          );
+          if (okProperty) {
+            const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+            violations.push(`${relativePath}:${line + 1} (success envelope)`);
+          }
+
+          const failureProperty = node.properties.find((property) =>
+            ts.isPropertyAssignment(property) &&
+            (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+            property.name.text === 'ok' &&
+            property.initializer.kind === ts.SyntaxKind.FalseKeyword,
+          );
+          if (failureProperty) {
+            const allowedFailureProperties = new Set(['ok', 'error']);
+            const extraProperties = node.properties.filter((property) =>
+              ts.isPropertyAssignment(property) &&
+              (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+              !allowedFailureProperties.has(property.name.text),
+            );
+            if (extraProperties.length > 0) {
+              const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+              violations.push(`${relativePath}:${line + 1} (failure has extra keys)`);
+            }
+          }
+
+          const statusProperty = node.properties.find((property) =>
+            ts.isPropertyAssignment(property) &&
+            (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+            property.name.text === 'status' &&
+            ts.isStringLiteralLike(property.initializer) &&
+            ['success', 'error', 'failed'].includes(property.initializer.text),
+          );
+          if (statusProperty) {
+            const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+            violations.push(`${relativePath}:${line + 1} (status repeats envelope outcome)`);
+          }
+        }
+        const errorArgument = ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'Error'
+          ? node.arguments?.[0]
+          : undefined;
+        if (errorArgument && ts.isStringLiteralLike(errorArgument)) {
+          if (matchesCataloguedCondition(errorArgument.text, catalogConditions)) {
+            const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
+            violations.push(`${relativePath}:${line + 1} (plain Error matches catalog)`);
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+
+    expect(violations).toEqual([]);
   });
 
   // case: S-203.1, S-203.2
@@ -289,6 +403,20 @@ describe('JSON envelope coverage for the live CLI registry', () => {
             hint: expect.any(String),
           },
         });
+
+        if (command.segments.join(' ') === 'webhook list') {
+          rejectUnauthenticatedWebhookRequests = true;
+          const unauthenticated = await runAndCapture([...command.segments, '--json']);
+          expect(unauthenticated.exitCode).toBe(1);
+          expect(unauthenticated.result).toMatchObject({
+            ok: false,
+            error: {
+              code: 'KB_AUTH_REQUIRED',
+              hint: 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+              details: { gatewayUrl: 'https://gateway.test' },
+            },
+          });
+        }
       } else {
         const validHelp = await runAndCapture([...command.segments, '--help', '--json']);
         expect(validHelp.exitCode, command.segments.join(' ')).toBe(0);

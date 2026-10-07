@@ -1,4 +1,4 @@
-import { isCataloguedErrorCode, toPluginErrorEnvelope } from '@kb-labs/plugin-contracts';
+import { isCataloguedErrorCode, toErrorEnvelope } from '@kb-labs/plugin-contracts';
 import type { CommandFailure } from '@kb-labs/plugin-contracts';
 import type { CommandError } from '@kb-labs/plugin-contracts';
 
@@ -56,7 +56,7 @@ export function handleError(_ctx: ErrorContext, err: unknown, _isJson?: boolean)
       },
     };
   }
-  const typedEnvelope = toPluginErrorEnvelope(err);
+  const typedEnvelope = toErrorEnvelope(err);
   const code = isCataloguedErrorCode(typedEnvelope.code) ? typedEnvelope.code : 'KB_RUNTIME_COMMAND_FAILED';
   return {
     ok: false,

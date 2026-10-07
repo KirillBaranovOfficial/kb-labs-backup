@@ -52,7 +52,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
         const result: BackupsResult = { backups, restored };
 
         if (outputJson) {
-          return { ok: true, result: result };
+          return result;
         } else {
           ctx.ui?.success?.(`Restored ${restored} file(s) from backup ${restoreId}`, {
             title: 'DevLink — Restore Backup',
@@ -64,7 +64,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
           });
         }
 
-        return { ok: true, result, meta: { timing: tracker.total() } };
+        return result;
       }
 
       // ─── List mode ───────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
       const result: BackupsResult = { backups };
 
       if (outputJson) {
-        return { ok: true, result: result };
+        return result;
       } else {
         if (backups.length === 0) {
           ctx.ui?.info?.('No backups found. Backups are created automatically before each switch.');
@@ -93,7 +93,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
         }
       }
 
-      return { ok: true, result, meta: { timing: tracker.total() } };
+      return result;
     },
   },
 });

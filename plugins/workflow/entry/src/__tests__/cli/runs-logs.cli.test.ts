@@ -33,7 +33,6 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: {}, argv: ['r-123'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.logs.length).toBe(3);
     expect(captured.logs[0]?.message).toContain('Step started');
   });
@@ -49,7 +48,6 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: { 'run-id': 'r-456' } }));
 
-    expect(result.ok).toBe(true);
     expect(captured.logs.length).toBe(3);
   });
 
@@ -64,11 +62,9 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: { json: true }, argv: ['r-123'] }));
 
-    expect(result.ok).toBe(true);
-    const payload = result as { ok: boolean; result: { logs: typeof sampleLogs } };
-    expect(payload.ok).toBe(true);
-    expect(Array.isArray(payload.result.logs)).toBe(true);
-    expect(payload.result.logs.length).toBe(3);
+    const payload = result as { logs: typeof sampleLogs };
+    expect(Array.isArray(payload.logs)).toBe(true);
+    expect(payload.logs.length).toBe(3);
   });
 
   it('RLG-04: missing runId returns exitCode 1 with validation error message', async () => {
@@ -76,9 +72,8 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: {}, argv: [] }));
 
-    expect(result.ok).toBe(false);
-    if (result.ok) { throw new Error('expected a missing run ID to fail'); }
-    expect(result.error.message).toContain('Missing run ID');
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('Missing run ID') } });
   });
 
   it('RLG-07: --step passes stepId to getRunLogs', async () => {
@@ -128,7 +123,7 @@ describe('workflow:runs-logs', () => {
     const ctx = createMockContext({ ui });
     const result = await runsLogsCommand.execute(ctx, mockCLIInput({ flags: {}, argv: ['r-123'] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 });

@@ -21,7 +21,7 @@ export default defineCommand({
       const policyConfig = await useConfig<PolicyConfig>();
 
       if (!policyConfig?.categories) {
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No policies config found', hint: "Run `kb policy detect --help` to review its inputs and recovery steps, then retry." }, result: { repos: [] } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'No policies config found', hint: "Run `kb policy detect --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const repoPaths = flags.path
@@ -31,7 +31,7 @@ export default defineCommand({
       const repos = repoPaths.map((p) => detectCategory(p, policyConfig));
 
       if (flags.json) {
-        return { ok: true, result: { repos } };
+        return { repos };
       } else {
         if (repos.length === 0) {
           ctx.ui.info?.('No repos detected');
@@ -45,7 +45,7 @@ export default defineCommand({
         }
       }
 
-      return { ok: true, result: { repos } };
+      return { repos };
     },
   },
 });

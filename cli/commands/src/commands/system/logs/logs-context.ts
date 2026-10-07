@@ -89,7 +89,7 @@ export const logsContext = defineSystemCommand<Flags, LogContextResult>({
     }
 
     return {
-      ok: true as const,
+
       data: {
         correlationKey: executionId
           ? { executionId }

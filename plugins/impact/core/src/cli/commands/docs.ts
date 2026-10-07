@@ -34,7 +34,7 @@ export default defineCommand<unknown, DocsInput, unknown>({
       try {
         root = findWorkspaceRoot();
       } catch {
-        if (flags.json) {return { ok: true, result: { docs: { stale: [], review: [], reindex: [] } } };}
+        if (flags.json) {return { docs: { stale: [], review: [], reindex: [] } };}
         else {ctx.ui?.warn?.('Could not find workspace root');}
         return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Could not find workspace root', hint: "Run `kb impact docs --help` to review its inputs and recovery steps, then retry." } };
       }
@@ -42,9 +42,9 @@ export default defineCommand<unknown, DocsInput, unknown>({
       const changed = detectChangedPackages(root);
       if (changed.length === 0) {
         const empty = { docs: { stale: [], review: [], reindex: [] }, recommendations: [] };
-        if (flags.json) {return { ok: true, result: empty };}
+        if (flags.json) {return empty;}
         else {ctx.ui?.success?.('No changes detected');}
-        return { ok: true, result: empty };
+        return empty;
       }
 
       const graph = buildReverseDependencyGraph(root);
@@ -73,7 +73,7 @@ export default defineCommand<unknown, DocsInput, unknown>({
       const result = { docs, recommendations };
 
       if (flags.json) {
-        return { ok: true, result: result };
+        return result;
       } else {
         ctx.ui?.write?.(formatHumanReadable({
           packages: { direct: [], dependent: [], transitive: [] },
@@ -84,7 +84,7 @@ export default defineCommand<unknown, DocsInput, unknown>({
         }));
       }
 
-      return { ok: true, result };
+      return result;
     },
   },
 });

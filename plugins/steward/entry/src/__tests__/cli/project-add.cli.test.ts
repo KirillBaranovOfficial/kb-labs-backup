@@ -28,7 +28,7 @@ describe('steward:project.add', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: { name: 'Acme API' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedAddProject).toHaveBeenCalledWith({ name: 'Acme API', status: 'active', description: undefined });
     expect(captured.infos[0]?.message).toContain('Acme API');
   });
@@ -46,7 +46,7 @@ describe('steward:project.add', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: { name: 'Acme API', json: true } }));
 
-    expect(result).toMatchObject({ ok: true, result: { id: 'prj_1' } });
+    expect(result).toMatchObject({ id: 'prj_1' });
   });
 
   it('missing --name is a validation error', async () => {
@@ -54,11 +54,11 @@ describe('steward:project.add', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
       expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddProject).not.toHaveBeenCalled();
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

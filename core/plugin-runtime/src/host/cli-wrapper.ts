@@ -7,6 +7,7 @@
 import type {
   RunResult,
   ExecutionMeta,
+  CommandFailure,
   CommandResult,
   CommandResultWithMeta,
   StandardMeta,
@@ -14,15 +15,23 @@ import type {
 } from '@kb-labs/plugin-contracts';
 
 /**
- * Check whether a handler returned the canonical command result.
+ * A command failure is the only structured handler result. Success values are
+ * always plain command data, even when that data contains an `ok` field.
  */
-function isCommandResult<T>(value: unknown): value is CommandResult<T> {
+function isCommandFailure(value: unknown): value is CommandFailure {
   return (
     typeof value === 'object' &&
     value !== null &&
     'ok' in value &&
-    typeof (value as { ok?: unknown }).ok === 'boolean'
+    value.ok === false &&
+    'error' in value &&
+    typeof value.error === 'object' && value.error !== null
   );
+}
+
+export function isHandlerSuccessEnvelope(value: unknown): boolean {
+  return typeof value === 'object' && value !== null &&
+    'ok' in value && value.ok === true && 'data' in value;
 }
 
 /**
@@ -48,7 +57,7 @@ function toStandardMeta(
  * Wrap RunResult from runner into CLI-specific CommandResultWithMeta
  *
  * CLI commands can return either:
- * - CommandResult<T> with ok, result, meta
+ * - CommandFailure for an operation failure
  * - T directly (data only, defaults to exitCode: 0)
  * - void/undefined (defaults to exitCode: 0)
  *
@@ -63,20 +72,30 @@ export function wrapCliResult<T>(
   const { data, executionMeta } = runResult;
   const standardMeta = toStandardMeta(executionMeta, descriptor);
 
-  // Case 1: Handler returned CommandResult
-  if (isCommandResult<T>(data)) {
-    const ok = data.ok;
-    const exitCode = ok ? 0 : 1;
+  // A handler must return its payload; only this boundary builds the success envelope.
+  if (isHandlerSuccessEnvelope(data)) {
+    return {
+      exitCode: 1,
+      ok: false,
+      error: {
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        message: 'Command handlers must return plain command data.',
+        hint: 'Return the payload without the { ok: true, data: ... } envelope, then retry the command.',
+      },
+      meta: standardMeta as StandardMeta & Record<string, unknown>,
+    };
+  }
+
+  // Case 1: Handler returned the shared typed failure.
+  if (isCommandFailure(data)) {
     const mergedMeta: StandardMeta & Record<string, unknown> = {
-      ...data.meta,
       ...standardMeta,
     };
 
     return {
-      exitCode,
-      ok,
-      result: data.result as T | undefined,
-      error: data.ok ? undefined : data.error,
+      exitCode: 1,
+      ok: false,
+      error: data.error,
       meta: mergedMeta,
     };
   }

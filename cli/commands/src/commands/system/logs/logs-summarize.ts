@@ -155,7 +155,7 @@ export const logsSummarize = defineSystemCommand<Flags, LogSummarizeResult>({
     }
 
     return {
-      ok: true,
+
       question,
       summary: aiSummary,
       llmUsed,

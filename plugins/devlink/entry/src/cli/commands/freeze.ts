@@ -52,7 +52,7 @@ export default defineCommand<unknown, FreezeInput, LockFile>({
       tracker.checkpoint('freeze');
 
       if (outputJson) {
-        return { ok: true, result: lock };
+        return lock;
       } else {
         ctx.ui?.success?.('Current state frozen to lock file', {
           title: 'DevLink — Freeze',
@@ -70,7 +70,7 @@ export default defineCommand<unknown, FreezeInput, LockFile>({
         });
       }
 
-      return { ok: true, result: lock, meta: { timing: tracker.total() } };
+      return lock;
     },
   },
 });

@@ -22,12 +22,7 @@ export default defineCommand({
       const policyConfig = await useConfig<PolicyConfig>();
 
       if (!policyConfig?.categories) {
-        const emptyReport: CheckReport = {
-          passed: false,
-          repos: [],
-          summary: { total: 0, passed: 0, failed: 0, violations: 0 },
-        };
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No policies config found in .kb/kb.config.json (expected "policies" key)', hint: 'Add a `policies` section to .kb/kb.config.json, then rerun `kb policy check`.' }, result: emptyReport };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'No policies config found in .kb/kb.config.json (expected "policies" key)', hint: 'Add a `policies` section to .kb/kb.config.json, then rerun `kb policy check`.' } };
       }
 
       const repoPaths = flags.path
@@ -46,14 +41,28 @@ export default defineCommand({
       const report = await runChecks(repos, policyConfig, workspaceRoot);
 
       if (flags.json) {
-        return { ok: true, result: report };
+        return report;
       } else {
         renderHumanReport(ctx, report);
       }
 
-      return report.passed
-        ? { ok: true, result: report }
-        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Policy violations found', hint: "Run `kb policy check --help` to review its inputs and recovery steps, then retry." }, result: report };
+      if (report.passed) {
+        return report;
+      }
+      return {
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: 'Policy violations found',
+          hint: 'Run `kb policy check --help` to review its inputs and recovery steps, then retry.',
+          diagnostics: report.repos.flatMap((repo) => repo.violations.map((violation) => ({
+            code: violation.rule,
+            severity: violation.severity,
+            ...(violation.file ? { path: violation.file } : {}),
+            message: `${violation.message}${violation.detail ? ` — ${violation.detail}` : ''}`,
+          }))),
+        },
+      };
     },
   },
 });

@@ -32,7 +32,7 @@ describe('steward:commitment.drop', () => {
       mockCLIInput({ argv: ['cmt_1'], flags: { reason: 'No longer relevant' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedCommitmentDrop).toHaveBeenCalledWith({ id: 'cmt_1', reason: 'No longer relevant' });
     expect(captured.infos[0]?.message).toContain('No longer relevant');
   });
@@ -47,11 +47,11 @@ describe('steward:commitment.drop', () => {
       mockCLIInput({ argv: ['missing'], flags: { reason: 'x' } }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
       expect(result.error.code).toBe('KB_RUNTIME_RESOURCE_NOT_FOUND');
     }
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('missing --reason is a validation error', async () => {
@@ -59,11 +59,11 @@ describe('steward:commitment.drop', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: ['cmt_1'] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
       expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedCommitmentDrop).not.toHaveBeenCalled();
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

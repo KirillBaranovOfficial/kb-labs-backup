@@ -35,10 +35,7 @@ export default defineCommand<unknown, CaptureSnapshotInput, CaptureSnapshotResul
       const result: CaptureSnapshotResult = { snapshotId: snapshot.snapshotId };
       ctx.ui.success(`Snapshot captured: ${result.snapshotId}`);
 
-      return {
-        ok: true,
-        result,
-      };
+      return result;
     },
   },
 });

@@ -9,7 +9,6 @@ import {
 } from "@kb-labs/core-project-registry";
 import { failWithEnvelope } from "../project/project-support";
 import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
-import { SessionManager } from '@kb-labs/cli-runtime/gateway';
 
 type Client = "claude" | "codex" | "cursor";
 type ConfigFlags = { json: { type: "boolean"; description?: string } };
@@ -105,7 +104,6 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
       const origin = gatewayTarget.gatewayUrl;
       const url = `${origin}/api/v1/projects/${encodeURIComponent(project.id)}/mcp`;
       const body = {
-        ok: true as const,
         client,
         projectId: project.id,
         url,

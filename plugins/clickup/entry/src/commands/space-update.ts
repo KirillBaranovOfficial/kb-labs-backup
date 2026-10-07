@@ -39,14 +39,14 @@ export default defineCommand({
         const space = await updateSpace(requireApiKey(), spaceId, { name, color });
 
         if (json) {
-          return { ok: true, result: full ? space : { id: space.id, name: space.name } };
+          return full ? space : { id: space.id, name: space.name };
         } else {
           ctx.ui?.success?.('Space updated', {
             sections: [{ items: [`id: ${space.id}`, `name: ${space.name}`] }],
           });
         }
 
-        return { ok: true, result: space };
+        return space;
       } catch (err) {
         return handleError(ctx, err, json);
       }

@@ -22,11 +22,11 @@ export default defineCommand({
         });
 
         if (json) {
-          return { ok: true, result: project };
+          return project;
         } else {
           ctx.ui?.info?.(`Created project "${project.name}" (${project.id})`);
         }
-        return { ok: true, result: project };
+        return project;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:project.add failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

@@ -35,14 +35,14 @@ export default defineCommand({
         const folder = await createFolder(requireApiKey(), space, { name });
 
         if (json) {
-          return { ok: true, result: full ? folder : { id: folder.id, name: folder.name } };
+          return full ? folder : { id: folder.id, name: folder.name };
         } else {
           ctx.ui?.success?.('Folder created', {
             sections: [{ items: [`id: ${folder.id}`, `name: ${folder.name}`] }],
           });
         }
 
-        return { ok: true, result: folder };
+        return folder;
       } catch (err) {
         return handleError(ctx, err, json);
       }

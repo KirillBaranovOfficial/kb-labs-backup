@@ -69,7 +69,7 @@ export const adapterBind = defineSystemCommand<Flags, BindResult>({
         dryRun: Boolean(flags['dry-run']),
       });
       return {
-        ok: true,
+
         slot,
         packageId,
         file: result.filePath,

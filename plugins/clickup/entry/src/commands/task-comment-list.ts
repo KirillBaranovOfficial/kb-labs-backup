@@ -19,13 +19,12 @@ export default defineCommand({
         const comments = await getTaskComments(requireApiKey(), taskId);
 
         if (input.flags.json) {
-          return { ok: true, result: input.flags.full ? comments : comments.map(c => ({ id: c.id, user: c.user.username, comment_text: c.comment_text, date: c.date })) };
-          return { ok: true, result: comments };
+          return input.flags.full ? comments : comments.map(c => ({ id: c.id, user: c.user.username, comment_text: c.comment_text, date: c.date }));
         }
 
         if (!comments.length) {
           ctx.ui?.info?.('No comments.');
-          return { ok: true, result: comments };
+          return comments;
         }
 
         ctx.ui?.chain?.(comments.map(c => {
@@ -36,7 +35,7 @@ export default defineCommand({
           };
         }));
 
-        return { ok: true, result: comments };
+        return comments;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

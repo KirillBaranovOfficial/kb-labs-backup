@@ -58,17 +58,13 @@ export const adapterUnbind = defineSystemCommand<Flags, UnbindResult>({
         schema: PlatformUserConfigSchema,
         dryRun: Boolean(flags['dry-run']),
       });
-      return { ok: true, slot, file: binding.filePath, changed: binding.changed || options.changed, dryRun: binding.dryRun };
+      return {  slot, file: binding.filePath, changed: binding.changed || options.changed, dryRun: binding.dryRun };
     } catch (error) {
       const envelope = configErrorEnvelope(error);
       throwSystemCataloguedError(envelope);
     }
   },
   formatter(result, ctx, flags) {
-    if (!result.ok) {
-
-      return;
-    }
     ctx.ui?.success(result.dryRun ? 'Adapter unbind validated; no config written' : 'Adapter unbound from platform', {
       sections: [{ header: 'Adapter', items: [`Slot: ${result.slot}`, `Config: ${result.file}`] }],
     });

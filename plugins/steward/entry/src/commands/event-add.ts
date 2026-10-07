@@ -29,9 +29,9 @@ export default defineCommand({
           text,
           kind: kind ?? 'note',
         });
-        if (json) {return { ok: true, result: event };}
+        if (json) {return event;}
         else {ctx.ui?.info?.(`Recorded event "${event.kind}" on ${subjectType}:${subjectId}`);}
-        return { ok: true, result: event };
+        return event;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:event.add failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

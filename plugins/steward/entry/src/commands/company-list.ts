@@ -12,10 +12,10 @@ export default defineCommand({
       const { json } = input.flags;
       try {
         const companies = await listCompanies();
-        if (json) {return { ok: true, result: companies };}
+        if (json) {return companies;}
         else if (companies.length === 0) {ctx.ui?.info?.('No companies yet.');}
         else {ctx.ui?.chain?.(companies.map((c) => ({ title: c.name, sections: [{ items: [c.id] }] })));}
-        return { ok: true, result: companies };
+        return companies;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:company.list failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

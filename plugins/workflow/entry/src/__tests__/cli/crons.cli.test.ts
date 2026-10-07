@@ -34,8 +34,7 @@ describe('workflow crons CLI', () => {
     });
     const { ui, captured } = createCapturedUI();
     const result = await cronListCommand.execute(createMockContext({ ui }), mockCLIInput({ flags: { json: true } }));
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true, result: response });
+    expect(result).toEqual(response);
   });
 
   it('gives a typed next action when a plugin cron cannot be enabled', async () => {
@@ -44,7 +43,7 @@ describe('workflow crons CLI', () => {
     });
     const { ui, captured } = createCapturedUI();
     const result = await enableCommand.execute(createMockContext({ ui }), mockCLIInput({ argv: ['plugin:qa:cleanup'], flags: { json: true } }));
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', hint: expect.any(String) } });
   });
 });

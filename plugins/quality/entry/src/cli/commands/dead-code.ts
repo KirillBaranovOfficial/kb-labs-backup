@@ -22,21 +22,20 @@ export default defineCommand<unknown, CLIInput<DeadCodeFlags>, unknown>({
 
       if (!cfg.knip.enabled) {
         ctx.ui?.success?.('knip is disabled in config (knip.enabled = false)');
-        return { ok: true };
+        return {  };
       }
 
       const report = await runKnip({ shell: ctx.api.shell, rootDir: cwd });
 
       if (flags.json) {
-        return { ok: true, result: report };
         return report.totalIssues > 0
-          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Dead code found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: report }
-          : { ok: true, result: report };
+          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Dead code found', hint: 'Review the dead-code report, then rerun `kb quality dead-code`.', diagnostics: report.unusedFiles.map((file) => ({ code: 'KB_QUALITY_UNUSED_FILE', severity: 'warning', path: file, message: 'File is unused.' })).concat(report.unusedExports.map((entry) => ({ code: 'KB_QUALITY_UNUSED_EXPORT', severity: 'warning', path: entry.file, message: `Unused export: ${entry.symbol}` }))) } }
+          : report;
       }
 
       if (report.totalIssues === 0) {
         ctx.ui?.success?.('No dead code detected');
-        return { ok: true };
+        return {  };
       }
 
       const sections: Array<{ header: string; items: string[] }> = [];

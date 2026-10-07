@@ -4,6 +4,19 @@
  * Platform-level error types shared by all adapter implementations.
  */
 
+/** Stable structural error contract consumed by the command boundary. */
+export interface TypedPlatformError {
+  readonly code: string;
+  readonly message: string;
+  readonly hint?: string;
+  readonly details?: Record<string, unknown>;
+  readonly diagnostics?: Array<{ code: string; severity: 'error' | 'warning' | 'info'; message: string; path?: string; line?: number; hint?: string }>;
+  readonly correlationId?: string;
+  readonly statusCode?: number;
+  readonly retryAfterMs?: number;
+  readonly service?: string;
+}
+
 /**
  * Thrown by NoOp adapter implementations when a plugin tries to use a
  * platform service that has no honest fallback available (e.g. LLM,
@@ -24,13 +37,14 @@
  * The gateway HTTP error mapper converts this into a structured response
  * `{code: 'ADAPTER_UNAVAILABLE', slot, reason}` for REST consumers.
  */
-export class AdapterUnavailableError extends Error {
+export class AdapterUnavailableError extends Error implements TypedPlatformError {
   /** Adapter slot, e.g. 'llm', 'embeddings', 'notifier'. */
   public readonly slot: string;
+  public readonly code: string;
+  public readonly details: Record<string, unknown>;
+  public readonly hint: string;
   /** Why the adapter is unavailable. */
   public readonly reason: 'not-configured' | 'load-failed';
-  /** Optional corrective hint for a known adapter load failure. */
-  public readonly hint?: string;
   /** Optional user-facing explanation for a known adapter load failure. */
   public readonly userMessage?: string;
   /** Optional copy-ready corrective command. */
@@ -44,19 +58,36 @@ export class AdapterUnavailableError extends Error {
     options?: { hint?: string; userMessage?: string; action?: { id: string; label: string; command: string } },
   ) {
     super(
-      message ??
-        `Adapter "${slot}" is not available (reason: ${reason}). ` +
-          `Configure a real adapter in kb.config.json under \`adapters.${slot}\`.`,
+      message ?? (reason === 'not-configured'
+        ? `Adapter "${slot}" is not configured. Configure a real adapter in kb.config.json under \`adapters.${slot}\`.`
+        : `Adapter "${slot}" is not available (reason: ${reason}).`),
       cause === undefined ? undefined : { cause },
     );
     this.name = 'AdapterUnavailableError';
     this.slot = slot;
     this.reason = reason;
-    this.hint = options?.hint;
+    this.code = reason === 'load-failed' ? 'KB_HOST_ADAPTER_UNAVAILABLE' : 'KB_ADAPTER_NOT_CONFIGURED';
+    const command = getAdapterConfigurationCommand(slot);
+    this.details = reason === 'load-failed'
+      ? { slot, reason }
+      : { service: slot, adapter: `platform.adapters.${slot}`, command };
+    this.hint = options?.hint ?? (reason === 'load-failed'
+      ? `Run "kb logs query" to inspect why the ${slot} adapter could not load, correct the underlying issue, then retry.`
+      : `Run "${command}" to configure the ${slot} adapter, then retry the command.`);
     this.userMessage = options?.userMessage;
     this.action = options?.action;
     Object.setPrototypeOf(this, AdapterUnavailableError.prototype);
   }
+}
+
+export function getAdapterConfigurationCommand(slot: string): string {
+  const packages: Record<string, string> = {
+    llm: '@kb-labs/adapters-openai',
+    embeddings: '@kb-labs/adapters-openai/embeddings',
+    vectorStore: '@kb-labs/adapters-qdrant',
+  };
+  const adapterPackage = packages[slot] ?? `@kb-labs/adapters-${slot.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
+  return `kb adapter bind ${slot} ${adapterPackage}`;
 }
 
 /** A project config attempted to set adapter bindings or options. */
@@ -69,10 +100,13 @@ export class AdapterProjectScopeError extends Error {
 }
 
 /** A bound adapter cannot run because a required credential is absent. */
-export class AdapterCredentialsMissingError extends Error {
+export class AdapterCredentialsMissingError extends Error implements TypedPlatformError {
+  public readonly code = 'KB_ADAPTER_CREDENTIALS_MISSING';
   public readonly slot: string;
   public readonly credential: string;
   public readonly configurationPath: string;
+  public readonly details: Record<string, unknown>;
+  public readonly hint: string;
 
   constructor(slot: string, credential: string, configurationPath: string) {
     super(`Adapter "${slot}" is missing ${credential}. No request was sent.`);
@@ -80,6 +114,9 @@ export class AdapterCredentialsMissingError extends Error {
     this.slot = slot;
     this.credential = credential;
     this.configurationPath = configurationPath;
+    const command = `kb config set --scope platform ${configurationPath} '\${${credential}}' --allow-missing-env`;
+    this.details = { service: slot, credential, path: configurationPath, command };
+    this.hint = `Run "${command}" to configure the missing credential. No request was sent.`;
     Object.setPrototypeOf(this, AdapterCredentialsMissingError.prototype);
   }
 }

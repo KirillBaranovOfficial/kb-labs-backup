@@ -54,8 +54,8 @@ describe('workspace:list', () => {
     const ctx = createMockContext({ ui });
     const result = await listCommand.execute(ctx, mockCLIInput({ flags: { gateway: 'http://localhost:4000' } }));
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ result: { hosts: [expect.any(Object)] } });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ hosts: [expect.any(Object)] });
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -74,8 +74,8 @@ describe('workspace:list', () => {
       mockCLIInput({ flags: { gateway: 'http://localhost:4000', json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ hosts: [{ hostId: 'host-1' }] });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ hosts: [{ hostId: 'host-1' }] });
   });
 
   it('CL-03: empty host list prints info message and returns exitCode 0', async () => {
@@ -92,8 +92,8 @@ describe('workspace:list', () => {
       mockCLIInput({ flags: { gateway: 'http://localhost:4000' } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ result: { hosts: [] } });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ hosts: [] });
     expect(captured.infos.length).toBeGreaterThan(0);
   });
 
@@ -111,7 +111,7 @@ describe('workspace:list', () => {
       mockCLIInput({ flags: { gateway: 'http://localhost:4000' } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -125,7 +125,7 @@ describe('workspace:list', () => {
       mockCLIInput({ flags: { gateway: 'http://localhost:4000' } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -147,7 +147,7 @@ describe('workspace:list', () => {
       mockCLIInput({ flags: { gateway: 'http://localhost:4000' } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ result: { hosts: [expect.any(Object), expect.any(Object)] } });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ hosts: [expect.any(Object), expect.any(Object)] });
   });
 });

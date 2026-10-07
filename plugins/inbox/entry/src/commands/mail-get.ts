@@ -35,7 +35,7 @@ export default defineCommand({
         });
 
         if (input.flags.json) {
-          return { ok: true, result: email };
+          return email;
         }
 
         const sections: Array<{ header?: string; items: string[] }> = [];
@@ -63,7 +63,7 @@ export default defineCommand({
           sections,
         });
 
-        return { ok: true, result: email };
+        return email;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

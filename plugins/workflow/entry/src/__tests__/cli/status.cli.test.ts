@@ -47,7 +47,6 @@ describe('workflow job status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-abc'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -63,11 +62,9 @@ describe('workflow job status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-abc'], flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = result as { ok: boolean; result: JobStatusDetail };
-    expect(payload.ok).toBe(true);
-    expect(payload.result.id).toBe('job-abc');
-    expect(payload.result.status).toBe('running');
+    const payload = result as JobStatusDetail;
+    expect(payload.id).toBe('job-abc');
+    expect(payload.status).toBe('running');
   });
 
   it('CS-03: missing --job-id returns exitCode 1 with error message', async () => {
@@ -75,8 +72,8 @@ describe('workflow job status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('CS-04: daemon unavailable returns exitCode 1 with readable message', async () => {
@@ -90,8 +87,8 @@ describe('workflow job status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-abc'] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('CS-05: job in running state renders status without throwing', async () => {
@@ -110,7 +107,6 @@ describe('workflow job status', () => {
     const ctx = createMockContext({ ui });
     const result = await statusCommand.execute(ctx, mockCLIInput({ argv: ['job-xyz'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.errors.length).toBe(0);
   });
 

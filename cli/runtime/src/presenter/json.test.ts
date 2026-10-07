@@ -5,36 +5,28 @@ describe('JSON presenter envelope', () => {
   afterEach(() => vi.restoreAllMocks());
 
   // case: S-203.1
-  it('writes one success envelope with the command payload inside data', () => {
+  it('writes the command boundary envelope without interpreting payload fields', () => {
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    createJsonPresenter().json({ ok: true, plugins: [] });
+    createJsonPresenter().json({ ok: true, data: { ok: true, plugins: [] } });
 
     expect(stdout).toHaveBeenCalledOnce();
     expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
       ok: true,
-      data: { plugins: [] },
+      data: { ok: true, plugins: [] },
     });
   });
 
   // case: S-203.2
-  it('converts unknown command result codes to a catalogued error envelope', () => {
+  it('writes the command boundary failure envelope unchanged', () => {
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    createJsonPresenter().json({
-      ok: false,
-      error: { code: 'CMD_NOT_FOUND', message: 'Unknown command: workflow lint' },
-    });
+    createJsonPresenter().json({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
 
     const result = JSON.parse(String(stdout.mock.calls[0]?.[0]));
     expect(result).toMatchObject({
       ok: false,
-      error: {
-        code: 'KB_RUNTIME_UNEXPECTED',
-        message: 'An unexpected error occurred.',
-        hint: expect.any(String),
-        correlationId: expect.any(String),
-      },
+      error: { code: 'KB_RUNTIME_INPUT_INVALID' },
     });
   });
 });

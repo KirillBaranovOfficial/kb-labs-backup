@@ -99,7 +99,7 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
         const result = await client.resolveApproval(runId, jobId, stepId, action, comment);
 
         if (outputJson) {
-          return { ok: true, result: result };
+          return result;
         } else {
           const actionLabel = action === 'approve' ? 'Approved' : 'Rejected';
           const icon = action === 'approve' ? '✓' : '✗';
@@ -123,7 +123,7 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

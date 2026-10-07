@@ -45,16 +45,16 @@ export default defineCommand<unknown, CheckInput, ImpactAnalysisResult>({
       try {
         root = findWorkspaceRoot();
       } catch {
-        if (flags.json) {return { ok: true, result: EMPTY_RESULT };}
+        if (flags.json) {return EMPTY_RESULT;}
         else {ctx.ui?.warn?.('Could not find workspace root');}
         return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Could not find workspace root', hint: "Run `kb impact check --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const changed = detectChangedPackages(root);
       if (changed.length === 0) {
-        if (flags.json) {return { ok: true, result: EMPTY_RESULT };}
+        if (flags.json) {return EMPTY_RESULT;}
         else {ctx.ui?.success?.('No changes detected');}
-        return { ok: true, result: EMPTY_RESULT };
+        return EMPTY_RESULT;
       }
 
       const graph = buildReverseDependencyGraph(root);
@@ -78,12 +78,12 @@ export default defineCommand<unknown, CheckInput, ImpactAnalysisResult>({
       const result: ImpactAnalysisResult = { packages, docs, tests, build, recommendations };
 
       if (flags.json) {
-        return { ok: true, result: result };
+        return result;
       } else {
         ctx.ui?.write?.(formatHumanReadable(result));
       }
 
-      return { ok: true, result };
+      return result;
     },
   },
 });

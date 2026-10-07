@@ -28,7 +28,7 @@ export default defineCommand<unknown, CLIInput<QaRegressionsFlags>, unknown>({
       const detection = detectRegressions(history);
 
       if (flags.json) {
-        return { ok: true, result: detection };
+        return detection;
       } else {
         for (const section of buildRegressionsReport(detection)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
@@ -36,8 +36,8 @@ export default defineCommand<unknown, CLIInput<QaRegressionsFlags>, unknown>({
       }
 
       return detection.hasRegressions
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Regressions found', hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' }, result: detection }
-        : { ok: true, result: detection };
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Regressions found', hint: 'Review the regression report, then rerun `kb qa regressions`.' } }
+        : detection;
     },
   },
 });

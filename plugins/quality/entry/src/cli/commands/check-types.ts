@@ -37,8 +37,8 @@ export default defineCommand({
         if (cached) {
           outputTypeAnalysis({ ...cached, cached: true }, flags, ui);
           return cached.totalErrors > 0
-            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Type errors found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: cached }
-            : { ok: true, result: cached };
+            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Type errors found', hint: 'Review the package type error counts, then rerun `kb quality check-types`.', diagnostics: cached.packages.filter((pkg) => pkg.errors > 0).map((pkg) => ({ code: 'KB_QUALITY_TYPE_ERRORS', severity: 'error', path: pkg.name, message: `${pkg.errors} type error(s).` })) } }
+            : cached;
         }
       }
 
@@ -64,8 +64,8 @@ export default defineCommand({
       outputTypeAnalysis({ ...result, cached: false }, flags, ui);
 
       return result.totalErrors > 0
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Type errors found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result, meta: { cached: false } }
-        : { ok: true, result, meta: { cached: false } };
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Type errors found', hint: 'Review the package type error counts, then rerun `kb quality check-types`.', diagnostics: result.packages.filter((pkg) => pkg.errors > 0).map((pkg) => ({ code: 'KB_QUALITY_TYPE_ERRORS', severity: 'error', path: pkg.name, message: `${pkg.errors} type error(s).` })) } }
+        : result;
     },
   },
 });

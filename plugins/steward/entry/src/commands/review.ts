@@ -14,7 +14,7 @@ export default defineCommand({
       try {
         const review = await getDailyReview();
         if (json) {
-          return { ok: true, result: review };
+          return review;
         } else {
           const backupLine =
             review.lastBackupDaysAgo === null
@@ -26,7 +26,7 @@ export default defineCommand({
             ctx.ui?.chain?.(review.staleCommitments.map((c) => ({ title: `[stale] ${c.text}`, sections: [{ items: [c.id] }] })));
           }
         }
-        return { ok: true, result: review };
+        return review;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:review failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

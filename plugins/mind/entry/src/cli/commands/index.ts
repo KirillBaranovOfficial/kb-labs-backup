@@ -48,8 +48,7 @@ export default defineCommand<unknown, CLIInput<IndexFlags>, IndexResponse>({
         );
 
         if (flags.json) {
-          return { ok: true, result: res };
-          return { ok: true, result: res };
+          return res;
         }
         const summary = `Indexed ${res.filesIndexed} file(s), ${res.chunks} chunk(s) into "${res.indexId}" (${res.durationMs}ms)`;
         if (loader) {
@@ -57,7 +56,7 @@ export default defineCommand<unknown, CLIInput<IndexFlags>, IndexResponse>({
         } else {
           ctx.ui?.success?.(summary);
         }
-        return { ok: true, result: res };
+        return res;
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

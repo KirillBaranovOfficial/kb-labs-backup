@@ -29,7 +29,7 @@ describe('steward:person.get', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: ['Ivanov'] }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.infos[0]?.message).toContain('Ivanov');
   });
 
@@ -40,11 +40,11 @@ describe('steward:person.get', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: ['missing'] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
       expect(result.error.code).toBe('KB_RUNTIME_RESOURCE_NOT_FOUND');
     }
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('missing idOrName is a validation error', async () => {
@@ -52,11 +52,11 @@ describe('steward:person.get', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
       expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedGetPerson).not.toHaveBeenCalled();
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

@@ -18,7 +18,7 @@ export default defineCommand({
       try {
         const candidates = await whoToContact({ topic, projectId: project });
         if (json) {
-          return { ok: true, result: candidates };
+          return candidates;
         } else if (candidates.length === 0) {
           ctx.ui?.info?.(`Nobody found for "${topic}".`);
         } else {
@@ -29,7 +29,7 @@ export default defineCommand({
             })),
           );
         }
-        return { ok: true, result: candidates };
+        return candidates;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:who failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

@@ -15,12 +15,12 @@ interface ShareTokenResult {
   added?: string;
 }
 
-export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
+export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult | undefined>({
   id: 'marketplace:share',
   description: 'Share a private plugin (--with or --link)',
 
   handler: {
-    async execute(ctx: PluginCommandContextV3, input: CLIInput<ShareFlags>): Promise<CommandResult<ShareTokenResult>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<ShareFlags>): Promise<CommandResult<ShareTokenResult | undefined>> {
       const { flags = {}, argv = [] } = input;
       const pkg = argv[0];
       const t0 = Date.now();
@@ -50,8 +50,7 @@ export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
           await registryPost(`/packages/${handle}/${encodeURIComponent(name)}/share/allowlist`, { namespaceId: flags.with });
 
           if (flags.json) {
-            return { ok: true, result: { added: flags.with, pkg } };
-            return { ok: true };
+            return { added: flags.with, pkg };
           }
 
           ctx.ui?.success?.(`${flags.with} can now install ${pkg}`, {
@@ -64,15 +63,14 @@ export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
             hint: 'For one-time access without an account, use --link instead',
             timing: Date.now() - t0,
           });
-          return { ok: true };
+          return;
         }
 
         const ttlDays = flags.ttl ? parseInt(flags.ttl, 10) : 7;
         const result = await registryPost<ShareTokenResult>(`/packages/${handle}/${encodeURIComponent(name)}/share/token`, { ttlDays });
 
         if (flags.json) {
-          return { ok: true, result: result };
-          return { ok: true, result };
+          return result;
         }
 
         const expiry = result.expiresAt
@@ -92,7 +90,7 @@ export default defineCommand<unknown, CLIInput<ShareFlags>, ShareTokenResult>({
           timing: Date.now() - t0,
         });
 
-        return { ok: true, result };
+        return result;
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

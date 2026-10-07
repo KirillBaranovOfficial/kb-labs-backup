@@ -52,7 +52,7 @@ export default defineCommand<unknown, PlanInput, DevlinkPlan>({
       tracker.checkpoint('plan');
 
       if (outputJson) {
-        return { ok: true, result: plan };
+        return plan;
       } else {
         if (plan.items.length === 0) {
           ctx.ui?.info?.('No changes needed — already in the target mode.');
@@ -101,7 +101,7 @@ export default defineCommand<unknown, PlanInput, DevlinkPlan>({
         }
       }
 
-      return { ok: true, result: plan, meta: { timing: tracker.total() } };
+      return plan;
     },
   },
 });

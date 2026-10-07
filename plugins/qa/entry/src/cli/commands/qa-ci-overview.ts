@@ -23,7 +23,7 @@ export default defineCommand<unknown, CLIInput<QaCiOverviewFlags>, unknown>({
         writeFileSync(output, `${JSON.stringify(overview, null, 2)}\n`);
       }
       if (input.flags.json) {
-        return { ok: true, result: overview };
+        return overview;
       } else {
         ctx.ui?.success?.(`CI reliability (${overview.runsAnalyzed} run${overview.runsAnalyzed === 1 ? '' : 's'})`, {
           sections: [
@@ -40,7 +40,7 @@ export default defineCommand<unknown, CLIInput<QaCiOverviewFlags>, unknown>({
           ],
         });
       }
-      return { ok: true };
+      return {  };
     },
   },
 });

@@ -67,12 +67,12 @@ export default defineCommand({
       }
 
       if (input.json) {
-        return { ok: true, result: { hosts } };
+        return { hosts };
       }
 
       if (hosts.length === 0) {
         ctx.ui?.info?.('No Workspace Agents connected.');
-        return { ok: true, result: { hosts: [] } };
+        return { hosts: [] };
       }
 
       const ago = (ts: number) => {
@@ -95,7 +95,7 @@ export default defineCommand({
         }],
       });
 
-      return { ok: true, result: { hosts } };
+      return { hosts };
     },
   },
 });

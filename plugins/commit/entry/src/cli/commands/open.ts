@@ -61,7 +61,7 @@ export default defineCommand({
       };
 
       if (input.json) {
-        return { ok: true, result: output };
+        return output;
       } else {
         if (!plan) {
           ctx.ui?.info?.('No commit plan found. Run `kb commit:generate` to create one.');
@@ -123,13 +123,7 @@ export default defineCommand({
         }
       }
 
-      return {
-        ok: true,
-        result: output,
-        meta: {
-          timing: Date.now() - startTime,
-        },
-      };
+      return output;
     },
   },
 });

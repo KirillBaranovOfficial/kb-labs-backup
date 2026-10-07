@@ -68,7 +68,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Synced');
   });
@@ -81,7 +81,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.infos.length).toBeGreaterThan(0);
     expect(captured.infos[0]?.message).toContain('up to date');
   });
@@ -99,9 +99,9 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toBeDefined();
-    expect(result.result).toMatchObject({ added: expect.any(Array), total: 1 });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toBeDefined();
+    expect(result).toMatchObject({ added: expect.any(Array), total: 1 });
   });
 
   it('CS-04: HTTP error — returns exitCode 1 with error captured', async () => {
@@ -112,7 +112,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -126,7 +126,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -140,7 +140,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -149,7 +149,7 @@ describe('marketplace:sync', () => {
     const ctx = createMockContext({ ui });
     const result = await syncCommand.execute(ctx, mockCLIInput({ flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedPost).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

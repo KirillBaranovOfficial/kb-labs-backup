@@ -495,7 +495,7 @@ async function runTrace(ctx: TraceCtx): Promise<CommandTraceResult> {
   };
 
   const status = stages.some((stage) => stage.status === 'error') ? 'unhealthy' : failing ? 'degraded' : 'healthy';
-  return { ok: true, status, ...result };
+  return {  status, ...result };
 }
 
 // ── Command ────────────────────────────────────────────────────────────────────
@@ -689,7 +689,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
     ctx.platform?.logger?.info('Diag command completed', summary);
 
     const status = summary.errors > 0 ? 'unhealthy' : summary.warnings > 0 ? 'degraded' : 'healthy';
-    return { ok: true, status, diagnostics, summary };
+    return {  status, diagnostics, summary };
   },
 
   // eslint-disable-next-line sonarjs/cognitive-complexity

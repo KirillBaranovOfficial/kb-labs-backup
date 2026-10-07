@@ -103,7 +103,7 @@ describe('commit:commit (run)', () => {
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(vi.mocked(applyCommitPlan)).toHaveBeenCalledOnce();
   });
@@ -117,8 +117,7 @@ describe('commit:commit (run)', () => {
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+    expect(result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
     expect(captured.success[0]?.message).toContain('No changes to commit');
     expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
     expect(vi.mocked(generateCommitPlan)).not.toHaveBeenCalled();
@@ -146,8 +145,7 @@ describe('commit:commit (run)', () => {
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const out = result.result as Record<string, unknown>;
+    const out = result as Record<string, unknown>;
     expect(out.applied).toBe(true);
     expect(Array.isArray(out.commits)).toBe(true);
   });
@@ -180,14 +178,14 @@ describe('commit:commit (run)', () => {
         flags: { 'dry-run': true, json: true },
       }));
 
-      expect(result.ok).toBe(true);
+      expect(result).not.toHaveProperty('ok');
       expect(gitSnapshot()).toEqual(before);
       expect(generateCommitPlan).toHaveBeenCalledOnce();
       expect(applyCommitPlan).not.toHaveBeenCalled();
       expect(savePlan).not.toHaveBeenCalled();
       expect(saveToHistory).not.toHaveBeenCalled();
       expect(clearPlan).not.toHaveBeenCalled();
-      expect(result.result).toMatchObject({ plan: mockPlan, applied: false, pushed: false, commits: [] });
+      expect(result).toMatchObject({ plan: mockPlan, applied: false, pushed: false, commits: [] });
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
@@ -201,9 +199,9 @@ describe('commit:commit (run)', () => {
 
     const result = await runCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true, json: true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(applyCommitPlan)).not.toHaveBeenCalled();
-    expect(result.result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+    expect(result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
   });
 
   // case: S-160.4
@@ -213,8 +211,7 @@ describe('commit:commit (run)', () => {
     const { ui, captured } = createCapturedUI();
     const result = await runCommand.execute(createRunContext(ui) as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
+    expect(result).toMatchObject({ plan: { commits: [] }, applied: false, pushed: false, commits: [] });
     expect(applyCommitPlan).not.toHaveBeenCalled();
     expect(generateCommitPlan).not.toHaveBeenCalled();
   });

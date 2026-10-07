@@ -23,9 +23,9 @@ export default defineCommand({
           topics: parseList(topics),
           priority: priority !== undefined ? Number(priority) : 0,
         });
-        if (json) {return { ok: true, result: member };}
+        if (json) {return member;}
         else {ctx.ui?.info?.(`Linked ${person} to ${project} as "${role}" (priority ${member.priority})`);}
-        return { ok: true, result: member };
+        return member;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:member.add failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

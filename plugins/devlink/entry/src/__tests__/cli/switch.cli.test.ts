@@ -62,7 +62,7 @@ describe('devlink:switch', () => {
 
     const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'local' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(vi.mocked(applyPlan)).toHaveBeenCalledOnce();
   });
@@ -76,7 +76,7 @@ describe('devlink:switch', () => {
 
     const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'local' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ mode: 'local', changed: 0 });
     expect(vi.mocked(applyPlan)).not.toHaveBeenCalled();
     expect(captured.infos.length).toBeGreaterThan(0);
   });
@@ -90,7 +90,6 @@ describe('devlink:switch', () => {
 
     const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'local' } }));
 
-    expect(result.ok).toBe(false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -100,7 +99,7 @@ describe('devlink:switch', () => {
 
     const result = await switchCommand.execute(ctx as never, mockCLIInput({ flags: { mode: 'local', 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ summary: expect.stringContaining('Switch'), operations: expect.any(Array) });
     expect(vi.mocked(applyPlan)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('local');

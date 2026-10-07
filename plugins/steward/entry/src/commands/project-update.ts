@@ -22,12 +22,12 @@ export default defineCommand({
           description,
         });
         if (!project) {
-          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No project "${id}"`, hint: "Run `kb steward project update --help` to review the failure and next steps." }, result: null };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No project "${id}"`, hint: "Run `kb steward project update --help` to review the failure and next steps." } };
         }
 
-        if (json) {return { ok: true, result: project };}
+        if (json) {return project;}
         else {ctx.ui?.info?.(`Updated "${project.name}" → [${project.status}]`);}
-        return { ok: true, result: project };
+        return project;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:project.update failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

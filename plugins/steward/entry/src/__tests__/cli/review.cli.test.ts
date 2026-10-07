@@ -30,7 +30,7 @@ describe('steward:review', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.infos[0]?.message).toContain('2d ago');
     expect(captured.chain[0]).toHaveLength(1);
   });
@@ -64,6 +64,6 @@ describe('steward:review', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result).toMatchObject({ ok: true, result: { lastBackupDaysAgo: 0 } });
+    expect(result).toMatchObject({ lastBackupDaysAgo: 0 });
   });
 });

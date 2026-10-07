@@ -50,12 +50,7 @@ export default defineCommand({
         }
         return listAllSessions(ctx, manager, Boolean(flags.json));
       } catch (error) {
-        const response = {
-          success: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-        return { ok: true, result: response };
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: response.error, hint: 'Check the session ID and stored agent history, then rerun `kb agents history`.' }, result: response };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error instanceof Error ? error.message : String(error), hint: 'Check the session ID and stored agent history, then rerun `kb agents history`.' } };
       }
     },
   },
@@ -69,9 +64,7 @@ async function showSessionHistory(
 ): Promise<HistoryResult> {
   const info = await manager.getSessionInfo(sessionId);
   if (!info) {
-    const err = { success: false, error: `Session not found: ${sessionId}` };
-    return { ok: true, result: err };
-    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: err.error, hint: 'Check the stored agent session data, then rerun `kb agents history`.' }, result: err };
+    return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Session not found: ${sessionId}`, hint: 'Check the stored agent session data, then rerun `kb agents history`.' } };
   }
 
   const turns = await manager.getTurns(sessionId);
@@ -87,7 +80,7 @@ async function showSessionHistory(
   };
 
   if (asJson) {
-    return { ok: true, result: response };
+    return response;
   } else {
     ctx.ui.write(`Session: ${sessionId}\n`);
     ctx.ui.write(`Runs: ${info.runCount} | Changes: ${changes.length}\n\n`);
@@ -99,7 +92,7 @@ async function showSessionHistory(
     }
   }
 
-  return { ok: true, result: response };
+  return response;
 }
 
 async function showFileHistory(
@@ -126,7 +119,7 @@ async function showFileHistory(
   };
 
   if (asJson) {
-    return { ok: true, result: response };
+    return response;
   } else {
     ctx.ui.write(`File: ${filePath}\n`);
     ctx.ui.write(`Changes: ${allChanges.length}\n\n`);
@@ -137,7 +130,7 @@ async function showFileHistory(
     }
   }
 
-  return { ok: true, result: response };
+  return response;
 }
 
 async function showAgentHistory(
@@ -164,7 +157,7 @@ async function showAgentHistory(
   };
 
   if (asJson) {
-    return { ok: true, result: response };
+    return response;
   } else {
     ctx.ui.write(`Agent: ${agentId}\n`);
     ctx.ui.write(`Changes: ${allChanges.length}\n\n`);
@@ -175,7 +168,7 @@ async function showAgentHistory(
     ctx.ui.write('\n');
   }
 
-  return { ok: true, result: response };
+  return response;
 }
 
 async function listAllSessions(
@@ -205,7 +198,7 @@ async function listAllSessions(
   };
 
   if (asJson) {
-    return { ok: true, result: response };
+    return response;
   } else {
     ctx.ui.write(`Sessions: ${data.length}\n\n`);
     for (const s of data) {
@@ -215,7 +208,7 @@ async function listAllSessions(
     }
   }
 
-  return { ok: true, result: response };
+  return response;
 }
 
 function dedupeSessionsById<T extends { id: string; status?: string; runCount: number; lastActivityAt: string }>(sessions: T[]): T[] {

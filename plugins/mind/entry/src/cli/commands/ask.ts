@@ -25,8 +25,7 @@ export default defineCommand<unknown, CLIInput<AskFlags>, AgentResponse>({
         const res = await mind.ask(req);
 
         if (json) {
-          return { ok: true, result: res };
-          return { ok: true, result: res };
+          return res;
         }
 
         const head = res.abstained
@@ -43,7 +42,7 @@ export default defineCommand<unknown, CLIInput<AskFlags>, AgentResponse>({
             },
           ],
         });
-        return { ok: true, result: res };
+        return res;
       } catch (err) {
         return handleError(ctx, err, json);
       }

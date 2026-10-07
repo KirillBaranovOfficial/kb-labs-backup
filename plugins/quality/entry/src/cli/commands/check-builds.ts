@@ -40,8 +40,8 @@ export default defineCommand({
         if (cached) {
           outputBuildCheck({ ...cached, cached: true }, flags, ui);
           return cached.failing > 0
-            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Build failures found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: cached }
-            : { ok: true, result: cached };
+            ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Build failures found', hint: 'Review the failed package builds, then rerun `kb quality check-builds`.', diagnostics: cached.failures.map((failure) => ({ code: 'KB_QUALITY_BUILD_FAILED', severity: 'error', path: failure.package, message: failure.error })) } }
+            : cached;
         }
       }
 
@@ -68,8 +68,8 @@ export default defineCommand({
       outputBuildCheck({ ...result, cached: false }, flags, ui);
 
       return result.failing > 0
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Build failures found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result }
-        : { ok: true, result };
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Build failures found', hint: 'Review the failed package builds, then rerun `kb quality check-builds`.', diagnostics: result.failures.map((failure) => ({ code: 'KB_QUALITY_BUILD_FAILED', severity: 'error', path: failure.package, message: failure.error })) } }
+        : result;
     },
   },
 });

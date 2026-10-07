@@ -51,7 +51,7 @@ export const version = defineSystemCommand<VersionFlags, VersionResult>({
     }
 
     return {
-      ok: true,
+
       version: cliVersion,
       nodeVersion,
       platform,

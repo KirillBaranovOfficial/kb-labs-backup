@@ -105,10 +105,7 @@ export default defineCommand<unknown, PrepareInfraInput, PrepareInfraResult>({
         ],
       });
 
-      return {
-        ok: true,
-        result,
-      };
+      return result;
     },
   },
 });

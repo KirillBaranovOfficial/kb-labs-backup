@@ -237,6 +237,22 @@ identifiers and must not encode objects or arrays as JSON strings. The shared
 human renderer presents the same diagnostic records as a list.
 Cases: S-203.1, S-203.2.
 
+### 2026-10-06: Command handlers return data and throw typed failures
+
+Every system and plugin CLI handler returns plain command data or a typed
+plugin-contracts `CommandFailure`; the shared command boundary creates the
+ADR-0049 result envelope exactly once. A handler returning a success-envelope
+shaped object is a contract violation, and payload fields such as `ok` remain
+payload data. Both handler types use the same `CommandFailure` for catalogued
+operation failures. Known
+actionable conditions retain their catalogued code and matching next-step hint;
+only unexpected failures use `KB_RUNTIME_UNEXPECTED`. The platform
+`toErrorEnvelope` is the only TypeScript error normalizer and accepts typed
+platform errors through a shared structural contract without depending on
+higher-level command packages. Structured findings use `error.diagnostics`;
+error details remain a flat string map and are never JSON-encoded objects.
+Cases: S-203.1, S-203.2.
+
 ### Platform members: core plugins only
 
 The platform ships its core plugins as members: `workflow` (the CLI for the workflow service), `marketplace` (installing the rest) and `scaffold` (plugin authoring). Commit, Review, Quality, Release and Steward are marketplace plugins and are not platform members. This applies the 2026-10-01 release-scope decision to the release configuration (`release.flows.platform.platformMembers`) and to the journey candidate. Before this change, the journey candidate didn't install the workflow CLI at all, so `kb workflow …` was unknown on installed platforms.

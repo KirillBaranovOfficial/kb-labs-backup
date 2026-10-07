@@ -88,6 +88,6 @@ export const webhookRevoke = defineSystemCommand<RevokeFlags, RevokeResult>({
       ctx.ui?.write?.(`✓  Webhook revoked: ${label}\n`);
     }
 
-    return { ok: true, revoked: label };
+    return {  revoked: label };
   },
 });

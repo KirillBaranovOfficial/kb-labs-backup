@@ -17,9 +17,9 @@ export default defineCommand({
 
       try {
         const topic = await addTopic({ name, aliases: parseList(aliases) ?? [] });
-        if (json) {return { ok: true, result: topic };}
+        if (json) {return topic;}
         else {ctx.ui?.info?.(`Registered topic "${topic.name}" (aliases: ${topic.aliases.join(', ') || 'none'})`);}
-        return { ok: true, result: topic };
+        return topic;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:topic.add failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

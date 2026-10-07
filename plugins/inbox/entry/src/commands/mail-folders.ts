@@ -18,7 +18,7 @@ export default defineCommand({
         const folders = await listFolders(account);
 
         if (input.flags.json) {
-          return { ok: true, result: folders };
+          return folders;
         }
 
         ctx.ui?.chain?.(folders.map(f => ({
@@ -33,7 +33,7 @@ export default defineCommand({
           }],
         })));
 
-        return { ok: true, result: folders };
+        return folders;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

@@ -86,16 +86,12 @@ describe('Sandbox Runner', () => {
       expect(result.executionMeta.duration).toBeGreaterThanOrEqual(0);
     });
 
-    it('should return raw CommandResult structure when handler returns it', async () => {
+    it('keeps plain data without interpreting success-looking fields', async () => {
       const handlerPath = join(testDir, 'command-result-handler.js');
       const handlerCode = `
         export default {
           async execute(ctx, input) {
-            return {
-              ok: true,
-              result: { message: 'success' },
-              meta: { custom: 'value' }
-            };
+            return { ok: true, result: { message: 'success' }, meta: { custom: 'value' } };
           }
         };
       `;
@@ -120,18 +116,12 @@ describe('Sandbox Runner', () => {
         cwd: testDir,
       });
 
-      // Raw CommandResult is in data
-      expect(runResult.data).toEqual({
-        ok: true,
-        result: { message: 'success' },
-        meta: { custom: 'value' },
-      });
+      expect(runResult.data).toEqual({ ok: true, result: { message: 'success' }, meta: { custom: 'value' } });
 
       // CLI host can then wrap this into CommandResultWithMeta
       const cliResult = wrapCliResult(runResult, descriptor);
       expect(cliResult.exitCode).toBe(0);
-      expect(cliResult.result).toEqual({ message: 'success' });
-      expect(cliResult.meta?.custom).toBe('value');
+      expect(cliResult.result).toEqual({ ok: true, result: { message: 'success' }, meta: { custom: 'value' } });
       expect(cliResult.meta?.pluginId).toBe('@kb-labs/test');
     });
 

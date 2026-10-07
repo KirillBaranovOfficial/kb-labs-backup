@@ -74,7 +74,7 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
         });
 
         if (flags.json) {
-          return { ok: true, result: result };
+          return result;
         } else {
           ctx.ui?.success?.(`Marketplace install completed (${result.scope ?? scopeCtx.scope})`, {
             sections: [
@@ -89,7 +89,7 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
           });
         }
 
-        return { ok: true, result };
+        return result;
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

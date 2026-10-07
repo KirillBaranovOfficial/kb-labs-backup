@@ -49,7 +49,7 @@ describe('marketplace:install', () => {
     const ctx = createMockContext({ ui });
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('install');
   });
@@ -66,9 +66,9 @@ describe('marketplace:install', () => {
     const ctx = createMockContext({ ui });
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toBeDefined();
-    expect(result.result).toMatchObject({ installed: expect.any(Array) });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toBeDefined();
+    expect(result).toMatchObject({ installed: expect.any(Array) });
   });
 
   it('CI-03: HTTP error — returns exitCode 1 with error captured', async () => {
@@ -78,7 +78,7 @@ describe('marketplace:install', () => {
     const ctx = createMockContext({ ui });
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: ['bad-pkg'], flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -97,7 +97,7 @@ describe('marketplace:install', () => {
       flags: { json },
     }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     if (json) {
       expect(result).toMatchObject({ ok: false, error: envelope });
     } else {
@@ -112,7 +112,7 @@ describe('marketplace:install', () => {
     const ctx = createMockContext({ ui });
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: [], flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -126,7 +126,7 @@ describe('marketplace:install', () => {
     const ctx = createMockContext({ ui });
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: ['pkg'], flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(mockedPost).not.toHaveBeenCalled();
   });
 
@@ -141,7 +141,7 @@ describe('marketplace:install', () => {
     const ctx = createMockContext({ ui });
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: ['dev-plugin'], flags: { dev: true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedPost).toHaveBeenCalledWith(
       '/packages/install',
       expect.objectContaining({ dev: true, specs: ['dev-plugin'] }),
@@ -159,8 +159,8 @@ describe('marketplace:install', () => {
     const ctx = createMockContext({ ui });
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: ['pkg'], flags: {} }));
 
-    expect(result.ok).toBe(true);
-    expect((result.result as { warnings: string[] }).warnings).toContain('Peer dependency mismatch');
+    expect(result).not.toHaveProperty('ok');
+    expect((result as { warnings: string[] }).warnings).toContain('Peer dependency mismatch');
   });
 
   it('CI-08: --dry-run shows intent, HTTP post is NOT called', async () => {
@@ -168,7 +168,7 @@ describe('marketplace:install', () => {
     const ctx = createMockContext({ ui });
     const result = await installCommand.execute(ctx, mockCLIInput({ argv: ['my-plugin'], flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedPost).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('my-plugin');

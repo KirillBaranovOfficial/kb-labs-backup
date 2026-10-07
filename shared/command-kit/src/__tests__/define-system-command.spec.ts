@@ -9,7 +9,6 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { toErrorEnvelope } from '@kb-labs/core-platform';
-import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
 import { defineSystemCommand, defineSystemCommandGroup } from '../define-system-command';
 
@@ -125,13 +124,7 @@ describe('defineSystemCommand', () => {
 
       const exitCode = await command.run(mockCtx, [], { json: true });
       const systemOutput = mockUI.json.mock.calls[0]?.[0] as { error: unknown };
-      const pluginOutput = normalizeJsonResult(
-        { ok: false, error: thrown },
-        { correlationId: 'test-request-id' },
-      ) as { error: unknown };
-
       expect(exitCode).toBe(1);
-      expect(systemOutput.error).toEqual(pluginOutput.error);
       expect(systemOutput.error).toEqual(toErrorEnvelope(thrown, { correlationId: 'test-request-id' }));
     });
 
@@ -149,7 +142,27 @@ describe('defineSystemCommand', () => {
 
       expect(exitCode).toBe(0);
       expect(mockUI.json).toHaveBeenCalledOnce();
-      expect(mockUI.json).toHaveBeenCalledWith({ ok: true, data: { version: '1.2.3' } });
+      expect(mockUI.json).toHaveBeenCalledWith({ ok: true, data: { ok: true, version: '1.2.3' } });
+    });
+
+    // case: S-203.1
+    it('rejects an ADR-0049-shaped object returned by a system handler', async () => {
+      const command = defineSystemCommand({
+        name: 'system-envelope-violation',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System envelope violation fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => ({ ok: true as const, data: { value: 'already wrapped' } }),
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(1);
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code: 'KB_PLUGIN_CONTRACT_VIOLATION' }),
+      }));
     });
 
     it('rejects handler JSON writes with the catalogued contract violation', async () => {
@@ -439,21 +452,21 @@ describe('defineSystemCommand', () => {
       );
     });
 
-    it('should return 0 for successful CommandResult', async () => {
+    it('serializes plain successful command data', async () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
         jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
         description: 'Test',
         flags: {},
-        handler: async () => ({ ok: true, data: 'success' }),
+        handler: async () => 'success',
       });
 
       const exitCode = await command.run(mockCtx, [], {});
       expect(exitCode).toBe(0);
     });
 
-    it('rejects returned failure results so system handlers must throw failures', async () => {
+    it('accepts the shared typed CommandFailure from system handlers', async () => {
       const command = defineSystemCommand({
         name: 'test',
         scope: 'project',
@@ -472,7 +485,36 @@ describe('defineSystemCommand', () => {
 
       const exitCode = await command.run(mockCtx, [], {});
       expect(exitCode).toBe(1);
-      expect(mockUI.error).toHaveBeenCalledWith(expect.stringContaining('KB_PLUGIN_CONTRACT_VIOLATION'), expect.anything());
+      expect(mockUI.error).toHaveBeenCalledWith(expect.stringContaining('KB_RUNTIME_COMMAND_FAILED'), expect.anything());
+    });
+
+    it.each([
+      ['input failure', 'KB_RUNTIME_INPUT_INVALID', 2],
+      ['operation failure', 'KB_RUNTIME_COMMAND_FAILED', 1],
+    ] as const)('maps a returned CommandFailure for %s to its catalogued exit code', async (_label, code, expectedExitCode) => {
+      const command = defineSystemCommand({
+        name: 'test-returned-failure-exit-code',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
+        description: 'Test returned failure exit code',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => ({
+          ok: false,
+          error: {
+            code,
+            message: 'The command failed.',
+            hint: 'Correct the input or retry the operation.',
+          },
+        }),
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(expectedExitCode);
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code }),
+      }));
     });
 
     it('should return numeric exit code directly', async () => {

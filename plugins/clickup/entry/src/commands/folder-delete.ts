@@ -34,12 +34,12 @@ export default defineCommand({
         await deleteFolder(requireApiKey(), folderId);
 
         if (input.flags.json) {
-          return { ok: true, result: { deleted: true, folderId } };
+          return { deleted: true, folderId };
         } else {
           ctx.ui?.success?.(`Deleted folder ${folderId}`);
         }
 
-        return { ok: true, result: { deleted: true, folderId } };
+        return { deleted: true, folderId };
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

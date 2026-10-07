@@ -31,12 +31,12 @@ export default defineCommand({
         await deleteTask(requireApiKey(), taskId);
 
         if (input.flags.json) {
-          return { ok: true, result: { deleted: true, taskId } };
+          return { deleted: true, taskId };
         } else {
           ctx.ui?.success?.(`Deleted task ${taskId}`);
         }
 
-        return { ok: true, result: { deleted: true, taskId } };
+        return { deleted: true, taskId };
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

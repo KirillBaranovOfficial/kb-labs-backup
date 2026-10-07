@@ -29,9 +29,10 @@ interface RelatedLogEntry {
 }
 
 type LogGetResult = CommandResult & {
-  data: { log: Record<string, unknown>; correlationKeys: CorrelationKeys; related?: RelatedLogEntry[] };
+  log: Record<string, unknown>;
+  correlationKeys: CorrelationKeys;
+  related?: RelatedLogEntry[];
   _rawLog?: LogRecord;
-  _rawRelated?: RelatedLogEntry[];
 };
 
 export const logsGet = defineSystemCommand<Flags, LogGetResult>({
@@ -73,24 +74,19 @@ export const logsGet = defineSystemCommand<Flags, LogGetResult>({
       related = relatedLogs.map(formatLogJson) as RelatedLogEntry[];
     }
 
-    const data = {
-      ok: true as const,
-      data: {
-        log: formatLogJson(log) as Record<string, unknown>,
-        correlationKeys: extractCorrelationKeys(log),
-        related,
-      },
-      _rawLog: log,
-      _rawRelated: flags.related ? related : undefined,
+    const result = {
+      log: formatLogJson(log) as Record<string, unknown>,
+      correlationKeys: extractCorrelationKeys(log),
+      related,
     };
-    return data;
+    return flags.json ? result : { ...result, _rawLog: log };
   },
   formatter(result, ctx, flags) {
+    const logJson = result.log;
+    const keys = result.correlationKeys;
     const rawLog = result._rawLog;
-    const logJson = result.data.log;
-    const keys = result.data.correlationKeys;
 
-    if (!rawLog || !logJson || !keys) {
+    if (!logJson || !keys || !rawLog) {
       return;
     }
 
@@ -135,7 +131,7 @@ export const logsGet = defineSystemCommand<Flags, LogGetResult>({
     });
 
     // Related logs
-    const { related } = result.data;
+    const { related } = result;
     if (related && related.length > 0) {
       ctx.ui.write(`\nRelated Logs (${related.length}):\n`);
       for (const r of related) {

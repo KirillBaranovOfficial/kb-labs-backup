@@ -18,7 +18,6 @@ export default defineCommand({
           'Usage: kb steward resource add <projectId> --type=... --label=... [--url=] [--content=]',
           json,
         );
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'INVALID_ARGS', hint: "Run `kb steward resource add --help` to review required inputs and recovery steps, then retry." }, result: null };
       }
       if (!url && !content) {
         return validationError(ctx, 'at least one of --url/--content must be set', undefined, json);
@@ -26,9 +25,9 @@ export default defineCommand({
 
       try {
         const resource = await addResource({ projectId, type, label, url, content });
-        if (json) {return { ok: true, result: resource };}
+        if (json) {return resource;}
         else {ctx.ui?.info?.(`Added resource "${resource.label}" (${resource.type}) to project ${projectId}`);}
-        return { ok: true, result: resource };
+        return resource;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:resource.add failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

@@ -26,7 +26,7 @@ describe('qa:ci-overview', () => {
   it('renders a compact ctx.ui summary for a person by default', async () => {
     const { ui, captured } = createCapturedUI();
     const result = await command.execute(createMockContext({ ui, cwd: '/' }) as never, mockCLIInput({ flags: { input: writeDossier() } }) as never);
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success[0]?.message).toContain('CI reliability');
     expect(captured.json).toHaveLength(0);
   });
@@ -34,7 +34,6 @@ describe('qa:ci-overview', () => {
   it('emits the same compact contract for agents with --json', async () => {
     const { ui, captured } = createCapturedUI();
     const result = await command.execute(createMockContext({ ui, cwd: '/' }) as never, mockCLIInput({ flags: { input: writeDossier(), json: true } }) as never);
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ runsAnalyzed: 1, findings: [{ fingerprint: 'network.registry.docker-hub-timeout' }] });
+    expect(result).toMatchObject({ runsAnalyzed: 1, findings: [{ fingerprint: 'network.registry.docker-hub-timeout' }] });
   });
 });

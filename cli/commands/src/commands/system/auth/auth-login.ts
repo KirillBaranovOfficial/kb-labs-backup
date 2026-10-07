@@ -165,7 +165,7 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
       ctx.ui?.write?.(`Token expires in ${Math.floor(tokenData.expiresIn / 60)} minutes (auto-refresh enabled).\n`);
     }
 
-    return { ok: true, gatewayUrl, expiresIn: tokenData.expiresIn, ...(handle ? { handle } : {}) };
+    return {  gatewayUrl, expiresIn: tokenData.expiresIn, ...(handle ? { handle } : {}) };
   },
 });
 
@@ -242,7 +242,7 @@ async function humanLogin(
   }
 
   return {
-    ok: true,
+
     gatewayUrl,
     expiresIn: loginData.expiresIn,
     ...(profileEmail ? { email: profileEmail } : {}),

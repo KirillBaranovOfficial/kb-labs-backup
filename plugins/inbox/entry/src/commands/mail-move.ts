@@ -33,11 +33,11 @@ export default defineCommand({
         await moveMessage(account, uid, input.flags.from ?? 'INBOX', input.flags.folder);
 
         if (input.flags.json) {
-          return { ok: true, result: { uid, folder: input.flags.folder } };
+          return { uid, folder: input.flags.folder };
         }
 
         ctx.ui?.success?.(`Moved uid=${uid} → ${input.flags.folder}`);
-        return { ok: true, result: null };
+        return null;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

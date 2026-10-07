@@ -49,7 +49,7 @@ export const projectList = defineSystemCommand<ListFlags, ProjectListResult>({
           ctx.ui?.write(`${pad(p.name, nameWidth)}  ${pad(p.id, 20)}  ${pad(p.status, 8)}  ${p.path}${note}\n`);
         }
       }
-      return { ok: true, projects, total: projects.length };
+      return {  projects, total: projects.length };
     } catch (error) {
       return failWithEnvelope(projectErrorEnvelope(error));
     }

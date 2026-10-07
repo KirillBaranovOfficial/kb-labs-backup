@@ -34,12 +34,12 @@ export default defineCommand({
         await deleteSpace(requireApiKey(), spaceId);
 
         if (input.flags.json) {
-          return { ok: true, result: { deleted: true, spaceId } };
+          return { deleted: true, spaceId };
         } else {
           ctx.ui?.success?.(`Deleted space ${spaceId}`);
         }
 
-        return { ok: true, result: { deleted: true, spaceId } };
+        return { deleted: true, spaceId };
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

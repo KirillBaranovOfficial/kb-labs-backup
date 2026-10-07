@@ -171,14 +171,9 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         action: { id: 'start-host', label: 'Start host', command: startHostCommand },
         networkRequired: !LOCAL_PACKAGES.has(packageRoot(implementation)) });
     }
-    return { ok: true, adapters: rows, projectRoot: loaded.projectRoot };
+    return {  adapters: rows, projectRoot: loaded.projectRoot };
   },
   formatter(result, ctx, flags) {
-    if (!result.ok) {
-      const error = result.error;
-
-      return;
-    }
     ctx.ui?.table?.(result.adapters ?? []);
   },
 });

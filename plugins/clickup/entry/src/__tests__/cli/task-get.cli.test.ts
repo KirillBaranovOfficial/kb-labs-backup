@@ -36,7 +36,7 @@ describe('clickup:task.get', () => {
       mockCLIInput({ argv: ['task-001'] }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
   });
 
   it('TG-02: --json outputs slim task object', async () => {
@@ -50,8 +50,8 @@ describe('clickup:task.get', () => {
       mockCLIInput({ argv: ['task-001'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const slim = result.result as Record<string, unknown>;
+    expect(result).not.toHaveProperty('ok');
+    const slim = result as Record<string, unknown>;
     expect(slim.id).toBe('task-001');
     expect(slim.status).toBe('open');
     expect(slim).toHaveProperty('description');
@@ -72,8 +72,8 @@ describe('clickup:task.get', () => {
       mockCLIInput({ argv: ['task-001'], flags: { json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ task: { id: 'task-001' } });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ task: { id: 'task-001' } });
   });
 
   it('TG-03: missing taskId returns exitCode 1', async () => {
@@ -84,7 +84,7 @@ describe('clickup:task.get', () => {
       mockCLIInput({ argv: [] }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -99,7 +99,7 @@ describe('clickup:task.get', () => {
       mockCLIInput({ argv: ['task-001'] }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

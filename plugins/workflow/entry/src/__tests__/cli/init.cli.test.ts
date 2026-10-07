@@ -22,15 +22,13 @@ describe('workflow:init', () => {
     const created = await initCommand.execute(ctx, mockCLIInput({ flags: {} }));
     const path = join(root, '.kb', 'workflows', 'hello.yml');
     const source = await readFile(path, 'utf8');
-    expect(created.ok).toBe(true);
+    expect(created).toEqual({ path: '.kb/workflows/hello.yml' });
     expect(source).toContain('command: echo hello-workflow');
     expect(source).toContain('runsOn: local');
     expect(captured.success[0]?.message).toContain('hello.yml');
 
     const duplicate = await initCommand.execute(ctx, mockCLIInput({ flags: {} }));
-    expect(duplicate.ok).toBe(false);
+    expect(duplicate).toMatchObject({ ok: false, error: { message: expect.stringContaining('already exists') } });
     expect(await readFile(path, 'utf8')).toBe(source);
-    if (duplicate.ok) { throw new Error('expected existing workflow initialization to fail'); }
-    expect(duplicate.error.message).toContain('already exists');
   });
 });

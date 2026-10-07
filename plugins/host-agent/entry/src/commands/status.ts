@@ -41,11 +41,11 @@ export default defineCommand({
 
       if (ipcStatus === null) {
         if (input.json) {
-          return { ok: true, result: { running: false } };
+          return { running: false };
         } else {
           ctx.ui?.info?.('Workspace Agent is not running. Start with: kb-dev start host-agent');
         }
-        return { ok: true, result: { running: false } };
+        return { running: false };
       }
 
       const statusLabel = ipcStatus.connected
@@ -62,7 +62,7 @@ export default defineCommand({
       };
 
       if (input.json) {
-        return { ok: true, result: result };
+        return result;
       } else {
         ctx.ui?.success?.('Workspace Agent Status', {
           sections: [{
@@ -75,7 +75,7 @@ export default defineCommand({
         });
       }
 
-      return { ok: true, result };
+      return result;
     },
   },
 });

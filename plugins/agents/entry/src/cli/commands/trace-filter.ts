@@ -71,7 +71,7 @@ export default defineCommand({
     if (!eventType) {
       const err = error('INVALID_EVENT_TYPE', 'Missing required --type flag');
       ctx.ui.write(JSON.stringify(err, null, 2) + '\n');
-      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? 'The task ID is invalid.', hint: 'Pass a valid task ID with `kb agents trace filter --task-id <id>`.' }, result: err };
+      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? 'The task ID is invalid.', hint: 'Pass a valid task ID with `kb agents trace filter --task-id <id>`.' } };
     }
 
     if (!VALID_EVENT_TYPES.includes(eventType)) {
@@ -80,7 +80,7 @@ export default defineCommand({
         `Invalid event type: ${eventType}. Valid types: ${VALID_EVENT_TYPES.join(', ')}`
       );
       ctx.ui.write(JSON.stringify(err, null, 2) + '\n');
-      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? 'The trace was not found.', hint: 'Choose an existing trace, then rerun `kb agents trace filter --task-id <id>`.' }, result: err };
+      return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error?.message ?? 'The trace was not found.', hint: 'Choose an existing trace, then rerun `kb agents trace filter --task-id <id>`.' } };
     }
 
     try {
@@ -93,7 +93,7 @@ export default defineCommand({
           'CORRUPTED_TRACE';
         const err = error(code, formatTraceLoadError(loaded.error));
         ctx.ui.write(JSON.stringify(err, null, 2) + '\n');
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: err.error?.message ?? 'The trace could not be filtered.', hint: 'Check the trace data, then rerun `kb agents trace filter --task-id <id>`.' }, result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: err.error?.message ?? 'The trace could not be filtered.', hint: 'Check the trace data, then rerun `kb agents trace filter --task-id <id>`.' } };
       }
 
       const { events } = loaded;
@@ -126,12 +126,12 @@ export default defineCommand({
         printHumanReadable(ctx, eventType, filtered);
       }
 
-      return { ok: true, result: response };
+      return response;
     } catch (err) {
       logger.error('trace:filter error:', err instanceof Error ? err : undefined);
       const errResponse = error('IO_ERROR', err instanceof Error ? err.message : String(err));
       ctx.ui.write(JSON.stringify(errResponse, null, 2) + '\n');
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: errResponse.error?.message ?? 'The trace could not be filtered.', hint: 'Check the trace data, then rerun `kb agents trace filter --task-id <id>`.' }, result: errResponse };
+      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: errResponse.error?.message ?? 'The trace could not be filtered.', hint: 'Check the trace data, then rerun `kb agents trace filter --task-id <id>`.' } };
     }
     },
   },

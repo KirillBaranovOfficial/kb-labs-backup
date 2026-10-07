@@ -37,7 +37,6 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
     expect(listPendingApprovals).toHaveBeenCalledWith('run-abc');
     expect(resolveApproval).toHaveBeenCalledWith('run-abc', 'job-001', 'step-review', 'approve', undefined);
     expect(captured.success.length).toBeGreaterThan(0);
@@ -58,7 +57,6 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { action: 'reject', comment: 'Needs rework' } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(resolveApproval).toHaveBeenCalledWith('run-abc', 'job-001', 'step-review', 'reject', 'Needs rework');
     expect(captured.success[0]?.message).toContain('Rejected');
   });
@@ -80,8 +78,7 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true, result: resolvedPayload });
+    expect(result).toEqual(resolvedPayload);
   });
 
   it('RAP-04: explicit --job-id + --step-id bypasses list call', async () => {
@@ -98,7 +95,6 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { 'job-id': 'job-001', 'step-id': 'step-x' } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(listPendingApprovals).not.toHaveBeenCalled();
     expect(resolveApproval).toHaveBeenCalledWith('run-abc', 'job-001', 'step-x', 'approve', undefined);
   });
@@ -118,8 +114,8 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RAP-06: multiple pending approvals returns exitCode 1 with list', async () => {
@@ -143,8 +139,8 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RAP-07: missing runId returns exitCode 1 with validation error', async () => {
@@ -159,8 +155,8 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: [], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RAP-08: invalid action value returns exitCode 1', async () => {
@@ -175,8 +171,8 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { action: 'skip' } }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RAP-09: daemon error on resolve returns exitCode 1', async () => {
@@ -195,7 +191,7 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
   });
 
   it('RAP-10: --run-id flag works as alias for positional argument', async () => {
@@ -215,7 +211,6 @@ describe('workflow:runs approve', () => {
       mockCLIInput({ argv: [], flags: { 'run-id': 'run-flag-001' } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(resolveApproval).toHaveBeenCalledWith('run-flag-001', expect.any(String), expect.any(String), 'approve', undefined);
   });
 });

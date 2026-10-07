@@ -46,11 +46,11 @@ export default defineCommand({
         await markMessage(account, uid, input.flags.folder ?? 'INBOX', action);
 
         if (input.flags.json) {
-          return { ok: true, result: { uid, action } };
+          return { uid, action };
         }
 
         ctx.ui?.success?.(`Marked uid=${uid} as ${action}`);
-        return { ok: true, result: null };
+        return null;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

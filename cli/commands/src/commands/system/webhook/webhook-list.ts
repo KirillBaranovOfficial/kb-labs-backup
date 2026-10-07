@@ -90,6 +90,6 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
       }
     }
 
-    return { ok: true, webhooks };
+    return {  webhooks };
   },
 });
