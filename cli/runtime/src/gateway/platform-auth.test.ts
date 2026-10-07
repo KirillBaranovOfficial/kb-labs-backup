@@ -166,7 +166,7 @@ describe('platform auth verification cache', () => {
           details: { gatewayUrl: 'https://gateway.test', reason },
           correlationId: 'refresh-correlation',
           hint: reason === 'unknown-issuer'
-            ? 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password when prompted.'
+            ? 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.'
             : 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
         },
       });

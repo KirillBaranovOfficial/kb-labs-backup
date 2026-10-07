@@ -110,7 +110,7 @@ describe('Gateway global auth gate', () => {
         ok: false,
         error: {
           code: 'KB_AUTH_REQUIRED',
-          hint: `Run "kb auth login --gateway-url ${gatewayUrl} --email <email>" and enter your password when prompted.`,
+          hint: `Run "kb auth login --gateway-url ${gatewayUrl} --email <email>" and enter your password at the prompt, or provide it with --password-stdin.`,
           correlationId: expect.any(String),
         },
       });
