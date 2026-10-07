@@ -9,7 +9,6 @@ import {
 } from "@kb-labs/core-project-registry";
 import { failWithEnvelope } from "../project/project-support";
 import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
-import { SessionManager } from '@kb-labs/cli-runtime/gateway';
 
 type Client = "claude" | "codex" | "cursor";
 type ConfigFlags = { json: { type: "boolean"; description?: string } };

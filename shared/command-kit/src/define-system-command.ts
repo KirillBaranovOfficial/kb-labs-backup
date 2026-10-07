@@ -383,7 +383,7 @@ export function defineSystemCommand<
           } else {
             ctx.ui?.error(renderErrorEnvelope(envelope), { hint: envelope.hint });
           }
-          return 1;
+          return mapErrorEnvelopeToExitCode(envelope.code);
         }
       } catch (error) {
         const envelope = toErrorEnvelope(error, { correlationId: ctx.requestId });
