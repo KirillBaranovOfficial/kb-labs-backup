@@ -22,6 +22,7 @@ import (
 
 type commandFlags struct {
 	index, input, requestRoot, projectRoot, platformVersion, platformChannel  string
+	gatewayURL                                                                string
 	sdkVersion, serviceProfile, plugins, adapters, policy, secretEnv          string
 	doctorInput, scenarioID, scenarioAnswers, platformRoot, snapshotID        string
 	registry, telemetryURL, operation                                         string
@@ -53,6 +54,7 @@ func newRootCommand() *cobra.Command {
 	p.StringVar(&flags.projectRoot, "project-root", "", "project directory to register after installation")
 	p.StringVar(&flags.platformVersion, "platform-version", "", "exact platform version")
 	p.StringVar(&flags.platformChannel, "platform-channel", "", "platform channel: stable, canary, experimental")
+	p.StringVar(&flags.gatewayURL, "gateway-url", "", "Gateway origin for this installation, for example http://127.0.0.1:4100")
 	p.StringVar(&flags.sdkVersion, "sdk-version", "", "exact SDK version")
 	p.StringVar(&flags.serviceProfile, "service-profile", "", "platform-owned service profile")
 	p.StringVar(&flags.plugins, "plugins", "", "comma-separated plugin IDs or id@version pins")
@@ -159,7 +161,8 @@ func (f *commandFlags) run(cmd *cobra.Command, operation string, _ []string) err
 		ScenarioID: f.scenarioID, ScenarioAnswers: f.scenarioAnswers, ScenarioResume: f.scenarioResume,
 		Direct: directRequest{PlatformRoot: f.requestRoot, ProjectRoot: f.projectRoot, PlatformVersion: f.platformVersion,
 			PlatformChannel: f.platformChannel, SDKVersion: f.sdkVersion, ServiceProfile: f.serviceProfile,
-			Plugins: f.plugins, Adapters: f.adapters, Providers: strings.Join(f.providers, ","), Policy: f.policy, Offline: f.offline},
+			GatewayURL: f.gatewayURL,
+			Plugins:    f.plugins, Adapters: f.adapters, Providers: strings.Join(f.providers, ","), Policy: f.policy, Offline: f.offline},
 		Executable: executable, Foreground: f.foreground, JSON: f.jsonOutput, Yes: f.recoverYes,
 		InstallInput: os.Stdin,
 	}

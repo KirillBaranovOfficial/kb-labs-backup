@@ -4,8 +4,11 @@ package contracts
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"path/filepath"
 	"sort"
+	"strconv"
 )
 
 const RequestSchema = "kb.create/v2"
@@ -56,6 +59,7 @@ type InstallRequest struct {
 	Platform            VersionSelector     `json:"platform"`
 	SDK                 VersionSelector     `json:"sdk,omitempty"`
 	ServiceProfile      string              `json:"serviceProfile,omitempty"`
+	GatewayURL          string              `json:"gatewayUrl,omitempty"`
 	Plugins             []ComponentRequest  `json:"plugins,omitempty"`
 	Adapters            []ComponentRequest  `json:"adapters,omitempty"`
 	ProviderPreferences map[string]string   `json:"providerPreferences,omitempty"`
@@ -86,6 +90,23 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 	}
 	if err := validateSelector("sdk", r.SDK); err != nil {
 		return InstallRequest{}, err
+	}
+	if r.GatewayURL != "" {
+		parsed, err := url.Parse(r.GatewayURL)
+		if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Port() == "" ||
+			(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return InstallRequest{}, fmt.Errorf("gateway URL must be an http loopback origin with an explicit port")
+		}
+		port, err := strconv.Atoi(parsed.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return InstallRequest{}, fmt.Errorf("gateway URL port must be between 1 and 65535")
+		}
+		hostname := parsed.Hostname()
+		ip := net.ParseIP(hostname)
+		if hostname != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return InstallRequest{}, fmt.Errorf("gateway URL must use a loopback host")
+		}
+		r.GatewayURL = "http://" + parsed.Host
 	}
 	if r.Policy == "" {
 		r.Policy = PolicyStrict

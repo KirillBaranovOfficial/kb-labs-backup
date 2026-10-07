@@ -13,10 +13,11 @@ import (
 
 func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 	for _, test := range []struct {
-		name, installed, target, pluginRange, wantCode string
+		name, installed, target, kind, componentRange, wantCode string
 	}{
-		{"downgrade", "3.2.0", "3.1.0", "", "KB_UPDATE_DOWNGRADE_REFUSED"},
-		{"installed plugin range", "3.2.0", "3.3.0", "=3.2.0", "KB_UPDATE_INCOMPATIBLE"},
+		{"downgrade", "3.2.0", "3.1.0", "", "", "KB_UPDATE_DOWNGRADE_REFUSED"},
+		{"installed plugin range", "3.0.0", "3.2.0", "plugin", "<3.2.0", "KB_UPDATE_INCOMPATIBLE"},
+		{"installed adapter range", "3.0.0", "3.2.0", "adapter", "<3.2.0", "KB_UPDATE_INCOMPATIBLE"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			inst := newInstallation(t)
@@ -24,10 +25,10 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 				Schema: contracts.ResolvedPlanSchema, PlatformChannel: "stable",
 				ServiceGraph: contracts.ServiceGraph{PlatformVersion: test.installed},
 				Artifacts: func() []contracts.Artifact {
-					if test.pluginRange == "" {
+					if test.kind == "" {
 						return nil
 					}
-					return []contracts.Artifact{{ID: "fixture-compat", Kind: "plugin", Version: "1.0.0", PlatformRange: test.pluginRange}}
+					return []contracts.Artifact{{ID: "fixture-compat", Kind: test.kind, Version: "1.0.0", PlatformRange: test.componentRange}}
 				}(),
 			}}
 			if err := receipt.Write(inst.root, active); err != nil {
@@ -76,6 +77,22 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 			if code != 2 || errorCode(payload) != test.wantCode {
 				t.Fatalf("update = code %d, error %s: %#v", code, errorCode(payload), payload)
 			}
+			if test.kind != "" {
+				errorValue, ok := payload["error"].(map[string]any)
+				if !ok {
+					t.Fatalf("update error = %#v", payload["error"])
+				}
+				details, ok := errorValue["details"].(map[string]any)
+				if !ok || details["kind"] != test.kind || details["id"] != "fixture-compat" ||
+					details["selectedVersion"] != test.target || details["requiredRange"] != test.componentRange {
+					t.Fatalf("update details = %#v", errorValue["details"])
+				}
+				for _, alias := range []string{"component", "version", "range", "subject", "value"} {
+					if _, exists := details[alias]; exists {
+						t.Fatalf("update details contain duplicate alias %q: %#v", alias, details)
+					}
+				}
+			}
 			after, err := os.ReadFile(receiptPath)
 			if err != nil {
 				t.Fatal(err)
@@ -87,5 +104,51 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 				t.Fatalf("refused update created snapshot directory: %v", err)
 			}
 		})
+	}
+}
+
+func TestUpdateMapsTargetPlanCompatibilityToUpdateCode(t *testing.T) {
+	inst := newInstallation(t)
+	index := filepath.Join(t.TempDir(), "release-index.json")
+	sealed, err := catalog.Seal(catalog.Catalog{
+		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "3.2.0"},
+		Compatibility: testCompatibility("3.2.0"),
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "3.2.0", Package: "@kb/platform", Tarball: "platform.tgz", SHA256: "platform",
+			SDKRange: "<3.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+		}},
+		SDKs: []catalog.Component{{ID: "sdk", Version: "3.2.0", Package: "@kb/sdk", Tarball: "sdk.tgz", SHA256: "sdk"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.CreateTemp(t.TempDir(), "update-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := (invocation{
+		Operation: "update", Index: index,
+		Direct:        directRequest{PlatformRoot: inst.root, PlatformVersion: "3.2.0", SDKVersion: "3.2.0", Policy: "compatible"},
+		NodePreflight: func() error { return nil },
+	}).run(output)
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	payload := readJSON(t, output.Name())
+	if code != 2 || errorCode(payload) != "KB_UPDATE_INCOMPATIBLE" {
+		t.Fatalf("update target plan = code %d, error %s: %#v", code, errorCode(payload), payload)
+	}
+	errorValue := payload["error"].(map[string]any)
+	details := errorValue["details"].(map[string]any)
+	if details["kind"] != "sdk" || details["id"] != "sdk" || details["selectedVersion"] != "3.2.0" || details["requiredRange"] != "<3.0.0" {
+		t.Fatalf("update target plan details = %#v", details)
 	}
 }

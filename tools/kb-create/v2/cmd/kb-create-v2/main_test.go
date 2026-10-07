@@ -105,6 +105,68 @@ func TestVersionJSONIncludesBuildCommit(t *testing.T) {
 	}
 }
 
+func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	release, err := catalog.Seal(catalog.Catalog{
+		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: testCompatibility("2.0.0"),
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "platform.tgz", SHA256: "platform",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Port: 4000}}}},
+			Config: []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+				Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(t.TempDir(), "release-index.json")
+	encoded, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"plan", "--json", "--index", indexPath,
+		"--request-platform-root", filepath.Join(t.TempDir(), "platform"), "--gateway-url", gatewayURL}
+	var busyOutput, busyError bytes.Buffer
+	busyCode := clikitcommand.Execute(newRootCommand(), args, &busyOutput, &busyError)
+	var busyPayload map[string]any
+	if err := json.Unmarshal(busyOutput.Bytes(), &busyPayload); err != nil {
+		t.Fatal(err)
+	}
+	if busyCode != 2 || errorCode(busyPayload) != contracts.CodePortInUse {
+		t.Fatalf("occupied Gateway plan = code %d, error %s: %s", busyCode, errorCode(busyPayload), busyOutput.String())
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := clikitcommand.Execute(newRootCommand(), args, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("plan exit = %d: %s", code, stdout.String()+stderr.String())
+	}
+	var payload struct {
+		Data struct {
+			Plan contracts.ResolvedInstallPlan `json:"plan"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.Plan.Request.GatewayURL != gatewayURL || payload.Data.Plan.Host.HealthURL != gatewayURL+"/health" ||
+		payload.Data.Plan.ServiceGraph.Services[0].Port != port {
+		t.Fatalf("declared Gateway was not applied to plan: %#v", payload.Data.Plan)
+	}
+}
+
 func TestHumanReleaseIndexFailurePrintsLoaderReason(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing-release-index.json")
 	_, err := catalog.LoadFile(path)

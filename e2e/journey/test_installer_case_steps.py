@@ -11,7 +11,8 @@ from installer_case_steps import (_seed_doctor_fixture, assert_default_service_p
                                   run_doctor_root_isolation_step,
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
                                   run_offline_plan_step, run_repeat_plan_readonly_step,
-                                  run_platform_cli, run_uninstall_decline_step, _service_ids_match,
+                                  run_platform_cli, run_secondary_root_gateway_isolation_step,
+                                  run_uninstall_decline_step, _service_ids_match,
                                   _snapshot_installation_owned_tree)
 from journey_resources import case_catalog_root
 from service_steps import Journey, record_candidate_provenance
@@ -42,7 +43,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertIn("-iTCP:4000", calls[0])
 
-    def test_offline_plan_step_uses_the_installed_root_cache(self):
+    def test_offline_plan_step_primes_and_uses_its_own_root_cache(self):
         with tempfile.TemporaryDirectory(prefix="journey-offline-plan-") as temp:
             root = Path(temp)
             index = root / "release-index.json"
@@ -51,8 +52,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
             def run_command(args):
                 calls.append(args)
-                payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"},
-                          "artifacts": [{"resolvedFrom": "cache"}]}}}
+                if args[1] == "status":
+                    payload = {"ok": True, "data": {"host": {"state": "stopped"},
+                              "running": False, "reachable": False}}
+                elif args[1] == "apply":
+                    payload = {"ok": True, "data": {"operation": "apply"}}
+                else:
+                    payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"},
+                              "artifacts": [{"resolvedFrom": "cache"}]}}}
                 return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
 
             journey = run_offline_plan_step(mode="local", launcher="kb-create", stable_index=index,
@@ -60,9 +67,12 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["S-181.4"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual(len(calls), 1)
-        self.assertIn("--offline", calls[0])
-        self.assertEqual(calls[0][calls[0].index("--request-platform-root") + 1], str(root))
+        self.assertEqual([call[1] for call in calls], ["status", "apply", "plan"])
+        self.assertNotIn("--offline", calls[1])
+        self.assertIn("--offline", calls[2])
+        cache_root = root.parent / "s181-offline-root"
+        self.assertEqual(calls[1][calls[1].index("--request-platform-root") + 1], str(cache_root))
+        self.assertEqual(calls[2][calls[2].index("--request-platform-root") + 1], str(cache_root))
 
     def test_platform_cli_resolves_the_requested_roots_executable(self):
         with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:
@@ -75,6 +85,61 @@ class InstallerCaseStepsTest(unittest.TestCase):
                              lambda args: calls.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
 
         self.assertEqual(calls, [[str(executable), "adapter", "list", "--json"]])
+
+    def test_secondary_root_gateway_isolation_checks_running_and_stopped_legs(self):
+        with tempfile.TemporaryDirectory(prefix="journey-secondary-gateway-") as temp:
+            parent = Path(temp)
+            primary, secondary = parent / "root-a", parent / "root-b"
+            running = {primary: False, secondary: False}
+            for root, installation, port in ((primary, "installation-a", 4000),
+                                             (secondary, "installation-b", 4100)):
+                (root / ".kb/v2/bin").mkdir(parents=True)
+                (root / ".kb/v2/bin/kb").touch()
+                (root / ".kb/v2/receipt.json").write_text(json.dumps({
+                    "installationId": installation,
+                    "verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
+                }))
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                if args[0] == "kb-create":
+                    command = args[1]
+                    root = Path(args[args.index("--platform-root") + 1])
+                    if command == "status":
+                        is_running = running[root]
+                        data = {"host": {"state": "running" if is_running else "stopped"},
+                                "running": is_running, "reachable": is_running}
+                    elif command == "start":
+                        running[root] = True
+                        data = {"operation": "start"}
+                    else:
+                        running[root] = False
+                        data = {"operation": "stop"}
+                    return subprocess.CompletedProcess(args, 0,
+                        json.dumps({"ok": True, "data": data}), "")
+                root = secondary
+                if running[root]:
+                    payload = {"ok": True, "data": {"adapters": [{"id": "analytics-sqlite"}]}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+                payload = {"ok": False, "error": {
+                    "code": "KB_HOST_UNREACHABLE", "message": "secondary Gateway is stopped",
+                    "hint": f'Run "kb-create start --platform-root {secondary}" and retry the command.',
+                    "details": {"address": "http://127.0.0.1:4100"},
+                }}
+                return subprocess.CompletedProcess(args, 1, json.dumps(payload), "")
+
+            journey = run_secondary_root_gateway_isolation_step(
+                mode="local", launcher="kb-create", primary_root=primary,
+                secondary_root=secondary, run_command=run_command,
+            )
+
+        self.assertEqual(journey.steps[0].cases, ["PC-001.12"])
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertFalse(running[primary])
+        self.assertFalse(running[secondary])
+        adapter_calls = [args for args in calls if args[0].endswith("/.kb/v2/bin/kb")]
+        self.assertEqual(len(adapter_calls), 2)
 
     def test_repeat_plan_compares_install_owned_files_while_host_stays_running(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:
