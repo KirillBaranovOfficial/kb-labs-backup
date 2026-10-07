@@ -19,6 +19,7 @@ export const LOCAL_ADMIN_CONTEXT: AuthContext = {
 
 const PUBLIC_ROUTES = new Map<string, ReadonlySet<string>>([
   ['/health', new Set(['GET', 'HEAD'])], ['/health/adapters', new Set(['GET', 'HEAD'])],
+  ['/health/identity', new Set(['GET', 'HEAD'])],
   // The route has its own loopback-peer, loopback-Host, and no-forwarding-header guard.
   ['/health/auth', new Set(['GET', 'HEAD'])],
   ['/ready', new Set(['GET', 'HEAD'])],

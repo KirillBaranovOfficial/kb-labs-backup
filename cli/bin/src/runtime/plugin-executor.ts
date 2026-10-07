@@ -19,11 +19,11 @@ import {
 } from "@kb-labs/plugin-contracts";
 import type { PlatformContainer } from "@kb-labs/core-runtime";
 import { setJsonMode } from "@kb-labs/shared-cli-ui";
+import { resolveActiveGateway } from "@kb-labs/cli-runtime/gateway";
 import { randomUUID } from "node:crypto";
 import {
   AdapterUnavailableError,
   createContextLogger,
-  resolveGatewayServiceAddress,
 } from "@kb-labs/core-platform";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import type { RegisteredCommand } from "@kb-labs/cli-commands";
@@ -34,6 +34,7 @@ import { createCLIUIFacade } from "./ui-facade";
 export interface PluginExecutionOptions {
   context: SystemContext;
   netOffset?: number;
+  platformRoot?: string;
   commandId: string;
   argv: string[];
   flags: Record<string, unknown>;
@@ -99,15 +100,13 @@ export async function executePlugin(
     permissions.env?.read,
     "KB_GATEWAY_URL",
   )
-    ? resolveGatewayServiceAddress(
-        platform.getAdapter<IServiceTransport>("serviceTransport"),
-        {
-          gatewayUrl: process.env.KB_GATEWAY_URL,
-          gatewayPort: process.env.GATEWAY_PORT,
-          gatewayHost: process.env.GATEWAY_HOST,
-          netOffset: options.netOffset ?? 0,
-        },
-      )
+    ? (await resolveActiveGateway({
+        cwd: context.cwd,
+        env: process.env,
+        platformRoot: options.platformRoot,
+        configuredNetOffset: options.netOffset,
+        transport: platform.getAdapter<IServiceTransport>("serviceTransport"),
+      })).gatewayUrl
     : undefined;
 
   try {

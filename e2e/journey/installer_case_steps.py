@@ -438,6 +438,25 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
                  cases=["S-181.3", "PC-001.10"])
 
+    def secondary_root_cli_does_not_report_primary_state() -> None:
+        secondary_cli = secret_root / ".kb/v2/bin/kb"
+        result = run_command([str(secondary_cli), "adapter", "list", "--json"])
+        if result.returncode == 0:
+            _, data = _payload(result, "secondary root adapter list")
+            rows = data.get("adapters", [])
+            if not isinstance(rows, list) or any(row.get("runtimeStatus") == "known" for row in rows if isinstance(row, dict)):
+                raise RuntimeError("secondary root adapter list returned another root's runtime state")
+            if not any(row.get("action", {}).get("command") == f'kb-create start --platform-root "{secret_root}"'
+                       for row in rows if isinstance(row, dict)):
+                raise RuntimeError("secondary root adapter list omitted its exact host start command")
+            return
+        _, error = _diagnostic(result, "secondary root adapter list")
+        if error.get("code") != "KB_HOST_IDENTITY_MISMATCH":
+            raise RuntimeError(f"secondary root CLI did not diagnose the foreign Gateway: {error}")
+
+    journey.step("keep the secondary root CLI isolated from the primary Gateway", "platform.install",
+                 secondary_root_cli_does_not_report_primary_state, cases=["PC-001.12"])
+
     def repair_dangling_shim() -> None:
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
         _data(run_command([launcher, "doctor", "--fix", "--platform-root", str(secret_root), "--json"]),

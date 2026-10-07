@@ -35,9 +35,9 @@ import { resolveVersion } from "./helpers/version";
 import { shouldShowLimits } from "./helpers/flags";
 import { hasNestedCommands } from "./help-routing";
 import type { PlatformContainer, PlatformConfig } from "@kb-labs/core-runtime";
-import { createContextLogger, createErrorEnvelope, resolveGatewayServiceAddress, toErrorEnvelope } from "@kb-labs/core-platform";
+import { createContextLogger, createErrorEnvelope, toErrorEnvelope } from "@kb-labs/core-platform";
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
-import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
+import { hasUsablePlatformAuth, resolveActiveGateway } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
 import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
 import { resolveProjectScope } from "./command-scope";
@@ -55,13 +55,8 @@ type RuntimeInitOptions = RuntimeSetupOptions;
 type CliRuntimeInstance = Awaited<ReturnType<typeof createCliRuntime>>;
 type CliExecutionContext = CliRuntimeInstance["context"];
 
-export function configuredGatewayUrl(): string {
-  return resolveGatewayServiceAddress(undefined, {
-    gatewayUrl: process.env.KB_GATEWAY_URL,
-    gatewayPort: process.env.GATEWAY_PORT,
-    gatewayHost: process.env.GATEWAY_HOST,
-    netOffset: Number(process.env.KB_NET_OFFSET) || 0,
-  });
+export async function configuredGatewayUrl(cwd = process.cwd(), platformRoot?: string) {
+  return resolveActiveGateway({ cwd, env: process.env, platformRoot });
 }
 
 export function createUnknownCommandError(
@@ -148,16 +143,16 @@ export async function executeCli(
     ? authRoute.cmd.category ? `${authRoute.cmd.category} ${authRoute.cmd.name}` : authRoute.cmd.name
     : cmdPath.join(" ");
   const accessMode = resolveCliAccessMode();
-  let gatewayUrl: string | undefined;
+  let gatewayTarget: Awaited<ReturnType<typeof configuredGatewayUrl>> | undefined;
   if (accessMode === 'secured') {
     try {
-      gatewayUrl = configuredGatewayUrl();
+      gatewayTarget = await configuredGatewayUrl(cwd, loadedConfig.platformRoot);
     } catch (error) {
       return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
     }
   }
   const authCheck: Awaited<ReturnType<typeof hasUsablePlatformAuth>> = accessMode === 'secured'
-    ? await hasUsablePlatformAuth()
+    ? await hasUsablePlatformAuth(gatewayTarget)
     : { authenticated: true };
   const authResult = global.version && isPlatformAuthExemptFlag("version")
     ? { value: true }
@@ -167,7 +162,7 @@ export async function executeCli(
       commandKind: authCommandKind,
       hasAuth: authCheck.authenticated,
       ...(authCheck.error ? { authError: authCheck.error } : {}),
-      gatewayUrl,
+      gatewayUrl: gatewayTarget?.gatewayUrl,
       help: global.help,
     }, async () => true);
   if ("error" in authResult) {
@@ -527,6 +522,7 @@ export async function executeCli(
           cliContext,
           platform,
           netOffset: Number(env.KB_NET_OFFSET) || 0,
+          platformRoot,
           presenter,
           runWithMiddleware: async (run) => {
             const runtime = await runtimeFactory(runtimeInitOptions);
@@ -547,6 +543,7 @@ interface DispatchPluginParams {
   flagsObj: ReturnType<typeof parseArgs>["flagsObj"];
   cliContext: CliExecutionContext;
   platform: PlatformContainer;
+  platformRoot?: string;
   netOffset: number;
   presenter: Presenter;
   runWithMiddleware: (run: () => Promise<number>) => Promise<number>;
@@ -591,6 +588,7 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
     const pluginExitCode = await executePlugin({
       context: p.cliContext,
       netOffset: p.netOffset,
+      platformRoot: p.platformRoot,
       commandId,
       argv: p.actualRest,
       flags: { ...p.global, ...p.flagsObj },

@@ -1,6 +1,10 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { IServiceTransport } from './adapters/service-transport.js';
 import { ServicePortConfigError } from './errors.js';
 import { getHostServiceAddress } from './host-service-address.js';
+import { createErrorEnvelope } from './error-envelope/catalog.js';
+import { ErrorEnvelopeError } from './error-envelope/types.js';
 
 /** Canonical listener settings for the Gateway service across all launchers. */
 export const GATEWAY_SERVICE_NETWORK = {
@@ -28,9 +32,96 @@ export interface ResolvedServiceListenAddress {
 
 export interface GatewayServiceAddressOptions {
   gatewayUrl?: string;
+  sessionGatewayUrl?: string;
   gatewayPort?: string;
   gatewayHost?: string;
   netOffset: number;
+}
+
+export interface CliGatewayTarget {
+  gatewayUrl: string;
+  platformRoot?: string;
+  installationId?: string;
+}
+
+/** Resolve and verify the Gateway selected by the active installed platform root. */
+export async function resolveCliGatewayTarget(
+  platformRoot: string | undefined,
+  options: GatewayServiceAddressOptions,
+  transport?: Pick<IServiceTransport, 'listenAddress'>,
+): Promise<CliGatewayTarget> {
+  const installation = platformRoot ? await readInstalledPlatformIdentity(platformRoot) : undefined;
+  const gatewayUrl = options.gatewayUrl
+    ? resolveGatewayServiceAddress(undefined, options)
+    : installation
+      ? installation.gatewayUrl
+      : options.sessionGatewayUrl
+        ? resolveGatewayServiceAddress(undefined, { ...options, gatewayUrl: options.sessionGatewayUrl })
+        : resolveGatewayServiceAddress(transport, options);
+
+  if (platformRoot && installation?.id) {
+    let response: Response;
+    try {
+      response = await fetch(`${gatewayUrl}/health/identity`, { signal: AbortSignal.timeout(2000) });
+    } catch {
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_HOST_UNREACHABLE', {
+        details: { address: new URL(gatewayUrl).origin },
+        hint: `Run "kb-create start --platform-root ${platformRoot}" and retry the command.`,
+      }));
+    }
+    let identity: { installationId?: string } = {};
+    if (response.ok) {
+      try {
+        identity = await response.json() as typeof identity;
+      } catch {
+        throw new ErrorEnvelopeError(createErrorEnvelope('KB_HOST_IDENTITY_MISMATCH', {
+          details: {
+            expectedInstallationId: installation.id,
+            actualInstallationId: 'unknown',
+            expectedPlatformRoot: platformRoot,
+          },
+        }));
+      }
+    }
+    if (identity.installationId !== installation.id) {
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_HOST_IDENTITY_MISMATCH', {
+        details: {
+          expectedInstallationId: installation.id,
+          actualInstallationId: identity.installationId ?? 'unknown',
+          expectedPlatformRoot: platformRoot,
+        },
+      }));
+    }
+  }
+
+  return {
+    gatewayUrl,
+    ...(platformRoot ? { platformRoot } : {}),
+    ...(installation?.id ? { installationId: installation.id } : {}),
+  };
+}
+
+export async function readInstalledPlatformIdentity(platformRoot: string): Promise<{ id: string; gatewayUrl: string } | undefined> {
+  const receiptPath = path.join(platformRoot, '.kb', 'v2', 'receipt.json');
+  let receipt: { id?: string; verification?: { hostHealthUrl?: string } };
+  try {
+    receipt = JSON.parse(await readFile(receiptPath, 'utf8')) as typeof receipt;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_INSTALL_RECEIPT_UNAVAILABLE', {
+      cause: `The active platform receipt at ${receiptPath} could not be parsed.`,
+    }));
+  }
+  if (!receipt.id || !receipt.verification?.hostHealthUrl) {
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_INSTALL_RECEIPT_UNAVAILABLE', {
+      cause: `The active platform receipt at ${receiptPath} has no installation ID or verified Gateway URL.`,
+    }));
+  }
+  const healthUrl = new URL(receipt.verification.hostHealthUrl);
+  healthUrl.pathname = healthUrl.pathname.replace(/\/?health$/, '');
+  healthUrl.search = '';
+  healthUrl.hash = '';
+  return { id: receipt.id, gatewayUrl: healthUrl.toString().replace(/\/$/, '') };
 }
 
 /** Resolve the HTTP URL that CLI children use to reach the Gateway listener. */

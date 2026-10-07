@@ -8,6 +8,8 @@ import {
   createProjectRegistry,
 } from "@kb-labs/core-project-registry";
 import { failWithEnvelope } from "../project/project-support";
+import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { SessionManager } from '@kb-labs/cli-runtime/gateway';
 
 type Client = "claude" | "codex" | "cursor";
 type ConfigFlags = { json: { type: "boolean"; description?: string } };
@@ -99,10 +101,8 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
       const host = config.host as Record<string, unknown> | undefined;
       const access = gateway?.access as Record<string, unknown> | undefined;
       const local = access?.mode === "local" || host?.auth === "off";
-      const port = Number(gateway?.port ?? process.env.GATEWAY_PORT ?? 4000);
-      const origin = (
-        process.env.GATEWAY_URL ?? `http://127.0.0.1:${port}`
-      ).replace(/\/$/, "");
+      const gatewayTarget = await resolveActiveGateway({ cwd, env: process.env, configuredGatewayPort: gateway?.port !== undefined ? String(gateway.port) : undefined });
+      const origin = gatewayTarget.gatewayUrl;
       const url = `${origin}/api/v1/projects/${encodeURIComponent(project.id)}/mcp`;
       const body = {
         ok: true as const,

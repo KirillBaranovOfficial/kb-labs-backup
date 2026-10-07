@@ -51,7 +51,7 @@ export interface SessionCredentials {
  * Gateway client configuration.
  */
 export interface GatewayClientConfig {
-  /** Gateway URL. @default from credentials.json or "http://localhost:4000" */
+  /** Gateway URL selected by the CLI active-root resolver. */
   gatewayUrl: string;
   /** Timeout for HTTP requests in ms. @default 30000 */
   requestTimeoutMs?: number;
