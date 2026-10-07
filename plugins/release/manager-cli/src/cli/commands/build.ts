@@ -71,9 +71,9 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         const msg = `No packages found${flags.scope ? ` matching scope: ${flags.scope}` : ''}`;
-        if (flags.json) { return { ok: true, result: { failed: [], results: [], message: msg } }; }
+        if (flags.json) { return { failed: [], results: [], message: msg }; }
         else { ctx.ui?.write?.(msg); }
-        return { ok: true, result: { ok: true, failed: [], results: [] } };
+        return { ok: true, failed: [], results: [] };
       }
 
       const effectiveConfig = flags.flow ? mergeConfigWithFlow(config, flags.flow) : config;
@@ -131,8 +131,8 @@ export default defineCommand({
 
       if (flags.json) {
         return ok
-          ? { ok: true, result: { ok, failed, results } }
-          : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release build failed.', hint: 'Inspect the failed packages in the result, resolve their build errors, then rerun `kb release build`.' }, result: { ok, failed, results } };
+          ? { ok, failed, results }
+          : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release build failed.', hint: 'Inspect the failed packages in the result, resolve their build errors, then rerun `kb release build`.' } };
       }
 
       ctx.ui?.sideBox?.({
@@ -141,7 +141,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok: true, result: { ok, failed, results } } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release build --help` to review its inputs and recovery steps, then retry." }, result: { ok, failed, results } };
+      return ok ? { ok, failed, results } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release build --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

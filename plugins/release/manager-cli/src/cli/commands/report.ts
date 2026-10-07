@@ -68,7 +68,7 @@ export default defineCommand({
         });
 
         if (flags.json) {
-          return { ok: true, result: report };
+          return report;
         } else {
           if (!ctx.ui) { throw new Error('UI not available'); }
           ctx.ui?.sideBox?.({
@@ -78,7 +78,7 @@ export default defineCommand({
           });
         }
 
-        return report.result.ok ? { ok: true, result: { report } } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release report --help` to review its inputs and recovery steps, then retry." }, result: { report } };
+        return report.result.ok ? { report } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release report --help` to review its inputs and recovery steps, then retry." } };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return handleReportNotFound(flags, ctx);

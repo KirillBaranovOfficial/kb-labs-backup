@@ -52,7 +52,7 @@ describe('release:checks', () => {
 
     const result = await checksCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
   });
 
   it('CB-02 (regression): a failed optional check must not fail the overall run — ' +
@@ -68,10 +68,8 @@ describe('release:checks', () => {
 
     const result = await checksCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const out = result.result as Record<string, unknown>;
-    expect(out.ok).toBe(true);
-    expect(out.failed).toEqual(['pack-install']);
+    expect(result).toMatchObject({ ok: true, failed: ['pack-install'] });
+    expect(result).not.toHaveProperty('result');
   });
 
   it('CB-03: a failed required (non-optional) check still fails the overall run', async () => {
@@ -84,10 +82,10 @@ describe('release:checks', () => {
 
     const result = await checksCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(false);
-    const out = result.result as Record<string, unknown>;
-    expect(out.ok).toBe(false);
-    expect(out.failed).toEqual(['dist-exports']);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { diagnostics: [expect.objectContaining({ message: expect.stringContaining('dist-exports') })] },
+    });
   });
 
   it('CB-04: --flow selects flow checks instead of the global check list', async () => {
@@ -108,7 +106,7 @@ describe('release:checks', () => {
 
     const result = await checksCommand.execute(ctx as never, mockCLIInput({ flags: { json: true, flow: 'platform' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     expect(vi.mocked(runReleaseChecks).mock.calls[0]?.[0]).toEqual([
       { id: 'dist-exports', command: 'bash', args: ['scripts/gates/check-dist-exports.sh'] },
     ]);
@@ -132,11 +130,15 @@ describe('release:checks', () => {
 
     const result = await checksCommand.execute(ctx as never, mockCLIInput({ flags: { json: true, flow: 'platform' } }));
 
-    expect(result.ok).toBe(false);
-    const out = result.result as { failed: string[]; report: { failures: Array<{ classification: string; package: string }> } };
-    expect(out.failed).toEqual(['pack-install']);
-    expect(out.report.failures.map(f => f.classification)).toEqual(['environment', 'suspected-flake']);
-    expect(out.report.failures.map(f => f.package)).toEqual(['a', 'b']);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        diagnostics: [
+          expect.objectContaining({ message: expect.stringContaining('pack-install (a)'), path: '/p/a' }),
+          expect.objectContaining({ message: expect.stringContaining('pack-install (b)'), path: '/p/b' }),
+        ],
+      },
+    });
   });
 
   it('CB-05: --preflight failing stops before checks run; without the flag preflight is never invoked', async () => {
@@ -151,11 +153,11 @@ describe('release:checks', () => {
     const ctx = createMockContext({ ui, cwd: '/project' });
     const result = await checksCommand.execute(ctx as never, mockCLIInput({ flags: { json: true, preflight: true } }));
 
-    expect(result.ok).toBe(false);
     expect(runReleaseChecks).not.toHaveBeenCalled();
-    const out = result.result as { failed: string[]; report: { stages: Array<{ stage: string; status: string }> } };
-    expect(out.failed).toEqual(['preflight:docker']);
-    expect(out.report.stages.map(s => `${s.stage}:${s.status}`)).toEqual(['preflight:failed', 'checks:not-run']);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { diagnostics: [expect.objectContaining({ message: expect.stringContaining('preflight:docker') })] },
+    });
 
     vi.mocked(runReleaseChecks).mockResolvedValue([{ id: 'x', ok: true }] as never);
     const { ui: ui2 } = createCapturedUI();
@@ -168,7 +170,7 @@ describe('release:checks', () => {
     vi.mocked(runReleaseChecks).mockResolvedValue([{ id: 'x', ok: true }] as never);
     const { ui } = createCapturedUI();
     const result = await checksCommand.execute(createMockContext({ ui, cwd: '/project' }) as never, mockCLIInput({ flags: { json: true, preflight: true } }));
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     expect(runReleaseChecks).toHaveBeenCalledTimes(1);
   });
 });

@@ -56,7 +56,7 @@ describe('release:git', () => {
 
     const result = await gitCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ committed: true, pushed: true });
     expect(vi.mocked(commitAndTagRelease)).toHaveBeenCalledOnce();
   });
 
@@ -68,7 +68,7 @@ describe('release:git', () => {
 
     const result = await gitCommand.execute(ctx as never, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ committed: false, tagged: [], pushed: false });
     expect(vi.mocked(commitAndTagRelease)).not.toHaveBeenCalled();
   });
 
@@ -78,10 +78,8 @@ describe('release:git', () => {
 
     const result = await gitCommand.execute(ctx as never, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const out = result.result as Record<string, unknown>;
-    expect(out.committed).toBe(true);
-    expect(Array.isArray(out.tagged)).toBe(true);
+    expect(result).not.toHaveProperty('result');
+    expect(result).toMatchObject({ committed: true, tagged: expect.any(Array), pushed: true });
   });
 
   it('GB-05: --flow is forwarded to commitAndTagRelease as flowName + tagPattern (regression: tag defaulted to "release-vX" instead of "<flow>-vX")', async () => {
@@ -105,7 +103,7 @@ describe('release:git', () => {
 
     const result = await gitCommand.execute(ctx as never, mockCLIInput({ flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ summary: expect.stringContaining('2 package(s)'), operations: expect.any(Array) });
     expect(vi.mocked(commitAndTagRelease)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('2 package');

@@ -141,7 +141,7 @@ export default defineCommand({
       const firstPkg = plan.packages[0];
 
       if (flags.json) {
-        return { ok: true, result: plan };
+        return plan;
       } else {
         ctx.ui?.sideBox?.({
           title: 'Release Plan',
@@ -150,7 +150,7 @@ export default defineCommand({
         });
       }
 
-      return { ok: true, result: { plan } };
+      return { plan };
     },
   },
 });

@@ -40,12 +40,11 @@ export default defineCommand({
       }
 
       if (flags.json) {
-        const response = { ok: true as const, result };
-        return response;
+        return result;
       }
 
       ctx.ui?.write?.(`OK: ${flags.name} installs and imports cleanly`);
-      return { ok: true, result };
+      return result;
     },
   },
 });

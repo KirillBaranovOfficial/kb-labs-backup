@@ -373,7 +373,7 @@ export default defineCommand({
           sections: [{ items: [`${ctx.ui.symbols.warning} No packages to release`] }],
           status: 'info',
         });
-        return { ok: true };
+        return {};
       }
 
       // 3. Show plan table
@@ -388,7 +388,7 @@ export default defineCommand({
             sections: [{ items: [`${ctx.ui.symbols.info} Cancelled`] }],
             status: 'info',
           });
-          return { ok: true };
+          return {};
         }
       }
 
@@ -430,7 +430,7 @@ export default defineCommand({
 
       reportPipelineResult(ctx, flags, result, dryRun, skipPublish);
 
-      return result.success ? { ok: true, result: { report: result.report } } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release run --help` to review its inputs and recovery steps, then retry." }, result: { report: result.report } };
+      return result.success ? { report: result.report } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release run --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

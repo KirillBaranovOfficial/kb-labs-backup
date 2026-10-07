@@ -33,7 +33,7 @@ describe('release:rollback', () => {
 
     const result = await rollbackCommand.execute(ctx as never, mockCLIInput<RollbackFlags>());
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ message: 'Rollback completed' });
     expect(restoreSnapshot).toHaveBeenCalledOnce();
   });
 
@@ -43,8 +43,7 @@ describe('release:rollback', () => {
 
     const result = await rollbackCommand.execute(ctx as never, mockCLIInput<RollbackFlags>({ flags: { json: true } }));
 
-    expect(result.result).toBeDefined();
-    expect((result.result as { message: string }).message).toBe('Rollback completed');
+    expect(result).toEqual({ message: 'Rollback completed' });
   });
 
   it('ROLL-03: --dry-run shows intent, restoreSnapshot is NOT called', async () => {
@@ -53,7 +52,7 @@ describe('release:rollback', () => {
 
     const result = await rollbackCommand.execute(ctx as never, mockCLIInput<RollbackFlags>({ flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ summary: 'Rollback last release from backup snapshot', operations: expect.any(Array) });
     expect(restoreSnapshot).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

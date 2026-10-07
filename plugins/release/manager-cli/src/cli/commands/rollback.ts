@@ -36,7 +36,7 @@ export default defineCommand({
       ctx.platform?.logger?.info?.('Release rollback completed');
 
       if (flags.json) {
-      return { ok: true, result: { message: 'Rollback completed' } };
+      return { message: 'Rollback completed' };
       } else {
         ctx.ui?.sideBox?.({
           title: 'Rollback',
@@ -52,7 +52,7 @@ export default defineCommand({
       }
 
       // Return exit code 4 for rollback executed
-      return { ok: true, result: { message: 'Rollback completed' } };
+      return { message: 'Rollback completed' };
     },
   },
 });

@@ -110,7 +110,7 @@ export default defineCommand({
       if (plan.packages.length === 0) {
         const msg = 'No packages in release plan — nothing to stage';
         if (!flags.json) ctx.ui?.write?.(msg);
-        return { ok: true, result: { registry, published: [], alreadyPublished: [], failed: [] } };
+        return { registry, published: [], alreadyPublished: [], failed: [] };
       }
 
       const fileConfig = await useConfig<ReleaseConfig>();
@@ -180,11 +180,11 @@ export default defineCommand({
       if (result.failed.length > 0) {
         stageLoader.fail(`${result.failed.length}/${packagesToPublish.length} package(s) failed to stage`);
         if (flags.json) {
-          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'The command operation failed.', hint: "Run `kb release stage plan --help` to review the failure and next steps." }, result: { registry, ...result } };
+          return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'The command operation failed.', hint: "Run `kb release stage plan --help` to review the failure and next steps." } };
         } else {
 
         }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release stage plan --help` to review its inputs and recovery steps, then retry." }, result: { registry, published: result.published, alreadyPublished: result.alreadyPublished, failed: result.failed } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release stage plan --help` to review its inputs and recovery steps, then retry." } };
       }
 
       stageLoader.succeed(`Staged ${result.published.length} package(s) (${result.alreadyPublished.length} already staged)`);
@@ -197,11 +197,11 @@ export default defineCommand({
       };
 
       if (flags.json) {
-        const response = { ok: true as const, result: payload };
+        const response = payload;
         return response;
       }
 
-      return { ok: true, result: payload };
+      return payload;
     },
   },
 });

@@ -127,9 +127,9 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         const msg = `No packages found${flags.scope ? ` matching scope: ${flags.scope}` : ''}`;
-        if (flags.json) { return { ok: true, result: { committed: false, tagged: [], pushed: false, message: msg } }; }
+        if (flags.json) { return { committed: false, tagged: [], pushed: false, message: msg }; }
         else { ctx.ui?.write?.(msg); }
-        return { ok: true, result: { committed: false, tagged: [], pushed: false } };
+        return { committed: false, tagged: [], pushed: false };
       }
 
       const scopePath = await resolveScopePath(repoRoot, flags.scope ?? 'root');
@@ -158,8 +158,7 @@ export default defineCommand({
       }
 
       if (flags.json) {
-        return { ok: true, result: result };
-        return { ok: true, result };
+        return result;
       }
 
       ctx.ui?.sideBox?.({
@@ -168,7 +167,7 @@ export default defineCommand({
         status: 'success',
       });
 
-      return { ok: true, result };
+      return result;
     },
   },
 });
