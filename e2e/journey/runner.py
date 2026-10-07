@@ -32,7 +32,7 @@ from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps,
                             run_last_admin_guard_steps, run_password_and_session_steps)
 from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
 from scoreboard import release_claims_for_case, write_scoreboards
-from invocations import (decode_ux_error_result, decode_ux_success_result,
+from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
                          invocation_context, open_http, read_ux_cli_result, run_command, run_pty_command,
                          start_background_command)
 
@@ -570,15 +570,18 @@ def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     finally:
         os.replace(hidden_receipt, receipt)
     restored, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
+    restored_message = "doctor did not return a healthy result after restoring the receipt"
     try:
         restored_payload = decode_ux_success_result(read_ux_cli_result(restored.stdout, restored.returncode))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         restored_payload = {}
+        restored_message = describe_cli_failure("kb-create doctor", restored.stdout, restored.stderr,
+                                                restored.returncode)
     restored_ok = (restored.returncode == 0 and restored_payload.get("installed") is True and restored_payload.get("running") is True
                    and restored_payload.get("reachable") is True
                    and restored_payload.get("platform", {}).get("ok") is True)
     record_case("doctor recovers after receipt restore", restored_ok,
-               "doctor did not return a healthy result after restoring the receipt", cases=["PC-003.3"])
+               restored_message, cases=["PC-003.3"])
 
 
 
@@ -831,7 +834,7 @@ def main():
         install_scenario = "custom" if VARIANT.endswith("secured") else SCENARIO
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
                 "--request-platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
-                "--registry", REGISTRY]
+                "--registry", REGISTRY, "--project-root", str(PROJECT)]
         if VARIANT.endswith("secured"):
             answers = json.dumps({
                 "access.mode": "secured",
@@ -1271,8 +1274,8 @@ def main():
         )
         project_result: dict[str, str] = {}
         def add_journey_project() -> str | None:
-            project_add, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project add "$1" --json',
-                                  "journey", str(PROJECT)], env=env, cwd=PROJECT, timeout=90)
+            project_add, _ = run(["bash", "-c", '. "$HOME/.profile"; kb project show --json'],
+                                 env=env, cwd=PROJECT, timeout=90)
             try:
                 payload = decode_ux_success_result(read_ux_cli_result(project_add.stdout, project_add.returncode))
                 project_id = find_project_id(payload)
@@ -1282,10 +1285,10 @@ def main():
                 project_id = ""
             project_result["id"] = project_id
             if project_add.returncode != 0:
-                return f"kb project add exited {project_add.returncode}: {' '.join(project_add.stdout.split())[-500:]}"
-            return None if project_id else "project registration did not return a project ID"
+                return f"kb project show exited {project_add.returncode}: {' '.join(project_add.stdout.split())[-500:]}"
+            return None if project_id else "kb project show did not find the project registered by installation"
 
-        outer_graph.flow("kb project add", "project", "projects", add_journey_project,
+        outer_graph.flow("verify installed project registration", "project", "projects", add_journey_project,
                          record_empty_success=False)
         capture_case_failure()
         project_id = project_result.get("id", "")

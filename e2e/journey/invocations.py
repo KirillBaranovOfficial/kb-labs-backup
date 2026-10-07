@@ -67,6 +67,23 @@ def read_ux_cli_result(stdout: str, returncode: int) -> dict[str, Any]:
     return value
 
 
+def describe_cli_failure(command: str, stdout: str, stderr: str, returncode: int) -> str:
+    """Describe a failed CLI invocation using its typed error when available."""
+    detail = " ".join(f"{stdout} {stderr}".split())
+    try:
+        value = json.loads(stdout)
+    except json.JSONDecodeError:
+        value = None
+    if isinstance(value, dict) and isinstance(value.get("error"), dict):
+        error = value["error"]
+        detail = "; ".join(part for part in (
+            str(error.get("code") or ""),
+            str(error.get("message") or ""),
+            f"hint: {error['hint']}" if error.get("hint") else "",
+        ) if part)
+    return f"{command} exited {returncode}" + (f": {detail}" if detail else ": no output")
+
+
 def read_ux_http_result(body: bytes, status: int) -> dict[str, Any]:
     """Parse an HTTP JSON result and require its status to carry a UX envelope."""
     try:
