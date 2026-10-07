@@ -49,6 +49,28 @@ class FakeGitHub:
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_failed_setup_producer_reports_typed_reason_and_blocks_dependents(self):
+        journey = Journey("secured", "setup-producer-failure")
+        calls = []
+        graph = FlowGraph(
+            journey,
+            {"install": (), "project": ("project-registered",), "adapter": ("project-registered",)},
+            state_producers={"project-registered": "install"},
+        )
+
+        def failed_setup():
+            raise RuntimeError("`kb project add /work/app` exited 1: KB_PROJECT_UNKNOWN; project root is missing; hint: create the project directory")
+
+        graph.flow("journey.setup project registration", "install", "platform.install", failed_setup)
+        graph.flow("project commands", "project", "projects", lambda: calls.append("project"))
+        graph.flow("adapter commands", "adapter", "adapter", lambda: calls.append("adapter"))
+
+        self.assertEqual(calls, [])
+        self.assertEqual([step.status for step in journey.steps], ["FAIL", "BLOCKED", "BLOCKED"])
+        self.assertIn("KB_PROJECT_UNKNOWN", journey.steps[0].message)
+        self.assertIn("hint: create the project directory", journey.steps[0].message)
+        self.assertIn("KB_PROJECT_UNKNOWN", journey.steps[1].message)
+
     def test_service_runner_main_consumes_full_list_and_selection_closure(self):
         declared = [
             ("selected analytics check", "analytics", lambda: None, ["S-201.3"]),

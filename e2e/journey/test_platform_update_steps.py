@@ -70,7 +70,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         elif args[1] == "status":
             stdout = json.dumps({"ok": True, "running": True, "reachable": True})
         elif args[1] == "restart":
-            stdout = json.dumps({"ok": True, "hostRestarted": True})
+            stdout = json.dumps({"ok": True, "operation": "restart", "host": {"pid": 1234}})
         elif args[1] == "doctor":
             stdout = json.dumps({"ok": True, "platform": {"ok": True}})
         elif args[1] == "adapter":
