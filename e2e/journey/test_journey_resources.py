@@ -30,3 +30,23 @@ class JourneyResourcesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JourneyScriptPathsTest(unittest.TestCase):
+    """The runner image mirrors the repository, so scripts must resolve through journey_module."""
+
+    def test_no_hardcoded_image_paths_for_journey_scripts(self):
+        journey_dir = Path(__file__).resolve().parent
+        offenders = []
+        for source in sorted(journey_dir.glob("*.py")):
+            if source.name.startswith("test_"):
+                continue
+            for number, line in enumerate(source.read_text().splitlines(), 1):
+                if "/opt/kb-journey" in line:
+                    offenders.append(f"{source.name}:{number}")
+        self.assertEqual(offenders, [], "use journey_resources.journey_module() instead of image paths")
+
+    def test_runner_scripts_resolve_to_existing_files(self):
+        from journey_resources import journey_module
+        for name in ("runner.py", "service_runner.py", "entrypoint.py"):
+            self.assertTrue(journey_module(name).is_file(), name)

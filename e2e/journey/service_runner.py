@@ -47,6 +47,7 @@ from mcp_project_steps import (
     unknown_tool,
 )
 from platform_state_dump import archive_service_logs
+from journey_resources import journey_module
 
 
 BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -333,7 +334,7 @@ def expect(path: str, expected: set[int], capability: str, *, method="GET", payl
         reason = f"{capability} unavailable: {method} {path} returned HTTP {status}"
         if detail:
             reason += f" ({detail})"
-        reason += "; build and start the capability, then rerun `python3 /opt/kb-journey/service_runner.py`"
+        reason += f"; build and start the capability, then rerun `python3 {journey_module('service_runner.py')}`"
         return reason
     return None
 

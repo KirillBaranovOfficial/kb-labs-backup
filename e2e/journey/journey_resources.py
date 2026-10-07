@@ -14,6 +14,11 @@ def workspace_resource(*parts: str) -> Path:
     return resource_root().joinpath(*parts)
 
 
+def journey_module(name: str) -> Path:
+    """Return a journey script by name; the image keeps the repository layout."""
+    return workspace_resource("e2e", "journey", name)
+
+
 def installer_case_fixture_root() -> Path:
     return workspace_resource("e2e", "platform", "fixtures", "installer-cases")
 

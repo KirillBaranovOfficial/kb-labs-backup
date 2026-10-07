@@ -21,7 +21,7 @@ from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import run_doctor_root_isolation_step, run_installer_case_steps, run_uninstall_decline_step
-from journey_resources import case_catalog_root
+from journey_resources import case_catalog_root, journey_module
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import FlowGraph, Journey, record_candidate_provenance, record_runner_failure
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
@@ -1437,7 +1437,7 @@ def main():
         service_env["KB_JOURNEY_STATES"] = json.dumps(outer_graph.states)
         service_env.pop("KB_JOURNEY_PROJECT_B_ID", None)
         service_env.pop("KB_JOURNEY_PROJECT_B_ROOT", None)
-        result, elapsed = run(["python3", "/opt/kb-journey/service_runner.py", "--mode", mode, "--output", str(service_report)],
+        result, elapsed = run(["python3", str(journey_module("service_runner.py")), "--mode", mode, "--output", str(service_report)],
                              env=service_env, timeout=900)
         TIMES[f"{mode} service journeys"] = elapsed
         if service_report.exists():

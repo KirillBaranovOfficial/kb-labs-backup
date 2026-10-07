@@ -12,7 +12,7 @@ from pathlib import Path
 
 from platform_state_dump import dump_platform_state
 from scoreboard import write_scoreboards
-from journey_resources import case_catalog_root
+from journey_resources import case_catalog_root, journey_module
 
 
 def write_case_scoreboards(summary_path: str | Path) -> None:
@@ -118,7 +118,7 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
 def main() -> int:
     variant = os.getenv("KB_JOURNEY_VARIANT", "default")
     mode = "secured" if variant.endswith("secured") else "local"
-    runner_path = Path("/opt/kb-journey/runner.py")
+    runner_path = journey_module("runner.py")
     summary_path = os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")
     return run_runner(runner_path, summary_path, mode)
 
