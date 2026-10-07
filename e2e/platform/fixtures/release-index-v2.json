@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "a9b7eb902f7db6586cf2ff66f552bbc7e08edb9e26ead3247d4397ab0e7c8990",
+  "digest": "758c18121f6c18ce2cce8c65ad00f933980e07adc261feda5af85055bcc4b208",
   "channels": {
     "stable": "2.120.1"
   },
