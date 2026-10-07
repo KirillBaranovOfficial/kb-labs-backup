@@ -105,7 +105,7 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 			},
 		},
 		Custom: []yamlCustomCheck{
-			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript"},
+			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}},
 		},
 	}
 
@@ -124,6 +124,9 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 	}
 	if len(cfg.Custom) != 1 || cfg.Custom[0].Name != "lint" {
 		t.Fatalf("mapped custom checks = %#v", cfg.Custom)
+	}
+	if len(cfg.Custom[0].Categories) != 1 || cfg.Custom[0].Categories[0] != "adapter" {
+		t.Fatalf("mapped custom check categories = %#v", cfg.Custom[0].Categories)
 	}
 
 	preset := mapPreset(raw.Presets["custom"])

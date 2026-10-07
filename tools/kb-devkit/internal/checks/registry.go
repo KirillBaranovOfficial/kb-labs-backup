@@ -48,6 +48,7 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 			fix:           c.Fix,
 			phase:         phase,
 			language:      c.Language,
+			categories:    c.Categories,
 			workspaceRoot: workspaceRoot,
 			checkConfig:   packCfg,
 		})
