@@ -122,6 +122,8 @@ def load_evidence(directory: Path, modes: Iterable[str]) -> dict[str, dict[str, 
             continue
         if not isinstance(data, dict):
             continue
+        if data.get("case_run", {}).get("partial") is True:
+            continue
         if path.name.startswith("studio-playwright-"):
             mode = "secured" if "secured" in path.stem else "local"
             if mode in evidence:
@@ -167,6 +169,20 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
         path.name.startswith((f"service-{mode}", f"service-auth-{mode}", f"installer-case-{mode}",
                              f"platform-{mode}", f"studio-playwright-{mode}"))
         for path in directory.glob("*.json"))] if directory.is_dir() else []
+    partial_selections = []
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.json")):
+            if path.name.startswith("case-scoreboard"):
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            case_run = data.get("case_run", {}) if isinstance(data, dict) else {}
+            if case_run.get("partial") is True:
+                partial_selections.extend(case_run.get("selection", []))
+    if partial_selections:
+        evidence = {mode: defaultdict(list) for mode in modes}
     rows = []
     planned_count = 0
     historical_count = 0
@@ -190,6 +206,8 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str]) -> di
     return {
         "schema": "kb.journey-case-scoreboard/v1",
         "modes": modes,
+        "partial": bool(partial_selections),
+        "selection": sorted(set(partial_selections)),
         "observedModes": observed_modes,
         "releaseCases": {"fullyGreen": sum(row["status"] == "Fully green" for row in release_cases),
                          "total": len(release_cases)},
@@ -209,6 +227,7 @@ def render_markdown(scoreboard: dict) -> str:
     release = scoreboard["releaseCases"]
     active = scoreboard["activeCases"]
     lines = [f"# Product case scoreboard ({modes})", "",
+             (f"**Partial run**; selection: {', '.join(scoreboard['selection'])}." if scoreboard.get("partial") else "Full run."),
              f"Release cases: **{release['fullyGreen']} / {release['total']}** fully green.",
              f"All active cases: **{active['fullyGreen']} / {active['total']}** fully green.",
              f"Planned cases: **{scoreboard['plannedCount']}**.",
@@ -259,6 +278,10 @@ def render_delta(previous_dir: Path, current_dir: Path) -> str:
             continue
         previous = json.loads(previous_path.read_text(encoding="utf-8"))
         current = json.loads(current_path.read_text(encoding="utf-8"))
+        if previous.get("partial") or current.get("partial"):
+            selection = sorted(set(previous.get("selection", [])) | set(current.get("selection", [])))
+            lines.extend(["", f"{mode}: delta omitted because a scoreboard is partial (selection: {', '.join(selection)})."])
+            continue
         if mode not in previous.get("observedModes", []) or mode not in current.get("observedModes", []):
             continue
         before_release = _fully_green(previous, mode)

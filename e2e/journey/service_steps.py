@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 import traceback
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,11 +46,17 @@ class Journey:
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.started = time.monotonic()
         self.steps: list[StepResult] = []
+        self.selected_steps = set(filter(None, os.getenv("KB_JOURNEY_SELECTED_STEPS", "").split(",")))
+        self.selection = list(filter(None, os.getenv("KB_JOURNEY_CASES", "").split(",")))
 
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
-             details: Callable[[], dict[str, Any]] | None = None) -> StepResult:
-        started = time.monotonic()
+             details: Callable[[], dict[str, Any]] | None = None, *, force: bool = False) -> StepResult:
         case_ids = list(cases)
+        if self.selected_steps and not force and (not case_ids or not self.selected_steps.intersection(case_ids)):
+            result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, "not selected", case_ids)
+            self.steps.append(result)
+            return result
+        started = time.monotonic()
         try:
             with invocation_context(step_id=",".join(case_ids) or name):
                 message = check()
@@ -73,8 +80,16 @@ class Journey:
         self.steps.append(result)
         return result
 
+    def skipped(self, name: str, capability: str, message: str = "not selected") -> StepResult:
+        result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, message, [])
+        self.steps.append(result)
+        return result
+
     def blocked(self, name: str, capability: str, reason: str, cases: Iterable[str] = ()) -> StepResult:
-        result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, reason, list(cases))
+        case_ids = list(cases)
+        if self.selected_steps and (not case_ids or not self.selected_steps.intersection(case_ids)):
+            return self.skipped(name, capability)
+        result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, reason, case_ids)
         self.steps.append(result)
         return result
 
@@ -85,7 +100,7 @@ class Journey:
         status = "FAIL" if failed else "BLOCKED" if blocked else "PASS"
         claims = {}
         for step in self.steps:
-            if step.status == "BLOCKED":
+            if step.status not in {"PASS", "FAIL"}:
                 continue
             for case_id in step.cases:
                 previous = claims.get(case_id)
@@ -97,6 +112,8 @@ class Journey:
             "mode": self.mode,
             "claims": [{"claimId": case_id, "kind": "journey", "status": result} for case_id, result in sorted(claims.items())],
         }
+        if self.selection:
+            case_run.update({"partial": True, "selection": self.selection})
         return JourneyResult("kb.service-journey/v1", self.run_id, self.started_at,
                              round(time.monotonic() - self.started, 3), status, first,
                              [_step_dict(step) for step in self.steps], case_run)
@@ -114,11 +131,37 @@ class FlowGraph:
 
     def __init__(self, journey: Journey, dependencies: dict[str, tuple[str, ...]],
                  diagnostics_path: str | Path | None = None,
-                 states: dict[str, dict[str, object]] | None = None):
+                 states: dict[str, dict[str, object]] | None = None,
+                 selected_groups: Iterable[str] = (), state_producers: dict[str, str] | None = None):
         self.journey = journey
         self.dependencies = dependencies
         self.diagnostics_path = Path(diagnostics_path) if diagnostics_path else None
         self.states = dict(states or {})
+        self.selected_groups = set(selected_groups)
+        self.state_producers = dict(state_producers or {})
+
+    def dependency_closure(self) -> set[str]:
+        """Return selected groups plus the groups that produce their required states."""
+        groups = set(self.selected_groups)
+        pending = list(groups)
+        states: set[str] = set()
+        while pending:
+            group = pending.pop()
+            for state in self.dependencies.get(group, ()):
+                if state in states:
+                    continue
+                states.add(state)
+                producer = self.state_producers.get(state)
+                if producer and producer not in groups:
+                    groups.add(producer)
+                    pending.append(producer)
+        return groups
+
+    def _state_required(self, state: str, group: str) -> bool:
+        if not self.journey.selected_steps:
+            return True
+        groups = self.dependency_closure()
+        return group in groups or any(state in self.dependencies.get(name, ()) for name in groups)
 
     def _blocker(self, group: str) -> tuple[str, dict[str, object]] | None:
         for state in self.dependencies.get(group, ()):
@@ -132,6 +175,8 @@ class FlowGraph:
 
     def probe_state(self, state: str, group: str, step: str, check: Callable[[], str | None]) -> StepResult:
         """Run and record an explicit state precondition probe."""
+        if not self._state_required(state, group):
+            return self.journey.skipped(f"state probe: {state}", "journey.state")
         def checked() -> str | None:
             try:
                 return check()
@@ -139,7 +184,7 @@ class FlowGraph:
                 self._write_traceback(group, f"state probe: {state}")
                 raise
 
-        result = self.journey.step(f"state probe: {state}", "journey.state", checked)
+        result = self.journey.step(f"state probe: {state}", "journey.state", checked, force=True)
         self.states[state] = {
             "passed": result.status == "PASS",
             "evidence": "probe passed" if result.status == "PASS" else result.message,
@@ -158,8 +203,10 @@ class FlowGraph:
 
     def step(self, name: str, group: str, capability: str, check: Callable[[], str | None],
              cases: Iterable[str] = ()) -> StepResult:
-        blocker = self._blocker(group)
         case_ids = list(cases)
+        if self.journey.selected_steps and (not case_ids or not self.journey.selected_steps.intersection(case_ids)):
+            return self.journey.step(name, capability, lambda: None, cases=case_ids)
+        blocker = self._blocker(group)
         if blocker:
             state, evidence = blocker
             result = self.journey.blocked(
@@ -185,6 +232,11 @@ class FlowGraph:
              record_empty_success: bool = True) -> str:
         """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
         case_ids = list(cases)
+        if self.journey.selected_steps and case_ids and not self.journey.selected_steps.intersection(case_ids):
+            self.journey.skipped(name, capability)
+            return "SKIPPED"
+        if self.journey.selected_steps:
+            self.selected_groups.add(group)
         blocker = None if always_run else self._blocker(group)
         if blocker:
             state, evidence = blocker
@@ -199,7 +251,7 @@ class FlowGraph:
             outcome = action()
         except Exception as error:
             self._write_traceback(group, name)
-            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__)
+            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__, force=True)
             outcome = None
         emitted = self.journey.steps[start:]
         if isinstance(outcome, str):
@@ -235,7 +287,7 @@ def record_runner_failure(path: str | Path, mode: str, failure: str) -> JourneyR
     name, separator, message = failure.partition(": ")
     journey = Journey(mode, f"runner-{mode}")
     journey.step(name if separator else "journey runner", "journey.install",
-                 lambda: message if separator else failure or "journey failed before capability checks")
+                 lambda: message if separator else failure or "journey failed before capability checks", force=True)
     return journey.write_json(path)
 
 

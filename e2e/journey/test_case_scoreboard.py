@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scoreboard import build_scoreboard, load_cases, release_claims_for_case, render_delta, write_scoreboards
+from scoreboard import build_scoreboard, load_cases, release_claims_for_case, render_delta, render_markdown, write_scoreboards
 
 
 class CaseScoreboardTests(unittest.TestCase):
@@ -114,6 +114,26 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertEqual(combined["modes"], ["local", "secured"])
         self.assertEqual(combined["observedModes"], ["local"])
 
+    def test_partial_run_is_marked_and_never_contributes_case_evidence(self):
+        self.write_json("service-secured.json", {
+            "case_run": {"mode": "secured", "claims": [
+                {"claimId": "S-001.1", "status": "PASS"},
+                {"claimId": "S-001.2", "status": "PASS"}]},
+            "steps": [],
+        })
+        self.write_json("service-local.json", {
+            "case_run": {"mode": "local", "partial": True, "selection": ["S-001.1"],
+                         "claims": [{"claimId": "S-001.1", "status": "PASS"},
+                                    {"claimId": "S-001.2", "status": "PASS"}]},
+            "steps": [],
+        })
+        scoreboard = build_scoreboard(self.reports, self.catalog, ["local"])
+        case = next(item for item in scoreboard["cases"] if item["id"] == "S-001")
+        self.assertTrue(scoreboard["partial"])
+        self.assertEqual(scoreboard["selection"], ["S-001.1"])
+        self.assertEqual(case["status"], "Unclaimed")
+        self.assertIn("Partial run", render_markdown(scoreboard))
+
     def test_delta_reports_new_and_regressed_fully_green_cases(self):
         before, after = self.root / "before", self.root / "after"
         before.mkdir()
@@ -133,6 +153,20 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertIn("Regressed: S-001", delta)
         self.assertIn("All active: fully green 1/2 → 1/2", delta)
         self.assertLess(delta.index("local release cases:"), delta.index("All active:"))
+
+    def test_delta_omits_partial_runs_instead_of_reporting_regressions(self):
+        before, after = self.root / "before-partial", self.root / "after-full"
+        before.mkdir()
+        after.mkdir()
+        for directory, partial in ((before, True), (after, False)):
+            data = {"observedModes": ["local"], "partial": partial, "selection": ["S-001"],
+                    "releaseCases": {"fullyGreen": 0, "total": 1},
+                    "activeCases": {"fullyGreen": 0, "total": 2}, "plannedCount": 1,
+                    "historicalCount": 1, "cases": []}
+            (directory / "case-scoreboard-local.json").write_text(json.dumps(data), encoding="utf-8")
+        delta = render_delta(before, after)
+        self.assertIn("delta omitted because a scoreboard is partial", delta)
+        self.assertNotIn("Regressed:", delta)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
 from runner import login_and_configure_secured_admin
-from service_runner import (SERVICE_GROUPS, checks, configure_installed_cli_path, declared_capabilities,
+from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
                             request as request_result,
@@ -49,6 +49,81 @@ class FakeGitHub:
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_service_runner_main_consumes_full_list_and_selection_closure(self):
+        declared = [
+            ("selected analytics check", "analytics", lambda: None, ["S-201.3"]),
+            ("unselected mcp check", "mcp", lambda: None, ["S-140.1"]),
+        ]
+        for mode in ("local", "secured"):
+            for selected in (False, True):
+                with self.subTest(mode=mode, selected=selected), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory) / f"service-{mode}.json"
+                    inherited = json.dumps({
+                        "host-running": {"passed": True, "evidence": "stubbed"},
+                        "project-registered": {"passed": True, "evidence": "stubbed"},
+                    })
+                    env = {
+                        "KB_JOURNEY_PLATFORM_ROOT": str(Path(directory) / "platform"),
+                        "KB_JOURNEY_STATES": inherited,
+                    }
+                    if selected:
+                        env.update({"KB_JOURNEY_CASES": "S-201.3",
+                                    "KB_JOURNEY_SELECTED_STEPS": "S-201.3"})
+                    executed: list[str] = []
+
+                    def execute_declared_steps(journey, steps, step_mode, *, graph):
+                        for state, producer in STATE_PRODUCERS.items():
+                            graph.probe_state(state, producer, f"producer {state}", lambda: None)
+                        for name, capability, check, cases in steps:
+                            group = next(group for group, spec in SERVICE_GROUPS.items()
+                                         if capability in spec["capabilities"])
+                            result = graph.step(name, group, capability, check, cases=cases)
+                            if result.status == "PASS":
+                                executed.append(name)
+
+                    with patch("service_runner.checks", return_value=iter(declared)), \
+                            patch("service_runner.run_service_steps", side_effect=execute_declared_steps), \
+                            patch("service_runner.configure_installed_cli_path"), \
+                            patch("service_runner.restore_secured_cli_login", return_value=None), \
+                            patch("service_runner.run_analytics_steps"), \
+                            patch("service_runner.run_gateway_steps"), \
+                            patch("service_runner.archive_service_logs"), \
+                            patch("service_runner.PROJECT_ID", ""), \
+                            patch.dict(os.environ, env, clear=True), \
+                            patch("sys.argv", ["service_runner.py", "--mode", mode, "--output", str(output)]), \
+                            redirect_stdout(io.StringIO()):
+                        service_main()
+
+                    result = json.loads(output.read_text())
+                    expected = {"selected analytics check"} if selected else {
+                        "selected analytics check", "unselected mcp check"}
+                    self.assertEqual(set(executed), expected)
+                    self.assertEqual(len(executed), len(expected))
+                    status_by_name = {step["name"]: step["status"] for step in result["steps"]}
+                    if selected:
+                        self.assertEqual(status_by_name["unselected mcp check"], "SKIPPED")
+                        self.assertEqual(status_by_name["selected analytics check"], "PASS")
+                        self.assertEqual(status_by_name["state probe: fixtures-installed"], "PASS")
+                        self.assertEqual(status_by_name["state probe: marketplace-available"], "PASS")
+                        allowed_passes = {
+                            "selected analytics check",
+                            "state probe: fixtures-installed",
+                            "state probe: marketplace-available",
+                        }
+                        self.assertTrue(all(
+                            status == ("PASS" if name in allowed_passes else "SKIPPED")
+                            for name, status in status_by_name.items()
+                        ), status_by_name)
+
+    def test_checks_returns_a_reusable_list_for_both_modes(self):
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode):
+                declared = checks(mode)
+                self.assertIsInstance(declared, list)
+                first_pass = list(declared)
+                second_pass = list(declared)
+                self.assertEqual([step[0] for step in first_pass], [step[0] for step in second_pass])
+
     def test_agents_project_fixture_installs_through_marketplace(self):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"

@@ -14,6 +14,23 @@ KB_JOURNEY_ONLY=service-local:explore e2e/journey/run.sh --no-build
 KB_JOURNEY_ONLY=service-secured:explore e2e/journey/run.sh --no-build
 ```
 
+To confirm only the journey claims for selected case IDs or step IDs, add
+`KB_JOURNEY_CASES` to a single-mode run:
+
+```bash
+KB_JOURNEY_ONLY=service-secured:explore \
+  KB_JOURNEY_CASES="S-042,S-005.2" \
+  e2e/journey/run.sh --no-build
+```
+
+The selector resolves IDs from `qa cases coverage`, so a case ID expands to its
+journey/e2e-claimed steps and a step ID selects that claim directly. Unknown or
+unclaimed IDs stop the run with a usage error. Unselected named steps appear as
+`SKIPPED (not selected)` in the result. A filtered scoreboard lists the
+selection and marks itself partial; partial evidence does not count toward case
+status or full-run deltas. Run the normal mode without `KB_JOURNEY_CASES` to
+produce full scoreboard evidence.
+
 The local run verifies loopback access without login. The secured run creates
 an isolated admin during installation, creates and activates a member through
 the invite routes, and checks both roles in Studio. Each result is written to
