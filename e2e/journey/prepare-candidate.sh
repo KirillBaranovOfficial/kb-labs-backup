@@ -44,6 +44,7 @@ node "$ROOT/e2e/platform/prepare-release-index.mjs" \
   --packages-dir "$PACKAGES" \
   --registry-manifest "$ROOT/e2e/platform/registry-manifest.json" \
   --sealer "$OUT/kb-create-release-index" \
+  --binary-dir "$TARGET" \
   --prepare-script "$ROOT/tools/kb-create/scripts/prepare-release-index.mjs" \
   --output "$TARGET/release-index.json"
 

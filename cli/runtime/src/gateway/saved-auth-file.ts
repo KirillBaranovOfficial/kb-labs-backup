@@ -1,22 +1,22 @@
 import { promises as fs } from 'node:fs';
-import { createErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, type ErrorEnvelope } from '@kb-labs/core-platform';
 
 export type SavedAuthFileFailure = 'invalid' | 'unreadable';
 
-export class SavedAuthFileError extends Error {
+export class SavedAuthFileError extends ErrorEnvelopeError {
   constructor(readonly filePath: string, readonly reason: SavedAuthFileFailure) {
-    super(`Saved authentication file ${filePath} is ${reason}.`);
+    super(createErrorEnvelope('KB_CONFIG_INVALID', {
+      message: `Saved authentication file ${filePath} is ${reason}.`,
+      hint: 'Run "kb auth login" to replace the saved authentication data, then retry the command.',
+      details: { path: filePath, reason },
+    }));
     this.name = 'SavedAuthFileError';
     Object.setPrototypeOf(this, SavedAuthFileError.prototype);
   }
 }
 
 export function savedAuthFileErrorEnvelope(error: SavedAuthFileError): ErrorEnvelope {
-  return createErrorEnvelope('KB_CONFIG_INVALID', {
-    message: `Saved authentication file ${error.filePath} is ${error.reason}.`,
-    hint: 'Run "kb auth login" to replace the saved authentication data, then retry the command.',
-    details: { path: error.filePath, reason: error.reason },
-  });
+  return error.envelope;
 }
 
 export async function readSavedAuthFile<T>(

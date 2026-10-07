@@ -10,6 +10,7 @@ import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { join, resolve } from 'node:path';
 import { prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
+import { buildBinaryManifest } from './binary-manifest.mjs';
 import { readPlatformReleaseConfig } from '../../tools/kb-create/scripts/platform-release-config.mjs';
 
 const args = process.argv.slice(2);
@@ -27,6 +28,8 @@ const packagesDir = resolve(required('--packages-dir'));
 const registryManifest = JSON.parse(readFileSync(resolve(required('--registry-manifest')), 'utf8'));
 const output = resolve(required('--output'));
 const sealer = resolve(required('--sealer'));
+const binaryDirectory = resolve(required('--binary-dir'));
+const binaryBaseUrl = value('--binary-base-url') ?? 'http://origin:8080/journey-candidate';
 const prepareScript = resolve(value('--prepare-script') ?? '/src/kb-create/scripts/prepare-release-index.mjs');
 const releaseConfigPath = resolve(value('--release-config') ?? '.kb/kb.config.jsonc');
 const stage = resolve(process.env.KB_JOURNEY_RELEASE_STAGE ?? '/tmp/kb-e2e-release-stage');
@@ -57,7 +60,7 @@ for (const name of wanted) {
 
 writeFileSync(join(stage, 'manifest.json'), `${JSON.stringify([...packages.values()], null, 2)}\n`);
 const binaryManifest = join(stage, 'binary-manifest.json');
-writeFileSync(binaryManifest, '{"binaries":[]}\n');
+writeFileSync(binaryManifest, `${JSON.stringify(buildBinaryManifest(binaryDirectory, binaryBaseUrl), null, 2)}\n`);
 
 const releaseConfig = readPlatformReleaseConfig(releaseConfigPath);
 const adapterConfig = JSON.stringify(releaseConfig.adapters);
