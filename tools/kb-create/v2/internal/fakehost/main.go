@@ -21,9 +21,17 @@ func main() {
 	ignoreTerm := flag.Bool("ignore-term", false, "ignore SIGTERM (forces the launcher to kill)")
 	unhealthy := flag.Bool("unhealthy", false, "answer /health with 500")
 	exitCode := flag.Int("exit", -1, "exit immediately with this status (start failure)")
+	startupError := flag.Bool("startup-error", false, "emit a typed startup error before exiting")
 	delay := flag.Duration("delay", 0, "wait before listening")
 	dumpEnv := flag.String("dump-env", "", "write the process environment to this file at start")
 	flag.Parse()
+	if *startupError {
+		if token := os.Getenv("API_TOKEN"); token != "" {
+			fmt.Fprintln(os.Stderr, "API_TOKEN="+token)
+		}
+		fmt.Fprintln(os.Stderr, `{"ok":false,"error":{"code":"KB_CONFIG_INVALID","message":"host configuration is invalid","cause":"must be a positive integer","hint":"correct the platform configuration"}}`)
+		os.Exit(7)
+	}
 	if *exitCode >= 0 {
 		fmt.Fprintln(os.Stderr, "fakehost: exiting early")
 		os.Exit(*exitCode)
@@ -61,7 +69,7 @@ func main() {
 	})
 	server := &http.Server{Handler: mux}
 	go func() { _ = server.Serve(listener) }()
-	fmt.Println("fakehost: ready")
+	fmt.Fprintln(os.Stderr, "fakehost: ready")
 	<-signals
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

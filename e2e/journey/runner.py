@@ -29,7 +29,7 @@ from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, ru
                         run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
 from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps, run_invite_lifecycle_steps,
                             run_last_admin_guard_steps, run_password_and_session_steps)
-from platform_state_dump import PlatformStateDumpOnce
+from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
 from scoreboard import release_claims_for_case, write_scoreboards
 from invocations import (decode_ux_error_result, decode_ux_success_result,
                          invocation_context, open_http, read_ux_cli_result, run_command, run_pty_command,
@@ -257,7 +257,8 @@ def dump_failure_state() -> None:
     STATE_DUMP_GUARD.dump(
         PLATFORM, report.parent, mode=mode, front=FRONT_DOOR, scenario=SCENARIO,
         variant=VARIANT, first_failure=FIRST_FAILURE or "journey reported FAIL",
-        env=LAST_COMMAND_ENV, cwd=LAST_COMMAND_CWD, admin_password="JourneyPassw0rd!" if mode == "secured" else "",
+        env=failure_dump_environment(ACTIVE_MAIN_ENV, LAST_COMMAND_ENV, BASE_ENV),
+        cwd=LAST_COMMAND_CWD, admin_password="JourneyPassw0rd!" if mode == "secured" else "",
     )
 
 
@@ -683,6 +684,10 @@ def main():
     env = BASE_ENV.copy()
     env["HOME"] = str(HOME)
     env["KB_JOURNEY_HOME_LABEL"] = "main"
+    # The entrypoint's crash handler runs outside this module's global namespace
+    # (runpy returns a separate dict), so publish the active install HOME there.
+    os.environ["HOME"] = str(HOME)
+    os.environ["KB_JOURNEY_HOME_LABEL"] = "main"
     env["KB_JOURNEY_INVOCATIONS"] = str(Path(os.getenv(
         "KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).resolve().parent)
     os.environ["KB_JOURNEY_INVOCATIONS"] = env["KB_JOURNEY_INVOCATIONS"]
