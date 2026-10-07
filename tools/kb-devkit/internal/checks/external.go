@@ -18,6 +18,7 @@ type externalRule struct {
 	fix           string
 	phase         string
 	language      string
+	categories    []string
 	workspaceRoot string
 	checkConfig   config.CheckPackConfig
 }
@@ -43,7 +44,22 @@ type externalFixOutput struct {
 
 func (r *externalRule) Name() string { return r.name }
 
+func (r *externalRule) appliesToCategory(category string) bool {
+	if len(r.categories) == 0 {
+		return true
+	}
+	for _, candidate := range r.categories {
+		if candidate == category {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *externalRule) Check(pkg workspace.Package, preset config.Preset) []Issue {
+	if !r.appliesToCategory(pkg.Category) {
+		return nil
+	}
 	out, err := r.runCommand(r.run, pkg, preset, nil, false)
 	if err == nil {
 		return out.Issues
@@ -83,7 +99,7 @@ func (r *externalRule) runCommand(command string, pkg workspace.Package, preset 
 		return externalCheckOutput{}, fmt.Errorf("marshal external check input for %s: %w", r.name, err)
 	}
 
-	cmd := exec.Command("sh", "-lc", command)
+	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = r.workspaceRoot
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Env = append(os.Environ(),

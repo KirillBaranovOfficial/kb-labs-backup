@@ -71,10 +71,20 @@ workspace:
       language: typescript
       preset: node-app
 
+    # Adapter support libraries that are not platform adapter providers.
+    adapter-support:
+      match:
+        - "adapters/notifier-router"
+        - "adapters/pino-http"
+        - "adapters/transport"
+      language: typescript
+      preset: node-lib
+
     # Adapter packages — node-lib + SDK-only dependency boundary.
-    # Must come before ts-lib so adapters/* doesn't match ts-lib first.
+    # Adapter support libraries above are the explicit exceptions to this broad match.
     adapter:
       match:
+        - "core/llm-router"
         - "adapters/*"
       language: typescript
       preset: adapter-lib
@@ -470,7 +480,7 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [ts-lib, ts-app, adapter]
+    - categories: [ts-lib, ts-app, adapter, adapter-support]
       command: tsup
       inputs:
         - "src/**"
@@ -542,7 +552,7 @@ tasks:
         - "^build"
 
   lint:
-    - categories: [ts-lib, ts-app]
+    - categories: [ts-lib, ts-app, adapter-support]
       command: eslint src/
       inputs:
         - "src/**"
@@ -574,7 +584,7 @@ tasks:
       outputs: []
 
   type-check:
-    - categories: [ts-lib, ts-app]
+    - categories: [ts-lib, ts-app, adapter-support]
       command: tsc --noEmit
       inputs:
         - "src/**"
@@ -619,7 +629,7 @@ tasks:
   # Affected only:
   #   kb-devkit run e2e --affected
   test:
-    - categories: [ts-lib, ts-app]
+    - categories: [ts-lib, ts-app, adapter-support]
       command: vitest run --passWithNoTests
       inputs:
         - "src/**"
@@ -643,7 +653,7 @@ tasks:
       outputs: []
 
   test:coverage:
-    - categories: [ts-lib, ts-app]
+    - categories: [ts-lib, ts-app, adapter-support]
       command: npx vitest run --passWithNoTests --coverage
       inputs:
         - "src/**"
@@ -722,6 +732,12 @@ tasks:
 #   { ok: boolean, items: [{ target, message, fix? }] }
 
 custom_checks:
+  - name: adapter-manifest
+    run: node scripts/checks/check-adapter-manifest.mjs
+    on: [check]
+    language: typescript
+    categories: [adapter]
+
   - name: test-pyramid
     run: node scripts/checks/check-test-pyramid.mjs
     on: [check]

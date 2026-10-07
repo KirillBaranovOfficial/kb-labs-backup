@@ -217,11 +217,12 @@ type yamlRun struct {
 }
 
 type yamlCustomCheck struct {
-	Name     string   `yaml:"name"`
-	Run      string   `yaml:"run"`
-	Fix      string   `yaml:"fix"`
-	On       []string `yaml:"on"`
-	Language string   `yaml:"language"`
+	Name       string   `yaml:"name"`
+	Run        string   `yaml:"run"`
+	Fix        string   `yaml:"fix"`
+	On         []string `yaml:"on"`
+	Language   string   `yaml:"language"`
+	Categories []string `yaml:"categories"`
 }
 
 type yamlChecks struct {
@@ -427,11 +428,12 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 	// Custom checks
 	for _, c := range raw.Custom {
 		cfg.Custom = append(cfg.Custom, CustomCheck{
-			Name:     c.Name,
-			Run:      c.Run,
-			Fix:      c.Fix,
-			On:       c.On,
-			Language: c.Language,
+			Name:       c.Name,
+			Run:        c.Run,
+			Fix:        c.Fix,
+			On:         c.On,
+			Language:   c.Language,
+			Categories: c.Categories,
 		})
 	}
 

@@ -16,6 +16,7 @@ export const manifest: AdapterManifest = {
   type: 'proxy', // Wraps/delegates to underlying LLM adapter
   description: 'Adaptive LLM router with tier-based model selection',
   implements: 'ILLM',
+  configSchema: {},
   capabilities: {
     streaming: true,
     batch: false,
