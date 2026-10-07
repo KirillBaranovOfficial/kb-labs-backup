@@ -108,11 +108,11 @@ export default defineCommand({
       if (packages.length === 0) {
         const msg = `No packages found to publish${scope ? ` matching scope: ${scope}` : ''}`;
         if (json) {
-          return { ok: true, result: { error: msg } };
+          return { error: msg };
         } else {
           ctx.ui?.write?.(msg);
         }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release publish --help` to review its inputs and recovery steps, then retry." }, result: { summary: { total: 0, successful: 0, failed: 0 } } };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release publish --help` to review its inputs and recovery steps, then retry." } };
       }
 
       let rawResult: ProgrammaticPublishResult | PublishWithOTPResult;
@@ -140,8 +140,8 @@ export default defineCommand({
       const publishResult = toPublishResult(rawResult.results);
 
       const response = publishResult.success
-        ? { ok: true as const, result: publishResult }
-        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Publish failed', hint: 'Inspect failed package details, resolve registry errors, then rerun `kb release publish`.' }, result: publishResult };
+        ? publishResult
+        : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Publish failed', hint: 'Inspect failed package details, resolve registry errors, then rerun `kb release publish`.' } };
 
       if (json) {
         return response;

@@ -171,7 +171,7 @@ export default defineCommand({
 
       if (discovered.length === 0) {
         const msg = `No packages found for flow "${flowName}"`;
-        if (flags.json) { return { ok: true, result: { outDir, artifacts: [] } }; } else { ctx.ui?.write?.(msg); }
+        if (flags.json) { return { outDir, artifacts: [] }; } else { ctx.ui?.write?.(msg); }
         return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release stage --help` to review its inputs and recovery steps, then retry." } };
       }
 
@@ -212,8 +212,7 @@ export default defineCommand({
 
       const result: StagePayload = { outDir, artifacts };
       if (flags.json) {
-        const response = { ok: true as const, result };
-        return response;
+        return result;
       }
 
       ctx.ui?.sideBox?.({
@@ -225,7 +224,7 @@ export default defineCommand({
         status: 'success',
       });
 
-      return { ok: true, result };
+      return result;
     },
   },
 });

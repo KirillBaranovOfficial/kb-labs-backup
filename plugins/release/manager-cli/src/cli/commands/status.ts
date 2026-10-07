@@ -177,7 +177,7 @@ export default defineCommand({
       });
 
       if (flags.json) {
-        return { ok: true, result: { ...status, ci } };
+        return { ...status, ci };
       } else {
         ctx.ui?.sideBox?.({
           title: `Release status — ${flags.flow}`,
@@ -186,7 +186,7 @@ export default defineCommand({
         });
       }
 
-      return { ok: true, result: { ...status, ci } };
+      return { ...status, ci };
     },
   },
 });

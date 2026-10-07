@@ -97,14 +97,7 @@ export default defineCommand<unknown, HelloInput, HelloResult>({
 
       // Return structured result
       // Standard metadata (executedAt, duration, pluginId, etc.) will be injected automatically by runtime
-      return {
-        ok: true,
-        result: greeting,
-        meta: {
-          version: 'v3',
-          timing: tracker.breakdown(),
-        },
-      };
+      return greeting;
     },
   },
 });

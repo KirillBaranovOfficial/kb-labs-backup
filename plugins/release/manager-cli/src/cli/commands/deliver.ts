@@ -186,7 +186,7 @@ export default defineCommand({
 
         writeGithubStepSummary(buildFailureSummaryMarkdown(target, publishedList.length, failedList));
 
-        const response = { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery failed', hint: 'Inspect failed package details, resolve registry errors, then retry delivery.' }, result };
+        const response = { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery failed', hint: 'Inspect failed package details, resolve registry errors, then retry delivery.' } };
         if (!flags.json) {
           ctx.ui?.sideBox?.({
             title: 'Deliver — npm',
@@ -203,8 +203,7 @@ export default defineCommand({
 
       if (dryRun) {
         const result: DeliverPayload = { success: true, target, published: publishResult.results.map(r => ({ name: r.name, version: r.version })) };
-        const response = { ok: true as const, result };
-        return response;
+        return result;
       }
 
       // Post-delivery verification against the real registry — this is the
@@ -246,8 +245,8 @@ export default defineCommand({
 
       if (flags.json) {
         const response = verifyIssues.length === 0
-          ? { ok: true as const, result }
-          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery verification failed after publish completed', hint: 'Packages were published; inspect verification issues and rerun `kb release deliver` to confirm.' }, result };
+          ? result
+          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery verification failed after publish completed', hint: 'Packages were published; inspect verification issues and rerun `kb release deliver` to confirm.' } };
         return response;
       }
 
@@ -261,8 +260,8 @@ export default defineCommand({
       });
 
       return verifyIssues.length === 0
-        ? { ok: true, result }
-        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery verification failed', hint: "Run `kb release deliver --help` to review its inputs and recovery steps, then retry." }, result };
+        ? result
+        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Delivery verification failed', hint: "Run `kb release deliver --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

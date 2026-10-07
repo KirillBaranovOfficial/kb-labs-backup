@@ -118,7 +118,7 @@ export default defineCommand({
       }
 
       if (flags.json) {
-        return { ok: true, result: { valid: isValid, hasPackages, hasBreaking, issues, plan } };
+        return { valid: isValid, hasPackages, hasBreaking, issues, plan };
       } else {
         ctx.ui?.sideBox?.({
           title: 'Release Verification',
@@ -134,8 +134,8 @@ export default defineCommand({
         breakingDetected: hasBreaking,
       };
       return isValid
-        ? { ok: true, result }
-        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release verification failed', hint: "Run `kb release verify --help` to review its inputs and recovery steps, then retry." }, result };
+        ? result
+        : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Release verification failed', hint: "Run `kb release verify --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

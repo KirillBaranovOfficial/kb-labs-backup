@@ -125,7 +125,7 @@ export default defineCommand<unknown, LoaderInput, LoaderResult>({
     // Final summary
     ctx.ui.success(`\nLoader Test Complete - ${result.completed ? 'Success' : 'Failed'}`);
 
-      return { ok: true, result };
+      return result;
     }
   }
 });

@@ -143,9 +143,9 @@ export default defineCommand({
 
       if (plan.packages.length === 0) {
         const msg = `No packages found${flags.scope ? ` matching scope: ${flags.scope}` : ''}`;
-        if (flags.json) { return { ok: true, result: { updated: 0, updates: [], message: msg } }; }
+        if (flags.json) { return { updated: 0, updates: [], message: msg }; }
         else { ctx.ui?.write?.(msg); }
-        return { ok: true, result: { ok: true, updated: 0, updates: [] } };
+        return { ok: true, updated: 0, updates: [] };
       }
 
       const versionLoader = useLoader(`Bumping ${plan.packages.length} package version(s)...`);
@@ -162,8 +162,7 @@ export default defineCommand({
       }
 
       if (flags.json) {
-        return { ok: true, result: { ok, updated, updates } };
-        return ok ? { ok: true, result: { ok, updated, updates } } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release version --help` to review its inputs and recovery steps, then retry." }, result: { ok, updated, updates } };
+        return { ok, updated, updates };
       }
 
       ctx.ui?.sideBox?.({
@@ -172,7 +171,7 @@ export default defineCommand({
         status: ok ? 'success' : 'error',
       });
 
-      return ok ? { ok: true, result: { ok, updated, updates } } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release version --help` to review its inputs and recovery steps, then retry." }, result: { ok, updated, updates } };
+      return ok ? { ok, updated, updates } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb release version --help` to review its inputs and recovery steps, then retry." } };
     },
   },
 });

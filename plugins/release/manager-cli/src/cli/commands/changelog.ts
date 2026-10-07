@@ -158,11 +158,11 @@ export default defineCommand({
       loader.succeed('Changelog generated successfully');
 
       if (flags.json) {
-        return { ok: true, result: {
+        return {
           packagesCount: plan.packages.length,
           markdown: format === 'md' || format === 'both' ? markdown : undefined,
           artifacts: artifacts.map(a => ({ name: a.name, path: a.path, size: a.size ?? 0 })),
-        } };
+        };
       } else {
         ctx.ui?.sideBox?.({
           title: 'Changelog Generated',
@@ -171,11 +171,11 @@ export default defineCommand({
         });
       }
 
-      return { ok: true, result: {
+      return {
         packagesCount: plan.packages.length,
         markdown: format === 'md' || format === 'both' ? markdown : undefined,
         artifacts: artifacts.map(a => ({ name: a.name, path: a.path, size: a.size ?? 0 })),
-      } };
+      };
     },
   },
 });
