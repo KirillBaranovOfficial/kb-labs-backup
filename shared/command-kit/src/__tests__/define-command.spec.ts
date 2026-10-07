@@ -61,7 +61,7 @@ describe('defineCommand', () => {
   });
 
   it('should call handler with correct input (V3 API)', async () => {
-    const handler = vi.fn().mockResolvedValue({ ok: true, result: 'success' });
+    const handler = vi.fn().mockResolvedValue({ message: 'success' });
 
     const command = defineCommand({
       id: 'test:command',
@@ -73,8 +73,7 @@ describe('defineCommand', () => {
 
     const result = await command.execute(mockCtx, { flags: { name: 'test' }, argv: [] });
 
-    expect(result.ok).toBe(true);
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ message: 'success' });
     expect(handler).toHaveBeenCalledOnce();
     expect(handler.mock.calls[0]?.[0]).toBe(mockCtx);
     expect(handler.mock.calls[0]?.[1]).toEqual({ flags: { name: 'test' }, argv: [] });
@@ -105,7 +104,7 @@ describe('defineCommand', () => {
   });
 
   it('should allow workflow host', async () => {
-    const handler = vi.fn().mockResolvedValue({ ok: true });
+    const handler = vi.fn().mockResolvedValue({ message: 'success' });
 
     const command = defineCommand({
       id: 'test:command',
@@ -120,12 +119,12 @@ describe('defineCommand', () => {
 
     const result = await command.execute(mockCtx, { flags: {}, argv: [] });
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ message: 'success' });
     expect(handler).toHaveBeenCalledOnce();
   });
 
   it('should handle handler returning number', async () => {
-    const handler = vi.fn().mockResolvedValue({ ok: true });
+    const handler = vi.fn().mockResolvedValue(42);
 
     const command = defineCommand({
       id: 'test:command',
@@ -137,11 +136,11 @@ describe('defineCommand', () => {
 
     const result = await command.execute(mockCtx, { flags: {}, argv: [] });
 
-    expect(result.ok).toBe(true);
+    expect(result).toBe(42);
   });
 
   it('should handle handler returning object with ok', async () => {
-    const handler = vi.fn().mockResolvedValue({ ok: true, result: 'test' });
+    const handler = vi.fn().mockResolvedValue({ ok: true, report: 'test' });
 
     const command = defineCommand({
       id: 'test:command',
@@ -153,7 +152,23 @@ describe('defineCommand', () => {
 
     const result = await command.execute(mockCtx, { flags: {}, argv: [] });
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ ok: true, report: 'test' });
+  });
+
+  // case: S-203.1
+  it('returns dry-run intent as plain command data', async () => {
+    const intent = { summary: 'Update project', operations: [{ type: 'update', resource: 'project' }] };
+    const execute = vi.fn();
+    const command = defineCommand({
+      id: 'test:mutate',
+      description: 'Test mutation',
+      handler: { intent: vi.fn().mockReturnValue(intent), execute },
+    });
+
+    const result = await command.execute(mockCtx, { flags: { 'dry-run': true }, argv: [] });
+
+    expect(result).toEqual(intent);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('should handle errors in handler', async () => {
@@ -243,7 +258,10 @@ describe('defineCommand', () => {
 
     const result = await command.execute(mockCtx, { flags: {}, argv: [] }) as any;
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({
+      ok: true,
+      result: { customField: 'custom-value', nested: 'data' },
+    });
     expect(result.result).toEqual({ customField: 'custom-value', nested: 'data' });
   });
 
@@ -263,7 +281,7 @@ describe('defineCommand', () => {
 
     const result = await command.execute(mockCtx, { flags: {}, argv: [] });
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ ok: true });
   });
 
   it('should work with sync handlers', async () => {
@@ -323,7 +341,10 @@ describe('defineCommand — dry-run routing', () => {
 
     expect(intent).toHaveBeenCalledOnce();
     expect(execute).not.toHaveBeenCalled();
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({
+      summary: 'Delete task abc',
+      operations: [{ type: 'delete', resource: 'task', details: { taskId: 'abc' } }],
+    });
     expect(mockCtx.ui.info).toHaveBeenCalledWith(
       expect.stringContaining('Dry-run: Delete task abc'),
       expect.objectContaining({ sections: expect.any(Array) }),

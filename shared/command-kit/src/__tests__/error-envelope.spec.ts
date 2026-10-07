@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { AdapterUnavailableError, validateErrorEnvelope } from '@kb-labs/core-platform';
-import { PluginError, defineError, toErrorEnvelope } from '../errors/index';
+import { AdapterUnavailableError, toErrorEnvelope, validateErrorEnvelope } from '@kb-labs/core-platform';
+import { PluginError, defineError } from '../errors/index';
 import { ServiceNotConfiguredError } from '../helpers/platform';
 import { ValidationError } from '../helpers/validation';
 
-describe('toErrorEnvelope (command-kit adapter)', () => {
+describe('core toErrorEnvelope for command-kit errors', () => {
   it('maps a defineError PluginError to a product envelope', () => {
     const MindError = defineError('MIND', {
       IndexNotFound: { code: 404, message: (scope: string) => `Index '${scope}' not found` },

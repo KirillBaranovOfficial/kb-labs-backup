@@ -59,7 +59,7 @@ describe('quality:fix-deps', () => {
 
     const result = await fixDepsCommand.execute(ctx as never, mockCLIInput({ flags: { all: true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -70,7 +70,7 @@ describe('quality:fix-deps', () => {
 
     const result = await fixDepsCommand.execute(ctx as never, mockCLIInput({ flags: { stats: true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -81,8 +81,7 @@ describe('quality:fix-deps', () => {
 
     const result = await fixDepsCommand.execute(ctx as never, mockCLIInput({ flags: { stats: true, json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ totalPackages: expect.any(Number), totalDeps: expect.any(Number) });
+    expect(result).toMatchObject({ totalPackages: expect.any(Number), totalDeps: expect.any(Number) });
   });
 
   it('FD-05: --dry-run shows intent, writeFileSync is NOT called', async () => {
@@ -93,7 +92,7 @@ describe('quality:fix-deps', () => {
 
     const result = await fixDepsCommand.execute(ctx as never, mockCLIInput({ flags: { all: true, 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(fs.default.writeFileSync)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

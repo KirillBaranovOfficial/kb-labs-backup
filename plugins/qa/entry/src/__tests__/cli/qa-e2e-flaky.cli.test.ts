@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { CommandFailure } from '@kb-labs/plugin-contracts';
 
 vi.mock('@kb-labs/qa-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@kb-labs/qa-core')>();
@@ -68,8 +69,7 @@ describe('qa:e2e-flaky', () => {
 
     const result = await e2eFlakyCommand.execute(ctx as never, mockCLIInput<QaE2eFlakyFlags>({ flags: { agent: true } }));
 
-    expect(result.ok).toBe(true);
-    const overview = result.result as { top: unknown[]; totalCases: number };
+    const overview = result as { top: unknown[]; totalCases: number };
     expect(overview.totalCases).toBe(1);
     expect(Array.isArray(overview.top)).toBe(true);
     // Overview must stay compact — no raw per-attempt payload leaking into the default view.
@@ -85,8 +85,7 @@ describe('qa:e2e-flaky', () => {
       mockCLIInput<QaE2eFlakyFlags>({ flags: { agent: true, case: 'gw/a.spec.ts#A-1' } }),
     );
 
-    expect(result.ok).toBe(true);
-    const timeline = result.result as { caseKey: string; history: unknown[] };
+    const timeline = result as { caseKey: string; history: unknown[] };
     expect(timeline.caseKey).toBe('gw/a.spec.ts#A-1');
     expect(timeline.history).toHaveLength(2);
     expect(JSON.stringify(timeline)).toContain('ECONNREFUSED');
@@ -101,8 +100,7 @@ describe('qa:e2e-flaky', () => {
       mockCLIInput<QaE2eFlakyFlags>({ flags: { case: 'gw/unknown.spec.ts#X-1' } }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.message).toContain('No history was found');
+    expect(result as CommandFailure).toMatchObject({ ok: false, error: { message: expect.stringContaining('No history was found') } });
   });
 
   it('QEF-04: --ingest merges shard flaky-report.json files and saves a snapshot', async () => {
@@ -126,7 +124,7 @@ describe('qa:e2e-flaky', () => {
 
       const result = await e2eFlakyCommand.execute(ctx as never, mockCLIInput<QaE2eFlakyFlags>({ flags: { ingest: dir } }));
 
-      expect(result.ok).toBe(true);
+      expect(result).toBeUndefined();
       expect(mockSaveE2eFlaky).toHaveBeenCalledOnce();
       const [cases] = mockSaveE2eFlaky.mock.calls[0] as [Array<{ testId: string }>];
       expect(cases.map(c => c.testId).sort()).toEqual(['A-1', 'B-1']);
@@ -142,8 +140,7 @@ describe('qa:e2e-flaky', () => {
 
     const result = await e2eFlakyCommand.execute(ctx as never, mockCLIInput<QaE2eFlakyFlags>({ flags: { sync: true } }));
 
-    expect(result.ok).toBe(false);
-    expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Flaky report sync failed.', hint: expect.any(String) } });
+    expect(result as CommandFailure).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Flaky report sync failed.', hint: expect.any(String) } });
   });
 
   it('QEF-06: --sync and --ingest compose — sync runs instead of being silently skipped by ingest', async () => {
@@ -165,7 +162,7 @@ describe('qa:e2e-flaky', () => {
         mockCLIInput<QaE2eFlakyFlags>({ flags: { sync: true, ingest: dir } }),
       );
 
-      expect(result.ok).toBe(true);
+      expect(result).toBeUndefined();
       // Both must have run: sync (git fetch) and ingest (saveE2eFlaky) — sync
       // must not be silently dropped just because --ingest was also passed.
       expect(ctx.api.shell.exec).toHaveBeenCalledWith('git', ['fetch', 'origin', 'ci-data'], expect.anything());
@@ -185,8 +182,7 @@ describe('qa:e2e-flaky', () => {
 
       const result = await e2eFlakyCommand.execute(ctx as never, mockCLIInput<QaE2eFlakyFlags>({ flags: { ingest: dir } }));
 
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.message).toContain('No flaky-report.json files were found');
+      expect(result as CommandFailure).toMatchObject({ ok: false, error: { message: expect.stringContaining('No flaky-report.json files were found') } });
       expect(mockSaveE2eFlaky).not.toHaveBeenCalled();
     } finally {
       rmSync(dir, { recursive: true, force: true });

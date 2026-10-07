@@ -53,7 +53,7 @@ describe('quality:snapshot', () => {
 
     const result = await snapshotCommand.execute(ctx as never, mockCLIInput<SnapshotFlags>());
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -63,8 +63,7 @@ describe('quality:snapshot', () => {
 
     const result = await snapshotCommand.execute(ctx as never, mockCLIInput<SnapshotFlags>({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect((result as { ok: true; result: typeof mockSnap }).result.score).toBe(90);
+    expect((result as typeof mockSnap).score).toBe(90);
     expect(captured.json).toHaveLength(0);
   });
 
@@ -74,7 +73,7 @@ describe('quality:snapshot', () => {
 
     const result = await snapshotCommand.execute(ctx as never, mockCLIInput<SnapshotFlags>({ flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(QualitySnapshotStore).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
   });

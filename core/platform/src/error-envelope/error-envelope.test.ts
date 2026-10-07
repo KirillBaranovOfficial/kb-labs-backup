@@ -235,6 +235,19 @@ describe('toErrorEnvelope (platform errors)', () => {
     );
   });
 
+  it('normalizes typed platform errors structurally when they cross a package boundary', () => {
+    const error = Object.assign(new Error('Adapter "llm" is not available.'), {
+      code: 'KB_ADAPTER_NOT_CONFIGURED',
+      details: { service: 'llm' },
+    });
+
+    expect(toErrorEnvelope(error)).toMatchObject({
+      code: 'KB_ADAPTER_NOT_CONFIGURED',
+      message: 'Adapter "llm" is not available.',
+      details: { service: 'llm' },
+    });
+  });
+
   // case: S-211.4
   it('maps exhausted adapter operations to a catalogued actionable failure', () => {
     const envelope = toErrorEnvelope(new AdapterOperationError(

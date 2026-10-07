@@ -39,15 +39,9 @@ describe('Subprocess Integration Tests', () => {
         export default {
           async execute(ctx, input) {
             return {
-              ok: true,
-              result: {
                 message: 'Hello from subprocess',
                 pid: process.pid,
                 hasContext: ctx !== undefined,
-              },
-              meta: {
-                customField: 'subprocess-value',
-              },
             };
           }
         };
@@ -118,8 +112,6 @@ describe('Subprocess Integration Tests', () => {
         expect(result.meta?.host).toBe('cli');
         expect(result.meta?.requestId).toBe('subprocess-req-123');
 
-        // Verify custom metadata preserved
-        expect(result.meta?.customField).toBe('subprocess-value');
       } finally {
         server.close();
       }

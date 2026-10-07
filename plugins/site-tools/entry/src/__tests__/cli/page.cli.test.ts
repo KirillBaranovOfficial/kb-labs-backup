@@ -56,7 +56,7 @@ describe('site-tools:page', () => {
 
     const result = await pageCommand.execute(ctx as never, mockCLIInput<PageFlags>({ argv: ['pricing'] }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({});
     expect(mkdirSync).toHaveBeenCalledOnce();
     // page.tsx, opengraph-image.tsx, en.json, ru.json
     expect(writeFileSync).toHaveBeenCalledTimes(4);
@@ -82,7 +82,7 @@ describe('site-tools:page', () => {
       mockCLIInput<PageFlags>({ argv: ['pricing'], flags: { 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({});
     expect(mkdirSync).not.toHaveBeenCalled();
     expect(writeFileSync).not.toHaveBeenCalled();
     expect(captured.success[0]?.message).toContain('dry-run');

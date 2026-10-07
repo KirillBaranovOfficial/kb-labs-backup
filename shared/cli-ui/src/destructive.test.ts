@@ -28,9 +28,13 @@ describe('confirmDestructive', () => {
     const result = confirmDestructive(c, { confirmed: false, isJson: false, action: ACTION });
     expect(result).toMatchObject({
       ok: false,
-      error: { code: 'KB_RUNTIME_CONFIRMATION_REQUIRED', kind: 'validation' },
-      result: { confirmationRequired: true },
+      error: {
+        code: 'KB_RUNTIME_CONFIRMATION_REQUIRED',
+        kind: 'validation',
+        details: { confirmationRequired: 'true', destructive: 'true', action: 'mind drop' },
+      },
     });
+    expect(result).not.toHaveProperty('result');
     expect(c.ui.warn).not.toHaveBeenCalled();
     expect(c.ui.json).not.toHaveBeenCalled();
   });
@@ -41,25 +45,25 @@ describe('confirmDestructive', () => {
     expect(res).toMatchObject({
       ok: false,
       error: { code: 'KB_RUNTIME_CONFIRMATION_REQUIRED' },
-      result: { confirmationRequired: true },
     });
     expect(c.ui.warn).not.toHaveBeenCalled();
     expect(c.ui.json).not.toHaveBeenCalled();
-    const sig = res!.result as Record<string, unknown>;
-    expect(sig).toMatchObject({
-      ok: false,
-      confirmationRequired: true,
-      destructive: true,
-      irreversible: false,
-      reversible: true,
+    const details = res!.error.details ?? {};
+    expect(details).toMatchObject({
+      confirmationRequired: 'true',
+      destructive: 'true',
+      irreversible: 'false',
+      reversible: 'true',
       severity: 'high',
       action: 'mind drop',
       resource: 'index "code"',
       confirmWith: '--yes',
+      blastRadiusCount: '100',
+      blastRadiusUnit: 'vectors',
+      blastRadiusScope: 'whole index',
+      recovery: 're-index from source',
     });
-    expect(sig.blastRadius).toEqual({ count: 100, unit: 'vectors', scope: 'whole index' });
-    expect(sig.recovery).toBe('re-index from source');
-    expect(String(sig.message)).toContain('mind drop');
+    expect(res!.error.message).toContain('mind drop');
   });
 
   it('marks irreversible actions and omits a recovery field when none', () => {
@@ -71,9 +75,9 @@ describe('confirmDestructive', () => {
     });
     expect(res).not.toBeNull();
     expect(c.ui.json).not.toHaveBeenCalled();
-    const sig = res!.result as Record<string, unknown>;
-    expect(sig.irreversible).toBe(true);
-    expect('recovery' in sig).toBe(false);
+    const details = res!.error.details ?? {};
+    expect(details.irreversible).toBe('true');
+    expect('recovery' in details).toBe(false);
   });
 
   it('does not print errors directly; the shared renderer owns failure output', () => {

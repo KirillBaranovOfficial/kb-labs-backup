@@ -31,7 +31,7 @@ describe('CLI UI adapter errors', () => {
     expect(String(errorOutput.mock.calls[0]?.[0])).toContain(message);
   });
 
-  it('keeps diagnostics on stderr and writes one success envelope in JSON mode', () => {
+  it('keeps diagnostics on stderr and writes the boundary result unchanged in JSON mode', () => {
     process.env.KB_OUTPUT_MODE = 'json';
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
     const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
@@ -42,9 +42,6 @@ describe('CLI UI adapter errors', () => {
 
     expect(stderr).toHaveBeenCalledOnce();
     expect(stdout).toHaveBeenCalledOnce();
-    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({
-      ok: true,
-      data: { plugins: [] },
-    });
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({ plugins: [] });
   });
 });

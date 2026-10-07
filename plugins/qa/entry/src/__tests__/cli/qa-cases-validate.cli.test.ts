@@ -9,6 +9,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
+import type { CommandFailure } from '@kb-labs/plugin-contracts';
 import command from '../../cli/commands/qa-cases-validate.js';
 
 const dirs: string[] = [];
@@ -24,14 +25,13 @@ describe('qa:cases-validate', () => {
 
     const result = await command.execute(createMockContext({ ui, cwd: root }) as never, mockCLIInput({ flags: { json: true } }) as never);
 
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected validation failure');
-    expect(result.error).toMatchObject({ code: 'KB_RUNTIME_INPUT_INVALID' });
+    const failure = result as CommandFailure;
+    expect(failure).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
     // The empty catalog also reports every release-claim baseline entry as stale, so match the catalog finding among them.
-    expect(result.error.diagnostics).toEqual(expect.arrayContaining([
+    expect(failure.error.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'QA_CASE_INVALID', severity: 'error', path: expect.any(String), line: 1 }),
     ]));
-    expect(result.error.diagnostics?.every(item => item.code === 'QA_CASE_INVALID' && item.severity === 'error')).toBe(true);
-    expect(result).not.toHaveProperty('result');
+    expect(failure.error.diagnostics?.every(item => item.code === 'QA_CASE_INVALID' && item.severity === 'error')).toBe(true);
+    expect(failure).not.toHaveProperty('result');
   });
 });

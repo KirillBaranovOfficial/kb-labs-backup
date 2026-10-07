@@ -120,7 +120,7 @@ describe('executeCommandV3 plugin command result output', () => {
   });
 
   // case: S-203.2
-  it('rejects a legacy string failure without treating it as a command error', async () => {
+  it('preserves plain data that resembles a legacy string failure', async () => {
     const json = vi.fn();
     const execute = vi.fn(async () => ({
       ok: true as const,
@@ -140,12 +140,13 @@ describe('executeCommandV3 plugin command result output', () => {
       platformContainer,
     });
 
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(0);
     expect(json).toHaveBeenCalledOnce();
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({
-      ok: false,
-      error: expect.objectContaining({ code: 'KB_RUNTIME_UNEXPECTED' }),
-    }));
+    expect(json).toHaveBeenCalledWith({
+      ok: true,
+      data: { ok: false, error: 'free text failure' },
+      meta: expect.any(Object),
+    });
   });
 
   // case: S-203.2, S-051.2

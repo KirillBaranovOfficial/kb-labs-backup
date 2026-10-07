@@ -33,7 +33,7 @@ describe('Host Wrappers', () => {
   };
 
   describe('wrapCliResult', () => {
-    it('should wrap a successful CommandResult', () => {
+    it('keeps an ok field in plain handler data', () => {
       const runResult: RunResult<{ ok: true; result: { data: string }; meta?: Record<string, unknown> }> = {
         ok: true,
         data: {
@@ -47,9 +47,8 @@ describe('Host Wrappers', () => {
       const result = wrapCliResult(runResult, mockDescriptor);
 
       expect(result.exitCode).toBe(0);
-      expect(result.result).toEqual({ data: 'success' });
+      expect(result.result).toEqual({ ok: true, result: { data: 'success' }, meta: { custom: 'value' } });
       expect(result.meta).toBeDefined();
-      expect(result.meta?.custom).toBe('value');
       expect(result.meta?.pluginId).toBe('@kb-labs/test-plugin');
       expect(result.meta?.pluginVersion).toBe('1.0.0');
       expect(result.meta?.commandId).toBe('test:command');
@@ -60,13 +59,30 @@ describe('Host Wrappers', () => {
       expect(result.meta?.executedAt).toBeDefined();
     });
 
-    it('should wrap a failed CommandResult', () => {
-      const runResult: RunResult<{ ok: false; error: string; result: { error: string } }> = {
+    it('rejects a handler-built success envelope instead of unwrapping it', () => {
+      const runResult: RunResult<unknown> = {
+        ok: true,
+        data: { ok: true, data: { report: 'healthy' }, meta: { source: 'handler' } },
+        executionMeta: mockExecutionMeta,
+      };
+
+      const result = wrapCliResult(runResult, mockDescriptor);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatchObject({
+        code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+        message: expect.stringContaining('plain command data'),
+        hint: expect.stringContaining('Return'),
+      });
+    });
+
+    it('normalizes the shared typed CommandFailure', () => {
+      const runResult: RunResult<{ ok: false; error: { code: string; message: string; hint: string } }> = {
         ok: true,
         data: {
           ok: false,
-          error: 'failed',
-          result: { error: 'failed' },
+          error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'failed', hint: 'Resolve the failure, then retry.' },
         },
         executionMeta: mockExecutionMeta,
       };
@@ -74,7 +90,8 @@ describe('Host Wrappers', () => {
       const result = wrapCliResult(runResult, mockDescriptor);
 
       expect(result.exitCode).toBe(1);
-      expect(result.result).toEqual({ error: 'failed' });
+      expect(result.ok).toBe(false);
+      expect(result.error).toEqual({ code: 'KB_RUNTIME_COMMAND_FAILED', message: 'failed', hint: 'Resolve the failure, then retry.' });
     });
 
     it('should wrap raw data as exitCode 0', () => {
@@ -118,7 +135,7 @@ describe('Host Wrappers', () => {
       expect(result.result).toBeUndefined();
     });
 
-    it('should preserve custom meta from CommandResult', () => {
+    it('keeps meta when it is part of plain command data', () => {
       const runResult: RunResult<{ ok: true; meta: { customField: string; anotherField: number } }> = {
         ok: true,
         data: {
@@ -130,8 +147,7 @@ describe('Host Wrappers', () => {
 
       const result = wrapCliResult(runResult, mockDescriptor);
 
-      expect(result.meta?.customField).toBe('test');
-      expect(result.meta?.anotherField).toBe(42);
+      expect(result.result).toMatchObject({ meta: { customField: 'test', anotherField: 42 } });
       // Standard fields should also be present
       expect(result.meta?.pluginId).toBe('@kb-labs/test-plugin');
     });

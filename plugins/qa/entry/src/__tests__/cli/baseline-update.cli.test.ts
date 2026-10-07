@@ -55,7 +55,7 @@ describe('qa:baseline:update', () => {
 
     const result = await baselineUpdateCommand.execute(ctx as never, mockCLIInput<BaselineUpdateFlags>());
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(SnapshotStore).toHaveBeenCalledOnce();
     expect(captured.success.length).toBeGreaterThan(0);
   });
@@ -66,8 +66,7 @@ describe('qa:baseline:update', () => {
 
     const result = await baselineUpdateCommand.execute(ctx as never, mockCLIInput<BaselineUpdateFlags>({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ id: 'baseline-1' });
+    expect(result).toMatchObject({ id: 'baseline-1' });
   });
 
   it('QBU-03: --dry-run shows intent, no checks run', async () => {
@@ -76,7 +75,7 @@ describe('qa:baseline:update', () => {
 
     const result = await baselineUpdateCommand.execute(ctx as never, mockCLIInput<BaselineUpdateFlags>({ flags: { 'dry-run': true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(DevkitAdapter).not.toHaveBeenCalled();
     expect(SnapshotStore).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');

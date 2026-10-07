@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { mockCLIInput } from '@kb-labs/sdk/testing';
 import type { PluginContextV3 } from '@kb-labs/sdk';
+import type { CommandFailure } from '@kb-labs/sdk';
 import dropCmd from '../../cli/commands/drop.js';
 
 /**
@@ -25,29 +26,27 @@ function captureCtx() {
 }
 
 describe('mind drop — destructive confirmation gate', () => {
-  it('blocks with a typed failure and warns without --yes — no execution', async () => {
+  it('blocks with a typed failure and confirmation signal without --yes — no execution', async () => {
     const { ctx, calls } = captureCtx();
     const res = await dropCmd.execute(ctx, mockCLIInput({ flags: { index: 'code', yes: false, json: false } }));
-    expect(res.ok).toBe(false);
-    if (res.ok) throw new Error('expected command failure');
-    expect(res.error).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
-    expect(calls.warn).toHaveLength(1);
-    expect(calls.warn[0]).toContain('--yes');
+    const failure = res as CommandFailure;
+    expect(failure).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_CONFIRMATION_REQUIRED', details: { confirmationRequired: 'true' } } });
+    expect(calls.warn).toHaveLength(0);
   });
 
-  it('emits a machine-readable confirmationRequired signal in --json mode', async () => {
+  it('returns the machine-readable confirmationRequired signal in --json mode', async () => {
     const { ctx, calls } = captureCtx();
     const res = await dropCmd.execute(ctx, mockCLIInput({ flags: { index: 'code', yes: false, json: true } }));
-    expect(res.ok).toBe(false);
-    if (res.ok) throw new Error('expected command failure');
-    expect(res.error).toMatchObject({ code: 'CONFIRMATION_REQUIRED' });
-    expect(calls.json).toHaveLength(1);
-    expect(calls.json[0]).toMatchObject({
-      confirmationRequired: true,
-      destructive: true,
+    const failure = res as CommandFailure;
+    expect(failure).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_CONFIRMATION_REQUIRED' } });
+    expect(calls.json).toHaveLength(0);
+    expect(failure.error.details).toMatchObject({
+      confirmationRequired: 'true',
+      destructive: 'true',
       action: 'mind drop',
       severity: 'high',
       confirmWith: '--yes',
     });
+    expect(failure).not.toHaveProperty('result');
   });
 });

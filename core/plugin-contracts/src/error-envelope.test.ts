@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { toErrorEnvelope, validateErrorEnvelope } from '@kb-labs/core-platform';
 import {
   AbortError,
   ConfigError,
@@ -10,9 +10,7 @@ import {
   TimeoutError,
   ValidationError,
 } from './errors.js';
-import { toPluginErrorEnvelope } from './error-envelope.js';
-
-describe('toPluginErrorEnvelope', () => {
+describe('core toErrorEnvelope for plugin errors', () => {
   const cases: Array<[string, PluginError, string]> = [
     ['validation', new ValidationError('bad', { field: 'cwd' }), 'KB_RUNTIME_INPUT_INVALID'],
     ['config', new ConfigError('bad config', { path: 'llm.model' }), 'KB_CONFIG_INVALID'],
@@ -26,7 +24,7 @@ describe('toPluginErrorEnvelope', () => {
 
   for (const [name, error, code] of cases) {
     it(`maps ${name} to ${code} as a valid envelope`, () => {
-      const envelope = toPluginErrorEnvelope(error, { correlationId: 'c1' });
+      const envelope = toErrorEnvelope(error, { correlationId: 'c1' });
       expect(validateErrorEnvelope(envelope)).toEqual([]);
       expect(envelope.code).toBe(code);
       expect(envelope.correlationId).toBe('c1');
@@ -34,12 +32,12 @@ describe('toPluginErrorEnvelope', () => {
   }
 
   it('renders details into catalog templates', () => {
-    expect(toPluginErrorEnvelope(new ConfigError('x', { path: 'llm.model' })).message).toContain('llm.model');
-    expect(toPluginErrorEnvelope(new RateLimitError('x', 2500)).message).toContain('3s');
+    expect(toErrorEnvelope(new ConfigError('x', { path: 'llm.model' })).message).toContain('llm.model');
+    expect(toErrorEnvelope(new RateLimitError('x', 2500)).message).toContain('3s');
   });
 
   it('rejects structured details rather than serializing them into strings', () => {
-    const envelope = toPluginErrorEnvelope(new PluginError('bad', 'CUSTOM_FAILURE', {
+    const envelope = toErrorEnvelope(new PluginError('bad', 'CUSTOM_FAILURE', {
       report: { findings: [] },
     }), { correlationId: 'c2' });
     expect(envelope).toMatchObject({
@@ -50,6 +48,6 @@ describe('toPluginErrorEnvelope', () => {
   });
 
   it('delegates non-plugin errors to core-platform', () => {
-    expect(toPluginErrorEnvelope(new Error('boom')).code).toBe('KB_RUNTIME_UNEXPECTED');
+    expect(toErrorEnvelope(new Error('boom')).code).toBe('KB_RUNTIME_UNEXPECTED');
   });
 });
