@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "62eea315ee502a9cce9064a0eeb9b3c5b514dc73d25998060d5acc9f808fef94",
+  "digest": "33adf3d096ac3e2feb5a51c42036edaa8b22601f5de7ad570ea955344752724f",
   "channels": {
     "stable": "3.2.0"
   },
@@ -48,6 +48,27 @@
         "kind": "sdk",
         "artifactId": "sdk",
         "version": "4.0.0",
+        "status": "prepared",
+        "validatedBy": [
+          "installer-journey-fixture"
+        ]
+      },
+      {
+        "id": "binary:kb-create@3.2.0:darwin/amd64",
+        "kind": "binary",
+        "artifactId": "kb-create",
+        "version": "3.2.0",
+        "requires": [
+          {
+            "label": "platform@3.2.0"
+          },
+          {
+            "label": "sdk@3.0.0"
+          },
+          {
+            "label": "sdk@3.2.0"
+          }
+        ],
         "status": "prepared",
         "validatedBy": [
           "installer-journey-fixture"

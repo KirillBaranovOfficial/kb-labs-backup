@@ -315,14 +315,15 @@ func TestTypedStartupEnvelopeIsTheHostFailureCause(t *testing.T) {
 	}
 	_, err := f.runner.Start(context.Background())
 	var typed *diag.Diag
-	if !errors.As(err, &typed) || typed.Code != "KB_HOST_START_FAILED" ||
+	if !errors.As(err, &typed) || typed.Code != "KB_CONFIG_INVALID" ||
 		typed.Meta["hostStartupCode"] != "KB_CONFIG_INVALID" ||
-		!strings.Contains(typed.Cause, "KB_CONFIG_INVALID") ||
+		!strings.Contains(typed.Cause, "positive integer") ||
+		typed.Meta["path"] != "platform.adapterOptions.analytics.retentionDays" ||
 		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), `"code":"KB_CONFIG_INVALID"`) ||
 		strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fake-secret-token") ||
 		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "[REDACTED]") ||
-		typed.Message != "The host process failed while starting." {
-		t.Fatalf("typed startup diagnostic = %#v; want catalogued host code in cause and stderr", err)
+		typed.Message != "Adapter option \"platform.adapterOptions.analytics.retentionDays\" is invalid: must be a positive integer." {
+		t.Fatalf("typed startup diagnostic = %#v; want original catalogued config error with host evidence", err)
 	}
 }
 

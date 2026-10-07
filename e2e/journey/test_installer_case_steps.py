@@ -11,7 +11,7 @@ from installer_case_steps import (_seed_doctor_fixture, assert_default_service_p
                                   run_doctor_root_isolation_step,
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
                                   run_offline_plan_step, run_repeat_plan_readonly_step,
-                                  run_uninstall_decline_step, _service_ids_match,
+                                  run_platform_cli, run_uninstall_decline_step, _service_ids_match,
                                   _snapshot_installation_owned_tree)
 from journey_resources import case_catalog_root
 from service_steps import Journey, record_candidate_provenance
@@ -42,7 +42,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(len(calls), 2)
             self.assertIn("-iTCP:4000", calls[0])
 
-    def test_offline_plan_step_executes_with_fake_cli_and_claims_s181_4(self):
+    def test_offline_plan_step_uses_the_installed_root_cache(self):
         with tempfile.TemporaryDirectory(prefix="journey-offline-plan-") as temp:
             root = Path(temp)
             index = root / "release-index.json"
@@ -62,6 +62,19 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
         self.assertEqual(len(calls), 1)
         self.assertIn("--offline", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--request-platform-root") + 1], str(root))
+
+    def test_platform_cli_resolves_the_requested_roots_executable(self):
+        with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:
+            root = Path(temp)
+            executable = root / ".kb/v2/bin/kb"
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            calls = []
+            run_platform_cli(root, ["adapter", "list", "--json"],
+                             lambda args: calls.append(args) or subprocess.CompletedProcess(args, 0, "", ""))
+
+        self.assertEqual(calls, [[str(executable), "adapter", "list", "--json"]])
 
     def test_repeat_plan_compares_install_owned_files_while_host_stays_running(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:
@@ -72,15 +85,24 @@ class InstallerCaseStepsTest(unittest.TestCase):
             index = Path(temp) / "release-index.json"
             index.write_text("{}")
             calls = []
+            status_calls = 0
 
             def run_command(args):
+                nonlocal status_calls
                 calls.append(args)
                 command = args[1]
                 if command == "status":
-                    data = {"host": {"state": "running", "healthy": True}, "running": True, "reachable": True}
+                    status_calls += 1
+                    running = status_calls > 1
+                    data = {"host": {"state": "running" if running else "stopped"},
+                            "running": running, "reachable": running}
+                elif command == "start":
+                    data = {"operation": "start"}
                 elif command == "plan":
                     data = {"plan": {"planHash": "same", "artifacts": [{"id": "platform"}],
                                      "serviceGraph": {"platformVersion": "2.0.0"}}}
+                elif command == "stop":
+                    data = {"operation": "stop"}
                 else:
                     data = {"operation": command}
                 return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
@@ -90,7 +112,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["PC-001.8"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual([args[1] for args in calls], ["status", "plan", "plan", "status"])
+        self.assertEqual([args[1] for args in calls], ["status", "start", "plan", "plan", "status", "stop"])
 
     def test_repeat_plan_allows_runtime_state_changes_from_running_host(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-runtime-state-") as temp:

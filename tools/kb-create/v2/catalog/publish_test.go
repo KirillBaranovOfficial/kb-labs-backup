@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -49,5 +50,45 @@ func TestCheckCompatibilityRequiresExplicitPlatformSDKRelation(t *testing.T) {
 	}
 	if err := CheckCompatibility(source, "2.0.0", "2.2.0", "", "", "", contracts.PolicyStrict); err == nil {
 		t.Fatal("expected unrelated SDK to be rejected")
+	}
+}
+
+func TestSealRejectsShippedBinaryWithoutCompatibilityRelation(t *testing.T) {
+	_, err := Seal(Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: &CompatibilityMatrix{Schema: CompatibilitySchema, Labels: []CompatibilityLabel{
+			{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"stage"}},
+		}},
+		Platforms: []PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+			Binaries: []Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "binary") {
+		t.Fatalf("Seal error = %v, want missing shipped binary compatibility", err)
+	}
+}
+
+func TestSealRejectsShippedBinaryMissingAnAdmittedSDKRelation(t *testing.T) {
+	_, err := Seal(Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: &CompatibilityMatrix{Schema: CompatibilitySchema, Labels: []CompatibilityLabel{
+			{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"stage"}},
+			{ID: "sdk@2.1.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.1.0", Status: "prepared", ValidatedBy: []string{"stage"}},
+			{ID: "binary:kb-create@2.0.0:linux/amd64", Kind: "binary", ArtifactID: "kb-create", Version: "2.0.0",
+				Requires: []CompatibilityRelation{{Label: "platform@2.0.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}},
+		}},
+		Platforms: []PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+			SDKRange: ">=2.0.0 <3.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+			Binaries: []Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
+		}},
+		SDKs: []Component{{ID: "sdk", Version: "2.1.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "SDK 2.1.0") {
+		t.Fatalf("Seal error = %v, want missing admitted SDK relation", err)
 	}
 }
