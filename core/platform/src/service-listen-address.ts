@@ -5,6 +5,7 @@ import { ServicePortConfigError } from './errors.js';
 import { getHostServiceAddress } from './host-service-address.js';
 import { createErrorEnvelope } from './error-envelope/catalog.js';
 import { ErrorEnvelopeError } from './error-envelope/types.js';
+import { decodeUxSuccessResult } from './ux-result/index.js';
 
 /** Canonical listener settings for the Gateway service across all launchers. */
 export const GATEWAY_SERVICE_NETWORK = {
@@ -72,7 +73,7 @@ export async function resolveCliGatewayTarget(
     let identity: { installationId?: string } = {};
     if (response.ok) {
       try {
-        identity = await response.json() as typeof identity;
+        identity = decodeUxSuccessResult<{ installationId?: string }>(await response.json());
       } catch {
         throw new ErrorEnvelopeError(createErrorEnvelope('KB_HOST_IDENTITY_MISMATCH', {
           details: {
@@ -103,25 +104,27 @@ export async function resolveCliGatewayTarget(
 
 export async function readInstalledPlatformIdentity(platformRoot: string): Promise<{ id: string; gatewayUrl: string } | undefined> {
   const receiptPath = path.join(platformRoot, '.kb', 'v2', 'receipt.json');
-  let receipt: { id?: string; verification?: { hostHealthUrl?: string } };
+  let receipt: { installationId?: string; verification?: { hostHealthUrl?: string } };
   try {
     receipt = JSON.parse(await readFile(receiptPath, 'utf8')) as typeof receipt;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw new ErrorEnvelopeError(createErrorEnvelope('KB_INSTALL_RECEIPT_UNAVAILABLE', {
       cause: `The active platform receipt at ${receiptPath} could not be parsed.`,
+      hint: `Run "kb-create update --platform-root ${platformRoot}" or reinstall the platform, then retry the command.`,
     }));
   }
-  if (!receipt.id || !receipt.verification?.hostHealthUrl) {
+  if (!receipt.installationId || !receipt.verification?.hostHealthUrl) {
     throw new ErrorEnvelopeError(createErrorEnvelope('KB_INSTALL_RECEIPT_UNAVAILABLE', {
-      cause: `The active platform receipt at ${receiptPath} has no installation ID or verified Gateway URL.`,
+      cause: `The active platform receipt at ${receiptPath} has no installationId or verified Gateway URL.`,
+      hint: `Run "kb-create update --platform-root ${platformRoot}" or reinstall the platform, then retry the command.`,
     }));
   }
   const healthUrl = new URL(receipt.verification.hostHealthUrl);
   healthUrl.pathname = healthUrl.pathname.replace(/\/?health$/, '');
   healthUrl.search = '';
   healthUrl.hash = '';
-  return { id: receipt.id, gatewayUrl: healthUrl.toString().replace(/\/$/, '') };
+  return { id: receipt.installationId, gatewayUrl: healthUrl.toString().replace(/\/$/, '') };
 }
 
 /** Resolve the HTTP URL that CLI children use to reach the Gateway listener. */

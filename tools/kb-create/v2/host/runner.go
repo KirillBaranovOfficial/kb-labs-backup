@@ -2,12 +2,14 @@ package host
 
 import (
 	"context"
+	"fmt"
 	"github.com/kb-labs/clikit/diag"
 	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/secrets"
 )
 
@@ -61,6 +63,17 @@ type Runner interface {
 // environment is read from the platform's private store at every start, so a
 // value stored after the launcher began still reaches the next host process.
 func NewRunner(platformRoot string, state State) (*ProcessRunner, error) {
+	active, err := receipt.Read(platformRoot)
+	if err != nil {
+		return nil, contracts.NewDiag(contracts.CodeReceiptUnavailable,
+			"The active install receipt could not be read.",
+			fmt.Sprintf("Run `kb-create update --platform-root %q` or reinstall the platform, then retry.", platformRoot), err)
+	}
+	if active.InstallationID == "" {
+		return nil, contracts.NewDiag(contracts.CodeReceiptUnavailable,
+			"The active install receipt has no installation ID.",
+			fmt.Sprintf("Run `kb-create update --platform-root %q` or reinstall the platform, then retry.", platformRoot), nil)
+	}
 	spec, err := LoadSpec(platformRoot)
 	if err != nil {
 		return nil, err
@@ -70,7 +83,8 @@ func NewRunner(platformRoot string, state State) (*ProcessRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessRunner{Spec: spec, State: state, PlatformRoot: filepath.Clean(root), SecretEnv: store.Environment}, nil
+	return &ProcessRunner{Spec: spec, State: state, PlatformRoot: filepath.Clean(root),
+		InstallationID: active.InstallationID, SecretEnv: store.Environment}, nil
 }
 
 // Prober is the trial run used to validate a plan's host before its receipt is

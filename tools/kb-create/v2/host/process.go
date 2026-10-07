@@ -61,10 +61,11 @@ func ActiveHost(state State) (ActiveHostRecord, bool) {
 // records a pid file and log under the state home, polls the health URL, and
 // stops it with a graceful terminate followed by a kill after the grace period.
 type ProcessRunner struct {
-	Spec         Spec
-	State        State
-	PlatformRoot string
-	Operation    string
+	Spec           Spec
+	State          State
+	PlatformRoot   string
+	InstallationID string
+	Operation      string
 	// HTTP and PollInterval exist for tests; zero values use sane defaults.
 	HTTP         *http.Client
 	PollInterval time.Duration
@@ -229,6 +230,9 @@ func (r *ProcessRunner) environment() ([]string, error) {
 	}
 	for key, value := range r.Spec.Env {
 		values[key] = value
+	}
+	if r.InstallationID != "" {
+		values["KB_INSTALLATION_ID"] = r.InstallationID
 	}
 	env := os.Environ()
 	for key, value := range values {

@@ -95,6 +95,7 @@ def run_platform_update_steps(
     secret_checkpoints: dict[str, str | None] = {}
     saved_user_session_established = False
     saved_session_succeeded_after_update = False
+    installation_id = ""
 
     def checkpoint_details() -> dict[str, dict[str, str | None]]:
         return {"configSha256": dict(config_checkpoints),
@@ -108,8 +109,11 @@ def run_platform_update_steps(
         secret_checkpoints[name] = _hash(secrets_path)
 
     def save_known_good_state() -> None:
-        nonlocal saved_user_session_established
+        nonlocal saved_user_session_established, installation_id
         receipt = json.loads(receipt_path.read_text())
+        installation_id = str(receipt.get("installationId") or "")
+        if not installation_id:
+            raise RuntimeError("active receipt has no stable installationId")
         actual = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
         if actual != base_version:
             raise RuntimeError(f"active receipt is {actual!r}, expected version {base_version}")
@@ -154,7 +158,7 @@ def run_platform_update_steps(
 
     def update() -> None:
         nonlocal snapshot_id, updated_plan_hash, updated_plan
-        result = _json_command(run_command, [launcher, "update", "--json", "--index", str(update_index),
+        result = _json_command(run_command, [launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
                                             "--input", str(request_file)], "update platform")
         snapshot = result.get("snapshot")
         receipt = result.get("receipt")
@@ -173,7 +177,7 @@ def run_platform_update_steps(
         snapshot_id = str(snapshot["id"])
         record_config_checkpoint("afterUpdateHostRestart")
         record_secret_checkpoint("afterUpdateHostRestart")
-        human = run_command([launcher, "update", "--index", str(update_index), "--input", str(request_file)])
+        human = run_command([launcher, "update", "--platform-root", root, "--index", str(update_index), "--input", str(request_file)])
         if human.returncode != 0 or "Platform update completed." not in human.stdout:
             raise RuntimeError("human update did not show its completion summary")
 
@@ -182,6 +186,8 @@ def run_platform_update_steps(
 
     def verify_updated_install() -> None:
         receipt = json.loads(receipt_path.read_text())
+        if receipt.get("installationId") != installation_id:
+            raise RuntimeError("installationId changed during update")
         version = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
         if version != updated_version:
             raise RuntimeError(f"active receipt is {version!r}, expected {updated_version}")
@@ -201,9 +207,10 @@ def run_platform_update_steps(
                 "installation-secret fingerprint changed during update: "
                 f"beforeUpdate={before_secret}, afterUpdateHostRestart={after_secret}"
             )
+        _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after update")
 
     journey.step("verify updated receipt, config, and host status", "platform.update", verify_updated_install,
-                 cases=["S-023.4"])
+                 cases=["S-023.4", "PC-001.13"])
 
     def project_command() -> None:
         nonlocal saved_session_succeeded_after_update
@@ -243,7 +250,7 @@ def run_platform_update_steps(
                 f"repeat update plan drift before mutation: first={updated_plan_hash!r}, "
                 f"preview={preview_hash!r}, changed fields={changed_fields}"
             )
-        result = _json_command(run_command, [launcher, "update", "--json", "--index", str(update_index),
+        result = _json_command(run_command, [launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
                                             "--input", str(request_file)], "repeat update")
         receipt = result.get("receipt")
         snapshot = result.get("snapshot")
@@ -310,6 +317,8 @@ def run_platform_update_steps(
 
     def verify_rollback() -> str | None:
         receipt = json.loads(receipt_path.read_text())
+        if receipt.get("installationId") != installation_id:
+            raise RuntimeError("installationId changed during rollback")
         version = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
         if version != base_version:
             raise RuntimeError(f"restored receipt is {version!r}, expected {base_version}")
@@ -375,9 +384,10 @@ def run_platform_update_steps(
             raise RuntimeError(f"project list after rollback returned an invalid UX result: {error}") from error
         if not isinstance(payload, dict) or not isinstance(payload.get("projects"), list):
             raise RuntimeError("project list after rollback did not return a projects payload")
+        _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after rollback")
 
     journey.step("verify restored receipt, config, host, and project command", "platform.rollback", verify_rollback,
-                 cases=["S-024.3", "S-041.4"] if verify_user is not None else ["S-024.3"], details=checkpoint_details)
+                 cases=["S-024.3", "S-041.4", "PC-001.14"] if verify_user is not None else ["S-024.3", "PC-001.14"], details=checkpoint_details)
 
     if verify_user is not None:
         def login_after_rollback() -> None:
@@ -394,4 +404,16 @@ def run_platform_update_steps(
             raise RuntimeError("kb-create doctor did not report a healthy restored platform")
 
     journey.step("diagnose the restored platform", "platform.rollback", doctor, cases=["S-024.5", "S-203.10"])
+
+    def restart_and_verify_identity() -> None:
+        result = _json_command(run_command, [launcher, "restart", "--platform-root", root, "--json"], "restart platform")
+        if result.get("hostRestarted") is not True:
+            raise RuntimeError("restart did not report a restarted host")
+        receipt = json.loads(receipt_path.read_text())
+        if receipt.get("installationId") != installation_id:
+            raise RuntimeError("installationId changed during restart")
+        _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after restart")
+
+    journey.step("restart the installed host and run an adapter command", "platform.restart",
+                 restart_and_verify_identity, cases=["PC-001.15"])
     return journey

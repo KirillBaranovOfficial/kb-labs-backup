@@ -406,7 +406,7 @@ func TestSpecValidationAndResolution(t *testing.T) {
 func writeReceipt(t *testing.T, root string, host *contracts.HostSpec) {
 	t.Helper()
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: host}
-	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", Plan: plan}); err != nil {
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", InstallationID: "stable-installation", Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -418,8 +418,20 @@ func TestNewRunnerRunsTheHostTheReceiptDeclares(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runner.Spec.Command != filepath.Join(root, "bin/host") || runner.State != state || runner.SecretEnv == nil {
+	if runner.Spec.Command != filepath.Join(root, "bin/host") || runner.State != state || runner.SecretEnv == nil || runner.InstallationID != "stable-installation" {
 		t.Fatalf("runner: %#v", runner)
+	}
+}
+
+func TestNewRunnerRejectsReceiptWithoutInstallationIdentity(t *testing.T) {
+	root, state := t.TempDir(), State{Dir: t.TempDir()}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: &contracts.HostSpec{Command: "host", HealthURL: "http://127.0.0.1:9/health"}}
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "transaction-id", Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewRunner(root, state)
+	if launcherCode(t, err) != contracts.CodeReceiptUnavailable {
+		t.Fatalf("missing installation identity error = %v", err)
 	}
 }
 

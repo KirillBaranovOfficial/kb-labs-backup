@@ -89,7 +89,7 @@ describe('installed platform adapter defaults', () => {
     gatewayServer = createServer((request, response) => {
       response.setHeader('content-type', 'application/json');
       if (request.url === '/health/identity') {
-        response.end(JSON.stringify({ installationId: 'installed-root-b', platformRoot }));
+        response.end(JSON.stringify({ ok: true, data: { installationId: 'installed-root-b' } }));
         return;
       }
       if (request.url === '/health/adapters') {
@@ -107,7 +107,7 @@ describe('installed platform adapter defaults', () => {
     const gatewayPort = (gatewayServer.address() as AddressInfo).port;
     await mkdir(path.join(platformRoot, '.kb', 'v2'), { recursive: true });
     await writeFile(path.join(platformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
-      id: 'installed-root-b', verification: { hostHealthUrl: `http://127.0.0.1:${gatewayPort}/health` },
+      installationId: 'installed-root-b', verification: { hostHealthUrl: `http://127.0.0.1:${gatewayPort}/health` },
     }));
 
     const configPath = path.join(workspaceRoot, '.kb', 'kb.config.jsonc');

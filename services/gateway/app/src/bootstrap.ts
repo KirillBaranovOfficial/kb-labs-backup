@@ -1,5 +1,7 @@
 import {
   GATEWAY_SERVICE_NETWORK,
+  createErrorEnvelope,
+  ErrorEnvelopeError,
   logDiagnosticEvent,
   readInstalledPlatformIdentity,
   type IServiceTransport,
@@ -463,6 +465,21 @@ export async function startGateway(
   }
 
   // 10. Create server with injected registry, transport and optional user auth deps
+  const installedIdentity = await readInstalledPlatformIdentity(platformRoot);
+  const installationId = process.env.KB_INSTALLATION_ID;
+  if (installedIdentity && !installationId) {
+    throw new ErrorEnvelopeError(createErrorEnvelope("KB_INSTALL_RECEIPT_UNAVAILABLE", {
+      cause: "The installed Gateway launcher did not provide KB_INSTALLATION_ID.",
+      hint: `Run \"kb-create update --platform-root ${platformRoot}\" or reinstall the platform, then retry.`,
+    }));
+  }
+  if (installedIdentity && installationId !== installedIdentity.id) {
+    throw new ErrorEnvelopeError(createErrorEnvelope("KB_INSTALL_RECEIPT_UNAVAILABLE", {
+      cause: "The installed Gateway identity does not match the active platform receipt.",
+      hint: `Run \"kb-create update --platform-root ${platformRoot}\" or reinstall the platform, then retry.`,
+    }));
+  }
+
   const server = await createServer(
     { ...config, port: listenPort },
     cache,
@@ -475,7 +492,7 @@ export async function startGateway(
     options.projectRouting,
     options.hostRoutes,
     undefined,
-    { installationId: (await readInstalledPlatformIdentity(platformRoot))?.id },
+    { installationId: installationId ?? installedIdentity?.id },
   );
 
   // 11. Listen

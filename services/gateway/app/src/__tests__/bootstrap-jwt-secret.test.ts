@@ -5,6 +5,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+const mockReadInstalledIdentity = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
 // Capture original env
 const originalEnv = { ...process.env };
 
@@ -18,7 +20,13 @@ vi.mock("@kb-labs/core-platform", () => ({
     defaultHost: "0.0.0.0",
   },
   logDiagnosticEvent: vi.fn(),
-  readInstalledPlatformIdentity: vi.fn().mockResolvedValue(undefined),
+  createErrorEnvelope: (code: string, options: { cause?: string; hint?: string } = {}) => ({ code, ...options }),
+  ErrorEnvelopeError: class ErrorEnvelopeError extends Error {
+    constructor(envelope: { code: string; cause?: string; hint?: string }) {
+      super(`${envelope.code}: ${envelope.cause} Hint: ${envelope.hint}`);
+    }
+  },
+  readInstalledPlatformIdentity: mockReadInstalledIdentity,
 }));
 
 vi.mock("@kb-labs/core-runtime", () => ({
@@ -126,6 +134,7 @@ vi.mock("@kb-labs/gateway-core", () => ({
 describe("bootstrap — JWT secret validation (H6)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockReadInstalledIdentity.mockResolvedValue(undefined);
     // Reset env to original state before each test
     process.env = { ...originalEnv };
     delete process.env.GATEWAY_JWT_SECRET;
@@ -168,5 +177,16 @@ describe("bootstrap — JWT secret validation (H6)", () => {
 
     const { bootstrap } = await import("../bootstrap.js");
     await expect(bootstrap("/tmp/test")).resolves.not.toThrow();
+  });
+
+  // case: PC-001.15
+  it("refuses to start an installed Gateway when the launcher omitted its installation identity", async () => {
+    process.env.NODE_ENV = "development";
+    delete process.env.KB_INSTALLATION_ID;
+    mockReadInstalledIdentity.mockResolvedValue({ id: "stable-installation", gatewayUrl: "http://127.0.0.1:4000" });
+
+    const { bootstrap } = await import("../bootstrap.js");
+    await expect(bootstrap("/tmp/test")).rejects.toThrow("KB_INSTALL_RECEIPT_UNAVAILABLE");
+    expect(mockReadInstalledIdentity).toHaveBeenCalledTimes(1);
   });
 });

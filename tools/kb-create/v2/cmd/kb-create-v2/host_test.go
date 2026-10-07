@@ -73,7 +73,7 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 	root := t.TempDir()
 	spec := &contracts.HostSpec{Command: fakehost, Args: append([]string{"-port", fmt.Sprint(port)}, hostArgs...), HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: spec}
-	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", Plan: plan}); err != nil {
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "r1", InstallationID: "installation-r1", Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
 	kbHome := t.TempDir()
@@ -264,7 +264,7 @@ func runForRoot(t *testing.T, inst installation, root, operation string) map[str
 // case: S-025.1, S-025.2, S-203.10
 func TestStatusAndDoctorReportReceiptChannelAndExactVersion(t *testing.T) {
 	inst := newInstallation(t)
-	active := contracts.InstallReceipt{ID: "receipt-canary", Plan: contracts.ResolvedInstallPlan{
+	active := contracts.InstallReceipt{ID: "receipt-canary", InstallationID: "installation-canary", Plan: contracts.ResolvedInstallPlan{
 		Schema: contracts.ResolvedPlanSchema, PlatformChannel: "canary",
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "3.2.0-canary.4"},
 		Host:         &contracts.HostSpec{Command: inst.launcher, HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", inst.port)},
