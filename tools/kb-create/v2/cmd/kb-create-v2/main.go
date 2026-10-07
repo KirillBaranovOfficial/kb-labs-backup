@@ -71,8 +71,8 @@ func Execute() int {
 }
 
 type directRequest struct {
-	PlatformRoot, ProjectRoot, PlatformVersion, PlatformChannel, SDKVersion, ServiceProfile, Plugins, Adapters, Providers, Policy string
-	Offline                                                                                                                       bool
+	PlatformRoot, ProjectRoot, PlatformVersion, PlatformChannel, SDKVersion, ServiceProfile, GatewayURL, Plugins, Adapters, Providers, Policy string
+	Offline                                                                                                                                   bool
 }
 
 // invocation is one parsed non-host command line. Every field is an input; the
@@ -94,6 +94,13 @@ type invocation struct {
 	RuntimeDeps      *runtime.Dependencies
 	NodePreflight    func() error
 	ProjectRegistrar func(string) (string, error)
+}
+
+func updateCompatibilityDiag(failure *diag.Diag) *diag.Diag {
+	if failure.Code == contracts.CodeIncompatibleComponents {
+		failure.Code = contracts.CodeUpdateIncompatible
+	}
+	return failure
 }
 
 func (i invocation) hostCommand(output *os.File) hostCommand {
@@ -176,6 +183,9 @@ func (i invocation) run(output *os.File) int {
 		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
 	}
 	if !response.OK {
+		if operation == "update" && response.Error != nil {
+			response.Error = updateCompatibilityDiag(response.Error)
+		}
 		write(output, response)
 		return 2
 	}
@@ -186,7 +196,7 @@ func (i invocation) run(output *os.File) int {
 			return 2
 		}
 		if validationErr := resolve.ValidateUpdate(active, *response.Plan, source); validationErr != nil {
-			write(output, map[string]any{"ok": false, "error": asDiag(validationErr)})
+			write(output, map[string]any{"ok": false, "error": updateCompatibilityDiag(asDiag(validationErr))})
 			return 2
 		}
 	}
@@ -200,6 +210,9 @@ func (i invocation) run(output *os.File) int {
 			data, _ := json.Marshal(request)
 			response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
 			if !response.OK {
+				if operation == "update" && response.Error != nil {
+					response.Error = updateCompatibilityDiag(response.Error)
+				}
 				write(output, response)
 				return 2
 			}
@@ -222,16 +235,18 @@ func (i invocation) run(output *os.File) int {
 			return 2
 		}
 	}
-	if operation == "apply" {
+	if operation == "apply" || (operation == "plan" && response.Plan.Request.GatewayURL != "") {
 		root := response.Plan.Request.PlatformRoot
-		if err := preflight.CheckInstallResources(root); err != nil {
-			var typed *diag.Diag
-			if errors.As(err, &typed) {
-				write(output, map[string]any{"ok": false, "error": typed})
-			} else {
-				write(output, failure(contracts.CodeResourceCheckFailed, "The launcher could not check available memory and disk space.", "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again.", err))
+		if operation == "apply" {
+			if err := preflight.CheckInstallResources(root); err != nil {
+				var typed *diag.Diag
+				if errors.As(err, &typed) {
+					write(output, map[string]any{"ok": false, "error": typed})
+				} else {
+					write(output, failure(contracts.CodeResourceCheckFailed, "The launcher could not check available memory and disk space.", "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again.", err))
+				}
+				return 2
 			}
-			return 2
 		}
 		if response.Plan.Host != nil {
 			if err := host.CheckPorts(*response.Plan, operation); err != nil {
@@ -730,7 +745,7 @@ func compileScenario(id, answers string, resume bool, base contracts.InstallRequ
 }
 
 func (value directRequest) normalize() (contracts.InstallRequest, error) {
-	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: value.PlatformRoot, ProjectRoot: value.ProjectRoot, Platform: contracts.VersionSelector{Version: value.PlatformVersion, Channel: contracts.Channel(value.PlatformChannel)}, SDK: contracts.VersionSelector{Version: value.SDKVersion}, ServiceProfile: value.ServiceProfile, Policy: contracts.CompatibilityPolicy(value.Policy), Source: contracts.SourceRegistry}
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: value.PlatformRoot, ProjectRoot: value.ProjectRoot, Platform: contracts.VersionSelector{Version: value.PlatformVersion, Channel: contracts.Channel(value.PlatformChannel)}, SDK: contracts.VersionSelector{Version: value.SDKVersion}, ServiceProfile: value.ServiceProfile, GatewayURL: value.GatewayURL, Policy: contracts.CompatibilityPolicy(value.Policy), Source: contracts.SourceRegistry}
 	if value.Offline {
 		request.Source = contracts.SourceOffline
 	}

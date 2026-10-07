@@ -291,6 +291,7 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
     master, slave = pty.openpty()
     process = None
     transcript = bytearray()
+    timed_out = False
     try:
         process = subprocess.Popen(argv, cwd=str(cwd) if cwd else None,
                                    env=dict(env) if env is not None else None,
@@ -307,6 +308,11 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
             try:
                 chunk = os.read(master, 8192)
             except OSError:
+                remaining = max(0, deadline - time.monotonic())
+                try:
+                    process.wait(timeout=remaining)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
                 break
             if not chunk:
                 continue
@@ -315,7 +321,8 @@ def run_pty_command(argv: list[str], *, cwd: str | Path | None = None,
                 answer = on_output(transcript.decode(errors="replace"))
                 if answer:
                     os.write(master, answer.encode() if isinstance(answer, str) else answer)
-        timed_out = process.poll() is None
+        if process.poll() is None and time.monotonic() >= deadline:
+            timed_out = True
         if timed_out:
             if start_new_session:
                 os.killpg(process.pid, signal.SIGKILL)

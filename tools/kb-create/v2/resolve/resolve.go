@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
 	"maps"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/kb-labs/create/v2/catalog"
@@ -73,7 +76,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if source.Compatibility != nil {
 		if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, "", "", "", request.Policy); err != nil {
 			if request.Policy == contracts.PolicyStrict && sdkVersion != "" {
-				failure := compatibilityFailure(contracts.CodeIncompatibleComponents, "SDK", "sdk", "sdk", sdkVersion,
+				failure := compatibilityFailure(contracts.CodeIncompatibleComponents, "sdk", "sdk", sdkVersion,
 					platform.SDKRange,
 					fmt.Sprintf("strict policy requires an exact compatibility-matrix relation for platform %s and SDK %s; declared SDK range is %s", platform.Version, sdkVersion, platform.SDKRange),
 					"Use an exact platform/SDK pair from the release matrix or choose --policy compatible.",
@@ -81,7 +84,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 				return contracts.ResolvedInstallPlan{}, failure
 			}
 			return contracts.ResolvedInstallPlan{}, compatibilityFailure(contracts.CodeIncompatibleComponents,
-				"release set", "release set", "release set", sdkVersion, platform.SDKRange, err.Error(),
+				"release set", "release set", sdkVersion, platform.SDKRange, err.Error(),
 				"Choose compatible versions or pass an explicit supported provider.", nil)
 		}
 	}
@@ -221,9 +224,110 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	} else if graph.Profile != "client" {
 		return contracts.ResolvedInstallPlan{}, incompatible("platform", platform.Version, "declares no host to run")
 	}
+	if request.GatewayURL != "" {
+		if selectedHost == nil {
+			return contracts.ResolvedInstallPlan{}, resolutionDiag(contracts.CodeInputRequired,
+				"a Gateway URL can only be declared for a platform with a host", map[string]string{"gatewayUrl": request.GatewayURL})
+		}
+		if err := configureGatewayAddress(request.GatewayURL, &graph, selectedHost, patches); err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
+	}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: request, Artifacts: artifacts, ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version), ProviderBindings: bindings, Host: selectedHost, ConfigPatches: patches, ReleaseDigest: source.Digest, ScenarioStateDigest: request.ScenarioStateDigest}
 	plan.PlanHash = hash(plan)
 	return plan, nil
+}
+
+func configureGatewayAddress(address string, graph *contracts.ServiceGraph, host *contracts.HostSpec, patches []contracts.ConfigPatch) error {
+	parsed, err := url.Parse(address)
+	if err != nil {
+		return resolutionDiag(contracts.CodeInputRequired, "the declared Gateway URL is invalid", map[string]string{"gatewayUrl": address})
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		return resolutionDiag(contracts.CodeInputRequired, "the declared Gateway URL must include a valid port", map[string]string{"gatewayUrl": address})
+	}
+	declaredService := false
+	baseGatewayPort := 0
+	for index := range graph.Services {
+		if graph.Services[index].ID == "gateway" {
+			baseGatewayPort = graph.Services[index].Port
+			declaredService = true
+		}
+	}
+	if !declaredService {
+		return resolutionDiag(contracts.CodeInputRequired, "the selected service profile does not declare a Gateway service", map[string]string{"gatewayUrl": address})
+	}
+	if baseGatewayPort < 1 || baseGatewayPort > 65535 {
+		return resolutionDiag(contracts.CodeConfigRequired, "the selected service profile does not declare a valid Gateway port", map[string]string{"gatewayUrl": address})
+	}
+	offset := port - baseGatewayPort
+	ports := make(map[string]int, len(graph.Services))
+	for index := range graph.Services {
+		if graph.Services[index].Port == 0 {
+			continue
+		}
+		resolvedPort := graph.Services[index].Port + offset
+		if resolvedPort < 1 || resolvedPort > 65535 {
+			return resolutionDiag(contracts.CodeInputRequired, "the declared Gateway port shifts a platform service outside the valid port range", map[string]string{"gatewayUrl": address, "service": graph.Services[index].ID})
+		}
+		graph.Services[index].Port = resolvedPort
+		ports[graph.Services[index].ID] = resolvedPort
+	}
+	configured := false
+	for index := range patches {
+		if patches[index].Path != "/platform/adapterOptions" {
+			continue
+		}
+		var config map[string]any
+		if err := json.Unmarshal([]byte(patches[index].JSON), &config); err != nil {
+			return resolutionDiag(contracts.CodeConfigRequired, "the declared platform adapter options are not valid JSON", map[string]string{"path": patches[index].Path})
+		}
+		serviceTransport, ok := config["serviceTransport"].(map[string]any)
+		if !ok {
+			return resolutionDiag(contracts.CodeConfigRequired, "platform adapter options do not declare serviceTransport", map[string]string{"path": patches[index].Path})
+		}
+		services, ok := serviceTransport["services"].(map[string]any)
+		if !ok {
+			return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport does not declare service addresses", map[string]string{"path": patches[index].Path})
+		}
+		for serviceID, resolvedPort := range ports {
+			settings, ok := services[serviceID].(map[string]any)
+			if !ok {
+				continue
+			}
+			currentAddress, ok := settings["url"].(string)
+			if !ok {
+				continue
+			}
+			serviceURL, err := url.Parse(currentAddress)
+			if err != nil || serviceURL.Hostname() == "" {
+				return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport contains an invalid service URL", map[string]string{"path": patches[index].Path, "service": serviceID})
+			}
+			serviceURL.Host = net.JoinHostPort(serviceURL.Hostname(), strconv.Itoa(resolvedPort))
+			settings["url"] = serviceURL.String()
+		}
+		gateway, ok := services["gateway"].(map[string]any)
+		if !ok {
+			return resolutionDiag(contracts.CodeConfigRequired, "serviceTransport does not declare a Gateway address", map[string]string{"path": patches[index].Path})
+		}
+		gateway["url"] = address
+		encoded, err := json.Marshal(config)
+		if err != nil {
+			return resolutionDiag(contracts.CodeConfigRequired, "the declared Gateway address could not be encoded", map[string]string{"path": patches[index].Path})
+		}
+		patches[index].JSON = string(encoded)
+		configured = true
+	}
+	if !configured {
+		return resolutionDiag(contracts.CodeConfigRequired, "the selected release must declare platform.adapterOptions to set a Gateway address", map[string]string{"gatewayUrl": address})
+	}
+	if host.Env == nil {
+		host.Env = map[string]string{}
+	}
+	host.Env["KB_NET_OFFSET"] = strconv.Itoa(offset)
+	host.HealthURL = address + "/health"
+	return nil
 }
 
 func annotateArtifactResolution(request contracts.InstallRequest, artifacts []contracts.Artifact) error {
@@ -561,13 +665,14 @@ func incompatible(subject, value, reason string) error {
 	if value != "" {
 		label = subject + " " + value
 	}
-	return compatibilityFailure(contracts.CodeIncompatibleComponents, label, subject, value, value, "",
+	return compatibilityFailure(contracts.CodeIncompatibleComponents, subject, value, value, "",
 		label+" is incompatible: "+reason, "Choose compatible versions or pass an explicit supported provider.", nil)
 }
 func incompatibleRange(component, version, rangeValue string) error {
 	message := component + " " + version + " is incompatible: it does not satisfy declared range " + rangeValue
 	kind, id := compatibilityKindAndID(component)
-	return compatibilityFailure(contracts.CodeIncompatibleComponents, component, kind, id, version, rangeValue,
+	kind = strings.ToLower(kind)
+	return compatibilityFailure(contracts.CodeIncompatibleComponents, kind, id, version, rangeValue,
 		message, "Choose compatible versions or pass an explicit supported provider.", nil)
 }
 func resolutionDiag(code, message string, details map[string]string) error {
@@ -576,17 +681,12 @@ func resolutionDiag(code, message string, details map[string]string) error {
 	return d
 }
 
-func compatibilityFailure(code, component, kind, id, version, requiredRange, reason, hint string, extra map[string]string) *diag.Diag {
+func compatibilityFailure(code, kind, id, selectedVersion, requiredRange, reason, hint string, extra map[string]string) *diag.Diag {
 	details := map[string]string{
-		"component":       component,
 		"kind":            kind,
 		"id":              id,
-		"version":         version,
-		"selectedVersion": version,
-		"range":           requiredRange,
+		"selectedVersion": selectedVersion,
 		"requiredRange":   requiredRange,
-		"subject":         kind,
-		"value":           id,
 	}
 	for key, value := range extra {
 		details[key] = value
@@ -602,7 +702,7 @@ func compatibilityKindAndID(component string) (string, string) {
 		return component, component
 	}
 	if fields[0] == "platform" && len(fields) > 1 && strings.EqualFold(fields[1], "SDK") {
-		return "SDK", "SDK"
+		return "sdk", "sdk"
 	}
 	if len(fields) > 1 && (fields[0] == "plugin" || fields[0] == "adapter" || fields[0] == "platform") {
 		return fields[0], fields[1]

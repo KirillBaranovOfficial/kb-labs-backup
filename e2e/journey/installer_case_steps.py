@@ -256,21 +256,99 @@ def assert_default_service_ports_free(platform_root: Path, run_command: CommandR
 
 def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
                           platform_root: Path, run_command: CommandRunner) -> Journey:
-    """Resolve the sealed stable request exclusively from the local artifact cache."""
+    """Populate a dedicated root's verified artifact cache, then resolve offline from it."""
     journey = Journey(mode, f"offline-plan-{mode}")
 
     def offline_plan() -> None:
-        root = platform_root
-        plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
-                                           "--platform-channel", "stable", "--offline",
-                                           "--request-platform-root", str(root)], "offline plan").get("plan", {})
-        artifacts = plan.get("artifacts", [])
-        if (plan.get("request", {}).get("source") != "offline" or not artifacts
-                or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
-            raise RuntimeError("offline plan omitted cache provenance or claimed registry/network resolution")
+        root = platform_root.parent / "s181-offline-root"
+        status = _json_command(run_command, [launcher, "status", "--platform-root", str(platform_root), "--json"],
+                               "primary status before offline cache priming")
+        host = status.get("host", {})
+        primary_was_running = (isinstance(host, dict) and host.get("state") == "running"
+                               and status.get("running") is True and status.get("reachable") is True)
+        if primary_was_running:
+            _json_command(run_command, [launcher, "stop", "--platform-root", str(platform_root), "--json"],
+                          "stop primary host for offline cache priming")
+        try:
+            _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                               "--platform-channel", "stable", "--request-platform-root", str(root)]),
+                  "online cache priming apply")
+            plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
+                                               "--platform-channel", "stable", "--offline",
+                                               "--request-platform-root", str(root)], "offline plan").get("plan", {})
+            artifacts = plan.get("artifacts", [])
+            if (plan.get("request", {}).get("source") != "offline" or not artifacts
+                    or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
+                raise RuntimeError("offline plan omitted cache provenance or claimed registry/network resolution")
+        finally:
+            if primary_was_running:
+                _json_command(run_command, [launcher, "start", "--platform-root", str(platform_root), "--json"],
+                              "restore primary host after offline cache priming")
 
     journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
                  cases=["S-181.4"])
+    return journey
+
+
+def run_secondary_root_gateway_isolation_step(*, mode: str, launcher: str, primary_root: Path,
+                                             secondary_root: Path, run_command: CommandRunner) -> Journey:
+    """Check the secondary root while live, then verify its stopped-host error."""
+    journey = Journey(mode, f"secondary-gateway-isolation-{mode}")
+    primary_receipt = primary_root / ".kb/v2/receipt.json"
+    secondary_receipt = secondary_root / ".kb/v2/receipt.json"
+
+    def gateway_isolation() -> None:
+        primary_installation = json.loads(primary_receipt.read_text()).get("installationId")
+        secondary_data = json.loads(secondary_receipt.read_text())
+        secondary_installation = secondary_data.get("installationId")
+        gateway_url = secondary_data.get("verification", {}).get("hostHealthUrl", "")
+        if not gateway_url.startswith("http://127.0.0.1:4100/"):
+            raise RuntimeError(f"secondary root receipt does not declare its own Gateway at port 4100: {gateway_url}")
+
+        was_running: dict[Path, bool] = {}
+        for root in (primary_root, secondary_root):
+            status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
+                                   f"status before Gateway isolation for {root}")
+            host = status.get("host", {})
+            was_running[root] = (isinstance(host, dict) and host.get("state") == "running"
+                                 and status.get("running") is True and status.get("reachable") is True)
+        try:
+            for root in (primary_root, secondary_root):
+                if not was_running[root]:
+                    _json_command(run_command, [launcher, "start", "--platform-root", str(root), "--json"],
+                                  f"start Gateway isolation host {root}")
+
+            live = run_platform_cli(secondary_root, ["adapter", "list", "--json"], run_command)
+            _, live_data = _payload(live, "secondary root adapter list while running")
+            if not isinstance(live_data.get("adapters"), list):
+                raise RuntimeError("running secondary root adapter list omitted adapter state")
+
+            _json_command(run_command, [launcher, "stop", "--platform-root", str(secondary_root), "--json"],
+                          "stop secondary Gateway for isolation check")
+            stopped = run_platform_cli(secondary_root, ["adapter", "list", "--json"], run_command)
+            _, error = _diagnostic(stopped, "secondary root adapter list while stopped")
+            unreachable_hint = f'Run "kb-create start --platform-root {secondary_root}" and retry the command.'
+            unreachable = error.get("code") == "KB_HOST_UNREACHABLE" and error.get("hint") == unreachable_hint
+            primary_answers = (error.get("code") == "KB_HOST_IDENTITY_MISMATCH"
+                               and error.get("details", {}).get("actualInstallationId") == primary_installation
+                               and error.get("details", {}).get("expectedInstallationId") == secondary_installation)
+            if stopped.returncode == 0 or not (unreachable or primary_answers):
+                raise RuntimeError(f"stopped secondary root did not identify its own unavailable Gateway: {error}")
+        finally:
+            for root in (secondary_root, primary_root):
+                status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
+                                       f"status before restoring Gateway isolation host {root}")
+                host = status.get("host", {})
+                running = isinstance(host, dict) and host.get("state") == "running"
+                if was_running[root] and not running:
+                    _json_command(run_command, [launcher, "start", "--platform-root", str(root), "--json"],
+                                  f"restore running host state {root}")
+                elif not was_running[root] and running:
+                    _json_command(run_command, [launcher, "stop", "--platform-root", str(root), "--json"],
+                                  f"restore stopped host state {root}")
+
+    journey.step("verify the secondary root's Gateway while running and stopped", "platform.install",
+                 gateway_isolation, cases=["PC-001.12"])
     return journey
 
 
@@ -510,8 +588,16 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     def secret_apply() -> None:
         if not secret_value:
             raise RuntimeError("isolated journey secret is unavailable for S-181.3")
+        primary_status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
+                                       "primary status before secondary install")
+        primary_host = primary_status.get("host", {})
+        if not (isinstance(primary_host, dict) and primary_host.get("state") == "running"
+                and primary_status.get("running") is True and primary_status.get("reachable") is True):
+            _json_command(run_command, [launcher, "start", "--platform-root", root, "--json"],
+                          "start primary before secondary install")
         apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                     "--platform-channel", "stable", "--request-platform-root", str(secret_root),
+                                    "--gateway-url", "http://127.0.0.1:4100",
                                     "--scenario", "custom", "--scenario-answers",
                                     json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
                                                 "admin.tenant": "journey"}),
@@ -519,6 +605,9 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         payload = _data(apply_result, "secret apply")
         if payload.get("shim") != {"linked": False, "owner": str(platform_root)}:
             raise RuntimeError(f"secret apply changed the live command owner: {payload.get('shim')}")
+        secondary_receipt = json.loads((secret_root / ".kb/v2/receipt.json").read_text())
+        if secondary_receipt.get("verification", {}).get("hostHealthUrl") != "http://127.0.0.1:4100/health":
+            raise RuntimeError("secondary apply did not record its declared Gateway address")
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
         if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
             raise RuntimeError("secondary apply moved the kb shim away from the primary platform root")
@@ -533,36 +622,13 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
                  cases=["S-181.3", "PC-001.10"])
 
-    def secondary_root_cli_does_not_report_primary_state() -> None:
-        status = _json_command(run_command, [launcher, "status", "--platform-root", str(platform_root), "--json"],
-                               "primary host status before secondary CLI")
-        host = status.get("host", {})
-        started_here = not (isinstance(host, dict) and host.get("state") == "running"
-                            and status.get("running") is True and status.get("reachable") is True)
-        if started_here:
-            _json_command(run_command, [launcher, "start", "--platform-root", str(platform_root), "--json"],
-                          "start primary host for secondary CLI")
-        try:
-            result = run_platform_cli(secret_root, ["adapter", "list", "--json"], run_command)
-            if result.returncode == 0:
-                _, data = _payload(result, "secondary root adapter list")
-                rows = data.get("adapters", [])
-                if not isinstance(rows, list) or any(row.get("runtimeStatus") == "known" for row in rows if isinstance(row, dict)):
-                    raise RuntimeError("secondary root adapter list returned another root's runtime state")
-                if not any(row.get("action", {}).get("command") == f'kb-create start --platform-root "{secret_root}"'
-                           for row in rows if isinstance(row, dict)):
-                    raise RuntimeError("secondary root adapter list omitted its exact host start command")
-                return
-            _, error = _diagnostic(result, "secondary root adapter list")
-            if error.get("code") != "KB_HOST_IDENTITY_MISMATCH":
-                raise RuntimeError(f"secondary root CLI did not diagnose the foreign Gateway: {error}")
-        finally:
-            if started_here:
-                _json_command(run_command, [launcher, "stop", "--platform-root", str(platform_root), "--json"],
-                              "stop primary host started for secondary CLI")
-
-    journey.step("keep the secondary root CLI isolated from the primary Gateway", "platform.install",
-                 secondary_root_cli_does_not_report_primary_state, cases=["PC-001.12"])
+    for step in run_secondary_root_gateway_isolation_step(mode=mode, launcher=launcher,
+                                                           primary_root=platform_root,
+                                                           secondary_root=secret_root,
+                                                           run_command=run_command).steps:
+        journey.step(step.name, step.capability,
+                     lambda step=step: None if step.status == "PASS" else step.message,
+                     cases=step.cases)
 
     def repair_dangling_shim() -> None:
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
@@ -644,8 +710,10 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         meta = error.get("details", {})
         if strict.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
             raise RuntimeError("strict SDK plan did not return KB_INSTALL_INCOMPATIBLE_COMPONENTS")
-        if any(meta.get(key) != value for key, value in (("component", "SDK"), ("version", "3.2.0"),
-                                                          ("range", ">=3.0.0 <4.0.0"), ("policy", "strict"))):
+        if any(meta.get(key) != value for key, value in (("kind", "sdk"), ("id", "sdk"),
+                                                          ("selectedVersion", "3.2.0"),
+                                                          ("requiredRange", ">=3.0.0 <4.0.0"),
+                                                          ("policy", "strict"))):
             raise RuntimeError(f"strict SDK error details are incomplete: {meta}")
         if error.get("hint") != "Use an exact platform/SDK pair from the release matrix or choose --policy compatible.":
             raise RuntimeError("strict SDK refusal omitted its exact correction hint")
@@ -667,7 +735,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         meta = error.get("details", {})
         if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
             raise RuntimeError("out-of-range adapter plan did not return KB_INSTALL_INCOMPATIBLE_COMPONENTS")
-        if meta.get("component") != "adapter fixture-adapter platform" or meta.get("version") != "3.2.0" or meta.get("range") != "<3.2.0":
+        if (meta.get("kind") != "adapter" or meta.get("id") != "fixture-adapter"
+                or meta.get("selectedVersion") != "3.2.0" or meta.get("requiredRange") != "<3.2.0"):
             raise RuntimeError(f"adapter range refusal omitted its component details: {meta}")
         if error.get("hint") != "Choose compatible versions or pass an explicit supported provider.":
             raise RuntimeError("adapter range refusal omitted its correction hint")
@@ -684,15 +753,15 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                               "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
                               "--policy", "compatible", "--request-platform-root", str(root)])
         _, error = _diagnostic(result, "installed component update")
-        meta = error.get("meta", {})
+        meta = error.get("details", {})
         expected_code = "KB_UPDATE_INCOMPATIBLE"
         expected_hint = f"Update or remove {kind} {component} first, then rerun `kb-create update`."
         after_files = {str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()}
         after_directories = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_dir()}
         if result.returncode == 0 or error.get("code") != expected_code or not isinstance(meta, dict):
             raise RuntimeError(f"incompatible installed {kind} update did not return {expected_code}: {error}")
-        if (meta.get("component") != component or meta.get("kind") != kind or meta.get("version") != "3.2.0"
-                or meta.get("range") != "<3.2.0" or error.get("hint") != expected_hint):
+        if (meta.get("kind") != kind or meta.get("id") != component or meta.get("selectedVersion") != "3.2.0"
+                or meta.get("requiredRange") != "<3.2.0" or error.get("hint") != expected_hint):
             raise RuntimeError(f"installed {kind} refusal omitted its range or correction details: {error}")
         if (receipt_path.read_bytes() != before_receipt or before_files != after_files
                 or before_directories != after_directories):
@@ -709,7 +778,9 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         sdk_meta = sdk_error.get("details", {})
         if sdk_result.returncode == 0 or sdk_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(sdk_meta, dict):
             raise RuntimeError("out-of-range SDK plan did not fail with the typed incompatibility")
-        if sdk_meta.get("component") != "platform SDK" or sdk_meta.get("version") != "4.0.0" or sdk_meta.get("range") != ">=3.0.0 <4.0.0":
+        if (sdk_meta.get("kind") != "sdk" or sdk_meta.get("id") != "sdk"
+                or sdk_meta.get("selectedVersion") != "4.0.0"
+                or sdk_meta.get("requiredRange") != ">=3.0.0 <4.0.0"):
             raise RuntimeError(f"out-of-range SDK refusal omitted component, version, or range: {sdk_meta}")
         binary_result = run_command([launcher, "plan", "--json", "--index", str(missing_binary),
                                      "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
@@ -718,8 +789,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         binary_meta = binary_error.get("details", {})
         if binary_result.returncode == 0 or binary_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(binary_meta, dict):
             raise RuntimeError("missing host binary plan did not fail with the typed incompatibility")
-        if binary_meta.get("subject") != "binary" or not binary_meta.get("value") or not binary_error.get("hint"):
-            raise RuntimeError(f"missing binary error omitted subject, OS/architecture, or hint: {binary_error}")
+        if binary_meta.get("kind") != "binary" or binary_meta.get("id") != "kb-create" or not binary_error.get("hint"):
+            raise RuntimeError(f"missing binary error omitted its binary identity or hint: {binary_error}")
 
     exact_step("S-053.5", sdk_and_binary_ranges, "refuse an SDK outside range and a release missing the host binary")
 
@@ -739,8 +810,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         after_exists = target.exists()
         if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
             raise RuntimeError("missing host binary did not refuse planning with the typed incompatibility")
-        if meta.get("subject") != "binary" or not meta.get("value") or before != after or before_exists != after_exists:
-            raise RuntimeError("missing binary refusal omitted its subject/value or changed the isolated install root")
+        if meta.get("kind") != "binary" or meta.get("id") != "kb-create" or before != after or before_exists != after_exists:
+            raise RuntimeError("missing binary refusal omitted its kind/id or changed the isolated install root")
 
     exact_step("S-053.7", missing_host_binary_before_mutation, "refuse planning without the runner binary")
 
