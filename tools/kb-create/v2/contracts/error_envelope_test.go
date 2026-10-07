@@ -2,19 +2,21 @@ package contracts
 
 import (
 	"encoding/json"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
 )
 
 func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
-	cause := os.ErrNotExist
+	cause := errors.New("invalid config: token=top-secret-value")
 	value := NewDiag(CodeInputRequired, "", "", cause)
 	if value.Code != CodeInputRequired || value.Unwrap() != cause {
 		t.Fatalf("diag = %#v; cause was not kept internal", value)
@@ -38,8 +40,14 @@ func TestNewDiagUsesSharedCatalogWithoutSerializingRawCause(t *testing.T) {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := fields["cause"]; exists {
-		t.Fatalf("raw Go cause was serialized: %s", data)
+	if fields["cause"] == nil || value.Reason == "" {
+		t.Fatalf("sanitized cause must be visible in JSON and human diagnostics: %s / %#v", data, value)
+	}
+	if strings.Contains(string(data), "top-secret-value") || strings.Contains(value.Reason, "top-secret-value") {
+		t.Fatalf("secret leaked through diagnostic cause: %s / %q", data, value.Reason)
+	}
+	if !strings.Contains(string(data), "[REDACTED]") || !strings.Contains(value.Reason, "[REDACTED]") {
+		t.Fatalf("cause redaction marker missing: %s / %q", data, value.Reason)
 	}
 	for _, field := range []string{"area", "stage", "severity", "retryable", "message", "hint"} {
 		if _, exists := fields[field]; !exists {

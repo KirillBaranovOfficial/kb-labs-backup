@@ -164,6 +164,33 @@ func TestDoctorFailuresUseSharedHumanAndJSONBoundary(t *testing.T) {
 	}
 }
 
+func TestNewDiagCauseIsVisibleAndRedactedAtDoctorCommandBoundary(t *testing.T) {
+	for _, mode := range []string{"human", "json"} {
+		t.Run(mode, func(t *testing.T) {
+			root := newRootCommand()
+			doctor := findCommand(root, "kb-create doctor")
+			doctor.RunE = func(*cobra.Command, []string) error {
+				return contracts.NewDiag("KB_INSTALL_DOCTOR_INPUT_INVALID", "doctor input could not be prepared", "fix the input and rerun doctor", errors.New("decode config: token=private-value"))
+			}
+			var stdout, stderr bytes.Buffer
+			args := []string{"doctor"}
+			if mode == "json" {
+				args = append(args, "--json")
+			}
+			if code := clikitcommand.Execute(root, args, &stdout, &stderr); code != 1 {
+				t.Fatalf("exit = %d, want 1; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			visible := stdout.String() + stderr.String()
+			if strings.Contains(visible, "private-value") || !strings.Contains(visible, "[REDACTED]") {
+				t.Fatalf("diagnostic cause must be visible with secret material redacted: %s", visible)
+			}
+			if !strings.Contains(visible, "decode config") {
+				t.Fatalf("diagnostic cause context missing: %s", visible)
+			}
+		})
+	}
+}
+
 // case: S-203.11, PC-003.2
 func TestDoctorMissingReceiptUsesSharedHumanAndJSONBoundary(t *testing.T) {
 	for _, mode := range []string{"human", "json"} {

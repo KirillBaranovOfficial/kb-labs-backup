@@ -1,6 +1,15 @@
 package contracts
 
-import "github.com/kb-labs/clikit/diag"
+import (
+	"regexp"
+
+	"github.com/kb-labs/clikit/diag"
+)
+
+var (
+	secretAssignment = regexp.MustCompile(`(?i)(\b[A-Z0-9_]*(PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s]+`)
+	secretJSONField  = regexp.MustCompile(`(?i)(["']?(password|token|secret|apiKey|key)["']?\s*:\s*)("[^"\\]*(\\.[^"\\]*)*"|'[^']*'|[^,}\]\s]+)`)
+)
 
 // ErrorStage is the moment of the user journey in which an error happened.
 // The set is open; the values below are the ones the launcher emits.
@@ -67,15 +76,22 @@ const (
 )
 
 // NewDiag constructs the shared clikit diagnostic for a kb-create error code.
-// The wrapped cause remains available through Unwrap; callers may add safe
-// machine-envelope cause text explicitly with clikit's WithCause option.
+// The wrapped cause remains available through Unwrap. Its sanitized text is
+// exposed in both machine and human diagnostics at this shared boundary.
 func NewDiag(code, message, hint string, cause error) *diag.Diag {
 	opts := make([]diag.Opt, 0, 2)
 	if hint != "" {
 		opts = append(opts, diag.WithHint(hint))
 	}
 	if cause != nil {
+		safeCause := redactCause(cause.Error())
+		opts = append(opts, diag.WithCause(safeCause), diag.WithReason(safeCause))
 		return diag.Wrap(cause, code, message, opts...)
 	}
 	return diag.New(code, message, opts...)
+}
+
+func redactCause(cause string) string {
+	cause = secretAssignment.ReplaceAllString(cause, `${1}"[REDACTED]"`)
+	return secretJSONField.ReplaceAllString(cause, `${1}"[REDACTED]"`)
 }
