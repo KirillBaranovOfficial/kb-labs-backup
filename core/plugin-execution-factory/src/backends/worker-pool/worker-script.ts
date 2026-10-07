@@ -21,7 +21,9 @@ import type {
   ShutdownMessage,
   UIPromptMessage,
   UIPromptResultMessage,
+  SerializedCataloguedError,
 } from './types.js';
+import { createErrorEnvelope, ErrorEnvelopeError, getCatalogEntry, toErrorEnvelope } from '@kb-labs/core-platform';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
 import type { ITransport } from '@kb-labs/core-ipc';
@@ -62,11 +64,7 @@ async function ipcPrompt(
     pendingPrompts.set(promptId, (result) => {
       clearTimeout(timer);
       if (result.error) {
-        if (result.error.code === 'KB_RUNTIME_INPUT_INVALID') {
-          reject(new InteractiveInputRequiredError(result.error.hint ?? promptHint, result.error.cause));
-          return;
-        }
-        reject(Object.assign(new Error(), result.error));
+        reject(rebuildCataloguedError(result.error));
         return;
       }
       resolve(result.value);
@@ -81,7 +79,31 @@ async function ipcPrompt(
   });
 }
 
-const promptHint = 'Provide the value as workflow or request input, then run `kb workflow run --help`.';
+function rebuildCataloguedError(error: SerializedCataloguedError): ErrorEnvelopeError {
+  return new ErrorEnvelopeError(createErrorEnvelope(error.code, {
+    message: error.message,
+    hint: error.hint,
+    ...(error.cause ? { cause: error.cause } : {}),
+    ...(error.details ? { details: error.details } : {}),
+  }));
+}
+
+function serializeCataloguedError(envelope: ReturnType<typeof toErrorEnvelope>): SerializedCataloguedError {
+  return {
+    code: envelope.code,
+    message: envelope.message,
+    hint: envelope.hint,
+    ...(envelope.cause ? { cause: envelope.cause } : {}),
+    ...(envelope.details ? { details: envelope.details } : {}),
+  };
+}
+
+function hasCataloguedCode(error: unknown): error is { code: string } {
+  return typeof error === 'object' && error !== null && 'code' in error &&
+    typeof error.code === 'string' && getCatalogEntry(error.code) !== undefined;
+}
+
+const promptHint = 'Supply the requested value as command or request input and retry.';
 
 function unavailablePrompt(message: string, reason: string): InteractiveInputRequiredError {
   return new InteractiveInputRequiredError(promptHint, `The prompt "${message}" cannot be answered. ${reason}`);
@@ -319,12 +341,25 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     process.send!(resultMessage);
   } catch (error) {
-    const promptFailure = error instanceof InteractiveInputRequiredError
-      ? { code: error.code, hint: error.hint, cause: error.cause }
-      : { code: resolveHandlerErrorCode(error) };
+    const errorEnvelope = error instanceof ErrorEnvelopeError
+      ? error.envelope
+      : hasCataloguedCode(error)
+        ? toErrorEnvelope(error)
+        : undefined;
+    const cataloguedError = errorEnvelope
+      ? serializeCataloguedError(errorEnvelope)
+      : undefined;
     sendError(requestId, {
       message: error instanceof Error ? error.message : String(error),
-      ...promptFailure,
+      ...(cataloguedError
+        ? {
+          code: cataloguedError.code,
+          hint: cataloguedError.hint,
+          cause: cataloguedError.cause,
+          details: cataloguedError.details,
+          cataloguedError,
+        }
+        : { code: resolveHandlerErrorCode(error) }),
       stack: error instanceof Error ? error.stack : undefined,
     });
   }

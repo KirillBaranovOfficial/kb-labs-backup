@@ -10,7 +10,7 @@
 
 import { safeColors } from '../colors.js';
 import {
-  requireInteractiveInput, enableRawMode, disableRawMode,
+  InteractiveInputRequiredError, requireInteractiveInput, enableRawMode, disableRawMode,
   hideCursor, showCursor, clearLines,
   onKeypress, isUpKey, isDownKey, isEnterKey, isEscapeKey,
 } from './terminal.js';
@@ -53,10 +53,15 @@ function renderSelect<T>(message: string, choices: SelectChoice<T>[], activeInde
 export async function select<T>(options: SelectOptions<T>): Promise<T> {
   const { message, choices, initialIndex = 0 } = options;
 
+  const noChoicesCause = `The "${message}" prompt has no choices to select.`;
+  const noChoicesHint = `Add at least one choice to the "${message}" prompt in the calling plugin, then retry.`;
+  requireInteractiveInput(
+    choices.length === 0 ? noChoicesHint : 'Run this command in a terminal to choose an option.',
+    choices.length === 0 ? noChoicesCause : `The "${message}" prompt requires interactive input.`,
+  );
   if (choices.length === 0) {
-    return (choices[Math.min(initialIndex, choices.length - 1)] as SelectChoice<T>).value;
+    throw new InteractiveInputRequiredError(noChoicesHint, noChoicesCause);
   }
-  requireInteractiveInput('Run this command in a terminal to choose an option.');
 
   let activeIndex = Math.min(initialIndex, choices.length - 1);
   let lineCount = 0;

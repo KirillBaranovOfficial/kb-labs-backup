@@ -7,6 +7,10 @@
 
 import type { ExecutionRequest, ExecutionResult } from '../../types.js';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
+import type { ErrorEnvelope } from '@kb-labs/core-platform';
+
+export type SerializedCataloguedError = Pick<ErrorEnvelope, 'code' | 'message' | 'hint'>
+  & Partial<Pick<ErrorEnvelope, 'cause' | 'details'>>;
 
 // ============================================================================
 // Worker Pool Configuration
@@ -174,6 +178,8 @@ export interface ErrorMessage extends BaseWorkerMessage {
     code?: string;
     hint?: string;
     cause?: string;
+    details?: Record<string, string>;
+    cataloguedError?: SerializedCataloguedError;
     stack?: string;
   };
 }
@@ -269,11 +275,7 @@ export interface UIPromptResultMessage extends BaseWorkerMessage {
   type: 'uiPromptResult';
   promptId: string;
   value: unknown;
-  error?: {
-    code?: string;
-    hint?: string;
-    cause: string;
-  };
+  error?: SerializedCataloguedError;
 }
 
 /**

@@ -11,7 +11,7 @@
 
 import { safeColors } from '../colors.js';
 import {
-  requireInteractiveInput, enableRawMode, disableRawMode,
+  InteractiveInputRequiredError, requireInteractiveInput, enableRawMode, disableRawMode,
   hideCursor, showCursor, clearLines,
   onKeypress, isUpKey, isDownKey, isEnterKey, isEscapeKey, isSpaceKey,
 } from './terminal.js';
@@ -69,10 +69,15 @@ function renderMultiSelect<T>(
 export async function multiSelect<T>(options: MultiSelectOptions<T>): Promise<T[]> {
   const { message, choices, min } = options;
 
+  const noChoicesCause = `The "${message}" prompt has no choices to select.`;
+  const noChoicesHint = `Add at least one choice to the "${message}" prompt in the calling plugin, then retry.`;
+  requireInteractiveInput(
+    choices.length === 0 ? noChoicesHint : 'Run this command in a terminal to choose options.',
+    choices.length === 0 ? noChoicesCause : `The "${message}" prompt requires interactive input.`,
+  );
   if (choices.length === 0) {
-    return choices.filter((c) => c.checked).map((c) => c.value);
+    throw new InteractiveInputRequiredError(noChoicesHint, noChoicesCause);
   }
-  requireInteractiveInput('Run this command in a terminal to choose options.');
 
   let activeIndex = 0;
   const checked = new Set<number>(
