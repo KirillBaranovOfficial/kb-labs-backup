@@ -33,7 +33,7 @@ describe('steward:resource.add', () => {
       mockCLIInput({ argv: ['prj_1'], flags: { type: 'repo', label: 'Repo', url: 'https://example.com' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedAddResource).toHaveBeenCalledWith({
       projectId: 'prj_1',
       type: 'repo',
@@ -49,12 +49,12 @@ describe('steward:resource.add', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
       expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddResource).not.toHaveBeenCalled();
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 
   it('requires at least one of --url/--content', async () => {
@@ -65,11 +65,11 @@ describe('steward:resource.add', () => {
       mockCLIInput({ argv: ['prj_1'], flags: { type: 'repo', label: 'Repo' } }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
       expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddResource).not.toHaveBeenCalled();
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

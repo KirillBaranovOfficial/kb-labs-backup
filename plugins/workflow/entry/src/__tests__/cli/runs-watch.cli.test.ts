@@ -68,7 +68,6 @@ describe('workflow:runs watch', () => {
     const ctx = createMockContext({ ui });
     const result = await runsWatchCommand.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.infos.some(i => i.message.includes('No runs found'))).toBe(true);
   });
 
@@ -88,7 +87,6 @@ describe('workflow:runs watch', () => {
     const ctx = createMockContext({ ui });
     const result = await runsWatchCommand.execute(ctx, mockCLIInput({ argv: [] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.infos.some(i => i.message.includes('run-latest'))).toBe(true);
   });
 
@@ -105,7 +103,6 @@ describe('workflow:runs watch', () => {
       mockCLIInput({ argv: ['run-abc'] }),
     );
 
-    expect(result.ok).toBe(true);
     expect(captured.writes.some((w) => w.includes('run.finished') || w.includes('SUCCESS'))).toBe(true);
   });
 
@@ -121,7 +118,7 @@ describe('workflow:runs watch', () => {
       mockCLIInput({ argv: ['run-abc'] }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
   });
 
   it('CW-04: --json flag emits JSON objects per event', async () => {
@@ -137,9 +134,7 @@ describe('workflow:runs watch', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) { throw new Error('expected workflow watch to succeed'); }
-    const payload = result.result as { events: Array<{ type: string }> };
+        const payload = result as { events: Array<{ type: string }> };
     expect(payload.events).toHaveLength(2);
     expect(payload.events[0]?.type).toBe('run.snapshot');
   });
@@ -154,8 +149,8 @@ describe('workflow:runs watch', () => {
       mockCLIInput({ argv: ['run-abc'] }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('CW-06: log.appended events are forwarded to ctx.ui.log()', async () => {

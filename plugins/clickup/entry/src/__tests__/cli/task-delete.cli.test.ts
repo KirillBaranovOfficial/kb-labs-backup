@@ -30,7 +30,7 @@ describe('clickup:task.delete', () => {
       mockCLIInput({ argv: ['task-001'], flags: { yes: true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('task-001');
   });
@@ -45,8 +45,8 @@ describe('clickup:task.delete', () => {
       mockCLIInput({ argv: ['task-001'], flags: { yes: true, json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ deleted: true, taskId: 'task-001' });
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ deleted: true, taskId: 'task-001' });
   });
 
   it('TD-03: missing taskId returns exitCode 1', async () => {
@@ -57,7 +57,7 @@ describe('clickup:task.delete', () => {
       mockCLIInput({ argv: [], flags: { yes: true } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -69,7 +69,7 @@ describe('clickup:task.delete', () => {
       mockCLIInput({ argv: ['task-001'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -83,7 +83,7 @@ describe('clickup:task.delete', () => {
       mockCLIInput({ argv: ['task-001'], flags: { yes: true } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -95,7 +95,7 @@ describe('clickup:task.delete', () => {
       mockCLIInput({ argv: ['task-001'], flags: { 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(deleteTask).not.toHaveBeenCalled();
     expect(captured.infos.length).toBeGreaterThan(0);
     expect(captured.infos[0]?.message).toContain('Dry-run');
@@ -110,7 +110,7 @@ describe('clickup:task.delete', () => {
       mockCLIInput({ argv: ['task-001'], flags: { 'dry-run': true, yes: true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(deleteTask).not.toHaveBeenCalled();
     expect(captured.infos.length).toBeGreaterThan(0);
   });

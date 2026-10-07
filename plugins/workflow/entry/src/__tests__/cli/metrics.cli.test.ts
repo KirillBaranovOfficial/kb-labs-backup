@@ -33,7 +33,6 @@ describe('workflow:metrics', () => {
     const ctx = createMockContext({ ui });
     const result = await metricsCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Metrics');
   });
@@ -49,11 +48,9 @@ describe('workflow:metrics', () => {
     const ctx = createMockContext({ ui });
     const result = await metricsCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = result as { ok: boolean; result: WorkflowMetricsData };
-    expect(payload.ok).toBe(true);
-    expect(payload.result.runs.total).toBe(42);
-    expect(payload.result.jobs.total).toBe(120);
+    const payload = result as WorkflowMetricsData;
+    expect(payload.runs.total).toBe(42);
+    expect(payload.jobs.total).toBe(120);
   });
 
   it('CM-03: daemon unavailable returns exitCode 1', async () => {
@@ -67,7 +64,7 @@ describe('workflow:metrics', () => {
     const ctx = createMockContext({ ui });
     const result = await metricsCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 });

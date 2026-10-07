@@ -28,7 +28,6 @@ describe('workflow:health', () => {
     const ctx = createMockContext({ ui });
     const result = await healthCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('healthy');
   });
@@ -44,8 +43,7 @@ describe('workflow:health', () => {
     const ctx = createMockContext({ ui });
     const result = await healthCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true, result: { ok: true, service: 'workflow' } });
+    expect(result).toMatchObject({ ok: true, service: 'workflow' });
   });
 
   it('CH-03: daemon unavailable — prints error, returns exitCode 1', async () => {
@@ -59,7 +57,7 @@ describe('workflow:health', () => {
     const ctx = createMockContext({ ui });
     const result = await healthCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 });

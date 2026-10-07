@@ -1,14 +1,35 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer, type Server } from 'node:http';
 import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
+function spawnCli(args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, args, options);
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', status => resolve({ status, stdout, stderr }));
+  });
+}
+
 describe('installed platform adapter defaults', () => {
   let tempRoot: string | undefined;
+  let gatewayServer: Server | undefined;
 
   afterEach(async () => {
+    if (gatewayServer) {
+      const server = gatewayServer;
+      gatewayServer = undefined;
+      await new Promise<void>((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve());
+      });
+    }
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
     tempRoot = undefined;
   });
@@ -110,7 +131,32 @@ describe('installed platform adapter defaults', () => {
       schema: 'kb.marketplace/3', plugins: {}, adapters,
     }));
 
-    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, KB_HOME: path.join(home, '.kb'), KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot };
+    gatewayServer = createServer((request, response) => {
+      if (request.url !== '/health/adapters') {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify([
+        { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs' },
+        { slot: 'kvStore', mode: 'real', implementation: '@kb-labs/adapters-sqlite/kv' },
+        { slot: 'llm', mode: 'real', implementation: '@kb-labs/adapters-openai' },
+      ]));
+    });
+    await new Promise<void>((resolve, reject) => {
+      gatewayServer?.once('error', reject);
+      gatewayServer?.listen(0, '127.0.0.1', resolve);
+    });
+    const address = gatewayServer.address();
+    if (!address || typeof address === 'string') throw new Error('Local gateway fixture did not bind a TCP port');
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      KB_HOME: path.join(home, '.kb'),
+      KB_PLATFORM_ROOT: platformRoot,
+      KB_PROJECT_ROOT: projectRoot,
+      KB_GATEWAY_URL: `http://127.0.0.1:${address.port}`,
+    };
     delete env.KB_NET_OFFSET;
     const help = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), '--help'], {
       cwd: projectRoot,
@@ -137,11 +183,9 @@ describe('installed platform adapter defaults', () => {
 
     await createProjectRegistry({ env }).add(projectRoot);
 
-    const command = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
+    const command = await spawnCli([path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
       cwd: projectRoot,
       env,
-      encoding: 'utf8',
-      timeout: 30_000,
     });
 
     expect(command.status, command.stderr || command.stdout).toBe(0);

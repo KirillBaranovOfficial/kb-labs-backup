@@ -37,7 +37,7 @@ describe('clickup:task comments list', () => {
       mockCLIInput({ argv: ['task-001'] }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
   });
 
   it('TCL-02: --json outputs slim comments array', async () => {
@@ -50,9 +50,9 @@ describe('clickup:task comments list', () => {
       mockCLIInput({ argv: ['task-001'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(Array.isArray(result.result)).toBe(true);
-    const slim = (result.result as Array<Record<string, unknown>>)[0]!;
+    expect(result).not.toHaveProperty('ok');
+    expect(Array.isArray(result)).toBe(true);
+    const slim = (result as Array<Record<string, unknown>>)[0]!;
     expect(slim.id).toBe('comment-1');
     expect(typeof slim.user).toBe('string');
     expect(slim).not.toHaveProperty('resolved');
@@ -69,8 +69,8 @@ describe('clickup:task comments list', () => {
       mockCLIInput({ argv: ['task-001'], flags: { json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const raw = (result.result as typeof mockComments)[0]!;
+    expect(result).not.toHaveProperty('ok');
+    const raw = (result as typeof mockComments)[0]!;
     expect(typeof raw.user).toBe('object');
     expect(raw.resolved).toBeDefined();
   });
@@ -85,7 +85,7 @@ describe('clickup:task comments list', () => {
       mockCLIInput({ argv: ['task-001'] }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.infos.length).toBeGreaterThan(0);
   });
 
@@ -97,7 +97,7 @@ describe('clickup:task comments list', () => {
       mockCLIInput({ argv: [] }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -111,7 +111,7 @@ describe('clickup:task comments list', () => {
       mockCLIInput({ argv: ['task-001'] }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 });

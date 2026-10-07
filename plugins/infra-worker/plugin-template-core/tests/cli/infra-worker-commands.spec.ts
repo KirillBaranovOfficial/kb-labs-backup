@@ -29,8 +29,7 @@ describe('infra-worker commands', () => {
       },
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toEqual({
+    expect(result).toEqual({
       workspaceId: 'ws_custom_1',
       environmentId: undefined,
       snapshotId: undefined,
@@ -65,10 +64,9 @@ describe('infra-worker commands', () => {
       },
     });
 
-    expect(result.ok).toBe(true);
-    expect(result.result?.workspaceId).toBeDefined();
-    expect(result.result?.environmentId).toBeDefined();
-    expect(result.result?.snapshotId).toBeDefined();
+    expect(result.workspaceId).toBeDefined();
+    expect(result.environmentId).toBeDefined();
+    expect(result.snapshotId).toBeDefined();
     expect(ctx.api.environment.create).toHaveBeenCalled();
     expect(ctx.api.workspace.attach).toHaveBeenCalled();
     expect(ctx.api.snapshot.capture).toHaveBeenCalledWith(

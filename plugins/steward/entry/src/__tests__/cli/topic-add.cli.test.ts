@@ -31,7 +31,7 @@ describe('steward:topic.add', () => {
       mockCLIInput({ flags: { name: 'frontend', aliases: 'фронт,фронтенд,front-end' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedAddTopic).toHaveBeenCalledWith({ name: 'frontend', aliases: ['фронт', 'фронтенд', 'front-end'] });
     expect(captured.infos[0]?.message).toContain('frontend');
   });
@@ -41,11 +41,11 @@ describe('steward:topic.add', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
+    expect(result).toHaveProperty('ok', false);
+    if ('error' in result) {
       expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
     }
     expect(mockedAddTopic).not.toHaveBeenCalled();
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    if ('error' in result) { expect(result.error.hint).toBeTruthy(); }
   });
 });

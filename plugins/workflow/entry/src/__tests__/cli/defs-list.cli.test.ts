@@ -33,7 +33,6 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.table.length).toBeGreaterThan(0);
     expect(captured.table[0]!.rows.length).toBe(2);
   });
@@ -49,11 +48,9 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = result as { ok: boolean; result: typeof sampleWorkflows };
-    expect(payload.ok).toBe(true);
-    expect(Array.isArray(payload.result)).toBe(true);
-    expect(payload.result.length).toBe(2);
+    const payload = result as typeof sampleWorkflows;
+    expect(Array.isArray(payload)).toBe(true);
+    expect(payload.length).toBe(2);
   });
 
   it('DL-03: --status active filters by status', async () => {
@@ -87,7 +84,6 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: { source: 'manifest' } }));
 
-    expect(result.ok).toBe(true);
   });
 
   it('DL-05: --tags passes tags filter to client', async () => {
@@ -116,7 +112,6 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.errors.length).toBe(0);
   });
 
@@ -131,8 +126,8 @@ describe('workflow:defs list', () => {
     const ctx = createMockContext({ ui });
     const result = await defsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('DL-08: renders Tags column joined by comma', async () => {

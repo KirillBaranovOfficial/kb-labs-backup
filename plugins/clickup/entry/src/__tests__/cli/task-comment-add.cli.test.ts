@@ -32,7 +32,7 @@ describe('clickup:task comments add', () => {
       mockCLIInput({ argv: ['task-001'], flags: { text: 'Hello world' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Comment added');
   });
@@ -49,8 +49,8 @@ describe('clickup:task comments add', () => {
       mockCLIInput({ argv: ['task-001'], flags: { text: 'Hello world', json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const slim = result.result as Record<string, unknown>;
+    expect(result).not.toHaveProperty('ok');
+    const slim = result as Record<string, unknown>;
     expect(slim.id).toBe('comment-1');
     expect(slim).not.toHaveProperty('user');
     expect(slim).not.toHaveProperty('resolved');
@@ -67,8 +67,8 @@ describe('clickup:task comments add', () => {
       mockCLIInput({ argv: ['task-001'], flags: { text: 'Hello world', json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const slim = result.result as Record<string, unknown>;
+    expect(result).not.toHaveProperty('ok');
+    const slim = result as Record<string, unknown>;
     expect(slim.id).toBe('comment-1');
     expect(typeof slim.user).toBe('string');
     expect(slim).not.toHaveProperty('resolved');
@@ -85,8 +85,8 @@ describe('clickup:task comments add', () => {
       mockCLIInput({ argv: ['task-001'], flags: { text: 'Hello world', json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const raw = result.result as typeof mockComment;
+    expect(result).not.toHaveProperty('ok');
+    const raw = result as typeof mockComment;
     expect(typeof raw.user).toBe('object');
     expect(raw.resolved).toBeDefined();
   });
@@ -99,7 +99,7 @@ describe('clickup:task comments add', () => {
       mockCLIInput({ argv: [], flags: { text: 'Hello world' } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -111,7 +111,7 @@ describe('clickup:task comments add', () => {
       mockCLIInput({ argv: ['task-001'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -125,7 +125,7 @@ describe('clickup:task comments add', () => {
       mockCLIInput({ argv: ['task-001'], flags: { text: 'Hello world' } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -137,7 +137,7 @@ describe('clickup:task comments add', () => {
       mockCLIInput({ argv: ['task-001'], flags: { text: 'Hello', 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(addTaskComment)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('task-001');

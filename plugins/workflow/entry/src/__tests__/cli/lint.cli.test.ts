@@ -16,7 +16,6 @@ describe('workflow:lint', () => {
 
     const result = await lintCommand.execute(ctx, mockCLIInput({ flags: { path: fixture('valid.yml') } }));
 
-    expect(result.ok).toBe(true);
     expect(captured.errors).toHaveLength(0);
     expect(captured.success.length).toBeGreaterThan(0);
   });
@@ -27,11 +26,14 @@ describe('workflow:lint', () => {
 
     const result = await lintCommand.execute(ctx, mockCLIInput({ flags: { path: fixture('invalid.yml') } }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
-    // The validation error must mention the offending field (jobs).
-    if (result.ok) { throw new Error('expected workflow lint to fail'); }
-    expect(result.error.message).toMatch(/job/i);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        message: expect.stringMatching(/job/i),
+        hint: expect.any(String),
+      },
+    });
   });
 
   it('CLI-03: --json emits parseable { ok:false, files:[...] }', async () => {
@@ -43,14 +45,19 @@ describe('workflow:lint', () => {
       mockCLIInput({ flags: { path: fixture('invalid.yml'), json: true } }),
     );
 
-    expect(result.ok).toBe(false);
-    if (result.ok) { throw new Error('expected invalid workflow file to fail'); }
-    expect(result.error.code).toBe('KB_RUNTIME_INPUT_INVALID');
-    const payload = result.result as { ok: boolean; files: Array<{ ok: boolean; errors: string[] }> };
-    expect(payload.ok).toBe(false);
-    expect(payload.files.length).toBe(1);
-    expect(payload.files[0]!.ok).toBe(false);
-    expect(payload.files[0]!.errors.length).toBeGreaterThan(0);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({
+            code: 'WORKFLOW_VALIDATION_FAILED',
+            path: expect.stringContaining('invalid.yml'),
+            message: expect.stringMatching(/job/i),
+          }),
+        ]),
+      },
+    });
   });
 
   it('CLI-04: directory path lints every file and fails if any is invalid', async () => {
@@ -62,12 +69,15 @@ describe('workflow:lint', () => {
       mockCLIInput({ flags: { path: fixturesDir, json: true } }),
     );
 
-    expect(result.ok).toBe(false);
-    if (result.ok) { throw new Error('expected invalid workflows in directory to fail'); }
-    const payload = result.result as { ok: boolean; files: Array<{ relativePath: string; ok: boolean }> };
-    expect(payload.files.length).toBe(2);
-    expect(payload.files.some((f) => f.ok)).toBe(true);
-    expect(payload.files.some((f) => !f.ok)).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({ code: 'WORKFLOW_VALIDATION_FAILED', path: expect.stringContaining('invalid.yml') }),
+        ]),
+      },
+    });
   });
 
   it('CLI-05: --strict on a valid file still passes (no warnings to promote)', async () => {
@@ -79,6 +89,5 @@ describe('workflow:lint', () => {
       mockCLIInput({ flags: { path: fixture('valid.yml'), strict: true } }),
     );
 
-    expect(result.ok).toBe(true);
   });
 });

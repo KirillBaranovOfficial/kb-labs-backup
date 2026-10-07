@@ -24,7 +24,7 @@ describe('steward:person.list', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.chain[0]).toHaveLength(1);
   });
 
@@ -35,7 +35,7 @@ describe('steward:person.list', () => {
     const ctx = createMockContext({ ui });
     const result = await command.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result).toMatchObject({ ok: true, result: [] });
+    expect(result).toEqual([]);
   });
 
   it('prints a friendly message with no contacts', async () => {

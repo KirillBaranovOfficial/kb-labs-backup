@@ -77,7 +77,7 @@ describe('review:run', () => {
     const ctx = createMockContext({ ui });
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(noopLoader.fail).toHaveBeenCalled();
   });
 
@@ -92,7 +92,7 @@ describe('review:run', () => {
     const ctx = createMockContext({ ui });
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(mockedRunReview).toHaveBeenCalledOnce();
     expect(captured.success.length + captured.warnings.length).toBeGreaterThan(0);
   });
@@ -110,8 +110,13 @@ describe('review:run', () => {
     const ctx = createMockContext({ ui });
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    expect(result.result).toMatchObject({ passed: false });
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        diagnostics: [{ code: 'KB_REVIEW_FINDING', path: 'src/index.ts', message: 'eval is dangerous' }],
+      },
+    });
   });
 
   it('RR-04: --json flag — returns ReviewResult to the shared serializer', async () => {
@@ -127,7 +132,7 @@ describe('review:run', () => {
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
     expect(captured.json).toHaveLength(0);
-    expect(result).toMatchObject({ ok: true, result: { findings: [], metadata: { analyzedFiles: 3 } } });
+    expect(result).toEqual(reviewResult);
   });
 
   it('RR-05: --scope=staged uses includeStaged filter', async () => {
@@ -167,7 +172,7 @@ describe('review:run', () => {
     const ctx = createMockContext({ ui });
     const result = await reviewRunCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(noopLoader.fail).toHaveBeenCalled();
   });
 

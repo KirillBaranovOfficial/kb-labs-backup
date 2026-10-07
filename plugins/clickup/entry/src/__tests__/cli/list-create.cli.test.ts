@@ -41,7 +41,7 @@ describe('clickup:list.create', () => {
       mockCLIInput({ flags: { folder: 'folder-1', name: 'My List' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('List created');
     expect(vi.mocked(createListInFolder)).toHaveBeenCalledWith('test-api-key', 'folder-1', { name: 'My List' });
@@ -57,7 +57,7 @@ describe('clickup:list.create', () => {
       mockCLIInput({ flags: { space: 'space-1', name: 'My List' } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(createListInSpace)).toHaveBeenCalledWith('test-api-key', 'space-1', { name: 'My List' });
   });
 
@@ -71,9 +71,9 @@ describe('clickup:list.create', () => {
       mockCLIInput({ flags: { folder: 'folder-1', name: 'My List', json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ id: 'list-1', name: 'My List' });
-    expect(Object.keys(result.result as object)).toEqual(['id', 'name']);
+    expect(result).not.toHaveProperty('ok');
+    expect(result).toMatchObject({ id: 'list-1', name: 'My List' });
+    expect(Object.keys(result as object)).toEqual(['id', 'name']);
   });
 
   it('LC-03b: --json --full outputs raw list object', async () => {
@@ -86,8 +86,8 @@ describe('clickup:list.create', () => {
       mockCLIInput({ flags: { folder: 'folder-1', name: 'My List', json: true, full: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    const raw = result.result as typeof mockList;
+    expect(result).not.toHaveProperty('ok');
+    const raw = result as typeof mockList;
     expect(raw.orderindex).toBeDefined();
     expect(raw.taskCount).toBeDefined();
   });
@@ -100,7 +100,7 @@ describe('clickup:list.create', () => {
       mockCLIInput({ flags: { folder: 'folder-1' } }) as Parameters<typeof listCreateCommand.execute>[1],
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -112,7 +112,7 @@ describe('clickup:list.create', () => {
       mockCLIInput({ flags: { name: 'My List' } }) as Parameters<typeof listCreateCommand.execute>[1],
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -126,7 +126,7 @@ describe('clickup:list.create', () => {
       mockCLIInput({ flags: { folder: 'folder-1', name: 'My List' } }),
     );
 
-    expect(result.ok).toBe(false);
+    expect(result).toHaveProperty('ok', false);
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -138,7 +138,7 @@ describe('clickup:list.create', () => {
       mockCLIInput({ flags: { folder: 'folder-1', name: 'My List', 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('ok');
     expect(vi.mocked(createListInFolder)).not.toHaveBeenCalled();
     expect(captured.infos[0]?.message).toContain('Dry-run');
     expect(captured.infos[0]?.message).toContain('My List');

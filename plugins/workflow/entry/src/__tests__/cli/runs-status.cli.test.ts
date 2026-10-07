@@ -52,7 +52,6 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: {}, argv: ['r-001'] }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -67,7 +66,6 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: { 'run-id': 'r-001' } }));
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -82,11 +80,9 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: { json: true }, argv: ['r-001'] }));
 
-    expect(result.ok).toBe(true);
-    const payload = result as { ok: boolean; result: WorkflowRunDetail };
-    expect(payload.ok).toBe(true);
-    expect(payload.result.id).toBe('r-001');
-    expect(payload.result.status).toBe('success');
+    const payload = result as WorkflowRunDetail;
+    expect(payload.id).toBe('r-001');
+    expect(payload.status).toBe('success');
   });
 
   it('RST-04: missing runId returns exitCode 1 with validation error message', async () => {
@@ -94,9 +90,8 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: {}, argv: [] }));
 
-    expect(result.ok).toBe(false);
-    if (result.ok) { throw new Error('expected a missing run ID to fail'); }
-    expect(result.error.message).toContain('Missing run ID');
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('Missing run ID') } });
   });
 
   it('RST-05: daemon unavailable returns exitCode 1', async () => {
@@ -110,7 +105,7 @@ describe('workflow:runs-status', () => {
     const ctx = createMockContext({ ui });
     const result = await runsStatusCommand.execute(ctx, mockCLIInput({ flags: {}, argv: ['r-001'] }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 });

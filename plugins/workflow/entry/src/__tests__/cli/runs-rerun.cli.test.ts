@@ -31,7 +31,6 @@ describe('workflow:runs rerun', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Rerun');
   });
@@ -51,8 +50,7 @@ describe('workflow:runs rerun', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true });
+    expect(result).toEqual({ runId: 'run-new-002', status: 'queued' });
   });
 
   it('RRR-02b: --run-id flag works as alias for positional arg', async () => {
@@ -70,7 +68,6 @@ describe('workflow:runs rerun', () => {
       mockCLIInput({ argv: [], flags: { 'run-id': 'run-abc' } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
   });
 
@@ -82,8 +79,8 @@ describe('workflow:runs rerun', () => {
       mockCLIInput({ argv: [], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RRR-04: daemon error returns exitCode 1', async () => {
@@ -101,8 +98,8 @@ describe('workflow:runs rerun', () => {
       mockCLIInput({ argv: ['run-bad'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RRR-05: --dry-run shows intent, daemon is NOT called', async () => {
@@ -118,7 +115,6 @@ describe('workflow:runs rerun', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { 'dry-run': true } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(rerunWorkflow).not.toHaveBeenCalled();
     expect(captured.infos.length).toBeGreaterThan(0);
     expect(captured.infos[0]?.message).toContain('Dry-run');
@@ -149,7 +145,6 @@ describe('workflow:runs rerun', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { 'failed-only': true } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(rerunWorkflow).toHaveBeenCalledWith('run-abc', { failedOnly: true });
   });
 
@@ -166,7 +161,6 @@ describe('workflow:runs rerun', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
     expect(rerunWorkflow).toHaveBeenCalledWith('run-abc', { failedOnly: false });
   });
 });

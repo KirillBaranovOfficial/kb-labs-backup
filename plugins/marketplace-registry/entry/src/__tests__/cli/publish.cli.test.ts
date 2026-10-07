@@ -68,7 +68,7 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual(PUBLISH_RESULT);
     // publish.ts uses ctx.ui.chain() — two items: pack step + publish step
     const chainCall = captured.chain[0];
     expect(chainCall).toBeDefined();
@@ -83,8 +83,8 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    expect(result.result).toMatchObject({ name: 'my-plugin', version: '1.0.0' });
+    expect(result).toEqual(PUBLISH_RESULT);
+
   });
 
   it('PB-03: --private passes visibility=private to registry', async () => {
@@ -104,7 +104,7 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
     expect(mockedPackPlugin).not.toHaveBeenCalled();
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
@@ -115,7 +115,7 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
     expect(mockedPackPlugin).not.toHaveBeenCalled();
   });
 
@@ -125,7 +125,7 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
     expect(mockedPackPlugin).not.toHaveBeenCalled();
   });
 
@@ -135,7 +135,7 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: { metaOnly: true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toBeUndefined();
     expect(mockedPackPlugin).not.toHaveBeenCalled();
     expect(mockedPostMultipart).not.toHaveBeenCalled();
     expect(mockedPatch).toHaveBeenCalled();
@@ -152,7 +152,7 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: { metaOnly: true } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toBeUndefined();
     expect(mockedResolveHandle).toHaveBeenCalled();
     // URL path must contain the handle resolved from credentials
     const [patchPath] = mockedPatch.mock.calls[0]!;
@@ -165,7 +165,7 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
     expect(result).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/), message: expect.any(String), hint: expect.any(String) } });
   });
 
@@ -175,7 +175,7 @@ describe('marketplace:publish', () => {
     const ctx = createCtxWithHandle(ui);
     const result = await publishCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false });
     // publish.ts uses ctx.ui.chain() for error output — error item has status: 'error'
     const chainCall = captured.chain[0];
     expect(chainCall).toBeDefined();

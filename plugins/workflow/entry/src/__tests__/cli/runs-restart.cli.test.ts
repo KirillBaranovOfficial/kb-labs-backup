@@ -31,7 +31,6 @@ describe('workflow:runs restart', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
     expect(captured.success.length).toBeGreaterThan(0);
     expect(captured.success[0]?.message).toContain('Restart');
   });
@@ -49,7 +48,6 @@ describe('workflow:runs restart', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { 'from-step': 'checkout' } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(restartRun).toHaveBeenCalledWith('run-abc', { fromStepId: 'checkout' });
   });
 
@@ -66,7 +64,6 @@ describe('workflow:runs restart', () => {
       mockCLIInput({ argv: ['run-abc'], flags: {} }),
     );
 
-    expect(result.ok).toBe(true);
     expect(restartRun).toHaveBeenCalledWith('run-abc', { fromStepId: undefined });
   });
 
@@ -85,8 +82,7 @@ describe('workflow:runs restart', () => {
       mockCLIInput({ argv: ['run-abc'], flags: { json: true } }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(result).toMatchObject({ ok: true });
+    expect(result).toEqual({ runId: 'run-new-004', status: 'queued' });
   });
 
   it('RST-05: missing run ID returns exitCode 1', async () => {
@@ -97,8 +93,8 @@ describe('workflow:runs restart', () => {
       mockCLIInput({ argv: [], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RST-06: daemon error returns exitCode 1', async () => {
@@ -116,8 +112,8 @@ describe('workflow:runs restart', () => {
       mockCLIInput({ argv: ['run-bad'], flags: {} }),
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('RST-07: --run-id flag works as alias for positional arg', async () => {
@@ -133,7 +129,6 @@ describe('workflow:runs restart', () => {
       mockCLIInput({ argv: [], flags: { 'run-id': 'run-abc' } }),
     );
 
-    expect(result.ok).toBe(true);
     expect(restartRun).toHaveBeenCalledWith('run-abc', expect.any(Object));
   });
 });

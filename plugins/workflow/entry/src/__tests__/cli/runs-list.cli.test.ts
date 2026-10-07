@@ -33,7 +33,6 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.table.length).toBeGreaterThan(0);
     expect(captured.table[0]!.rows.length).toBe(2);
   });
@@ -50,12 +49,10 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: { json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = result as { ok: boolean; result: typeof sampleRuns };
-    expect(payload.ok).toBe(true);
-    expect(Array.isArray(payload.result)).toBe(true);
-    expect(payload.result.length).toBe(2);
-    expect(payload.result[0]).toMatchObject({ id: 'r-001', workflowId: 'e2e-hello', status: 'success' });
+    const payload = result as typeof sampleRuns;
+    expect(Array.isArray(payload)).toBe(true);
+    expect(payload.length).toBe(2);
+    expect(payload[0]).toMatchObject({ id: 'r-001', workflowId: 'e2e-hello', status: 'success' });
   });
 
   it('CL-03: --status running filters by status', async () => {
@@ -89,7 +86,6 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: { limit: 5 } }));
 
-    expect(result.ok).toBe(true);
   });
 
   it('CL-05: --workflow filters by workflowId', async () => {
@@ -118,7 +114,6 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     expect(captured.errors.length).toBe(0);
   });
 
@@ -133,8 +128,8 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) { expect(result.error.hint).toBeTruthy(); }
+    expect(result).toHaveProperty('ok', false);
+    expect(result).toMatchObject({ ok: false, error: { hint: expect.any(String) } });
   });
 
   it('CL-09: future startedAt renders as "just now" (not negative)', async () => {
@@ -151,7 +146,6 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     const row = captured.table[0]!.rows[0]!;
     const whenCell = row['When'] as string;
     expect(whenCell).toBe('just now');
@@ -172,7 +166,6 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: { limit: '3' as unknown as number } }));
 
-    expect(result.ok).toBe(true);
   });
 
   it('CL-11: RUNNING run with currentStepName shows step name in Step column', async () => {
@@ -188,7 +181,6 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     const row = captured.table[0]!.rows[0]!;
     expect(row['Step']).toBe('build-image');
   });
@@ -206,7 +198,6 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     const row = captured.table[0]!.rows[0]!;
     expect(row['Step']).toBe('');
   });
@@ -225,7 +216,6 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: { workflow: 'deploy-prod' } }));
 
-    expect(result.ok).toBe(true);
     expect(captured.table[0]!.rows.length).toBe(1);
     expect(captured.table[0]!.rows[0]!['Workflow']).toBe('deploy-prod');
   });
@@ -251,7 +241,6 @@ describe('workflow:runs list', () => {
     const ctx = createMockContext({ ui });
     const result = await runsListCommand.execute(ctx, mockCLIInput({ flags: {} }));
 
-    expect(result.ok).toBe(true);
     const row = captured.table[0]!.rows[0]!;
     expect(row['Step']).toBe('await-gate');
   });

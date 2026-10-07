@@ -224,6 +224,8 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     const sources = await glob([
       'cli/commands/src/commands/system/**/*.ts',
       'plugins/*/entry/src/cli/**/*.ts',
+      'plugins/*/entry/src/commands/**/*.ts',
+      'plugins/infra-worker/plugin-template-core/src/cli/commands/**/*.ts',
     ], { cwd: workspaceRoot, ignore: ['**/*.test.ts', '**/*.spec.ts'] });
     const catalog = JSON.parse(await readFile(path.join(workspaceRoot, 'core/platform/src/error-envelope/errors.catalog.json'), 'utf8')) as {
       codes: Array<{ code: string; message: string; hint: string }>;
