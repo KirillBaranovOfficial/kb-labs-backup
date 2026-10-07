@@ -15,6 +15,8 @@ from platform_update_steps import _json_command
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result)
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
                                workspace_resource)
+from service_port_assertions import (assert_root_offset, service_ports,
+                                     service_transport_ports)
 from service_steps import Journey
 
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
@@ -54,6 +56,26 @@ def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandR
     if not executable.is_file():
         raise RuntimeError(f"platform CLI is missing for {platform_root}: {executable}")
     return run_command([str(executable), *args])
+
+
+def stop_installer_fixture_host(root: Path, launcher: str, run_command: CommandRunner) -> None:
+    """Stop an installed fixture host before another journey action or cleanup."""
+    if (root / ".kb/v2/receipt.json").is_file():
+        status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
+                               f"status before cleaning installer fixture {root}")
+        host = status.get("host", {})
+        if isinstance(host, dict) and host.get("state") == "running":
+            _json_command(run_command, [launcher, "stop", "--platform-root", str(root), "--json"],
+                          f"stop installer fixture host {root}")
+
+
+def cleanup_installer_fixture_root(root: Path, launcher: str, run_command: CommandRunner) -> None:
+    """Stop an installed fixture host before removing its platform files."""
+    stop_installer_fixture_host(root, launcher, run_command)
+    if (root / ".kb/v2/receipt.json").is_file():
+        _json_command(run_command, [launcher, "uninstall", "--platform-root", str(root), "--yes", "--json"],
+                      f"uninstall installer fixture root {root}")
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def _seed_doctor_fixture(source_root: Path, target_root: Path, *, requirement: dict | None = None,
@@ -368,25 +390,80 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
         primary_port, automatic_port = urlsplit(primary_url).port, urlsplit(automatic_url).port
         if not primary_port or automatic_port != primary_port + 100:
             raise RuntimeError(f"no-flag apply did not allocate the next Gateway offset: {automatic_url}")
+        automatic_plan = automatic_receipt.get("plan", {})
+        automatic_services = automatic_plan.get("serviceGraph", {}).get("services", [])
+        primary_plan = primary_receipt.get("plan", {})
+        primary_ports = service_ports(primary_plan)
+        primary_transport_ports = service_transport_ports(primary_plan)
+        assert_root_offset(automatic_plan, primary_ports, primary_transport_ports, 100,
+                           "secondary receipt")
 
-        planned = _data(run_command([launcher, "plan", "--json", "--index", str(stable_index),
-                                     "--platform-channel", "stable", "--request-platform-root",
-                                     str(automatic_root)]), "repeat automatic Gateway plan").get("plan", {})
-        if (planned.get("request", {}).get("gatewayUrl") != automatic_url.removesuffix("/health")
-                or planned.get("host", {}).get("healthUrl") != automatic_url):
-            raise RuntimeError(f"replanning changed the installed Gateway address: {planned}")
+        _json_command(run_command, [launcher, "stop", "--platform-root", str(automatic_root), "--json"],
+                      "stop automatic Gateway root before checking its retained allocation")
 
-        result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                              "--platform-channel", "stable", "--request-platform-root", str(explicit_root),
-                              "--gateway-url", "http://127.0.0.1:4200"])
-        data = _data(result, "explicit Gateway apply")
-        explicit_receipt = data.get("receipt", {})
-        explicit_url = explicit_receipt.get("verification", {}).get("hostHealthUrl", "")
-        if explicit_url != "http://127.0.0.1:4200/health":
-            raise RuntimeError(f"explicit Gateway override was not recorded in the receipt: {explicit_url}")
+        explicit_installed = False
+        try:
+            result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                  "--platform-channel", "stable", "--request-platform-root", str(explicit_root),
+                                  "--gateway-url", "http://127.0.0.1:4200"])
+            explicit_installed = (explicit_root / ".kb/v2/receipt.json").is_file()
+            data = _data(result, "explicit Gateway apply")
+            explicit_receipt = data.get("receipt", {})
+            explicit_url = explicit_receipt.get("verification", {}).get("hostHealthUrl", "")
+            if explicit_url != "http://127.0.0.1:4200/health":
+                raise RuntimeError(f"explicit Gateway override was not recorded in the receipt: {explicit_url}")
+
+            next_plan = _data(run_command([launcher, "plan", "--json", "--index", str(stable_index),
+                                           "--platform-channel", "stable", "--request-platform-root",
+                                           str(explicit_root.parent / "root-d")]), "plan after stopped root allocation").get("plan", {})
+            next_url = next_plan.get("request", {}).get("gatewayUrl", "")
+            if urlsplit(next_url).port != automatic_port + 200:
+                raise RuntimeError(f"stopped root did not retain its allocation: new root planned {next_url}")
+            assert_root_offset(next_plan, primary_ports, primary_transport_ports, 300,
+                               "next planned root")
+
+            planned = _data(run_command([launcher, "plan", "--json", "--index", str(stable_index),
+                                         "--platform-channel", "stable", "--request-platform-root",
+                                         str(automatic_root)]), "repeat automatic Gateway plan").get("plan", {})
+            if (planned.get("request", {}).get("gatewayUrl") != automatic_url.removesuffix("/health")
+                    or planned.get("host", {}).get("healthUrl") != automatic_url
+                    or planned.get("serviceGraph", {}).get("services") != automatic_services):
+                raise RuntimeError(f"replanning changed the stopped root's Gateway or service ports: {planned}")
+        finally:
+            if explicit_installed:
+                stop_installer_fixture_host(explicit_root, launcher, run_command)
 
     journey.step("allocate an unused Gateway address by default and honor an explicit override",
                  "platform.install", verify_gateway_addresses, cases=["PC-001.10", "PC-001.16"])
+    return journey
+
+
+def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Path,
+                                  platform_root: Path, project_root: Path,
+                                  run_command: CommandRunner) -> Journey:
+    """Install a custom scenario in JSON mode and verify its project registry entry."""
+    journey = Journey(mode, f"json-install-project-{mode}")
+
+    def install_and_show() -> None:
+        platform_root.parent.mkdir(parents=True, exist_ok=True)
+        project_root.mkdir(parents=True, exist_ok=True)
+        try:
+            result = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                  "--request-platform-root", str(platform_root), "--service-profile", "default",
+                                  "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
+                                  "--project-root", str(project_root)])
+            _data(result, "JSON custom-scenario install with project")
+            shown = _data(run_platform_cli(platform_root, ["project", "show", str(project_root), "--json"], run_command),
+                          "registered project after JSON install").get("project", {})
+            if shown.get("path") != str(project_root.resolve()) or not shown.get("id"):
+                raise RuntimeError(f"JSON install did not register the canonical project path: {shown}")
+            if (project_root / ".kb").exists():
+                raise RuntimeError("JSON project registration wrote KB Labs files into the project repository")
+        finally:
+            cleanup_installer_fixture_root(platform_root, launcher, run_command)
+
+    journey.step("install a custom scenario in JSON mode and register its project",
+                 "platform.install", install_and_show, cases=["S-187.6"])
     return journey
 
 
@@ -982,29 +1059,39 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         root, project = scratch / "s187-with-project", scratch / "s187-project"
         project.mkdir(parents=True, exist_ok=True)
         before = set(project.iterdir())
-        result = run_command([launcher, "install", "--index", str(stable_index),
-                              "--platform-root", str(root), "--project-root", str(project)])
-        canonical = str(project.resolve())
-        if (result.returncode != 0 or "Verification: platform installed at" not in result.stdout
-                or canonical not in result.stdout or not (root / ".kb/v2/receipt.json").is_file()):
-            raise RuntimeError("non-interactive install did not verify and register the canonical project path")
-        if set(project.iterdir()) != before:
-            raise RuntimeError("project registration wrote KB Labs files into the project repository")
-        shutil.rmtree(root, ignore_errors=True)
+        try:
+            result = run_command([launcher, "install", "--index", str(stable_index),
+                                  "--platform-root", str(root), "--project-root", str(project)])
+            canonical = str(project.resolve())
+            if (result.returncode != 0 or "Verification: platform installed at" not in result.stdout
+                    or canonical not in result.stdout or not (root / ".kb/v2/receipt.json").is_file()):
+                raise RuntimeError("non-interactive install did not verify and register the canonical project path")
+            if set(project.iterdir()) != before:
+                raise RuntimeError("project registration wrote KB Labs files into the project repository")
+        finally:
+            cleanup_installer_fixture_root(root, launcher, run_command)
 
     exact_step("S-187.4", install_with_project, "install non-interactively and register a project", "platform.install")
 
     def install_without_project() -> None:
         root = scratch / "s187-no-project"
-        result = run_command([launcher, "install", "--index", str(stable_index), "--platform-root", str(root)])
-        if result.returncode != 0 or "kb project add <path>" not in result.stdout:
-            raise RuntimeError("install without a project omitted the exact `kb project add <path>` next step")
-        receipt = json.loads((root / ".kb/v2/receipt.json").read_text())
-        if receipt.get("project") or receipt.get("projects"):
-            raise RuntimeError("install without a project unexpectedly registered one")
-        shutil.rmtree(root, ignore_errors=True)
+        try:
+            result = run_command([launcher, "install", "--index", str(stable_index), "--platform-root", str(root)])
+            if result.returncode != 0 or "kb project add <path>" not in result.stdout:
+                raise RuntimeError("install without a project omitted the exact `kb project add <path>` next step")
+            receipt = json.loads((root / ".kb/v2/receipt.json").read_text())
+            if receipt.get("project") or receipt.get("projects"):
+                raise RuntimeError("install without a project unexpectedly registered one")
+        finally:
+            cleanup_installer_fixture_root(root, launcher, run_command)
 
     exact_step("S-187.5", install_without_project, "install without a project and print its registration command", "platform.install")
+
+    json_install_journey = run_json_install_project_step(
+        mode=mode, launcher=launcher, stable_index=stable_index,
+        platform_root=scratch / "s187-json-with-project",
+        project_root=scratch / "s187-json-project", run_command=run_command)
+    journey.steps.extend(json_install_journey.steps)
 
     shutil.rmtree(scratch, ignore_errors=True)
     return journey
