@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
-from invocations import decode_ux_success_result, invocation_context, read_ux_cli_result, run_command
+from hermetic_cli import run_hermetic_cli
+from invocations import decode_ux_success_result, describe_cli_failure, invocation_context, read_ux_cli_result
 
 
 SERVICE_SOURCES = {
@@ -92,9 +92,9 @@ def main() -> int:
     for mode in ("local", "secured"):
         command = ["pnpm", "-s", "kb", "qa", "cases", "coverage", "--level", "all", "--mode", mode, "--json"]
         with invocation_context(step_id="journey.case-selection"):
-            result = run_command(command, cwd=Path.cwd(), env=os.environ, timeout=120)
+            result = run_hermetic_cli(command, cwd=Path.cwd(), env=os.environ, timeout=120)
         if result.returncode != 0:
-            raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout, stderr=result.stderr)
+            raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
         results.append(read_coverage_result(result.stdout, result.returncode))
     requested = os.environ.get("KB_JOURNEY_CASES", "")
     if requested:
