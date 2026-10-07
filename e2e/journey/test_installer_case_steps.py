@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from installer_case_steps import (_seed_doctor_fixture, run_doctor_root_isolation_step,
+from installer_case_steps import (_seed_doctor_fixture, assert_default_service_ports_free,
+                                  run_doctor_root_isolation_step,
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
                                   run_offline_plan_step, run_repeat_plan_readonly_step,
                                   run_uninstall_decline_step, _service_ids_match,
@@ -17,6 +18,30 @@ from service_steps import Journey, record_candidate_provenance
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_default_service_port_check_names_leftover_listener_owner(self):
+        with tempfile.TemporaryDirectory(prefix="journey-default-port-check-") as temp:
+            root = Path(temp)
+            receipt_path = root / ".kb/v2/receipt.json"
+            receipt_path.parent.mkdir(parents=True)
+            receipt_path.write_text(json.dumps({"plan": {
+                "host": {"healthUrl": "http://127.0.0.1:4000/health"},
+                "serviceGraph": {"services": [{"id": "gateway", "port": 4000},
+                                                {"id": "marketplace", "port": 5070}]},
+            }}))
+
+            calls = []
+
+            def lsof(args):
+                calls.append(args)
+                if "-iTCP:4000" in args:
+                    return subprocess.CompletedProcess(args, 0, "p363\ncMainThread\n", "")
+                return subprocess.CompletedProcess(args, 1, "", "")
+
+            with self.assertRaisesRegex(RuntimeError, r"port 4000 .* pid 363 \(MainThread\)"):
+                assert_default_service_ports_free(root, lsof)
+            self.assertEqual(len(calls), 2)
+            self.assertIn("-iTCP:4000", calls[0])
+
     def test_offline_plan_step_executes_with_fake_cli_and_claims_s181_4(self):
         with tempfile.TemporaryDirectory(prefix="journey-offline-plan-") as temp:
             root = Path(temp)
@@ -261,22 +286,21 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
             def run_command(args):
                 calls.append(args)
-                self.assertEqual(json.loads(config_path.read_text())["platform"]["adapterOptions"]["analytics"]["retentionDays"], 0)
-                payload = {"ok": False, "error": {
-                    "code": "KB_CONFIG_INVALID",
-                    "message": "Invalid platform.adapterOptions.analytics.retentionDays",
-                    "cause": "must be a positive integer",
-                    "hint": "Run kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90",
-                }}
-                return subprocess.CompletedProcess(args, 1, json.dumps(payload), "")
+                if args[1] == "start":
+                    self.assertEqual(json.loads(config_path.read_text())["platform"]["adapterOptions"]["analytics"]["retentionDays"], 0)
+                    payload = {"ok": True, "data": {"operation": "start", "host": {"pid": 363}}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {"operation": "stop"}}), "")
 
             journey = run_analytics_invalid_retention_step(mode="local", launcher="kb-create",
                                                            platform_root=root, run_command=run_command)
 
         self.assertEqual(journey.steps[0].cases, ["S-191.7"])
-        self.assertEqual(journey.steps[0].status, "PASS")
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0][1], "start")
+        self.assertEqual(calls[1][1], "stop")
+        self.assertEqual(calls[1][calls[1].index("--platform-root") + 1], str(root))
 
     def test_doctor_root_isolation_claim_checks_repair_and_main_status(self):
         with tempfile.TemporaryDirectory(prefix="journey-doctor-isolation-") as temp:
