@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -456,7 +457,7 @@ func installOutput(t *testing.T) (*os.File, string) {
 	return file, path
 }
 
-// case: PC-001.16
+// case: PC-001.16, S-054.2
 func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -469,12 +470,19 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	listener.Close()
 	root := filepath.Join(home, "kb-platform")
 	index := filepath.Join(home, "release-index.json")
+	compatibility := testCompatibility("2.0.0")
+	compatibility.Labels = append(compatibility.Labels, catalog.CompatibilityLabel{
+		ID:   fmt.Sprintf("binary:kb-create@2.0.0:%s/%s", goruntime.GOOS, goruntime.GOARCH),
+		Kind: "binary", ArtifactID: "kb-create", Version: "2.0.0",
+		Requires: []catalog.CompatibilityRelation{{Label: "platform@2.0.0"}}, Status: "prepared", ValidatedBy: []string{"test"},
+	})
 	release, err := catalog.Seal(catalog.Catalog{
 		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Compatibility: testCompatibility("2.0.0"),
+		Compatibility: compatibility,
 		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
 			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)},
 			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}},
+			Binaries: []catalog.Binary{{ID: "kb-create", OS: goruntime.GOOS, Arch: goruntime.GOARCH, URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
 			Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
 				{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}}},
 		Plugins: []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}},
@@ -518,6 +526,33 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 	if target, err := os.Readlink(filepath.Join(home, "bin", "kb")); err != nil || target != filepath.Join(root, ".kb", "v2", "bin", "kb") {
 		t.Fatalf("kb shim target/error = %q / %v", target, err)
+	}
+	installedReceipt, err := receipt.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasLauncherBinary := false
+	for _, artifact := range installedReceipt.Plan.Artifacts {
+		if artifact.Kind == "binary" && artifact.ID == "kb-create" {
+			hasLauncherBinary = true
+		}
+	}
+	if !hasLauncherBinary {
+		t.Fatal("sealed install fixture did not resolve the shipped kb-create binary")
+	}
+	var doctorOutput, doctorError bytes.Buffer
+	doctorCode := clikitcommand.Execute(newRootCommand(), []string{"doctor", "--platform-root", root, "--json"}, &doctorOutput, &doctorError)
+	if doctorCode != 0 {
+		t.Fatalf("automatic doctor after sealed install exited %d: stdout=%s stderr=%s", doctorCode, doctorOutput.String(), doctorError.String())
+	}
+	var doctorResponse struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Findings []any `json:"findings"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(doctorOutput.Bytes(), &doctorResponse); err != nil || !doctorResponse.OK || len(doctorResponse.Data.Findings) != 0 {
+		t.Fatalf("automatic doctor after clean sealed install should have no findings: err=%v stdout=%s", err, doctorOutput.String())
 	}
 	secondaryRoot := filepath.Join(home, "kb-platform-secondary")
 	secondaryOutput, _ := installOutput(t)
