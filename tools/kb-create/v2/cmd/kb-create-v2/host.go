@@ -186,7 +186,7 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	if executable == "" {
 		var err error
 		if executable, err = os.Executable(); err != nil {
-			return host.Info{}, contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", err)
+			return host.Info{}, host.StartFailure(state, err, map[string]string{"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot)})
 		}
 	}
 	logFile, err := os.OpenFile(state.SupervisorLog(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -198,10 +198,12 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	host.ConfigureDetached(cmd)
 	if err := cmd.Start(); err != nil {
-		return host.Info{}, contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", err)
+		return host.Info{}, host.StartFailure(state, err, map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot)})
 	}
 	exited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(exited) }()
+	waitErr := make(chan error, 1)
+	go func() { waitErr <- cmd.Wait(); close(exited) }()
+	started := time.Now()
 	deadline := time.After(process.Spec.ReadyTimeout + 10*time.Second)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -213,20 +215,28 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 		}
 		select {
 		case <-exited:
-			return host.Info{}, supervisorFailure(state)
+			return host.Info{}, supervisorFailure(state, <-waitErr, process.Spec.HealthURL, time.Since(started), c.PlatformRoot)
 		case <-deadline:
 			host.KillProcess(cmd.Process.Pid)
-			return host.Info{}, contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", errors.New("supervisor did not report a healthy host in time"))
+			return host.Info{}, host.StartFailure(state, errors.New("supervisor did not report a healthy host in time"), map[string]string{
+				"supervisorLog": state.SupervisorLog(), "readinessURL": process.Spec.HealthURL,
+				"waited":      time.Since(started).Round(time.Millisecond).String(),
+				"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot),
+			})
 		case <-ctx.Done():
 			host.KillProcess(cmd.Process.Pid)
-			return host.Info{}, contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", ctx.Err())
+			return host.Info{}, host.StartFailure(state, ctx.Err(), map[string]string{
+				"supervisorLog": state.SupervisorLog(), "readinessURL": process.Spec.HealthURL,
+				"waited":      time.Since(started).Round(time.Millisecond).String(),
+				"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot),
+			})
 		case <-ticker.C:
 		}
 	}
 }
 
 // supervisorFailure recovers the envelope the supervisor printed before exiting.
-func supervisorFailure(state host.State) error {
+func supervisorFailure(state host.State, exit error, readinessURL string, waited time.Duration, platformRoot string) error {
 	file, err := os.Open(state.SupervisorLog())
 	if err == nil {
 		defer file.Close()
@@ -243,9 +253,11 @@ func supervisorFailure(state host.State) error {
 			}
 		}
 	}
-	e := contracts.NewDiag("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", errors.New("supervisor exited before the host became healthy"))
-	e.Meta = map[string]any{"log": state.SupervisorLog()}
-	return e
+	return host.StartFailure(state, fmt.Errorf("supervisor exited before host readiness: %v", exit), map[string]string{
+		"supervisorLog": state.SupervisorLog(), "supervisorExit": fmt.Sprint(exit),
+		"readinessURL": readinessURL, "waited": waited.Round(time.Millisecond).String(),
+		"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", platformRoot),
+	})
 }
 
 func (c hostCommand) supervise(ctx context.Context, runner host.Runner, state host.State) int {

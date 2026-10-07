@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,12 +13,14 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/diagnostics"
 )
 
 // pidRecord is the host.pid file. It is the only cross-process handle on the
@@ -73,6 +76,42 @@ type ProcessRunner struct {
 	pid     int
 	exited  chan struct{}
 	waitErr error
+	stderr  *tailBuffer
+	secrets []string
+}
+
+const startupStderrLimit = 8 * 1024
+const startupStderrLines = 40
+
+var (
+	secretAssignment = regexp.MustCompile(`(?i)(\b[A-Z0-9_]*(PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s]+`)
+	secretJSONField  = regexp.MustCompile(`(?i)(["']?(password|token|secret|apiKey|key)["']?\s*:\s*)("[^"\\]*(\\.[^"\\]*)*"|'[^']*'|[^,}\]\s]+)`)
+)
+
+type tailBuffer struct {
+	mu    sync.Mutex
+	limit int
+	data  []byte
+}
+
+func (b *tailBuffer) Write(data []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = append(b.data, data...)
+	if len(b.data) > b.limit {
+		b.data = append([]byte(nil), b.data[len(b.data)-b.limit:]...)
+	}
+	return len(data), nil
+}
+
+func (b *tailBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	lines := strings.Split(strings.TrimSpace(string(b.data)), "\n")
+	if len(lines) > startupStderrLines {
+		lines = lines[len(lines)-startupStderrLines:]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func (r *ProcessRunner) Name() string { return "process" }
@@ -121,14 +160,15 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 	env, err := r.environment()
 	if err != nil {
 		_ = logFile.Close()
-		return Info{}, r.startFailed(err)
+		return Info{}, r.startFailed(err, nil)
 	}
 	cmd.Env = env
-	cmd.Stdout, cmd.Stderr = logFile, logFile
+	r.stderr = &tailBuffer{limit: startupStderrLimit}
+	cmd.Stdout, cmd.Stderr = logFile, io.MultiWriter(logFile, r.stderr)
 	configureHostProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
-		return Info{}, r.startFailed(err)
+		return Info{}, r.startFailed(err, nil)
 	}
 	exited := make(chan struct{})
 	r.mu.Lock()
@@ -194,20 +234,81 @@ func (r *ProcessRunner) environment() ([]string, error) {
 	for key, value := range values {
 		env = append(env, key+"="+value)
 	}
+	r.mu.Lock()
+	r.secrets = r.secrets[:0]
+	for _, value := range values {
+		if value != "" {
+			r.secrets = append(r.secrets, value)
+		}
+	}
+	r.mu.Unlock()
 	return env, nil
 }
 
-func (r *ProcessRunner) startFailed(cause error) *diag.Diag {
-	return hostError("KB_HOST_START_FAILED", "The host process failed while starting.", "Read the reason in the log and report the correlationId if it is unclear.", cause, map[string]string{"log": r.State.HostLog()})
+// StartFailure is the single diagnostic builder for failed launcher host starts.
+func StartFailure(state State, cause error, evidence map[string]string) *diag.Diag {
+	details := map[string]string{"log": state.HostLog(), "launcherLog": state.LauncherLog()}
+	for key, value := range evidence {
+		details[key] = redactHostOutput(value, nil)
+	}
+	if cause != nil {
+		cause = errors.New(redactHostOutput(cause.Error(), nil))
+	}
+	if startup := startupEnvelope(details["stderrTail"]); startup != nil {
+		details["hostStartupCode"] = startup.Error.Code
+		reason := startup.Error.Code + ": " + startup.Error.Message
+		if startup.Error.Cause != "" {
+			reason += " (" + startup.Error.Cause + ")"
+		}
+		cause = errors.New(reason)
+	}
+	reason := "host startup failed"
+	if cause != nil {
+		reason = cause.Error()
+	}
+	nextCommand := details["nextCommand"]
+	if nextCommand == "" {
+		nextCommand = "kb-create start"
+	}
+	hint := fmt.Sprintf("Read the launcher log at %q and host log at %q, correct the reported startup failure, then run `%s`.", state.LauncherLog(), state.HostLog(), nextCommand)
+	failure := hostError("KB_HOST_START_FAILED", "The host process failed while starting.", hint, cause, details)
+	failure.Reason = reason
+	failure.Cause = reason
+	if err := appendLauncherFailure(state, failure); err != nil {
+		failure.Meta["launcherLogError"] = err.Error()
+	}
+	return failure
+}
+
+func (r *ProcessRunner) startFailed(cause error, evidence map[string]string) *diag.Diag {
+	if evidence == nil {
+		evidence = map[string]string{}
+	}
+	if tail := r.stderrTail(); tail != "" {
+		evidence["stderrTail"] = redactHostOutput(tail, r.secrets)
+	}
+	if r.Operation == "apply" {
+		evidence["nextCommand"] = "kb-create apply"
+	} else {
+		root := r.PlatformRoot
+		if root == "" {
+			root = "<platform-root>"
+		}
+		evidence["nextCommand"] = fmt.Sprintf("kb-create start --platform-root %q", root)
+	}
+	return StartFailure(r.State, cause, evidence)
 }
 
 func (r *ProcessRunner) waitReady(ctx context.Context, pid int, exited <-chan struct{}) error {
+	started := time.Now()
 	deadline := time.NewTimer(r.Spec.ReadyTimeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(r.interval())
 	defer ticker.Stop()
+	lastProbe := readinessProbe{URL: r.Spec.HealthURL}
 	for {
-		if r.healthy(ctx) {
+		lastProbe = r.probe(ctx)
+		if lastProbe.Healthy {
 			if err := r.verifyListenerOwner(pid); err != nil {
 				r.kill(pid)
 				return err
@@ -223,10 +324,10 @@ func (r *ProcessRunner) waitReady(ctx context.Context, pid int, exited <-chan st
 			if cause == nil {
 				cause = fmt.Errorf("process exited with status 0")
 			}
-			return r.startFailed(fmt.Errorf("host exited before it became healthy: %w", cause))
+			return r.startFailed(fmt.Errorf("host exited before becoming ready: %s", processExit(cause)), processExitDetails(cause))
 		case <-deadline.C:
 			r.kill(pid)
-			return r.startFailed(fmt.Errorf("host did not become healthy within %s", r.Spec.ReadyTimeout))
+			return r.startFailed(fmt.Errorf("readiness check %s failed after %s", probeDescription(lastProbe), time.Since(started).Round(time.Millisecond)), readinessDetails(lastProbe, time.Since(started)))
 		case <-ctx.Done():
 			// A host that became healthy just as the caller cancelled is up;
 			// the caller decides whether to stop it.
@@ -238,9 +339,10 @@ func (r *ProcessRunner) waitReady(ctx context.Context, pid int, exited <-chan st
 				return nil
 			}
 			r.kill(pid)
-			return r.startFailed(ctx.Err())
+			return r.startFailed(ctx.Err(), readinessDetails(lastProbe, time.Since(started)))
 		case <-ticker.C:
-			if r.healthy(ctx) {
+			lastProbe = r.probe(ctx)
+			if lastProbe.Healthy {
 				if err := r.verifyListenerOwner(pid); err != nil {
 					r.kill(pid)
 					return err
@@ -249,6 +351,119 @@ func (r *ProcessRunner) waitReady(ctx context.Context, pid int, exited <-chan st
 			}
 		}
 	}
+}
+
+type readinessProbe struct {
+	URL     string
+	Status  int
+	Error   string
+	Healthy bool
+}
+
+func (r *ProcessRunner) probe(ctx context.Context) readinessProbe {
+	result := readinessProbe{URL: r.Spec.HealthURL}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.Spec.HealthURL, nil)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	response, err := r.client().Do(request)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	defer response.Body.Close()
+	result.Status = response.StatusCode
+	result.Healthy = response.StatusCode >= 200 && response.StatusCode < 300
+	return result
+}
+
+func readinessDetails(probe readinessProbe, waited time.Duration) map[string]string {
+	details := map[string]string{"readinessURL": probe.URL, "waited": waited.Round(time.Millisecond).String()}
+	if probe.Status != 0 {
+		details["readinessStatus"] = strconv.Itoa(probe.Status)
+	}
+	if probe.Error != "" {
+		details["readinessError"] = probe.Error
+	}
+	return details
+}
+
+func probeDescription(probe readinessProbe) string {
+	if probe.Status != 0 {
+		return fmt.Sprintf("%s returned HTTP %d", probe.URL, probe.Status)
+	}
+	if probe.Error != "" {
+		return fmt.Sprintf("%s could not be reached: %s", probe.URL, probe.Error)
+	}
+	return probe.URL
+}
+
+func processExit(err error) string {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if code := exit.ExitCode(); code >= 0 {
+			return fmt.Sprintf("exit code %d", code)
+		}
+		return exit.Error()
+	}
+	return err.Error()
+}
+
+func processExitDetails(err error) map[string]string {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if code := exit.ExitCode(); code >= 0 {
+			return map[string]string{"exitCode": strconv.Itoa(code)}
+		}
+		return map[string]string{"signal": exit.Error()}
+	}
+	return map[string]string{"exitStatus": err.Error()}
+}
+
+type hostStartupEnvelope struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Cause   string `json:"cause"`
+	} `json:"error"`
+}
+
+func startupEnvelope(stderr string) *hostStartupEnvelope {
+	for _, line := range strings.Split(stderr, "\n") {
+		var envelope hostStartupEnvelope
+		if json.Unmarshal(bytes.TrimSpace([]byte(line)), &envelope) == nil && envelope.Error.Code != "" {
+			if _, known := diag.LookupCatalog(envelope.Error.Code); known {
+				return &envelope
+			}
+		}
+	}
+	return nil
+}
+
+func (r *ProcessRunner) stderrTail() string {
+	if r.stderr == nil {
+		return ""
+	}
+	return redactHostOutput(r.stderr.String(), r.secrets)
+}
+
+func redactHostOutput(value string, secrets []string) string {
+	value = diagnostics.Redact(value, secrets)
+	value = secretAssignment.ReplaceAllString(value, `${1}"[REDACTED]"`)
+	return secretJSONField.ReplaceAllString(value, `${1}"[REDACTED]"`)
+}
+
+func appendLauncherFailure(state State, failure *diag.Diag) error {
+	file, err := os.OpenFile(state.LauncherLog(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	entry := map[string]any{"time": time.Now().UTC(), "event": "host.start.failed", "code": failure.Code,
+		"cause": failure.Cause, "details": failure.Meta}
+	encodeErr := json.NewEncoder(file).Encode(entry)
+	closeErr := file.Close()
+	return errors.Join(encodeErr, closeErr)
 }
 
 type portOwner struct{ PID, Command string }
@@ -338,11 +553,12 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 func (r *ProcessRunner) verifyListenerOwner(pid int) error {
 	_, port, err := net.SplitHostPort(r.Spec.HealthAddress())
 	if err != nil {
-		return r.startFailed(err)
+		return r.startFailed(err, map[string]string{"readinessURL": r.Spec.HealthURL})
 	}
 	owner := listenerOwner(port)
 	if owner.PID != strconv.Itoa(pid) {
-		return hostError("KB_HOST_START_FAILED", "The health endpoint is responding from a process the launcher did not start.", "Stop the process using port "+port+" and run `kb-create install` again.", nil, map[string]string{"port": port, "expectedPid": strconv.Itoa(pid), "pid": owner.PID, "command": owner.Command})
+		cause := fmt.Errorf("readiness endpoint %s is served by pid %s (%s), expected host pid %d", r.Spec.HealthURL, owner.PID, owner.Command, pid)
+		return r.startFailed(cause, map[string]string{"readinessURL": r.Spec.HealthURL, "expectedPid": strconv.Itoa(pid), "pid": owner.PID, "command": owner.Command})
 	}
 	return nil
 }
@@ -355,16 +571,7 @@ func (r *ProcessRunner) kill(pid int) {
 }
 
 func (r *ProcessRunner) healthy(ctx context.Context) bool {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, r.Spec.HealthURL, nil)
-	if err != nil {
-		return false
-	}
-	response, err := r.client().Do(request)
-	if err != nil {
-		return false
-	}
-	defer response.Body.Close()
-	return response.StatusCode >= 200 && response.StatusCode < 300
+	return r.probe(ctx).Healthy
 }
 
 // Stop terminates the recorded host: graceful first, kill after the grace

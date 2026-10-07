@@ -22,6 +22,15 @@ UNKNOWN_COMMAND = re.compile(r"Unknown command:\s*([^\n\r]+)")
 SERVICE_LOG_BUDGET = 2 * 1024 * 1024
 
 
+def failure_dump_environment(active_main: Mapping[str, str] | None,
+                             last_command: Mapping[str, str] | None,
+                             fallback: Mapping[str, str]) -> Mapping[str, str]:
+    """Keep failure dumps pointed at the main install after fixture commands."""
+    if fallback.get("KB_JOURNEY_HOME_LABEL") == "main" and fallback.get("HOME"):
+        return fallback
+    return active_main or last_command or fallback
+
+
 class PlatformStateDumpOnce:
     """Ensure one runner invocation writes at most one platform snapshot."""
 

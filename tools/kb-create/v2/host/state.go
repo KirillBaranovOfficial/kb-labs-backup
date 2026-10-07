@@ -44,6 +44,7 @@ func StateHome() (State, error) {
 
 func (s State) HostPID() string        { return filepath.Join(s.Dir, "host.pid") }
 func (s State) HostLog() string        { return filepath.Join(s.Dir, "host.log") }
+func (s State) LauncherLog() string    { return filepath.Join(s.Dir, "launcher.log") }
 func (s State) SupervisorPID() string  { return filepath.Join(s.Dir, "supervisor.pid") }
 func (s State) SupervisorLog() string  { return filepath.Join(s.Dir, "supervisor.log") }
 func (s State) Control() string        { return filepath.Join(s.Dir, "control.json") }
