@@ -36,6 +36,17 @@ if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
   pnpm -s kb qa cases validate
 fi
 
+if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
+  if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
+    echo "KB_JOURNEY_CASES requires KB_JOURNEY_ONLY to select a journey mode." >&2
+    exit 2
+  fi
+  selection_json="$(python3 e2e/journey/select_from_cases.py)"
+  export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
+else
+  unset KB_JOURNEY_SELECTED_STEPS
+fi
+
 if [[ "${1:-}" != "--no-build" ]]; then
   pnpm install --frozen-lockfile
   kb-devkit run build --affected
@@ -57,7 +68,7 @@ run_journey() {
   echo "==> $front_door / $scenario / $variant"
   if ! KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
     "${COMPOSE[@]}" run --rm -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
-    -e KB_JOURNEY_SERVICE_PROFILE runner < /dev/null; then
+    -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_SELECTED_STEPS runner < /dev/null; then
     status=1
   fi
 }

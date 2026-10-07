@@ -357,7 +357,7 @@ def service_check(name, capability, check, *, cases=()):
     return name, capability, check, list(cases)
 
 
-def checks(mode: str):
+def _checks(mode: str):
     pid = PROJECT_ID or "{projectId}"
     token = os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")
     auth_token = lambda: os.getenv("KB_JOURNEY_SERVICE_TOKEN", token)
@@ -501,6 +501,13 @@ def checks(mode: str):
     yield service_check("Studio shell", "studio", lambda: expect_html("/", "Studio shell"))
     yield service_check("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
     yield service_check("marketplace registry", "marketplace", lambda: expect(f"/api/v1/projects/{pid}/rest/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
+
+
+def checks(mode: str):
+    """Return a reusable declaration list for this service mode."""
+    return list(_checks(mode))
+
+
 def declared_capabilities(mode: str) -> set[str]:
     """Return every capability the selected service profile promises to check."""
     capabilities = {capability for _, capability, _, _ in checks(mode)}
@@ -594,18 +601,22 @@ def mcp_diagnostics(project_id: str, token: str) -> str | None:
 
 SERVICE_GROUPS = {
     "platform": {"capabilities": {"gateway"}, "depends_on": ("host-running",)},
-    "auth": {"capabilities": {"auth.local", "auth.secured"}, "depends_on": ("host-running",)},
+    "auth": {"capabilities": {"auth.local", "auth.secured"}, "depends_on": ("host-running",),
+             "produces": ("session",)},
     "projects": {"capabilities": {"projects"}, "depends_on": ("host-running",)},
     "workflow": {"capabilities": {"workflow"}, "depends_on": ("host-running", "project-registered")},
-    "marketplace": {"capabilities": {"marketplace"}, "depends_on": ("host-running", "project-registered")},
+    "marketplace": {"capabilities": {"marketplace"}, "depends_on": ("host-running", "project-registered"),
+                     "produces": ("marketplace-available",)},
     "marketplace-fixtures": {"capabilities": set(),
-                             "depends_on": ("host-running", "project-registered", "marketplace-available")},
+                             "depends_on": ("host-running", "project-registered", "marketplace-available"),
+                             "produces": ("fixtures-installed",)},
     "mcp": {"capabilities": {"mcp"}, "depends_on": ("host-running", "project-registered", "fixtures-installed")},
     "studio": {"capabilities": {"studio"}, "depends_on": ("host-running", "project-registered")},
     "analytics": {"capabilities": {"analytics"}, "depends_on": ("host-running", "project-registered", "fixtures-installed")},
     "gateway-extra": {"capabilities": {"gateway-extra"}, "depends_on": ("host-running", "session")},
     "agent-session": {"capabilities": {"agent-session"},
-                       "depends_on": ("host-running", "project-registered", "agent-plugin-installed")},
+                       "depends_on": ("host-running", "project-registered", "agent-plugin-installed"),
+                       "produces": ("agent-plugin-installed",)},
     "project-registry": {"capabilities": {"project-registry"}, "depends_on": ("host-running", "project-registered")},
     "project-identity": {"capabilities": {"project-identity"}, "depends_on": ("host-running", "project-registered")},
     "workspace": {"capabilities": {"workspace"}, "depends_on": ("host-running",)},
@@ -615,6 +626,10 @@ SERVICE_GROUPS = {
     "plugin-author": {"capabilities": {"plugin-author"},
                        "depends_on": ("host-running", "project-registered", "fixtures-installed", "session")},
     "worktree": {"capabilities": {"worktree"}, "depends_on": ("host-running", "project-registered")},
+}
+STATE_PRODUCERS = {
+    state: group for group, spec in SERVICE_GROUPS.items()
+    for state in spec.get("produces", ())
 }
 
 
@@ -914,9 +929,16 @@ def main() -> int:
     graph = FlowGraph(
         journey, {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
         diagnostics_path=Path(args.output).resolve().with_name("journey-diagnostics.log"),
-        states=inherited_states,
+        states=inherited_states, state_producers=STATE_PRODUCERS,
     )
     try:
+        declared_steps = list(checks(args.mode))
+        selected_step_ids = set(journey.selected_steps)
+        graph.selected_groups.update(
+            group for name, capability, check, case_ids in declared_steps
+            if selected_step_ids.intersection(case_ids)
+            for group, spec in SERVICE_GROUPS.items() if capability in spec["capabilities"]
+        )
         configure_installed_cli_path()
         if args.mode == "secured":
             graph.probe_state("session", "auth", "fresh secured CLI login",
@@ -959,7 +981,7 @@ def main() -> int:
                 return None if all(fixtures.get(key) for key in required) else "project fixture handoff omitted a registered project field"
             graph.probe_state("fixtures-installed", "marketplace-fixtures", "project fixture handoff",
                               fixtures_probe)
-        run_service_steps(journey, checks(args.mode), args.mode, graph=graph)
+        run_service_steps(journey, declared_steps, args.mode, graph=graph)
         if PROJECT_ID:
             if project_root:
                 graph.probe_state(
@@ -999,7 +1021,7 @@ def main() -> int:
         with diagnostics.open("a", encoding="utf-8") as stream:
             stream.write("\n== unexpected exception in service runner ==\n")
             stream.write(traceback.format_exc())
-        journey.step("service runner", "journey.runner", lambda: str(error) or error.__class__.__name__)
+        journey.step("service runner", "journey.runner", lambda: str(error) or error.__class__.__name__, force=True)
     finally:
         kb_home = Path(os.getenv("KB_HOME", str(Path.home() / ".kb")))
         def archive_logs() -> None:
