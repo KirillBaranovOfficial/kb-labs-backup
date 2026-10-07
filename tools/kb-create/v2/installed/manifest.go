@@ -63,6 +63,9 @@ func DoctorInput(platformRoot string, artifacts []contracts.Artifact, configured
 func LoadAll(platformRoot string, artifacts []contracts.Artifact) ([]Manifest, error) {
 	result := make([]Manifest, 0, len(artifacts))
 	for _, artifact := range artifacts {
+		if artifact.Kind == "binary" {
+			continue
+		}
 		manifest, err := Load(platformRoot, artifact)
 		if err != nil {
 			return nil, err
