@@ -84,6 +84,17 @@ function validate() {
       continue;
     }
 
+    if (['marketplace', 'platform'].includes(entry?.source) &&
+        (typeof entry.package !== 'string' || !VALID_ID.test(entry.package))) {
+      issues.push({
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `.kb/marketplace.lock: "${id}" must record its npm package name.`,
+        file: '.kb/marketplace.lock',
+      });
+      continue;
+    }
+
     if (entry?.source === 'marketplace' && (
       typeof entry.version !== 'string' || typeof entry.integrity !== 'string' ||
       typeof entry.enabled !== 'boolean' || typeof entry.package !== 'string' || !VALID_ID.test(entry.package) ||

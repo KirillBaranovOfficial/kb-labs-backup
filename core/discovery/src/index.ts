@@ -34,6 +34,7 @@ export {
   removeFromMarketplaceLock,
   createEmptyLock,
   createMarketplaceEntry,
+  MarketplaceLockValidationError,
   enablePlugin,
   disablePlugin,
 } from './marketplace-lock.js';
@@ -64,6 +65,8 @@ export type {
   // Marketplace lock
   MarketplaceLock,
   MarketplaceEntry,
+  MarketplaceAdapterEntry,
+  MarketplaceLockEntry,
   // Discovery result
   DiscoveredPlugin,
   DiscoveryResult,

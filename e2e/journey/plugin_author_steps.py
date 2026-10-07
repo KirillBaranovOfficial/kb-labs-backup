@@ -130,9 +130,10 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         except (OSError, json.JSONDecodeError) as error:
             raise RuntimeError("Commit case flow requires the Marketplace-installed project lock") from error
         plugins = lock.get("plugins") if isinstance(lock, dict) else None
-        commit = plugins.get("@kb-labs/commit-entry") if isinstance(plugins, dict) else None
-        if not isinstance(commit, dict) or commit.get("enabled", True) is not True:
-            raise RuntimeError("Commit case flow requires @kb-labs/commit-entry enabled by the Marketplace flow")
+        commit = plugins.get("@kb-labs/commit") if isinstance(plugins, dict) else None
+        if (not isinstance(commit, dict) or commit.get("enabled", True) is not True
+                or commit.get("package") != "@kb-labs/commit-entry"):
+            raise RuntimeError("Commit case flow requires @kb-labs/commit (package @kb-labs/commit-entry) enabled by the Marketplace flow")
         package = "@kb-labs/review-entry"
         result = cli(["marketplace", "install", package, "--json"])
         if result.returncode != 0:
@@ -473,7 +474,7 @@ def run_plugin_author_flow(
                    and item.get("scope") == "project" for item in listed if isinstance(item, dict)):
             raise RuntimeError("demo is not listed as a local project plugin after marketplace link")
         _, lock_entry = _lock_entry(project)
-        if lock_entry.get("source") != "local" or lock_entry.get("resolvedPath") != str(ENTRY_DIR):
+        if lock_entry.get("source") != "local" or lock_entry.get("link") != str(ENTRY_DIR):
             raise RuntimeError("project marketplace.lock does not record demo's local relative link path")
 
     def _invoke_original() -> None:
