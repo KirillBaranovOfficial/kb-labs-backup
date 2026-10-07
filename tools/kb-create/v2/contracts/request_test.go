@@ -52,6 +52,21 @@ func TestInstallRequestRejectsRemovedUpgradeSafePolicy(t *testing.T) {
 	}
 }
 
+func TestInstallRequestNormalizesAndValidatesGatewayURL(t *testing.T) {
+	request, err := (InstallRequest{PlatformRoot: t.TempDir(), GatewayURL: "http://127.0.0.1:4100/"}).Normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.GatewayURL != "http://127.0.0.1:4100" {
+		t.Fatalf("GatewayURL = %q", request.GatewayURL)
+	}
+	for _, address := range []string{"https://127.0.0.1:4100", "http://example.com:4100", "http://127.0.0.1", "http://127.0.0.1:4100/path"} {
+		if _, err := (InstallRequest{PlatformRoot: t.TempDir(), GatewayURL: address}).Normalize(); err == nil {
+			t.Fatalf("Normalize accepted invalid GatewayURL %q", address)
+		}
+	}
+}
+
 func TestInstallRequestSortsComponentsAndRedactsSecretValues(t *testing.T) {
 	request, err := (InstallRequest{
 		PlatformRoot: t.TempDir(),

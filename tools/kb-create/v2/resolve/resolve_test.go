@@ -3,6 +3,7 @@ package resolve
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
@@ -81,6 +82,55 @@ func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 				t.Fatal("offline plan accepted an absent or corrupt cache entry")
 			}
 		})
+	}
+}
+
+func TestPlanAppliesAnExplicitGatewayAddressToHostServicesAndConfig(t *testing.T) {
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Port: 4000}, {ID: "rest", Port: 5050}}}},
+			Config: []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+				Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"},"rest":{"url":"http://127.0.0.1:5050"}}}}`}},
+		}},
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), GatewayURL: "http://127.0.0.1:4100"}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Host == nil || plan.Host.HealthURL != "http://127.0.0.1:4100/health" {
+		t.Fatalf("host health URL = %#v", plan.Host)
+	}
+	if len(plan.ServiceGraph.Services) != 2 || plan.ServiceGraph.Services[0].Port != 4100 || plan.ServiceGraph.Services[1].Port != 5150 {
+		t.Fatalf("service graph = %#v", plan.ServiceGraph.Services)
+	}
+	if plan.Host.Env["KB_NET_OFFSET"] != "100" {
+		t.Fatalf("host environment = %#v", plan.Host.Env)
+	}
+	var optionsPatch *contracts.ConfigPatch
+	for index := range plan.ConfigPatches {
+		if plan.ConfigPatches[index].Path == "/platform/adapterOptions" {
+			optionsPatch = &plan.ConfigPatches[index]
+		}
+	}
+	if optionsPatch == nil {
+		t.Fatalf("config patches = %#v", plan.ConfigPatches)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(optionsPatch.JSON), &config); err != nil {
+		t.Fatal(err)
+	}
+	serviceTransport := config["serviceTransport"].(map[string]any)
+	services := serviceTransport["services"].(map[string]any)
+	gateway := services["gateway"].(map[string]any)
+	if gateway["url"] != "http://127.0.0.1:4100" {
+		t.Fatalf("gateway config = %#v", gateway)
+	}
+	rest := services["rest"].(map[string]any)
+	if rest["url"] != "http://127.0.0.1:5150" {
+		t.Fatalf("rest config = %#v", rest)
 	}
 }
 
