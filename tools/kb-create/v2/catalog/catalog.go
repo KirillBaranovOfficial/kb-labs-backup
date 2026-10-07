@@ -248,6 +248,24 @@ func validateCompatibility(matrix CompatibilityMatrix, source Catalog) error {
 			}
 		}
 	}
+	for _, platform := range source.Platforms {
+		for _, shipped := range platform.Binaries {
+			id := fmt.Sprintf("binary:%s@%s:%s/%s", shipped.ID, platform.Version, shipped.OS, shipped.Arch)
+			binary, ok := compatibilityLabel(matrix.Labels, id, "binary")
+			if !ok || !requiresLabel(binary, "platform@"+platform.Version) {
+				return fmt.Errorf("compatibility matrix does not relate shipped binary %s to platform %s", shipped.ID, platform.Version)
+			}
+			for _, sdk := range source.SDKs {
+				admitted, err := semrange.Satisfies(sdk.Version, platform.SDKRange)
+				if err != nil {
+					return fmt.Errorf("platform %s has an invalid SDK range: %w", platform.Version, err)
+				}
+				if admitted && !requiresLabel(binary, "sdk@"+sdk.Version) {
+					return fmt.Errorf("compatibility matrix does not relate shipped binary %s to SDK %s for platform %s", shipped.ID, sdk.Version, platform.Version)
+				}
+			}
+		}
+	}
 	return nil
 }
 

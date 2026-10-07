@@ -39,7 +39,7 @@ func label(id, kind, artifact string, requires ...string) catalog.CompatibilityL
 }
 
 // fixtureIndex returns the sealed JSON of a small but complete release index.
-func fixtureIndex(t *testing.T, options fixtureOptions) []byte {
+func fixtureCatalog(t *testing.T, options fixtureOptions) catalog.Catalog {
 	t.Helper()
 	binaryOS := options.binaryPlatformOS
 	if binaryOS == "" {
@@ -53,7 +53,7 @@ func fixtureIndex(t *testing.T, options fixtureOptions) []byte {
 	if options.unrelatedBinary {
 		binaryLabel.Requires = nil
 	}
-	source, err := catalog.Seal(catalog.Catalog{
+	return catalog.Catalog{
 		Channels: map[contracts.Channel]string{contracts.ChannelStable: fixtureVersion},
 		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{
 			platformLabel, label("sdk@"+fixtureVersion, "sdk", "sdk"), binaryLabel,
@@ -66,7 +66,12 @@ func fixtureIndex(t *testing.T, options fixtureOptions) []byte {
 			Binaries:           []catalog.Binary{{ID: "kb-create", OS: binaryOS, Arch: targetArch, URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
 		}},
 		SDKs: []catalog.Component{{ID: "sdk", Version: fixtureVersion, Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
-	})
+	}
+}
+
+func fixtureIndex(t *testing.T, options fixtureOptions) []byte {
+	t.Helper()
+	source, err := catalog.Seal(fixtureCatalog(t, options))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +148,10 @@ func TestCompatibilityMatrix(t *testing.T) {
 		requireCode(t, installIndex(fixtureIndex(t, fixtureOptions{omitSDKRelation: true}), "2.0.0"), contracts.CodeIncompatibleComponents)
 	})
 	t.Run("binary not related to platform or sdk", func(t *testing.T) {
-		requireCode(t, installIndex(fixtureIndex(t, fixtureOptions{unrelatedBinary: true}), "2.0.0"), contracts.CodeIncompatibleComponents)
+		_, err := catalog.Seal(fixtureCatalog(t, fixtureOptions{unrelatedBinary: true}))
+		if err == nil || !strings.Contains(err.Error(), "shipped binary") {
+			t.Fatalf("Seal error = %v, want rejection for shipped binary without platform relation", err)
+		}
 	})
 	t.Run("corrupt digest", func(t *testing.T) {
 		data := fixtureIndex(t, fixtureOptions{})

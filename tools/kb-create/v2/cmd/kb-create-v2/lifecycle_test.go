@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -37,6 +38,42 @@ func TestReadConfirmation(t *testing.T) {
 		if err != nil || got != test.want {
 			t.Fatalf("answer %q: got %v, %v", test.answer, got, err)
 		}
+	}
+}
+
+// case: S-050.3
+func TestUninstallTerminalDeclineReturnsCancelledAndPreservesReceipt(t *testing.T) {
+	inst := newInstallation(t)
+	receiptPath := filepath.Join(inst.root, ".kb", "v2", "receipt.json")
+	before, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.CreateTemp(t.TempDir(), "decline-result")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+
+	var prompt bytes.Buffer
+	code := confirmDestructiveOperation(invocation{Registry: "https://registry.example.test"}, "uninstall",
+		inst.root, strings.NewReader("n\n"), &prompt, true, output)
+	if code != 1 || !strings.Contains(prompt.String(), "Continue? [y/N]") {
+		t.Fatalf("terminal decline exit = %d, prompt = %q", code, prompt.String())
+	}
+	if _, err := output.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	result, err := io.ReadAll(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(result), "KB_INSTALL_OPERATION_CANCELLED") {
+		t.Fatalf("terminal decline output omitted cancellation diagnostic: %s", result)
+	}
+	after, err := os.ReadFile(receiptPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("receipt changed after terminal decline: err=%v", err)
 	}
 }
 
@@ -135,25 +172,29 @@ func TestRecoveryRequiresYesWithoutTTY(t *testing.T) {
 }
 
 // case: S-050.4, S-024.4, S-100.2, S-203.12
-func TestDestructiveOperationsShareNonTTYConfirmationExit(t *testing.T) {
+func TestDestructiveOperationsRequireExplicitNonTTYConfirmation(t *testing.T) {
 	for _, operation := range []string{"uninstall", "rollback", "recover"} {
 		t.Run(operation, func(t *testing.T) {
-			file, err := os.CreateTemp(t.TempDir(), "confirmation-result")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer file.Close()
-
-			code := confirmDestructiveOperation(invocation{JSON: true}, operation, "/platform", strings.NewReader(""), &bytes.Buffer{}, false, file)
-			if code != 2 {
-				t.Fatalf("non-TTY confirmation exit = %d, want 2", code)
-			}
-			if _, err := file.Seek(0, 0); err != nil {
-				t.Fatal(err)
-			}
-			payload := readJSON(t, file.Name())
-			if errorCode(payload) != "KB_INSTALL_CONFIRMATION_REQUIRED" {
-				t.Fatalf("non-TTY confirmation error = %s", errorCode(payload))
+			for _, jsonMode := range []bool{false, true} {
+				file, err := os.CreateTemp(t.TempDir(), "confirmation-result")
+				if err != nil {
+					t.Fatal(err)
+				}
+				code := confirmDestructiveOperation(invocation{JSON: jsonMode, Registry: "https://registry.example.test"}, operation,
+					"/platform", strings.NewReader(""), &bytes.Buffer{}, false, file)
+				if code != 2 {
+					t.Fatalf("non-TTY confirmation exit = %d, want 2", code)
+				}
+				if _, err := file.Seek(0, 0); err != nil {
+					t.Fatal(err)
+				}
+				payload := readJSON(t, file.Name())
+				failure, _ := payload["error"].(map[string]any)
+				if errorCode(payload) != "KB_INSTALL_CONFIRMATION_REQUIRED" ||
+					!strings.Contains(fmt.Sprint(failure["hint"]), "--yes") {
+					t.Fatalf("non-TTY confirmation error lacks exact rerun hint: %#v", payload)
+				}
+				_ = file.Close()
 			}
 		})
 	}

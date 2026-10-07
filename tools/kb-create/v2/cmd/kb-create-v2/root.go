@@ -297,7 +297,9 @@ func (p streamProgress) Emit(event runtime.ProgressEvent) {
 
 func errorFromOperationResult(data []byte, exitCode int) error {
 	var envelope struct {
-		Error json.RawMessage `json:"error"`
+		Error          json.RawMessage `json:"error"`
+		LogPath        string          `json:"logPath"`
+		DiagnosticPath string          `json:"diagnosticPath"`
 	}
 	if json.Unmarshal(data, &envelope) == nil && len(envelope.Error) > 0 {
 		var result struct {
@@ -313,12 +315,30 @@ func errorFromOperationResult(data []byte, exitCode int) error {
 			if _, known := diag.LookupCatalog(result.Code); known {
 				var typed diag.Diag
 				if json.Unmarshal(envelope.Error, &typed) == nil {
+					if envelope.LogPath != "" || envelope.DiagnosticPath != "" {
+						if typed.Meta == nil {
+							typed.Meta = map[string]any{}
+						}
+						if envelope.LogPath != "" {
+							typed.Meta["logPath"] = envelope.LogPath
+						}
+						if envelope.DiagnosticPath != "" {
+							typed.Meta["diagnosticPath"] = envelope.DiagnosticPath
+						}
+					}
 					typed.ProcessExitCode = exitCode
 					return &typed
 				}
 				meta := result.Details
 				if meta == nil {
 					meta = result.Meta
+				}
+				meta = cloneOperationMeta(meta)
+				if envelope.LogPath != "" {
+					meta["logPath"] = envelope.LogPath
+				}
+				if envelope.DiagnosticPath != "" {
+					meta["diagnosticPath"] = envelope.DiagnosticPath
 				}
 				return diag.New(result.Code, result.Message,
 					diag.WithHint(result.Hint), diag.WithCause(result.Cause),
@@ -339,6 +359,14 @@ func errorFromOperationResult(data []byte, exitCode int) error {
 		return diag.New("KB_RUNTIME_INPUT_INVALID", "The command input is invalid.")
 	}
 	return errors.New("kb-create command failed unexpectedly")
+}
+
+func cloneOperationMeta(meta map[string]any) map[string]any {
+	cloned := make(map[string]any, len(meta))
+	for key, value := range meta {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func runHostThroughBoundary(cmd *cobra.Command, inv invocation, operation string) error {

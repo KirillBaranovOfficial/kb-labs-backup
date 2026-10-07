@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -72,15 +73,16 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if source.Compatibility != nil {
 		if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, "", "", "", request.Policy); err != nil {
 			if request.Policy == contracts.PolicyStrict && sdkVersion != "" {
-				failure := &diag.Diag{
-					Code:    contracts.CodeIncompatibleComponents,
-					Message: fmt.Sprintf("strict policy requires an exact compatibility-matrix relation for platform %s and SDK %s; declared SDK range is %s", platform.Version, sdkVersion, platform.SDKRange),
-					Hint:    "Use an exact platform/SDK pair from the release matrix or choose --policy compatible.",
-					Meta:    map[string]any{"component": "SDK", "version": sdkVersion, "range": platform.SDKRange, "policy": string(request.Policy)},
-				}
+				failure := compatibilityFailure(contracts.CodeIncompatibleComponents, "SDK", "sdk", "sdk", sdkVersion,
+					platform.SDKRange,
+					fmt.Sprintf("strict policy requires an exact compatibility-matrix relation for platform %s and SDK %s; declared SDK range is %s", platform.Version, sdkVersion, platform.SDKRange),
+					"Use an exact platform/SDK pair from the release matrix or choose --policy compatible.",
+					map[string]string{"policy": string(request.Policy)})
 				return contracts.ResolvedInstallPlan{}, failure
 			}
-			return contracts.ResolvedInstallPlan{}, incompatible("release set", platform.Version, err.Error())
+			return contracts.ResolvedInstallPlan{}, compatibilityFailure(contracts.CodeIncompatibleComponents,
+				"release set", "release set", "release set", sdkVersion, platform.SDKRange, err.Error(),
+				"Choose compatible versions or pass an explicit supported provider.", nil)
 		}
 	}
 	if err := catalog.CheckLauncher(platform, options.LauncherVersion); err != nil {
@@ -559,19 +561,53 @@ func incompatible(subject, value, reason string) error {
 	if value != "" {
 		label = subject + " " + value
 	}
-	return resolutionDiag(contracts.CodeIncompatibleComponents, label+" is incompatible: "+reason, map[string]string{"subject": subject, "value": value})
+	return compatibilityFailure(contracts.CodeIncompatibleComponents, label, subject, value, value, "",
+		label+" is incompatible: "+reason, "Choose compatible versions or pass an explicit supported provider.", nil)
 }
 func incompatibleRange(component, version, rangeValue string) error {
 	message := component + " " + version + " is incompatible: it does not satisfy declared range " + rangeValue
-	return resolutionDiag(contracts.CodeIncompatibleComponents, message, map[string]string{
-		"subject": component, "value": version, "component": component,
-		"version": version, "range": rangeValue,
-	})
+	kind, id := compatibilityKindAndID(component)
+	return compatibilityFailure(contracts.CodeIncompatibleComponents, component, kind, id, version, rangeValue,
+		message, "Choose compatible versions or pass an explicit supported provider.", nil)
 }
 func resolutionDiag(code, message string, details map[string]string) error {
 	d := diag.New(code, message, diag.WithMeta(stringMap(details)))
 	d.Hint = "Choose compatible versions or pass an explicit supported provider."
 	return d
+}
+
+func compatibilityFailure(code, component, kind, id, version, requiredRange, reason, hint string, extra map[string]string) *diag.Diag {
+	details := map[string]string{
+		"component":       component,
+		"kind":            kind,
+		"id":              id,
+		"version":         version,
+		"selectedVersion": version,
+		"range":           requiredRange,
+		"requiredRange":   requiredRange,
+		"subject":         kind,
+		"value":           id,
+	}
+	for key, value := range extra {
+		details[key] = value
+	}
+	d := diag.New(code, reason, diag.WithMeta(stringMap(details)))
+	d.Hint = hint
+	return d
+}
+
+func compatibilityKindAndID(component string) (string, string) {
+	fields := strings.Fields(component)
+	if len(fields) == 0 {
+		return component, component
+	}
+	if fields[0] == "platform" && len(fields) > 1 && strings.EqualFold(fields[1], "SDK") {
+		return "SDK", "SDK"
+	}
+	if len(fields) > 1 && (fields[0] == "plugin" || fields[0] == "adapter" || fields[0] == "platform") {
+		return fields[0], fields[1]
+	}
+	return fields[0], component
 }
 func stringMap(values map[string]string) map[string]any {
 	result := make(map[string]any, len(values))

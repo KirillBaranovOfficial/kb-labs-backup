@@ -475,7 +475,7 @@ func (i invocation) runInstall(output *os.File) int {
 		fmt.Fprintf(humanOut, "\nKB Labs is installed at %s.\nNext: register a project with `kb project add <path>`.\n", root)
 		return 0
 	}
-	projectID, registerErr := i.registerProject(planned.Plan.Request.ProjectRoot)
+	projectID, registerErr := i.registerProject(root, planned.Plan.Request.ProjectRoot)
 	if registerErr != nil {
 		fmt.Fprintf(humanOut, "\nKB Labs is installed at %s, but the selected project could not be registered: %s.\nNext: run `kb project add %q`.\n", root, registerErr, planned.Plan.Request.ProjectRoot)
 		return 1
@@ -535,15 +535,15 @@ func (i invocation) runJSONInstall(output *os.File) int {
 	return i.run(output)
 }
 
-func (i invocation) registerProject(projectRoot string) (string, error) {
+func projectCLIPath(platformRoot string) string {
+	return filepath.Join(platformRoot, ".kb", "v2", "bin", "kb")
+}
+
+func (i invocation) registerProject(platformRoot, projectRoot string) (string, error) {
 	if i.ProjectRegistrar != nil {
 		return i.ProjectRegistrar(projectRoot)
 	}
-	kbPath := "kb"
-	if i.Executable != "" {
-		kbPath = filepath.Join(filepath.Dir(i.Executable), "kb")
-	}
-	command := exec.Command(kbPath, "project", "add", projectRoot, "--json")
+	command := exec.Command(projectCLIPath(platformRoot), "project", "add", projectRoot, "--json")
 	output, err := command.Output()
 	if err != nil {
 		var failure struct {

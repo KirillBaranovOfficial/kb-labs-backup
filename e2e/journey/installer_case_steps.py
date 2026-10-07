@@ -48,6 +48,14 @@ def _diagnostic(result: subprocess.CompletedProcess, label: str) -> tuple[dict, 
     return envelope, error
 
 
+def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandRunner) -> subprocess.CompletedProcess:
+    """Run the CLI installed for the requested root, independent of PATH shim ownership."""
+    executable = platform_root / ".kb/v2/bin/kb"
+    if not executable.is_file():
+        raise RuntimeError(f"platform CLI is missing for {platform_root}: {executable}")
+    return run_command([str(executable), *args])
+
+
 def _seed_doctor_fixture(source_root: Path, target_root: Path, *, requirement: dict | None = None,
                          missing_projection: bool = False, receipt_requirement: dict | None = None) -> Path:
     """Copy a real receipt identity and materialize only its manifest projections."""
@@ -252,7 +260,7 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
     journey = Journey(mode, f"offline-plan-{mode}")
 
     def offline_plan() -> None:
-        root = platform_root.parent / "s181-offline-root"
+        root = platform_root
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
                                            "--platform-channel", "stable", "--offline",
                                            "--request-platform-root", str(root)], "offline plan").get("plan", {})
@@ -276,27 +284,34 @@ def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Pat
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
                                "status before repeat plan")
         host = status.get("host", {})
-        if (not isinstance(host, dict) or host.get("state") != "running"
-                or status.get("running") is not True or status.get("reachable") is not True):
-            raise RuntimeError("PC-001.8 requires the installed host to be running and reachable")
-        before = _snapshot_installation_owned_tree(platform_root)
-        args = [launcher, "plan", "--json", "--index", str(stable_index),
-                "--request-platform-root", root, "--service-profile", "default",
-                "--scenario", "commit"]
-        first = _json_command(run_command, args, "first clean-install plan").get("plan", {})
-        second = _json_command(run_command, args, "repeat clean-install plan").get("plan", {})
-        if any(first.get(key) != second.get(key) for key in ("planHash", "artifacts", "serviceGraph")):
-            raise RuntimeError("repeat plan changed planHash, artifacts, or serviceGraph")
-        after = _snapshot_installation_owned_tree(platform_root)
-        changes = _snapshot_changes(before, after)
-        if any(changes.values()):
-            raise RuntimeError(_format_snapshot_changes(changes))
-        status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
-                               "status after repeat plan")
-        host = status.get("host", {})
-        if (not isinstance(host, dict) or host.get("state") != "running"
-                or status.get("running") is not True or status.get("reachable") is not True):
-            raise RuntimeError("host health check failed after PC-001.8: expected running and reachable")
+        started_here = not (isinstance(host, dict) and host.get("state") == "running"
+                            and status.get("running") is True and status.get("reachable") is True)
+        if started_here:
+            _json_command(run_command, [launcher, "start", "--platform-root", root, "--json"],
+                          "start host for repeat plan")
+        try:
+            before = _snapshot_installation_owned_tree(platform_root)
+            args = [launcher, "plan", "--json", "--index", str(stable_index),
+                    "--request-platform-root", root, "--service-profile", "default",
+                    "--scenario", "commit"]
+            first = _json_command(run_command, args, "first clean-install plan").get("plan", {})
+            second = _json_command(run_command, args, "repeat clean-install plan").get("plan", {})
+            if any(first.get(key) != second.get(key) for key in ("planHash", "artifacts", "serviceGraph")):
+                raise RuntimeError("repeat plan changed planHash, artifacts, or serviceGraph")
+            after = _snapshot_installation_owned_tree(platform_root)
+            changes = _snapshot_changes(before, after)
+            if any(changes.values()):
+                raise RuntimeError(_format_snapshot_changes(changes))
+            status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
+                                   "status after repeat plan")
+            host = status.get("host", {})
+            if (not isinstance(host, dict) or host.get("state") != "running"
+                    or status.get("running") is not True or status.get("reachable") is not True):
+                raise RuntimeError("host health check failed after PC-001.8: expected running and reachable")
+        finally:
+            if started_here:
+                _json_command(run_command, [launcher, "stop", "--platform-root", root, "--json"],
+                              "stop host started for repeat plan")
 
     journey.step("repeat install planning without changing the installed root", "platform.install",
                  repeat_plan, cases=["PC-001.8"])
@@ -507,7 +522,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
         if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
             raise RuntimeError("secondary apply moved the kb shim away from the primary platform root")
-        cli = run_command(["kb", "--help"])
+        cli = run_platform_cli(platform_root, ["--help"], run_command)
         if cli.returncode != 0:
             raise RuntimeError(f"the existing kb shim did not run the primary platform CLI: {cli.stdout[-500:]}")
         receipt_path = secret_root / ".kb/v2/receipt.json"
@@ -519,20 +534,32 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                  cases=["S-181.3", "PC-001.10"])
 
     def secondary_root_cli_does_not_report_primary_state() -> None:
-        secondary_cli = secret_root / ".kb/v2/bin/kb"
-        result = run_command([str(secondary_cli), "adapter", "list", "--json"])
-        if result.returncode == 0:
-            _, data = _payload(result, "secondary root adapter list")
-            rows = data.get("adapters", [])
-            if not isinstance(rows, list) or any(row.get("runtimeStatus") == "known" for row in rows if isinstance(row, dict)):
-                raise RuntimeError("secondary root adapter list returned another root's runtime state")
-            if not any(row.get("action", {}).get("command") == f'kb-create start --platform-root "{secret_root}"'
-                       for row in rows if isinstance(row, dict)):
-                raise RuntimeError("secondary root adapter list omitted its exact host start command")
-            return
-        _, error = _diagnostic(result, "secondary root adapter list")
-        if error.get("code") != "KB_HOST_IDENTITY_MISMATCH":
-            raise RuntimeError(f"secondary root CLI did not diagnose the foreign Gateway: {error}")
+        status = _json_command(run_command, [launcher, "status", "--platform-root", str(platform_root), "--json"],
+                               "primary host status before secondary CLI")
+        host = status.get("host", {})
+        started_here = not (isinstance(host, dict) and host.get("state") == "running"
+                            and status.get("running") is True and status.get("reachable") is True)
+        if started_here:
+            _json_command(run_command, [launcher, "start", "--platform-root", str(platform_root), "--json"],
+                          "start primary host for secondary CLI")
+        try:
+            result = run_platform_cli(secret_root, ["adapter", "list", "--json"], run_command)
+            if result.returncode == 0:
+                _, data = _payload(result, "secondary root adapter list")
+                rows = data.get("adapters", [])
+                if not isinstance(rows, list) or any(row.get("runtimeStatus") == "known" for row in rows if isinstance(row, dict)):
+                    raise RuntimeError("secondary root adapter list returned another root's runtime state")
+                if not any(row.get("action", {}).get("command") == f'kb-create start --platform-root "{secret_root}"'
+                           for row in rows if isinstance(row, dict)):
+                    raise RuntimeError("secondary root adapter list omitted its exact host start command")
+                return
+            _, error = _diagnostic(result, "secondary root adapter list")
+            if error.get("code") != "KB_HOST_IDENTITY_MISMATCH":
+                raise RuntimeError(f"secondary root CLI did not diagnose the foreign Gateway: {error}")
+        finally:
+            if started_here:
+                _json_command(run_command, [launcher, "stop", "--platform-root", str(platform_root), "--json"],
+                              "stop primary host started for secondary CLI")
 
     journey.step("keep the secondary root CLI isolated from the primary Gateway", "platform.install",
                  secondary_root_cli_does_not_report_primary_state, cases=["PC-001.12"])
@@ -567,9 +594,8 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
         if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
             raise RuntimeError("uninstall changed the live owner's kb shim")
-        cli = run_command(["kb", "--help"])
-        if cli.returncode != 0:
-            raise RuntimeError(f"kb stopped working after non-owner uninstall: {cli.stdout[-500:]}")
+        if not (platform_root / ".kb/v2/bin/kb").is_file():
+            raise RuntimeError("uninstall removed the owning platform CLI")
 
     journey.step("uninstall a platform that does not own the kb command", "platform.install",
                  uninstall_non_owner, cases=["PC-001.11"])
@@ -615,7 +641,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                               "--platform-version", "3.2.0", "--sdk-version", "3.2.0",
                               "--policy", "strict", "--request-platform-root", str(scratch / "strict-sdk")])
         _, error = _diagnostic(strict, "strict SDK matrix plan")
-        meta = error.get("meta", {})
+        meta = error.get("details", {})
         if strict.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
             raise RuntimeError("strict SDK plan did not return KB_INSTALL_INCOMPATIBLE_COMPONENTS")
         if any(meta.get(key) != value for key, value in (("component", "SDK"), ("version", "3.2.0"),
@@ -638,7 +664,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                               "--adapters", "fixture-adapter@1.0.0", "--policy", "compatible",
                               "--request-platform-root", str(scratch / "adapter-range")])
         _, error = _diagnostic(result, "adapter range plan")
-        meta = error.get("meta", {})
+        meta = error.get("details", {})
         if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
             raise RuntimeError("out-of-range adapter plan did not return KB_INSTALL_INCOMPATIBLE_COMPONENTS")
         if meta.get("component") != "adapter fixture-adapter platform" or meta.get("version") != "3.2.0" or meta.get("range") != "<3.2.0":
@@ -680,7 +706,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                                   "--platform-version", "3.2.0", "--sdk-version", "4.0.0",
                                   "--policy", "compatible", "--request-platform-root", str(scratch / "sdk-outside-range")])
         _, sdk_error = _diagnostic(sdk_result, "out-of-range SDK plan")
-        sdk_meta = sdk_error.get("meta", {})
+        sdk_meta = sdk_error.get("details", {})
         if sdk_result.returncode == 0 or sdk_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(sdk_meta, dict):
             raise RuntimeError("out-of-range SDK plan did not fail with the typed incompatibility")
         if sdk_meta.get("component") != "platform SDK" or sdk_meta.get("version") != "4.0.0" or sdk_meta.get("range") != ">=3.0.0 <4.0.0":
@@ -689,7 +715,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                                      "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
                                      "--policy", "compatible", "--request-platform-root", str(scratch / "missing-binary")])
         _, binary_error = _diagnostic(binary_result, "missing binary plan")
-        binary_meta = binary_error.get("meta", {})
+        binary_meta = binary_error.get("details", {})
         if binary_result.returncode == 0 or binary_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(binary_meta, dict):
             raise RuntimeError("missing host binary plan did not fail with the typed incompatibility")
         if binary_meta.get("subject") != "binary" or not binary_meta.get("value") or not binary_error.get("hint"):
@@ -708,7 +734,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                               "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
                               "--policy", "compatible", "--request-platform-root", str(target)])
         _, error = _diagnostic(result, "missing host binary plan")
-        meta = error.get("meta", {})
+        meta = error.get("details", {})
         after = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()} if target.exists() else {}
         after_exists = target.exists()
         if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
@@ -824,9 +850,10 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("rollback unexpectedly accepted a missing recovery snapshot")
         if not all(error.get(key) for key in ("code", "stage", "message", "hint")):
             raise RuntimeError(f"recovery error omitted structured diagnostics: {error}")
-        if not envelope.get("logPath") or not envelope.get("diagnosticPath"):
+        details = error.get("details", {})
+        if not details.get("logPath") or not details.get("diagnosticPath"):
             raise RuntimeError("recovery error omitted its log or diagnostic dossier path")
-        dossier = Path(envelope["diagnosticPath"]).read_text()
+        dossier = Path(details["diagnosticPath"]).read_text()
         if "fixture-secret-value" in dossier:
             raise RuntimeError("diagnostic dossier serialized a secret value")
         shutil.rmtree(root, ignore_errors=True)

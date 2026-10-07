@@ -33,6 +33,19 @@ func TestOperationResultReadsCanonicalDiagnosticWithoutDroppingFields(t *testing
 	}
 }
 
+// case: S-025.6
+func TestOperationResultCarriesRecoveryDossierPathsIntoStructuredDetails(t *testing.T) {
+	data := []byte(`{"ok":false,"error":{"code":"KB_UPDATE_APPLY_FAILED","message":"rollback failed","hint":"inspect diagnostics"},"logPath":"/platform/.kb/logs/rollback.log","diagnosticPath":"/platform/.kb/diagnostics/corr.json"}`)
+	var got *diag.Diag
+	if err := errorFromOperationResult(data, diag.ExitError); !errors.As(err, &got) {
+		t.Fatalf("operation diagnostic = %#v, want *diag.Diag", err)
+	}
+	if got.Meta["logPath"] != "/platform/.kb/logs/rollback.log" ||
+		got.Meta["diagnosticPath"] != "/platform/.kb/diagnostics/corr.json" {
+		t.Fatalf("recovery paths = %#v, want both paths preserved", got.Meta)
+	}
+}
+
 func TestOperationResultPreservesCataloguedCodeWhenEnvelopeHasExtraFields(t *testing.T) {
 	legacy := []byte(`{"ok":false,"error":{"code":"KB_RUNTIME_INPUT_INVALID","message":"old shape","reason":"private","hint":"retry"}}`)
 	var got *diag.Diag

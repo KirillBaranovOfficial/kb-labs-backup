@@ -29,7 +29,7 @@ func main() {
 		if token := os.Getenv("API_TOKEN"); token != "" {
 			fmt.Fprintln(os.Stderr, "API_TOKEN="+token)
 		}
-		fmt.Fprintln(os.Stderr, `{"ok":false,"error":{"code":"KB_CONFIG_INVALID","message":"host configuration is invalid","cause":"must be a positive integer","hint":"correct the platform configuration"}}`)
+		fmt.Fprintln(os.Stderr, `{"ok":false,"error":{"code":"KB_CONFIG_INVALID","message":"Adapter option \"platform.adapterOptions.analytics.retentionDays\" is invalid: must be a positive integer.","cause":"must be a positive integer","hint":"kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90","details":{"path":"platform.adapterOptions.analytics.retentionDays"}}}`)
 		os.Exit(7)
 	}
 	if *exitCode >= 0 {

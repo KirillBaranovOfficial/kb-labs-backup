@@ -383,7 +383,8 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 
 func TestRegisterProjectInvokesPlainProjectAdd(t *testing.T) {
 	home := t.TempDir()
-	bin := filepath.Join(home, "bin")
+	root := filepath.Join(home, "secondary-root")
+	bin := filepath.Join(root, ".kb", "v2", "bin")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +401,7 @@ func TestRegisterProjectInvokesPlainProjectAdd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	projectID, err := (invocation{Executable: filepath.Join(bin, "kb-create")}).registerProject(projectPath)
+	projectID, err := (invocation{Executable: filepath.Join(home, "bin", "kb-create")}).registerProject(root, projectPath)
 	if err != nil || projectID != "prj_test123" {
 		t.Fatalf("projectID/error = %q / %v", projectID, err)
 	}

@@ -16,7 +16,7 @@ import {
   unsetUserConfigValue,
   type ConfigWriteErrorCode,
 } from '../user-config/write-user-config.js';
-import { createAdapterOptionsValidator, validateAdapterOptions } from '../adapter-schema.js';
+import { createAdapterOptionsValidator, validateAdapterOptions, validatePlatformAdapterOptions } from '../adapter-schema.js';
 
 const AdapterValue = z.union([z.string().min(1), z.array(z.string().min(1)), z.null()]);
 
@@ -294,6 +294,29 @@ describe('setUserConfigValue: schema validation', () => {
       'KB_CONFIG_INVALID',
     );
     expect(error.message).toContain('Expected number');
+  });
+
+  it('validates configured adapter options before host startup', async () => {
+    const platformRoot = path.join(dir, 'validation-platform');
+    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'analytics-fixture');
+    await fsp.mkdir(packageRoot, { recursive: true });
+    await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@kb-labs/analytics-fixture', type: 'module', exports: './manifest.js',
+    }));
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { configSchema: {
+      retentionDays: { type: 'number', integer: true, minimum: 1, minimumMessage: 'Must be a positive integer', hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90' }
+    } };`);
+
+    const issues = await validatePlatformAdapterOptions(platformRoot, {
+      adapters: { analytics: '@kb-labs/analytics-fixture' },
+      adapterOptions: { analytics: { retentionDays: 0 } },
+    });
+
+    expect(issues).toEqual([{
+      path: 'platform.adapterOptions.analytics.retentionDays',
+      message: 'Must be a positive integer',
+      hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90',
+    }]);
   });
 
   // case: S-211.7

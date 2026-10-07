@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "9632d86614d39ccd97bcb33804ac9c9ea7b796b1ca72af668f9a57e5046d07a4",
+  "digest": "bb074885b5a37d56a2465d1f99f27e51908d76d9d7fbd0fc55a2fec7832f5927",
   "channels": {
     "stable": "3.2.0"
   },
@@ -48,6 +48,27 @@
         "kind": "sdk",
         "artifactId": "sdk",
         "version": "4.0.0",
+        "status": "prepared",
+        "validatedBy": [
+          "installer-journey-fixture"
+        ]
+      },
+      {
+        "id": "binary:kb-create@3.2.0:linux/arm64",
+        "kind": "binary",
+        "artifactId": "kb-create",
+        "version": "3.2.0",
+        "requires": [
+          {
+            "label": "platform@3.2.0"
+          },
+          {
+            "label": "sdk@3.0.0"
+          },
+          {
+            "label": "sdk@3.2.0"
+          }
+        ],
         "status": "prepared",
         "validatedBy": [
           "installer-journey-fixture"

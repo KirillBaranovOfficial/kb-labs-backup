@@ -12,11 +12,12 @@
  */
 
 import { createRequire } from "node:module";
-import { loadEffectiveConfig } from "@kb-labs/core-config";
+import { loadEffectiveConfig, validatePlatformAdapterOptions } from "@kb-labs/core-config";
 import { createDiscoveryInputFingerprinter } from "@kb-labs/core-discovery";
 import type { IProjectRegistry } from "@kb-labs/core-contracts";
 import {
   GATEWAY_SERVICE_NETWORK,
+  AdapterConfigError,
   resolveServiceListenAddress,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
@@ -277,6 +278,14 @@ export async function createHostConfig(
         const effective = await loadEffectiveConfig(ctx.projectRoot, {
           platformRoot: ctx.platformRoot,
         });
+        const platformConfig = (effective?.data as { platform?: unknown } | undefined)?.platform;
+        if (platformConfig && typeof platformConfig === "object" && !Array.isArray(platformConfig)) {
+          const issues = await validatePlatformAdapterOptions(ctx.platformRoot, platformConfig as Record<string, unknown>);
+          const issue = issues[0];
+          if (issue) {
+            throw new AdapterConfigError(issue.path, issue.message, issue.hint ?? "Correct the adapter option and run `kb-create start` again.");
+          }
+        }
         const settings = parseHostSettings(
           (effective?.data as { host?: unknown } | undefined)?.host,
         );

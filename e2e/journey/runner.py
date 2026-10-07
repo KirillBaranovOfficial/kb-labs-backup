@@ -559,10 +559,11 @@ def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
         except (json.JSONDecodeError, AttributeError):
             diagnostic = {}
         human, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM)], env=env, timeout=120)
+        human_output = human.stdout + human.stderr
         typed_ok = (result.returncode == 1 and diagnostic.get("code") == "KB_INSTALL_RECEIPT_UNAVAILABLE"
                     and diagnostic.get("hint") and diagnostic.get("correlationId")
-                    and "KB_INSTALL_RECEIPT_UNAVAILABLE" in human.stdout
-                    and "correlationId" in human.stdout)
+                    and "KB_INSTALL_RECEIPT_UNAVAILABLE" in human_output
+                    and "correlationId" in human_output)
         record_case("doctor reports missing receipt", typed_ok,
                     "doctor did not return the typed missing-receipt diagnostic in both modes",
                     cases=["PC-003.2", "S-203.11"])
