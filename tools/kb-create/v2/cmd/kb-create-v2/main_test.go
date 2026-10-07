@@ -15,6 +15,7 @@ import (
 	"time"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
@@ -578,6 +579,7 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 }
 
+// case: S-187.4
 func TestRegisterProjectInvokesPlainProjectAdd(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, "secondary-root")
@@ -587,7 +589,7 @@ func TestRegisterProjectInvokesPlainProjectAdd(t *testing.T) {
 	}
 	kb := filepath.Join(bin, "kb")
 	argsFile := filepath.Join(home, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\nprintf '{\"ok\":true,\"project\":{\"id\":\"prj_test123\",\"path\":\"%s\"}}' \"$PROJECT_PATH\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CAPTURE_ARGS\"\nprintf '{\"ok\":true,\"data\":{\"project\":{\"id\":\"prj_test123\",\"path\":\"%s\"}}}' \"$PROJECT_PATH\"\n"
 	if err := os.WriteFile(kb, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -612,6 +614,7 @@ func TestRegisterProjectInvokesPlainProjectAdd(t *testing.T) {
 	}
 }
 
+// case: S-187.4
 func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -672,6 +675,141 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projectRoot, ".kb")); !os.IsNotExist(err) {
 		t.Fatalf("installer created project files: %v", err)
+	}
+
+	failedRoot := filepath.Join(home, "kb-platform-registration-failure")
+	failedOutput, failedPath := installOutput(t)
+	var failedScreen bytes.Buffer
+	failedCode := (invocation{
+		Operation: "install", Index: index,
+		Direct:        directRequest{PlatformRoot: failedRoot, ProjectRoot: projectRoot},
+		InstallInput:  strings.NewReader(strings.Repeat("\n", 12)),
+		InstallOutput: &failedScreen,
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: failedRoot}, Host: installHost{}},
+		NodePreflight: func() error { return nil },
+		ProjectRegistrar: func(string) (string, error) {
+			return "", errors.New("project registry unavailable")
+		},
+	}).run(failedOutput)
+	if err := failedOutput.Close(); err != nil {
+		t.Fatal(err)
+	}
+	failedData, err := os.ReadFile(failedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failure struct {
+		OK    bool       `json:"ok"`
+		Error *diag.Diag `json:"error"`
+	}
+	if err := json.Unmarshal(failedData, &failure); err != nil || failedCode != 1 || failure.OK || failure.Error == nil ||
+		failure.Error.Code != contracts.CodeApplyFailed || !strings.Contains(failure.Error.Hint, "kb project add") {
+		t.Fatalf("project registration failure = code %d, output %s, decode error %v", failedCode, failedData, err)
+	}
+}
+
+func writeJSONInstallFixture(t *testing.T, home string) string {
+	t.Helper()
+	index := filepath.Join(home, "release-index.json")
+	release, err := catalog.Seal(catalog.Catalog{
+		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: testCompatibility("2.0.0"),
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform",
+			Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHostOnFreePort(t),
+			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}},
+			Config:   []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}}},
+		Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "1.0.0",
+			Package: "@kb/sqlite-stores", Tarball: "https://example.test/sqlite-stores.tgz", SHA256: "sqlite-stores"},
+			Provides: []string{"documentDatabase"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return index
+}
+
+// case: S-187.6
+func TestJSONScenarioInstallRegistersCanonicalProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	index := writeJSONInstallFixture(t, home)
+	root, project := filepath.Join(home, "platform"), filepath.Join(home, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := map[string]string{}
+	output, path := installOutput(t)
+	code := (invocation{
+		Operation: "install", JSON: true, Index: index, ScenarioID: "custom",
+		ScenarioAnswers: `{"access.mode":"local"}`,
+		Direct:          directRequest{PlatformRoot: root, ProjectRoot: project},
+		RuntimeDeps:     &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
+		NodePreflight:   func() error { return nil },
+		ProjectRegistrar: func(path string) (string, error) {
+			registry[path] = "prj_json"
+			return registry[path], nil
+		},
+	}).run(output)
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || registry[canonical] != "prj_json" {
+		data, _ := os.ReadFile(path)
+		t.Fatalf("JSON scenario install exit=%d registry=%v output=%s", code, registry, data)
+	}
+}
+
+// case: S-187.6
+func TestJSONRequestFileInstallRegistersCanonicalProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	index := writeJSONInstallFixture(t, home)
+	root, project := filepath.Join(home, "platform"), filepath.Join(home, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root,
+		ProjectRoot: project, ServiceProfile: "default", Source: contracts.SourceRegistry}
+	requestData, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestPath := filepath.Join(home, "request.json")
+	if err := os.WriteFile(requestPath, requestData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry := map[string]string{}
+	output, path := installOutput(t)
+	code := (invocation{
+		Operation: "install", JSON: true, Index: index, Input: requestPath,
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
+		NodePreflight: func() error { return nil },
+		ProjectRegistrar: func(path string) (string, error) {
+			registry[path] = "prj_input"
+			return registry[path], nil
+		},
+	}).run(output)
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || registry[canonical] != "prj_input" {
+		data, _ := os.ReadFile(path)
+		t.Fatalf("JSON request install exit=%d registry=%v output=%s", code, registry, data)
 	}
 }
 

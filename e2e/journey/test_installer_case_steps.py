@@ -4,22 +4,118 @@ import subprocess
 import tempfile
 import unittest
 import json
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
 from installer_case_steps import (_seed_doctor_fixture, assert_default_service_ports_free,
+                                  cleanup_installer_fixture_root,
                                   run_doctor_root_isolation_step,
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
                                   run_offline_plan_step, run_repeat_plan_readonly_step,
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
                                   run_gateway_allocation_step,
+                                  assert_root_offset, run_json_install_project_step,
                                   run_uninstall_decline_step, _service_ids_match,
                                   _snapshot_installation_owned_tree)
 from journey_resources import case_catalog_root
 from service_steps import Journey, record_candidate_provenance
+from service_port_assertions import assert_service_ports_preserved
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_root_offset_assertion_checks_services_and_transport_urls(self):
+        plan = {"serviceGraph": {"services": [{"id": "gateway", "port": 4100},
+                                               {"id": "marketplace", "port": 5170}]},
+                "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                    "serviceTransport": {"services": {
+                        "gateway": {"url": "http://127.0.0.1:4100"},
+                        "marketplace": {"url": "http://127.0.0.1:5170"},
+                    }},
+                })}]}
+        assert_root_offset(plan, {"gateway": 4000, "marketplace": 5070},
+                           {"gateway": 4000, "marketplace": 5070}, 100, "secondary root")
+        plan["serviceGraph"]["services"][1]["port"] = 5270
+        with self.assertRaisesRegex(RuntimeError, "service ports"):
+            assert_root_offset(plan, {"gateway": 4000, "marketplace": 5070},
+                               {"gateway": 4000, "marketplace": 5070}, 100, "secondary root")
+
+    # case: PC-001.13, PC-001.14, PC-001.15
+    def test_lifecycle_port_assertion_rejects_service_or_transport_drift(self):
+        before = {"serviceGraph": {"services": [{"id": "gateway", "port": 4100},
+                                                {"id": "marketplace", "port": 5170}]},
+                  "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                      "serviceTransport": {"services": {
+                          "gateway": {"url": "http://127.0.0.1:4100"},
+                          "marketplace": {"url": "http://127.0.0.1:5170"},
+                      }},
+                  })}]}
+        assert_service_ports_preserved(before, before, "update")
+        changed_service = deepcopy(before)
+        changed_service["serviceGraph"]["services"][1]["port"] += 1
+        with self.assertRaisesRegex(RuntimeError, "service graph ports"):
+            assert_service_ports_preserved(before, changed_service, "rollback")
+        changed_transport = deepcopy(before)
+        transport = json.loads(changed_transport["configPatches"][0]["json"])
+        transport["serviceTransport"]["services"]["marketplace"]["url"] = "http://127.0.0.1:5171"
+        changed_transport["configPatches"][0]["json"] = json.dumps(transport)
+        with self.assertRaisesRegex(RuntimeError, "service transport ports"):
+            assert_service_ports_preserved(before, changed_transport, "restart")
+
+    def test_json_custom_scenario_install_claim_checks_project_registry_and_cleans_host(self):
+        with tempfile.TemporaryDirectory(prefix="journey-json-install-project-") as temp:
+            root = Path(temp)
+            platform = root / "platform"
+            project = root / "project"
+            index = root / "index.json"
+            index.write_text("{}")
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                if args[1] == "install":
+                    (platform / ".kb/v2/bin").mkdir(parents=True)
+                    (platform / ".kb/v2/receipt.json").write_text("{}")
+                    (platform / ".kb/v2/bin/kb").write_text("fixture")
+                    return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{"operation":"install"}}', "")
+                if args[1] == "project":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "project": {"id": "prj_test", "path": str(project.resolve())}}}), "")
+                if args[1] == "status":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "host": {"state": "running"}}}), "")
+                return subprocess.CompletedProcess(args, 0, '{"ok":true,"data":{}}', "")
+
+            journey = run_json_install_project_step(mode="local", launcher="kb-create", stable_index=index,
+                                                    platform_root=platform, project_root=project,
+                                                    run_command=run_command)
+            self.assertEqual(journey.steps[0].cases, ["S-187.6"])
+            self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+            install_args = calls[0]
+            self.assertIn("--json", install_args)
+            self.assertEqual(install_args[install_args.index("--scenario") + 1], "custom")
+            self.assertEqual(install_args[install_args.index("--project-root") + 1], str(project))
+            self.assertEqual([call[1] for call in calls[1:]], ["project", "status", "stop", "uninstall"])
+
+    def test_installer_fixture_cleanup_stops_running_host_before_removing_root(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installer-cleanup-") as temp:
+            root = Path(temp) / "platform"
+            receipt = root / ".kb/v2/receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text("{}")
+            calls = []
+
+            def run_command(args):
+                calls.append(args[1])
+                payload = {"host": {"state": "running"}} if args[1] == "status" else {}
+                return subprocess.CompletedProcess(args, 0,
+                    json.dumps({"ok": True, "data": payload}), "")
+
+            cleanup_installer_fixture_root(root, "kb-create", run_command)
+
+        self.assertEqual(calls, ["status", "stop", "uninstall"])
+        self.assertFalse(root.exists())
+
     def test_default_service_port_check_names_leftover_listener_owner(self):
         with tempfile.TemporaryDirectory(prefix="journey-default-port-check-") as temp:
             root = Path(temp)
@@ -148,25 +244,62 @@ class InstallerCaseStepsTest(unittest.TestCase):
             primary, automatic, explicit = parent / "root-a", parent / "root-b", parent / "root-c"
             index = parent / "release-index.json"
             index.write_text("{}")
-            for root, port in ((primary, 4000), (automatic, 4100)):
+            for root, port, service_port in ((primary, 4000, 5070), (automatic, 4100, 5170)):
                 (root / ".kb/v2").mkdir(parents=True)
                 (root / ".kb/v2/receipt.json").write_text(json.dumps({
                     "verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
+                    "plan": {"serviceGraph": {"services": [
+                        {"id": "gateway", "port": port}, {"id": "marketplace", "port": service_port},
+                    ]}, "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                        "serviceTransport": {"services": {
+                            "gateway": {"url": f"http://127.0.0.1:{port}"},
+                            "marketplace": {"url": f"http://127.0.0.1:{service_port}"},
+                        }},
+                    })}]},
                 }))
             calls = []
 
             def run_command(args):
                 calls.append(args)
-                if args[1] == "plan":
-                    payload = {"plan": {"request": {"gatewayUrl": "http://127.0.0.1:4100"},
-                                        "host": {"healthUrl": "http://127.0.0.1:4100/health"}}}
+                command = args[1]
+                if command == "status":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "host": {"state": "running"},
+                    }}), "")
+                if command == "stop":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}), "")
+                if command == "uninstall":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}), "")
+                if command == "plan":
+                    root = Path(args[args.index("--request-platform-root") + 1])
+                    port = 4300 if root.name == "root-d" else 4100
+                    payload = {"plan": {"request": {"gatewayUrl": f"http://127.0.0.1:{port}"},
+                                        "host": {"healthUrl": f"http://127.0.0.1:{port}/health"},
+                                        "serviceGraph": {"services": [
+                                            {"id": "gateway", "port": port},
+                                            {"id": "marketplace", "port": port + 1070},
+                                        ]}, "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                                            "serviceTransport": {"services": {
+                                                "gateway": {"url": f"http://127.0.0.1:{port}"},
+                                                "marketplace": {"url": f"http://127.0.0.1:{port + 1070}"},
+                                            }},
+                                        })}]}}
                     return subprocess.CompletedProcess(args, 0,
                         json.dumps({"ok": True, "data": payload}), "")
                 root = Path(args[args.index("--request-platform-root") + 1])
                 gateway = args[args.index("--gateway-url") + 1]
                 port = gateway.rsplit(":", 1)[1]
                 (root / ".kb/v2").mkdir(parents=True)
-                receipt = {"verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"}}
+                receipt = {"verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
+                           "plan": {"serviceGraph": {"services": [
+                               {"id": "gateway", "port": int(port)},
+                               {"id": "marketplace", "port": int(port) + 1070},
+                           ]}, "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                               "serviceTransport": {"services": {
+                                   "gateway": {"url": f"http://127.0.0.1:{port}"},
+                                   "marketplace": {"url": f"http://127.0.0.1:{int(port) + 1070}"},
+                               }},
+                           })}]}}
                 (root / ".kb/v2/receipt.json").write_text(json.dumps(receipt))
                 return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
                     "receipt": receipt,
@@ -178,9 +311,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["PC-001.10", "PC-001.16"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual([call[1] for call in calls], ["plan", "apply"])
-        self.assertNotIn("--gateway-url", calls[0])
+        self.assertEqual([call[1] for call in calls], ["stop", "apply", "plan", "plan", "status", "stop"])
         self.assertEqual(calls[1][calls[1].index("--gateway-url") + 1], "http://127.0.0.1:4200")
+        self.assertEqual(calls[2][calls[2].index("--request-platform-root") + 1], str(explicit.parent / "root-d"))
 
     def test_repeat_plan_compares_install_owned_files_while_host_stays_running(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:
@@ -548,7 +681,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",
-                        "S-187.4", "S-187.5"}
+                        "S-187.4", "S-187.5", "S-187.6"}
             self.assertEqual(set(claims), expected)
             self.assertTrue(all(claims[claim] == "FAIL" for claim in expected))
 

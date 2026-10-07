@@ -33,19 +33,31 @@ class PlatformUpdateStepsTest(unittest.TestCase):
     def _write_receipt(self, version: str):
         self.receipt.write_text(json.dumps({
             "installationId": "installation-stable-1",
-            "plan": {"serviceGraph": {"platformVersion": version}},
+            "plan": self._plan(version),
             "verification": {"configSha256": hashlib.sha256(self.config.read_bytes()).hexdigest(),
                              "hostHealthUrl": "http://127.0.0.1:4100/health"},
         }))
+
+    def _plan(self, version: str) -> dict:
+        return {
+            "serviceGraph": {"platformVersion": version, "services": [
+                {"id": "gateway", "port": 4100}, {"id": "marketplace", "port": 5170},
+            ]},
+            "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                "serviceTransport": {"services": {
+                    "gateway": {"url": "http://127.0.0.1:4100"},
+                    "marketplace": {"url": "http://127.0.0.1:5170"},
+                }},
+            })}],
+            "planHash": "resolved-plan-hash",
+        }
 
     def fake_kb(self, args: list[str]) -> subprocess.CompletedProcess:
         self.commands.append(args)
         stdout = ""
         code = 0
         if args[1] == "plan":
-            stdout = json.dumps({"ok": True, "plan": {
-                "serviceGraph": {"platformVersion": "3.0.1"}, "planHash": "resolved-plan-hash",
-            }})
+            stdout = json.dumps({"ok": True, "plan": self._plan("3.0.1")})
         elif args[1] == "update":
             update_count = sum(command[1] == "update" for command in self.commands)
             self.config.write_text('{"stable":true,"platform":"3.0.1"}\n')
@@ -53,7 +65,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             if "--json" not in args:
                 stdout = "Platform update completed.\n"
                 return subprocess.CompletedProcess(args, 0, stdout, "")
-            stdout = json.dumps({"ok": True, "receipt": {"plan": {"serviceGraph": {"platformVersion": "3.0.1"}, "planHash": "resolved-plan-hash"}},
+            stdout = json.dumps({"ok": True, "receipt": {"plan": self._plan("3.0.1")},
                                  "snapshot": {"id": f"snapshot-{update_count}"},
                                  "hostRestarted": True, "logPath": "/logs/update.log"})
         elif args[1] == "rollback":

@@ -47,3 +47,22 @@ func TestRemoveReleasesAddressForNextRoot(t *testing.T) {
 		t.Fatalf("allocated after remove = %q, error = %v", allocated, err)
 	}
 }
+
+func TestStoppedRootKeepsItsGatewayAllocationUntilUninstall(t *testing.T) {
+	registry := Registry{Path: filepath.Join(t.TempDir(), "launcher", "gateways.json")}
+	if err := registry.RegisterMany([]Root{
+		{PlatformRoot: "/platform/a", URL: "http://127.0.0.1:4000"},
+		{PlatformRoot: "/platform/b", URL: "http://127.0.0.1:4100"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stoppedRoot, err := registry.Allocate("/platform/b", "http://127.0.0.1:4000", "")
+	if err != nil || stoppedRoot != "http://127.0.0.1:4100" {
+		t.Fatalf("stopped root allocation = %q, error = %v; want its recorded address", stoppedRoot, err)
+	}
+	nextRoot, err := registry.Allocate("/platform/c", "http://127.0.0.1:4000", "")
+	if err != nil || nextRoot != "http://127.0.0.1:4200" {
+		t.Fatalf("next root allocation = %q, error = %v; want the next offset after the stopped root", nextRoot, err)
+	}
+}
