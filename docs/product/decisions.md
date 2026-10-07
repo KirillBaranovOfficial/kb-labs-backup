@@ -6,6 +6,16 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ## 2026-10-07
 
+### Plugin lock keys are the manifest IDs
+
+The canonical plugin identity is `id` from the package's `kb.plugin/3` manifest,
+including its scope. Every platform and project marketplace lock uses that exact
+ID as its plugin key; package names and shortened release-index IDs are not
+alternate identities. The release-index sealer rejects a plugin artifact whose
+ID differs from its manifest ID before producing a sealed index. CLI JSON
+stdout contains one result envelope, while discovery diagnostics stay on
+stderr. Cases: S-010.3, S-179.14, S-203.1.
+
 ### Offline plans show artifact resolution per artifact
 
 `kb-create plan --offline` exposes the actual source selected for each resolved

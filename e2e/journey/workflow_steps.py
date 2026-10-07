@@ -25,7 +25,7 @@ def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 1
         command = ["bash", "-c", 'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile"; fi; kb "$@"', "kb", *args]
     result = run_command(command, env=env, cwd=cwd, timeout=timeout, input=input_text)
     return subprocess.CompletedProcess(command, result.returncode,
-                                        stdout=(result.stdout or "") + (result.stderr or ""),
+                                        stdout=result.stdout or "",
                                         stderr=result.stderr)
 
 

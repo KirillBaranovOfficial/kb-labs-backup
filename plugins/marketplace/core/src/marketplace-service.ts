@@ -186,6 +186,15 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       this.assertScopeAllowsKind(ctx.scope, primaryKind);
 
       const strategy = this.strategies.get(primaryKind);
+      const canonicalId = strategy?.resolveId
+        ? await strategy.resolveId(result.packageRoot)
+        : result.id;
+      if (!canonicalId) {
+        throw new InvalidEntityError(
+          `Package "${result.id}" (resolved from "${spec}") does not declare a canonical entity ID. ` +
+          'Declare the ID in its KB manifest and retry the install.',
+        );
+      }
       const provides = strategy
         ? await strategy.extractProvides(result.packageRoot)
         : [primaryKind];
@@ -206,27 +215,27 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         provides,
         trust,
         signature: resolved.signature,
-        spec,
+        package: result.id,
       });
 
-      await addToMarketplaceLock(scopeRoot, result.id, entry);
+      await addToMarketplaceLock(scopeRoot, canonicalId, entry);
 
       // Cache manifest
       if (!this.extensionStore) {
-        await this.cacheManifest(scopeRoot, result.id, result.packageRoot, primaryKind, result.integrity);
+        await this.cacheManifest(scopeRoot, canonicalId, result.packageRoot, primaryKind, result.integrity);
       }
 
       // Run post-install hook
       if (strategy?.afterInstall) {
         try {
-          await strategy.afterInstall(result.id, result.packageRoot, this, ctx);
+          await strategy.afterInstall(canonicalId, result.packageRoot, this, ctx);
         } catch (err) {
-          warnings.push(`afterInstall for ${result.id}: ${(err as Error).message}`);
+          warnings.push(`afterInstall for ${canonicalId}: ${(err as Error).message}`);
         }
       }
 
       installed.push({
-        id: result.id,
+        id: canonicalId,
         version: result.version,
         primaryKind,
         provides,
@@ -267,10 +276,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         await strategy.beforeUninstall(id, this, ctx);
       }
 
+      const packageName = entry.source === 'local' ? undefined : entry.package!;
+
       await removeFromMarketplaceLock(scopeRoot, id);
       await removeCacheEntry(scopeRoot, id);
-      if (!this.extensionStore) {
-        await this.source.remove(id, scopeRoot);
+      if (!this.extensionStore && packageName) {
+        await this.source.remove(packageName, scopeRoot);
       }
     }
   }
@@ -370,7 +381,10 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     }
 
     const ids = packageIds ?? Object.keys(lock.plugins);
-    const specs = ids.filter(id => id in lock.plugins);
+    const specs = ids.filter(id => id in lock.plugins).map(id => {
+      const entry = lock.plugins[id]!;
+      return entry.package!;
+    });
 
     return this.install(ctx, specs);
   }
@@ -714,7 +728,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
   private async resolveEntryPath(scopeRoot: string, id: string, entry: MarketplaceEntry): Promise<string | undefined> {
     if (entry.source === 'marketplace' && this.extensionStore && entry.version) {
-      return (await this.extensionStore.lookup({ name: id, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
+      return (await this.extensionStore.lookup({ name: entry.package!, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
     }
     if (entry.link) {return path.resolve(scopeRoot, entry.link);}
     if (entry.resolvedPath) {return path.resolve(scopeRoot, entry.resolvedPath);}
