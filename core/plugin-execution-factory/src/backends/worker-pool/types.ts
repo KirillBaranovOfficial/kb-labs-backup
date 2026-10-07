@@ -172,6 +172,8 @@ export interface ErrorMessage extends BaseWorkerMessage {
   error: {
     message: string;
     code?: string;
+    hint?: string;
+    cause?: string;
     stack?: string;
   };
 }
@@ -267,6 +269,11 @@ export interface UIPromptResultMessage extends BaseWorkerMessage {
   type: 'uiPromptResult';
   promptId: string;
   value: unknown;
+  error?: {
+    code?: string;
+    hint?: string;
+    cause: string;
+  };
 }
 
 /**
@@ -329,6 +336,8 @@ export interface QueuedRequest {
 
   /** UI prompt callback — passed through to worker.execute() */
   onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>;
+  /** Context-specific hint used when no UI prompt responder is available. */
+  uiPromptHint?: string;
 }
 
 // ============================================================================

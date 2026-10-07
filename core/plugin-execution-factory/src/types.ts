@@ -249,6 +249,8 @@ export type OnLogCallback = (entry: LogEntry) => void;
 export interface ExecuteOptions {
   signal?: AbortSignal;
   pluginInvoker?: PluginInvokerFn;
+  /** Context-specific instruction shown when this execution cannot answer a UI prompt. */
+  uiPromptHint?: string;
   /**
    * Callback for ui/shell log entries ('log.line' events from StreamingUI + shell capture).
    * Host is responsible for SQLite persistence (e.g. stepLogger.info()).

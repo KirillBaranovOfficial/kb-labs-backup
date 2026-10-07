@@ -82,11 +82,12 @@ export class PoolExecutor {
     onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
+    uiPromptHint?: string,
   ): Promise<ExecutionResult> {
     this.onTotalRequests();
 
     try {
-      const result = await worker.execute(request, timeoutMs, onLog, onUIPrompt, onLoggerLog);
+      const result = await worker.execute(request, timeoutMs, onLog, onUIPrompt, onLoggerLog, uiPromptHint);
 
       if (result.ok) {
         this.onSuccessCount();

@@ -362,15 +362,6 @@ def checks(mode: str):
     token = os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")
     auth_token = lambda: os.getenv("KB_JOURNEY_SERVICE_TOKEN", token)
 
-    def platform_readiness() -> str | None:
-        gateway_error = expect_json("/ready", "gateway readiness")
-        workflow_error = expect_json(
-            f"/api/v1/projects/{pid}/workflow/health", "project-aware workflow health", token=auth_token())
-        errors = [error for error in (gateway_error, workflow_error) if error]
-        return "; ".join(errors) if errors else None
-
-    yield service_check("platform readiness (gateway + project workflow)", "gateway", platform_readiness,
-                        cases=["PC-002.3"])
     if mode == "secured":
         def admin_login():
             if not ADMIN_PASSWORD:
@@ -390,6 +381,16 @@ def checks(mode: str):
                 return f"secured admin CLI token did not authenticate /auth/me (HTTP {me_status})"
             return None
         yield service_check("secured admin CLI login", "auth.secured", admin_login)
+
+    def platform_readiness() -> str | None:
+        gateway_error = expect_json("/ready", "gateway readiness")
+        workflow_error = expect_json(
+            f"/api/v1/projects/{pid}/workflow/health", "project-aware workflow health", token=auth_token())
+        errors = [error for error in (gateway_error, workflow_error) if error]
+        return "; ".join(errors) if errors else None
+
+    yield service_check("platform readiness (gateway + project workflow)", "gateway", platform_readiness,
+                        cases=["PC-002.3"])
 
     if not PROJECT_ID:
         project = lambda: "BLOCKED: no project is registered; run `kb project add <path> --json` and set KB_JOURNEY_PROJECT_ID"

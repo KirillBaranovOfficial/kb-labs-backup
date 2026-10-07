@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveCliGatewayTarget } from '@kb-labs/core-platform';
@@ -23,10 +23,11 @@ vi.mock('../platform-init.js', () => ({
   resolveProjectConfig: mocks.resolveProjectConfig,
   initializePlatform: mocks.initializePlatform,
 }));
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>(),
+  CredentialsManager: class { async load() { return null; } },
   hasUsablePlatformAuth: mocks.hasUsablePlatformAuth,
   resolveActiveGateway: mocks.resolveActiveGateway,
-  SessionManager: class { async load() { return null; } },
 }));
 vi.mock('../gateway-executor.js', () => ({
   tryResolveGateway: mocks.tryResolveGateway,
@@ -67,6 +68,51 @@ describe('secured CLI auth ordering', () => {
       gatewayHost: env.GATEWAY_HOST,
       netOffset: Number(env.KB_NET_OFFSET ?? 0),
     }));
+  });
+
+  // case: S-031.1, S-041.8
+  it('lets auth status report an expired saved session without refreshing it first', async () => {
+    isolatedHome = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-expired-session-'));
+    process.env.HOME = isolatedHome;
+    process.env.KB_HOME = path.join(isolatedHome, '.kb');
+    process.env.KB_GATEWAY_URL = 'http://gateway.test';
+    process.env.GATEWAY_PORT = '4300';
+    delete process.env.KB_PLATFORM_ROOT;
+    await mkdir(path.join(isolatedHome, '.kb'), { recursive: true });
+    const sessionPath = path.join(isolatedHome, '.kb', 'session.json');
+    await writeFile(sessionPath, JSON.stringify({
+      gatewayUrl: 'http://gateway.test', accessToken: 'expired-access', refreshToken: 'valid-refresh',
+      expiresAt: 0, email: 'member@example.test',
+    }));
+    mocks.loadPlatformConfiguration.mockResolvedValue({
+      platformConfig: {}, rawConfig: { gateway: { access: { mode: 'secured' } } },
+      rawPlatformConfig: { gateway: { access: { mode: 'secured' } } }, effectiveConfig: undefined,
+      platformRoot: isolatedHome, projectRoot: undefined, sameLocation: true,
+      sources: { platform: 'env', project: 'platform', fields: {} },
+    });
+    mocks.initializePlatform.mockResolvedValue({
+      platform: { logger: mocks.logger }, platformConfig: {},
+      rawConfig: { gateway: { access: { mode: 'secured' } } }, effectiveConfig: {},
+      platformRoot: isolatedHome, projectRoot: undefined,
+    });
+    mocks.hasUsablePlatformAuth.mockImplementation(async () => {
+      await writeFile(sessionPath, JSON.stringify({
+        gatewayUrl: 'http://gateway.test', accessToken: 'refreshed-access', refreshToken: 'next-refresh',
+        expiresAt: Date.now() + 900_000, email: 'member@example.test',
+      }));
+      return { authenticated: true };
+    });
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const exitCode = await executeCli(['auth', 'status', '--json'], { cwd: isolatedHome });
+    const records = stdout.mock.calls.map(([record]) => String(record));
+
+    expect(exitCode).toBe(0);
+    expect(records).toHaveLength(1);
+    expect(JSON.parse(records[0]!).data.session).toMatchObject({
+      authenticated: true, tokenExpired: true, email: 'member@example.test',
+    });
+    expect(mocks.hasUsablePlatformAuth).not.toHaveBeenCalled();
   });
 
   // case: S-041.7, S-041.17, S-203.15

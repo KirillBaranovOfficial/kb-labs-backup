@@ -92,10 +92,5 @@ export function createStreamingUI(base: UIFacade, emitter: EventEmitterFn): UIFa
       emit(line, entry.level, entry.level === 'error' ? 'stderr' : 'stdout');
     },
 
-    // Non-interactive context — return safe defaults silently
-    confirm: async (_msg, opts) => opts?.defaultValue ?? false,
-    prompt: async (_msg, opts) => opts?.default ?? '',
-    select: async (_msg, choices) => choices[0]?.value as never,
-    multiSelect: async (_msg, choices) => choices.filter((c) => c.checked).map((c) => c.value) as never,
   };
 }

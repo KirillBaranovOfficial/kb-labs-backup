@@ -616,7 +616,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       return reply.send({ ok: true });
     } catch (err) {
       if (err instanceof AuthError) {
-        const code = (err as AuthError).code;
+        const code = err.code;
         if (code === 'unknown_invite') {
           // Unknown, expired, revoked, and consumed invite tokens share the
           // same public response so callers cannot distinguish token state.
@@ -660,9 +660,9 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       return reply.send({ ok: true });
     } catch (err) {
       if (err instanceof AuthError) {
-        const code = (err as AuthError).code;
+        const code = err.code;
         if (code === 'invalid_current_password') {
-          return reply.code(400).send({ error: 'Bad Request', message: 'Current password is incorrect' });
+          return sendAuthError(reply, 400, undefined, undefined, 'KB_AUTH_INVALID_CURRENT_PASSWORD');
         }
         if (code === 'weak_password') {
           return reply.code(400).send({ error: 'Bad Request', message: err.message });

@@ -28,6 +28,11 @@ export function getCatalogEntry(code: string): ErrorCatalogEntry | undefined {
   return byCode.get(code);
 }
 
+/** Map catalogued command failures to the CLI usage exit code at shared boundaries. */
+export function mapErrorEnvelopeToExitCode(code: string): number {
+  return code === 'KB_RUNTIME_INPUT_INVALID' ? 2 : 1;
+}
+
 /** Fills `{name}` placeholders from `values`; a missing value renders as "unknown". */
 export function renderTemplate(template: string, values: Readonly<Record<string, string>> = {}): string {
   return template.replace(/\{([A-Za-z0-9_]+)\}/g, (_match, key: string) => values[key] ?? 'unknown');

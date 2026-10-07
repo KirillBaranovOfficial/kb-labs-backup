@@ -53,27 +53,48 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
                         email: str | None = None, base_url: str | None = None,
                         password: str | None = None) -> None:
     """Prove the CLI status surface in local and secured mode."""
-    def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
-        return run_command([cli_path, *args], env=env)
+    def invoke(args: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+        return run_command([cli_path, *args], env=env, **kwargs)
 
     if authenticated:
         if not base_url or not email or not password:
             raise ValueError("secured CLI auth status requires gateway URL, email, and password")
-        prompt_seen = False
+        missing_password = invoke(["auth", "login", "--gateway-url", base_url, "--email", email])
+        try:
+            missing_payload = decode_ux_error_result(read_ux_cli_result(
+                missing_password.stdout, missing_password.returncode))
+        except (json.JSONDecodeError, ValueError) as error:
+            raise AssertionError("non-TTY kb auth login did not return its usage error envelope") from error
+        expected_hint = (f"cat password.txt | kb auth login --gateway-url '{base_url}' "
+                         f"--email '{email}' --password-stdin")
+        if (missing_password.returncode != 2
+                or missing_payload.get("code") != "KB_RUNTIME_INPUT_INVALID"
+                or missing_payload.get("message") != "The provided input is invalid."
+                or missing_payload.get("cause") != "The password prompt requires an interactive terminal."
+                or missing_payload.get("hint") != expected_hint):
+            raise AssertionError(f"non-TTY kb auth login returned an unexpected result: {missing_payload!r}")
+        login = invoke(["auth", "login", "--gateway-url", base_url, "--email", email,
+                        "--password-stdin"], input=password + "\n")
+        if login.returncode != 0:
+            raise AssertionError(f"kb auth login failed: {(login.stdout + login.stderr)[-400:]}")
+        if password in login.stdout or password in login.stderr:
+            raise AssertionError("kb auth login echoed the password supplied through stdin")
+        command = [cli_path, "auth", "login", "--gateway-url", base_url, "--email", email]
+        password_sent = False
 
-        def answer_password(transcript: str) -> str | None:
-            nonlocal prompt_seen
-            if not prompt_seen and "Password: " in transcript:
-                prompt_seen = True
+        def enter_password(transcript: str) -> str | None:
+            nonlocal password_sent
+            if not password_sent and "Password: " in transcript:
+                password_sent = True
                 return password + "\n"
             return None
 
-        login, _ = run_pty_command([cli_path, "auth", "login", "--gateway-url", base_url,
-                                    "--email", email], env=env, on_output=answer_password)
-        if login.returncode != 0:
-            raise AssertionError(f"kb auth login failed: {(login.stdout + login.stderr)[-400:]}")
-        if not prompt_seen:
-            raise AssertionError("kb auth login did not prompt for the human password")
+        tty_login, _ = run_pty_command(command, env=env, timeout=30, on_output=enter_password)
+        tty_transcript = _combined(tty_login)
+        if tty_login.returncode != 0 or not password_sent or "Authenticated" not in tty_transcript:
+            raise AssertionError(f"TTY kb auth login did not complete: {tty_transcript[-400:]}")
+        if password in tty_transcript:
+            raise AssertionError("TTY kb auth login echoed the password")
     status = invoke(["auth", "status", "--json"])
     try:
         status_payload = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))

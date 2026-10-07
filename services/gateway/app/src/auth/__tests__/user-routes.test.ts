@@ -895,6 +895,14 @@ describe('POST /auth/password/change', () => {
     });
 
     expect(r.statusCode).toBe(400);
+    expect(r.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_AUTH_INVALID_CURRENT_PASSWORD',
+        message: 'Current password is incorrect',
+        hint: 'Check the current password and retry the password change.',
+      },
+    });
   });
 
   it('returns 401 without session cookie', async () => {

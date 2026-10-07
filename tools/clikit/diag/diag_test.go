@@ -110,6 +110,13 @@ func TestExitCodeUsesSharedTable(t *testing.T) {
 	}
 }
 
+func TestExitCodePreservesWrappedOperationStatus(t *testing.T) {
+	d := New("KB_INSTALL_CONFIRMATION_REQUIRED", "Confirmation is required.", WithProcessExitCode(ExitInput))
+	if got := ExitCode(d); got != ExitInput {
+		t.Fatalf("ExitCode() = %d, want %d", got, ExitInput)
+	}
+}
+
 func TestDiag_AsError(t *testing.T) {
 	var err error = New("KB_RUNTIME_INPUT_INVALID", "invalid")
 	var d *Diag

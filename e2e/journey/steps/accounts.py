@@ -60,7 +60,9 @@ def run_password_and_session_steps(base_url: str, email: str, password: str) -> 
     wrong = _browser_call(base_url, first, "/auth/password/change", method="POST",
                           body={"currentPassword": password, "newPassword": "WrongChanged123!"},
                           csrf=True, expected=400)
-    if wrong.get("message") != "Current password is incorrect":
+    if (wrong.get("code") != "KB_AUTH_INVALID_CURRENT_PASSWORD"
+            or wrong.get("message") != "Current password is incorrect"
+            or wrong.get("hint") != "Check the current password and retry the password change."):
         raise AssertionError(f"incorrect current password returned unexpected message: {wrong!r}")
     _browser_call(base_url, first, "/auth/me")
 

@@ -10,6 +10,7 @@ import {
   createErrorEnvelope,
   errorCatalog,
   getCatalogEntry,
+  mapErrorEnvelopeToExitCode,
   renderTemplate,
   toErrorEnvelope,
   validateErrorEnvelope,
@@ -17,6 +18,13 @@ import {
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const fixtureDir = join(here, 'fixtures');
+
+describe('mapErrorEnvelopeToExitCode', () => {
+  it('maps catalogued invalid input to usage exit and other envelopes to failure', () => {
+    expect(mapErrorEnvelopeToExitCode('KB_RUNTIME_INPUT_INVALID')).toBe(2);
+    expect(mapErrorEnvelopeToExitCode('KB_RUNTIME_UNEXPECTED')).toBe(1);
+  });
+});
 
 function loadFixtures(kind: 'valid' | 'invalid'): Array<{ name: string; value: unknown }> {
   const dir = join(fixtureDir, kind);

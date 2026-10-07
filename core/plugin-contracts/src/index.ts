@@ -73,7 +73,7 @@ export type {
   MessageOptions,
   PluginHandlerUIFacade,
 } from "./ui.js";
-export { noopUI } from "./ui.js";
+export { InteractiveInputRequiredError, noopUI } from "./ui.js";
 
 // Trace
 export type {

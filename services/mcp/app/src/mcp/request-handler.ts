@@ -34,9 +34,9 @@ function errorResult(envelope: ReturnType<typeof createErrorEnvelope>): CallTool
   };
 }
 
-export function mcpToolError(code: string, details: Record<string, string>): CallToolResult {
+export function mcpToolError(code: string, details: Record<string, string>, gatewayUrl?: string): CallToolResult {
   const templateDetails = code === 'KB_AUTH_REQUIRED'
-    ? { gatewayUrl: '<url>', ...details }
+    ? { gatewayUrl: gatewayUrl ?? '<url>', ...details }
     : details;
   return errorResult(createErrorEnvelope(code, { details: templateDetails, correlationId: randomUUID() }));
 }
@@ -203,6 +203,7 @@ export interface ExecuteToolCallArgs {
   analytics?: IAnalytics | null;
   /** Observability collector — records mcp.tool.call operation. Optional for tests. */
   collector?: McpObservabilityCollector;
+  gatewayUrl?: string;
 }
 
 /**
@@ -213,11 +214,11 @@ export interface ExecuteToolCallArgs {
  * Only then is the command run via executeCommandV3.
  */
 export async function executeToolCall(args: ExecuteToolCallArgs): Promise<CallToolResult> {
-  const { name, visibleTools, permits, tenantId, resolvePlatform, analytics, collector, logger } = args;
+  const { name, visibleTools, permits, tenantId, resolvePlatform, analytics, collector, logger, gatewayUrl } = args;
   const t0 = Date.now();
 
   if (!permits) {
-    return mcpToolError('KB_AUTH_REQUIRED', {});
+    return mcpToolError('KB_AUTH_REQUIRED', {}, gatewayUrl);
   }
 
   const tool = visibleTools.find((t) => t.name === name);

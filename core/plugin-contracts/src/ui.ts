@@ -275,28 +275,26 @@ export interface UIFacade {
   chain(items: ChainItem[]): void;
 
   /**
-   * Prompt for confirmation.
-   * In non-interactive contexts (worker, in-process, CI) returns defaultValue.
+   * Prompt for confirmation. A context without a prompt responder rejects with
+   * InteractiveInputRequiredError instead of substituting defaultValue.
    */
   confirm(message: string, options?: { defaultValue?: boolean }): Promise<boolean>;
 
   /**
-   * Prompt for text input.
-   * In non-interactive contexts returns options.default or ''.
+   * Prompt for text input. A context without a prompt responder rejects with
+   * InteractiveInputRequiredError instead of substituting a default.
    */
   prompt(message: string, options?: PromptOptions): Promise<string>;
 
   /**
-   * Prompt to select a single value from a list.
-   * In non-interactive contexts returns the first choice value.
-   * In worker pool, relayed via IPC to the host process.
+   * Prompt to select a single value from a list. A context without a prompt
+   * responder rejects with InteractiveInputRequiredError.
    */
   select<T = string>(message: string, choices: SelectChoice<T>[]): Promise<T>;
 
   /**
-   * Prompt to select multiple values from a list.
-   * In non-interactive contexts returns pre-checked values.
-   * In worker pool, relayed via IPC to the host process.
+   * Prompt to select multiple values from a list. A context without a prompt
+   * responder rejects with InteractiveInputRequiredError.
    */
   multiSelect<T = string>(message: string, choices: MultiSelectChoice<T>[]): Promise<T[]>;
 
@@ -471,8 +469,27 @@ const noopSymbols: Symbols = {
   rightT: '┤',
 };
 
+/** Structured failure for a required prompt in an execution context without a responder. */
+export class InteractiveInputRequiredError extends Error {
+  readonly code = 'KB_RUNTIME_INPUT_INVALID';
+  override readonly cause: string;
+
+  constructor(readonly hint: string, cause: string) {
+    super();
+    this.cause = cause;
+  }
+}
+
+function unavailablePrompt(message: string): InteractiveInputRequiredError {
+  return new InteractiveInputRequiredError(
+    'Provide the value as workflow or request input, then run `kb workflow run --help`.',
+    `The prompt "${message}" cannot be answered in this execution context.`,
+  );
+}
+
 /**
- * No-op UI implementation (for testing or silent mode)
+ * Silent UI implementation. Output is discarded, but required prompts fail
+ * because this context has no responder that can collect their values.
  */
 export const noopUI: UIFacade = {
   colors: noopColors,
@@ -496,9 +513,9 @@ export const noopUI: UIFacade = {
   box: () => {},
   sideBox: () => {},
   chain: () => {},
-  confirm: async () => true,
-  prompt: async () => '',
-  select: async (_, choices) => choices[0]?.value as never,
-  multiSelect: async (_, choices) => choices.filter((c) => c.checked).map((c) => c.value) as never,
+  confirm: async (message) => { throw unavailablePrompt(message); },
+  prompt: async (message) => { throw unavailablePrompt(message); },
+  select: async (message) => { throw unavailablePrompt(message); },
+  multiSelect: async (message) => { throw unavailablePrompt(message); },
   log: () => {},
 };

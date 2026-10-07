@@ -10,7 +10,7 @@
 
 import { safeColors } from '../colors.js';
 import {
-  isInteractive, enableRawMode, disableRawMode,
+  requireInteractiveInput, enableRawMode, disableRawMode,
   hideCursor, showCursor, clearLines,
   onKeypress, isUpKey, isDownKey, isEnterKey, isEscapeKey,
 } from './terminal.js';
@@ -53,9 +53,10 @@ function renderSelect<T>(message: string, choices: SelectChoice<T>[], activeInde
 export async function select<T>(options: SelectOptions<T>): Promise<T> {
   const { message, choices, initialIndex = 0 } = options;
 
-  if (!isInteractive() || choices.length === 0) {
+  if (choices.length === 0) {
     return (choices[Math.min(initialIndex, choices.length - 1)] as SelectChoice<T>).value;
   }
+  requireInteractiveInput('Run this command in a terminal to choose an option.');
 
   let activeIndex = Math.min(initialIndex, choices.length - 1);
   let lineCount = 0;

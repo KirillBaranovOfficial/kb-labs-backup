@@ -178,21 +178,15 @@ export class WorkerPoolBackend implements ExecutionBackend {
     const hostType: HostType = request.descriptor.hostContext.host;
     const ui = this.uiProvider(hostType);
     const onUIPrompt = async (prompt: UIPromptMessage): Promise<unknown> => {
-      try {
-        switch (prompt.kind) {
-          case 'select':
-            return await ui.select(prompt.message, prompt.choices ?? []);
-          case 'multiSelect':
-            return await ui.multiSelect(prompt.message, prompt.choices ?? []);
-          case 'confirm':
-            return await ui.confirm(prompt.message, { defaultValue: (prompt.defaultValue as boolean) ?? false });
-          case 'text':
-            return await ui.prompt(prompt.message, { default: prompt.defaultValue as string });
-          default:
-            return prompt.defaultValue ?? false;
-        }
-      } catch {
-        return prompt.defaultValue ?? false;
+      switch (prompt.kind) {
+        case 'select':
+          return ui.select(prompt.message, prompt.choices ?? []);
+        case 'multiSelect':
+          return ui.multiSelect(prompt.message, prompt.choices ?? []);
+        case 'confirm':
+          return ui.confirm(prompt.message, { defaultValue: (prompt.defaultValue as boolean) ?? false });
+        case 'text':
+          return ui.prompt(prompt.message, { default: prompt.defaultValue as string });
       }
     };
 
@@ -202,6 +196,7 @@ export class WorkerPoolBackend implements ExecutionBackend {
         onLog: options?.onLog,
         onLoggerLog: options?.onLoggerLog,
         onUIPrompt,
+        uiPromptHint: options?.uiPromptHint,
       });
 
       const executionTimeMs = performance.now() - start;

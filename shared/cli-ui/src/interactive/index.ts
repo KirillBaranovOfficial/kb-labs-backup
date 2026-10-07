@@ -1,4 +1,4 @@
-export { isInteractive } from './terminal.js';
+export { InteractiveInputRequiredError, isInteractive, requireInteractiveInput } from './terminal.js';
 export { confirm } from './confirm.js';
 export { text } from './text.js';
 export { select } from './select.js';

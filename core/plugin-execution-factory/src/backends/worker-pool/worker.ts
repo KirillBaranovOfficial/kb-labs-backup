@@ -27,6 +27,7 @@ interface WithMiddlewareDecls {
 }
 import type { ExecutionRequest, ExecutionResult, PlatformTransportFactory, PlatformTransportServer } from '../../types.js';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
+import { InteractiveInputRequiredError } from '@kb-labs/plugin-contracts';
 import { WorkerCrashedError, TimeoutError } from '../../errors.js';
 
 /**
@@ -160,6 +161,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
     onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>;
+    uiPromptHint?: string;
     request: ExecutionRequest;
     startedAt: number;
     /**
@@ -327,6 +329,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
     onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
+    uiPromptHint?: string,
   ): Promise<ExecutionResult> {
     if (this._state !== 'idle') {
       throw new Error(`Worker ${this.id} is not available (state: ${this._state})`);
@@ -420,6 +423,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
         onLog,
         onLoggerLog,
         onUIPrompt,
+        uiPromptHint,
         request,
         startedAt,
       });
@@ -610,7 +614,11 @@ export class Worker extends EventEmitter<WorkerEvents> {
         const pending = this.pendingRequests.get(msg.requestId);
         if (pending) {
           const error = new Error(msg.error.message);
-          Object.assign(error, { code: msg.error.code });
+          Object.assign(error, {
+            code: msg.error.code,
+            hint: msg.error.hint,
+            cause: msg.error.cause,
+          });
           error.stack = msg.error.stack;
           pending.reject(error);
         }
@@ -651,15 +659,28 @@ export class Worker extends EventEmitter<WorkerEvents> {
           pending.onUIPrompt(msg).then((value) => {
             const result: UIPromptResultMessage = { type: 'uiPromptResult', promptId: msg.promptId, value };
             proc.send(result);
-          }).catch(() => {
-            // On error, send default value (first choice or false)
-            const defaultVal = msg.defaultValue ?? false;
-            const result: UIPromptResultMessage = { type: 'uiPromptResult', promptId: msg.promptId, value: defaultVal };
+          }).catch((error: unknown) => {
+            const result: UIPromptResultMessage = {
+              type: 'uiPromptResult',
+              promptId: msg.promptId,
+              value: undefined,
+              error: error instanceof InteractiveInputRequiredError
+                ? { code: error.code, hint: error.hint, cause: String(error.cause) }
+                : { cause: error instanceof Error ? error.message : String(error) },
+            };
             proc.send(result);
           });
         } else if (this.process) {
-          // No handler — return default immediately
-          const result: UIPromptResultMessage = { type: 'uiPromptResult', promptId: msg.promptId, value: msg.defaultValue ?? false };
+          const error = new InteractiveInputRequiredError(
+            pending?.uiPromptHint ?? `Supply the value requested by "${msg.message}" as command or request input.`,
+            `The prompt "${msg.message}" has no responder in this execution context.`,
+          );
+          const result: UIPromptResultMessage = {
+            type: 'uiPromptResult',
+            promptId: msg.promptId,
+            value: undefined,
+            error: { code: error.code, hint: error.hint, cause: String(error.cause) },
+          };
           this.process.send(result);
         }
         break;

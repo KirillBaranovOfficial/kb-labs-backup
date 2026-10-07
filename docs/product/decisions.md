@@ -356,7 +356,9 @@ S-201.1–S-201.2, S-203.7–S-203.8.
 `kb auth login` accepts `--password-stdin` for automation and prompts securely
 when a human omits `--password`. Auth catalog hints show the login command
 without a password argument. There is no password environment-variable
-fallback. Cases: S-007.4, S-010.6, S-031.4, S-041.6, S-041.7.
+fallback. When no TTY is available, a missing required password is invalid
+usage; the CLI exits 2 and gives the exact `--password-stdin` command. Cases:
+S-007.4, S-010.6, S-031.4, S-041.6, S-041.7.
 
 ### 2026-10-07: CLI Gateway routing follows the installed platform root
 
@@ -474,3 +476,13 @@ terminal cancellation remains an operation cancellation and exits 1. A shared
 confirmation boundary applies this rule to uninstall, rollback, and account
 recovery before any destructive action runs.
 Cases: S-050.3–S-050.4, S-024.4, S-203.12.
+
+### Required interactive input never uses a silent default
+
+When a CLI or plugin asks for required input and its execution context has no
+interactive responder, it fails with `KB_RUNTIME_INPUT_INVALID` instead of
+accepting a prompt default. CLI prompts without a TTY exit 2 and give the exact
+command for supplying input through a supported flag or stdin. Plugin prompts
+in workflow, Studio, REST, MCP, and worker execution fail at the prompt
+boundary; callers must pass the value as explicit workflow or request input.
+Cases: S-041.6, S-215.1.
