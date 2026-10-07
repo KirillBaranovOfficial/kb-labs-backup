@@ -610,9 +610,9 @@ func (i invocation) runInstall(output *os.File) int {
 		fmt.Fprintf(humanOut, "\nKB Labs is installed at %s.\nNext: register a project with `kb project add <path>`.\n", root)
 		return 0
 	}
-	projectID, registerErr := i.registerProject(root, planned.Plan.Request.ProjectRoot)
+	projectID, registerErr := i.registerInstalledProject(root, planned.Plan.Request.ProjectRoot)
 	if registerErr != nil {
-		fmt.Fprintf(humanOut, "\nKB Labs is installed at %s, but the selected project could not be registered: %s.\nNext: run `kb project add %q`.\n", root, registerErr, planned.Plan.Request.ProjectRoot)
+		write(output, map[string]any{"ok": false, "error": projectRegistrationFailure(root, planned.Plan.Request.ProjectRoot, registerErr)})
 		return 1
 	}
 	fmt.Fprintf(humanOut, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `kb-create status --platform-root %q` and `kb project show %s`.\n", root, projectID, planned.Plan.Request.ProjectRoot, root, projectID)
@@ -625,8 +625,7 @@ func (i invocation) runJSONInstall(output *os.File) int {
 		return 2
 	}
 	if i.Input != "" {
-		i.Operation = "apply"
-		return i.run(output)
+		return i.applyInstallAndRegister(output, i.Input)
 	}
 	_, err := catalog.LoadFile(i.Index)
 	if err != nil {
@@ -665,13 +664,77 @@ func (i invocation) runJSONInstall(output *os.File) int {
 		write(output, failure("KB_RUNTIME_UNEXPECTED", "install request could not be staged", "check temporary-directory permissions and rerun `kb-create install --json`", err))
 		return 1
 	}
-	i.Operation, i.Input = "apply", requestFile.Name()
-	i.Direct = directRequest{}
-	return i.run(output)
+	return i.applyInstallAndRegister(output, requestFile.Name())
+}
+
+func (i invocation) applyInstallAndRegister(output *os.File, requestPath string) int {
+	result, err := os.CreateTemp("", "kb-create-install-result-*.json")
+	if err != nil {
+		write(output, failure("KB_RUNTIME_UNEXPECTED", "install result could not be staged", "check temporary-directory permissions and rerun `kb-create install --json`", err))
+		return 1
+	}
+	defer os.Remove(result.Name())
+	apply := i
+	apply.Operation, apply.Input = "apply", requestPath
+	apply.Direct = directRequest{}
+	code := apply.run(result)
+	if err := result.Close(); err != nil {
+		write(output, failure("KB_RUNTIME_UNEXPECTED", "install result could not be read", "check temporary-directory permissions and rerun `kb-create install --json`", err))
+		return 1
+	}
+	data, err := os.ReadFile(result.Name())
+	if err != nil {
+		write(output, failure("KB_RUNTIME_UNEXPECTED", "install result could not be read", "check temporary-directory permissions and rerun `kb-create install --json`", err))
+		return 1
+	}
+	if code != 0 {
+		_, _ = output.Write(data)
+		return code
+	}
+	var applied struct {
+		OK      bool                     `json:"ok"`
+		Receipt contracts.InstallReceipt `json:"receipt"`
+	}
+	if err := json.Unmarshal(data, &applied); err != nil || !applied.OK {
+		write(output, failure("KB_RUNTIME_UNEXPECTED", "install result was invalid", "rerun `kb-create install --json`; if this repeats, report the launcher version", err))
+		return 1
+	}
+	request := applied.Receipt.Plan.Request
+	if request.ProjectRoot != "" {
+		if _, err := i.registerInstalledProject(request.PlatformRoot, request.ProjectRoot); err != nil {
+			write(output, map[string]any{"ok": false, "error": projectRegistrationFailure(request.PlatformRoot, request.ProjectRoot, err)})
+			return 1
+		}
+	}
+	_, _ = output.Write(data)
+	return 0
+}
+
+func projectRegistrationFailure(platformRoot, projectRoot string, cause error) *diag.Diag {
+	failure := contracts.NewDiag(contracts.CodeApplyFailed,
+		"The platform is installed, but the selected project could not be registered.",
+		fmt.Sprintf("Run `kb project add %q`, then verify with `kb project show %q`.", projectRoot, projectRoot), cause)
+	failure.Meta = map[string]any{"platformRoot": platformRoot, "projectRoot": projectRoot}
+	return failure
 }
 
 func projectCLIPath(platformRoot string) string {
 	return filepath.Join(platformRoot, ".kb", "v2", "bin", "kb")
+}
+
+func (i invocation) registerInstalledProject(platformRoot, projectRoot string) (string, error) {
+	if projectRoot == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("project directory %q must exist: %w", projectRoot, err)
+	}
+	return i.registerProject(platformRoot, filepath.Clean(canonical))
 }
 
 func (i invocation) registerProject(platformRoot, projectRoot string) (string, error) {
@@ -690,19 +753,21 @@ func (i invocation) registerProject(platformRoot, projectRoot string) (string, e
 		return "", fmt.Errorf("the project registry command failed (%s)", err)
 	}
 	var result struct {
-		OK      bool `json:"ok"`
-		Project struct {
-			ID   string `json:"id"`
-			Path string `json:"path"`
-		} `json:"project"`
+		OK   bool `json:"ok"`
+		Data struct {
+			Project struct {
+				ID   string `json:"id"`
+				Path string `json:"path"`
+			} `json:"project"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(output, &result); err != nil {
 		return "", fmt.Errorf("decode project registration result: %w", err)
 	}
-	if !result.OK || result.Project.ID == "" || result.Project.Path != projectRoot {
+	if !result.OK || result.Data.Project.ID == "" || result.Data.Project.Path != projectRoot {
 		return "", fmt.Errorf("project registration returned an unexpected result")
 	}
-	return result.Project.ID, nil
+	return result.Data.Project.ID, nil
 }
 
 type humanProgress struct {

@@ -498,7 +498,9 @@ Cases: PC-001.10–PC-001.11, S-025.9.
 When a machine installs another host profile without `--gateway-url`, kb-create
 reuses the release Gateway address if no installed root claims it. Otherwise it
 allocates the next free 100-port offset. The allocated origin is stored in the
-resolved plan and receipt, so update, rollback, and restart preserve it. The
+resolved plan and receipt; every declared service port and transport URL uses
+that same offset. A stopped root retains its claim; only uninstall releases it.
+Update, rollback, and restart preserve the allocation. The
 shim identifies only its current owner, and the host PID record identifies
 only a currently running root; neither enumerates installed roots. Project
 registry entries do not identify platform roots. A machine-level launcher

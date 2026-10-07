@@ -1205,10 +1205,6 @@ def main():
             return run(args, env=installer_env, timeout=1200)[0]
         def installer_command(args: list[str]):
             installer_env = env.copy()
-            root_flag = next((flag for flag in ("--platform-root", "--request-platform-root") if flag in args), None)
-            if root_flag is not None:
-                fixture_root = Path(args[args.index(root_flag) + 1])
-                installer_env["KB_HOME"] = str(HOME / "installer-fixture-kb-homes" / fixture_root.name)
             if "--secret-env" in args:
                 installer_env["KB_JOURNEY_ADMIN_PASSWORD"] = installer_secret
             return run(args, env=installer_env, timeout=1200)[0]
