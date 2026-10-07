@@ -28,6 +28,10 @@ type Artifact struct {
 	Registry string `json:"registry,omitempty"`
 }
 
+// IsBinary reports whether this artifact is an executable rather than an
+// installed package with a manifest projection.
+func (a Artifact) IsBinary() bool { return a.Kind == "binary" }
+
 type Service struct {
 	ID          string   `json:"id"`
 	Command     string   `json:"command"`

@@ -125,7 +125,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if graph.Profile == "client" {
 		var clientBinary []contracts.Artifact
 		for _, item := range artifacts {
-			if item.Kind == "binary" && item.ID == "kb-create" {
+			if item.IsBinary() && item.ID == "kb-create" {
 				clientBinary = append(clientBinary, item)
 			}
 		}
@@ -335,7 +335,7 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 		item := &artifacts[index]
 		if request.Source == contracts.SourceOffline {
 			cachePath := filepath.Join(request.PlatformRoot, ".kb", "v2", "cache")
-			if item.Kind == "binary" {
+			if item.IsBinary() {
 				cachePath = filepath.Join(cachePath, "binaries", item.SHA256)
 			} else {
 				cachePath = filepath.Join(cachePath, "packages", item.SHA256+".tgz")
@@ -359,7 +359,7 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 			continue
 		}
 		item.ResolvedFrom = "registry"
-		if item.Kind == "binary" {
+		if item.IsBinary() {
 			item.ResolvedURL = item.URL
 		} else {
 			item.ResolvedURL = item.Tarball
@@ -643,7 +643,15 @@ func compatible(rangeValue, version, name string) error {
 	if rangeValue == "" {
 		return nil
 	}
-	if matched, err := semrange.Satisfies(version, rangeValue); err == nil && matched {
+	constraint, err := semrange.ParseRange(rangeValue)
+	if err != nil {
+		return fmt.Errorf("%s declares invalid compatibility range %q: %w", name, rangeValue, err)
+	}
+	candidate, err := semrange.ParseVersion(version)
+	if err != nil {
+		return fmt.Errorf("%s has invalid version %q: %w", name, version, err)
+	}
+	if constraint.Satisfies(candidate) {
 		return nil
 	}
 	return incompatibleRange(name, version, rangeValue)

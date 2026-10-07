@@ -21,7 +21,7 @@ type Binaries struct {
 
 func (b Binaries) Install(items []contracts.Artifact) error {
 	for _, item := range items {
-		if item.Kind != "binary" {
+		if !item.IsBinary() {
 			continue
 		}
 		if item.URL == "" || item.SHA256 == "" || item.Target == "" {
@@ -85,7 +85,7 @@ func (b Binaries) download(item contracts.Artifact) ([]byte, error) {
 
 func (b Binaries) Remove(items []contracts.Artifact) error {
 	for _, item := range items {
-		if item.Kind != "binary" {
+		if !item.IsBinary() {
 			continue
 		}
 		path := filepath.Join(b.Root, ".kb", "v2", "bin", filepath.Base(item.Target))

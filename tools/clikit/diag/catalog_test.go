@@ -116,6 +116,9 @@ func scanKBCodeLiterals(sourceRoot string) (map[string][]string, error) {
 			if !ok || literal.Kind != token.STRING {
 				return true
 			}
+			if isMapIndexKey(file, literal) {
+				return true
+			}
 			code, err := strconv.Unquote(literal.Value)
 			if err != nil || !kbCodeLiteral.MatchString(code) {
 				return true
@@ -128,6 +131,22 @@ func scanKBCodeLiterals(sourceRoot string) (map[string][]string, error) {
 		return nil
 	})
 	return emitted, err
+}
+
+// isMapIndexKey excludes string literals used to read or write map entries.
+// Environment variable names commonly have the KB_ prefix but are not
+// diagnostic codes; diagnostics are emitted as values or constructor args.
+func isMapIndexKey(file *ast.File, target *ast.BasicLit) bool {
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		index, ok := node.(*ast.IndexExpr)
+		if ok && index.Index == target {
+			found = true
+			return false
+		}
+		return !found
+	})
+	return found
 }
 
 func uncataloguedKBCodeLiterals(emitted map[string][]string, entries map[string]CatalogEntry) map[string][]string {
@@ -160,5 +179,23 @@ func TestCatalogScannerRejectsUncataloguedFixtureLiteral(t *testing.T) {
 		t.Fatalf("uncatalogued fixture should fail catalog check; got missing codes %v", missing)
 	} else if _, ok := missing["KB_FIXTURE_404"]; !ok {
 		t.Fatalf("uncatalogued fixture was not rejected: %v", missing)
+	}
+}
+
+func TestCatalogScannerIgnoresKBMapIndexKeys(t *testing.T) {
+	toolsDir := filepath.Join(t.TempDir(), "tools", "fixture")
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(toolsDir, "fixture.go")
+	if err := os.WriteFile(fixture, []byte("package fixture\nvar env = map[string]string{}\nfunc set() { env[\"KB_INSTALLATION_ID\"] = \"id\" }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	emitted, err := scanKBCodeLiterals(filepath.Dir(filepath.Dir(toolsDir)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := emitted["KB_INSTALLATION_ID"]; exists {
+		t.Fatalf("map index key was reported as a diagnostic code: %v", emitted)
 	}
 }
