@@ -96,6 +96,7 @@ def run_platform_update_steps(
     saved_user_session_established = False
     saved_session_succeeded_after_update = False
     installation_id = ""
+    gateway_url = ""
 
     def checkpoint_details() -> dict[str, dict[str, str | None]]:
         return {"configSha256": dict(config_checkpoints),
@@ -109,11 +110,14 @@ def run_platform_update_steps(
         secret_checkpoints[name] = _hash(secrets_path)
 
     def save_known_good_state() -> None:
-        nonlocal saved_user_session_established, installation_id
+        nonlocal saved_user_session_established, installation_id, gateway_url
         receipt = json.loads(receipt_path.read_text())
         installation_id = str(receipt.get("installationId") or "")
+        gateway_url = str(receipt.get("verification", {}).get("hostHealthUrl") or "")
         if not installation_id:
             raise RuntimeError("active receipt has no stable installationId")
+        if not gateway_url:
+            raise RuntimeError("active receipt has no stable Gateway health URL")
         actual = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
         if actual != base_version:
             raise RuntimeError(f"active receipt is {actual!r}, expected version {base_version}")
@@ -188,6 +192,8 @@ def run_platform_update_steps(
         receipt = json.loads(receipt_path.read_text())
         if receipt.get("installationId") != installation_id:
             raise RuntimeError("installationId changed during update")
+        if receipt.get("verification", {}).get("hostHealthUrl") != gateway_url:
+            raise RuntimeError("Gateway address changed during update")
         version = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
         if version != updated_version:
             raise RuntimeError(f"active receipt is {version!r}, expected {updated_version}")
@@ -319,6 +325,8 @@ def run_platform_update_steps(
         receipt = json.loads(receipt_path.read_text())
         if receipt.get("installationId") != installation_id:
             raise RuntimeError("installationId changed during rollback")
+        if receipt.get("verification", {}).get("hostHealthUrl") != gateway_url:
+            raise RuntimeError("Gateway address changed during rollback")
         version = receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion")
         if version != base_version:
             raise RuntimeError(f"restored receipt is {version!r}, expected {base_version}")
@@ -412,6 +420,8 @@ def run_platform_update_steps(
         receipt = json.loads(receipt_path.read_text())
         if receipt.get("installationId") != installation_id:
             raise RuntimeError("installationId changed during restart")
+        if receipt.get("verification", {}).get("hostHealthUrl") != gateway_url:
+            raise RuntimeError("Gateway address changed during restart")
         _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after restart")
 
     journey.step("restart the installed host and run an adapter command", "platform.restart",

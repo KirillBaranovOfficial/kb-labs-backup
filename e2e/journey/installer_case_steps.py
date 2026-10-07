@@ -302,8 +302,10 @@ def run_secondary_root_gateway_isolation_step(*, mode: str, launcher: str, prima
         secondary_data = json.loads(secondary_receipt.read_text())
         secondary_installation = secondary_data.get("installationId")
         gateway_url = secondary_data.get("verification", {}).get("hostHealthUrl", "")
-        if not gateway_url.startswith("http://127.0.0.1:4100/"):
-            raise RuntimeError(f"secondary root receipt does not declare its own Gateway at port 4100: {gateway_url}")
+        primary_gateway = json.loads(primary_receipt.read_text()).get("verification", {}).get("hostHealthUrl", "")
+        primary_port, secondary_port = urlsplit(primary_gateway).port, urlsplit(gateway_url).port
+        if not primary_port or not secondary_port or secondary_port == primary_port:
+            raise RuntimeError(f"secondary root receipt does not declare a distinct Gateway address: {gateway_url}")
 
         was_running: dict[Path, bool] = {}
         for root in (primary_root, secondary_root):
@@ -349,6 +351,42 @@ def run_secondary_root_gateway_isolation_step(*, mode: str, launcher: str, prima
 
     journey.step("verify the secondary root's Gateway while running and stopped", "platform.install",
                  gateway_isolation, cases=["PC-001.12"])
+    return journey
+
+
+def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
+                                primary_root: Path, automatic_root: Path,
+                                explicit_root: Path, run_command: CommandRunner) -> Journey:
+    """Verify the automatically assigned root address and explicit override."""
+    journey = Journey(mode, f"gateway-allocation-{mode}")
+
+    def verify_gateway_addresses() -> None:
+        primary_receipt = json.loads((primary_root / ".kb/v2/receipt.json").read_text())
+        automatic_receipt = json.loads((automatic_root / ".kb/v2/receipt.json").read_text())
+        primary_url = primary_receipt.get("verification", {}).get("hostHealthUrl", "")
+        automatic_url = automatic_receipt.get("verification", {}).get("hostHealthUrl", "")
+        primary_port, automatic_port = urlsplit(primary_url).port, urlsplit(automatic_url).port
+        if not primary_port or automatic_port != primary_port + 100:
+            raise RuntimeError(f"no-flag apply did not allocate the next Gateway offset: {automatic_url}")
+
+        planned = _data(run_command([launcher, "plan", "--json", "--index", str(stable_index),
+                                     "--platform-channel", "stable", "--request-platform-root",
+                                     str(automatic_root)]), "repeat automatic Gateway plan").get("plan", {})
+        if (planned.get("request", {}).get("gatewayUrl") != automatic_url.removesuffix("/health")
+                or planned.get("host", {}).get("healthUrl") != automatic_url):
+            raise RuntimeError(f"replanning changed the installed Gateway address: {planned}")
+
+        result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                              "--platform-channel", "stable", "--request-platform-root", str(explicit_root),
+                              "--gateway-url", "http://127.0.0.1:4200"])
+        data = _data(result, "explicit Gateway apply")
+        explicit_receipt = data.get("receipt", {})
+        explicit_url = explicit_receipt.get("verification", {}).get("hostHealthUrl", "")
+        if explicit_url != "http://127.0.0.1:4200/health":
+            raise RuntimeError(f"explicit Gateway override was not recorded in the receipt: {explicit_url}")
+
+    journey.step("allocate an unused Gateway address by default and honor an explicit override",
+                 "platform.install", verify_gateway_addresses, cases=["PC-001.10", "PC-001.16"])
     return journey
 
 
@@ -585,6 +623,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                  lambda: channel_plan("canary", canary_index, "s181-canary-root"), cases=["S-181.2"])
 
     secret_root = platform_root.parent / "s181-secret-root"
+    explicit_gateway_root = platform_root.parent / "pc001-explicit-gateway-root"
     def secret_apply() -> None:
         if not secret_value:
             raise RuntimeError("isolated journey secret is unavailable for S-181.3")
@@ -597,7 +636,6 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                           "start primary before secondary install")
         apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                     "--platform-channel", "stable", "--request-platform-root", str(secret_root),
-                                    "--gateway-url", "http://127.0.0.1:4100",
                                     "--scenario", "custom", "--scenario-answers",
                                     json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
                                                 "admin.tenant": "journey"}),
@@ -607,7 +645,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             raise RuntimeError(f"secret apply changed the live command owner: {payload.get('shim')}")
         secondary_receipt = json.loads((secret_root / ".kb/v2/receipt.json").read_text())
         if secondary_receipt.get("verification", {}).get("hostHealthUrl") != "http://127.0.0.1:4100/health":
-            raise RuntimeError("secondary apply did not record its declared Gateway address")
+            raise RuntimeError("secondary apply did not record its automatically allocated Gateway address")
         shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
         if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
             raise RuntimeError("secondary apply moved the kb shim away from the primary platform root")
@@ -621,6 +659,14 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
                  cases=["S-181.3", "PC-001.10"])
+
+    for step in run_gateway_allocation_step(mode=mode, launcher=launcher, stable_index=stable_index,
+                                            primary_root=platform_root, automatic_root=secret_root,
+                                            explicit_root=explicit_gateway_root,
+                                            run_command=run_command).steps:
+        journey.step(step.name, step.capability,
+                     lambda step=step: None if step.status == "PASS" else step.message,
+                     cases=step.cases)
 
     for step in run_secondary_root_gateway_isolation_step(mode=mode, launcher=launcher,
                                                            primary_root=platform_root,
@@ -674,6 +720,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     for generated_root in (apply_root, platform_root.parent / "s181-stable-root",
                            platform_root.parent / "s181-canary-root", secret_root,
+                           explicit_gateway_root,
                            platform_root.parent / "removed-shim-owner",
                            platform_root.parent / "s181-offline-root"):
         shutil.rmtree(generated_root, ignore_errors=True)

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -556,6 +557,11 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 			ports[strconv.Itoa(service.Port)] = service.ID
 		}
 	}
+	state, stateErr := StateHome()
+	var active ActiveHostRecord
+	if stateErr == nil {
+		active, _ = ActiveHost(state)
+	}
 	for port, purpose := range ports {
 		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))
 		if err == nil {
@@ -563,9 +569,35 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 			continue
 		}
 		owner := listenerOwner(port)
-		return portInUseError(port, "", purpose, owner, operation, err)
+		if active.PID > 0 && filepath.Clean(active.PlatformRoot) == filepath.Clean(plan.Request.PlatformRoot) &&
+			owner.PID == strconv.Itoa(active.PID) {
+			continue
+		}
+		failure := portInUseError(port, "", purpose, owner, operation, err)
+		if operation == "plan" || operation == "apply" {
+			if plan.Host != nil {
+				if gatewayURL, suggestionErr := nextGatewayURL(plan.Host.HealthURL); suggestionErr == nil {
+					failure.Hint += " Use --gateway-url " + gatewayURL + " and rerun `kb-create " + operation + "`."
+				}
+			}
+		}
+		return failure
 	}
 	return nil
+}
+
+func nextGatewayURL(healthURL string) (string, error) {
+	parsed, err := url.Parse(healthURL)
+	if err != nil {
+		return "", err
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || port+100 > 65535 {
+		return "", fmt.Errorf("Gateway port has no valid 100-port offset")
+	}
+	parsed.Host = strings.TrimSuffix(parsed.Host, ":"+parsed.Port()) + ":" + strconv.Itoa(port+100)
+	parsed.Path, parsed.RawPath, parsed.RawQuery, parsed.Fragment = "", "", "", ""
+	return parsed.String(), nil
 }
 
 func (r *ProcessRunner) verifyListenerOwner(pid int) error {

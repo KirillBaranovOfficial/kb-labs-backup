@@ -174,3 +174,20 @@ func Correct(launcher, platformRoot string) bool {
 	target, err := os.Readlink(Path(launcher))
 	return err == nil && target == Target(platformRoot)
 }
+
+// Owner returns the installed platform root currently named by the managed kb
+// shim. It does not infer owners from unmanaged files or dangling symlinks.
+func Owner(launcher string) (string, bool) {
+	target, err := os.Readlink(Path(launcher))
+	if err != nil {
+		return "", false
+	}
+	root, managed := managedRoot(target)
+	if !managed {
+		return "", false
+	}
+	if _, err := receipt.Read(root); err != nil {
+		return "", false
+	}
+	return filepath.Clean(root), true
+}
