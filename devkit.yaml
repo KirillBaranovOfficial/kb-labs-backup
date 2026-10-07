@@ -84,7 +84,6 @@ workspace:
     # Adapter support libraries above are the explicit exceptions to this broad match.
     adapter:
       match:
-        - "core/llm-router"
         - "adapters/*"
       language: typescript
       preset: adapter-lib

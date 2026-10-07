@@ -10,7 +10,7 @@ import * as os from 'node:os';
 import { DiscoveryManager } from '../discovery-manager.js';
 import { writeMarketplaceLock, createEmptyLock, createMarketplaceEntry } from '../marketplace-lock.js';
 import { computePackageIntegrity } from '../integrity.js';
-import { findWorkspaceCandidates, findWorkspacePackages } from '../workspace-source.js';
+import { findWorkspaceCandidates, findWorkspacePackages, loadAdapterManifest } from '../workspace-source.js';
 
 interface PluginFixture {
   dir: string;
@@ -325,6 +325,42 @@ describe('findWorkspacePackages', () => {
       expect(found).toEqual([{ packageName: '@kb-labs/adapters-sqlite', packageRoot: adapterRoot }]);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('workspace adapter candidates', () => {
+  it('does not discover the LLM routing wrapper as an ILLM provider', async () => {
+    const root = path.resolve(import.meta.dirname, '../../../..');
+    const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-llm-provider-workspace-'));
+    try {
+      const routerRoot = path.join(fixtureRoot, 'packages', 'llm-router');
+      const providerRoot = path.join(fixtureRoot, 'packages', 'llm-provider');
+      await fs.mkdir(path.join(routerRoot, 'dist'), { recursive: true });
+      await fs.mkdir(path.join(providerRoot, 'dist'), { recursive: true });
+      const routerPackage = JSON.parse(await fs.readFile(path.join(root, 'core/llm-router/package.json'), 'utf8')) as Record<string, unknown>;
+      await fs.writeFile(path.join(routerRoot, 'package.json'), JSON.stringify(routerPackage));
+      await fs.writeFile(path.join(routerRoot, 'dist', 'manifest.js'), 'export const manifest = { implements: "ILLM" };\n');
+      await fs.writeFile(path.join(providerRoot, 'package.json'), JSON.stringify({
+        name: '@fixture/llm-provider',
+        type: 'module',
+        kb: { manifest: './dist/manifest.js' },
+      }));
+      await fs.writeFile(path.join(providerRoot, 'dist', 'manifest.js'), 'export const manifest = { implements: "ILLM" };\n');
+      await fs.writeFile(path.join(fixtureRoot, 'pnpm-workspace.yaml'), 'packages: ["packages/*"]\n');
+
+      const workspaceCandidates = await findWorkspaceCandidates(fixtureRoot);
+      const llmProviders = (await Promise.all(workspaceCandidates.map(async candidate => ({
+        packageName: candidate.packageName,
+        manifest: await loadAdapterManifest(candidate.packageRoot),
+      }))))
+        .filter(candidate => candidate.manifest?.implements === 'ILLM')
+        .map(candidate => candidate.packageName);
+
+      expect(llmProviders).toEqual(['@fixture/llm-provider']);
+      expect(llmProviders).not.toContain('@kb-labs/llm-router');
+    } finally {
+      await fs.rm(fixtureRoot, { recursive: true, force: true });
     }
   });
 });

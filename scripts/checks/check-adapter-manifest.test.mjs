@@ -11,17 +11,17 @@ const checker = fileURLToPath(new URL('./check-adapter-manifest.mjs', import.met
 test('adapter-manifest reports schema and workspace category completeness errors', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-check-'));
   try {
-    const adapterRoot = path.join(root, 'packages', 'adapter');
+    const adapterRoot = path.join(root, 'adapters', 'adapter');
     const extraRoot = path.join(root, 'packages', 'extra');
     await mkdir(path.join(adapterRoot, 'dist'), { recursive: true });
     await mkdir(path.join(extraRoot, 'dist'), { recursive: true });
     await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'fixture-root', private: true }));
-    await writeFile(path.join(root, 'pnpm-workspace.yaml'), 'packages: ["packages/*"]\n');
+    await writeFile(path.join(root, 'pnpm-workspace.yaml'), 'packages: ["adapters/*", "packages/*"]\n');
     await writeFile(path.join(root, 'devkit.yaml'), [
       'workspace:',
       '  categories:',
       '    adapter:',
-      '      match: ["packages/adapter"]',
+      '      match: ["adapters/*"]',
       '    ts-lib:',
       '      match: ["packages/*"]',
       '',
@@ -42,7 +42,7 @@ test('adapter-manifest reports schema and workspace category completeness errors
       'workspace:',
       '  categories:',
       '    adapter:',
-      '      match: ["packages/adapter", "packages/extra"]',
+      '      match: ["adapters/*", "packages/*"]',
       '    ts-lib:',
       '      match: ["packages/*"]',
       '',

@@ -30,8 +30,6 @@ export {
   type AdapterLoader,
 } from './router.js';
 export { TierResolver, CapabilityResolver, type ResolveResult } from './resolver.js';
-export { manifest } from './manifest.js';
-
 // Re-export types for convenience
 export type {
   LLMTier,

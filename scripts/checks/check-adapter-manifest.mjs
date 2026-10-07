@@ -11,7 +11,6 @@ const checkName = input.check;
 const devkit = yaml.load(await readFile(path.join(workspaceRoot, 'devkit.yaml'), 'utf8'));
 const adapterCategory = devkit.workspace.categories.adapter;
 if (!adapterCategory) throw new Error('devkit.yaml has no adapter category');
-const completenessAnchor = adapterCategory.match?.find(pattern => !/[?*]/.test(pattern));
 const ignoredDirectories = new Set(['.git', 'node_modules', 'dist', 'coverage', '.turbo', '__pycache__']);
 
 function matchesPattern(pattern, relPath) {
@@ -160,13 +159,17 @@ async function main() {
   }
 
   // The full workspace graph comes from pnpm-workspace.yaml; category membership comes from
-  // the first-match devkit category rules, the same source used by kb-devkit.
-  // A literal category match is the one invocation that performs this global comparison.
+  // the first-match devkit category rules, the same source used by kb-devkit. The first
+  // registered adapter package by path anchors one global completeness scan; this does not
+  // require a special literal category match that could misclassify a support package.
+  const packages = await workspacePackages();
+  const adapterPackages = packages
+    .filter(pkg => categoryFor(pkg.relPath) === 'adapter')
+    .sort((a, b) => a.relPath.localeCompare(b.relPath));
+  const completenessAnchor = adapterPackages[0];
   if (!completenessAnchor) {
-    items.push(issue(currentPackage.Name, path.join(workspaceRoot, 'devkit.yaml'), 'adapter category needs a literal package match to anchor its workspace completeness scan'));
-  } else if (currentPackage.RelPath === completenessAnchor) {
-    const packages = await workspacePackages();
-    const adapterPackages = packages.filter(pkg => categoryFor(pkg.relPath) === 'adapter');
+    items.push(issue(currentPackage.Name, path.join(workspaceRoot, 'devkit.yaml'), 'adapter category does not match any workspace package'));
+  } else if (currentPackage.RelPath === completenessAnchor.relPath) {
     for (const pkg of packages) {
       const packageFile = path.join(pkg.path, 'package.json');
       if (!pkg.name) {
