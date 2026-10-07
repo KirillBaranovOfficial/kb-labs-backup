@@ -57,7 +57,7 @@ describe('release:build', () => {
 
     const result = await buildCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'platform' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     expect(shellExec).toHaveBeenCalledWith(
       'pnpm',
       ['run', 'build:affected'],
@@ -72,7 +72,7 @@ describe('release:build', () => {
 
     const result = await buildCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'platform' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true });
     expect(vi.mocked(buildPackages)).toHaveBeenCalledOnce();
   });
 });

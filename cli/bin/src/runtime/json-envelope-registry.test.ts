@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { glob } from 'glob';
 import ts from 'typescript';
 import { registerBuiltinCommands, registerBuiltinSystemCommands, registry, type RouteResult } from '@kb-labs/cli-commands';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
@@ -80,6 +79,14 @@ function isSuccessMarker(node: ts.Expression): boolean {
     (ts.isTypeAssertionExpression(node) && isSuccessMarker(node.expression));
 }
 
+function functionBody(node: ts.Node): ts.Block | undefined {
+  if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) || ts.isGetAccessor(node) || ts.isSetAccessor(node)) {
+    return node.body && ts.isBlock(node.body) ? node.body : undefined;
+  }
+  return undefined;
+}
+
 function isReturnedObjectLiteral(node: ts.ObjectLiteralExpression): boolean {
   let expression: ts.Expression = node;
   let parent = node.parent;
@@ -91,7 +98,27 @@ function isReturnedObjectLiteral(node: ts.ObjectLiteralExpression): boolean {
     expression = parent;
     parent = parent.parent;
   }
-  return Boolean(parent && ts.isReturnStatement(parent) && parent.expression === expression);
+  if (parent && ts.isReturnStatement(parent) && parent.expression === expression) return true;
+  if (!parent || !ts.isVariableDeclaration(parent) || parent.initializer !== expression || !ts.isIdentifier(parent.name)) return false;
+
+  const variableName = parent.name.text;
+  let owner: ts.Node | undefined = parent.parent;
+  while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
+  if (!owner) return false;
+  const body = functionBody(owner);
+  if (!body) return false;
+
+  let returned = false;
+  const findReturn = (candidate: ts.Node) => {
+    if (ts.isFunctionLike(candidate) && candidate !== owner) return;
+    if (ts.isReturnStatement(candidate) && candidate.expression && ts.isIdentifier(candidate.expression) && candidate.expression.text === variableName) {
+      returned = true;
+      return;
+    }
+    ts.forEachChild(candidate, findReturn);
+  };
+  findReturn(body);
+  return returned;
 }
 
 function isCommandHandlerReturn(node: ts.ObjectLiteralExpression): boolean {
@@ -132,10 +159,18 @@ const logger = {
 const platform = mocks.platform;
 
 type SystemCommandFixture = Extract<RouteResult, { type: 'system-cmd' }>['cmd'];
+type PluginCommandFixture = Extract<RouteResult, { type: 'command' }>['command'];
 
-function commandPaths(): { segments: string[]; kind: 'system' | 'plugin'; system?: SystemCommandFixture }[] {
+type RegistryCommandFixture = {
+  segments: string[];
+  kind: 'system' | 'plugin';
+  system?: SystemCommandFixture;
+  plugin?: PluginCommandFixture;
+};
+
+function commandPaths(): RegistryCommandFixture[] {
   const queue = registry.complete([]).map((entry) => entry.split(' '));
-  const commands = new Map<string, { kind: 'system' | 'plugin'; system?: SystemCommandFixture }>();
+  const commands = new Map<string, Omit<RegistryCommandFixture, 'segments'>>();
   while (queue.length > 0) {
     const segments = queue.shift()!;
     const route = registry.resolve(segments);
@@ -144,7 +179,7 @@ function commandPaths(): { segments: string[]; kind: 'system' | 'plugin'; system
       continue;
     }
     if (route.type === 'command') {
-      commands.set(route.command.manifest.segments.join(' '), { kind: 'plugin' });
+      commands.set(route.command.manifest.segments.join(' '), { kind: 'plugin', plugin: route.command });
       continue;
     }
     const children = route.type === 'system-group'
@@ -154,6 +189,57 @@ function commandPaths(): { segments: string[]; kind: 'system' | 'plugin'; system
   }
   return [...commands].sort(([left], [right]) => left.localeCompare(right))
     .map(([command, info]) => ({ segments: command.split(' '), ...info }));
+}
+
+async function sourceFilesBelow(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return sourceFilesBelow(absolutePath);
+    }
+    return entry.isFile() && /\.[cm]?tsx?$/.test(entry.name) && !/\.(test|spec)\.[cm]?tsx?$/.test(entry.name)
+      ? [absolutePath]
+      : [];
+  }));
+  return files.flat().sort();
+}
+
+function pluginHandlerSource(command: PluginCommandFixture): string | undefined {
+  const root = command.pkgRoot;
+  const manifest = command.v3Manifest ?? command.manifest.manifestV2;
+  if (!root || !manifest) return undefined;
+  const commandPath = command.manifest.segments.join(' ');
+  const declaration = manifest.cli?.commands.find((candidate) => candidate.path.trim().split(/\s+/).join(' ') === commandPath);
+  const handler = declaration?.handler?.split('#', 1)[0];
+  if (!handler) return undefined;
+
+  const relativeHandler = handler.replace(/^\.\//, '').replace(/^dist\//, '');
+  const sourceRelativePath = relativeHandler.replace(/\.[cm]?js$/, '.ts');
+  return path.resolve(root, 'src', sourceRelativePath);
+}
+
+function systemCommandNames(relativePath: string, text: string): string[] {
+  const source = ts.createSourceFile(relativePath, text, ts.ScriptTarget.Latest, true);
+  const names: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'defineSystemCommand') {
+      const config = node.arguments[0];
+      if (config && ts.isObjectLiteralExpression(config)) {
+        const name = config.properties.find((property) =>
+          ts.isPropertyAssignment(property) &&
+          (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+          property.name.text === 'name',
+        );
+        if (name && ts.isPropertyAssignment(name) && ts.isStringLiteralLike(name.initializer)) {
+          names.push(name.initializer.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return names;
 }
 
 describe('JSON envelope coverage for the live CLI registry', () => {
@@ -222,12 +308,54 @@ describe('JSON envelope coverage for the live CLI registry', () => {
 
   // case: S-203.1
   it('rejects handler-built envelopes, extra failure fields, and envelope-like status values', async () => {
-    const sources = await glob([
-      'cli/commands/src/commands/system/**/*.ts',
-      'plugins/*/entry/src/cli/**/*.ts',
-      'plugins/*/entry/src/commands/**/*.ts',
-      'plugins/infra-worker/plugin-template-core/src/cli/commands/**/*.ts',
-    ], { cwd: workspaceRoot, ignore: ['**/*.test.ts', '**/*.spec.ts'] });
+    const commands = commandPaths();
+    const systemSources = await sourceFilesBelow(path.join(workspaceRoot, 'cli/commands/src'));
+    const sourcesBySystemName = new Map<string, string[]>();
+    for (const sourcePath of systemSources) {
+      const text = await readFile(sourcePath, 'utf8');
+      for (const name of systemCommandNames(sourcePath, text)) {
+        sourcesBySystemName.set(name, [...(sourcesBySystemName.get(name) ?? []), sourcePath]);
+      }
+    }
+
+    const registeredHandlerCommands: string[] = [];
+    const handlerSources = new Set<string>();
+    const unresolvedHandlers: string[] = [];
+    for (const command of commands) {
+      const commandKey = command.segments.join(' ');
+      if (command.kind === 'system') {
+        registeredHandlerCommands.push(commandKey);
+        const sourcesForCommand = sourcesBySystemName.get(command.system!.name) ?? [];
+        if (sourcesForCommand.length === 0) {
+          unresolvedHandlers.push(`${commandKey} (system handler "${command.system!.name}")`);
+        }
+        for (const sourcePath of sourcesForCommand) handlerSources.add(sourcePath);
+        continue;
+      }
+
+      const plugin = command.plugin!;
+      const manifest = plugin.v3Manifest ?? plugin.manifest.manifestV2;
+      if (!manifest?.cli?.commands.some((declaration) => declaration.path.trim().split(/\s+/).join(' ') === commandKey)) {
+        continue; // Synthetic unavailable registry entries have no handler source.
+      }
+      registeredHandlerCommands.push(commandKey);
+      const sourcePath = pluginHandlerSource(plugin);
+      if (!sourcePath) {
+        unresolvedHandlers.push(`${commandKey} (${plugin.packageName ?? plugin.manifest.package ?? 'plugin'} has no manifest handler)`);
+      } else {
+        handlerSources.add(sourcePath);
+      }
+    }
+
+    const scannedHandlerCommands = commands
+      .filter((command) => command.kind === 'system' || Boolean(command.plugin?.v3Manifest ?? command.plugin?.manifest.manifestV2))
+      .filter((command) => command.kind === 'system'
+        ? (sourcesBySystemName.get(command.system!.name)?.length ?? 0) > 0
+        : Boolean(pluginHandlerSource(command.plugin!)))
+      .map((command) => command.segments.join(' '));
+    expect(unresolvedHandlers).toEqual([]);
+    expect(scannedHandlerCommands.sort()).toEqual(registeredHandlerCommands.sort());
+
     const catalog = JSON.parse(await readFile(path.join(workspaceRoot, 'core/platform/src/error-envelope/errors.catalog.json'), 'utf8')) as {
       codes: Array<{ code: string; message: string; hint: string }>;
     };
@@ -239,8 +367,9 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     expect(matchesCataloguedCondition('Authentication is required.', catalogConditions)).toBe(true);
     const violations: string[] = [];
 
-    for (const relativePath of sources) {
-      const text = await readFile(path.join(workspaceRoot, relativePath), 'utf8');
+    for (const absolutePath of handlerSources) {
+      const relativePath = path.relative(workspaceRoot, absolutePath);
+      const text = await readFile(absolutePath, 'utf8');
       const source = ts.createSourceFile(relativePath, text, ts.ScriptTarget.Latest, true);
       const visit = (node: ts.Node) => {
         if (ts.isObjectLiteralExpression(node) && isReturnedObjectLiteral(node) && isCommandHandlerReturn(node)) {
@@ -250,7 +379,12 @@ describe('JSON envelope coverage for the live CLI registry', () => {
             property.name.text === 'ok' &&
             isSuccessMarker(property.initializer),
           );
-          if (okProperty) {
+          const payloadProperty = node.properties.find((property) =>
+            ts.isPropertyAssignment(property) &&
+            (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+            ['data', 'result'].includes(property.name.text),
+          );
+          if (okProperty && (payloadProperty || node.properties.length === 1)) {
             const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
             violations.push(`${relativePath}:${line + 1} (success envelope)`);
           }

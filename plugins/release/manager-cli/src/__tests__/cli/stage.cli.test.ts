@@ -104,7 +104,7 @@ describe('release:stage — default packageManager (pnpm)', () => {
 
     const result = await stageCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'sdk' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('result');
     expect(vi.mocked(rewriteWorkspaceDeps)).toHaveBeenCalledOnce();
     expect(vi.mocked(rewriteWorkspaceDeps).mock.calls[0]![2]).toBe('pnpm');
     expect(vi.mocked(spawnSync)).toHaveBeenCalledWith(
@@ -120,8 +120,8 @@ describe('release:stage — default packageManager (pnpm)', () => {
 
     const result = await stageCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'sdk', json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = (result as { result: { artifacts: Array<{ tarball: string }> } }).result;
+    expect(result).not.toHaveProperty('result');
+    const payload = result as { artifacts: Array<{ tarball: string }> };
     expect(payload.artifacts[0]!.tarball).toBe('kb-labs-sdk.tgz');
   });
 
@@ -133,8 +133,8 @@ describe('release:stage — default packageManager (pnpm)', () => {
 
     const result = await stageCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'many', json: true } }));
 
-    expect(result.ok).toBe(true);
-    const payload = (result as { result: { artifacts: Array<{ name: string }> } }).result;
+    expect(result).not.toHaveProperty('result');
+    const payload = result as { artifacts: Array<{ name: string }> };
     expect(payload.artifacts).toHaveLength(8);
     expect(new Set(payload.artifacts.map(a => a.name)).size).toBe(8);
   });
@@ -161,7 +161,7 @@ describe('release:stage — packageManager: npm (opt-in)', () => {
 
     const result = await stageCommand.execute(ctx as never, mockCLIInput({ flags: { flow: 'sdk' } }));
 
-    expect(result.ok).toBe(true);
+    expect(result).not.toHaveProperty('result');
     expect(vi.mocked(rewriteWorkspaceDeps)).toHaveBeenCalledOnce();
 
     const versionMap = vi.mocked(rewriteWorkspaceDeps).mock.calls[0]![1] as Map<string, string>;
