@@ -4,7 +4,7 @@ import { createErrorEnvelope } from '@kb-labs/core-platform';
 const mocks = vi.hoisted(() => ({
   session: { gatewayUrl: 'https://gateway.test', accessToken: 'saved', refreshToken: 'refresh', expiresAt: 0 },
   load: vi.fn(), refresh: vi.fn(), isExpired: vi.fn(() => true),
-  credentialsLoad: vi.fn(),
+  credentialsLoad: vi.fn(), credentialsRefresh: vi.fn(), credentialsExpired: vi.fn(() => true),
 }));
 
 vi.mock('./session.js', () => ({
@@ -14,7 +14,13 @@ vi.mock('./session.js', () => ({
     async refresh() { return mocks.refresh(); }
   },
 }));
-vi.mock('./credentials.js', () => ({ CredentialsManager: class { async load() { return mocks.credentialsLoad(); } } }));
+vi.mock('./credentials.js', () => ({
+  CredentialsManager: class {
+    async load() { return mocks.credentialsLoad(); }
+    isExpired() { return mocks.credentialsExpired(); }
+    async refresh() { return mocks.credentialsRefresh(); }
+  },
+}));
 
 let hasUsablePlatformAuth: typeof import('./platform-auth.js').hasUsablePlatformAuth;
 let GatewayAuthResponseError: typeof import('./result.js').GatewayAuthResponseError;
@@ -25,7 +31,9 @@ beforeEach(async () => {
   mocks.load.mockReset();
   mocks.refresh.mockReset();
   mocks.credentialsLoad.mockReset();
+  mocks.credentialsRefresh.mockReset();
   mocks.isExpired.mockReturnValue(true);
+  mocks.credentialsExpired.mockReturnValue(true);
   ({ GatewayAuthResponseError } = await import('./result.js'));
   ({ SavedAuthFileError } = await import('./saved-auth-file.js'));
   ({ hasUsablePlatformAuth } = await import('./platform-auth.js'));
@@ -35,6 +43,32 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('platform auth verification cache', () => {
+  // case: S-203.23
+  it('does not refresh or verify saved credentials against a different Gateway origin', async () => {
+    for (const credentialKind of ['user session', 'machine credential'] as const) {
+      mocks.load.mockReset().mockResolvedValue(null);
+      mocks.credentialsLoad.mockReset().mockResolvedValue(null);
+      const credential = { ...mocks.session, gatewayUrl: 'https://gateway-a.test' };
+      if (credentialKind === 'user session') { mocks.load.mockResolvedValue(credential); }
+      else { mocks.credentialsLoad.mockResolvedValue(credential); }
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(hasUsablePlatformAuth({ gatewayUrl: 'https://gateway-b.test' })).resolves.toMatchObject({
+        authenticated: false,
+        error: {
+          code: 'KB_AUTH_REQUIRED',
+          details: { gatewayUrl: 'https://gateway-b.test' },
+          hint: expect.stringContaining('kb auth login --gateway-url https://gateway-b.test --email <email>'),
+        },
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mocks.refresh).not.toHaveBeenCalled();
+      expect(mocks.credentialsRefresh).not.toHaveBeenCalled();
+    }
+  });
+
   it('loads, refreshes, and verifies the session once for the process', async () => {
     mocks.load.mockResolvedValue(mocks.session);
     mocks.refresh.mockResolvedValue({ ...mocks.session, accessToken: 'refreshed' });
@@ -131,7 +165,9 @@ describe('platform auth verification cache', () => {
           code,
           details: { gatewayUrl: 'https://gateway.test', reason },
           correlationId: 'refresh-correlation',
-          hint: 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+          hint: reason === 'unknown-issuer'
+            ? 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password when prompted.'
+            : 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
         },
       });
     }

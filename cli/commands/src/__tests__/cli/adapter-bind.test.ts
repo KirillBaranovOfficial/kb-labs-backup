@@ -11,6 +11,12 @@ import { adapterList } from '../../commands/system/adapter/list.js';
 import { adapterUnbind } from '../../commands/system/adapter/unbind.js';
 import { configSet } from '../../commands/system/config/set.js';
 
+vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+  resolveActiveGateway: async ({ env }: { env: NodeJS.ProcessEnv }) => ({
+    gatewayUrl: env.KB_GATEWAY_URL ?? 'http://127.0.0.1:4000',
+  }),
+}));
+
 let sandbox: string;
 let platformRoot: string;
 let projectRoot: string;
@@ -75,7 +81,7 @@ describe('kb adapter list', () => {
   // case: S-211.6
   it('reports a runtime adapter load failure with its recovery command', async () => {
     const { ctx, outputs } = context();
-    vi.spyOn(ctx.runtime, 'env').mockImplementation((name: string) => name === 'KB_GATEWAY_URL' ? 'http://127.0.0.1:4000' : undefined);
+    vi.stubEnv('KB_GATEWAY_URL', 'http://127.0.0.1:4000');
     vi.spyOn(ctx.runtime, 'fetch').mockResolvedValue(new Response(JSON.stringify([
       {
         slot: 'llm',
@@ -119,7 +125,7 @@ describe('kb adapter list', () => {
     expect(adapters.find(({ slot }) => slot === 'llm')).toMatchObject({
       mode: 'unknown',
       runtimeStatus: 'unknown',
-      action: { command: 'kb-create start' },
+      action: { command: `kb-create start --platform-root "${platformRoot}"` },
     });
     expect(adapters.find(({ slot }) => slot === 'llm')?.mode).not.toBe('real');
   });

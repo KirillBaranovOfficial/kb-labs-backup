@@ -1,14 +1,24 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AdapterUnavailableError } from '@kb-labs/core-platform';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AdapterUnavailableError, resolveCliGatewayTarget } from '@kb-labs/core-platform';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 
-const { executeCommandV3 } = vi.hoisted(() => ({ executeCommandV3: vi.fn() }));
+const { executeCommandV3, resolveActiveGateway } = vi.hoisted(() => ({ executeCommandV3: vi.fn(), resolveActiveGateway: vi.fn() }));
 vi.mock('@kb-labs/cli-runtime/v3', () => ({ executeCommandV3 }));
+vi.mock('@kb-labs/cli-runtime/gateway', () => ({ resolveActiveGateway }));
 
 import { executePlugin, renderUnavailableAdapterError } from './plugin-executor.js';
 
 describe('plugin executor adapter errors', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  beforeEach(() => {
+    resolveActiveGateway.mockImplementation(({ platformRoot, env, configuredNetOffset, transport }) => resolveCliGatewayTarget(platformRoot, {
+      gatewayUrl: env.KB_GATEWAY_URL,
+      gatewayPort: env.GATEWAY_PORT,
+      gatewayHost: env.GATEWAY_HOST,
+      netOffset: env.KB_NET_OFFSET === undefined ? configuredNetOffset ?? 0 : Number(env.KB_NET_OFFSET),
+    }, transport));
+  });
 
   it('renders an unconfigured capability as one line and marks it handled', () => {
     const errorOutput = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -59,6 +69,7 @@ describe('plugin executor adapter errors', () => {
         argv: [],
         flags: {},
         manifestCmd,
+        platformRoot: "/platform",
         platform,
       });
 
@@ -95,6 +106,7 @@ describe('plugin executor adapter errors', () => {
         argv: [],
         flags: {},
         manifestCmd,
+        platformRoot: "/platform",
         netOffset: 200,
         platform: {
           getSocketPath: () => '/tmp/platform.sock',
@@ -135,6 +147,7 @@ describe('plugin executor adapter errors', () => {
         argv: [],
         flags: {},
         manifestCmd,
+        platformRoot: "/platform",
         netOffset: 0,
         platform: {
           getSocketPath: () => '/tmp/platform.sock',

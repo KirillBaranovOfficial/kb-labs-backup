@@ -110,7 +110,7 @@ describe('Gateway global auth gate', () => {
         ok: false,
         error: {
           code: 'KB_AUTH_REQUIRED',
-          hint: `Run "kb auth login --gateway-url ${gatewayUrl} --email <email>" and enter your password at the prompt, or provide it with --password-stdin.`,
+          hint: `Run "kb auth login --gateway-url ${gatewayUrl} --email <email>" and enter your password when prompted.`,
           correlationId: expect.any(String),
         },
       });
@@ -300,6 +300,7 @@ describe('Gateway global auth gate', () => {
     expect(isPlatformPublicRoute('GET', '/studio/assets/app.js')).toBe(true);
     expect(isPlatformPublicRoute('POST', '/studio/assets/app.js')).toBe(false);
     expect(isPlatformPublicRoute('GET', '/health/auth')).toBe(true);
+    expect(isPlatformPublicRoute('GET', '/health/identity')).toBe(true);
     expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/packages')).toBe(true);
     expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/packages/acme/pkg')).toBe(true);
     expect(isPlatformPublicRoute('GET', '/api/v1/plugins/custom/health')).toBe(false);

@@ -279,7 +279,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                run_command=fail_every_command)
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
-            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "S-025.9", "S-181.1", "S-181.2",
+            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "S-025.9", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",

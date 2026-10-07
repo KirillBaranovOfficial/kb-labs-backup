@@ -1,12 +1,163 @@
-import { describe, expect, it } from 'vitest';
-import { toErrorEnvelope } from './error-envelope/index.js';
+import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { toErrorEnvelope, ErrorEnvelopeError } from './error-envelope/index.js';
 import {
   GATEWAY_SERVICE_NETWORK,
   resolveGatewayServiceAddress,
+  resolveCliGatewayTarget,
   resolveServiceListenAddress,
 } from './service-listen-address.js';
 
 describe('resolveServiceListenAddress', () => {
+  it('uses the active root receipt address and verifies its installation identity', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ installationId: 'root-b' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+      }));
+      const target = await resolveCliGatewayTarget(root, { netOffset: 0 });
+      expect(target).toEqual({ gatewayUrl: 'http://127.0.0.1:4250', platformRoot: root, installationId: 'root-b' });
+      expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:4250/health/identity', {
+        signal: expect.any(AbortSignal),
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the explicit KB_GATEWAY_URL ahead of the active root receipt', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ installationId: 'root-b' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+      }));
+      const target = await resolveCliGatewayTarget(root, { gatewayUrl: 'http://127.0.0.1:4300', gatewayPort: '4301', netOffset: 20 });
+      expect(target.gatewayUrl).toBe('http://127.0.0.1:4300');
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps an installed root on its receipt when ambient dev network settings are set', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ installationId: 'root-b' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+      }));
+      const target = await resolveCliGatewayTarget(root, {
+        gatewayPort: '4300', gatewayHost: '127.0.0.2', netOffset: 200,
+      });
+      expect(target.gatewayUrl).toBe('http://127.0.0.1:4250');
+      expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:4250/health/identity', {
+        signal: expect.any(AbortSignal),
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // case: S-203.22
+  it('rejects a Gateway that identifies as another installed root', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ installationId: 'root-a' }), { status: 200 })));
+    try {
+      await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+      }));
+      let failure: unknown;
+      try {
+        await resolveCliGatewayTarget(root, { netOffset: 0 });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(ErrorEnvelopeError);
+      const envelope = toErrorEnvelope(failure);
+      expect(envelope).toMatchObject({
+        code: 'KB_HOST_IDENTITY_MISMATCH',
+        details: { expectedPlatformRoot: root, expectedInstallationId: 'root-b', actualInstallationId: 'root-a' },
+      });
+      expect(envelope.details).not.toHaveProperty('actualPlatformRoot');
+      expect(JSON.stringify(envelope)).not.toContain('/platform-a');
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reports the active root start command when its receipt address is unreachable', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('connection refused'); }));
+    try {
+      await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+      }));
+      let failure: unknown;
+      try {
+        await resolveCliGatewayTarget(root, { netOffset: 0 });
+      } catch (error) {
+        failure = error;
+      }
+      expect(toErrorEnvelope(failure)).toMatchObject({
+        code: 'KB_HOST_UNREACHABLE',
+        hint: `Run "kb-create start --platform-root ${root}" and retry the command.`,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses service defaults when the active root has no receipt state', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
+    try {
+      await expect(resolveCliGatewayTarget(root, { netOffset: 0 })).resolves.toMatchObject({
+        gatewayUrl: 'http://127.0.0.1:4000', platformRoot: root,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the saved session Gateway for a client root without a local installation receipt', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-client-gateway-'));
+    try {
+      await expect(resolveCliGatewayTarget(root, {
+        netOffset: 0,
+        gatewayPort: '4300',
+        sessionGatewayUrl: 'https://client-gateway.example.test/',
+      })).resolves.toMatchObject({ gatewayUrl: 'https://client-gateway.example.test' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('applies workspace Gateway port and network offset when no receipt or session exists', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-workspace-gateway-'));
+    try {
+      await expect(resolveCliGatewayTarget(root, { gatewayPort: '4300', netOffset: 20 })).resolves.toMatchObject({
+        gatewayUrl: 'http://127.0.0.1:4320', platformRoot: root,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('exports the gateway service network settings shared by all address consumers', () => {
     expect(GATEWAY_SERVICE_NETWORK).toEqual({
       serviceId: 'gateway',

@@ -1,13 +1,15 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { resolveCliGatewayTarget } from '@kb-labs/core-platform';
 
 const mocks = vi.hoisted(() => ({
   loadPlatformConfiguration: vi.fn(),
   resolveProjectConfig: vi.fn(),
   initializePlatform: vi.fn(),
   hasUsablePlatformAuth: vi.fn(),
+  resolveActiveGateway: vi.fn(),
   tryResolveGateway: vi.fn(),
   executeViaGateway: vi.fn(),
   logger: {
@@ -21,7 +23,11 @@ vi.mock('../platform-init.js', () => ({
   resolveProjectConfig: mocks.resolveProjectConfig,
   initializePlatform: mocks.initializePlatform,
 }));
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({ hasUsablePlatformAuth: mocks.hasUsablePlatformAuth }));
+vi.mock('@kb-labs/cli-runtime/gateway', () => ({
+  hasUsablePlatformAuth: mocks.hasUsablePlatformAuth,
+  resolveActiveGateway: mocks.resolveActiveGateway,
+  SessionManager: class { async load() { return null; } },
+}));
 vi.mock('../gateway-executor.js', () => ({
   tryResolveGateway: mocks.tryResolveGateway,
   executeViaGateway: mocks.executeViaGateway,
@@ -52,6 +58,15 @@ describe('secured CLI auth ordering', () => {
     process.env.KB_LOG_STREAM = originalLogStream;
     process.env.KB_OUTPUT_MODE = originalOutputMode;
     vi.clearAllMocks();
+  });
+
+  beforeEach(() => {
+    mocks.resolveActiveGateway.mockImplementation(({ platformRoot, env }) => resolveCliGatewayTarget(platformRoot, {
+      gatewayUrl: env.KB_GATEWAY_URL,
+      gatewayPort: env.GATEWAY_PORT,
+      gatewayHost: env.GATEWAY_HOST,
+      netOffset: Number(env.KB_NET_OFFSET ?? 0),
+    }));
   });
 
   // case: S-041.7, S-041.17, S-203.15
@@ -93,7 +108,7 @@ describe('secured CLI auth ordering', () => {
       error: {
         code: 'KB_AUTH_REQUIRED',
         message: 'Authentication is required.',
-        hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4500 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+        hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4500 --email <email>" and enter your password when prompted.',
       },
     });
     expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(
