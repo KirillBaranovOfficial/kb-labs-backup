@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-import unittest
+import json
+import os
+import subprocess
 import sys
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import select_from_cases
 from select_from_cases import read_coverage_result, selection_from_coverage, selectors_from_coverage
 from service_steps import FlowGraph, Journey
 
@@ -35,6 +42,60 @@ class CaseJourneySelectionTests(unittest.TestCase):
         ):
             with self.subTest(stdout=stdout, returncode=returncode), self.assertRaises(ValueError):
                 read_coverage_result(stdout, returncode)
+
+    def test_selector_runs_coverage_without_caller_home_or_platform_overrides(self):
+        with tempfile.TemporaryDirectory() as caller_home:
+            captured = []
+
+            def invoke(command, **options):
+                captured.append(options["env"])
+                mode = command[command.index("--mode") + 1]
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "ok": True, "data": {"mode": mode, "cases": [{
+                        "id": "S-042", "status": "active", "release": True,
+                        "steps": [{"stepId": "S-042.1", "claims": [{
+                            "kind": "journey", "source": "e2e/journey/service_runner.py",
+                        }]}],
+                    }]},
+                }), "")
+
+            output = StringIO()
+            with patch.dict(os.environ, {
+                "HOME": caller_home,
+                "KB_HOME": "/caller/kb-home",
+                "KB_PLATFORM_ROOT": "/caller/platform",
+                "KB_NET_OFFSET": "731",
+                "KB_JOURNEY_CASES": "S-042",
+            }, clear=False), patch("hermetic_cli.run_command", side_effect=invoke), redirect_stdout(output):
+                self.assertEqual(select_from_cases.main(), 0)
+
+            self.assertEqual(len(captured), 2)
+            for child_env in captured:
+                self.assertNotEqual(child_env["HOME"], caller_home)
+                self.assertFalse(Path(child_env["HOME"]).exists())
+                self.assertNotIn("KB_HOME", child_env)
+                self.assertNotIn("KB_PLATFORM_ROOT", child_env)
+                self.assertNotIn("KB_NET_OFFSET", child_env)
+            self.assertEqual(json.loads(output.getvalue()), {
+                "selection": ["S-042"], "steps": ["S-042.1"],
+            })
+
+    def test_selector_failure_includes_decoded_cli_error_envelope(self):
+        failure = {"ok": False, "error": {
+            "code": "KB_CONFIG_INVALID",
+            "message": "Saved authentication file .kb/credentials.json is invalid.",
+            "hint": "Run \"kb auth login\" to replace the saved authentication data, then retry the command.",
+        }}
+
+        def invoke(command, **_options):
+            return subprocess.CompletedProcess(command, 1, json.dumps(failure), "")
+
+        with patch("hermetic_cli.run_command", side_effect=invoke), patch.dict(
+            os.environ, {"KB_JOURNEY_CASES": "S-042"}, clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "KB_CONFIG_INVALID; Saved authentication file") as raised:
+                select_from_cases.main()
+        self.assertIn("hint: Run \"kb auth login\"", str(raised.exception))
 
     def test_selects_only_entry_points_with_active_release_journey_claims(self):
         results = [

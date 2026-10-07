@@ -33,7 +33,7 @@ if [[ "${1:-}" == "--prepare-only" ]]; then
 fi
 
 if [[ -z "${KB_JOURNEY_ONLY:-}" ]]; then
-  pnpm -s kb qa cases validate
+  python3 e2e/journey/hermetic_cli.py -- pnpm -s kb qa cases validate
 fi
 
 if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
