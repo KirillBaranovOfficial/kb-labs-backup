@@ -319,6 +319,25 @@ describe('setUserConfigValue: schema validation', () => {
     }]);
   });
 
+  it('keeps missing adapter configSchema a typed error when options are configured', async () => {
+    const platformRoot = path.join(dir, 'schema-less-platform');
+    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'schema-less-fixture');
+    await fsp.mkdir(packageRoot, { recursive: true });
+    await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@kb-labs/schema-less-fixture', type: 'module', exports: './manifest.js',
+    }));
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), 'export const manifest = { implements: "IAnalytics" };');
+
+    await expect(validatePlatformAdapterOptions(platformRoot, {
+      adapters: { analytics: '@kb-labs/schema-less-fixture' },
+      adapterOptions: { analytics: { retentionDays: 30 } },
+    })).resolves.toEqual([{
+      path: 'platform.adapterOptions.analytics',
+      message: 'Cannot load a configSchema for configured adapter @kb-labs/schema-less-fixture.',
+      hint: 'Repair the installed adapter manifest for @kb-labs/schema-less-fixture, then run `kb-create start` again.',
+    }]);
+  });
+
   // case: S-211.7
   it('rejects adapter options outside the declared manifest shape without changing the file', async () => {
     const error = await expectCode(
