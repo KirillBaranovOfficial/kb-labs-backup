@@ -2,7 +2,7 @@ package semrange
 
 import "testing"
 
-func TestSatisfiesComparatorConjunctionsAndAlternatives(t *testing.T) {
+func TestParsedRangeEvaluatesEveryOperator(t *testing.T) {
 	for _, test := range []struct {
 		version, constraint string
 		want                bool
@@ -12,34 +12,61 @@ func TestSatisfiesComparatorConjunctionsAndAlternatives(t *testing.T) {
 		{"3.1.0", ">=2.0.0 <3.0.0 || ^4.0.0", false},
 		{"0.2.8", "^0.2.0", true},
 		{"0.3.0", "^0.2.0", false},
+		{"1.4.9", "~1.4.0", true},
+		{"1.5.0", "~1.4.0", false},
+		{"2.0.0", "=2.0.0", true},
+		{"2.0.1", "=2.0.0", false},
+		{"2.0.1", ">2.0.0", true},
+		{"2.0.0", ">2.0.0", false},
+		{"2.0.0", ">=2.0.0", true},
+		{"2.0.0", "<2.0.1", true},
+		{"2.0.1", "<=2.0.1", true},
 		{"3.3.0-rc.2", ">=3.0.0 <4.0.0", true},
+		{"9.8.7", "*", true},
 	} {
-		got, err := Satisfies(test.version, test.constraint)
-		if err != nil || got != test.want {
-			t.Fatalf("Satisfies(%q, %q) = %v, %v; want %v", test.version, test.constraint, got, err, test.want)
+		candidate, err := ParseVersion(test.version)
+		if err != nil {
+			t.Fatalf("ParseVersion(%q): %v", test.version, err)
+		}
+		constraint, err := ParseRange(test.constraint)
+		if err != nil {
+			t.Fatalf("ParseRange(%q): %v", test.constraint, err)
+		}
+		if got := constraint.Satisfies(candidate); got != test.want {
+			t.Errorf("ParseRange(%q).Satisfies(%q) = %v, want %v", test.constraint, test.version, got, test.want)
 		}
 	}
 }
 
-func TestValidateRejectsRangesOutsideTheSupportedGrammar(t *testing.T) {
+func TestParseRangeRejectsRangesOutsideSupportedGrammar(t *testing.T) {
 	for _, invalid := range []string{"^3", ">=3.0.0 ||", "1.x", "~", ">=*"} {
-		if err := Validate(invalid); err == nil {
-			t.Errorf("Validate(%q) succeeded", invalid)
+		if _, err := ParseRange(invalid); err == nil {
+			t.Errorf("ParseRange(%q) succeeded", invalid)
 		}
 	}
 }
 
-func TestValidateRejectsInvalidSemVerIdentifiers(t *testing.T) {
-	for _, invalid := range []string{"1.2.3-01", "1.2.3-alpha..1", "1.2.3+bad+metadata", "01.2.3", "1.2.3-18446744073709551616"} {
-		if err := Validate(invalid); err == nil {
-			t.Errorf("Validate(%q) succeeded", invalid)
+func TestParseVersionRejectsInvalidNumericFormsAndOverflow(t *testing.T) {
+	for _, invalid := range []string{"1.2.3-01", "1.2.3-alpha..1", "1.2.3+bad+metadata", "01.2.3", "18446744073709551616.0.0", "1.2.3-18446744073709551616"} {
+		if _, err := ParseVersion(invalid); err == nil {
+			t.Errorf("ParseVersion(%q) succeeded", invalid)
 		}
 	}
 }
 
-func TestCompareOrdersPrereleasesBeforeStable(t *testing.T) {
-	comparison, err := Compare("3.0.1-canary.2", "3.0.1")
-	if err != nil || comparison >= 0 {
-		t.Fatalf("Compare() = %d, %v; prerelease should precede stable", comparison, err)
+func TestCompareUsesSemVerPrereleaseOrdering(t *testing.T) {
+	for _, test := range []struct {
+		left, right string
+		want        int
+	}{
+		{"1.0.0-alpha", "1.0.0-alpha.1", -1},
+		{"1.0.0-alpha.2", "1.0.0-alpha.10", -1},
+		{"1.0.0-beta", "1.0.0-alpha", 1},
+		{"1.0.0-rc.1", "1.0.0", -1},
+	} {
+		got, err := Compare(test.left, test.right)
+		if err != nil || got != test.want {
+			t.Errorf("Compare(%q, %q) = %d, %v; want %d", test.left, test.right, got, err, test.want)
+		}
 	}
 }

@@ -25,6 +25,24 @@ func TestWithHintSurvivesBoundaryNormalization(t *testing.T) {
 	}
 }
 
+func TestDiagnosticCauseAndReasonRedactCredentialShapes(t *testing.T) {
+	for _, secret := range []string{
+		"request failed token=ghp_123456789abcdef",
+		"connect https://deploy-user:super-secret@registry.example.test/v1",
+		"GATEWAY_INTERNAL_SECRET=live-secret-value",
+	} {
+		d := New("KB_RUNTIME_INPUT_INVALID", "Request failed.", WithCause(secret), WithReason(secret))
+		for field, value := range map[string]string{"cause": d.Cause, "reason": d.Reason} {
+			if strings.Contains(value, "ghp_123456789abcdef") || strings.Contains(value, "super-secret") || strings.Contains(value, "live-secret-value") {
+				t.Errorf("%s retained secret from %q: %q", field, secret, value)
+			}
+			if !strings.Contains(value, "[REDACTED]") {
+				t.Errorf("%s was not redacted: %q", field, value)
+			}
+		}
+	}
+}
+
 func TestDiagnosticJSONUsesCanonicalEnvelopeAndAcceptsNoPrivateShape(t *testing.T) {
 	const hint = "Use GET /v1/status, POST /v1/host/restart or POST /v1/update-request."
 	original := New("KB_RUNTIME_INPUT_INVALID", "Unknown control endpoint.", WithHint(hint), WithCause("safe detail"), WithCorrelationID("corr-test"))
