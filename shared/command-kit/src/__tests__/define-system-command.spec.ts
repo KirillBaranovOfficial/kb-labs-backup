@@ -488,6 +488,35 @@ describe('defineSystemCommand', () => {
       expect(mockUI.error).toHaveBeenCalledWith(expect.stringContaining('KB_RUNTIME_COMMAND_FAILED'), expect.anything());
     });
 
+    it.each([
+      ['input failure', 'KB_RUNTIME_INPUT_INVALID', 2],
+      ['operation failure', 'KB_RUNTIME_COMMAND_FAILED', 1],
+    ] as const)('maps a returned CommandFailure for %s to its catalogued exit code', async (_label, code, expectedExitCode) => {
+      const command = defineSystemCommand({
+        name: 'test-returned-failure-exit-code',
+        scope: 'project',
+        jsonTest: { noSafeValidPath: 'Unit test command fixture.' },
+        description: 'Test returned failure exit code',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => ({
+          ok: false,
+          error: {
+            code,
+            message: 'The command failed.',
+            hint: 'Correct the input or retry the operation.',
+          },
+        }),
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(expectedExitCode);
+      expect(mockUI.json).toHaveBeenCalledWith(expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({ code }),
+      }));
+    });
+
     it('should return numeric exit code directly', async () => {
       const command = defineSystemCommand({
         name: 'test',

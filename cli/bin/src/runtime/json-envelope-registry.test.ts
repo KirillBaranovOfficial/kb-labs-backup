@@ -53,11 +53,6 @@ const mocks = vi.hoisted(() => {
       errors: [],
       lockMissing: true,
     }),
-    loadCredentials: vi.fn().mockResolvedValue({
-      gatewayUrl: 'https://gateway.test',
-      accessToken: 'registry-test-token',
-      expiresAt: Date.now() + 60 * 60 * 1000,
-    }),
   };
 });
 
@@ -74,14 +69,6 @@ vi.mock('@kb-labs/core-runtime', async (importOriginal) => ({
 vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => ({
   ...await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>(),
   resolveActiveGateway: async () => ({ gatewayUrl: 'https://gateway.test' }),
-  gatewayApiFetch: async (input: string | URL) => {
-    const data = String(input).includes('/api/v1/webhooks') ? { webhooks: [] } : { tokens: [] };
-    return new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-  },
-  CredentialsManager: class {
-    load() { return mocks.loadCredentials(); }
-    isExpired() { return false; }
-  },
 }));
 
 import { executeCli } from './bootstrap.js';
@@ -122,6 +109,7 @@ function matchesCataloguedCondition(message: string, conditions: string[]): bool
 
 let isolatedHome: string;
 let fixtureProjectId: string;
+let rejectUnauthenticatedWebhookRequests = false;
 const originalEnvironment = {
   HOME: process.env.HOME,
   KB_HOME: process.env.KB_HOME,
@@ -178,7 +166,15 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     delete process.env.KB_NET_OFFSET;
     process.env.KB_LOG_LEVEL = 'silent';
     process.env.KB_LOG_STREAM = 'stderr';
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, data: { webhooks: [] } }) }) as typeof fetch;
+    globalThis.fetch = vi.fn((input: string | URL | Request) => {
+      if (rejectUnauthenticatedWebhookRequests && String(input).includes('/api/v1/webhooks')) {
+        return Promise.resolve(new Response('', { status: 401 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { webhooks: [], tokens: [] } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    }) as typeof fetch;
     const projects = await createProjectRegistry({ env: process.env });
     fixtureProjectId = (await projects.add(workspaceRoot)).project.id;
     const platformConfig = {
@@ -409,14 +405,15 @@ describe('JSON envelope coverage for the live CLI registry', () => {
         });
 
         if (command.segments.join(' ') === 'webhook list') {
-          mocks.loadCredentials.mockResolvedValueOnce(null);
+          rejectUnauthenticatedWebhookRequests = true;
           const unauthenticated = await runAndCapture([...command.segments, '--json']);
           expect(unauthenticated.exitCode).toBe(1);
           expect(unauthenticated.result).toMatchObject({
             ok: false,
             error: {
               code: 'KB_AUTH_REQUIRED',
-              hint: 'Run "kb auth login", then retry "kb webhook list".',
+              hint: 'Run "kb auth login --gateway-url https://gateway.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+              details: { gatewayUrl: 'https://gateway.test' },
             },
           });
         }
