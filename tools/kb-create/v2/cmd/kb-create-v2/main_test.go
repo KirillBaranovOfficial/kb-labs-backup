@@ -16,6 +16,8 @@ import (
 	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
+	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
@@ -145,6 +147,10 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	if busyCode != 2 || errorCode(busyPayload) != contracts.CodePortInUse {
 		t.Fatalf("occupied Gateway plan = code %d, error %s: %s", busyCode, errorCode(busyPayload), busyOutput.String())
 	}
+	errorEnvelope := busyPayload["error"].(map[string]any)
+	if !strings.Contains(errorEnvelope["hint"].(string), "--gateway-url") {
+		t.Fatalf("occupied Gateway plan hint omits --gateway-url: %#v", errorEnvelope)
+	}
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -164,6 +170,71 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	if payload.Data.Plan.Request.GatewayURL != gatewayURL || payload.Data.Plan.Host.HealthURL != gatewayURL+"/health" ||
 		payload.Data.Plan.ServiceGraph.Services[0].Port != port {
 		t.Fatalf("declared Gateway was not applied to plan: %#v", payload.Data.Plan)
+	}
+}
+
+func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
+	t.Setenv("KB_HOME", t.TempDir())
+	state, err := host.StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootA, rootB := filepath.Join(t.TempDir(), "platform-a"), filepath.Join(t.TempDir(), "platform-b")
+	registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
+	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
+		t.Fatal(err)
+	}
+	release, err := catalog.Seal(catalog.Catalog{
+		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: testCompatibility("2.0.0"),
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "platform.tgz", SHA256: "platform",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Port: 4000}}}},
+			Config: []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+				Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(t.TempDir(), "release-index.json")
+	encoded, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath,
+		"--request-platform-root", rootB}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("automatic Gateway plan exit=%d: %s", code, stdout.String()+stderr.String())
+	}
+	var payload struct {
+		Data struct {
+			Plan contracts.ResolvedInstallPlan `json:"plan"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	plan := payload.Data.Plan
+	if plan.Request.GatewayURL != "http://127.0.0.1:4100" || plan.Host.HealthURL != "http://127.0.0.1:4100/health" ||
+		plan.ServiceGraph.Services[0].Port != 4100 {
+		t.Fatalf("automatic Gateway address not applied: %#v", plan)
+	}
+}
+
+func TestRecordedGatewayURLKeepsUpdateAddressFromReceipt(t *testing.T) {
+	active := contracts.InstallReceipt{Verification: contracts.Verification{HostHealthURL: "http://127.0.0.1:4100/health"}}
+	if got := recordedGatewayURL(active); got != "http://127.0.0.1:4100" {
+		t.Fatalf("receipt Gateway URL = %q", got)
+	}
+	active.Plan.Request.GatewayURL = "http://127.0.0.1:4200"
+	if got := recordedGatewayURL(active); got != "http://127.0.0.1:4200" {
+		t.Fatalf("request Gateway URL = %q, want stored origin", got)
 	}
 }
 
@@ -271,7 +342,7 @@ func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
 		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform",
 			Tarball: "https://example.test/platform.tgz", SHA256: "platform",
 			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}},
-			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}}},
+			Host:     testHostOnFreePort(t)}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +360,8 @@ func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
 		PlatformVersion: "2.0.0", Policy: string(contracts.PolicyCompatible)}, JSON: true}).run(output)
 	output.Close()
 	if code != 0 {
-		t.Fatalf("plan exit code = %d", code)
+		data, _ := os.ReadFile(output.Name())
+		t.Fatalf("plan exit code = %d: %s", code, data)
 	}
 	if after := snapshotTree(t, root); !bytes.Equal(before, after) {
 		t.Fatalf("plan changed the platform root: before %q, after %q", before, after)
@@ -384,9 +456,11 @@ func installOutput(t *testing.T) (*os.File, string) {
 	return file, path
 }
 
+// case: PC-001.16
 func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -398,8 +472,12 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	release, err := catalog.Seal(catalog.Catalog{
 		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Compatibility: testCompatibility("2.0.0"),
-		Platforms:     []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)}, Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}}},
-		Plugins:       []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}},
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)},
+			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}},
+			Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
+				{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}}},
+		Plugins: []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -440,6 +518,28 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 	if target, err := os.Readlink(filepath.Join(home, "bin", "kb")); err != nil || target != filepath.Join(root, ".kb", "v2", "bin", "kb") {
 		t.Fatalf("kb shim target/error = %q / %v", target, err)
+	}
+	secondaryRoot := filepath.Join(home, "kb-platform-secondary")
+	secondaryOutput, _ := installOutput(t)
+	secondaryCode := (invocation{Operation: "apply", Index: index,
+		Direct:     directRequest{PlatformRoot: secondaryRoot, PlatformChannel: "stable", ServiceProfile: "default", Policy: "compatible"},
+		Executable: launcher, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: secondaryRoot}, Host: installHost{}},
+		NodePreflight: func() error { return nil }, JSON: true,
+	}).run(secondaryOutput)
+	if err := secondaryOutput.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if secondaryCode != 0 {
+		data, _ := os.ReadFile(secondaryOutput.Name())
+		t.Fatalf("secondary no-flag apply exit %d: %s", secondaryCode, data)
+	}
+	secondaryReceipt, err := receipt.Read(secondaryRoot)
+	if err != nil || secondaryReceipt.Verification.HostHealthURL != fmt.Sprintf("http://127.0.0.1:%d/health", port+100) {
+		t.Fatalf("secondary receipt Gateway = %q, error=%v; want next 100-port offset", secondaryReceipt.Verification.HostHealthURL, err)
+	}
+	registry, err := (gateway.Registry{Path: filepath.Join(home, ".kb", "launcher", "gateway-roots.json")}).Read()
+	if err != nil || len(registry) != 2 {
+		t.Fatalf("registered Gateway roots = %#v, error=%v", registry, err)
 	}
 }
 

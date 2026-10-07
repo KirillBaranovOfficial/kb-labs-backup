@@ -180,7 +180,8 @@ func TestPortInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer blocker.Close()
-	plan := contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", f.port)}}
+	plan := contracts.ResolvedInstallPlan{Request: contracts.InstallRequest{PlatformRoot: f.runner.PlatformRoot},
+		Host: &contracts.HostSpec{HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", f.port)}}
 	if err := CheckPorts(plan, "apply"); err == nil {
 		t.Fatal("expected early port conflict")
 	} else {
@@ -192,6 +193,15 @@ func TestPortInUse(t *testing.T) {
 			!strings.Contains(typed.Hint, typed.Meta["pid"].(string)) || !strings.Contains(typed.Hint, typed.Meta["command"].(string)) {
 			t.Fatalf("port hint omits the owning process or attempted command: %#v", err)
 		}
+		if !strings.Contains(typed.Hint, "--gateway-url") {
+			t.Fatalf("port hint omits explicit Gateway recovery: %#v", err)
+		}
+	}
+	planFailure := CheckPorts(plan, "plan")
+	var planDiagnostic *diag.Diag
+	if !errors.As(planFailure, &planDiagnostic) || planDiagnostic.Code != "KB_INSTALL_PORT_IN_USE" ||
+		!strings.Contains(planDiagnostic.Hint, "--gateway-url") || !strings.Contains(planDiagnostic.Hint, "kb-create plan") {
+		t.Fatalf("plan port diagnostic does not suggest a Gateway address: %#v", planFailure)
 	}
 	_, err = f.runner.Start(context.Background())
 	if code := launcherCode(t, err); code != "KB_INSTALL_PORT_IN_USE" {

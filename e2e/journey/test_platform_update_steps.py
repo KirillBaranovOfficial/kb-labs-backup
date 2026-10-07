@@ -34,7 +34,8 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.receipt.write_text(json.dumps({
             "installationId": "installation-stable-1",
             "plan": {"serviceGraph": {"platformVersion": version}},
-            "verification": {"configSha256": hashlib.sha256(self.config.read_bytes()).hexdigest()},
+            "verification": {"configSha256": hashlib.sha256(self.config.read_bytes()).hexdigest(),
+                             "hostHealthUrl": "http://127.0.0.1:4100/health"},
         }))
 
     def fake_kb(self, args: list[str]) -> subprocess.CompletedProcess:

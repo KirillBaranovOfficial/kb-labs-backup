@@ -232,6 +232,41 @@ func TestFreshApplyGeneratesStableInstallationIdentityForHostAndReceipt(t *testi
 	}
 }
 
+// case: PC-001.13
+func TestGatewayAddressPersistsAcrossUpdateAndRollback(t *testing.T) {
+	root := t.TempDir()
+	store := &secrets.Store{PlatformRoot: root}
+	plan := planIn(root, "gateway-before")
+	plan.Request.GatewayURL = "http://127.0.0.1:4100"
+	plan.Host.HealthURL = plan.Request.GatewayURL + "/health"
+	installed, err := Apply(context.Background(), plan, Dependencies{Artifacts: &fakeInstaller{}, Host: &fakeProbe{}, Secrets: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := planIn(root, "gateway-after")
+	next.Request.GatewayURL = "http://127.0.0.1:4100"
+	next.Host.HealthURL = next.Request.GatewayURL + "/health"
+	updated, snapshot, err := Update(context.Background(), next, Dependencies{Artifacts: &fakeInstaller{}, Secrets: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Plan.Request.GatewayURL != installed.Plan.Request.GatewayURL ||
+		updated.Verification.HostHealthURL != installed.Verification.HostHealthURL {
+		t.Fatalf("Gateway changed on update: initial=%#v updated=%#v", installed.Plan.Request, updated.Plan.Request)
+	}
+	if _, err := Rollback(root, snapshot.ID, Dependencies{Artifacts: &fakeInstaller{}}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := receipt.Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Plan.Request.GatewayURL != installed.Plan.Request.GatewayURL ||
+		restored.Verification.HostHealthURL != installed.Verification.HostHealthURL {
+		t.Fatalf("Gateway changed on rollback: initial=%#v restored=%#v", installed.Plan.Request, restored.Plan.Request)
+	}
+}
+
 // case: PC-001.14
 func TestUpdateRejectsReceiptWithoutInstallationIdentity(t *testing.T) {
 	root := t.TempDir()
