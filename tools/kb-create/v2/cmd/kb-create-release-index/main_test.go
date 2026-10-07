@@ -22,12 +22,12 @@ func TestRunSealsNormalizedReleaseExport(t *testing.T) {
 	source.Compatibility.Labels[0].Requires = []catalog.CompatibilityRelation{{Label: "sdk@2.0.0"}}
 	source.Compatibility.Labels = append(source.Compatibility.Labels, catalog.CompatibilityLabel{ID: "sdk@2.0.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"stage"}})
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}
-	for _, id := range []string{"marketplace", "review", "scaffold"} {
-		source.Platforms[0].Members = append(source.Platforms[0].Members, catalog.Component{ID: id, Version: "2.0.0", Package: "@kb/" + id, Tarball: "https://example.test/" + id + ".tgz", SHA256: id})
+	for _, id := range []string{"@kb-labs/marketplace", "@kb-labs/review", "@kb-labs/scaffold"} {
+		source.Platforms[0].Members = append(source.Platforms[0].Members, catalog.Component{ID: id, Version: "2.0.0", Package: "@kb-labs/" + id[len("@kb-labs/"):], Tarball: "https://example.test/" + id + ".tgz", SHA256: id})
 	}
-	for _, id := range []string{"commit", "release"} {
-		component := catalog.Component{ID: id, Version: "2.0.0", Package: "@kb/" + id, Tarball: "https://example.test/" + id + ".tgz", SHA256: id}
-		if id == "commit" {
+	for _, id := range []string{"@kb-labs/commit", "@kb-labs/release"} {
+		component := catalog.Component{ID: id, Version: "2.0.0", Package: "@kb-labs/" + id[len("@kb-labs/"):], Tarball: "https://example.test/" + id + ".tgz", SHA256: id}
+		if id == "@kb-labs/commit" {
 			component.Requires = []catalog.Requirement{{Capability: "cache"}}
 		}
 		source.Plugins = append(source.Plugins, component)

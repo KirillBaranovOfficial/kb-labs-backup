@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -159,5 +160,70 @@ describe('installed platform adapter defaults', () => {
       mode: 'real', implementation: '@kb-labs/adapters-openai',
       credentialsStatus: 'missing', missingCredentials: ['OPENAI_API_KEY'],
     });
+  });
+
+  // case: S-203.1
+  it('keeps discovery diagnostics off JSON stdout', async () => {
+    const workspaceRoot = path.resolve(process.cwd(), '../..');
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-json-discovery-diagnostic-'));
+    const platformRoot = path.join(tempRoot, 'platform');
+    const projectRoot = path.join(tempRoot, 'project');
+    const home = path.join(tempRoot, 'home');
+    await Promise.all([mkdir(projectRoot), mkdir(home)]);
+    await mkdir(path.join(platformRoot, '.kb'), { recursive: true });
+    await mkdir(path.join(projectRoot, '.kb'));
+    const workspaceConfig = await readFile(path.join(workspaceRoot, '.kb', 'kb.config.jsonc'), 'utf8');
+    const releaseConfig = workspaceConfig.replace(/"mode":\s*"development",\s*/, '');
+    const config = JSON.parse(releaseConfig.replace(/,\s*([}\]])/g, '$1')) as {
+      platform: { adapters: Record<string, string>; adapterOptions?: Record<string, unknown> };
+    };
+    delete config.platform.adapters.storage;
+    if (config.platform.adapterOptions) delete config.platform.adapterOptions.storage;
+    await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), `${JSON.stringify(config, null, 2)}\n`);
+    const packages = [...new Set([
+      ...Object.values(config.platform.adapters).map(value => value.split('/').slice(0, 2).join('/')),
+      '@kb-labs/adapters-openai',
+      '@kb-labs/adapters-fs',
+    ])];
+    const adapters = Object.fromEntries(packages.map(packageName => {
+      const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
+      return [packageName, {
+        version: '2.120.1',
+        integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        resolvedPath: path.relative(platformRoot, packagePath),
+        source: 'platform',
+        enabled: true,
+      }];
+    }));
+    const pluginRoot = path.join(workspaceRoot, 'plugins/marketplace/entry');
+    const pluginPackageJSON = await readFile(path.join(pluginRoot, 'package.json'));
+    await writeFile(path.join(platformRoot, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        marketplace: {
+          version: '2.120.1',
+          integrity: `sha256-${createHash('sha256').update(pluginPackageJSON).digest('base64')}`,
+          package: '@kb-labs/marketplace-entry',
+          resolvedPath: path.relative(platformRoot, pluginRoot),
+          source: 'platform',
+          enabled: true,
+        },
+      },
+      adapters,
+    }));
+
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, KB_HOME: path.join(home, '.kb'), KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot };
+    delete env.KB_NET_OFFSET;
+    await createProjectRegistry({ env }).add(projectRoot);
+    const command = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'project', 'list', '--json'], {
+      cwd: projectRoot,
+      env,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(command.status, command.stderr || command.stdout).toBe(0);
+    expect(JSON.parse(command.stdout)).toMatchObject({ ok: true, data: expect.anything() });
+    expect(command.stdout).not.toContain('[discover]');
+    expect(command.stderr).toContain('PLUGIN_ID_MISMATCH');
   });
 });

@@ -54,9 +54,20 @@ describe('Marketplace → Discovery Integration', () => {
   }
 
   it('install → discover: plugin is available after marketplace install', async () => {
-    const { dir, integrity } = await createPluginOnDisk('review', '@kb-labs/review', '2.0.0');
+    const { dir, integrity } = await createPluginOnDisk('commit', '@kb-labs/commit-entry', '2.0.0');
+    await fs.writeFile(
+      path.join(dir, 'kb.plugin.json'),
+      JSON.stringify({
+        schema: 'kb.plugin/3',
+        id: '@kb-labs/commit',
+        version: '2.0.0',
+        display: { name: 'commit', description: 'commit plugin' },
+        cli: { commands: [{ path: 'commit run', describe: 'Run commit', handler: './dist/h.js' }] },
+      }),
+    );
 
     // Step 1: Install via MarketplaceService
+    const removedPackages: string[] = [];
     const source: PackageSource = {
       async resolve(spec: string): Promise<ResolvedPackage> {
         return { id: spec, version: '2.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
@@ -64,14 +75,17 @@ describe('Marketplace → Discovery Integration', () => {
       async install(pkg: ResolvedPackage): Promise<InstalledPackage> {
         return { id: pkg.id, version: pkg.version, packageRoot: dir, integrity: pkg.integrity };
       },
-      async remove() {},
+      async remove(packageName: string) {
+        removedPackages.push(packageName);
+        await fs.rm(dir, { recursive: true, force: true });
+      },
     };
 
     const marketplace = new MarketplaceService({ platformRoot: tmpDir, source });
-    const installResult = await marketplace.install({ scope: "platform" }, ['@kb-labs/review']);
+    const installResult = await marketplace.install({ scope: "platform" }, ['@kb-labs/commit-entry']);
 
     expect(installResult.installed).toHaveLength(1);
-    expect(installResult.installed[0]!.id).toBe('@kb-labs/review');
+    expect(installResult.installed[0]!.id).toBe('@kb-labs/commit');
     expect(installResult.installed[0]!.provides).toContain('cli-command');
 
     // Step 2: Discover via DiscoveryManager
@@ -79,15 +93,26 @@ describe('Marketplace → Discovery Integration', () => {
     const discoverResult = await dm.discover();
 
     expect(discoverResult.plugins).toHaveLength(1);
-    expect(discoverResult.plugins[0]!.id).toBe('@kb-labs/review');
+    expect(discoverResult.plugins[0]!.id).toBe('@kb-labs/commit');
     expect(discoverResult.plugins[0]!.version).toBe('2.0.0');
     expect(discoverResult.plugins[0]!.provides).toContain('cli-command');
+    const lock = JSON.parse(await fs.readFile(path.join(tmpDir, '.kb', 'marketplace.lock'), 'utf8')) as { plugins: Record<string, unknown> };
+    expect(lock.plugins).toHaveProperty('@kb-labs/commit');
+    expect(lock.plugins).not.toHaveProperty('@kb-labs/commit-entry');
+    expect(lock.plugins['@kb-labs/commit']).toMatchObject({ package: '@kb-labs/commit-entry' });
+    const listed = await marketplace.list({ scope: 'platform' }, { kind: 'plugin' });
+    expect(listed.map(entry => entry.id)).toEqual(['@kb-labs/commit']);
 
     // Manifest should be fully loaded
-    const manifest = discoverResult.manifests.get('@kb-labs/review');
+    const manifest = discoverResult.manifests.get('@kb-labs/commit');
     expect(manifest).toBeDefined();
     expect(manifest!.cli?.commands).toHaveLength(1);
-    expect(manifest!.cli?.commands?.[0]?.path).toBe('review run');
+    expect(manifest!.cli?.commands?.[0]?.path).toBe('commit run');
+
+    await marketplace.uninstall({ scope: 'platform' }, ['@kb-labs/commit']);
+    expect(removedPackages).toEqual(['@kb-labs/commit-entry']);
+    expect(await marketplace.list({ scope: 'platform' })).toEqual([]);
+    expect((await new DiscoveryManager({ root: tmpDir, verifyIntegrity: false }).discover()).plugins).toEqual([]);
   });
 
   it('writes a portable v3 pin and resolves it from two independent machine stores', async () => {

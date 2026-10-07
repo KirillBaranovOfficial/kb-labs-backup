@@ -354,13 +354,14 @@ class MarketplaceStepTests(unittest.TestCase):
                     value = lock(lock_root, platform=platform)
                     value.setdefault("adapters", {})
                     collection = value["plugins"]
-                    collection[package_id] = {
+                    plugin_id = "@kb-labs/commit" if package_id == "@kb-labs/commit-entry" else package_id
+                    collection[plugin_id] = {
                         "version": version, "integrity": "sha512-fixture", "source": "marketplace",
-                        "enabled": True, "resolvedPath": f"store:{package_id}@{version}",
+                        "enabled": True, "resolvedPath": f"store:{package_id}@{version}", "package": package_id,
                     }
                     save_lock(lock_root, value)
                     stdout = json.dumps({
-                        "installed": [{"id": package_id, "version": version}],
+                        "installed": [{"id": plugin_id, "version": version}],
                         "warnings": [],
                         "scope": "platform" if platform else "project",
                     })
@@ -379,7 +380,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 elif args[:4] in (["marketplace", "plugins", "disable", "@kb-labs/commit"],
                                   ["marketplace", "plugins", "enable", "@kb-labs/commit"]):
                     value = lock(cwd_path)
-                    entry = value["plugins"].get("@kb-labs/commit-entry")
+                    entry = value["plugins"].get("@kb-labs/commit")
                     if not isinstance(entry, dict):
                         return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False}), "")
                     enabled = args[2] == "enable"
@@ -390,7 +391,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 1, "", "Plugin @kb-labs/not-installed was not found.\n")
                 elif args[:3] == ["marketplace", "update", "@kb-labs/commit"]:
                     value = lock(cwd_path)
-                    entry = value["plugins"]["@kb-labs/commit-entry"]
+                    entry = value["plugins"]["@kb-labs/commit"]
                     entry["version"] = "2.120.2"
                     entry["integrity"] = "sha512-updated-fixture"
                     entry["resolvedPath"] = "store:@kb-labs/commit-entry@2.120.2"
@@ -401,12 +402,12 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"scope": "project",
                         "warnings": ["Plugin @kb-labs/not-published was not found in the registry."]}}), "")
                 elif args[:2] == ["commit", "--help"]:
-                    if lock(cwd_path)["plugins"].get("@kb-labs/commit-entry", {}).get("enabled") is False:
+                    if lock(cwd_path)["plugins"].get("@kb-labs/commit", {}).get("enabled") is False:
                         return subprocess.CompletedProcess(command, 1, "", "Command not found: commit")
                     stdout = "Commands: commit open"
                 elif args[:2] == ["commit", "open"]:
                     value = lock(cwd_path)
-                    if "@kb-labs/commit-entry" not in value["plugins"]:
+                    if "@kb-labs/commit" not in value["plugins"]:
                         return subprocess.CompletedProcess(command, 2, json.dumps({"ok": False, "error": {
                             "code": "KB_RUNTIME_INPUT_INVALID",
                             "message": "Unknown command: commit open",
@@ -417,7 +418,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
                     lock_root = platform_root if platform else cwd_path
                     value = lock(lock_root, platform=platform)
-                    value["plugins"].pop(args[2], None)
+                    value["plugins"].pop("@kb-labs/commit" if args[2] == "@kb-labs/commit-entry" else args[2], None)
                     save_lock(lock_root, value)
                     stdout = json.dumps({"ok": True})
                 elif args[:2] == ["workflow", "health"]:
@@ -495,7 +496,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     "correlationId": "request-fixture"}})
 
             def fake_commit_case_hook():
-                self.assertIn("@kb-labs/commit-entry", lock(project)["plugins"])
+                self.assertIn("@kb-labs/commit", lock(project)["plugins"])
                 commit_case_hook_calls.append(True)
 
             journey = Journey("local", "marketplace-fixture")
@@ -515,7 +516,7 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"), calls)
             self.assertIn(("kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1",
                            "--scope", "platform", "--json"), calls)
-            self.assertIn(("kb", "marketplace", "uninstall", "@kb-labs/commit-entry",
+            self.assertIn(("kb", "marketplace", "uninstall", "@kb-labs/commit",
                            "--scope", "platform", "--json"), calls)
             self.assertEqual([call[0] for call in http_calls], [
                 "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",

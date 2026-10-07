@@ -169,8 +169,8 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   ]);
   assert.deepEqual(index.compatibility.labels[0].requires, [{ label: 'sdk@2.0.0', constraint: '>=2.0.0 <3.0.0' }]);
   assert.equal(index.channels.canary, '2.0.0');
-  assert.equal(index.plugins[0].id, 'commit');
-  assert.equal(index.plugins.find(p => p.package === '@kb-labs/release-manager-cli')?.id, 'release');
+  assert.equal(index.plugins[0].id, '@kb-labs/commit');
+  assert.equal(index.plugins.find(p => p.package === '@kb-labs/release-manager-cli')?.id, '@kb-labs/release');
   // The launcher runs the platform as one host process; the index must say how.
   assert.deepEqual(index.platforms[0].host, {
     command: 'node_modules/.bin/kb-host',
@@ -201,7 +201,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   // that produced "release-manager-cli" here but "release" in the shipped
   // manifest file, so installed.Load()'s id equality check failed at publish
   // time with a misleading "does not match resolved artifact" error.
-  assert.equal(index.platforms[0].members.find(m => m.package === '@kb-labs/release-manager-cli')?.id, 'release');
+  assert.equal(index.platforms[0].members.find(m => m.package === '@kb-labs/release-manager-cli')?.id, '@kb-labs/release');
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.provides, ['logger']);
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.defaultFor, ['logger']);
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'state-broker')?.defaultFor, ['cache']);
