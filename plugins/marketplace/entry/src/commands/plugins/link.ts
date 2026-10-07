@@ -66,7 +66,6 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
           'Provide a path relative to the selected scope directory, for example `.kb/plugins/demo/packages/demo-entry`.',
           flags.json,
         );
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'The --link path must be relative to the selected scope directory.', hint: "Run `kb marketplace link --help` to review its inputs and recovery steps, then retry." }, result: { id: '', scope: '' } };
       }
 
       try {
@@ -75,11 +74,11 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
         const result = await post<LinkResponse>(`/packages/link`, { path: pluginPath, ...scopeBody(scopeCtx) });
 
         if (flags.json) {
-          return { ok: true, result: { id: result.id, scope: result.scope } };
+          return { id: result.id, scope: result.scope };
         } else {
           ctx.ui?.success?.(`Linked ${result.id} (${result.scope})`);
         }
-        return { ok: true, result: { id: result.id, scope: result.scope } };
+        return { id: result.id, scope: result.scope };
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

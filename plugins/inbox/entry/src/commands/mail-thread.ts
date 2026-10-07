@@ -33,7 +33,7 @@ export default defineCommand({
         });
 
         if (input.flags.json) {
-          return { ok: true, result: thread };
+          return thread;
         }
 
         ctx.ui?.info?.(`Thread: ${thread.length} message${thread.length !== 1 ? 's' : ''}`);
@@ -48,7 +48,7 @@ export default defineCommand({
           }],
         })));
 
-        return { ok: true, result: thread };
+        return thread;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

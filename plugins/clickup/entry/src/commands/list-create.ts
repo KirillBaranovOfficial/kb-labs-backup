@@ -41,14 +41,14 @@ export default defineCommand({
           : await createListInSpace(apiKey, space!, { name });
 
         if (json) {
-          return { ok: true, result: full ? list : { id: list.id, name: list.name } };
+          return full ? list : { id: list.id, name: list.name };
         } else {
           ctx.ui?.success?.('List created', {
             sections: [{ items: [`id: ${list.id}`, `name: ${list.name}`] }],
           });
         }
 
-        return { ok: true, result: list };
+        return list;
       } catch (err) {
         return handleError(ctx, err, json);
       }

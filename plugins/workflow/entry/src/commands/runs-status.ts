@@ -44,8 +44,7 @@ export default defineCommand<unknown, CLIInput<RunsStatusFlags>, unknown>({
         const run = await client.getRun(runId);
 
         if (outputJson) {
-          return { ok: true, result: run };
-          return { ok: true };
+          return run;
         }
 
         const trigger = run.trigger
@@ -94,7 +93,7 @@ export default defineCommand<unknown, CLIInput<RunsStatusFlags>, unknown>({
         }
 
         ctx.ui?.success?.('Run Status', { title: run.name, sections });
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

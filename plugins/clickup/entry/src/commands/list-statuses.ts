@@ -19,8 +19,7 @@ export default defineCommand({
         const statuses = await getListStatuses(requireApiKey(), listId);
 
         if (input.flags.json) {
-          return { ok: true, result: input.flags.full ? statuses : statuses.map(s => ({ status: s.status, type: s.type, color: s.color })) };
-          return { ok: true, result: statuses };
+          return input.flags.full ? statuses : statuses.map(s => ({ status: s.status, type: s.type, color: s.color }));
         }
 
         ctx.ui?.table?.(
@@ -32,7 +31,7 @@ export default defineCommand({
           ],
         );
 
-        return { ok: true, result: statuses };
+        return statuses;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

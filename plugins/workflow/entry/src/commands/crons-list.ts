@@ -10,7 +10,7 @@ export default defineCommand<unknown, { flags?: { json?: boolean } }, unknown>({
       try {
         const result = await new WorkflowDaemonClient().getCronJobs();
         if (outputJson) {
-          return { ok: true, result: result };
+          return result;
         } else if (result.crons.length === 0) {
           ctx.ui?.warn?.('No workflow crons found. Create one in .kb/crons/<id>.yml, then run: kb workflow crons list');
         } else {
@@ -32,11 +32,9 @@ export default defineCommand<unknown, { flags?: { json?: boolean } }, unknown>({
         if (!outputJson) {
           for (const error of result.errors) { ctx.ui?.warn?.(`${error.file}: ${error.reason}`); }
         }
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
-        if (!outputJson) { ctx.ui?.warn?.('Check the workflow daemon and run: kb workflow crons list --json'); }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb workflow crons list --help` to review its inputs and recovery steps, then retry." } };
       }
     },
   },

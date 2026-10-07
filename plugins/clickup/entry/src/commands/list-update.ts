@@ -36,14 +36,14 @@ export default defineCommand({
         const list = await updateList(requireApiKey(), listId, { name: input.flags.name });
 
         if (input.flags.json) {
-          return { ok: true, result: input.flags.full ? list : { id: list.id, name: list.name } };
+          return input.flags.full ? list : { id: list.id, name: list.name };
         } else {
           ctx.ui?.success?.('List updated', {
             sections: [{ items: [`id: ${list.id}`, `name: ${list.name}`] }],
           });
         }
 
-        return { ok: true, result: list };
+        return list;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

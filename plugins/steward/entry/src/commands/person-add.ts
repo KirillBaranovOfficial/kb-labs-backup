@@ -24,14 +24,14 @@ export default defineCommand({
         });
 
         if (json) {
-          return { ok: true, result: { person, possibleDuplicates } };
+          return { person, possibleDuplicates };
         } else {
           ctx.ui?.info?.(`Added "${person.name}" (${person.id})`);
           if (possibleDuplicates.length > 0) {
             ctx.ui?.warn?.(`Possible duplicate${possibleDuplicates.length > 1 ? 's' : ''}: ${possibleDuplicates.map((p) => p.id).join(', ')}`);
           }
         }
-        return { ok: true, result: { person, possibleDuplicates } };
+        return { person, possibleDuplicates };
       } catch (err) {
         ctx.platform.logger?.error?.('steward:person.add failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

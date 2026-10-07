@@ -200,7 +200,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
           const latest = await client.listRuns({ limit: 1 });
           if (!latest.length) {
             ctx.ui?.info?.('No runs found');
-            return { ok: true };
+            return undefined;
           }
           runId = latest[0]!.id!;
           ctx.ui?.info?.(`Showing latest run: ${runId}`);
@@ -215,12 +215,11 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
         // --json=fields output (--json=all for full, --json=status,jobs for selective)
         if (jsonFields) {
           if (jsonFields === 'all') {
-            return { ok: true, result: run };
+            return run;
           } else {
             const fields = jsonFields.split(',').map(f => f.trim());
-            return { ok: true, result: pickFields(run, fields) };
+            return pickFields(run, fields);
           }
-          return { ok: true };
         }
 
         // --log or --log-failed: show run logs
@@ -270,7 +269,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
                 } catch { /* skip malformed */ }
               }
             }
-            return { ok: true };
+            return undefined;
           }
 
           // Run already completed — fetch historical logs
@@ -282,7 +281,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
 
           if (filteredLogs.length === 0) {
             ctx.ui?.info?.('No logs found');
-            return { ok: true };
+            return undefined;
           }
 
           const logLines = filteredLogs.map(l => {
@@ -296,7 +295,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
             { header: showLogFailed ? 'Failed step logs' : 'Run logs', items: logLines },
           ];
           ctx.ui?.success?.(`Run ${runId}`, { title: run.name, sections });
-          return { ok: true };
+          return undefined;
         }
 
         // Default: show run tree (optionally with per-step stdout)
@@ -334,7 +333,7 @@ export default defineCommand<unknown, CLIInput<RunsViewFlags>, unknown>({
         if (failed) {
           return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', `Workflow run ${runId} failed.`, `Inspect its logs with: kb workflow runs logs ${runId}`, !!jsonFields, run.result?.error?.message);
         }
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, !!jsonFields);
       }

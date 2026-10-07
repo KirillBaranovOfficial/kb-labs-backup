@@ -47,7 +47,7 @@ export default defineCommand<unknown, CLIInput<RunsLogsFlags>, unknown>({
           failedOnly: flags?.['log-failed'],
         });
         renderLogs(ctx, logs as LogEntry[], outputJson);
-        return { ok: true, result: { logs } };
+        return { logs };
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

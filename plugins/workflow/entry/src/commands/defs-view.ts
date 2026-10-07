@@ -25,8 +25,7 @@ export default defineCommand<unknown, CLIInput<DefsViewFlags>, unknown>({
         const workflow = await client.getWorkflow(id);
 
         if (outputJson) {
-          return { ok: true, result: workflow };
-          return { ok: true };
+          return workflow;
         }
 
         const summary: string[] = [
@@ -62,7 +61,7 @@ export default defineCommand<unknown, CLIInput<DefsViewFlags>, unknown>({
           sections,
         });
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

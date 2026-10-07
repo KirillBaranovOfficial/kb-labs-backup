@@ -17,10 +17,10 @@ export default defineCommand({
 
       try {
         const resources = await listResources(projectId);
-        if (json) {return { ok: true, result: resources };}
+        if (json) {return resources;}
         else if (resources.length === 0) {ctx.ui?.info?.('No resources yet.');}
         else {ctx.ui?.chain?.(resources.map((r) => ({ title: `${r.label} (${r.type})`, sections: [{ items: [r.url ?? '(no url)'] }] })));}
-        return { ok: true, result: resources };
+        return resources;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:resource.list failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

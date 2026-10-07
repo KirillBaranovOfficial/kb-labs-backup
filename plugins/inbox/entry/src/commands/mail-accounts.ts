@@ -16,12 +16,12 @@ export default defineCommand({
         const accounts = listAccounts();
 
         if (input.flags.json) {
-          return { ok: true, result: accounts };
+          return accounts;
         }
 
         if (!accounts.length) {
           ctx.ui?.info?.('No accounts configured. Set INBOX_ACCOUNTS=work,personal and account vars.');
-          return { ok: true, result: accounts };
+          return accounts;
         }
 
         ctx.ui?.chain?.(accounts.map((acc, i) => ({
@@ -34,7 +34,7 @@ export default defineCommand({
           }],
         })));
 
-        return { ok: true, result: accounts };
+        return accounts;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

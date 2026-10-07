@@ -60,13 +60,12 @@ export default defineCommand<unknown, CLIInput<RunsListFlags>, unknown>({
         });
 
         if (outputJson) {
-          return { ok: true, result: runs };
-          return { ok: true };
+          return runs;
         }
 
         if (runs.length === 0) {
           ctx.ui?.info?.('No runs found');
-          return { ok: true };
+          return undefined;
         }
 
         ctx.ui?.table?.(
@@ -96,7 +95,7 @@ export default defineCommand<unknown, CLIInput<RunsListFlags>, unknown>({
         );
         ctx.ui?.success?.(`${runs.length} run(s)`);
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

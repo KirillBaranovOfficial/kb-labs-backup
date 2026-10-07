@@ -60,11 +60,11 @@ export default defineCommand<unknown, UninstallInput, { removed: string[]; scope
         });
 
         if (flags.json) {
-          return { ok: true, result: { removed: argv, scope: scopeCtx.scope } };
+          return { removed: argv, scope: scopeCtx.scope };
         } else {
           ctx.ui?.success?.(`Removed from ${scopeCtx.scope}: ${argv.join(', ')}`);
         }
-        return { ok: true, result: { removed: argv, scope: scopeCtx.scope } };
+        return { removed: argv, scope: scopeCtx.scope };
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

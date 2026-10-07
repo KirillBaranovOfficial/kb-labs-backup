@@ -59,7 +59,7 @@ export default defineCommand({
         });
 
         if (json) {
-          return { ok: true, result: full ? task : { id: task.id, name: task.name, status: task.status.status, url: task.url } };
+          return full ? task : { id: task.id, name: task.name, status: task.status.status, url: task.url };
         } else {
           ctx.ui?.success?.('Task created', {
             sections: [{
@@ -73,7 +73,7 @@ export default defineCommand({
           });
         }
 
-        return { ok: true, result: task };
+        return task;
       } catch (err) {
         return handleError(ctx, err, json);
       }

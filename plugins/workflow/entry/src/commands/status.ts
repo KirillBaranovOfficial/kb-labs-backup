@@ -27,7 +27,7 @@ export default defineCommand<unknown, StatusInput, unknown>({
         const status = await client.getJobStatus(jobId);
 
         if (outputJson) {
-          return { ok: true, result: status };
+          return status;
         } else {
           const statusItems = [
             `ID: ${status.id}`,
@@ -98,7 +98,7 @@ export default defineCommand<unknown, StatusInput, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

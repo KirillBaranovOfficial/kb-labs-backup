@@ -19,11 +19,11 @@ export default defineCommand({
       try {
         const commitment = await commitmentSnooze({ id, until: parseDate(until), reason });
         if (!commitment) {
-          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment snooze --help` to review the failure and next steps." }, result: null };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment snooze --help` to review the failure and next steps." } };
         }
-        if (json) {return { ok: true, result: commitment };}
+        if (json) {return commitment;}
         else {ctx.ui?.info?.(`Snoozed "${commitment.text}" until ${until}`);}
-        return { ok: true, result: commitment };
+        return commitment;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.snooze failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

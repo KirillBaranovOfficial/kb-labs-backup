@@ -34,13 +34,12 @@ export default defineCommand({
         });
 
         if (input.flags.json) {
-          return { ok: true, result: input.flags.full ? tasks : tasks.map(slimTask) };
-          return { ok: true, result: tasks };
+          return input.flags.full ? tasks : tasks.map(slimTask);
         }
 
         if (!tasks.length) {
           ctx.ui?.info?.('No tasks found.');
-          return { ok: true, result: tasks };
+          return tasks;
         }
 
         ctx.ui?.table?.(
@@ -60,7 +59,7 @@ export default defineCommand({
           ],
         );
 
-        return { ok: true, result: tasks };
+        return tasks;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

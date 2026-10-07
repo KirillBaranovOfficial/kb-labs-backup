@@ -35,14 +35,14 @@ export default defineCommand({
         const folder = await updateFolder(requireApiKey(), folderId, { name: input.flags.name });
 
         if (input.flags.json) {
-          return { ok: true, result: input.flags.full ? folder : { id: folder.id, name: folder.name } };
+          return input.flags.full ? folder : { id: folder.id, name: folder.name };
         } else {
           ctx.ui?.success?.('Folder updated', {
             sections: [{ items: [`id: ${folder.id}`, `name: ${folder.name}`] }],
           });
         }
 
-        return { ok: true, result: folder };
+        return folder;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

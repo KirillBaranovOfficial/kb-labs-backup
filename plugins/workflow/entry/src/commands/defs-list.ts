@@ -24,13 +24,12 @@ export default defineCommand<unknown, CLIInput<DefsListFlags>, unknown>({
         });
 
         if (outputJson) {
-          return { ok: true, result: workflows };
-          return { ok: true };
+          return workflows;
         }
 
         if (workflows.length === 0) {
           ctx.ui?.info?.('No workflow definitions found');
-          return { ok: true };
+          return undefined;
         }
 
         ctx.ui?.table?.(
@@ -53,7 +52,7 @@ export default defineCommand<unknown, CLIInput<DefsListFlags>, unknown>({
         );
         ctx.ui?.success?.(`${workflows.length} workflow(s)`);
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

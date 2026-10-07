@@ -44,7 +44,7 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
           const latest = await client.listRuns({ limit: 1 });
           if (!latest.length) {
             if (!outputJson) { ctx.ui?.info?.('No runs found'); }
-            return { ok: true, result: { events } };
+            return { events };
           }
           runId = latest[0]!.id!;
           if (!outputJson) { ctx.ui?.info?.(`Watching latest run: ${runId}`); }
@@ -114,9 +114,9 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
                 const finalStatus = event.payload?.['status'] as string ?? event.type.split('.')[1];
                 if (!outputJson) { ctx.ui?.write?.(`Run ${finalStatus.toUpperCase()}. Use 'kb workflow runs view ${runId}' for details.`); }
                 if (finalStatus !== 'success') {
-                  return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Workflow run ${runId} ended with status ${finalStatus}.`, hint: `Inspect the run with: kb workflow runs view ${runId}` }, result: { events } };
+                  return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `Workflow run ${runId} ended with status ${finalStatus}.`, hint: `Inspect the run with: kb workflow runs view ${runId}`, diagnostics: [{ code: 'WORKFLOW_RUN_FAILED', severity: 'error', path: runId, message: `Workflow run ended with status ${finalStatus}.` }] } };
                 }
-                return { ok: true, result: { events } };
+                return { events };
               }
             } catch {
               // Ignore malformed events
@@ -124,7 +124,7 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
           }
         }
 
-        return { ok: true, result: { events } };
+        return { events };
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

@@ -25,7 +25,7 @@ export default defineCommand<unknown, CLIInput<JobListFlags>, unknown>({
         const filteredJobs = statusFilter ? jobs.filter((job) => job.status === statusFilter) : jobs;
 
         if (outputJson) {
-          return { ok: true, result: { jobs: filteredJobs } };
+          return { jobs: filteredJobs };
         } else if (filteredJobs.length === 0) {
           ctx.ui?.warn?.('No active jobs found');
         } else {
@@ -40,7 +40,7 @@ export default defineCommand<unknown, CLIInput<JobListFlags>, unknown>({
           ctx.ui?.success?.(`${filteredJobs.length} active job${filteredJobs.length === 1 ? '' : 's'}`);
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

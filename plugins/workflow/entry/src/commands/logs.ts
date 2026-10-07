@@ -46,7 +46,7 @@ export default defineCommand<unknown, LogsInput, unknown>({
         const logs = await client.getJobLogs(jobId);
         renderLogs(ctx, logs as LogEntry[], outputJson);
 
-        return { ok: true, result: { logs } };
+        return { logs };
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

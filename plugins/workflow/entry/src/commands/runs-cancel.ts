@@ -33,7 +33,7 @@ export default defineCommand<unknown, CLIInput<RunsCancelFlags>, unknown>({
         await client.cancelRun(runId);
 
         if (outputJson) {
-          return { ok: true, result: { runId, cancelled: true } };
+          return { runId, cancelled: true };
         } else {
           ctx.ui?.success?.('Cancellation Requested', {
             title: runId,
@@ -51,7 +51,7 @@ export default defineCommand<unknown, CLIInput<RunsCancelFlags>, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

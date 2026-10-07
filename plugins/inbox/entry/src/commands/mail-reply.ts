@@ -41,11 +41,11 @@ export default defineCommand({
         }, input.flags.body);
 
         if (input.flags.json) {
-          return { ok: true, result };
+          return result;
         }
 
         ctx.ui?.success?.(`Reply sent  id: ${result.messageId}`);
-          return { ok: true, result };
+          return result;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

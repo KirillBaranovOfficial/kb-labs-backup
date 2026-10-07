@@ -12,10 +12,10 @@ export default defineCommand({
       const { json } = input.flags;
       try {
         const people = await listPeople();
-        if (json) {return { ok: true, result: people };}
+        if (json) {return people;}
         else if (people.length === 0) {ctx.ui?.info?.('No contacts yet.');}
         else {ctx.ui?.chain?.(people.map((p) => ({ title: p.name, sections: [{ items: [p.globalTopics.join(', ') || '(no topics)'] }] })));}
-        return { ok: true, result: people };
+        return people;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:person.list failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

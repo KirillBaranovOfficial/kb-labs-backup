@@ -30,13 +30,13 @@ export default defineCommand<unknown, CLIInput<InitFlags>, unknown>({
       try {
         await mkdir(join(process.cwd(), '.kb', 'workflows'), { recursive: true });
         await writeFile(output, EXAMPLE, { encoding: 'utf8', flag: 'wx' });
-        const result = { ok: true, path: '.kb/workflows/hello.yml' };
-        if (input.flags.json) { return { ok: true, result: result }; }
+        const result = { path: '.kb/workflows/hello.yml' };
+        if (input.flags.json) { return result; }
         else {
           ctx.ui?.success?.('Created .kb/workflows/hello.yml');
           ctx.ui?.write?.('Next: kb workflow lint && kb workflow run --workflow-id=hello\n');
         }
-        return { ok: true, result };
+        return result;
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
           return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow init`.', input.flags.json ?? false);

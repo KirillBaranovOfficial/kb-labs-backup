@@ -32,9 +32,9 @@ export default defineCommand({
           remindAt: remindAtRaw ? parseDate(remindAtRaw) : undefined,
           staleAfterDays: staleAfterDays !== undefined ? Number(staleAfterDays) : 14,
         });
-        if (json) {return { ok: true, result: commitment };}
+        if (json) {return commitment;}
         else {ctx.ui?.info?.(`Recorded commitment "${commitment.text}" (${commitment.id})`);}
-        return { ok: true, result: commitment };
+        return commitment;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.add failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

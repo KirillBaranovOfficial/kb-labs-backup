@@ -21,12 +21,12 @@ interface PublishResultData {
   pageUrl?: string;
 }
 
-export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>({
+export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData | undefined>({
   id: 'marketplace:publish',
   description: 'Publish plugin to KB Labs Registry',
 
   handler: {
-    async execute(ctx: PluginCommandContextV3, input: CLIInput<PublishFlags>): Promise<CommandResult<PublishResultData>> {
+    async execute(ctx: PluginCommandContextV3, input: CLIInput<PublishFlags>): Promise<CommandResult<PublishResultData | undefined>> {
       const { flags = {} } = input;
       const pluginDir = path.resolve(ctx.cwd, flags.path ?? '.');
       const visibility = flags.private ? 'private' : 'public';
@@ -52,7 +52,6 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
           'Add a kb.manifest or kb.adapter field to package.json',
           flags.json,
         );
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Not a KB Labs plugin or adapter', hint: "Run `kb hub publish --help` to review its inputs and recovery steps, then retry." } };
       }
 
       // Read README (non-fatal)
@@ -92,7 +91,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
             sections: [{ header: 'Package', items: [`${meta.name} @ ${handle}`] }],
             timing: Date.now() - t0,
           });
-          return { ok: true };
+          return;
         } catch (err) {
           return handleError(ctx, err, flags.json);
         }
@@ -118,8 +117,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
         );
 
         if (flags.json) {
-          return { ok: true, result: result };
-          return { ok: true, result };
+          return result;
         }
 
         ctx.ui?.chain?.([
@@ -140,7 +138,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData>
           },
         ]);
 
-        return { ok: true, result };
+        return result;
       } catch (err) {
         if (flags.json) {
           return handleError(ctx, err, true);

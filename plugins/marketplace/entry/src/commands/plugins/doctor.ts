@@ -45,7 +45,7 @@ export default defineCommand<unknown, DoctorInput, DoctorResultData>({
         const report = await get<DoctorResultData>('/diagnostics', query);
 
         if (flags.json) {
-          return { ok: true, result: report };
+          return report;
         } else if (report.issues.length === 0) {
           ctx.ui?.success?.(`All ${report.total} packages healthy (${scopeCtx.scope})`);
         } else {
@@ -58,7 +58,21 @@ export default defineCommand<unknown, DoctorInput, DoctorResultData>({
           });
         }
 
-        return report.ok ? { ok: true, result: report } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Marketplace doctor found issues', hint: "Run `kb marketplace plugins doctor --help` to review its inputs and recovery steps, then retry." }, result: report };
+        return report.ok ? report : {
+          ok: false,
+          error: {
+            code: 'KB_RUNTIME_COMMAND_FAILED',
+            message: 'Marketplace doctor found issues',
+            hint: "Run `kb marketplace plugins doctor --help` to review its inputs and recovery steps, then retry.",
+            diagnostics: report.issues.map((issue) => ({
+              code: issue.diagnosticCode ?? 'KB_MARKETPLACE_DIAGNOSTIC',
+              severity: issue.severity === 'error' ? 'error' as const : 'warning' as const,
+              path: issue.packageId,
+              message: issue.message,
+              ...(issue.remediation ? { hint: issue.remediation } : {}),
+            })),
+          },
+        };
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

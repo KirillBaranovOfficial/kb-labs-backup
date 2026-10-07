@@ -110,7 +110,7 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
         const result = await client.runWorkflow(workflowId, request);
 
         if (outputJson) {
-          return { ok: true, result: result };
+          return result;
         } else {
           ctx.ui?.success?.('Workflow run submitted', {
             title: 'Workflow Engine',
@@ -129,7 +129,7 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

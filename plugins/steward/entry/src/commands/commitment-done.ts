@@ -18,11 +18,11 @@ export default defineCommand({
       try {
         const commitment = await commitmentDone({ id });
         if (!commitment) {
-          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment done --help` to review the failure and next steps." }, result: null };
+          return { ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND', message: `No commitment "${id}"`, hint: "Run `kb steward commitment done --help` to review the failure and next steps." } };
         }
-        if (json) {return { ok: true, result: commitment };}
+        if (json) {return commitment;}
         else {ctx.ui?.info?.(`Done: "${commitment.text}"`);}
-        return { ok: true, result: commitment };
+        return commitment;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.done failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

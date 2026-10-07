@@ -36,7 +36,6 @@ export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
           'Usage: kb workflow runs-restart <runId> [--from-step=<stepId>]',
           outputJson,
         );
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Command failed', hint: "Run `kb workflow runs restart --help` to review its inputs and recovery steps, then retry." } };
       }
 
       const fromStepId = flags?.['from-step'];
@@ -46,7 +45,7 @@ export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
         const result = await client.restartRun(runId, { fromStepId });
 
         if (outputJson) {
-          return { ok: true, result: result };
+          return result;
         } else {
           ctx.ui?.success?.('Workflow Restart Triggered', {
             title: runId,
@@ -67,7 +66,7 @@ export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

@@ -24,8 +24,7 @@ export default defineCommand({
         ]);
 
         if (input.flags.json) {
-          return { ok: true, result: input.flags.full ? { task, comments } : slimTaskWithDesc(task) };
-          return { ok: true, result: { task, comments } };
+          return input.flags.full ? { task, comments } : slimTaskWithDesc(task);
         }
 
         const priority = task.priority?.priority ?? '–';
@@ -64,7 +63,7 @@ export default defineCommand({
           sections,
         });
 
-        return { ok: true, result: { task, comments } };
+        return { task, comments };
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

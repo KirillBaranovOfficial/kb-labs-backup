@@ -32,8 +32,7 @@ export default defineCommand({
         const workspace = await getWorkspaceHierarchy(requireApiKey(), requireTeamId());
 
         if (input.flags.json) {
-          return { ok: true, result: input.flags.full ? workspace : toCompact(workspace) };
-          return { ok: true, result: workspace };
+          return input.flags.full ? workspace : toCompact(workspace);
         }
 
         const sections = workspace.spaces.map(space => ({
@@ -48,7 +47,7 @@ export default defineCommand({
         }));
         ctx.ui?.info?.(workspace.name, { sections });
 
-        return { ok: true, result: workspace };
+        return workspace;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

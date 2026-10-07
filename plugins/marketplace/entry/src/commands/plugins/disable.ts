@@ -41,11 +41,11 @@ export default defineCommand<unknown, DisableInput, { packageId: string; scope: 
       try {
         await post(`/packages/disable`, { packageId, ...scopeBody(scopeCtx) });
         if (flags.json) {
-          return { ok: true, result: { packageId, scope: scopeCtx.scope } };
+          return { packageId, scope: scopeCtx.scope };
         } else {
           ctx.ui?.success?.(`Disabled ${packageId} (${scopeCtx.scope})`);
         }
-        return { ok: true, result: { packageId, scope: scopeCtx.scope } };
+        return { packageId, scope: scopeCtx.scope };
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

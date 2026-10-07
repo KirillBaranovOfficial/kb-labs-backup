@@ -36,8 +36,7 @@ export default defineCommand<unknown, CLIInput<DeprecateFlags>, unknown>({
         await registryPost(`/packages/${handle}/${encodeURIComponent(name)}/deprecate`, { message: flags.message });
 
         if (flags.json) {
-          return { ok: true, result: { deprecated: true, pkg } };
-          return { ok: true };
+          return { deprecated: true, pkg };
         }
 
         const items = [
@@ -55,7 +54,7 @@ export default defineCommand<unknown, CLIInput<DeprecateFlags>, unknown>({
           timing: Date.now() - t0,
         });
 
-        return { ok: true };
+        return;
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

@@ -135,7 +135,7 @@ export default defineCommand({
       await writeFile(configPath, JSON.stringify(agentConfig, null, 2), { mode: 0o600 });
 
       if (flags.json) {
-        return { ok: true, result: { configPath, hostId: data.hostId, clientId: data.clientId } };
+        return { configPath, hostId: data.hostId, clientId: data.clientId };
       } else {
         ctx.ui?.success?.('Workspace Agent registered', {
           sections: [{
@@ -152,7 +152,7 @@ export default defineCommand({
         });
       }
 
-      return { ok: true, result: { configPath } };
+      return { configPath };
     },
   },
 });

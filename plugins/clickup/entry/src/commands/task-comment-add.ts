@@ -44,20 +44,20 @@ export default defineCommand<unknown, CLIInput<TaskCommentAddFlags>, ClickUpComm
 
         if (input.flags.json) {
           if (input.flags.full) {
-            return { ok: true, result: comment };
+            return comment;
           } else {
-            return { ok: true, result: {
+            return {
               id: comment.id,
               date: comment.date,
               ...(comment.comment_text !== undefined ? { comment_text: comment.comment_text } : {}),
               ...(comment.user?.username !== undefined ? { user: comment.user.username } : {}),
-            } };
+            };
           }
         } else {
           ctx.ui?.success?.(`Comment added (id: ${comment.id})`);
         }
 
-        return { ok: true, result: comment };
+        return comment;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

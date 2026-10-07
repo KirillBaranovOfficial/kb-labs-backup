@@ -22,7 +22,7 @@ export default defineCommand<unknown, HealthInput, unknown>({
         const health = await client.health();
 
         if (outputJson) {
-          return { ok: true, result: health };
+          return health;
         } else {
           ctx.ui?.success?.('Daemon is healthy', {
             title: 'Workflow Daemon',
@@ -35,7 +35,7 @@ export default defineCommand<unknown, HealthInput, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         if (outputJson) {
           return handleError(ctx, error, true);

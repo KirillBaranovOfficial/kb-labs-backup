@@ -33,16 +33,30 @@ export default defineCommand<unknown, CLIInput<LintFlags>, unknown>({
           !r.ok || (strict && r.warnings.length > 0);
         const failed = results.filter(isFailed);
         const firstError = failed.flatMap((file) => file.errors)[0];
+        const diagnostics = failed.flatMap((file) => [
+          ...file.errors.map((message) => ({
+            code: 'WORKFLOW_VALIDATION_FAILED',
+            severity: 'error' as const,
+            path: file.relativePath,
+            message,
+          })),
+          ...(strict ? file.warnings.map((message) => ({
+            code: 'WORKFLOW_VALIDATION_WARNING',
+            severity: 'warning' as const,
+            path: file.relativePath,
+            message,
+          })) : []),
+        ]);
 
         if (outputJson) {
           return failed.length === 0
-            ? { ok: true, result: { ok: true, files: results } }
-            : { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: firstError ? `Workflow validation failed: ${firstError}` : 'Workflow validation failed.', hint: 'Fix the file and field errors in the result, then rerun `kb workflow lint`.' }, result: { ok: false, files: results } };
+            ? { files: results }
+            : { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: firstError ? `Workflow validation failed: ${firstError}` : 'Workflow validation failed.', hint: 'Fix the file and field errors in the diagnostics, then rerun `kb workflow lint`.', diagnostics } };
         }
 
         if (results.length === 0) {
           ctx.ui?.warn?.('No workflow files found');
-          return { ok: true };
+          return undefined;
         }
 
         for (const r of results) {
@@ -63,10 +77,10 @@ export default defineCommand<unknown, CLIInput<LintFlags>, unknown>({
 
         if (failed.length === 0) {
           ctx.ui?.success?.(`${results.length} workflow file(s) valid`);
-          return { ok: true };
+          return undefined;
         }
 
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: firstError ? `${failed.length}/${results.length} workflow file(s) failed validation: ${firstError}` : `${failed.length}/${results.length} workflow file(s) failed validation.`, hint: 'Fix the file and field errors above, then rerun `kb workflow lint`.' }, result: { ok: false, files: results } };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: firstError ? `${failed.length}/${results.length} workflow file(s) failed validation: ${firstError}` : `${failed.length}/${results.length} workflow file(s) failed validation.`, hint: 'Fix the file and field errors above, then rerun `kb workflow lint`.', diagnostics } };
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }

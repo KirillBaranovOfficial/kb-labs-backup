@@ -36,8 +36,7 @@ export default defineCommand<unknown, CLIInput<YankFlags>, unknown>({
         await registryPost(`/packages/${handle}/${encodeURIComponent(name)}/${version}/yank`, { reason: flags.reason });
 
         if (flags.json) {
-          return { ok: true, result: { yanked: true, pkg, version } };
-          return { ok: true };
+          return { yanked: true, pkg, version };
         }
 
         const items = [
@@ -54,7 +53,7 @@ export default defineCommand<unknown, CLIInput<YankFlags>, unknown>({
           timing: Date.now() - t0,
         });
 
-        return { ok: true };
+        return;
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

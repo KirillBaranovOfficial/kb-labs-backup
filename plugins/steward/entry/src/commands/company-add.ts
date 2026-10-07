@@ -16,9 +16,9 @@ export default defineCommand({
 
       try {
         const company = await addCompany({ name });
-        if (json) {return { ok: true, result: company };}
+        if (json) {return company;}
         else {ctx.ui?.info?.(`Added company "${company.name}" (${company.id})`);}
-        return { ok: true, result: company };
+        return company;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:company.add failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

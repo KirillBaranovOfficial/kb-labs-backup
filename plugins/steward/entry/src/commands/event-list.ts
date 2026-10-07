@@ -18,10 +18,10 @@ export default defineCommand({
           subjectId,
           kind,
         });
-        if (json) {return { ok: true, result: events };}
+        if (json) {return events;}
         else if (events.length === 0) {ctx.ui?.info?.('No events yet.');}
         else {ctx.ui?.chain?.(events.map((e) => ({ title: `[${e.kind}] ${new Date(e.at).toISOString()}`, sections: [{ items: [e.text ?? e.reason ?? '(no text)'] }] })));}
-        return { ok: true, result: events };
+        return events;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:event.list failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

@@ -22,7 +22,7 @@ export default defineCommand<unknown, MetricsInput, unknown>({
         const metrics = await client.getMetrics();
 
         if (outputJson) {
-          return { ok: true, result: metrics };
+          return metrics;
         } else {
           const runsItems = [
             `Total: ${metrics.runs.total}`,
@@ -50,7 +50,7 @@ export default defineCommand<unknown, MetricsInput, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         if (outputJson) {
           return handleError(ctx, error, true);

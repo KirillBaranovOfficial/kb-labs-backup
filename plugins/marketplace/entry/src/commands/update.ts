@@ -57,7 +57,6 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
         } else {
           return handleError(ctx, err, flags.json);
         }
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Please specify at least one package to update', hint: "Run `kb marketplace update --help` to review its inputs and recovery steps, then retry." }, result: { installed: [], warnings: [], scope: '' } };
       }
 
       try {
@@ -71,7 +70,7 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
         const result = await post<UpdateResultData>('/packages/update', body);
 
         if (flags.json) {
-          return { ok: true, result: result };
+          return result;
         } else if (result.installed.length === 0) {
           ctx.ui?.info?.(`Nothing to update (${scopeCtx.scope})`);
         } else {
@@ -86,7 +85,7 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
           });
         }
 
-        return { ok: true, result };
+        return result;
       } catch (err) {
         return handleError(ctx, err, flags.json);
       }

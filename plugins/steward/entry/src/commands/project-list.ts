@@ -13,7 +13,7 @@ export default defineCommand({
       try {
         const projects = await listProjects({ status: status as 'active' | 'paused' | 'archived' | undefined });
         if (json) {
-          return { ok: true, result: projects };
+          return projects;
         } else if (projects.length === 0) {
           ctx.ui?.info?.('No projects yet.');
         } else {
@@ -21,7 +21,7 @@ export default defineCommand({
             projects.map((p) => ({ title: `${p.name} [${p.status}]`, sections: [{ items: [p.id] }] })),
           );
         }
-        return { ok: true, result: projects };
+        return projects;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:project.list failed', err instanceof Error ? err : new Error(String(err)));
         return handleError(ctx, err, json);

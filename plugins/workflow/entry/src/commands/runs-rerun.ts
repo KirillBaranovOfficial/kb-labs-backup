@@ -45,7 +45,7 @@ export default defineCommand<unknown, CLIInput<RunsRerunFlags>, unknown>({
         const result = await client.rerunWorkflow(runId, { failedOnly });
 
         if (outputJson) {
-          return { ok: true, result: result };
+          return result;
         } else {
           ctx.ui?.success?.('Workflow Rerun Triggered', {
             title: runId,
@@ -66,7 +66,7 @@ export default defineCommand<unknown, CLIInput<RunsRerunFlags>, unknown>({
           });
         }
 
-        return { ok: true };
+        return undefined;
       } catch (error) {
         return handleError(ctx, error, outputJson);
       }
