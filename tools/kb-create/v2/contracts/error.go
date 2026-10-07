@@ -1,15 +1,6 @@
 package contracts
 
-import (
-	"regexp"
-
-	"github.com/kb-labs/clikit/diag"
-)
-
-var (
-	secretAssignment = regexp.MustCompile(`(?i)(\b[A-Z0-9_]*(PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s]+`)
-	secretJSONField  = regexp.MustCompile(`(?i)(["']?(password|token|secret|apiKey|key)["']?\s*:\s*)("[^"\\]*(\\.[^"\\]*)*"|'[^']*'|[^,}\]\s]+)`)
-)
+import "github.com/kb-labs/clikit/diag"
 
 // ErrorStage is the moment of the user journey in which an error happened.
 // The set is open; the values below are the ones the launcher emits.
@@ -84,14 +75,8 @@ func NewDiag(code, message, hint string, cause error) *diag.Diag {
 		opts = append(opts, diag.WithHint(hint))
 	}
 	if cause != nil {
-		safeCause := redactCause(cause.Error())
-		opts = append(opts, diag.WithCause(safeCause), diag.WithReason(safeCause))
+		opts = append(opts, diag.WithCauseAndReason(cause.Error()))
 		return diag.Wrap(cause, code, message, opts...)
 	}
 	return diag.New(code, message, opts...)
-}
-
-func redactCause(cause string) string {
-	cause = secretAssignment.ReplaceAllString(cause, `${1}"[REDACTED]"`)
-	return secretJSONField.ReplaceAllString(cause, `${1}"[REDACTED]"`)
 }

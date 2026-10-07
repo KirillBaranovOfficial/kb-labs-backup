@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
-	"strconv"
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/semrange"
 )
 
 // SupportedSchemas lists every release-index schema this launcher can read.
@@ -97,75 +97,32 @@ func wrapIndexError(path, gate, expected, actual string, err error) error {
 }
 
 // CheckLauncher enforces the platform's optional minLauncherVersion. An empty
-// constraint means no constraint. A launcher without a parsable release
-// version (a local "dev" build) is not constrained.
+// constraint means no constraint.
 func CheckLauncher(platform PlatformBundle, launcherVersion string) error {
 	if platform.MinLauncherVersion == "" {
 		return nil
 	}
-	minimum, ok := parseSemver(platform.MinLauncherVersion)
-	if !ok {
+	// A workspace build has no release version to compare. This is the
+	// established local-build contract exercised by the compatibility matrix.
+	if launcherVersion == "dev" {
+		return nil
+	}
+	minimum, err := semrange.ParseVersion(platform.MinLauncherVersion)
+	if err != nil {
 		return contracts.NewDiag(contracts.CodeReleaseIndexInvalid,
 			fmt.Sprintf("Platform %s declares an invalid minLauncherVersion %q.", platform.Version, platform.MinLauncherVersion), indexInvalidHint, nil)
 	}
-	current, ok := parseSemver(launcherVersion)
-	if !ok || compareSemver(current, minimum) >= 0 {
+	current, err := semrange.ParseVersion(launcherVersion)
+	if err != nil {
+		return contracts.NewDiag(contracts.CodeReleaseIndexInvalid,
+			fmt.Sprintf("Launcher version %q is not a valid semantic version.", launcherVersion), indexInvalidHint, err)
+	}
+	if semrange.AtLeast(minimum).Satisfies(current) {
 		return nil
 	}
-	err := contracts.NewDiag(contracts.CodeLauncherTooOld,
+	failure := contracts.NewDiag(contracts.CodeLauncherTooOld,
 		fmt.Sprintf("Platform %s requires launcher %s or newer, but this is %s.", platform.Version, platform.MinLauncherVersion, launcherVersion),
 		"Run kb-create update, or download the current launcher, then retry.", nil)
-	err.Meta = map[string]any{"platform": platform.Version, "minLauncherVersion": platform.MinLauncherVersion, "launcher": launcherVersion}
-	return err
-}
-
-type semver struct {
-	core       [3]int
-	prerelease string
-}
-
-func parseSemver(value string) (semver, bool) {
-	value = strings.TrimPrefix(strings.TrimSpace(value), "v")
-	if at := strings.Index(value, "+"); at >= 0 {
-		value = value[:at]
-	}
-	var result semver
-	if at := strings.Index(value, "-"); at >= 0 {
-		result.prerelease, value = value[at+1:], value[:at]
-	}
-	parts := strings.Split(value, ".")
-	if len(parts) != 3 {
-		return semver{}, false
-	}
-	for i, part := range parts {
-		n, err := strconv.Atoi(part)
-		if err != nil || n < 0 {
-			return semver{}, false
-		}
-		result.core[i] = n
-	}
-	return result, true
-}
-
-func compareSemver(a, b semver) int {
-	for i := range a.core {
-		if a.core[i] != b.core[i] {
-			if a.core[i] > b.core[i] {
-				return 1
-			}
-			return -1
-		}
-	}
-	switch {
-	case a.prerelease == b.prerelease:
-		return 0
-	case a.prerelease == "":
-		return 1
-	case b.prerelease == "":
-		return -1
-	case a.prerelease > b.prerelease:
-		return 1
-	default:
-		return -1
-	}
+	failure.Meta = map[string]any{"platform": platform.Version, "minLauncherVersion": platform.MinLauncherVersion, "launcher": launcherVersion}
+	return failure
 }

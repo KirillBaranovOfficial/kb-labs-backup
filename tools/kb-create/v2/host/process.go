@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -84,11 +83,6 @@ type ProcessRunner struct {
 
 const startupStderrLimit = 8 * 1024
 const startupStderrLines = 40
-
-var (
-	secretAssignment = regexp.MustCompile(`(?i)(\b[A-Z0-9_]*(PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s]+`)
-	secretJSONField  = regexp.MustCompile(`(?i)(["']?(password|token|secret|apiKey|key)["']?\s*:\s*)("[^"\\]*(\\.[^"\\]*)*"|'[^']*'|[^,}\]\s]+)`)
-)
 
 type tailBuffer struct {
 	mu    sync.Mutex
@@ -469,8 +463,7 @@ func (r *ProcessRunner) stderrTail() string {
 
 func redactHostOutput(value string, secrets []string) string {
 	value = diagnostics.Redact(value, secrets)
-	value = secretAssignment.ReplaceAllString(value, `${1}"[REDACTED]"`)
-	return secretJSONField.ReplaceAllString(value, `${1}"[REDACTED]"`)
+	return diag.RedactText(value)
 }
 
 func appendLauncherFailure(state State, failure *diag.Diag) error {

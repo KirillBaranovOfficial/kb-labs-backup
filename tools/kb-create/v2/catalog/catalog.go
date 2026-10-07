@@ -112,7 +112,7 @@ func Validate(source Catalog) error {
 		if err := platform.Host.Validate(); err != nil {
 			return fmt.Errorf("platform bundle %q declares an invalid host: %w", key, err)
 		}
-		if err := semrange.Validate(platform.SDKRange); err != nil {
+		if _, err := semrange.ParseRange(platform.SDKRange); err != nil {
 			return fmt.Errorf("platform %s SDK range is invalid: %w", key, err)
 		}
 		for _, binary := range platform.Binaries {
@@ -160,7 +160,11 @@ func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, o
 	}
 	if sdkVersion != "" {
 		sdkID := "sdk@" + sdkVersion
-		if _, ok := compatibilityLabel(source.Compatibility.Labels, sdkID, "sdk"); !ok || !requiresCompatibleLabel(platform, sdkID, sdkVersion, policy) {
+		compatible, err := requiresCompatibleLabel(platform, sdkID, sdkVersion, policy)
+		if err != nil {
+			return fmt.Errorf("compatibility matrix relation for %s: %w", sdkID, err)
+		}
+		if _, ok := compatibilityLabel(source.Compatibility.Labels, sdkID, "sdk"); !ok || !compatible {
 			return fmt.Errorf("compatibility matrix does not relate %s to %s", platformID, sdkID)
 		}
 	}
@@ -174,25 +178,38 @@ func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, o
 	return nil
 }
 
-func requiresCompatibleLabel(label CompatibilityLabel, wanted, version string, policy contracts.CompatibilityPolicy) bool {
+func requiresCompatibleLabel(label CompatibilityLabel, wanted, version string, policy contracts.CompatibilityPolicy) (bool, error) {
+	var candidate semrange.Version
+	candidateParsed := false
 	for _, relation := range label.Requires {
 		if relation.Label == wanted {
-			return true
+			return true, nil
 		}
 		if policy == contracts.PolicyCompatible && relation.Constraint != "" {
-			if ok, err := semrange.Satisfies(version, relation.Constraint); err == nil && ok {
-				return true
+			rangeValue, err := semrange.ParseRange(relation.Constraint)
+			if err != nil {
+				return false, err
+			}
+			if !candidateParsed {
+				candidate, err = semrange.ParseVersion(version)
+				if err != nil {
+					return false, err
+				}
+				candidateParsed = true
+			}
+			if rangeValue.Satisfies(candidate) {
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
 func validateComponentRanges(component Component) error {
-	if err := semrange.Validate(component.PlatformRange); err != nil {
+	if _, err := semrange.ParseRange(component.PlatformRange); err != nil {
 		return fmt.Errorf("component %s platform range is invalid: %w", component.ID, err)
 	}
-	if err := semrange.Validate(component.SDKRange); err != nil {
+	if _, err := semrange.ParseRange(component.SDKRange); err != nil {
 		return fmt.Errorf("component %s SDK range is invalid: %w", component.ID, err)
 	}
 	return nil
@@ -238,7 +255,7 @@ func validateCompatibility(matrix CompatibilityMatrix, source Catalog) error {
 	}
 	for _, label := range matrix.Labels {
 		for _, relation := range label.Requires {
-			if err := semrange.Validate(relation.Constraint); err != nil {
+			if _, err := semrange.ParseRange(relation.Constraint); err != nil {
 				return fmt.Errorf("compatibility relation %s -> %s has invalid range: %w", label.ID, relation.Label, err)
 			}
 		}
@@ -255,12 +272,16 @@ func validateCompatibility(matrix CompatibilityMatrix, source Catalog) error {
 			if !ok || !requiresLabel(binary, "platform@"+platform.Version) {
 				return fmt.Errorf("compatibility matrix does not relate shipped binary %s to platform %s", shipped.ID, platform.Version)
 			}
+			rangeValue, err := semrange.ParseRange(platform.SDKRange)
+			if err != nil {
+				return fmt.Errorf("platform %s has an invalid SDK range: %w", platform.Version, err)
+			}
 			for _, sdk := range source.SDKs {
-				admitted, err := semrange.Satisfies(sdk.Version, platform.SDKRange)
+				candidate, err := semrange.ParseVersion(sdk.Version)
 				if err != nil {
-					return fmt.Errorf("platform %s has an invalid SDK range: %w", platform.Version, err)
+					return fmt.Errorf("SDK %s has an invalid version: %w", sdk.ID, err)
 				}
-				if admitted && !requiresLabel(binary, "sdk@"+sdk.Version) {
+				if rangeValue.Satisfies(candidate) && !requiresLabel(binary, "sdk@"+sdk.Version) {
 					return fmt.Errorf("compatibility matrix does not relate shipped binary %s to SDK %s for platform %s", shipped.ID, sdk.Version, platform.Version)
 				}
 			}

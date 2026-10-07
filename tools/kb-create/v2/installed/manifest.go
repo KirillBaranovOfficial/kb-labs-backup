@@ -63,7 +63,7 @@ func DoctorInput(platformRoot string, artifacts []contracts.Artifact, configured
 func LoadAll(platformRoot string, artifacts []contracts.Artifact) ([]Manifest, error) {
 	result := make([]Manifest, 0, len(artifacts))
 	for _, artifact := range artifacts {
-		if artifact.Kind == "binary" {
+		if artifact.IsBinary() {
 			continue
 		}
 		manifest, err := Load(platformRoot, artifact)
@@ -112,7 +112,7 @@ func Write(platformRoot string, artifact contracts.Artifact) error {
 func InspectProjections(platformRoot string, artifacts []contracts.Artifact) ([]ProjectionIssue, error) {
 	issues := make([]ProjectionIssue, 0)
 	for _, artifact := range artifacts {
-		if artifact.Kind == "binary" {
+		if artifact.IsBinary() {
 			continue
 		}
 		if artifact.Package == "" || artifact.Version == "" {

@@ -18,9 +18,25 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"runtime/debug"
 	"time"
 )
+
+var (
+	secretAssignment = regexp.MustCompile(`(?i)(\b[A-Z0-9_]*(PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s]+`)
+	secretJSONField  = regexp.MustCompile(`(?i)(["']?(password|token|secret|apiKey|key)["']?\s*:\s*)("[^"\\]*(\\.[^"\\]*)*"|'[^']*'|[^,}\]\s]+)`)
+	urlCredentials   = regexp.MustCompile(`(?i)(https?://)[^/@\s:]+:[^/@\s]+@`)
+)
+
+// RedactText removes common credential forms before diagnostic text reaches
+// human or machine output. Secret values supplied by a runtime are handled by
+// that runtime's value-aware log/dossier redactor.
+func RedactText(value string) string {
+	value = secretAssignment.ReplaceAllString(value, `${1}"[REDACTED]"`)
+	value = secretJSONField.ReplaceAllString(value, `${1}"[REDACTED]"`)
+	return urlCredentials.ReplaceAllString(value, `${1}[REDACTED]@`)
+}
 
 // Diag is a structured diagnostic. The zero value is not useful — construct
 // with New or Wrap.
@@ -67,7 +83,7 @@ func (d *Diag) Unwrap() error {
 type Opt func(*Diag)
 
 // WithReason sets the WHY.
-func WithReason(reason string) Opt { return func(d *Diag) { d.Reason = reason } }
+func WithReason(reason string) Opt { return func(d *Diag) { d.Reason = RedactText(reason) } }
 
 // WithHint preserves a command-specific next step while retaining the
 // catalog's remaining canonical envelope fields.
@@ -77,7 +93,16 @@ func WithHint(hint string) Opt { return func(d *Diag) { d.Hint = hint } }
 func WithProcessExitCode(code int) Opt { return func(d *Diag) { d.ProcessExitCode = code } }
 
 // WithCause sets a safe cause for the canonical machine error envelope.
-func WithCause(cause string) Opt { return func(d *Diag) { d.Cause = cause } }
+func WithCause(cause string) Opt { return func(d *Diag) { d.Cause = RedactText(cause) } }
+
+// WithCauseAndReason sanitizes one failure string for machine and human output.
+func WithCauseAndReason(cause string) Opt {
+	return func(d *Diag) {
+		safe := RedactText(cause)
+		d.Cause = safe
+		d.Reason = safe
+	}
+}
 
 // WithMeta merges structured context into Meta.
 func WithMeta(meta map[string]any) Opt {

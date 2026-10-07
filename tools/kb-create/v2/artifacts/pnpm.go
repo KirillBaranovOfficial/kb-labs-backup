@@ -102,7 +102,7 @@ func (p Pnpm) Install(items []contracts.Artifact) error {
 
 func (p Pnpm) materializeManifests(items []contracts.Artifact) error {
 	for _, item := range items {
-		if item.Kind == "binary" {
+		if item.IsBinary() {
 			continue
 		}
 		if err := installed.Write(p.Root, item); err != nil {
@@ -296,7 +296,7 @@ func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
 	}
 	versions := make([]string, 0, len(items))
 	for _, item := range items {
-		if item.Kind == "binary" {
+		if item.IsBinary() {
 			continue
 		}
 		if item.Package == "" || item.Version == "" {
@@ -340,7 +340,7 @@ func (p Pnpm) mergeSealedArtifactOverrides(items []contracts.Artifact) error {
 	}
 	sealed := make(map[string]string, len(items))
 	for _, item := range items {
-		if item.Kind == "binary" || item.Tarball == "" {
+		if item.IsBinary() || item.Tarball == "" {
 			continue
 		}
 		if item.Package == "" || item.SHA256 == "" {
@@ -406,7 +406,7 @@ func (p Pnpm) specs(items []contracts.Artifact) ([]string, error) {
 	seen := make(map[string]struct{}, len(items))
 	result := make([]string, 0, len(items))
 	for _, item := range items {
-		if item.Kind == "binary" {
+		if item.IsBinary() {
 			continue
 		}
 		if item.Package == "" || item.Version == "" {
@@ -440,7 +440,7 @@ func packageNames(items []contracts.Artifact) ([]string, error) {
 	seen := make(map[string]struct{}, len(items))
 	result := make([]string, 0, len(items))
 	for _, item := range items {
-		if item.Kind == "binary" {
+		if item.IsBinary() {
 			continue
 		}
 		if item.Package == "" || item.Version == "" {
