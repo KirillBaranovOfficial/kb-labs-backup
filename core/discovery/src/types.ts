@@ -51,20 +51,10 @@ export interface MarketplaceLock {
   schema: 'kb.marketplace/3';
   plugins: Record<string, MarketplaceEntry>;
   /** Machine-only entries; adapters are never project scoped. */
-  adapters?: Record<string, MarketplaceEntry>;
+  adapters?: Record<string, MarketplaceAdapterEntry>;
 }
 
-export interface MarketplaceEntry {
-  /** Source kind for this pin. */
-  source: 'marketplace' | 'local' | 'platform';
-  /** Installed version (semver) */
-  version?: string;
-  /** SRI integrity hash (sha256-...) */
-  integrity?: string;
-  /** Runtime-only location for platform lock entries. Never written to project pins. */
-  resolvedPath?: string;
-  /** Project-relative link for explicitly linked local packages. */
-  link?: string;
+interface MarketplaceEntryMetadata {
   /**
    * Trust level: 'trusted' = signed by KB Labs Registry (sealed, no self-upgrade).
    * 'untrusted' = installed from npm/local/workspace. Default: 'untrusted'.
@@ -78,9 +68,46 @@ export interface MarketplaceEntry {
   provides?: EntityKind[];
   /** Whether the entity is active (default: true) */
   enabled?: boolean;
-  /** npm package name recorded separately from the canonical manifest ID. */
-  package?: string;
 }
+
+/** Plugin lock entry; package-manager identity is mandatory for installed pins. */
+export type MarketplaceEntry = MarketplaceEntryMetadata & (
+  | {
+      source: 'marketplace';
+      version: string;
+      integrity: string;
+      package: string;
+      resolvedPath?: string;
+      link?: never;
+    }
+  | {
+      source: 'platform';
+      version: string;
+      integrity: string;
+      package: string;
+      resolvedPath: string;
+      link?: never;
+    }
+  | {
+      source: 'local';
+      link: string;
+      package?: never;
+      version?: string;
+      integrity?: string;
+      resolvedPath?: never;
+    }
+);
+
+/** Machine-local adapter lock entry; adapters use package IDs as their keys. */
+export interface MarketplaceAdapterEntry {
+  source: 'platform';
+  version: string;
+  integrity: string;
+  resolvedPath: string;
+  enabled: boolean;
+}
+
+export type MarketplaceLockEntry = MarketplaceEntry | MarketplaceAdapterEntry;
 
 // ---------------------------------------------------------------------------
 // Discovery Result

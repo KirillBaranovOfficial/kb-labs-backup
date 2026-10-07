@@ -48,14 +48,20 @@ async function writeLock(
 ): Promise<void> {
   const lock = createEmptyLock();
   for (const { id, dir, source } of entries) {
-    lock.plugins[id] = createMarketplaceEntry({
+    const entryOptions = {
       version: '1.0.0',
       integrity: await computePackageIntegrity(dir),
-      resolvedPath: path.relative(root, dir),
-      source,
       primaryKind: 'plugin',
       provides: ['plugin', 'cli-command'],
-    });
+    };
+    if (source === 'local') {
+      lock.plugins[id] = createMarketplaceEntry({ ...entryOptions, source, resolvedPath: path.relative(root, dir) });
+    } else {
+      const packageName = JSON.parse(await fs.readFile(path.join(dir, 'package.json'), 'utf8')).name as string;
+      lock.plugins[id] = source === 'platform'
+        ? createMarketplaceEntry({ ...entryOptions, source, package: packageName, resolvedPath: path.relative(root, dir) })
+        : createMarketplaceEntry({ ...entryOptions, source, package: packageName });
+    }
   }
   await writeMarketplaceLock(root, lock);
 }

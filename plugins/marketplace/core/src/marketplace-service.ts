@@ -15,7 +15,7 @@ import * as crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import { glob } from 'glob';
-import type { EntityKind, MarketplaceEntry, MarketplaceLock } from '@kb-labs/core-discovery';
+import type { EntityKind, MarketplaceLock, MarketplaceLockEntry } from '@kb-labs/core-discovery';
 import {
   readMarketplaceLock,
   writeMarketplaceLock,
@@ -203,20 +203,24 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       const trust: 'trusted' | 'untrusted' = resolved.signature ? 'trusted' : 'untrusted';
 
       // Write to marketplace.lock
-      const entry = createMarketplaceEntry({
+      const entryOptions = {
         version: result.version,
         integrity: result.integrity,
-        resolvedPath: usesExtensionStore
-          ? `store:${encodeURIComponent(result.id)}@${encodeURIComponent(result.version)}`
-          : relativeToRoot(scopeRoot, result.packageRoot),
-        source: usesExtensionStore ? resolved.source
-          : ctx.scope === 'platform' && resolved.source === 'marketplace' ? 'platform' : resolved.source,
         primaryKind,
         provides,
         trust,
         signature: resolved.signature,
-        package: result.id,
-      });
+      };
+      const packagePath = usesExtensionStore
+          ? `store:${encodeURIComponent(result.id)}@${encodeURIComponent(result.version)}`
+          : relativeToRoot(scopeRoot, result.packageRoot);
+      const entrySource = usesExtensionStore ? resolved.source
+        : ctx.scope === 'platform' && resolved.source === 'marketplace' ? 'platform' : resolved.source;
+      const entry = entrySource === 'platform'
+        ? createMarketplaceEntry({ ...entryOptions, source: 'platform', package: result.id, resolvedPath: packagePath })
+        : entrySource === 'marketplace'
+          ? createMarketplaceEntry({ ...entryOptions, source: 'marketplace', package: result.id, resolvedPath: packagePath })
+          : createMarketplaceEntry({ ...entryOptions, source: 'local', resolvedPath: packagePath });
 
       await addToMarketplaceLock(scopeRoot, canonicalId, entry);
 
@@ -276,7 +280,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         await strategy.beforeUninstall(id, this, ctx);
       }
 
-      const packageName = entry.source === 'local' ? undefined : entry.package!;
+      const packageName = entry.source === 'local' ? undefined : ('package' in entry ? entry.package : id);
 
       await removeFromMarketplaceLock(scopeRoot, id);
       await removeCacheEntry(scopeRoot, id);
@@ -486,7 +490,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     return matching;
   }
 
-  async getEntry(ctx: ScopeContext, packageId: string): Promise<MarketplaceEntry | null> {
+  async getEntry(ctx: ScopeContext, packageId: string): Promise<MarketplaceLockEntry | null> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     const diag = new DiagnosticCollector();
     const lock = await readMarketplaceLock(scopeRoot, diag);
@@ -609,19 +613,28 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       return;
     }
 
-    const entry = createMarketplaceEntry({
-      version: pkgVersion,
-      integrity,
-      resolvedPath: relativeToRoot(scopeRoot, pkgDir),
-      source: primaryKind === 'adapter' ? 'platform' : 'local',
-      primaryKind,
-      provides,
-    });
-
-    if (!autoEnable) { entry.enabled = false; }
-
-    const target = primaryKind === 'adapter' ? (lock.adapters ??= {}) : lock.plugins;
-    target[resolvedId] = entry;
+    const resolvedPath = relativeToRoot(scopeRoot, pkgDir);
+    if (primaryKind === 'adapter') {
+      const adapters = (lock.adapters ??= {});
+      adapters[resolvedId] = {
+        source: 'platform',
+        version: pkgVersion,
+        integrity,
+        resolvedPath,
+        enabled: autoEnable ?? true,
+      };
+    } else {
+      const entry = createMarketplaceEntry({
+        version: pkgVersion,
+        integrity,
+        resolvedPath,
+        source: 'local',
+        primaryKind,
+        provides,
+      });
+      if (!autoEnable) { entry.enabled = false; }
+      lock.plugins[resolvedId] = entry;
+    }
     existingIds.add(resolvedId);
     added.push({ id: resolvedId, primaryKind, version: pkgVersion });
   }
@@ -681,7 +694,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         }
       }
 
-      if (!entry.signature) {
+      if (!('signature' in entry) || !entry.signature) {
         issues.push({
           severity: 'info',
           packageId: id,
@@ -726,12 +739,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     };
   }
 
-  private async resolveEntryPath(scopeRoot: string, id: string, entry: MarketplaceEntry): Promise<string | undefined> {
+  private async resolveEntryPath(scopeRoot: string, id: string, entry: MarketplaceLockEntry): Promise<string | undefined> {
     if (entry.source === 'marketplace' && this.extensionStore && entry.version) {
-      return (await this.extensionStore.lookup({ name: entry.package!, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
+      return (await this.extensionStore.lookup({ name: entry.package, version: entry.version, expectedIntegrity: entry.integrity }))?.packageRoot;
     }
-    if (entry.link) {return path.resolve(scopeRoot, entry.link);}
-    if (entry.resolvedPath) {return path.resolve(scopeRoot, entry.resolvedPath);}
+    if ('link' in entry && entry.link) {return path.resolve(scopeRoot, entry.link);}
+    if ('resolvedPath' in entry && entry.resolvedPath) {return path.resolve(scopeRoot, entry.resolvedPath);}
     return undefined;
   }
 

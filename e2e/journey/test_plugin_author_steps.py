@@ -43,8 +43,8 @@ elif args[:3] == ["marketplace", "link", "--link"]:
         raise SystemExit(1)
     if not (root / args[3] / "package.json").is_file():
         raise SystemExit("entry package is missing")
-    lock_path.write_text(json.dumps({"plugins": {"demo": {
-        "source": "local", "resolvedPath": args[3]
+    lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {"demo": {
+        "source": "local", "link": args[3], "enabled": True
     }}}))
 elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
     plugins = json.loads(lock_path.read_text()).get("plugins", {}) if lock_path.exists() else {}
@@ -52,7 +52,7 @@ elif args[:4] == ["marketplace", "plugins", "list", "--json"]:
                for key, value in plugins.items()]
     print(json.dumps({"ok": True, "data": {"entries": entries, "total": len(entries)}}))
 elif args[:4] == ["marketplace", "plugins", "unlink", "demo"]:
-    lock_path.write_text(json.dumps({"plugins": {}}))
+    lock_path.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {}}))
 elif args[:2] == ["marketplace", "install"]:
     print(json.dumps({"ok": True, "data": {"scope": "project"}}))
 elif args[:2] == ["marketplace", "uninstall"]:
@@ -196,7 +196,13 @@ class PluginAuthorJourneyTests(unittest.TestCase):
     def test_commit_and_review_case_steps_are_claimed_from_fake_cli_responses(self):
         (self.project / ".kb/marketplace.lock").write_text(json.dumps({
             "schema": "kb.marketplace/3",
-            "plugins": {"@kb-labs/commit-entry": {"enabled": True, "version": "2.120.1"}},
+            "plugins": {"@kb-labs/commit": {
+                "enabled": True,
+                "version": "2.120.1",
+                "integrity": "sha256-fixture",
+                "source": "marketplace",
+                "package": "@kb-labs/commit-entry",
+            }},
         }))
         journey = Journey("local", "commit-case-fixture")
         run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",

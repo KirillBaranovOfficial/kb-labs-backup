@@ -934,14 +934,14 @@ def main() -> int:
                 graph.flow("marketplace flow", "marketplace", "marketplace",
                            lambda: run_marketplace_steps(journey, project_root, registry, env),
                            cases=["S-041.7"], record_empty_success=False)
-            project_lock = Path(project_root) / ".kb" / "plugins.lock.json"
+            project_lock = Path(project_root) / ".kb" / "marketplace.lock"
             def marketplace_probe() -> str | None:
                 try:
                     lock = json.loads(project_lock.read_text())
                 except (OSError, json.JSONDecodeError) as error:
                     return f"project plugin lock is missing or unreadable: {error}"
-                entry = lock.get("plugins", {}).get("@kb-labs/commit-entry")
-                return None if isinstance(entry, dict) and entry.get("version") else "Commit fixture is absent from the project plugin lock"
+                entry = lock.get("plugins", {}).get("@kb-labs/commit")
+                return None if isinstance(entry, dict) and entry.get("package") == "@kb-labs/commit-entry" and entry.get("version") else "Commit fixture is absent from the project marketplace lock"
             graph.probe_state("marketplace-available", "marketplace", "marketplace install",
                               marketplace_probe)
             graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
