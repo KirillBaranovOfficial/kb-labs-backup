@@ -275,7 +275,7 @@ for (const item of stage) {
         : manifest?.schema === 'kb.adapter/1'
           ? manifest.id
         : manifest?.schema === 'kb.plugin/3'
-          ? pluginIdFor(manifest, item.name)
+          ? pluginIdFor(manifest)
         : idFor(item.name);
   normalizedIdByPackage.set(item.name, normalizedID);
   const generatedRequirements = item.name === platformPackage
@@ -579,16 +579,10 @@ function idFor(packageName) {
   return packageName.split('/').pop().replace(/-entry$/, '');
 }
 
-// A plugin's kb.plugin/3 manifest is the source of truth for its catalog ID
-// (e.g. "@kb-labs/release" -> "release"). Stripping the "-entry" suffix off
-// the npm package name (idFor) is only a fallback for manifests that don't
-// declare one — package names don't reliably follow the manifest's id (e.g.
-// @kb-labs/release-manager-cli's manifest declares id "@kb-labs/release").
-function pluginIdFor(manifest, packageName) {
-  if (typeof manifest.id === 'string' && manifest.id.startsWith('@')) {
-    return manifest.id.split('/').pop();
-  }
-  return idFor(packageName);
+// A plugin's kb.plugin/3 manifest is the source of truth for its ID, including
+// its scope. Package names and release-index short names are not plugin IDs.
+function pluginIdFor(manifest) {
+  return manifest.id;
 }
 
 // Convert an adapter interface name (e.g. "IServiceTransport", "IKVStore",

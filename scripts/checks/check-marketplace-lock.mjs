@@ -84,14 +84,26 @@ function validate() {
       continue;
     }
 
+    if (['marketplace', 'platform'].includes(entry?.source) &&
+        (typeof entry.package !== 'string' || !VALID_ID.test(entry.package))) {
+      issues.push({
+        check: CHECK_NAME,
+        severity: 'error',
+        message: `.kb/marketplace.lock: "${id}" must record its npm package name.`,
+        file: '.kb/marketplace.lock',
+      });
+      continue;
+    }
+
     if (entry?.source === 'marketplace' && (
       typeof entry.version !== 'string' || typeof entry.integrity !== 'string' ||
-      typeof entry.enabled !== 'boolean' || 'resolvedPath' in entry || 'installedAt' in entry
+      typeof entry.enabled !== 'boolean' || typeof entry.package !== 'string' || !VALID_ID.test(entry.package) ||
+      'resolvedPath' in entry || 'installedAt' in entry
     )) {
       issues.push({
         check: CHECK_NAME,
         severity: 'error',
-        message: `.kb/marketplace.lock: "${id}" is not a machine-independent v3 pin (expected version, integrity, enabled, source; no resolvedPath or installedAt).`,
+        message: `.kb/marketplace.lock: "${id}" is not a machine-independent v3 pin (expected version, integrity, package, enabled, source; no resolvedPath or installedAt).`,
         file: '.kb/marketplace.lock',
       });
       continue;
@@ -115,7 +127,7 @@ function validate() {
       continue;
     }
     const allowed = entry.source === 'marketplace'
-      ? ['version', 'integrity', 'enabled', 'source']
+      ? ['version', 'integrity', 'package', 'enabled', 'source']
       : ['link', 'enabled', 'source'];
     if (Object.keys(entry ?? {}).some((key) => !allowed.includes(key))) {
       issues.push({ check: CHECK_NAME, severity: 'error', message: `.kb/marketplace.lock: "${id}" contains fields outside the project v3 lock contract.`, file: '.kb/marketplace.lock' });

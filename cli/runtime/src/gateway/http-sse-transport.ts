@@ -16,6 +16,7 @@ import type {
   GatewayCredentials,
   ICredentialsManager,
 } from './types.js';
+import { authRequiredForGateway, credentialMatchesGatewayOrigin } from './auth-origin.js';
 
 export class HttpSseGatewayTransport implements IGatewayClient {
   private readonly config: GatewayClientConfig;
@@ -140,6 +141,10 @@ export class HttpSseGatewayTransport implements IGatewayClient {
       throw new Error(
         'Gateway credentials not found. Run "kb auth login" to authenticate.',
       );
+    }
+
+    if (!credentialMatchesGatewayOrigin(creds.gatewayUrl, this.config.gatewayUrl)) {
+      throw authRequiredForGateway(this.config.gatewayUrl);
     }
 
     if (this.credentials.isExpired(creds) && this.config.autoRefresh !== false) {

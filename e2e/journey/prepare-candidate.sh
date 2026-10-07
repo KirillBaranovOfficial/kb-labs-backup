@@ -26,6 +26,8 @@ if [[ "${KB_JOURNEY_PACKAGES_READY:-0}" != "1" ]]; then
   "$ROOT/e2e/scripts/pack-all.sh" "$PACKAGES"
 fi
 
+node "$ROOT/e2e/scripts/validate-package-outputs.mjs" "$PACKAGES"
+
 (
   cd "$ROOT/tools/kb-create"
   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.commit=$COMMIT" \

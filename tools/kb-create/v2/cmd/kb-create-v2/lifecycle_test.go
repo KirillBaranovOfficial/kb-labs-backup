@@ -672,6 +672,10 @@ func TestDoctorRecoverUsesExplicitPlatformRootWithoutARegisteredProject(t *testi
 	if code != 0 || !strings.Contains(raw, "recovered") {
 		t.Fatalf("recover with explicit platform root and no registered project: %d %s", code, raw)
 	}
+	recoveryPayload, err := operationResultPayload("doctor", false, true, []byte(raw))
+	if err != nil || recoveryPayload["operation"] != "recover" || recoveryPayload["recovered"] != true {
+		t.Fatalf("recovery did not return a valid recovery result: %#v, %v", recoveryPayload, err)
+	}
 	if errorCode(payload) != "" {
 		t.Fatalf("recovery returned an error: %v", payload)
 	}

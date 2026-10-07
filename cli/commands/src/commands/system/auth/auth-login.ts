@@ -49,13 +49,13 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
     '~/.kb/session.json. Both auto-refresh on expiry.',
   category: 'auth',
   examples: [
-    'kb auth login --gateway-url http://localhost:4000 --client-id clt_xxx --client-secret cs_xxx',
-    'kb auth login --gateway-url http://localhost:4000 --email admin@example.com',
-    'kb auth login --gateway-url http://localhost:4000 --email admin@example.com --password-stdin < password.txt',
+    'kb auth login --gateway-url <gateway-url> --client-id clt_xxx --client-secret cs_xxx',
+    'kb auth login --gateway-url <gateway-url> --email admin@example.com',
+    'kb auth login --gateway-url <gateway-url> --email admin@example.com --password-stdin < password.txt',
     'kb auth login --gateway-url https://gateway.example.com --client-id clt_xxx --client-secret cs_xxx --json',
   ],
   flags: {
-    'gateway-url': { type: 'string', description: 'Gateway server URL (e.g. http://localhost:4000)' },
+    'gateway-url': { type: 'string', description: 'Gateway server URL' },
     'client-id': { type: 'string', description: 'Client ID from service account registration' },
     'client-secret': { type: 'string', description: 'Client Secret from service account registration' },
     email: { type: 'string', description: 'Email for human (admin) login' },
@@ -75,6 +75,8 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
       throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
     }
 
+    const passwordStdinCommand = `cat password.txt | kb auth login --gateway-url ${shellQuote(gatewayUrl)} --email ${shellQuote(email ?? '')} --password-stdin`;
+
     if (flags['password-stdin'] && flags.password) {
       throwSystemCommandError('Choose either --password or --password-stdin.', 'Run `kb auth login --help` and retry with one password source.');
     }
@@ -83,20 +85,13 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
     if (!password && flags['password-stdin']) {
       password = await readPasswordFromStdin();
     } else if (!password && email) {
-      try {
-        password = await promptForPassword();
-      } catch {
-        throwSystemCommandError(
-          'A password prompt requires an interactive terminal.',
-          'Run `kb auth login --gateway-url <url> --email <email> --password-stdin < password.txt` to provide the password through stdin.',
-        );
-      }
+      password = await promptForPassword(passwordStdinCommand);
     }
 
     if (email && !password) {
       throwSystemCommandError(
         'No password was provided for the human login.',
-        'Run `kb auth login --gateway-url <url> --email <email> --password-stdin < password.txt` with a password file on stdin.',
+        passwordStdinCommand,
       );
     }
 
@@ -173,6 +168,10 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
     return {  gatewayUrl, expiresIn: tokenData.expiresIn, ...(handle ? { handle } : {}) };
   },
 });
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
 
 /** Human (email/password) login branch — see the module docblock. */
 async function humanLogin(

@@ -50,7 +50,8 @@ export class CredentialsManager implements ICredentialsManager {
   }
 
   async refresh(credentials: GatewayCredentials): Promise<GatewayCredentials> {
-    const url = `${credentials.gatewayUrl}/auth/refresh`;
+    const gatewayUrl = credentials.gatewayUrl;
+    const url = `${gatewayUrl}/auth/refresh`;
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -59,7 +60,7 @@ export class CredentialsManager implements ICredentialsManager {
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new GatewayAuthResponseError('Token refresh', response.status, body, credentials.gatewayUrl);
+      throw new GatewayAuthResponseError('Token refresh', response.status, body, gatewayUrl);
     }
 
     const data = await readGatewaySuccessData<{
@@ -69,7 +70,7 @@ export class CredentialsManager implements ICredentialsManager {
     }>(response);
 
     const updated: GatewayCredentials = {
-      gatewayUrl: credentials.gatewayUrl,
+      gatewayUrl,
       accessToken: data.accessToken,
       refreshToken: data.refreshToken,
       expiresAt: Date.now() + data.expiresIn * 1000,

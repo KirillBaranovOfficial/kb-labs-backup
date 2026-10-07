@@ -32,7 +32,14 @@ class ProjectIdentityStepsTest(unittest.TestCase):
             platform_root = Path(home) / "platform"
             (platform_root / ".kb").mkdir(parents=True)
             (platform_root / ".kb" / "marketplace.lock").write_text(json.dumps({
-                "plugins": {"@kb-labs/workflow": {"version": "2.120.1"}},
+                "schema": "kb.marketplace/3",
+                "plugins": {"@kb-labs/workflow": {
+                    "version": "2.120.1",
+                    "integrity": "sha256-fixture",
+                    "source": "marketplace",
+                    "enabled": True,
+                    "package": "@kb-labs/workflow-entry",
+                }},
             }))
             env = {"HOME": home, "KB_HOME": str(Path(home) / ".kb"), "KB_PLATFORM_ROOT": str(platform_root)}
             Path(env["KB_HOME"]).mkdir()
@@ -62,7 +69,13 @@ class ProjectIdentityStepsTest(unittest.TestCase):
                         "@kb-labs/commit-entry": "@kb-labs/commit",
                         "@kb-labs/mind-entry": "@kb-labs/mind",
                     }.get(package, package)
-                    locks.setdefault(cwd, {})[manifest_id] = {"version": "2.120.1"}
+                    locks.setdefault(cwd, {})[manifest_id] = {
+                        "version": "2.120.1",
+                        "integrity": "sha256-fixture",
+                        "source": "marketplace",
+                        "enabled": True,
+                        "package": package,
+                    }
                     lock = cwd / ".kb" / "marketplace.lock"
                     lock.parent.mkdir(parents=True, exist_ok=True)
                     lock.write_text(json.dumps({"plugins": locks[cwd]}))

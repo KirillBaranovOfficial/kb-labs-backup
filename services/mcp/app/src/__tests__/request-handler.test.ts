@@ -263,9 +263,13 @@ describe('executeToolCall', () => {
       tenantId: 'anonymous',
       resolvePlatform,
       logger: requestLogger,
+      gatewayUrl: 'https://gateway.example.test',
     });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
+    expect(result.structuredContent).toMatchObject({ ok: false, error: {
+      code: 'KB_AUTH_REQUIRED',
+      hint: 'Run "kb auth login --gateway-url https://gateway.example.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+    } });
     expect(executeCommandV3).not.toHaveBeenCalled();
   });
 
@@ -339,16 +343,20 @@ describe('executeToolCall', () => {
     );
   });
 
-  // case: S-041.7, S-041.9
+  // case: S-041.11
   it('returns catalog auth envelopes for unauthenticated and forbidden tool calls', async () => {
     const unauthenticated = await executeToolCall({
       name: 'plugin__command', args: {}, visibleTools: [], permits: null, tenantId: 'tenant',
       resolvePlatform,
       logger: requestLogger,
+      gatewayUrl: 'https://gateway.example.test',
     });
     expect(unauthenticated).toMatchObject({
       isError: true,
-      structuredContent: { ok: false, error: { code: 'KB_AUTH_REQUIRED', hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".' } },
+      structuredContent: { ok: false, error: {
+        code: 'KB_AUTH_REQUIRED', message: 'Authentication is required.',
+        hint: 'Run "kb auth login --gateway-url https://gateway.example.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+      } },
     });
 
     const forbidden = await executeToolCall({

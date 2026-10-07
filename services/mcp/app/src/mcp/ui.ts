@@ -3,12 +3,11 @@
  * buffer instead of writing to a TTY. Used to run plugin commands headlessly and
  * return their textual output as an MCP tool result.
  *
- * Output methods append to the buffer. Interactive methods return safe,
- * non-blocking defaults (mirroring the canonical noopUI) because an MCP tool call
- * is non-interactive — there is no human to answer a prompt.
+ * Output methods append to the buffer. Interactive methods fail because an MCP
+ * tool call has no prompt responder; required values belong in tool arguments.
  */
 
-import { noopUI } from '@kb-labs/plugin-contracts';
+import { InteractiveInputRequiredError, noopUI } from '@kb-labs/plugin-contracts';
 import type { UIFacade } from '@kb-labs/plugin-contracts';
 
 export interface BufferedUI {
@@ -37,6 +36,12 @@ export function createBufferedUI(pushFn?: (text: string) => void): BufferedUI {
       lines.push(text);
     }
   };
+
+  const unavailablePrompt = (message: string): InteractiveInputRequiredError =>
+    new InteractiveInputRequiredError(
+      'Provide the value as an explicit tool argument, then retry the tool call.',
+      `The prompt "${message}" cannot be answered during an MCP tool call.`,
+    );
 
   const ui: UIFacade = {
     colors: noopUI.colors,
@@ -69,23 +74,10 @@ export function createBufferedUI(pushFn?: (text: string) => void): BufferedUI {
     },
     chain: (items) => items.forEach((item) => push(`• ${item.title}`)),
     log: (entry) => push(`[${entry.level}] ${entry.message}`),
-    // Non-interactive defaults — same semantics as noopUI.
-    confirm: async (message, options) => {
-      push(`[confirm] ${message}`);
-      return options?.defaultValue ?? true;
-    },
-    prompt: async (message, options) => {
-      push(`[prompt] ${message}`);
-      return options?.default ?? '';
-    },
-    select: async (message, choices) => {
-      push(`[select] ${message}`);
-      return choices[0]?.value as never;
-    },
-    multiSelect: async (message, choices) => {
-      push(`[multiSelect] ${message}`);
-      return choices.filter((c) => c.checked).map((c) => c.value) as never;
-    },
+    confirm: async (message) => { throw unavailablePrompt(message); },
+    prompt: async (message) => { throw unavailablePrompt(message); },
+    select: async (message) => { throw unavailablePrompt(message); },
+    multiSelect: async (message) => { throw unavailablePrompt(message); },
   };
 
   return { ui, getOutput: () => lines.join('\n') };

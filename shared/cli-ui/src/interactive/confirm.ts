@@ -7,7 +7,7 @@
 
 import * as readline from 'node:readline';
 import { safeColors } from '../colors.js';
-import { isInteractive } from './terminal.js';
+import { requireInteractiveInput } from './terminal.js';
 
 export interface ConfirmOptions {
   message: string;
@@ -17,9 +17,7 @@ export interface ConfirmOptions {
 export async function confirm(options: ConfirmOptions): Promise<boolean> {
   const { message, defaultValue = false } = options;
 
-  if (!isInteractive()) {
-    return defaultValue;
-  }
+  requireInteractiveInput('Run this command in a terminal to answer the confirmation prompt.');
 
   const hint = defaultValue ? '(Y/n)' : '(y/N)';
   process.stdout.write(`${safeColors.primary('◆')}  ${safeColors.bold(message)} ${safeColors.muted(hint)} `);

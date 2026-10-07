@@ -6,6 +6,28 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ## 2026-10-07
 
+### Credentials are kept per Gateway origin; the marketplace is a KB Labs Gateway
+
+The official marketplace will be a hosted KB Labs Gateway in secured mode, using
+the platform's own accounts, sessions, and API tokens. The CLI therefore keeps
+saved credentials keyed by Gateway origin, uses each one only at the origin that
+issued it, and lets a user stay signed in to several Gateways at once. Public
+plugin installs need no credential. A team's private or paid plugins are fetched
+by the host with the installation's marketplace credential, so members only
+authenticate to their own platform. Author actions use a personal author
+credential scoped to the author's plugin scopes; CI uses short-lived, scope-limited
+publish credentials. Cases: S-216, S-217 (planned).
+
+### Plugin lock keys are the manifest IDs
+
+The canonical plugin identity is `id` from the package's `kb.plugin/3` manifest,
+including its scope. Every platform and project marketplace lock uses that exact
+ID as its plugin key; package names and shortened release-index IDs are not
+alternate identities. The release-index sealer rejects a plugin artifact whose
+ID differs from its manifest ID before producing a sealed index. CLI JSON
+stdout contains one result envelope, while discovery diagnostics stay on
+stderr. Cases: S-010.3, S-179.14, S-203.1.
+
 ### Offline plans show artifact resolution per artifact
 
 `kb-create plan --offline` exposes the actual source selected for each resolved
@@ -350,7 +372,26 @@ S-201.1–S-201.2, S-203.7–S-203.8.
 `kb auth login` accepts `--password-stdin` for automation and prompts securely
 when a human omits `--password`. Auth catalog hints show the login command
 without a password argument. There is no password environment-variable
-fallback. Cases: S-007.4, S-010.6, S-031.4, S-041.6, S-041.7.
+fallback. When no TTY is available, a missing required password is invalid
+usage; the CLI exits 2 and gives the exact `--password-stdin` command. Cases:
+S-007.4, S-010.6, S-031.4, S-041.6, S-041.7.
+
+### 2026-10-07: CLI Gateway routing follows the installed platform root
+
+The CLI resolves a local installed Gateway from the active platform root's
+verified URL in `.kb/v2/receipt.json`. Only `KB_GATEWAY_URL` explicitly
+overrides an installed receipt; `GATEWAY_PORT`, `GATEWAY_HOST`, and
+`KB_NET_OFFSET` select the workspace listener only when there is no installed
+receipt. The Gateway's public `/health/identity` response exposes only the
+non-secret installation ID. A mismatch reports the local platform root and
+both installation IDs, never a remote filesystem path. Client roots continue
+to use their saved session Gateway URL.
+
+Saved user sessions and machine credentials may be used only with the Gateway
+origin that issued them. If the selected Gateway origin differs, CLI API
+calls do not send or refresh those credentials and return `KB_AUTH_REQUIRED`
+with a login hint for the selected Gateway.
+Cases: PC-001.12, S-054.12, S-203.22–S-203.23.
 
 ## 2026-10-06
 
@@ -451,3 +492,13 @@ terminal cancellation remains an operation cancellation and exits 1. A shared
 confirmation boundary applies this rule to uninstall, rollback, and account
 recovery before any destructive action runs.
 Cases: S-050.3–S-050.4, S-024.4, S-203.12.
+
+### Required interactive input never uses a silent default
+
+When a CLI or plugin asks for required input and its execution context has no
+interactive responder, it fails with `KB_RUNTIME_INPUT_INVALID` instead of
+accepting a prompt default. CLI prompts without a TTY exit 2 and give the exact
+command for supplying input through a supported flag or stdin. Plugin prompts
+in workflow, Studio, REST, MCP, and worker execution fail at the prompt
+boundary; callers must pass the value as explicit workflow or request input.
+Cases: S-041.6, S-215.1.

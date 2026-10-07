@@ -1,5 +1,6 @@
 import {
   ServicePortConfigError,
+  mapErrorEnvelopeToExitCode,
   toErrorEnvelope,
 } from '@kb-labs/core-platform';
 import {
@@ -33,14 +34,14 @@ export function handleExecutionError(error: unknown, presenter: Presenter): numb
     } else if (typeof presenter.error === 'function') {
       presenter.error(`${envelope.message} [${envelope.code}]\nHint: ${envelope.hint}`);
     }
-    return 1;
+    return mapErrorEnvelopeToExitCode(envelope.code);
   }
 
-  const message = error instanceof Error ? error.message : String(error);
+  const envelope = toErrorEnvelope(error);
   if (presenter.isJSON && typeof presenter.json === 'function') {
-    presenter.json({ ok: false, error: { message } });
+    presenter.json({ ok: false, error: envelope });
   } else if (typeof presenter.error === 'function') {
-    presenter.error(message);
+    presenter.error(`${envelope.message} [${envelope.code}]${envelope.hint ? `\nHint: ${envelope.hint}` : ''}`);
   }
-  return 1;
+  return mapErrorEnvelopeToExitCode(envelope.code);
 }

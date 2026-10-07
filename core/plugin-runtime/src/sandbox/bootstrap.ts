@@ -7,7 +7,7 @@
 
 import type { ParentMessage, ChildMessage, ExecuteMessage, LogMessage } from './ipc-protocol.js';
 import type { UIFacade } from '@kb-labs/plugin-contracts';
-import { PluginError, wrapError, noopUI } from '@kb-labs/plugin-contracts';
+import { PluginError, wrapError } from '@kb-labs/plugin-contracts';
 import { createBaseStdoutUI, NOOP_PROMPTS, setJsonMode } from '@kb-labs/shared-cli-ui';
 import { createPluginContextV3 } from '../context/index.js';
 import { executeCleanup, type EventEmitterFn } from '../api/index.js';
@@ -67,15 +67,7 @@ process.on('message', async (msg: ParentMessage) => {
   if (jsonMode) {setJsonMode(true);}
 
   // Create stdout UI (plain text output)
-  let ui: UIFacade = createBaseStdoutUI(NOOP_PROMPTS, () => {});
-  if (jsonMode) {
-    ui = {
-      ...noopUI,
-      colors: ui.colors,
-      symbols: ui.symbols,
-      json: ui.json,
-    };
-  }
+  const ui: UIFacade = createBaseStdoutUI(NOOP_PROMPTS, () => {});
 
   // Create eventEmitter that sends log messages to parent via IPC
   const eventEmitter: EventEmitterFn = async (name, payload) => {

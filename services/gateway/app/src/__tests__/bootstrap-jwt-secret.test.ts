@@ -18,6 +18,7 @@ vi.mock("@kb-labs/core-platform", () => ({
     defaultHost: "0.0.0.0",
   },
   logDiagnosticEvent: vi.fn(),
+  readInstalledPlatformIdentity: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@kb-labs/core-runtime", () => ({

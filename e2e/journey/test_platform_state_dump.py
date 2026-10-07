@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from platform_state_dump import (MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDumpOnce,
-                                 _write_auth_state_probe, archive_service_logs, dump_platform_state)
+                                 _write_auth_state_probe, archive_service_logs, dump_platform_state,
+                                 failure_dump_environment)
 
 
 class PlatformStateDumpTests(unittest.TestCase):
@@ -128,6 +129,10 @@ class PlatformStateDumpTests(unittest.TestCase):
                 "\n".join(f"probe-line-{number}" for number in range(500))
                 + "\nGATEWAY_INTERNAL_SECRET=probe-secret\n"
             )
+            (probe_logs / "launcher.log").write_text(
+                '{"event":"host.start.failed","cause":"readiness check failed",'
+                '"details":{"stderrTail":"API_TOKEN=probe-launcher-secret"}}\n'
+            )
             platform = root / "platform"
             reports = root / "reports"
             binaries = root / "bin"
@@ -229,10 +234,35 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertIn("probe-line-499", probe_tail)
             self.assertNotIn("probe-line-99\n", probe_tail)
             self.assertNotIn("probe-secret", probe_tail)
+            probe_launcher_tail = (destination / "launcher-logs/probe/launcher.log").read_text()
+            self.assertIn("host.start.failed", probe_launcher_tail)
+            self.assertNotIn("probe-launcher-secret", probe_launcher_tail)
             self.assertIn("First failure:", (destination / "index.md").read_text())
             self.assertIn("Journey git revision: abc123def", (destination / "index.md").read_text())
             size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
             self.assertLessEqual(size, MAX_DUMP_BYTES)
+
+    def test_runner_failure_dump_uses_main_launcher_home_after_fixture_commands(self):
+        with tempfile.TemporaryDirectory(prefix="journey-main-home-dump-") as temporary:
+            root = Path(temporary)
+            main_home, fixture_home = root / "main-home", root / "fixture-home"
+            launcher_log = main_home / ".kb/launcher/probe/launcher.log"
+            launcher_log.parent.mkdir(parents=True)
+            launcher_log.write_text('{"event":"host.start.failed","cause":"probe failed"}\n')
+            fixture_home.mkdir()
+            namespace = {
+                "ACTIVE_MAIN_ENV": None,
+                "LAST_COMMAND_ENV": {"HOME": str(fixture_home)},
+            }
+            command_env = failure_dump_environment(
+                namespace["ACTIVE_MAIN_ENV"], namespace["LAST_COMMAND_ENV"],
+                {"HOME": str(main_home), "KB_JOURNEY_HOME_LABEL": "main"},
+            )
+            destination = dump_platform_state(
+                root / "platform", root / "reports", mode="local", front="agent",
+                scenario="explore", variant="default", first_failure="runner failed", env=command_env,
+            )
+            self.assertTrue((destination / "launcher-logs/probe/launcher.log").is_file())
 
     def test_dump_includes_project_workflow_records_and_daemon_logs(self):
         with tempfile.TemporaryDirectory(prefix="journey-workflow-dump-test-") as temporary:

@@ -5,8 +5,10 @@
  * After revocation, incoming deliveries with the old secret are rejected immediately.
  */
 
-import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { CredentialsManager } from '@kb-labs/cli-runtime/gateway';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { gatewayApiFetch, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { getContextCwd } from '@kb-labs/shared-cli-ui';
+import { ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 type RevokeFlags = {
   plugin: { type: 'string'; description: string };
@@ -51,30 +53,23 @@ export const webhookRevoke = defineSystemCommand<RevokeFlags, RevokeResult>({
       throwSystemCommandError(msg, "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry.");
     }
 
-    const credentialsManager = new CredentialsManager();
-    const credentials = await credentialsManager.load();
-
-    if (!credentials) {
-      const msg = 'Not authenticated. Run "kb auth login" first.';
-      throwSystemCommandError(msg, "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry.");
-    }
-
     // Build path: encode each segment to handle scoped package names (@org/pkg)
     const segments = [
       encodeURIComponent(pluginId),
       encodeURIComponent(event),
       ...(flags.instance ? [encodeURIComponent(flags.instance)] : []),
     ].join('/');
-    const url = `${credentials.gatewayUrl}/api/v1/webhooks/${segments}`;
+    const target = await resolveActiveGateway({ cwd: getContextCwd(ctx), env: process.env });
+    const url = `${target.gatewayUrl}/api/v1/webhooks/${segments}`;
 
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await gatewayApiFetch(url, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${credentials.accessToken}` },
-      });
+      }, target, 'machine');
     } catch (err) {
-      const msg = `Cannot reach Gateway at ${credentials.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
+      if (err instanceof ErrorEnvelopeError) { throwSystemCataloguedError(err.envelope); }
+      const msg = `Cannot reach Gateway at ${target.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
       throwSystemCommandError(msg, "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry.");
     }
 

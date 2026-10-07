@@ -15,12 +15,12 @@ import (
 
 func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	root := t.TempDir()
-	writePackageJSON(t, root, "@kb-labs/plugin-commit", `{"name":"@kb-labs/plugin-commit"}`)
+	writePackageJSON(t, root, "@kb-labs/commit-entry", `{"name":"@kb-labs/commit-entry"}`)
 	writePackageJSON(t, root, "@kb-labs/adapters-sqlite", `{"name":"@kb-labs/adapters-sqlite"}`)
 	artifacts := []contracts.Artifact{
 		{ID: "@kb-labs/platform-core", Kind: "platform", Package: "@kb-labs/platform-core", Version: "1.0.0"},
 		{ID: "@kb-labs/binary-kbdev", Kind: "binary", Version: "1.0.0"},
-		{ID: "@kb-labs/plugin-commit", Kind: "plugin", Package: "@kb-labs/plugin-commit", Version: "1.2.3", SHA256: strings.Repeat("a", 64)},
+		{ID: "@kb-labs/commit", Kind: "plugin", Package: "@kb-labs/commit-entry", Version: "1.2.3", SHA256: strings.Repeat("a", 64)},
 		{ID: "@kb-labs/adapters-sqlite", Kind: "adapter", Package: "@kb-labs/adapters-sqlite", Version: "4.5.6"},
 	}
 
@@ -35,12 +35,15 @@ func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	if len(lock.Plugins) != 1 || len(lock.Adapters) != 1 {
 		t.Fatalf("plugins/adapters = %d/%d, want 1/1 (non-discoverable kinds must be excluded): %+v", len(lock.Plugins), len(lock.Adapters), lock)
 	}
-	plugin, ok := lock.Plugins["@kb-labs/plugin-commit"]
+	plugin, ok := lock.Plugins["@kb-labs/commit"]
 	if !ok {
 		t.Fatal("plugin entry missing")
 	}
-	if plugin.ResolvedPath != "node_modules/@kb-labs/plugin-commit" {
+	if plugin.ResolvedPath != "node_modules/@kb-labs/commit-entry" {
 		t.Errorf("resolvedPath = %q", plugin.ResolvedPath)
+	}
+	if plugin.Package != "@kb-labs/commit-entry" {
+		t.Errorf("package = %q", plugin.Package)
 	}
 	if !plugin.Enabled {
 		t.Error("fresh entry should default to enabled")
@@ -50,6 +53,21 @@ func TestWriteLock_PluginsAndAdaptersOnly(t *testing.T) {
 	}
 	if adapter, ok := lock.Adapters["@kb-labs/adapters-sqlite"]; !ok || adapter.Source != "platform" {
 		t.Errorf("adapter missing from machine adapters map: %+v", lock.Adapters)
+	}
+}
+
+func TestReadLockRejectsPluginWithoutPackage(t *testing.T) {
+	root := t.TempDir()
+	lockPath := filepath.Join(root, ".kb", "marketplace.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"schema":"kb.marketplace/3","plugins":{"@kb-labs/commit":{"version":"1.0.0","integrity":"sha256-abc","resolvedPath":"node_modules/@kb-labs/commit-entry","source":"platform","enabled":true}}}`)
+	if err := os.WriteFile(lockPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readLock(root); err == nil || !strings.Contains(err.Error(), "require a package") {
+		t.Fatalf("readLock error = %v, want required package validation", err)
 	}
 }
 

@@ -73,6 +73,11 @@ vi.mock('@kb-labs/core-runtime', async (importOriginal) => ({
 }));
 vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => ({
   ...await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>(),
+  resolveActiveGateway: async () => ({ gatewayUrl: 'https://gateway.test' }),
+  gatewayApiFetch: async (input: string | URL) => {
+    const data = String(input).includes('/api/v1/webhooks') ? { webhooks: [] } : { tokens: [] };
+    return new Response(JSON.stringify({ ok: true, data }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  },
   CredentialsManager: class {
     load() { return mocks.loadCredentials(); }
     isExpired() { return false; }

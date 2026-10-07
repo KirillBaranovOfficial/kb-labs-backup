@@ -1,35 +1,20 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { createServer, type Server } from 'node:http';
+import { createHash } from 'node:crypto';
 import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
-
-function spawnCli(args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }): Promise<{ status: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, args, options);
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-    child.once('error', reject);
-    child.once('close', status => resolve({ status, stdout, stderr }));
-  });
-}
 
 describe('installed platform adapter defaults', () => {
   let tempRoot: string | undefined;
   let gatewayServer: Server | undefined;
 
   afterEach(async () => {
-    if (gatewayServer) {
-      const server = gatewayServer;
-      gatewayServer = undefined;
-      await new Promise<void>((resolve, reject) => {
-        server.close(error => error ? reject(error) : resolve());
-      });
-    }
+    if (gatewayServer?.listening) await new Promise<void>((resolve, reject) => gatewayServer!.close((error) => error ? reject(error) : resolve()));
+    gatewayServer = undefined;
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
     tempRoot = undefined;
   });
@@ -101,6 +86,30 @@ describe('installed platform adapter defaults', () => {
       mkdir(home, { recursive: true }),
     ]);
 
+    gatewayServer = createServer((request, response) => {
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/health/identity') {
+        response.end(JSON.stringify({ installationId: 'installed-root-b', platformRoot }));
+        return;
+      }
+      if (request.url === '/health/adapters') {
+        response.end(JSON.stringify([
+          { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs' },
+          { slot: 'kvStore', mode: 'real', implementation: '@kb-labs/adapters-sqlite/kv' },
+          { slot: 'llm', mode: 'real', implementation: '@kb-labs/adapters-openai' },
+        ]));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('{}');
+    });
+    await new Promise<void>((resolve) => gatewayServer!.listen(0, '127.0.0.1', resolve));
+    const gatewayPort = (gatewayServer.address() as AddressInfo).port;
+    await mkdir(path.join(platformRoot, '.kb', 'v2'), { recursive: true });
+    await writeFile(path.join(platformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+      id: 'installed-root-b', verification: { hostHealthUrl: `http://127.0.0.1:${gatewayPort}/health` },
+    }));
+
     const configPath = path.join(workspaceRoot, '.kb', 'kb.config.jsonc');
     const workspaceConfig = await readFile(configPath, 'utf8');
     const releaseConfig = workspaceConfig.replace(/"mode":\s*"development",\s*/, '');
@@ -131,33 +140,11 @@ describe('installed platform adapter defaults', () => {
       schema: 'kb.marketplace/3', plugins: {}, adapters,
     }));
 
-    gatewayServer = createServer((request, response) => {
-      if (request.url !== '/health/adapters') {
-        response.writeHead(404).end();
-        return;
-      }
-      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify([
-        { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs' },
-        { slot: 'kvStore', mode: 'real', implementation: '@kb-labs/adapters-sqlite/kv' },
-        { slot: 'llm', mode: 'real', implementation: '@kb-labs/adapters-openai' },
-      ]));
-    });
-    await new Promise<void>((resolve, reject) => {
-      gatewayServer?.once('error', reject);
-      gatewayServer?.listen(0, '127.0.0.1', resolve);
-    });
-    const address = gatewayServer.address();
-    if (!address || typeof address === 'string') throw new Error('Local gateway fixture did not bind a TCP port');
-
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      HOME: home,
-      KB_HOME: path.join(home, '.kb'),
-      KB_PLATFORM_ROOT: platformRoot,
-      KB_PROJECT_ROOT: projectRoot,
-      KB_GATEWAY_URL: `http://127.0.0.1:${address.port}`,
-    };
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, KB_HOME: path.join(home, '.kb'), KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot };
     delete env.KB_NET_OFFSET;
+    delete env.KB_GATEWAY_URL;
+    delete env.GATEWAY_PORT;
+    delete env.GATEWAY_HOST;
     const help = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), '--help'], {
       cwd: projectRoot,
       env,
@@ -183,7 +170,7 @@ describe('installed platform adapter defaults', () => {
 
     await createProjectRegistry({ env }).add(projectRoot);
 
-    const command = await spawnCli([path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
+    const command = await spawnCli(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
       cwd: projectRoot,
       env,
     });
@@ -204,4 +191,85 @@ describe('installed platform adapter defaults', () => {
       credentialsStatus: 'missing', missingCredentials: ['OPENAI_API_KEY'],
     });
   });
+
+  // case: S-203.1
+  it('keeps discovery diagnostics off JSON stdout', async () => {
+    const workspaceRoot = path.resolve(process.cwd(), '../..');
+    tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-cli-json-discovery-diagnostic-'));
+    const platformRoot = path.join(tempRoot, 'platform');
+    const projectRoot = path.join(tempRoot, 'project');
+    const home = path.join(tempRoot, 'home');
+    await Promise.all([mkdir(projectRoot), mkdir(home)]);
+    await mkdir(path.join(platformRoot, '.kb'), { recursive: true });
+    await mkdir(path.join(projectRoot, '.kb'));
+    const workspaceConfig = await readFile(path.join(workspaceRoot, '.kb', 'kb.config.jsonc'), 'utf8');
+    const releaseConfig = workspaceConfig.replace(/"mode":\s*"development",\s*/, '');
+    const config = JSON.parse(releaseConfig.replace(/,\s*([}\]])/g, '$1')) as {
+      platform: { adapters: Record<string, string>; adapterOptions?: Record<string, unknown> };
+    };
+    delete config.platform.adapters.storage;
+    if (config.platform.adapterOptions) delete config.platform.adapterOptions.storage;
+    await writeFile(path.join(platformRoot, '.kb', 'kb.config.jsonc'), `${JSON.stringify(config, null, 2)}\n`);
+    const packages = [...new Set([
+      ...Object.values(config.platform.adapters).map(value => value.split('/').slice(0, 2).join('/')),
+      '@kb-labs/adapters-openai',
+      '@kb-labs/adapters-fs',
+    ])];
+    const adapters = Object.fromEntries(packages.map(packageName => {
+      const packagePath = path.join(workspaceRoot, 'adapters', packageName.replace('@kb-labs/adapters-', ''));
+      return [packageName, {
+        version: '2.120.1',
+        integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        resolvedPath: path.relative(platformRoot, packagePath),
+        source: 'platform',
+        enabled: true,
+      }];
+    }));
+    const pluginRoot = path.join(workspaceRoot, 'plugins/marketplace/entry');
+    const pluginPackageJSON = await readFile(path.join(pluginRoot, 'package.json'));
+    await writeFile(path.join(platformRoot, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        marketplace: {
+          version: '2.120.1',
+          integrity: `sha256-${createHash('sha256').update(pluginPackageJSON).digest('base64')}`,
+          package: '@kb-labs/marketplace-entry',
+          resolvedPath: path.relative(platformRoot, pluginRoot),
+          source: 'platform',
+          enabled: true,
+        },
+      },
+      adapters,
+    }));
+
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, KB_HOME: path.join(home, '.kb'), KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot };
+    delete env.KB_NET_OFFSET;
+    await createProjectRegistry({ env }).add(projectRoot);
+    const command = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'project', 'list', '--json'], {
+      cwd: projectRoot,
+      env,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    expect(command.status, command.stderr || command.stdout).toBe(0);
+    expect(JSON.parse(command.stdout)).toMatchObject({ ok: true, data: expect.anything() });
+    expect(command.stdout).not.toContain('[discover]');
+    expect(command.stderr).toContain('PLUGIN_ID_MISMATCH');
+  });
 });
+
+function spawnCli(command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, options);
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => child.kill('SIGTERM'), 30_000);
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', (status) => {
+      clearTimeout(timeout);
+      resolve({ status, stdout, stderr });
+    });
+  });
+}

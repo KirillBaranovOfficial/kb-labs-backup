@@ -45,9 +45,16 @@ class SecuredConnectionContractTests(unittest.TestCase):
         validate_case_response("S-042.6", 400, {
             "code": "KB_AUTH_INVALID_PASSWORD_RESET", "hint": "Request a new link",
         })
-        validate_case_response("S-005.5", 403, {"error": {
+        validate_case_response("S-005.5", 403, {
             "code": "KB_AUTH_FORBIDDEN", "message": "Permission denied: users:read", "hint": "Ask an administrator",
-        }})
+        })
+
+    def test_revoked_session_sign_in_hint_is_not_mistaken_for_a_stack_trace(self):
+        validate_cli_case(
+            "S-031.3", 1,
+            'KB_AUTH_SESSION_REVOKED: The saved Gateway session was revoked. Run "kb auth login" '
+            'and enter your password at the prompt, or provide it with --password-stdin.',
+        )
 
     def test_client_apply_claim_requires_client_profile_empty_services_and_shim(self):
         payload = {"ok": True, "profile": "client", "services": [], "shim": {"path": "/tmp/kb"},

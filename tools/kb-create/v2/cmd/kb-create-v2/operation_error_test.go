@@ -41,6 +41,20 @@ func TestOperationResultPreservesCataloguedCodeWhenEnvelopeHasExtraFields(t *tes
 	}
 }
 
+func TestOperationResultPreservesExitInputForCataloguedDiagnostic(t *testing.T) {
+	original := diag.New("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.",
+		diag.WithHint("rerun with --yes"))
+	data, err := json.Marshal(map[string]any{"ok": false, "error": original})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := errorFromOperationResult(data, diag.ExitInput)
+	var got *diag.Diag
+	if !errors.As(parsed, &got) || got.Code != original.Code || diag.ExitCode(got) != diag.ExitInput {
+		t.Fatalf("operation diagnostic = %#v, exit = %d; want catalogued code and exit %d", parsed, diag.ExitCode(got), diag.ExitInput)
+	}
+}
+
 // case: PC-001.9
 func TestOperationResultPreservesCataloguedInputCodesAndMapsUnknownCodes(t *testing.T) {
 	for _, code := range []string{"KB_INSTALL_PORT_IN_USE", "KB_INSTALL_INPUT_REQUIRED"} {

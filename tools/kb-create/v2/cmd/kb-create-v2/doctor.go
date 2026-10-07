@@ -1,6 +1,7 @@
 package v2cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -405,9 +406,18 @@ func (i invocation) runRecover(output *os.File) int {
 	if _, supervised := supervisor.LivePID(state, i.PlatformRoot); supervised || status.State != host.StateStopped {
 		return command.fail(1, contracts.NewDiag(contracts.CodeRecoveryHostRunning, "Recovery needs the host to be stopped, but it is running.", "Run \"kb-create stop\", recover, then \"kb-create start\".", nil))
 	}
-	code, err := runner.RunTool(ctx, *runner.Spec.Recover, i.Recover.args(), os.Stdin, output, os.Stderr)
+	var toolOutput bytes.Buffer
+	code, err := runner.RunTool(ctx, *runner.Spec.Recover, i.Recover.args(), os.Stdin, &toolOutput, os.Stderr)
 	if err != nil {
 		return command.fail(1, contracts.NewDiag(contracts.CodeRecoveryFailed, "The platform's recovery tool could not be run.", "Inspect the platform installation with \"kb-create doctor\".", err))
+	}
+	if code == 0 {
+		write(output, map[string]any{
+			"ok":        true,
+			"operation": "recover",
+			"recovered": true,
+			"output":    strings.TrimSpace(toolOutput.String()),
+		})
 	}
 	return code
 }

@@ -12,14 +12,14 @@ describe("MCP access mode", () => {
   });
 
   it('returns HTTP 401 with the catalog envelope before MCP protocol handling', () => {
-    expect(mcpUnauthenticatedResponse()).toMatchObject({
+    expect(mcpUnauthenticatedResponse('https://gateway.example.test')).toMatchObject({
       statusCode: 401,
       body: {
         ok: false,
         error: {
           code: 'KB_AUTH_REQUIRED',
           message: 'Authentication is required.',
-          hint: 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
+          hint: 'Run "kb auth login --gateway-url https://gateway.example.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
           correlationId: expect.any(String),
         },
       },

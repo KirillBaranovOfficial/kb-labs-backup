@@ -10,7 +10,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from platform_state_dump import dump_platform_state
+from platform_state_dump import dump_platform_state, failure_dump_environment
 from scoreboard import write_scoreboards
 from journey_resources import case_catalog_root, journey_module
 
@@ -96,7 +96,10 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str) -> 
                 scenario=os.getenv("KB_JOURNEY_SCENARIO", "commit"),
                 variant=os.getenv("KB_JOURNEY_VARIANT", "default"),
                 first_failure=f"{error.__class__.__name__}: {error}",
-                env=namespace.get("LAST_COMMAND_ENV") or environment or os.environ,
+                env=failure_dump_environment(
+                    namespace.get("ACTIVE_MAIN_ENV"), namespace.get("LAST_COMMAND_ENV"),
+                    environment or os.environ,
+                ),
                 cwd=namespace.get("LAST_COMMAND_CWD"),
                 admin_password="JourneyPassw0rd!" if mode == "secured" else "",
             )

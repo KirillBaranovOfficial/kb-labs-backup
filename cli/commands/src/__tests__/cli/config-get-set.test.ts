@@ -108,7 +108,7 @@ async function writeCommitSettingsManifest(): Promise<void> {
   await write(platformRoot, '.kb/marketplace.lock', JSON.stringify({
     schema: 'kb.marketplace/3',
     plugins: {
-      '@kb-labs/commit': { source: 'platform', version: '0.1.0', integrity, resolvedPath: '.kb/plugins/commit', enabled: true },
+      '@kb-labs/commit': { source: 'platform', version: '0.1.0', integrity, package: '@kb-labs/commit-entry', resolvedPath: '.kb/plugins/commit', enabled: true },
     },
   }));
 }

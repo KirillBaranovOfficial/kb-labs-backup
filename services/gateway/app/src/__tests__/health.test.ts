@@ -107,6 +107,9 @@ function makeTransport(callResult?: ServiceTransportResponse): IServiceTransport
   } as unknown as IServiceTransport;
 }
 
+const absolutePathInResponse = /(?:^|["',\s])\/(?:[^"',\s]+\/)*[^"',\s]*/;
+const windowsAbsolutePathInResponse = /(?:^|["',\s])[A-Za-z]:\\(?:[^"',\s]+\\)*[^"',\s]*/;
+
 const mockTransport: IServiceTransport = makeTransport();
 
 // ── App builder ───────────────────────────────────────────────────────────
@@ -116,6 +119,7 @@ async function buildHealthApp(
   transport?: IServiceTransport,
   routeObserver?: Parameters<typeof import('../server.js').createServer>[10],
   projectRouting?: Parameters<typeof import('../server.js').createServer>[8],
+  installationIdentity?: Parameters<typeof import('../server.js').createServer>[11],
 ) {
   // Dynamically import createServer — it uses the mocked platform
   const { createServer } = await import('../server.js');
@@ -128,7 +132,7 @@ async function buildHealthApp(
   };
 
   const cache = makeCache();
-  return createServer(fullConfig, cache, noopLogger, stubJwtConfig, undefined, transport ?? mockTransport, undefined, undefined, projectRouting, undefined, routeObserver);
+  return createServer(fullConfig, cache, noopLogger, stubJwtConfig, undefined, transport ?? mockTransport, undefined, undefined, projectRouting, undefined, routeObserver, installationIdentity);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -163,6 +167,27 @@ describe('Gateway /health endpoint', () => {
     expect(body.adapters.analytics.available).toBe(true);
     expect(body.adapters.vectorStore.available).toBe(true);
     expect(body.adapters.embeddings.available).toBe(true);
+  });
+
+  // case: S-203.22
+  it('keeps public health payloads free of absolute filesystem paths', async () => {
+    mockAdapters = { llm: { complete: vi.fn() } };
+    mockAdapterStatuses = [
+      { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs', configuredPackage: '@kb-labs/adapters-fs', recordedAt: new Date().toISOString() },
+    ];
+    const projectRuntimes = {
+      acquire: async () => ({ host: '127.0.0.1', port: 1234, headers: {}, release: () => undefined }),
+      status: () => ({ limit: 1, active: 0, runtimes: [] }),
+    };
+    app = await buildHealthApp({}, undefined, undefined, projectRuntimes);
+
+    for (const url of ['/health', '/health/adapters']) {
+      const response = await app.inject({ method: 'GET', url });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['www-authenticate']).toBeUndefined();
+      expect(response.body).not.toMatch(absolutePathInResponse);
+      expect(response.body).not.toMatch(windowsAbsolutePathInResponse);
+    }
   });
 
   it('returns degraded when non-critical adapter missing', async () => {
@@ -449,5 +474,24 @@ describe('Gateway /health/adapters endpoint', () => {
     const res = await app.inject({ method: 'GET', url: '/health/adapters' });
     expect(res.statusCode).not.toBe(401);
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe('Gateway /health/identity endpoint', () => {
+  let app: Awaited<ReturnType<typeof buildHealthApp>>;
+
+  afterEach(async () => {
+    if (app) await app.close();
+  });
+
+  // case: S-203.22
+  it('returns only the installation id without disclosing a filesystem path', async () => {
+    app = await buildHealthApp({}, undefined, undefined, undefined, { installationId: 'receipt-b' });
+
+    const response = await app.inject({ method: 'GET', url: '/health/identity' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toEqual({ installationId: 'receipt-b' });
+    expect(response.body).not.toMatch(absolutePathInResponse);
+    expect(response.body).not.toMatch(windowsAbsolutePathInResponse);
   });
 });

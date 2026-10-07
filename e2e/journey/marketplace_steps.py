@@ -228,7 +228,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     def cli(args: list[str], cwd: Path = project) -> subprocess.CompletedProcess[str]:
         return _run(["kb", *args], cwd=cwd, env=base_env, runner=runner)
 
-    commit_package = "@kb-labs/commit-entry"
+    commit_package = "@kb-labs/commit"
+    commit_install_package = "@kb-labs/commit-entry"
     unrelated_package = "@kb-labs/qa-entry"
     authenticate_secured_marketplace(journey, project, base_env, runner)
     if journey.steps and journey.steps[-1].status != "PASS":
@@ -254,7 +255,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         return
     with invocation_context(step_id="S-010.1"):
         wait_for_marketplace_ready(project, base_env, runner)
-        commit_version = _registry_version(commit_package, registry, base_env, runner)
+        commit_version = _registry_version(commit_install_package, registry, base_env, runner)
         unrelated_version = _registry_version(unrelated_package, registry, base_env, runner)
     platform_list = ["marketplace", "plugins", "list", "--scope", "platform", "--json"]
     platform_plugins = _entries(_json(cli(platform_list), platform_list))
@@ -272,8 +273,8 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     before = json.loads(lock_file.read_text()) if lock_file.exists() else {"plugins": {}}
     if commit_package in before.get("plugins", {}):
         raise RuntimeError(f"{commit_package} is already pinned in the fresh project before the install case")
-    install_commit = ["marketplace", "install", f"{commit_package}@{commit_version}", "--json"]
-    install_commit_platform = ["marketplace", "install", f"{commit_package}@{commit_version}",
+    install_commit = ["marketplace", "install", f"{commit_install_package}@{commit_version}", "--json"]
+    install_commit_platform = ["marketplace", "install", f"{commit_install_package}@{commit_version}",
                               "--scope", "platform", "--json"]
     sealed_platform_before = _platform_snapshot(platform_root)
     def install_exact_commit() -> None:
@@ -383,12 +384,12 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
 
     def assert_commit_lock() -> None:
         lock = json.loads(lock_file.read_text())
-        entry = lock.get("plugins", {}).get(commit_package)
+        entry = lock.get("plugins", {}).get("@kb-labs/commit")
         if lock.get("schema") != "kb.marketplace/3" or not isinstance(entry, dict):
             raise RuntimeError("project marketplace lock is not schema v3 or has no commit plugin pin")
-        if (entry.get("version") != commit_version or not entry.get("integrity")
+        if (entry.get("version") != commit_version or entry.get("package") != commit_install_package or not entry.get("integrity")
                 or entry.get("source") != "marketplace" or entry.get("enabled") is not True):
-            raise RuntimeError(f"project lock entry does not preserve exact version, integrity, source and enabled state: {entry!r}")
+            raise RuntimeError(f"project lock entry does not preserve package, exact version, integrity, source and enabled state: {entry!r}")
     journey.step("inspect exact v3 marketplace lock entry", "marketplace", assert_commit_lock, cases=["S-010.3"])
     if journey.steps[-1].status != "PASS":
         return
@@ -577,7 +578,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             raise RuntimeError("marketplace update did not report a successful result")
         installed = payload["installed"]
         if installed and not any(
-                isinstance(item, dict) and item.get("id") in {commit_package, "@kb-labs/commit"}
+                isinstance(item, dict) and item.get("id") == commit_package
                 and isinstance(item.get("version"), str) and item["version"]
                 for item in installed):
             raise RuntimeError("marketplace update did not report the exact updated Commit version")
@@ -682,7 +683,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         return
 
     def reinstall_commit_and_assert_route() -> None:
-        reinstall = ["marketplace", "install", f"{commit_package}@{commit_version}", "--json"]
+        reinstall = ["marketplace", "install", f"{commit_install_package}@{commit_version}", "--json"]
         installed = _json(cli(reinstall), reinstall)
         entries = installed.get("installed")
         if not isinstance(entries, list) or not any(

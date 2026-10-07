@@ -1,5 +1,6 @@
 import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch, readGatewaySuccessData, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
 
 function errorEnvelope(error: unknown): ErrorEnvelope | null {
@@ -30,7 +31,8 @@ export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult &
     };
     if (!flags['user-id']) { return fail('Provide --user-id. Run `kb auth reset-link --user-id <id>` after `kb auth login`.'); }
     try {
-      const response = await gatewayApiFetch(`http://127.0.0.1:4000/auth/users/${encodeURIComponent(flags['user-id'])}/password-reset-link`, { method: 'POST' });
+      const gateway = await resolveActiveGateway({ cwd: getContextCwd(ctx), env: process.env });
+      const response = await gatewayApiFetch(`${gateway.gatewayUrl}/auth/users/${encodeURIComponent(flags['user-id'])}/password-reset-link`, { method: 'POST' }, gateway);
       if (!response.ok) { return fail(`Gateway could not create the reset link (HTTP ${response.status}). Check the user ID and retry kb auth reset-link.`); }
       const result = await readGatewaySuccessData<{ resetUrl: string; expiresAt: number }>(response);
       if (!flags.json) { ctx.ui?.write?.(`Password reset link (expires ${new Date(result.expiresAt).toISOString()}):\n${result.resetUrl}\n`); }

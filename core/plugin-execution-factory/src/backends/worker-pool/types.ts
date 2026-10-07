@@ -7,6 +7,10 @@
 
 import type { ExecutionRequest, ExecutionResult } from '../../types.js';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
+import type { ErrorEnvelope } from '@kb-labs/core-platform';
+
+export type SerializedCataloguedError = Pick<ErrorEnvelope, 'code' | 'message' | 'hint'>
+  & Partial<Pick<ErrorEnvelope, 'cause' | 'details'>>;
 
 // ============================================================================
 // Worker Pool Configuration
@@ -172,6 +176,10 @@ export interface ErrorMessage extends BaseWorkerMessage {
   error: {
     message: string;
     code?: string;
+    hint?: string;
+    cause?: string;
+    details?: Record<string, string>;
+    cataloguedError?: SerializedCataloguedError;
     stack?: string;
   };
 }
@@ -267,6 +275,7 @@ export interface UIPromptResultMessage extends BaseWorkerMessage {
   type: 'uiPromptResult';
   promptId: string;
   value: unknown;
+  error?: SerializedCataloguedError;
 }
 
 /**
@@ -329,6 +338,8 @@ export interface QueuedRequest {
 
   /** UI prompt callback — passed through to worker.execute() */
   onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>;
+  /** Context-specific hint used when no UI prompt responder is available. */
+  uiPromptHint?: string;
 }
 
 // ============================================================================

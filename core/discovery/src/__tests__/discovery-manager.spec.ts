@@ -41,6 +41,7 @@ describe('DiscoveryManager', () => {
     lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-abc',
+      package: '@kb-labs/ghost',
       resolvedPath: './nonexistent',
       source: 'platform',
       primaryKind: 'plugin',
@@ -117,6 +118,7 @@ describe('DiscoveryManager', () => {
     lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-abc',
+      package: '@kb-labs/ghost',
       source: 'marketplace',
       primaryKind: 'plugin',
       provides: ['plugin'],
@@ -201,6 +203,7 @@ describe('DiscoveryManager', () => {
     lock.plugins['@kb-labs/bad-hash'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-WRONGHASH',
+      package: '@kb-labs/bad-hash',
       resolvedPath: './plugins/bad-hash',
       source: 'platform',
       primaryKind: 'plugin',
@@ -231,6 +234,7 @@ describe('DiscoveryManager', () => {
     lock.plugins['@kb-labs/no-verify'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-WRONG',
+      package: '@kb-labs/no-verify',
       resolvedPath: './plugins/no-verify',
       source: 'platform',
       primaryKind: 'plugin',
@@ -261,6 +265,7 @@ describe('DiscoveryManager', () => {
     lock.plugins['@kb-labs/unsigned'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity,
+      package: '@kb-labs/unsigned',
       resolvedPath: './plugins/unsigned',
       source: 'platform',
       primaryKind: 'plugin',

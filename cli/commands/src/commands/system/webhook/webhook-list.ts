@@ -5,9 +5,10 @@
  * with provisioned status for each.
  */
 
-import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
-import { CredentialsManager } from '@kb-labs/cli-runtime/gateway';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { gatewayApiFetch, readGatewaySuccessData, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { getContextCwd } from '@kb-labs/shared-cli-ui';
+import { ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 type ListFlags = {
   plugin: { type: 'string'; description: string };
@@ -44,27 +45,16 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
     json: { type: 'boolean', description: 'Output in JSON format' },
   },
   async handler(ctx, _argv, flags) {
-    const credentialsManager = new CredentialsManager();
-    const credentials = await credentialsManager.load();
-
-    if (!credentials) {
-      const msg = 'Not authenticated. Run "kb auth login" first.';
-      throw Object.assign(new Error(msg), {
-        code: 'KB_AUTH_REQUIRED',
-        hint: 'Run "kb auth login", then retry "kb webhook list".',
-      });
-    }
-
     const qs = flags.plugin ? `?pluginId=${encodeURIComponent(flags.plugin)}` : '';
-    const url = `${credentials.gatewayUrl}/api/v1/webhooks${qs}`;
+    const target = await resolveActiveGateway({ cwd: getContextCwd(ctx), env: process.env });
+    const url = `${target.gatewayUrl}/api/v1/webhooks${qs}`;
 
     let response: Response;
     try {
-      response = await fetch(url, {
-        headers: { Authorization: `Bearer ${credentials.accessToken}` },
-      });
+      response = await gatewayApiFetch(url, {}, target, 'machine');
     } catch (err) {
-      const msg = `Cannot reach Gateway at ${credentials.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
+      if (err instanceof ErrorEnvelopeError) { throwSystemCataloguedError(err.envelope); }
+      const msg = `Cannot reach Gateway at ${target.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
       throwSystemCommandError(msg, "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry.");
     }
 

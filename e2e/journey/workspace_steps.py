@@ -124,9 +124,9 @@ def run_workspace_cli_steps(journey: Journey, repo_root: Path) -> None:
                 return f"workspace adapter listing did not resolve configured workspace packages for: {', '.join(missing)}"
             unknown = [slot for slot in expected if adapter_rows[slot].get("runtimeStatus") != "unknown"
                        or adapter_rows[slot].get("mode") != "unknown"
-                       or adapter_rows[slot].get("action", {}).get("command") != "kb-create start"]
+                       or adapter_rows[slot].get("action", {}).get("command") != f'kb-create start --platform-root "{repo_root}"']
             if unknown:
-                return f"stopped host adapter rows did not report unknown status with `kb-create start` for: {', '.join(unknown)}"
+                return f"stopped host adapter rows did not report unknown status with the platform-root start command for: {', '.join(unknown)}"
             return None
 
         journey.step("list configured workspace adapters", "workspace-cli", list_workspace_adapters, cases=["S-179.5"])

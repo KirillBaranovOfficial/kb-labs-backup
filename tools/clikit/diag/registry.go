@@ -12,6 +12,9 @@ func ExitCode(d *Diag) int {
 	if d == nil {
 		return ExitOK
 	}
+	if d.ProcessExitCode != ExitOK {
+		return d.ProcessExitCode
+	}
 	if d.Code == "KB_RUNTIME_INPUT_INVALID" {
 		return ExitInput
 	}

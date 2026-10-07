@@ -8,7 +8,8 @@ export function sendAuthError(
   permission?: string,
   cause?: string,
   code?: 'KB_AUTH_REQUIRED' | 'KB_AUTH_FORBIDDEN' | 'KB_AUTH_INVALID_CREDENTIALS'
-    | 'KB_AUTH_INVALID_INVITE' | 'KB_AUTH_INVALID_PASSWORD_RESET' | 'KB_AUTH_LAST_ADMIN',
+    | 'KB_AUTH_INVALID_INVITE' | 'KB_AUTH_INVALID_PASSWORD_RESET' | 'KB_AUTH_INVALID_CURRENT_PASSWORD'
+    | 'KB_AUTH_LAST_ADMIN',
   responseFields: Record<string, unknown> = {},
 ) {
   const errorCode = code ?? (status === 403 ? 'KB_AUTH_FORBIDDEN' : 'KB_AUTH_REQUIRED');

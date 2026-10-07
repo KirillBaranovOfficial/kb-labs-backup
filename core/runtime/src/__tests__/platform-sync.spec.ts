@@ -31,7 +31,14 @@ async function writeLock(root: string, entries: Record<string, TestLockEntry>): 
   for (const [id, entry] of Object.entries(entries)) {
     const serialized = entry.source === 'local'
       ? { link: entry.resolvedPath, enabled: entry.enabled ?? true, source: 'local' }
-      : { version: entry.version, integrity: entry.integrity, resolvedPath: entry.resolvedPath, source: 'platform', enabled: entry.enabled ?? true };
+      : {
+        version: entry.version,
+        integrity: entry.integrity,
+        ...(entry.primaryKind === 'plugin' ? { package: id } : {}),
+        resolvedPath: entry.resolvedPath,
+        source: 'platform',
+        enabled: entry.enabled ?? true,
+      };
     (entry.primaryKind === 'adapter' ? adapters : plugins)[id] = serialized;
   }
 

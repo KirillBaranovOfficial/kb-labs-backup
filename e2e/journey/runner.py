@@ -20,7 +20,8 @@ from studio_steps import (create_studio_access_tokens, create_studio_environment
 from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
-from installer_case_steps import run_doctor_root_isolation_step, run_installer_case_steps, run_uninstall_decline_step
+from installer_case_steps import (assert_default_service_ports_free, run_doctor_root_isolation_step,
+                                  run_installer_case_steps, run_uninstall_decline_step)
 from journey_resources import case_catalog_root, journey_module
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import FlowGraph, Journey, record_candidate_provenance, record_runner_failure
@@ -29,7 +30,7 @@ from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, ru
                         run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
 from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps, run_invite_lifecycle_steps,
                             run_last_admin_guard_steps, run_password_and_session_steps)
-from platform_state_dump import PlatformStateDumpOnce
+from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
 from scoreboard import release_claims_for_case, write_scoreboards
 from invocations import (decode_ux_error_result, decode_ux_success_result,
                          invocation_context, open_http, read_ux_cli_result, run_command, run_pty_command,
@@ -142,11 +143,11 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
     child_env = env or BASE_ENV
     started = time.monotonic()
     result = run_command(args, cwd=cwd or Path.cwd(), env=child_env, timeout=timeout,
-                         input=input_text, stderr=subprocess.STDOUT,
+                         input=input_text,
                          monitor_process=lambda pid: _sample_pnpm_rss_for_run(pid))
     duration = time.monotonic() - started
     return subprocess.CompletedProcess(args, result.returncode,
-                                       stdout=(result.stdout or "") + (result.stderr or ""),
+                                       stdout=result.stdout or "",
                                        stderr=result.stderr or ""), duration
 
 
@@ -257,7 +258,8 @@ def dump_failure_state() -> None:
     STATE_DUMP_GUARD.dump(
         PLATFORM, report.parent, mode=mode, front=FRONT_DOOR, scenario=SCENARIO,
         variant=VARIANT, first_failure=FIRST_FAILURE or "journey reported FAIL",
-        env=LAST_COMMAND_ENV, cwd=LAST_COMMAND_CWD, admin_password="JourneyPassw0rd!" if mode == "secured" else "",
+        env=failure_dump_environment(ACTIVE_MAIN_ENV, LAST_COMMAND_ENV, BASE_ENV),
+        cwd=LAST_COMMAND_CWD, admin_password="JourneyPassw0rd!" if mode == "secured" else "",
     )
 
 
@@ -683,6 +685,10 @@ def main():
     env = BASE_ENV.copy()
     env["HOME"] = str(HOME)
     env["KB_JOURNEY_HOME_LABEL"] = "main"
+    # The entrypoint's crash handler runs outside this module's global namespace
+    # (runpy returns a separate dict), so publish the active install HOME there.
+    os.environ["HOME"] = str(HOME)
+    os.environ["KB_JOURNEY_HOME_LABEL"] = "main"
     env["KB_JOURNEY_INVOCATIONS"] = str(Path(os.getenv(
         "KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).resolve().parent)
     os.environ["KB_JOURNEY_INVOCATIONS"] = env["KB_JOURNEY_INVOCATIONS"]
@@ -1218,6 +1224,7 @@ def main():
                 platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command,
             )
         finally:
+            assert_default_service_ports_free(PLATFORM, installer_command)
             started, _ = run([launcher, "start", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=180)
             if started.returncode != 0:
                 raise RuntimeError(f"could not restart the main host after isolated installer fixtures: {started.stderr or started.stdout}")

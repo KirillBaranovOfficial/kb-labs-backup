@@ -21,49 +21,92 @@ import type {
   ShutdownMessage,
   UIPromptMessage,
   UIPromptResultMessage,
+  SerializedCataloguedError,
 } from './types.js';
+import { createErrorEnvelope, ErrorEnvelopeError, getCatalogEntry, toErrorEnvelope } from '@kb-labs/core-platform';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
 import type { ITransport } from '@kb-labs/core-ipc';
 import type { LoadedMiddleware } from '@kb-labs/plugin-runtime';
 import { createBaseStdoutUI, setJsonMode, type UIPrompts } from '@kb-labs/shared-cli-ui';
+import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
 import { resolveHandlerErrorCode } from './resolve-handler-error-code.js';
 
 // Worker state
 const workerId = process.env.KB_WORKER_ID ?? 'unknown';
 
 // Pending IPC prompt resolvers keyed by promptId
-const pendingPrompts = new Map<string, (value: unknown) => void>();
+const pendingPrompts = new Map<string, (result: UIPromptResultMessage) => void>();
 let promptCounter = 0;
 
 /**
  * Send a UI prompt request to the host via IPC and await the result.
- * Falls back to defaultValue if IPC is unavailable or times out.
+ * Rejects with an actionable error if the prompt cannot reach a responder.
  */
 async function ipcPrompt(
   requestId: string,
   prompt: Omit<UIPromptMessage, 'type' | 'promptId' | 'requestId'>,
-  defaultValue: unknown,
   timeoutMs = 60_000,
 ): Promise<unknown> {
-  if (!process.send) {return defaultValue;}
+  if (!process.send) {
+    throw unavailablePrompt(prompt.message, 'The worker cannot relay this prompt to its host.');
+  }
 
   const promptId = `prompt-${workerId}-${++promptCounter}`;
   const msg: UIPromptMessage = { type: 'uiPrompt', promptId, requestId, ...prompt };
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingPrompts.delete(promptId);
-      resolve(defaultValue);
+      reject(unavailablePrompt(prompt.message, 'The host did not answer the prompt.'));
     }, timeoutMs);
 
-    pendingPrompts.set(promptId, (value) => {
+    pendingPrompts.set(promptId, (result) => {
       clearTimeout(timer);
-      resolve(value);
+      if (result.error) {
+        reject(rebuildCataloguedError(result.error));
+        return;
+      }
+      resolve(result.value);
     });
 
-    process.send!(msg);
+    process.send!(msg, (error) => {
+      if (!error) return;
+      pendingPrompts.delete(promptId);
+      clearTimeout(timer);
+      reject(unavailablePrompt(prompt.message, 'The worker could not send the prompt to its host.'));
+    });
   });
+}
+
+function rebuildCataloguedError(error: SerializedCataloguedError): ErrorEnvelopeError {
+  return new ErrorEnvelopeError(createErrorEnvelope(error.code, {
+    message: error.message,
+    hint: error.hint,
+    ...(error.cause ? { cause: error.cause } : {}),
+    ...(error.details ? { details: error.details } : {}),
+  }));
+}
+
+function serializeCataloguedError(envelope: ReturnType<typeof toErrorEnvelope>): SerializedCataloguedError {
+  return {
+    code: envelope.code,
+    message: envelope.message,
+    hint: envelope.hint,
+    ...(envelope.cause ? { cause: envelope.cause } : {}),
+    ...(envelope.details ? { details: envelope.details } : {}),
+  };
+}
+
+function hasCataloguedCode(error: unknown): error is { code: string } {
+  return typeof error === 'object' && error !== null && 'code' in error &&
+    typeof error.code === 'string' && getCatalogEntry(error.code) !== undefined;
+}
+
+const promptHint = 'Supply the requested value as command or request input and retry.';
+
+function unavailablePrompt(message: string, reason: string): InteractiveInputRequiredError {
+  return new InteractiveInputRequiredError(promptHint, `The prompt "${message}" cannot be answered. ${reason}`);
 }
 let isShuttingDown = false;
 
@@ -116,23 +159,23 @@ function createStdoutUI(currentRequestId?: string): UIFacade {
   const prompts: UIPrompts = {
     confirm: async (msg, opts) => {
       const dv = opts?.defaultValue ?? false;
-      if (!currentRequestId) { return dv; }
-      return ipcPrompt(currentRequestId, { kind: 'confirm', message: msg, defaultValue: dv }, dv) as Promise<boolean>;
+      if (!currentRequestId) { throw unavailablePrompt(msg, 'No execution request is active.'); }
+      return ipcPrompt(currentRequestId, { kind: 'confirm', message: msg, defaultValue: dv }) as Promise<boolean>;
     },
     prompt: async (msg, opts) => {
       const dv = opts?.default ?? '';
-      if (!currentRequestId) { return dv; }
-      return ipcPrompt(currentRequestId, { kind: 'text', message: msg, defaultValue: dv }, dv) as Promise<string>;
+      if (!currentRequestId) { throw unavailablePrompt(msg, 'No execution request is active.'); }
+      return ipcPrompt(currentRequestId, { kind: 'text', message: msg, defaultValue: dv }) as Promise<string>;
     },
     select: async <T>(msg: string, choices: SelectChoice<T>[]) => {
       const dv = choices[0]?.value;
-      if (!currentRequestId) { return dv as T; }
-      return ipcPrompt(currentRequestId, { kind: 'select', message: msg, choices, defaultValue: dv }, dv) as Promise<T>;
+      if (!currentRequestId) { throw unavailablePrompt(msg, 'No execution request is active.'); }
+      return ipcPrompt(currentRequestId, { kind: 'select', message: msg, choices, defaultValue: dv }) as Promise<T>;
     },
     multiSelect: async <T>(msg: string, choices: MultiSelectChoice<T>[]) => {
       const dv = choices.filter(c => c.checked).map(c => c.value);
-      if (!currentRequestId) { return dv as T[]; }
-      return ipcPrompt(currentRequestId, { kind: 'multiSelect', message: msg, choices, defaultValue: dv }, dv) as Promise<T[]>;
+      if (!currentRequestId) { throw unavailablePrompt(msg, 'No execution request is active.'); }
+      return ipcPrompt(currentRequestId, { kind: 'multiSelect', message: msg, choices, defaultValue: dv }) as Promise<T[]>;
     },
   };
   return createBaseStdoutUI(prompts, (entry) => {
@@ -150,7 +193,6 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
   try {
     // Dynamic import to avoid loading at startup
     const { runInProcess, createStreamingUI } = await import('@kb-labs/plugin-runtime');
-    const { noopUI } = await import('@kb-labs/plugin-contracts');
     const path = await import('node:path');
     const fs = await import('node:fs');
 
@@ -231,9 +273,8 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     // UI: wrap with StreamingUI so ui.info/warn/error/write also reach the log stream.
     // In json mode keep a minimal UI but still stream through eventEmitter.
-    const baseUI: UIFacade = jsonMode
-      ? { ...noopUI, colors: createStdoutUI(requestId).colors, symbols: createStdoutUI(requestId).symbols, json: createStdoutUI(requestId).json }
-      : createStdoutUI(requestId);
+    const stdoutUI = createStdoutUI(requestId);
+    const baseUI: UIFacade = jsonMode ? { ...stdoutUI, json: stdoutUI.json } : stdoutUI;
     const ui: UIFacade = createStreamingUI(baseUI, eventEmitter);
 
     // Intercept raw stdout/stderr to capture console.log() and third-party output.
@@ -300,9 +341,25 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     process.send!(resultMessage);
   } catch (error) {
+    const errorEnvelope = error instanceof ErrorEnvelopeError
+      ? error.envelope
+      : hasCataloguedCode(error)
+        ? toErrorEnvelope(error)
+        : undefined;
+    const cataloguedError = errorEnvelope
+      ? serializeCataloguedError(errorEnvelope)
+      : undefined;
     sendError(requestId, {
       message: error instanceof Error ? error.message : String(error),
-      code: resolveHandlerErrorCode(error),
+      ...(cataloguedError
+        ? {
+          code: cataloguedError.code,
+          hint: cataloguedError.hint,
+          cause: cataloguedError.cause,
+          details: cataloguedError.details,
+          cataloguedError,
+        }
+        : { code: resolveHandlerErrorCode(error) }),
       stack: error instanceof Error ? error.stack : undefined,
     });
   }
@@ -323,7 +380,7 @@ function handleMiddlewares(message: MiddlewaresInitMessage): void {
  */
 function sendError(
   requestId: string,
-  error: { message: string; code?: string; stack?: string }
+  error: { message: string; code?: string; hint?: string; cause?: string; stack?: string }
 ): void {
   process.send!({ type: 'error', requestId, error } as ErrorMessage);
 }
@@ -359,7 +416,7 @@ function onMessage(message: WorkerMessage): void {
       const resolve = pendingPrompts.get(result.promptId);
       if (resolve) {
         pendingPrompts.delete(result.promptId);
-        resolve(result.value);
+        resolve(result);
       }
       break;
     }

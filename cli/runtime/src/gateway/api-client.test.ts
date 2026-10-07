@@ -1,15 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ session: null as null | { gatewayUrl: string; accessToken: string; refreshToken: string; expiresAt: number }, loadError: null as unknown, refresh: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  session: null as null | { gatewayUrl: string; accessToken: string; refreshToken: string; expiresAt: number },
+  machine: null as null | { gatewayUrl: string; accessToken: string; refreshToken: string; expiresAt: number },
+  loadError: null as unknown,
+  refresh: vi.fn(),
+  machineRefresh: vi.fn(),
+}));
 vi.mock('./session.js', () => ({
   SessionManager: class {
     async load() { if (mocks.loadError) throw mocks.loadError; return mocks.session; }
-    isExpired() { return false; }
+    isExpired(session: { expiresAt: number }) { return session.expiresAt <= Date.now(); }
     async refresh() { return mocks.refresh(); }
   },
 }));
 vi.mock('./credentials.js', () => ({
-  CredentialsManager: class { async load() { return null; } },
+  CredentialsManager: class {
+    async load() { return mocks.machine; }
+    isExpired(credentials: { expiresAt: number }) { return credentials.expiresAt <= Date.now(); }
+    async refresh() { return mocks.machineRefresh(); }
+  },
 }));
 
 import { gatewayApiFetch } from './api-client.js';
@@ -18,7 +28,11 @@ import { SavedAuthFileError } from './saved-auth-file.js';
 import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 describe('gatewayApiFetch auth mapping', () => {
-  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); mocks.session = null; mocks.loadError = null; mocks.refresh.mockReset(); });
+  afterEach(() => {
+    vi.restoreAllMocks(); vi.unstubAllGlobals();
+    mocks.session = null; mocks.machine = null; mocks.loadError = null;
+    mocks.refresh.mockReset(); mocks.machineRefresh.mockReset();
+  });
 
   // case: S-041.18
   it('preserves a corrupt saved session as a catalogued config error', async () => {
@@ -42,6 +56,40 @@ describe('gatewayApiFetch auth mapping', () => {
         details: { gatewayUrl: 'http://127.0.0.1:4000' },
       },
     });
+  });
+
+  it('refreshes a session only at its issuing Gateway origin', async () => {
+    const session = { gatewayUrl: 'https://gateway-a.test', accessToken: 'stale', refreshToken: 'refresh', expiresAt: 0 };
+    mocks.session = session;
+    mocks.refresh.mockResolvedValue({ ...session, accessToken: 'fresh', expiresAt: Date.now() + 60_000 });
+    const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+
+    await gatewayApiFetch('https://gateway-a.test/api', {}, { gatewayUrl: 'https://gateway-a.test' });
+
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toEqual(new URL('https://gateway-a.test/api'));
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe('Bearer fresh');
+  });
+
+  it('uses an issuing-origin machine credential when no user session is saved', async () => {
+    mocks.machine = { gatewayUrl: 'https://gateway-a.test', accessToken: 'machine', refreshToken: 'refresh', expiresAt: Date.now() + 60_000 };
+    const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+
+    await gatewayApiFetch('https://gateway-a.test/api', {}, { gatewayUrl: 'https://gateway-a.test' });
+
+    expect(fetch.mock.calls[0]?.[0]).toEqual(new URL('https://gateway-a.test/api'));
+    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe('Bearer machine');
+  });
+
+  it('retargets the full request origin to the resolved Gateway when supplied', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+
+    await gatewayApiFetch('https://old-gateway.test:4444/api', {}, { gatewayUrl: 'https://active-gateway.test:8443' });
+
+    expect(fetch.mock.calls[0]?.[0]).toEqual(new URL('https://active-gateway.test:8443/api'));
   });
 
   // case: S-041.9
@@ -70,6 +118,40 @@ describe('gatewayApiFetch auth mapping', () => {
         correlationId: expect.any(String),
       },
     });
+  });
+
+  // case: S-203.23
+  it('does not send or refresh saved credentials at a different Gateway origin', async () => {
+    for (const credentialKind of ['user session', 'machine credential'] as const) {
+      mocks.session = null;
+      mocks.machine = null;
+      const credential = {
+        gatewayUrl: 'https://gateway-root-a.test',
+        accessToken: 'root-a-access',
+        refreshToken: 'root-a-refresh',
+        expiresAt: 0,
+      };
+      if (credentialKind === 'user session') { mocks.session = credential; }
+      else { mocks.machine = credential; }
+      const fetch = vi.fn();
+      vi.stubGlobal('fetch', fetch);
+
+      await expect(gatewayApiFetch(
+        'https://gateway-root-b.test/auth/tokens',
+        {},
+        { gatewayUrl: 'https://gateway-root-b.test' },
+      )).rejects.toMatchObject({
+        envelope: {
+          code: 'KB_AUTH_REQUIRED',
+          details: { gatewayUrl: 'https://gateway-root-b.test' },
+          hint: expect.stringContaining('kb auth login --gateway-url https://gateway-root-b.test --email <email>'),
+        },
+      });
+
+      expect(fetch).not.toHaveBeenCalled();
+      expect(mocks.refresh).not.toHaveBeenCalled();
+      expect(mocks.machineRefresh).not.toHaveBeenCalled();
+    }
   });
 });
 

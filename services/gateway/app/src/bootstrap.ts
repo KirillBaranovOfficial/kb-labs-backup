@@ -1,6 +1,7 @@
 import {
   GATEWAY_SERVICE_NETWORK,
   logDiagnosticEvent,
+  readInstalledPlatformIdentity,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
 import {
@@ -473,6 +474,8 @@ export async function startGateway(
     webhookManifests,
     options.projectRouting,
     options.hostRoutes,
+    undefined,
+    { installationId: (await readInstalledPlatformIdentity(platformRoot))?.id },
   );
 
   // 11. Listen

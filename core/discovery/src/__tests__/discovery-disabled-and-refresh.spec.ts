@@ -181,6 +181,7 @@ describe('DiscoveryManager — local integrity refresh', () => {
     lock.plugins['@kb-labs/remote-bad'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-WRONG',
+      package: '@kb-labs/remote-bad',
       resolvedPath: './plugins/remote-bad',
       source: 'platform', // NOT local → integrity mismatch blocks
       primaryKind: 'plugin',

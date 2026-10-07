@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { toErrorEnvelope } from '@kb-labs/core-platform';
+import { InteractiveInputRequiredError } from '@kb-labs/shared-cli-ui/interactive';
 import { defineSystemCommand, defineSystemCommandGroup } from '../define-system-command';
 
 describe('defineSystemCommand', () => {
@@ -71,6 +72,30 @@ describe('defineSystemCommand', () => {
   });
 
   describe('Basic Command Creation', () => {
+    it('uses the usage exit code for catalogued invalid input', async () => {
+      const command = defineSystemCommand({
+        name: 'system-input-error',
+        scope: 'platform',
+        jsonTest: { safeArgs: [] },
+        description: 'System input error fixture',
+        flags: { json: { type: 'boolean' } },
+        handler: async () => { throw new InteractiveInputRequiredError('kb command --required-input', 'This test prompt cannot be answered.'); },
+      });
+
+      const exitCode = await command.run(mockCtx, [], { json: true });
+
+      expect(exitCode).toBe(2);
+      expect(mockUI.json).toHaveBeenCalledWith({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'KB_RUNTIME_INPUT_INVALID',
+          message: 'The provided input is invalid.',
+          cause: 'This test prompt cannot be answered.',
+          hint: 'kb command --required-input',
+        }),
+      });
+    });
+
     it.each([
       ['catalogued', Object.assign(new Error('Catalogued failure.'), {
         code: 'KB_RUNTIME_COMMAND_FAILED',

@@ -28,6 +28,7 @@ export class PoolQueueManager {
     onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
+    uiPromptHint?: string,
   ) => Promise<ExecutionResult>;
   private onAcquireTimeout: () => void;
 
@@ -44,6 +45,7 @@ export class PoolQueueManager {
         onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
         onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
         onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
+        uiPromptHint?: string,
       ) => Promise<ExecutionResult>;
       onAcquireTimeout: () => void;
     }
@@ -83,6 +85,7 @@ export class PoolQueueManager {
     onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void,
     onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>,
+    uiPromptHint?: string,
   ): Promise<ExecutionResult> {
     return new Promise<ExecutionResult>((resolve, reject) => {
       const queuedAt = Date.now();
@@ -141,6 +144,7 @@ export class PoolQueueManager {
         onLog,
         onLoggerLog,
         onUIPrompt,
+        uiPromptHint,
         resolve: (result) => {
           clearTimeout(acquireTimeout);
           if (signal) {
@@ -191,7 +195,7 @@ export class PoolQueueManager {
       const timeoutMs = queued.request.timeoutMs ?? 30_000;
       const startTime = queued.queuedAt;
 
-      this.onExecuteOnWorker(worker, queued.request, timeoutMs, startTime, queued.onLog, queued.onUIPrompt, queued.onLoggerLog)
+      this.onExecuteOnWorker(worker, queued.request, timeoutMs, startTime, queued.onLog, queued.onUIPrompt, queued.onLoggerLog, queued.uiPromptHint)
         .then((result) => {
           queued.resolve(result);
           // Process more from queue

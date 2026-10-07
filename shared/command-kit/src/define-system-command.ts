@@ -12,7 +12,7 @@ import {
 } from './index';
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { formatError } from './errors/index';
-import { createErrorEnvelope, getCatalogEntry, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, getCatalogEntry, mapErrorEnvelopeToExitCode, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { isHandlerSuccessEnvelope, normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
 
@@ -400,7 +400,7 @@ export function defineSystemCommand<
             { hint: envelope.hint },
           );
         }
-        return 1;
+        return mapErrorEnvelopeToExitCode(envelope.code);
       }
 
       if (jsonMode) {

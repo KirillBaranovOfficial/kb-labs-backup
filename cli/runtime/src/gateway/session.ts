@@ -58,7 +58,8 @@ export class SessionManager implements ISessionManager {
   }
 
   async refresh(session: SessionCredentials): Promise<SessionCredentials> {
-    const url = `${session.gatewayUrl}/auth/refresh/cli`;
+    const gatewayUrl = session.gatewayUrl;
+    const url = `${gatewayUrl}/auth/refresh/cli`;
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -67,7 +68,7 @@ export class SessionManager implements ISessionManager {
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new GatewayAuthResponseError('Session refresh', response.status, body, session.gatewayUrl);
+      throw new GatewayAuthResponseError('Session refresh', response.status, body, gatewayUrl);
     }
 
     const data = await readGatewaySuccessData<{

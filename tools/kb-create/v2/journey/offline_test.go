@@ -191,12 +191,12 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 				Services: []contracts.Service{{ID: "workflow", Command: "kb-workflow", Port: 7778, Required: true}},
 			}},
 		}},
-		Plugins: []catalog.Component{{ID: "commit", Version: "1.0.0", Package: "@kb/commit", SHA256: "commit", PlatformRange: "^2.0.0"}},
+		Plugins: []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb-labs/commit-entry", SHA256: "commit", PlatformRange: "^2.0.0"}},
 	}
 	primeOfflineCatalog(t, root, &source)
 	plan, err := resolve.Plan(contracts.InstallRequest{
 		PlatformRoot: root, Source: contracts.SourceOffline, ServiceProfile: "default",
-		Plugins: []contracts.ComponentRequest{{ID: "commit"}},
+		Plugins: []contracts.ComponentRequest{{ID: "@kb-labs/commit"}},
 	}, source)
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +211,7 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 	}
 	foundPlugin := false
 	for _, artifact := range artifacts.installed {
-		if artifact.ID == "commit" {
+		if artifact.ID == "@kb-labs/commit" {
 			foundPlugin = true
 		}
 	}

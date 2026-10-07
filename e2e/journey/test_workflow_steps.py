@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,25 @@ from service_steps import Journey
 
 
 class WorkflowJourneyTests(unittest.TestCase):
+    # case: S-203.1
+    def test_bash_profile_cli_capture_keeps_stderr_separate_from_stdout(self):
+        with tempfile.TemporaryDirectory(prefix="journey-cli-streams-") as temp:
+            env = {
+                **os.environ,
+                "HOME": temp,
+                "KB_JOURNEY_INVOCATIONS": temp,
+                "KB_JOURNEY_CLI_PATH": "/bin/sh",
+            }
+            result = workflow_steps.run_cli(
+                ["-c", "printf envelope; printf diagnostic >&2"],
+                env=env,
+                cwd=Path(temp),
+            )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "envelope")
+        self.assertEqual(result.stderr, "diagnostic")
+
     def test_solo_workflow_list_claim_fails_when_workflow_id_field_is_missing(self):
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory)
