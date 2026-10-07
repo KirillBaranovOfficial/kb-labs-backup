@@ -86,17 +86,30 @@ def run_cli_logout_steps(cli_path: str, env: dict[str, str]) -> None:
     def invoke(args: list[str]) -> subprocess.CompletedProcess[str]:
         return run_command([cli_path, *args], env=env)
 
+    email = env["KB_JOURNEY_ADMIN_EMAIL"]
+    password = env["KB_JOURNEY_ADMIN_PASSWORD"]
+    gateway_url = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
+    login = run_command([cli_path, "auth", "login", "--gateway-url", gateway_url,
+                         "--email", email, "--password-stdin", "--json"],
+                        env=env, input=password + "\n")
+    try:
+        login_payload = decode_ux_success_result(read_ux_cli_result(login.stdout, login.returncode))
+    except ValueError as error:
+        raise AssertionError(f"kb auth login --json did not return JSON: {login.stdout[-400:]}") from error
+    if login.returncode != 0 or login_payload.get("email") != email or login_payload.get("gatewayUrl") != gateway_url:
+        raise AssertionError(f"kb auth login did not establish the session for S-102.3: {login_payload!r}")
+
     logout = invoke(["auth", "logout", "--json"])
     try:
         logout_payload = decode_ux_success_result(read_ux_cli_result(logout.stdout, logout.returncode))
-    except json.JSONDecodeError as error:
+    except ValueError as error:
         raise AssertionError(f"kb auth logout --json did not return JSON: {logout.stdout[-400:]}") from error
     if logout.returncode != 0 or logout_payload != {"message": "Logged out. Credentials removed."}:
         raise AssertionError(f"kb auth logout returned unexpected JSON: {logout_payload!r}")
     status = invoke(["auth", "status", "--json"])
     try:
         status_payload = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))
-    except json.JSONDecodeError as error:
+    except ValueError as error:
         raise AssertionError(f"kb auth status --json did not return JSON: {status.stdout[-400:]}") from error
     if status.returncode != 0 or status_payload.get("session", {}).get("authenticated") is not False:
         raise AssertionError(f"kb auth status after logout returned unexpected JSON: {status_payload!r}")

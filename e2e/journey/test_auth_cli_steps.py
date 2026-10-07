@@ -97,13 +97,10 @@ class CliAuthJourneyTests(unittest.TestCase):
                                                                **({"email": state["email"]} if state["email"] else {})}}}
             elif args[1:3] == ["auth", "login"]:
                 if "--password-stdin" not in args:
-                    payload = {"ok": False, "error": {
-                        "code": "KB_RUNTIME_INPUT_INVALID",
-                        "message": "The provided input is invalid.",
-                        "cause": "The password prompt requires an interactive terminal.",
-                        "hint": "cat password.txt | kb auth login --gateway-url 'http://gateway.test' --email 'member@example.test' --password-stdin",
-                    }}
-                    return subprocess.CompletedProcess(args, 2, json.dumps(payload), "")
+                    message = "The provided input is invalid. [KB_RUNTIME_INPUT_INVALID]"
+                    cause = "The password prompt requires an interactive terminal."
+                    hint = "cat password.txt | kb auth login --gateway-url 'http://gateway.test' --email 'member@example.test' --password-stdin"
+                    return subprocess.CompletedProcess(args, 2, "", f"{message}\nCause: {cause}\nHint: {hint}\n")
                 self.assertEqual(kwargs.get("input"), "MemberPass123!\n")
                 state["email"] = "member@example.test"
                 session_path = Path(env["HOME"]) / ".kb" / "session.json"
@@ -239,15 +236,23 @@ class CliAuthJourneyTests(unittest.TestCase):
     def test_cli_logout_removes_session_and_status_reports_unauthenticated(self):
         commands = []
 
-        def invoke(args, **_kwargs):
+        def invoke(args, **kwargs):
             commands.append(args)
+            if args[1:3] == ["auth", "login"]:
+                self.assertEqual(kwargs.get("input"), "AdminPass123!\n")
+                payload = {"ok": True, "data": {"email": "admin@example.test", "gatewayUrl": "http://gateway.test"}}
+                return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
             payload = {"ok": True, "data": {"message": "Logged out. Credentials removed."}} if args[2] == "logout" else {
                 "ok": True, "data": {"session": {"authenticated": False}}}
             return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
 
-        with patch("steps.accounts.subprocess.run", side_effect=invoke):
-            run_cli_logout_steps("/isolated/bin/kb", {"HOME": "/isolated"})
-        self.assertEqual(commands, [["/isolated/bin/kb", "auth", "logout", "--json"],
+        with patch("steps.accounts.run_command", side_effect=invoke):
+            run_cli_logout_steps("/isolated/bin/kb", {"HOME": "/isolated", "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
+                                                        "KB_JOURNEY_ADMIN_PASSWORD": "AdminPass123!",
+                                                        "KB_JOURNEY_BASE_URL": "http://gateway.test"})
+        self.assertEqual(commands, [["/isolated/bin/kb", "auth", "login", "--gateway-url", "http://gateway.test",
+                                     "--email", "admin@example.test", "--password-stdin", "--json"],
+                                    ["/isolated/bin/kb", "auth", "logout", "--json"],
                                     ["/isolated/bin/kb", "auth", "status", "--json"]])
 
 

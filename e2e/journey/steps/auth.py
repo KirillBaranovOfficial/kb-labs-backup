@@ -60,19 +60,19 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
         if not base_url or not email or not password:
             raise ValueError("secured CLI auth status requires gateway URL, email, and password")
         missing_password = invoke(["auth", "login", "--gateway-url", base_url, "--email", email])
-        try:
-            missing_payload = decode_ux_error_result(read_ux_cli_result(
-                missing_password.stdout, missing_password.returncode))
-        except (json.JSONDecodeError, ValueError) as error:
-            raise AssertionError("non-TTY kb auth login did not return its usage error envelope") from error
         expected_hint = (f"cat password.txt | kb auth login --gateway-url '{base_url}' "
                          f"--email '{email}' --password-stdin")
-        if (missing_password.returncode != 2
-                or missing_payload.get("code") != "KB_RUNTIME_INPUT_INVALID"
-                or missing_payload.get("message") != "The provided input is invalid."
-                or missing_payload.get("cause") != "The password prompt requires an interactive terminal."
-                or missing_payload.get("hint") != expected_hint):
-            raise AssertionError(f"non-TTY kb auth login returned an unexpected result: {missing_payload!r}")
+        human_error = missing_password.stderr
+        expected_output = (
+            "KB_RUNTIME_INPUT_INVALID",
+            "The provided input is invalid.",
+            "The password prompt requires an interactive terminal.",
+            expected_hint,
+        )
+        if missing_password.returncode != 2 or any(part not in human_error for part in expected_output):
+            raise AssertionError(
+                f"non-TTY kb auth login returned an unexpected human error on stderr: {human_error[-600:]}"
+            )
         login = invoke(["auth", "login", "--gateway-url", base_url, "--email", email,
                         "--password-stdin"], input=password + "\n")
         if login.returncode != 0:

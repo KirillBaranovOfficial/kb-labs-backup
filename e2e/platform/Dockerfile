@@ -28,7 +28,9 @@ COPY tools/kb-create /src/kb-create
 COPY tools/kb-dev    /src/kb-dev
 COPY tools/kb-devkit /src/kb-devkit
 
-RUN cd /src/kb-create && go build -o /out/kb-create .
+RUN cd /src/kb-create && GOOS=linux GOARCH=amd64 go build -o /out/kb-create-linux-amd64 .
+RUN cd /src/kb-create && GOOS=linux GOARCH=arm64 go build -o /out/kb-create-linux-arm64 .
+RUN cp /out/kb-create-linux-amd64 /out/kb-create && chmod +x /out/kb-create
 RUN cd /src/kb-create && go build -o /out/kb-create-release-index ./v2/cmd/kb-create-release-index
 RUN cd /src/kb-dev    && go build -o /out/kb-dev .
 RUN cd /src/kb-devkit && go build -o /out/kb-devkit .
@@ -43,12 +45,16 @@ COPY e2e/platform/registry-manifest.json /src/registry-manifest.json
 COPY e2e/platform/prepare-release-index.mjs /src/prepare-release-index.mjs
 COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
 COPY e2e/platform/release-index-version.mjs /src/release-index-version.mjs
+COPY e2e/platform/binary-manifest.mjs /src/binary-manifest.mjs
 COPY tools/kb-create/scripts/prepare-release-index.mjs /src/kb-create/scripts/prepare-release-index.mjs
+COPY --from=go-builder /out/kb-create-linux-amd64 /out/binaries/kb-create-linux-amd64
+COPY --from=go-builder /out/kb-create-linux-arm64 /out/binaries/kb-create-linux-arm64
 COPY --from=go-builder /out/kb-create-release-index /usr/local/bin/kb-create-release-index
 RUN node /src/prepare-release-index.mjs \
       --packages-dir /src/packages \
       --registry-manifest /src/registry-manifest.json \
       --sealer /usr/local/bin/kb-create-release-index \
+      --binary-dir /out/binaries \
       --output /out/release-index.json
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────

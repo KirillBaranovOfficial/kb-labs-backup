@@ -6,6 +6,7 @@ import type { CommandError } from '@kb-labs/plugin-contracts';
 export function renderErrorEnvelope(envelope: CommandError): string {
   return [
     `${envelope.message} [${envelope.code}]`,
+    ...(envelope.cause ? [`  Cause: ${envelope.cause}`] : []),
     ...(envelope.diagnostics ?? []).map((item) => `  - ${item.code} (${item.severity})${item.path ? ` ${item.path}${item.line ? `:${item.line}` : ''}` : ''}: ${item.message}${item.hint ? ` — ${item.hint}` : ''}`),
     `  Hint:  ${envelope.hint}`,
     ...(envelope.correlationId ? [`  Correlation ID: ${envelope.correlationId}`] : []),
@@ -43,13 +44,14 @@ export function handleError(_ctx: ErrorContext, err: unknown, _isJson?: boolean)
     ? err.envelope
     : null;
   if (envelope !== null && typeof envelope === 'object' && 'code' in envelope && 'message' in envelope) {
-    const typedEnvelope = envelope as { code: string; message: string; hint?: string; details?: Record<string, unknown>; diagnostics?: CommandError['diagnostics']; [key: string]: unknown };
+    const typedEnvelope = envelope as { code: string; message: string; cause?: string; hint?: string; details?: Record<string, unknown>; diagnostics?: CommandError['diagnostics']; [key: string]: unknown };
     const code = isCataloguedErrorCode(typedEnvelope.code) ? typedEnvelope.code : 'KB_RUNTIME_COMMAND_FAILED';
     return {
       ok: false,
       error: {
         code,
         message: typedEnvelope.message,
+        ...(typedEnvelope.cause ? { cause: typedEnvelope.cause } : {}),
         hint: typedEnvelope.hint ?? 'Resolve the reported error, then retry the command.',
         ...(typedEnvelope.details && isStringMap(typedEnvelope.details) ? { details: typedEnvelope.details } : {}),
         ...(typedEnvelope.diagnostics ? { diagnostics: typedEnvelope.diagnostics } : {}),
@@ -63,6 +65,7 @@ export function handleError(_ctx: ErrorContext, err: unknown, _isJson?: boolean)
     error: {
       code,
       message: typedEnvelope.message,
+      ...(typedEnvelope.cause ? { cause: typedEnvelope.cause } : {}),
       hint: typedEnvelope.hint,
       ...(typedEnvelope.details && isStringMap(typedEnvelope.details) ? { details: typedEnvelope.details } : {}),
       ...(typedEnvelope.diagnostics ? { diagnostics: typedEnvelope.diagnostics } : {}),

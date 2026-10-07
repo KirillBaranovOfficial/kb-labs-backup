@@ -61,8 +61,15 @@ describe('SessionManager', () => {
 
   it('SM-08: load() classifies malformed JSON instead of treating it as a missing session', async () => {
     await fs.writeFile(filePath, '{bad json');
-    await expect(manager.load()).rejects.toMatchObject({
+    const error = await manager.load().catch((reason: unknown) => reason);
+    expect(error).toMatchObject({
       name: 'SavedAuthFileError', reason: 'invalid', filePath: '.kb/session.json',
+      envelope: {
+        code: 'KB_CONFIG_INVALID',
+        message: 'Saved authentication file .kb/session.json is invalid.',
+        hint: 'Run "kb auth login" to replace the saved authentication data, then retry the command.',
+        details: { path: '.kb/session.json', reason: 'invalid' },
+      },
     });
   });
 
