@@ -493,6 +493,21 @@ modified. The decision is enforced in the shared `shim.Ensure` and
 `shim.Remove` boundary used by apply, uninstall, and doctor.
 Cases: PC-001.10–PC-001.11, S-025.9.
 
+### Installed host roots receive distinct Gateway addresses by default
+
+When a machine installs another host profile without `--gateway-url`, kb-create
+reuses the release Gateway address if no installed root claims it. Otherwise it
+allocates the next free 100-port offset. The allocated origin is stored in the
+resolved plan and receipt, so update, rollback, and restart preserve it. The
+shim identifies only its current owner, and the host PID record identifies
+only a currently running root; neither enumerates installed roots. Project
+registry entries do not identify platform roots. A machine-level launcher
+registry therefore records all successfully applied root and Gateway pairs for
+subsequent allocations. An occupied port owned by a non-KB process fails
+planning with `KB_INSTALL_PORT_IN_USE` and a `--gateway-url` hint. An explicit
+`--gateway-url` remains the operator override. Cases:
+PC-001.10, PC-001.12, PC-001.16.
+
 ### Destructive confirmation without a TTY is invalid usage
 
 Destructive `kb-create` operations require explicit `--yes` when no terminal is

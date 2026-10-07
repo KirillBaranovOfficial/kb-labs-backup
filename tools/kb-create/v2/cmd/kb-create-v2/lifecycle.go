@@ -18,6 +18,7 @@ import (
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/lifecycle"
 	"github.com/kb-labs/create/v2/logs"
@@ -121,6 +122,17 @@ func (i invocation) runUpdate(ctx context.Context, output *os.File, plan contrac
 		writeDiagnosticFailure(output, root, correlationID, logPath, asDiag(err), &plan)
 		return 1
 	}
+	if updated.Plan.Host != nil {
+		origin, originErr := gateway.OriginFromHealthURL(updated.Verification.HostHealthURL)
+		if originErr != nil {
+			write(output, failure(contracts.CodeHostSpecInvalid, "the updated Gateway address could not be recorded", fmt.Sprintf("rerun `kb-create update --platform-root %q` after checking the receipt", root), originErr))
+			return 1
+		}
+		if err := (gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}).Register(root, origin); err != nil {
+			write(output, failure(contracts.CodeApplyFailed, "the update succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create update`", err))
+			return 1
+		}
+	}
 	write(output, map[string]any{"ok": true, "operation": "update", "receipt": updated, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning, "logPath": logPath})
 	*outcome, *errorCode = "success", ""
 	return 0
@@ -222,6 +234,23 @@ func (i invocation) runRecovery(output *os.File) int {
 	if operation == "uninstall" && i.Executable != "" {
 		if err := shim.Remove(i.Executable, root); err != nil {
 			write(output, failure("KB_INSTALL_APPLY_FAILED", "installation was removed but the kb command shim could not be removed", "remove the stale kb link from the launcher directory after checking its target", err))
+			return 1
+		}
+	}
+	registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
+	if operation == "uninstall" {
+		if err := registry.Remove(root); err != nil {
+			write(output, failure(contracts.CodeApplyFailed, "the installation was removed but its Gateway address could not be released", "check launcher state permissions, then rerun `kb-create apply` for remaining roots", err))
+			return 1
+		}
+	} else if restored, readErr := receipt.Read(root); readErr == nil && restored.Plan.Host != nil {
+		origin, originErr := gateway.OriginFromHealthURL(restored.Verification.HostHealthURL)
+		if originErr != nil {
+			write(output, failure(contracts.CodeHostSpecInvalid, "the restored Gateway address could not be recorded", fmt.Sprintf("rerun `kb-create rollback --platform-root %q --snapshot %q --yes`", root, target), originErr))
+			return 1
+		}
+		if err := registry.Register(root, origin); err != nil {
+			write(output, failure(contracts.CodeApplyFailed, "the rollback succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create rollback`", err))
 			return 1
 		}
 	}

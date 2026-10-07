@@ -12,6 +12,7 @@ from installer_case_steps import (_seed_doctor_fixture, assert_default_service_p
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
                                   run_offline_plan_step, run_repeat_plan_readonly_step,
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
+                                  run_gateway_allocation_step,
                                   run_uninstall_decline_step, _service_ids_match,
                                   _snapshot_installation_owned_tree)
 from journey_resources import case_catalog_root
@@ -140,6 +141,46 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertFalse(running[secondary])
         adapter_calls = [args for args in calls if args[0].endswith("/.kb/v2/bin/kb")]
         self.assertEqual(len(adapter_calls), 2)
+
+    def test_gateway_allocation_step_checks_default_allocation_and_explicit_override(self):
+        with tempfile.TemporaryDirectory(prefix="journey-gateway-allocation-") as temp:
+            parent = Path(temp)
+            primary, automatic, explicit = parent / "root-a", parent / "root-b", parent / "root-c"
+            index = parent / "release-index.json"
+            index.write_text("{}")
+            for root, port in ((primary, 4000), (automatic, 4100)):
+                (root / ".kb/v2").mkdir(parents=True)
+                (root / ".kb/v2/receipt.json").write_text(json.dumps({
+                    "verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
+                }))
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                if args[1] == "plan":
+                    payload = {"plan": {"request": {"gatewayUrl": "http://127.0.0.1:4100"},
+                                        "host": {"healthUrl": "http://127.0.0.1:4100/health"}}}
+                    return subprocess.CompletedProcess(args, 0,
+                        json.dumps({"ok": True, "data": payload}), "")
+                root = Path(args[args.index("--request-platform-root") + 1])
+                gateway = args[args.index("--gateway-url") + 1]
+                port = gateway.rsplit(":", 1)[1]
+                (root / ".kb/v2").mkdir(parents=True)
+                receipt = {"verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"}}
+                (root / ".kb/v2/receipt.json").write_text(json.dumps(receipt))
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                    "receipt": receipt,
+                }}), "")
+
+            journey = run_gateway_allocation_step(mode="local", launcher="kb-create", stable_index=index,
+                                                  primary_root=primary, automatic_root=automatic,
+                                                  explicit_root=explicit, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].cases, ["PC-001.10", "PC-001.16"])
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertEqual([call[1] for call in calls], ["plan", "apply"])
+        self.assertNotIn("--gateway-url", calls[0])
+        self.assertEqual(calls[1][calls[1].index("--gateway-url") + 1], "http://127.0.0.1:4200")
 
     def test_repeat_plan_compares_install_owned_files_while_host_stays_running(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:
@@ -503,7 +544,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                                    run_command=fail_every_command)
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
-            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "S-025.9", "S-181.1", "S-181.2",
+            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "S-025.9", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",

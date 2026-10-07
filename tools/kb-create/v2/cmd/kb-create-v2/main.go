@@ -23,6 +23,7 @@ import (
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/logs"
 	"github.com/kb-labs/create/v2/preflight"
@@ -101,6 +102,23 @@ func updateCompatibilityDiag(failure *diag.Diag) *diag.Diag {
 		failure.Code = contracts.CodeUpdateIncompatible
 	}
 	return failure
+}
+
+func recordedGatewayURL(active contracts.InstallReceipt) string {
+	if active.Plan.Request.GatewayURL != "" {
+		return active.Plan.Request.GatewayURL
+	}
+	origin, _ := gateway.OriginFromHealthURL(active.Verification.HostHealthURL)
+	return origin
+}
+
+func planHasGateway(plan contracts.ResolvedInstallPlan) bool {
+	for _, service := range plan.ServiceGraph.Services {
+		if service.ID == "gateway" {
+			return true
+		}
+	}
+	return false
 }
 
 func (i invocation) hostCommand(output *os.File) hostCommand {
@@ -189,6 +207,90 @@ func (i invocation) run(output *os.File) int {
 		write(output, response)
 		return 2
 	}
+	state, stateErr := host.StateHome()
+	if stateErr != nil {
+		write(output, map[string]any{"ok": false, "error": asDiag(stateErr)})
+		return 2
+	}
+	var releaseOperation func()
+	if operation == "apply" {
+		releaseOperation, err = state.AcquireOperation(operation)
+		if err != nil {
+			write(output, map[string]any{"ok": false, "error": asDiag(err)})
+			return 2
+		}
+		defer releaseOperation()
+	}
+	if response.Plan.Host != nil && planHasGateway(*response.Plan) &&
+		(operation == "plan" || operation == "apply" || operation == "update") {
+		root := response.Plan.Request.PlatformRoot
+		registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
+		knownByRoot := make(map[string]gateway.Root)
+		rememberRoot := func(candidate string) {
+			if candidate == "" || filepath.Clean(candidate) == filepath.Clean(root) {
+				return
+			}
+			activeOwner, ownerErr := receipt.Read(candidate)
+			if ownerErr == nil {
+				if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" {
+					knownByRoot[filepath.Clean(candidate)] = gateway.Root{PlatformRoot: filepath.Clean(candidate), URL: ownerURL}
+				}
+			}
+		}
+		if operation == "apply" || operation == "plan" {
+			if owner, ok := shim.Owner(i.Executable); ok {
+				rememberRoot(owner)
+			}
+			if activeHost, ok := host.ActiveHost(state); ok {
+				rememberRoot(activeHost.PlatformRoot)
+			}
+		}
+		known := make([]gateway.Root, 0, len(knownByRoot))
+		for _, knownRoot := range knownByRoot {
+			known = append(known, knownRoot)
+		}
+		requestedURL := response.Plan.Request.GatewayURL
+		active, activeErr := receipt.Read(root)
+		if requestedURL == "" && activeErr == nil {
+			requestedURL = recordedGatewayURL(active)
+		}
+		defaultURL, err := gateway.OriginFromHealthURL(response.Plan.Host.HealthURL)
+		if err != nil {
+			write(output, failure(contracts.CodeHostSpecInvalid, "the release Gateway address is invalid", "select a release with a valid loopback Gateway health URL", err))
+			return 2
+		}
+		selectedURL, err := registry.AllocateWithKnown(root, defaultURL, requestedURL, known)
+		if err != nil {
+			write(output, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", err))
+			return 2
+		}
+		claimant, claimed, err := registry.ClaimantAmong(root, selectedURL, known)
+		if err != nil {
+			write(output, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", err))
+			return 2
+		}
+		if claimed {
+			failure := contracts.NewDiag(contracts.CodePortInUse,
+				"Gateway address "+selectedURL+" is already assigned to installed root "+claimant.PlatformRoot+".",
+				"Choose another `--gateway-url`, then rerun `kb-create apply`.", nil)
+			failure.Meta = map[string]any{"address": selectedURL, "platformRoot": claimant.PlatformRoot}
+			write(output, map[string]any{"ok": false, "error": failure})
+			return 2
+		}
+		if selectedURL != response.Plan.Request.GatewayURL {
+			request := response.Plan.Request
+			request.GatewayURL = selectedURL
+			data, _ := json.Marshal(request)
+			response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
+			if !response.OK {
+				if operation == "update" && response.Error != nil {
+					response.Error = updateCompatibilityDiag(response.Error)
+				}
+				write(output, response)
+				return 2
+			}
+		}
+	}
 	if operation == "update" {
 		active, readErr := receipt.Read(response.Plan.Request.PlatformRoot)
 		if readErr != nil {
@@ -219,11 +321,6 @@ func (i invocation) run(output *os.File) int {
 		}
 	}
 	root := response.Plan.Request.PlatformRoot
-	state, stateErr := host.StateHome()
-	if stateErr != nil {
-		write(output, map[string]any{"ok": false, "error": asDiag(stateErr)})
-		return 2
-	}
 	if operation == "apply" {
 		if running := refuseApplyBesideRunningHost(state, *response.Plan, root); running != nil {
 			write(output, map[string]any{"ok": false, "error": running})
@@ -235,7 +332,7 @@ func (i invocation) run(output *os.File) int {
 			return 2
 		}
 	}
-	if operation == "apply" || (operation == "plan" && response.Plan.Request.GatewayURL != "") {
+	if operation == "apply" || operation == "plan" {
 		root := response.Plan.Request.PlatformRoot
 		if operation == "apply" {
 			if err := preflight.CheckInstallResources(root); err != nil {
@@ -281,12 +378,14 @@ func (i invocation) run(output *os.File) int {
 		write(output, failure(contracts.CodeApplyFailed, "the session signing secret could not be generated or stored.", "check that the platform root is writable, then rerun `kb-create install`", err))
 		return 2
 	}
-	release, lockErr := state.AcquireOperation(operation)
-	if lockErr != nil {
-		write(output, map[string]any{"ok": false, "error": asDiag(lockErr)})
-		return 2
+	if operation == "update" {
+		release, lockErr := state.AcquireOperation(operation)
+		if lockErr != nil {
+			write(output, map[string]any{"ok": false, "error": asDiag(lockErr)})
+			return 2
+		}
+		defer release()
 	}
-	defer release()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	offlineArtifacts := response.Plan.Request.Source == contracts.SourceOffline
@@ -315,8 +414,29 @@ func (i invocation) run(output *os.File) int {
 		if deps.Host == nil && response.Plan.Host != nil {
 			deps.Host = prober
 		}
-		receipt, applyErr := runtime.Apply(ctx, *response.Plan, deps)
+		appliedReceipt, applyErr := runtime.Apply(ctx, *response.Plan, deps)
 		if applyErr == nil {
+			if response.Plan.Host != nil {
+				roots := []gateway.Root{}
+				if owner, ok := shim.Owner(i.Executable); ok && filepath.Clean(owner) != filepath.Clean(root) {
+					if activeOwner, ownerErr := receipt.Read(owner); ownerErr == nil {
+						if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" {
+							roots = append(roots, gateway.Root{PlatformRoot: owner, URL: ownerURL})
+						}
+					}
+				}
+				origin, originErr := gateway.OriginFromHealthURL(appliedReceipt.Verification.HostHealthURL)
+				if originErr != nil {
+					write(output, failure(contracts.CodeHostSpecInvalid, "the applied Gateway address could not be recorded", "rerun `kb-create update --platform-root` after checking the receipt", originErr))
+					return 1
+				}
+				roots = append(roots, gateway.Root{PlatformRoot: root, URL: origin})
+				registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
+				if err := registry.RegisterMany(roots); err != nil {
+					write(output, failure(contracts.CodeApplyFailed, "the installation succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create apply`", err))
+					return 1
+				}
+			}
 			var shimResult shim.EnsureResult
 			if i.Executable != "" {
 				if deps.Progress != nil {
@@ -335,7 +455,7 @@ func (i invocation) run(output *os.File) int {
 					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
 				}
 			}
-			payload := map[string]any{"ok": true, "operation": operation, "receipt": receipt, "logPath": transcript.Path(), "profile": receipt.Plan.ServiceGraph.Profile, "services": receipt.Plan.ServiceGraph.Services}
+			payload := map[string]any{"ok": true, "operation": operation, "receipt": appliedReceipt, "logPath": transcript.Path(), "profile": appliedReceipt.Plan.ServiceGraph.Profile, "services": appliedReceipt.Plan.ServiceGraph.Services}
 			if i.Executable != "" {
 				payload["shim"] = shimResult
 			}
