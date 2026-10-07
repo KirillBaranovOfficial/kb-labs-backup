@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
+import steps.auth as auth_steps
 from steps.accounts import run_cli_logout_steps
 from steps.auth import (assert_platform_auth_required, run_bootstrap_recovery_steps, run_cli_auth_forbidden,
                         run_cli_auth_status, assert_cli_session_absent, run_cli_corrupt_session_file)
@@ -88,15 +89,27 @@ class CliAuthJourneyTests(unittest.TestCase):
     def test_local_status_and_secured_login_status_tokens_commands(self):
         calls: list[list[str]] = []
 
-        def invoke(args, *, env, **_kwargs):
+        def invoke(args, *, env, **kwargs):
             calls.append(args)
             if args[1:3] == ["auth", "status"]:
                 payload = {"ok": True, "data": {"session": {"authenticated": bool(state["email"]),
                                                                "path": str(Path(env["HOME"]) / ".kb" / "session.json"),
                                                                **({"email": state["email"]} if state["email"] else {})}}}
             elif args[1:3] == ["auth", "login"]:
-                state["email"] = "member@example.test" if "member@example.test" in args else "admin@example.test"
-                payload = {"ok": True, "data": {}}
+                if "--password-stdin" not in args:
+                    payload = {"ok": False, "error": {
+                        "code": "KB_RUNTIME_INPUT_INVALID",
+                        "message": "The provided input is invalid.",
+                        "cause": "The password prompt requires an interactive terminal.",
+                        "hint": "cat password.txt | kb auth login --gateway-url 'http://gateway.test' --email 'member@example.test' --password-stdin",
+                    }}
+                    return subprocess.CompletedProcess(args, 2, json.dumps(payload), "")
+                self.assertEqual(kwargs.get("input"), "MemberPass123!\n")
+                state["email"] = "member@example.test"
+                session_path = Path(env["HOME"]) / ".kb" / "session.json"
+                session_path.parent.mkdir(parents=True, exist_ok=True)
+                session_path.write_text("{}", encoding="utf-8")
+                return subprocess.CompletedProcess(args, 0, "Authenticated\n", "")
             elif args[1:3] == ["auth", "tokens"]:
                 payload = {"ok": True, "data": {"tokens": []}}
             else:
@@ -104,28 +117,31 @@ class CliAuthJourneyTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
 
         state = {"email": None}
-        def answer_tty_password(args, *, env, on_output):
-            calls.append(args)
-            self.assertEqual(on_output("Password: "), "MemberPass123!\n")
-            state["email"] = "member@example.test"
-            session_path = Path(env["HOME"]) / ".kb" / "session.json"
-            session_path.parent.mkdir(parents=True, exist_ok=True)
-            session_path.write_text("{}", encoding="utf-8")
-            return subprocess.CompletedProcess(args, 0, "Password: \nAuthenticated\n", ""), 0.01
-
         with tempfile.TemporaryDirectory(prefix="auth-status-home-") as home:
             env = {"HOME": home}
-            with patch("steps.auth.subprocess.run", side_effect=invoke), \
-                 patch("steps.auth.run_pty_command", side_effect=answer_tty_password):
-                run_cli_auth_status("/isolated/bin/kb", env, authenticated=False)
-                state["email"] = None
-                run_cli_auth_status("/isolated/bin/kb", env, authenticated=True,
-                                    email="member@example.test", password="MemberPass123!",
-                                    base_url="http://gateway.test")
+            with patch("steps.auth.subprocess.run", side_effect=invoke):
+                old_run_pty = auth_steps.run_pty_command
+
+                def run_pty(command, *, env, timeout, on_output):
+                    transcript = "Password: \nAuthenticated\n"
+                    on_output(transcript)
+                    return subprocess.CompletedProcess(command, 0, transcript, ""), 0.0
+
+                auth_steps.run_pty_command = run_pty
+                try:
+                    run_cli_auth_status("/isolated/bin/kb", env, authenticated=False)
+                    state["email"] = None
+                    run_cli_auth_status("/isolated/bin/kb", env, authenticated=True,
+                                        email="member@example.test", password="MemberPass123!",
+                                        base_url="http://gateway.test")
+                finally:
+                    auth_steps.run_pty_command = old_run_pty
 
         self.assertEqual(calls[0], ["/isolated/bin/kb", "auth", "status", "--json"])
         self.assertIn(["/isolated/bin/kb", "auth", "login", "--gateway-url", "http://gateway.test",
                        "--email", "member@example.test"], calls)
+        self.assertIn(["/isolated/bin/kb", "auth", "login", "--gateway-url", "http://gateway.test",
+                       "--email", "member@example.test", "--password-stdin"], calls)
         self.assertIn(["/isolated/bin/kb", "auth", "tokens", "--json"], calls)
 
     # case: S-041.9

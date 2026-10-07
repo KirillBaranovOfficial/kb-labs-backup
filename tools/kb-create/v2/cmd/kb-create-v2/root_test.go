@@ -82,3 +82,14 @@ func TestUnhealthyDoctorReportUsesNormalClikitSuccessResult(t *testing.T) {
 		t.Fatalf("clikit result = %s", stdout.String())
 	}
 }
+
+func TestDoctorRecoveryUsesItsOwnStructuredResult(t *testing.T) {
+	data := []byte(`{"ok":true,"operation":"recover","recovered":true,"output":"recovered"}`)
+	payload, err := operationResultPayload("doctor", false, true, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload["operation"] != "recover" || payload["recovered"] != true || payload["status"] != nil {
+		t.Fatalf("recovery result was interpreted as a doctor report: %#v", payload)
+	}
+}

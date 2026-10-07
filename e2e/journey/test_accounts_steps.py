@@ -123,7 +123,9 @@ class SecuredAccountsJourneyTests(unittest.TestCase):
         def browser_call(_base, jar, path, *, method="GET", body=None, csrf=False, expected=200):
             calls.append((method, path, expected))
             if path == "/auth/password/change" and expected == 400:
-                return {"message": "Current password is incorrect"}
+                return {"code": "KB_AUTH_INVALID_CURRENT_PASSWORD",
+                        "message": "Current password is incorrect",
+                        "hint": "Check the current password and retry the password change."}
             if path == "/auth/me" and jar == 2:
                 return {"error": "unauthorized"}
             if path == "/auth/sessions":

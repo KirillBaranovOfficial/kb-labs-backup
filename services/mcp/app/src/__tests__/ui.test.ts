@@ -33,18 +33,21 @@ describe('createBufferedUI', () => {
     expect(getOutput()).toBe('[spinner] working\n[spinner] still working\n[ok] finished');
   });
 
-  it('returns non-interactive defaults without blocking', async () => {
+  // case: S-215.1
+  it('rejects unanswered prompts instead of returning defaults', async () => {
     const { ui } = createBufferedUI();
-    expect(await ui.confirm('ok?')).toBe(true);
-    expect(await ui.confirm('ok?', { defaultValue: false })).toBe(false);
-    expect(await ui.prompt('name?')).toBe('');
-    expect(await ui.prompt('name?', { default: 'x' })).toBe('x');
-    expect(await ui.select('pick', [{ label: 'A', value: 'a' }])).toBe('a');
-    expect(
-      await ui.multiSelect('pick', [
-        { label: 'A', value: 'a', checked: true },
-        { label: 'B', value: 'b' },
-      ]),
-    ).toEqual(['a']);
+    const prompts = [
+      ui.confirm('ok?', { defaultValue: true }),
+      ui.prompt('name?', { default: 'x' }),
+      ui.select('pick', [{ label: 'A', value: 'a' }]),
+      ui.multiSelect('pick', [{ label: 'A', value: 'a', checked: true }]),
+    ];
+    for (const prompt of prompts) {
+      await expect(prompt).rejects.toMatchObject({
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        hint: 'Provide the value as an explicit tool argument, then retry the tool call.',
+        cause: expect.stringContaining('cannot be answered during an MCP tool call'),
+      });
+    }
   });
 });

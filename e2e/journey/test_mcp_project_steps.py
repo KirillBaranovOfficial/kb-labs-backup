@@ -204,6 +204,35 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             ["/ready", f"/api/v1/projects/{service_runner.PROJECT_ID or '{projectId}'}/workflow/health"],
         )
 
+    def test_secured_platform_readiness_logs_in_before_checking_protected_workflow_health(self):
+        calls = []
+
+        def request(path, **kwargs):
+            calls.append((path, kwargs.get("token", "")))
+            if path == "/auth/login/cli":
+                return 200, {"accessToken": "session-token"}, {}
+            if path == "/auth/me":
+                return 200, {"userId": "admin"}, {}
+            return 200, {"ready": True}, {}
+
+        with patch("service_runner.ADMIN_PASSWORD", "admin-pass"), \
+                patch("service_runner.ADMIN_EMAIL", "admin@example.test"), \
+                patch.dict(os.environ, {"KB_JOURNEY_SERVICE_TOKEN": ""}), \
+                patch("service_runner.request", side_effect=request), \
+                patch("service_runner.expect_json", side_effect=[None, None]) as expect_json:
+            rows = list(checks("secured"))
+            login_name, _, login_check, _ = rows[0]
+            readiness_name, _, readiness_check, _ = next(
+                row for row in rows if row[0] == "platform readiness (gateway + project workflow)")
+            self.assertEqual(login_name, "secured admin CLI login")
+            self.assertIsNone(login_check())
+            self.assertEqual(readiness_name, "platform readiness (gateway + project workflow)")
+            self.assertIsNone(readiness_check())
+
+        self.assertEqual(calls[0][0], "/auth/login/cli")
+        self.assertEqual(calls[1], ("/auth/me", "session-token"))
+        self.assertEqual(expect_json.call_args_list[1].kwargs["token"], "session-token")
+
     def test_registered_runtime_identity_checks_canonical_registry_path(self):
         project_root = "/tmp/journey-project"
         canonical_root = str(Path(project_root).resolve())
