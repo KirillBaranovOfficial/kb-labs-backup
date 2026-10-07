@@ -27,10 +27,12 @@ process.on('message', (message) => {
       type: 'error',
       requestId: activeRequestId,
       error: {
-        message: '',
+        message: message.error.message,
         code: message.error.code,
         hint: message.error.hint,
         cause: message.error.cause,
+        details: message.error.details,
+        cataloguedError: message.error,
       },
     });
     return;

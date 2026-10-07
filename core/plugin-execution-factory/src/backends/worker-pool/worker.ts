@@ -20,6 +20,7 @@ import type {
   MiddlewaresInitMessage,
   UIPromptMessage,
   UIPromptResultMessage,
+  SerializedCataloguedError,
 } from './types.js';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
 interface WithMiddlewareDecls {
@@ -28,6 +29,7 @@ interface WithMiddlewareDecls {
 import type { ExecutionRequest, ExecutionResult, PlatformTransportFactory, PlatformTransportServer } from '../../types.js';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { InteractiveInputRequiredError } from '@kb-labs/plugin-contracts';
+import { createErrorEnvelope, ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
 import { WorkerCrashedError, TimeoutError } from '../../errors.js';
 
 /**
@@ -133,6 +135,26 @@ function killProcessTree(rootPid: number): void {
   } catch {
     // Already exited.
   }
+}
+
+function serializeCataloguedError(error: unknown): SerializedCataloguedError {
+  const envelope = toErrorEnvelope(error);
+  return {
+    code: envelope.code,
+    message: envelope.message,
+    hint: envelope.hint,
+    ...(envelope.cause ? { cause: envelope.cause } : {}),
+    ...(envelope.details ? { details: envelope.details } : {}),
+  };
+}
+
+function rebuildCataloguedError(error: SerializedCataloguedError): ErrorEnvelopeError {
+  return new ErrorEnvelopeError(createErrorEnvelope(error.code, {
+    message: error.message,
+    hint: error.hint,
+    ...(error.cause ? { cause: error.cause } : {}),
+    ...(error.details ? { details: error.details } : {}),
+  }));
 }
 
 /**
@@ -613,6 +635,12 @@ export class Worker extends EventEmitter<WorkerEvents> {
         const msg = message as ErrorMessage;
         const pending = this.pendingRequests.get(msg.requestId);
         if (pending) {
+          if (msg.error.cataloguedError) {
+            const error = rebuildCataloguedError(msg.error.cataloguedError);
+            error.stack = msg.error.stack;
+            pending.reject(error);
+            break;
+          }
           const error = new Error(msg.error.message);
           Object.assign(error, {
             code: msg.error.code,
@@ -660,13 +688,12 @@ export class Worker extends EventEmitter<WorkerEvents> {
             const result: UIPromptResultMessage = { type: 'uiPromptResult', promptId: msg.promptId, value };
             proc.send(result);
           }).catch((error: unknown) => {
+            const serializedError = serializeCataloguedError(error);
             const result: UIPromptResultMessage = {
               type: 'uiPromptResult',
               promptId: msg.promptId,
               value: undefined,
-              error: error instanceof InteractiveInputRequiredError
-                ? { code: error.code, hint: error.hint, cause: String(error.cause) }
-                : { cause: error instanceof Error ? error.message : String(error) },
+              error: serializedError,
             };
             proc.send(result);
           });
@@ -679,7 +706,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
             type: 'uiPromptResult',
             promptId: msg.promptId,
             value: undefined,
-            error: { code: error.code, hint: error.hint, cause: String(error.cause) },
+            error: serializeCataloguedError(error),
           };
           this.process.send(result);
         }
