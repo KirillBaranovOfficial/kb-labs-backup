@@ -199,6 +199,25 @@ class MarketplaceStepTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"):
             _output(result, command)
 
+    def test_setup_command_failure_preserves_typed_code_message_and_next_step(self):
+        command = ["kb", "project", "add", "/work/missing-project", "--json"]
+        result = subprocess.CompletedProcess(command, 1, json.dumps({
+            "ok": False,
+            "error": {
+                "code": "KB_PROJECT_PATH_INVALID",
+                "message": "Project path does not exist.",
+                "hint": "Create it, then run `kb project add /work/missing-project`.",
+            },
+        }), "")
+
+        with self.assertRaises(RuntimeError) as raised:
+            _output(result, command)
+
+        self.assertIn("`kb project add /work/missing-project --json` exited 1", str(raised.exception))
+        self.assertIn("KB_PROJECT_PATH_INVALID", str(raised.exception))
+        self.assertIn("Project path does not exist.", str(raised.exception))
+        self.assertIn("hint: Create it, then run `kb project add /work/missing-project`.", str(raised.exception))
+
     def test_secured_marketplace_claims_typed_missing_login_then_persists_admin_session(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-auth-journey-") as directory:
             root = Path(directory)

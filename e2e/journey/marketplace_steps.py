@@ -28,6 +28,17 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandR
 def _output(result: subprocess.CompletedProcess[str], command: list[str]) -> str:
     if result.returncode != 0:
         detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
+        try:
+            envelope = read_ux_cli_result(result.stdout or "", result.returncode)
+        except (json.JSONDecodeError, ValueError):
+            envelope = None
+        if isinstance(envelope, dict) and envelope.get("ok") is False:
+            error = decode_ux_error_result(envelope)
+            detail = "; ".join(part for part in (
+                str(error.get("code") or ""),
+                str(error.get("message") or ""),
+                f"hint: {error['hint']}" if error.get("hint") else "",
+            ) if part)
         if len(detail) > 2200:
             detail = f"{detail[:1700]} … {detail[-500:]}"
         raise RuntimeError(f"`{' '.join(command)}` exited {result.returncode}: {detail}")

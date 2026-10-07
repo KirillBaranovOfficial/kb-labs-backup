@@ -263,6 +263,15 @@ class FlowGraph:
         failed = next((step for step in group_steps if step.status == "FAIL"), None)
         blocked = next((step for step in group_steps if step.status == "BLOCKED"), None)
         if failed:
+            for state, producer in self.state_producers.items():
+                if producer == group:
+                    self.states[state] = {
+                        "passed": False,
+                        "evidence": failed.message,
+                        "group": group,
+                        "step": name,
+                        "claim": ", ".join(failed.cases) or "no case claim",
+                    }
             return "FAIL"
         if blocked:
             return "BLOCKED"

@@ -415,8 +415,9 @@ def run_platform_update_steps(
 
     def restart_and_verify_identity() -> None:
         result = _json_command(run_command, [launcher, "restart", "--platform-root", root, "--json"], "restart platform")
-        if result.get("hostRestarted") is not True:
-            raise RuntimeError("restart did not report a restarted host")
+        host = result.get("host")
+        if result.get("operation") != "restart" or not isinstance(host, dict) or not isinstance(host.get("pid"), int) or host["pid"] <= 0:
+            raise RuntimeError("restart did not return operation=restart and a running host PID")
         receipt = json.loads(receipt_path.read_text())
         if receipt.get("installationId") != installation_id:
             raise RuntimeError("installationId changed during restart")
