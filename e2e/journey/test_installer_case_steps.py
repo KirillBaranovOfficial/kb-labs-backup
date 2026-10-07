@@ -5,13 +5,252 @@ import tempfile
 import unittest
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from installer_case_steps import (_seed_doctor_fixture, run_doctor_root_isolation_step,
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
-                                  run_uninstall_decline_step)
+                                  run_offline_plan_step, run_repeat_plan_readonly_step,
+                                  run_uninstall_decline_step, _service_ids_match,
+                                  _snapshot_installation_owned_tree)
+from journey_resources import case_catalog_root
+from service_steps import Journey, record_candidate_provenance
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_offline_plan_step_executes_with_fake_cli_and_claims_s181_4(self):
+        with tempfile.TemporaryDirectory(prefix="journey-offline-plan-") as temp:
+            root = Path(temp)
+            index = root / "release-index.json"
+            index.write_text("{}")
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"},
+                          "artifacts": [{"resolvedFrom": "cache"}]}}}
+                return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+            journey = run_offline_plan_step(mode="local", launcher="kb-create", stable_index=index,
+                                            platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].cases, ["S-181.4"])
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--offline", calls[0])
+
+    def test_repeat_plan_compares_install_owned_files_while_host_stays_running(self):
+        with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:
+            root = Path(temp) / "platform"
+            marker = root / ".kb/receipt.json"
+            marker.parent.mkdir(parents=True)
+            marker.write_text('{"receipt":"stable"}\n')
+            index = Path(temp) / "release-index.json"
+            index.write_text("{}")
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                command = args[1]
+                if command == "status":
+                    data = {"host": {"state": "running", "healthy": True}, "running": True, "reachable": True}
+                elif command == "plan":
+                    data = {"plan": {"planHash": "same", "artifacts": [{"id": "platform"}],
+                                     "serviceGraph": {"platformVersion": "2.0.0"}}}
+                else:
+                    data = {"operation": command}
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            journey = run_repeat_plan_readonly_step(mode="local", launcher="kb-create", stable_index=index,
+                                                    platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].cases, ["PC-001.8"])
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertEqual([args[1] for args in calls], ["status", "plan", "plan", "status"])
+
+    def test_repeat_plan_allows_runtime_state_changes_from_running_host(self):
+        with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-runtime-state-") as temp:
+            root = Path(temp) / "platform"
+            log_dir = root / ".kb/logs"
+            log_dir.mkdir(parents=True)
+            index = Path(temp) / "release-index.json"
+            index.write_text("{}")
+            calls = []
+
+            def run_command(args):
+                calls.append(args[1])
+                command = args[1]
+                if command == "status":
+                    data = {"host": {"state": "running"}, "running": True, "reachable": True}
+                elif command == "plan":
+                    (log_dir / "host-runtime.log").write_text("runtime update\n")
+                    data = {"plan": {"planHash": "same", "artifacts": [], "serviceGraph": {}}}
+                else:
+                    data = {"operation": command}
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            journey = run_repeat_plan_readonly_step(mode="local", launcher="kb-create", stable_index=index,
+                                                    platform_root=root, run_command=run_command)
+            installed_files = _snapshot_installation_owned_tree(root)
+
+        self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
+        self.assertEqual(calls, ["status", "plan", "plan", "status"])
+        self.assertEqual(set(installed_files), {".kb"})
+
+    def test_missing_installer_fixture_is_claimless_preflight_failure(self):
+        with tempfile.TemporaryDirectory(prefix="journey-missing-installer-fixture-") as temp:
+            root = Path(temp)
+            stable, canary = root / "stable.json", root / "canary.json"
+            stable.write_text("{}")
+            canary.write_text("{}")
+            calls = []
+            with patch("installer_case_steps.installer_scenario_resources",
+                       return_value=[root / "missing-host-binary-linux-amd64.json"]):
+                journey = run_installer_case_steps(
+                    mode="local", launcher="kb-create", stable_index=stable, canary_index=canary,
+                    platform_root=root, secret_value="secret", run_command=lambda args: calls.append(args),
+                )
+
+        self.assertEqual(len(journey.steps), 1)
+        self.assertEqual(journey.steps[0].capability, "journey.orchestration")
+        self.assertEqual(journey.steps[0].cases, [])
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertIn("missing-host-binary", journey.steps[0].message)
+        self.assertIn("node_modules/@kb-labs/cli-bin/dist/bin.js", journey.steps[0].message)
+        self.assertEqual(calls, [])
+
+    def test_repeat_plan_reports_changed_added_and_removed_paths(self):
+        with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-diff-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir()
+            (root / "changed.txt").write_text("before")
+            (root / "removed.txt").write_text("remove")
+            index = Path(temp) / "release-index.json"
+            index.write_text("{}")
+
+            def run_command(args):
+                command = args[1]
+                if command == "status":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "host": {"state": "running"}, "running": True, "reachable": True}}), "")
+                if command == "plan" and not (root / "added.txt").exists():
+                    (root / "changed.txt").write_text("after")
+                    (root / "removed.txt").unlink()
+                    (root / "added.txt").write_text("new")
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                    "plan": {"planHash": "same", "artifacts": [], "serviceGraph": {}}}}), "")
+
+            journey = run_repeat_plan_readonly_step(mode="local", launcher="kb-create", stable_index=index,
+                                                    platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertIn("changed (1): changed.txt", journey.steps[0].message)
+        self.assertIn("added (1): added.txt", journey.steps[0].message)
+        self.assertIn("removed (1): removed.txt", journey.steps[0].message)
+
+    def test_repeat_plan_fails_when_restarted_host_is_unhealthy(self):
+        with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-unhealthy-") as temp:
+            root = Path(temp) / "platform"
+            root.mkdir()
+            index = Path(temp) / "release-index.json"
+            index.write_text("{}")
+            status_calls = 0
+
+            def run_command(args):
+                nonlocal status_calls
+                command = args[1]
+                if command == "status":
+                    status_calls += 1
+                    healthy = status_calls == 1
+                    data = {"host": {"state": "running" if healthy else "stopped"},
+                            "running": healthy, "reachable": healthy}
+                elif command == "plan":
+                    data = {"plan": {"planHash": "same", "artifacts": [], "serviceGraph": {}}}
+                else:
+                    data = {"operation": command}
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            journey = run_repeat_plan_readonly_step(mode="local", launcher="kb-create", stable_index=index,
+                                                    platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertIn("host health", journey.steps[0].message)
+
+    def test_repeat_plan_limits_displayed_paths_and_reports_total(self):
+        from installer_case_steps import _format_snapshot_changes
+
+        message = _format_snapshot_changes({"changed": [f"file-{index:02d}" for index in range(22)],
+                                            "added": [], "removed": []})
+
+        self.assertIn("changed (22):", message)
+        self.assertIn("22 path(s) total, showing 20 of 22", message)
+        self.assertNotIn("file-20", message)
+
+    def test_repeat_plan_snapshot_excludes_layout_runtime_state(self):
+        with tempfile.TemporaryDirectory(prefix="journey-layout-runtime-state-") as temp:
+            root = Path(temp)
+            (root / ".kb/logs").mkdir(parents=True)
+            (root / ".kb/logs/host.log").write_text("runtime\n")
+            (root / ".kb/kb.config.jsonc").write_text("{}\n")
+            snapshot = _snapshot_installation_owned_tree(root)
+
+        self.assertEqual(set(snapshot), {".kb", ".kb/kb.config.jsonc"})
+
+    def test_receipt_service_graph_must_match_selected_plan_services(self):
+        planned = {"services": [{"id": "api"}, {"id": "worker"}]}
+        declared = {"services": [{"id": "api"}]}
+
+        self.assertFalse(_service_ids_match(planned, declared))
+
+    def test_offline_plan_requires_cache_resolution_for_every_artifact(self):
+        with tempfile.TemporaryDirectory(prefix="journey-offline-plan-provenance-") as temp:
+            root = Path(temp)
+            index = root / "release-index.json"
+            index.write_text("{}")
+
+            def run_command(args):
+                payload = {"ok": True, "data": {"plan": {"request": {"source": "offline"}, "artifacts": [
+                    {"id": "platform", "resolvedFrom": "cache"},
+                    {"id": "kb-dev", "resolvedFrom": "registry", "resolvedUrl": "https://example.test/kb-dev"},
+                ]}}}
+                return subprocess.CompletedProcess(args, 0, json.dumps(payload), "")
+
+            journey = run_offline_plan_step(mode="local", launcher="kb-create", stable_index=index,
+                                            platform_root=root, run_command=run_command)
+
+        self.assertEqual(journey.steps[0].status, "FAIL")
+        self.assertIn("network resolution", journey.steps[0].message)
+
+    def test_candidate_mismatch_is_typed_orchestration_failure_without_claims(self):
+        with tempfile.TemporaryDirectory(prefix="journey-candidate-provenance-") as temp:
+            report = Path(temp) / "candidate.json"
+            journey = Journey("local", "candidate-provenance-test")
+            step = record_candidate_provenance(journey, "abc1234", {
+                "version": "2.0.0", "commit": "def5678",
+            })
+            journey.write_json(report)
+            payload = json.loads(report.read_text())
+
+        self.assertEqual(step.status, "FAIL")
+        self.assertEqual(journey.result().case_run["claims"], [])
+        self.assertEqual(len(payload["steps"]), 1)
+        step = payload["steps"][0]
+        self.assertEqual(step["capability"], "journey.orchestration")
+        self.assertEqual(step["details"]["code"], "KB_JOURNEY_CANDIDATE_MISMATCH")
+        self.assertIn("abc1234", step["message"])
+        self.assertIn("def5678", step["message"])
+
+    def test_candidate_short_commit_matches_checkout_revision(self):
+        with tempfile.TemporaryDirectory(prefix="journey-candidate-provenance-") as temp:
+            report = Path(temp) / "candidate.json"
+            journey = Journey("local", "candidate-provenance-test")
+            step = record_candidate_provenance(journey, "abc1234567890", {
+                "version": "2.0.0", "commit": "abc1234",
+            })
+            journey.write_json(report)
+
+        self.assertEqual(step.status, "PASS")
+        self.assertEqual(journey.result().case_run["claims"], [])
+
     def test_invalid_analytics_retention_claim_requires_catalogued_start_error(self):
         with tempfile.TemporaryDirectory(prefix="journey-invalid-analytics-retention-") as temp:
             root = Path(temp)
@@ -97,6 +336,24 @@ class InstallerCaseStepsTest(unittest.TestCase):
             self.assertEqual(fixture_artifact["config"], [requirement])
             self.assertEqual(manifest["requirements"], [requirement])
 
+    def test_doctor_fixture_includes_installed_cli_entry_needed_by_launcher_shim(self):
+        with tempfile.TemporaryDirectory(prefix="journey-doctor-cli-fixture-") as temp:
+            root = Path(temp)
+            source = root / "source"
+            source_package = source / "node_modules/@kb-labs/cli-bin"
+            source_package.joinpath("dist").mkdir(parents=True)
+            source_package.joinpath("dist/bin.js").write_text("export {};\n")
+            receipt = source / ".kb/v2/receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"plan": {"artifacts": [
+                {"kind": "cli", "id": "cli", "package": "@kb-labs/cli-bin", "version": "1.0.0"},
+            ]}}))
+            target = root / "target"
+
+            _seed_doctor_fixture(source, target)
+
+            self.assertEqual((target / "node_modules/@kb-labs/cli-bin/dist/bin.js").read_text(), "export {};\n")
+
     def test_uninstall_decline_claim_fails_for_a_failed_fake_response(self):
         with tempfile.TemporaryDirectory(prefix="journey-uninstall-decline-") as temp:
             receipt = Path(temp) / "receipt.json"
@@ -120,17 +377,22 @@ class InstallerCaseStepsTest(unittest.TestCase):
             canary.write_text('{"platforms": []}')
             installed = root / "installed"
             installed.mkdir()
+            installed_cli_entry = installed / "node_modules/@kb-labs/cli-bin/dist/bin.js"
+            installed_cli_entry.parent.mkdir(parents=True)
+            installed_cli_entry.write_text("export {};\n")
 
             def fail_every_command(args):
                 return subprocess.CompletedProcess(args, 2, '{"ok":false,"error":{"code":"FAKE_FAILURE"}}', "")
 
-            journey = run_installer_case_steps(mode="local", launcher="kb-create", stable_index=stable,
-                                               canary_index=canary, platform_root=installed,
-                                               secret_value="journey-test-secret",
-                                               run_command=fail_every_command)
+            with patch("installer_case_steps.installer_scenario_resources",
+                       return_value=[case_catalog_root()]):
+                journey = run_installer_case_steps(mode="local", launcher="kb-create", stable_index=stable,
+                                                   canary_index=canary, platform_root=installed,
+                                                   secret_value="journey-test-secret",
+                                                   run_command=fail_every_command)
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
-            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "S-181.1", "S-181.2",
+            expected = {"PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "S-025.9", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-025.1", "S-025.2",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7",

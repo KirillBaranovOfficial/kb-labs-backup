@@ -13,9 +13,10 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { fillAdapterFallbacksAndRecord, initPlatform, resetPlatform } from '../loader.js';
+import { createDegradedAdapterProxy, fillAdapterFallbacksAndRecord, initPlatform, resetPlatform } from '../loader.js';
 import { platform } from '../container.js';
 import { getAdapterStatusFor, resetAdapterStatus } from '../adapter-status.js';
+import { AdapterUnavailableError } from '@kb-labs/core-platform';
 
 describe('Platform Loader', () => {
   beforeEach(() => {
@@ -66,6 +67,30 @@ describe('Platform Loader', () => {
   });
 
   describe('Adapter Configuration', () => {
+    // case: S-211.6
+    it('throws the typed unavailable error for method and property reads and remains safely awaitable', async () => {
+      const error = new AdapterUnavailableError('llm', 'load-failed', 'adapter load failed');
+      const adapter = createDegradedAdapterProxy({ complete: () => 'fallback', label: 'fallback-value' }, error) as {
+        complete(): string;
+        label: string;
+      };
+      expect(() => adapter.complete()).toThrow(error);
+      expect(() => adapter.label).toThrow(error);
+      expect(await adapter).toBe(adapter);
+      expect(Reflect.get(adapter, Symbol.toStringTag)).toBeUndefined();
+    });
+
+    // case: S-211.6
+    it('throws a typed error for a degraded slot with no fallback target', () => {
+      const error = new AdapterUnavailableError('vectorStore', 'load-failed', 'adapter load failed');
+      const adapter = createDegradedAdapterProxy(undefined, error) as {
+        upsert(): void;
+        anyProperty: unknown;
+      };
+      expect(() => adapter.upsert()).toThrow(error);
+      expect(() => adapter.anyProperty).toThrow(error);
+    });
+
     it('reports the composed local log reader as real when its backends are loaded', () => {
       platform.setAdapter('logRingBuffer', {});
       resetAdapterStatus();
@@ -76,6 +101,42 @@ describe('Platform Loader', () => {
         mode: 'real',
         implementation: 'HybridLogReader',
       });
+    });
+
+    // case: S-211.6
+    it('records a failed configured slot as degraded while keeping other slots available', async () => {
+      platform.reset();
+      platform.setAdapter('llm', undefined as never);
+      resetAdapterStatus();
+      fillAdapterFallbacksAndRecord(
+        platform,
+        { llm: '@kb-labs/adapters-missing-llm' },
+        false,
+        new Map([['llm', {
+          packageName: '@kb-labs/adapters-missing-llm',
+          correlationId: 'test-correlation',
+          cause: 'package was not found',
+          causeError: new Error('package was not found'),
+          action: {
+            id: 'install-adapter',
+            label: 'Install @kb-labs/adapters-missing-llm',
+            command: 'kb marketplace install @kb-labs/adapters-missing-llm --scope platform',
+          },
+        }]]),
+      );
+
+      expect(getAdapterStatusFor('llm')).toMatchObject({
+        mode: 'degraded',
+        reason: 'load-failed',
+        configuredPackage: '@kb-labs/adapters-missing-llm',
+        action: { command: 'kb marketplace install @kb-labs/adapters-missing-llm --scope platform' },
+      });
+      await expect(async () => platform.llm.complete('hello')).rejects.toBeInstanceOf(AdapterUnavailableError);
+      await expect(async () => platform.llm.complete('hello')).rejects.toMatchObject({
+        slot: 'llm',
+        reason: 'load-failed',
+      });
+      expect(getAdapterStatusFor('cache')?.mode).not.toBe('degraded');
     });
 
     it('should handle config with no adapters', async () => {

@@ -41,6 +41,8 @@ export type ConfigWriteErrorCode =
   | 'KB_CONFIG_SECRET_MISSING'
   | 'KB_CONFIG_SECRET_PLAINTEXT'
   | 'KB_CONFIG_CONFLICT'
+  | 'KB_ADAPTER_NOT_INSTALLED'
+  | 'KB_ADAPTER_SLOT_MISMATCH'
   | 'KB_PLUGIN_SETTINGS_INVALID'
   | 'KB_PLUGIN_SETTINGS_SCHEMA_INVALID';
 
@@ -61,6 +63,12 @@ export interface ConfigIssue {
   /** Dotted path of the offending value. */
   path: string;
   message: string;
+  /** Catalogued semantic code; omitted for ordinary schema/shape violations. */
+  code?: ConfigWriteErrorCode;
+  /** Code-specific template values in addition to `path`. */
+  details?: Record<string, string>;
+  /** Specific next step for semantic validators such as adapter binding. */
+  hint?: string;
 }
 
 export interface SetUserConfigOptions {
@@ -170,6 +178,12 @@ function issueKey(issue: ConfigIssue): string {
   return `${issue.path}\u0000${issue.message}`;
 }
 
+function issueOverlapsWritePath(issue: ConfigIssue, keyPath: readonly string[]): boolean {
+  const issuePath = issue.path.split('.');
+  const sharedLength = Math.min(issuePath.length, keyPath.length);
+  return issuePath.slice(0, sharedLength).every((segment, index) => segment === keyPath[index]);
+}
+
 /** Write text atomically (tmp + rename in the same directory), keeping the file mode. */
 async function writeAtomicKeepingMode(filePath: string, text: string): Promise<void> {
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
@@ -262,12 +276,14 @@ async function computeEdit(options: SetUserConfigOptions, text: string, filePath
     [...schemaIssues(schema, before), ...((await options.validate?.(before)) ?? [])].map(issueKey),
   );
   const introduced = [...schemaIssues(schema, after), ...((await options.validate?.(after)) ?? [])].filter(
-    (issue) => !knownBefore.has(issueKey(issue)),
+    (issue) => issueOverlapsWritePath(issue, keyPath) || !knownBefore.has(issueKey(issue)),
   );
   const first = introduced[0];
   if (first) {
-    throw new ConfigWriteError('KB_CONFIG_INVALID', `${first.path || keyName}: ${first.message}`, {
+    throw new ConfigWriteError(first.code ?? 'KB_CONFIG_INVALID', `${first.path || keyName}: ${first.message}`, {
+      ...(first.details ?? {}),
       path: first.path || keyName,
+      ...(first.hint ? { hint: first.hint } : {}),
     });
   }
 

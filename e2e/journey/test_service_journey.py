@@ -19,6 +19,8 @@ from entrypoint import run_runner
 from runner import login_and_configure_secured_admin
 from service_runner import (SERVICE_GROUPS, checks, configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
+                            expect_html, install_project_agents_plugin,
+                            request as request_result,
                             PROJECT_ID,
                             _prepare_and_export_mcp_projects,
                             main as service_main, mcp_probe, run_grouped_service_steps, run_service_steps)
@@ -47,6 +49,44 @@ class FakeGitHub:
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_agents_project_fixture_installs_through_marketplace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp) / "project"
+            project.mkdir()
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append((command, kwargs))
+                return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
+
+            with patch("service_runner._registry_version", return_value="2.120.1"), \
+                    patch("service_runner.run_with_runner", side_effect=lambda runner, command, **kwargs: fake_run(command, **kwargs)):
+                install_project_agents_plugin(str(project), "http://registry.test", {"HOME": temp})
+
+            self.assertEqual(calls[0][0], [
+                "kb", "marketplace", "install", "@kb-labs/agent-entry@2.120.1", "--json",
+            ])
+            self.assertEqual(calls[0][1]["cwd"], str(project.resolve()))
+
+    def test_studio_shell_is_html_while_studio_api_uses_json_envelope(self):
+        with patch("service_runner.request_raw", return_value=(200, b"<!doctype html><html></html>",
+                                                               {"content-type": "text/html; charset=utf-8"})):
+            self.assertIsNone(expect_html("/", "Studio shell"))
+        with patch("service_runner.request_raw", return_value=(200, b"{\"ok\":true}",
+                                                               {"content-type": "application/json"})):
+            self.assertIn("HTML", expect_html("/", "Studio shell"))
+
+    def test_studio_project_api_requires_the_shared_json_envelope(self):
+        headers = {"content-type": "application/json"}
+        with patch("service_runner.open_http", return_value=(200, b'{"ok":true,"data":{"projects":[]}}', headers)):
+            status, body, _ = request_result("/api/v1/projects")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"projects": []})
+
+        with patch("service_runner.open_http", return_value=(200, b'{"projects":[]}', headers)):
+            with self.assertRaisesRegex(RuntimeError, "UX JSON envelope"):
+                request_result("/api/v1/projects")
+
     def test_first_failure_and_json_result(self):
         journey = Journey("local", "fixture")
         journey.step("health", "gateway", lambda: None)
@@ -461,10 +501,9 @@ class ServiceJourneyTests(unittest.TestCase):
             "projectBRoot": project_b_root,
         })
         self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit-entry@2.120.1", "--json"])
-        self.assertEqual(calls[1], ["kb", "marketplace", "install", "@kb-labs/agent-entry@2.120.1", "--json"])
-        self.assertEqual(calls[3], ["kb", "marketplace", "install", "@kb-labs/review-entry@2.120.1", "--json"])
         registration_calls = [call for call in calls if call[:3] == ["kb", "project", "add"]]
         self.assertEqual(len(registration_calls), 1)
+        self.assertEqual(calls[2], ["kb", "marketplace", "install", "@kb-labs/review-entry@2.120.1", "--json"])
         self.assertEqual(registration_calls[0][0:3], ["kb", "project", "add"])
         self.assertEqual(registered_project_exists, [True])
         self.assertEqual(plan["gitStatus"]["staged"], ["note.txt"])
@@ -564,11 +603,13 @@ class ServiceJourneyTests(unittest.TestCase):
             for source in tokens[1:-1]:
                 for path in root.glob(source):
                     target = Path(destination)
+                    if path.is_dir() and str(target) == "/opt/kb-journey/e2e/journey":
+                        copied_into_package.update(child.name for child in path.glob("*.py"))
                     if destination.endswith("/"):
                         target /= path.name
                     if str(target) == "/usr/local/bin/kb-journey-runner" and path.name == "entrypoint.py":
                         wrapper_copied = True
-                    if str(target.parent) == "/opt/kb-journey":
+                    if str(target.parent) == "/opt/kb-journey/e2e/journey":
                         copied_into_package.add(path.name)
 
         local_modules = {path.stem for path in journey_dir.glob("*.py")}
@@ -585,9 +626,9 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertTrue(wrapper_copied, "Dockerfile.runner must install entrypoint.py as kb-journey-runner")
         self.assertTrue(required_modules <= copied_into_package,
                         f"Dockerfile.runner misses journey modules: {sorted(required_modules - copied_into_package)}")
-        self.assertIn("COPY e2e/journey/steps /opt/kb-journey/steps",
+        self.assertIn("COPY e2e/journey /opt/kb-journey/e2e/journey",
                       (journey_dir / "Dockerfile.runner").read_text(),
-                      "Dockerfile.runner must copy the auth step package imported by runner.py")
+                      "Dockerfile.runner must mirror the journey package under the repository resource root")
 
     def test_aggregate_compares_previous_status_and_uses_stable_fingerprint(self):
         bad = {"capability": "workflow", "mode": "local", "name": "run", "status": "FAIL",

@@ -21,6 +21,7 @@ import {
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import { sendAuthError } from './error-response.js';
 import { COOKIE_REFRESH } from './user-cookies.js';
+import { authRejectionEnvelope, gatewayRequestUrl } from './tokens.js';
 import { optionalRequestBodySchema, uxErrorResponses } from '../route-schema.js';
 
 const string = { type: 'string' } as const;
@@ -126,12 +127,13 @@ export function registerAuthRoutes(
       return reply.code(400).send({ error: 'Bad Request', issues: parsed.error.issues });
     }
 
-    const tokens = await authService.refreshTokens(parsed.data.refreshToken);
-    if (!tokens) {
-      return sendAuthError(reply, 401, undefined, 'Invalid or expired refresh token');
+    const verification = await authService.refreshTokens(parsed.data.refreshToken);
+    if (!verification.ok) {
+      request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason: verification.reason }, 'Gateway authentication rejected');
+      return reply.code(401).send({ ok: false, error: authRejectionEnvelope(verification.reason, gatewayRequestUrl(request), String(request.id)) });
     }
 
-    return reply.send(tokens);
+    return reply.send(verification.payload);
   });
 
   app.post<{ Body: { refreshToken?: string } }>('/auth/logout/cli', { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ['Auth'], summary: 'Revoke a CLI session or machine refresh token', querystring: { type: 'object', properties: {}, additionalProperties: false }, body: { type: 'object', properties: { refreshToken: string }, additionalProperties: false }, response: { 200: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] }, ...uxErrorResponses([400]) } } }, async (request, reply) => {
@@ -140,10 +142,12 @@ export function registerAuthRoutes(
       return reply.code(400).send({ error: 'Bad Request', message: 'refreshToken is required' });
     }
     const tokenKind = await authService.classifyRefreshToken(refreshToken);
-    if (tokenKind?.kind === 'machine') {
+    if (tokenKind.ok && tokenKind.payload.kind === 'machine') {
       await authService.revokeRefreshToken(refreshToken);
-    } else if (tokenKind?.kind === 'user') {
+    } else if (tokenKind.ok && tokenKind.payload.kind === 'user') {
       await userExt?.userLogoutFn(refreshToken);
+    } else if (!tokenKind.ok) {
+      request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason: tokenKind.reason }, 'Gateway authentication rejected');
     }
     return reply.send({ ok: true });
   });

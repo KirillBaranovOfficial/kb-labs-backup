@@ -59,7 +59,7 @@ export class CredentialsManager implements ICredentialsManager {
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new GatewayAuthResponseError('Token refresh', response.status, body);
+      throw new GatewayAuthResponseError('Token refresh', response.status, body, credentials.gatewayUrl);
     }
 
     const data = await readGatewaySuccessData<{

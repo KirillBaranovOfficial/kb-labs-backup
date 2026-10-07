@@ -102,6 +102,29 @@ func TestApplyRemovesGeneratedProjectionWhenTheHostDoesNotStart(t *testing.T) {
 	}
 }
 
+// case: S-005.1
+func TestApplyClientProfileInstallsWithoutRuntimeConfigOrHostProbe(t *testing.T) {
+	root := t.TempDir()
+	probe := &fakeProbe{}
+	plan := contracts.ResolvedInstallPlan{
+		Schema:       contracts.ResolvedPlanSchema,
+		Request:      contracts.InstallRequest{PlatformRoot: root},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "client"},
+	}
+	if _, err := Apply(context.Background(), plan, Dependencies{Artifacts: &fakeInstaller{}, Host: probe}); err != nil {
+		t.Fatal(err)
+	}
+	if len(probe.specs) != 0 {
+		t.Fatalf("client host probes = %#v", probe.specs)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
+		t.Fatalf("client runtime config stat error = %v", err)
+	}
+	if _, err := receipt.Read(root); err != nil {
+		t.Fatalf("client receipt was not committed: %v", err)
+	}
+}
+
 func TestApplyRejectsAPlanWithoutAHost(t *testing.T) {
 	root := t.TempDir()
 	plan := planIn(root, "plan")

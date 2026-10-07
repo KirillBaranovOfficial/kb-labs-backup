@@ -8,7 +8,7 @@ import type { DiscoveredAdapter } from '../discover-adapters.js';
 
 describe('loadDiscoveredAdapterModule', () => {
   // case: S-054.2
-  it('creates a typed, actionable error for a bound adapter package that cannot load', () => {
+  it('preserves a dependent package error and directs the user to host diagnostics', () => {
     const cause = Object.assign(new Error("Cannot find package 'openai' imported from /platform/node_modules/@kb-labs/adapters-openai/dist/llm.js"), {
       code: 'ERR_MODULE_NOT_FOUND',
     });
@@ -22,6 +22,7 @@ describe('loadDiscoveredAdapterModule', () => {
     expect(error.message).toContain("Cannot find package 'openai'");
     expect(error.message).not.toContain('kb marketplace install');
     expect(error.message).toContain('kb-create doctor --platform-root "/platform"');
+    expect(error.action?.command).toBe('kb-create doctor --platform-root "/platform"');
     expect(error.cause).toBe(cause);
   });
 
@@ -36,7 +37,19 @@ describe('loadDiscoveredAdapterModule', () => {
     expect(error.message).toContain('Install it with `kb marketplace install @kb-labs/adapters-openai --scope platform`.');
     expect(error.message).toContain('ERR_MODULE_NOT_FOUND');
     expect(error.message).not.toContain('kb-create doctor');
+    expect(error.action?.command).toBe('kb marketplace install @kb-labs/adapters-openai --scope platform');
     expect(error.cause).toBe(cause);
+  });
+
+  // case: S-211.6
+  it('recognizes the configured package manifest ENOENT as a missing installation', () => {
+    const cause = Object.assign(new Error("ENOENT: no such file or directory, open '/platform/node_modules/@kb-labs/adapters-vibeproxy/package.json'"), {
+      code: 'ENOENT',
+    });
+    const error = configuredAdapterLoadError('llm', '@kb-labs/adapters-vibeproxy', cause, '/platform');
+
+    expect(error.action?.command).toBe('kb marketplace install @kb-labs/adapters-vibeproxy --scope platform');
+    expect(error.message).toContain('ENOENT');
   });
 
   // case: S-179.12

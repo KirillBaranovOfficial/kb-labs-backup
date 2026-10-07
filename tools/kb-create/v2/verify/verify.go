@@ -18,6 +18,15 @@ import (
 
 // Run reads the generated runtime config and validates the plan's host.
 func Run(plan contracts.ResolvedInstallPlan, now time.Time) (contracts.Verification, error) {
+	if plan.ServiceGraph.Profile == "client" {
+		if plan.Host != nil || len(plan.ServiceGraph.Services) != 0 {
+			return contracts.Verification{}, contracts.NewDiag(contracts.CodeHostSpecInvalid, "The client profile must not declare a host or services.", "Use the client service profile from the release index.", nil)
+		}
+		if _, err := os.Stat(filepath.Join(plan.Request.PlatformRoot, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
+			return contracts.Verification{}, fmt.Errorf("client profile must not write runtime config")
+		}
+		return contracts.Verification{ReadinessCheckedAt: now.UTC()}, nil
+	}
 	config, err := os.ReadFile(filepath.Join(plan.Request.PlatformRoot, ".kb", "kb.config.jsonc"))
 	if err != nil {
 		return contracts.Verification{}, fmt.Errorf("read runtime config: %w", err)

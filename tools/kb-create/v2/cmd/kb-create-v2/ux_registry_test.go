@@ -130,6 +130,8 @@ func TestDoctorFailuresUseSharedHumanAndJSONBoundary(t *testing.T) {
 			}
 		})
 		t.Run(mode+" unexpected", func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
 			root := newRootCommand()
 			doctor := findCommand(root, "kb-create doctor")
 			doctor.RunE = func(*cobra.Command, []string) error {
@@ -153,10 +155,6 @@ func TestDoctorFailuresUseSharedHumanAndJSONBoundary(t *testing.T) {
 			correlationID := regexp.MustCompile(`[a-f0-9]{32}`).FindString(visible)
 			if correlationID == "" {
 				t.Fatalf("failure has no correlation ID: %s", visible)
-			}
-			home, err := os.UserHomeDir()
-			if err != nil {
-				t.Fatal(err)
 			}
 			log, err := os.ReadFile(filepath.Join(home, ".kb", "logs", "kb-create.jsonl"))
 			if err != nil || !bytes.Contains(log, []byte(correlationID)) || !bytes.Contains(log, []byte(`"stack"`)) {

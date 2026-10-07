@@ -59,10 +59,11 @@ export function createClientWsHandler(cache: ICache, jwtConfig: JwtConfig, logge
     }
 
     const authContext = await resolveToken(token, cache, jwtConfig);
-    if (!authContext) {
+    if (!authContext.ok) {
       socket.close(1008, 'Invalid token');
       return;
     }
+    const authenticatedContext = authContext.payload;
 
     const connectionId = randomUUID();
 
@@ -107,7 +108,7 @@ export function createClientWsHandler(cache: ICache, jwtConfig: JwtConfig, logge
       connectionId,
     });
 
-    logger.debug('Client connected', { connectionId, namespaceId: authContext.namespaceId });
+    logger.debug('Client connected', { connectionId, namespaceId: authenticatedContext.namespaceId });
 
     // 4. Message handler
     socket.on('message', (raw) => {
@@ -138,7 +139,7 @@ export function createClientWsHandler(cache: ICache, jwtConfig: JwtConfig, logge
             send(socket, { type: 'client:error', code: 'EXECUTION_NOT_FOUND', message: `Execution ${executionId} not found`, executionId });
             return;
           }
-          if (execution.namespaceId !== authContext.namespaceId) {
+          if (execution.namespaceId !== authenticatedContext.namespaceId) {
             send(socket, { type: 'client:error', code: 'FORBIDDEN', message: 'Execution belongs to another namespace', executionId });
             return;
           }
@@ -170,7 +171,7 @@ export function createClientWsHandler(cache: ICache, jwtConfig: JwtConfig, logge
             send(socket, { type: 'client:error', code: 'EXECUTION_NOT_FOUND', message: `Execution ${executionId} not found`, executionId });
             return;
           }
-          if (execution.namespaceId !== authContext.namespaceId) {
+          if (execution.namespaceId !== authenticatedContext.namespaceId) {
             send(socket, { type: 'client:error', code: 'FORBIDDEN', message: 'Execution belongs to another namespace', executionId });
             return;
           }

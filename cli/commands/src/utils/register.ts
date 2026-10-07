@@ -17,6 +17,7 @@ import { hello } from "../commands/system/hello";
 import { createCompletionCommand, autoUpdateCompletion } from "../commands/system/completion";
 import { diag } from "../commands/system/diag";
 import { registerManifests, preflightManifests } from "../registry/register";
+import type { DiagnosticEvent } from '@kb-labs/core-discovery';
 import { getContextCwd } from "@kb-labs/shared-cli-ui";
 import type { ILogger } from "@kb-labs/core-platform";
 import { platform } from "@kb-labs/core-runtime";
@@ -24,6 +25,11 @@ import { platform } from "@kb-labs/core-runtime";
 let _registered = false;
 let _systemCommandsRegistered = false;
 const registeredCommands: unknown[] = [];
+let discoveryDiagnostics: DiagnosticEvent[] = [];
+
+export function getDiscoveryDiagnostics(): readonly DiagnosticEvent[] {
+  return [...discoveryDiagnostics];
+}
 
 export interface RegisterBuiltinCommandsInput {
   cwd?: string;
@@ -61,11 +67,13 @@ export async function registerBuiltinCommands(
 
   try {
     const cwd = getContextCwd({ cwd: input.cwd });
-    const { discoverManifests } = await import('../registry/discover');
-    const discovered = await discoverManifests(cwd, {
+    const { discoverManifestsDetailed } = await import('../registry/discover');
+    const discovery = await discoverManifestsDetailed(cwd, {
       platformRoot: input.platformRoot,
       projectRoot: input.projectRoot,
     });
+    const discovered = discovery.results;
+    discoveryDiagnostics = discovery.diagnostics;
 
     if (discovered.length > 0) {
       log.info(`Discovered ${discovered.length} packages with CLI manifests`);

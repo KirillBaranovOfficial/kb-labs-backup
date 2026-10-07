@@ -1,6 +1,6 @@
 /**
- * Validation of `platform.adapterOptions.<adapter>` against the adapter's
- * manifest `configSchema` (ADR-0047: adapters already declare their options).
+ * Validation of platform adapter bindings and `platform.adapterOptions.<adapter>`
+ * against the adapter's installed manifest.
  *
  * Shared by `kb config set` (`cli/commands`) and the host's `/api/v1/adapters`
  * API (`services/host`, stage 6 second slice) so both write through the same
@@ -10,9 +10,8 @@
  * is not guaranteed to list every option an adapter accepts, so the check is
  * deliberately narrow: only options the manifest DECLARES are type/enum
  * checked, unknown options pass, and `required` is not enforced (a project
- * layer may set only some of the options). When the adapter package or its
- * manifest cannot be found the check is skipped and the write is validated by
- * the platform schema alone.
+ * layer may set only some of the options). Adapter binding writes also require
+ * an installed package manifest that declares the requested slot.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -28,6 +27,12 @@ export interface ManifestFieldSchema {
 }
 
 export type ManifestConfigSchema = Record<string, ManifestFieldSchema>;
+
+export interface AdapterConfigManifest {
+  implements?: string | string[];
+  defaultFor?: string[];
+  configSchema?: ManifestConfigSchema;
+}
 
 interface PackageJson {
   main?: string;
@@ -45,6 +50,11 @@ export function splitPackageSpecifier(spec: string): { name: string; subpath: st
   const name = parts.slice(0, nameLength).join('/');
   const rest = parts.slice(nameLength).join('/');
   return { name, subpath: rest ? `./${rest}` : '.' };
+}
+
+function adapterPackageInstalled(spec: string, platformRoot: string): boolean {
+  const { name } = splitPackageSpecifier(spec);
+  return existsSync(path.join(platformRoot, 'node_modules', name, 'package.json'));
 }
 
 function exportTarget(entry: unknown): string | undefined {
@@ -92,11 +102,11 @@ export function resolveAdapterModule(spec: string, platformRoot: string): string
   return undefined;
 }
 
-/** The manifest `configSchema` of an adapter package, or `undefined` when unavailable. */
-export async function loadAdapterConfigSchema(
+/** The manifest of an adapter package installed beneath the target platform root. */
+export async function loadAdapterManifest(
   spec: string,
   platformRoot: string,
-): Promise<ManifestConfigSchema | undefined> {
+): Promise<AdapterConfigManifest | undefined> {
   const modulePath = resolveAdapterModule(spec, platformRoot);
   if (!modulePath) {
     return undefined;
@@ -105,8 +115,18 @@ export async function loadAdapterConfigSchema(
     const mod = (await import(pathToFileURL(modulePath).href)) as Record<string, unknown>;
     const fromDefault = isRecord(mod.default) ? mod.default.manifest : undefined;
     const manifest = mod.manifest ?? fromDefault;
-    if (isRecord(manifest) && isRecord(manifest.configSchema)) {
-      return manifest.configSchema as ManifestConfigSchema;
+    if (isRecord(manifest)) {
+      return {
+        ...(typeof manifest.implements === 'string' || Array.isArray(manifest.implements)
+          ? { implements: manifest.implements as string | string[] }
+          : {}),
+        ...(Array.isArray(manifest.defaultFor)
+          ? { defaultFor: manifest.defaultFor.filter((slot): slot is string => typeof slot === 'string') }
+          : {}),
+        ...(isRecord(manifest.configSchema)
+          ? { configSchema: manifest.configSchema as ManifestConfigSchema }
+          : {}),
+      };
     }
   } catch {
     // The adapter cannot be imported here; fall back to the platform schema.
@@ -199,14 +219,52 @@ export function createAdapterOptionsValidator(
   input: AdapterOptionsValidatorInput,
 ): ((document: Record<string, unknown>) => Promise<ConfigIssue[]>) | undefined {
   const target = optionsHolder(keyPath);
-  if (!target) {
+  const bindingSlot = keyPath[0] === 'platform' && keyPath[1] === 'adapters' && keyPath.length === 3
+    ? keyPath[2]
+    : undefined;
+  if (!target && !bindingSlot) {
     return undefined;
   }
-  const { name, basePath } = target;
-  let cachedSchema: Promise<ManifestConfigSchema | undefined> | undefined;
+  const { name, basePath } = target ?? { name: bindingSlot!, basePath: keyPath.slice(0, 3).join('.') };
+  const cachedManifests = new Map<string, Promise<AdapterConfigManifest | undefined>>();
 
   return async (document) => {
     const platform = isRecord(document.platform) ? document.platform : undefined;
+    if (bindingSlot) {
+      const adapters = isRecord(platform?.adapters) ? platform.adapters : undefined;
+      const value = adapters?.[bindingSlot];
+      if (value === null) {return [];}
+      const specs = typeof value === 'string'
+        ? [value]
+        : Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+      const issues: ConfigIssue[] = [];
+      for (const spec of specs) {
+        const manifest = await getManifest(spec);
+        if (!manifest) {
+          issues.push(adapterPackageInstalled(spec, input.platformRoot)
+            ? {
+                path: basePath,
+                message: `Installed adapter package "${spec}" does not expose a loadable manifest for slot "${bindingSlot}".`,
+                hint: `Repair the installed package manifest for ${spec}, then retry the binding.`,
+              }
+            : notInstalledIssue(spec, bindingSlot, basePath));
+          continue;
+        }
+        const contract = ADAPTER_CONTRACT_BY_SLOT[bindingSlot];
+        const implementations = Array.isArray(manifest.implements) ? manifest.implements : [manifest.implements];
+        if (!manifest.defaultFor?.includes(bindingSlot) && (!contract || !implementations.includes(contract))) {
+          issues.push({
+            path: basePath,
+            code: 'KB_ADAPTER_SLOT_MISMATCH',
+            details: { package: splitPackageSpecifier(spec).name, slot: bindingSlot },
+            message: `Adapter package ${splitPackageSpecifier(spec).name} does not declare platform slot ${bindingSlot}.`,
+            hint: `Install a provider that declares ${bindingSlot} with \`kb marketplace install <pkg> --scope platform\`, then retry.`,
+          });
+        }
+      }
+      return issues;
+    }
+
     const optionsRoot = keyPath[0] === 'platform' ? platform?.adapterOptions : document.adapterOptions;
     const options = isRecord(optionsRoot) ? optionsRoot[name] : undefined;
     if (!isRecord(options)) {
@@ -214,10 +272,65 @@ export function createAdapterOptionsValidator(
     }
     const spec = adapterSpecFor(name, platform?.adapters, input.effectiveAdapters);
     if (!spec) {
-      return [];
+      return [{
+        path: basePath,
+        message: `Cannot validate adapter options because no package is bound for ${name}. Bind an installed adapter before setting its options.`,
+        hint: `Run \`kb adapter bind ${name} <package>\` with an installed adapter, then retry.`,
+      }];
     }
-    cachedSchema ??= loadAdapterConfigSchema(spec, input.platformRoot);
-    const schema = await cachedSchema;
-    return schema ? validateAdapterOptions(basePath, options, schema) : [];
+    const manifest = await getManifest(spec);
+    if (!manifest && !adapterPackageInstalled(spec, input.platformRoot)) {
+      return [notInstalledIssue(spec, name, basePath)];
+    }
+    if (!manifest) {
+      return [{
+        path: basePath,
+        message: `Cannot load the installed manifest for adapter ${spec}.`,
+        hint: `Repair the installed package manifest for ${spec}, then retry the option write.`,
+      }];
+    }
+    if (!manifest.configSchema) {
+      return [{
+        path: basePath,
+        message: `Installed adapter ${spec} does not declare configSchema for ${basePath}.`,
+        hint: `Run \`kb adapter bind ${name} <package>\` with a provider that declares configSchema, then retry.`,
+      }];
+    }
+    return validateAdapterOptions(basePath, options, manifest.configSchema);
+  };
+
+  function getManifest(spec: string): Promise<AdapterConfigManifest | undefined> {
+    let pending = cachedManifests.get(spec);
+    if (!pending) {
+      pending = loadAdapterManifest(spec, input.platformRoot);
+      cachedManifests.set(spec, pending);
+    }
+    return pending;
+  }
+}
+
+function notInstalledIssue(spec: string, slot: string, basePath: string): ConfigIssue {
+  const packageName = splitPackageSpecifier(spec).name;
+  return {
+    path: basePath,
+    code: 'KB_ADAPTER_NOT_INSTALLED',
+    details: { package: packageName, slot },
+    message: `Adapter package ${packageName} is not installed on this platform.`,
+    hint: `kb marketplace install ${packageName} --scope platform`,
   };
 }
+
+const ADAPTER_CONTRACT_BY_SLOT: Record<string, string> = {
+  logger: 'ILogger',
+  cache: 'ICache',
+  storage: 'IStorage',
+  eventBus: 'IEventBus',
+  documentDatabase: 'IDocumentDatabase',
+  kvStore: 'IKVStore',
+  analytics: 'IAnalytics',
+  llm: 'ILLM',
+  embeddings: 'IEmbeddings',
+  vectorStore: 'IVectorStore',
+  logs: 'ILogReader',
+  snapshotManager: 'ISnapshotManager',
+};

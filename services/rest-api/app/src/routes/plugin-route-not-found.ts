@@ -22,18 +22,39 @@ export function registerPluginRouteNotFoundHandler(
 
   app.setNotFoundHandler(async (request, reply) => {
     const pathname = request.url.split("?", 1)[0] ?? request.url;
-    if (!pathname.startsWith(pluginPrefix)) return reply.code(404).send({ error: "Not Found" });
+    const route = `${request.method} ${pathname}`;
+    const resourceNotFound = (message: string, details: Record<string, string> = { route }) => {
+      const error = createErrorEnvelope("KB_RUNTIME_RESOURCE_NOT_FOUND", {
+        details,
+        message,
+        correlationId: String(request.id),
+        hint: "Check the REST route and method, then use a route declared by the service or an enabled plugin.",
+      });
+      return reply.code(404).send(createUxFailureResult(error));
+    };
+    if (!pathname.startsWith(pluginPrefix)) {
+      return resourceNotFound(`REST route ${route} was not found.`);
+    }
 
     const slug = pathname.slice(pluginPrefix.length).split("/", 1)[0];
-    if (!slug) return reply.code(404).send({ error: "Not Found" });
+    if (!slug) return resourceNotFound(`REST route ${route} was not found.`);
 
     const snapshot = registry.snapshot();
     const requestedPrefix = `${pluginPrefix}${slug}`;
-    const installedPrefix = snapshot.manifests.some((entry) => {
+    const installedEntry = snapshot.manifests.find((entry) => {
       const prefix = pluginBasePath(entry, basePath);
       return prefix === requestedPrefix || prefix?.startsWith(`${requestedPrefix}/`);
     });
-    if (installedPrefix) return reply.code(404).send({ error: "Not Found" });
+    if (installedEntry) {
+      const plugin = installedEntry.pluginId;
+      const error = createErrorEnvelope("KB_RUNTIME_RESOURCE_NOT_FOUND", {
+        details: { plugin, route },
+        message: `REST route ${route} was not found for plugin ${plugin}.`,
+        correlationId: String(request.id),
+        hint: "Run `kb marketplace plugins doctor --scope project` to inspect project plugin routes, then use a declared route.",
+      });
+      return reply.code(404).send(createUxFailureResult(error));
+    }
 
     let packageId: string | undefined;
     try {

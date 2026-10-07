@@ -182,6 +182,11 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   assert.equal(index.platforms[0].profiles.default.services[0].command, 'kb-workflow');
   assert.equal(index.platforms[0].profiles.default.services[0].port, 7778);
   assert.equal(index.platforms[0].profiles.default.services[0].healthCheck, '/health');
+  assert.deepEqual(index.platforms[0].profiles.client, {
+    profile: 'client',
+    platformVersion: index.platforms[0].version,
+    services: [],
+  });
   assert.deepEqual(index.platforms[0].requires, [{ capability: 'serviceTransport', requiredBy: 'platform' }]);
   assert.deepEqual(index.platforms[0].config, [
     { id: 'platform.adapters', path: '/platform/adapters', default: '{"serviceTransport":"@kb-labs/adapters-service-transport-http"}' },
@@ -550,6 +555,31 @@ test('the sealer rejects a secret requirement that cannot reach a service', () =
   const { result, text } = prepareWithGateway({ 'kb-create.requirements.json': requirementsFile([{ id: 'gateway.jwt', secret: true }]) });
   assert.notEqual(result.status, 0);
   assert.match(text, /secret manifest requirement gateway\.jwt must declare env and services/);
+  const output = text.slice(text.indexOf('{')).split(/\r?\n/, 1)[0];
+  const failure = JSON.parse(output).error;
+  assert.equal(failure.code, 'KB_RELEASE_INDEX_SEAL_FAILED');
+  assert.match(failure.cause, /secret manifest requirement gateway\.jwt must declare env and services/);
+  assert.equal(failure.details.gate, 'manifest validation');
+  assert.match(failure.details.rule, /secret manifest requirement gateway\.jwt must declare env and services/);
+  assert.equal(failure.retryable, false);
+  assert.match(failure.hint, /gateway\.jwt/i);
+  assert.match(failure.hint, /env.*services.*release-index preparation/i);
+});
+
+test('the sealer gives a secret default rule its own remediation hint', () => {
+  const { result, text } = prepareWithGateway({ 'kb-create.requirements.json': requirementsFile([{
+    id: 'gateway.jwt', secret: true, env: 'GATEWAY_JWT', services: ['gateway'], default: '"unsafe"',
+  }]) });
+  assert.notEqual(result.status, 0);
+  assert.match(text, /secret manifest requirement gateway\.jwt must not declare a default/);
+  const output = text.slice(text.indexOf('{')).split(/\r?\n/, 1)[0];
+  const failure = JSON.parse(output).error;
+  assert.equal(failure.code, 'KB_RELEASE_INDEX_SEAL_FAILED');
+  assert.equal(failure.details.gate, 'manifest validation');
+  assert.match(failure.details.rule, /must not declare a default/);
+  assert.equal(failure.retryable, false);
+  assert.match(failure.hint, /remove the default/i);
+  assert.doesNotMatch(failure.hint, /add.*env.*services/i);
 });
 
 function skewFixture(prefix, sdkVersion) {

@@ -13,6 +13,7 @@ const mockCredLoad = vi.fn();
 const mockCredIsExpired = vi.fn();
 const mockSessionLoad = vi.fn();
 const mockSessionIsExpired = vi.fn();
+const mockSessionPath = vi.fn(() => '/tmp/test-home/.kb/session.json');
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
   CredentialsManager: class {
     load = mockCredLoad;
@@ -21,6 +22,7 @@ vi.mock('@kb-labs/cli-runtime/gateway', () => ({
   SessionManager: class {
     load = mockSessionLoad;
     isExpired = mockSessionIsExpired;
+    getFilePath = mockSessionPath;
   },
 }));
 
@@ -72,7 +74,7 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
-    expectSuccessEnvelope(captured, { authenticated: false, session: { authenticated: false } });
+    expectSuccessEnvelope(captured, { authenticated: false, session: { authenticated: false, path: '/tmp/test-home/.kb/session.json' } });
   });
 
   it('ST-02: machine only — top-level authenticated true, session.authenticated false', async () => {
@@ -87,7 +89,7 @@ describe('kb auth status', () => {
     expectSuccessEnvelope(captured, {
       authenticated: true,
       gatewayUrl: 'http://localhost:4000',
-      session: { authenticated: false },
+      session: { authenticated: false, path: '/tmp/test-home/.kb/session.json' },
     });
   });
 
@@ -102,7 +104,7 @@ describe('kb auth status', () => {
     expect(exitCode).toBe(0);
     expectSuccessEnvelope(captured, {
       authenticated: false,
-      session: { authenticated: true, email: 'admin@bootstrap.local', tokenExpired: false },
+      session: { authenticated: true, path: '/tmp/test-home/.kb/session.json', email: 'admin@bootstrap.local', tokenExpired: false },
     });
   });
 
@@ -121,7 +123,7 @@ describe('kb auth status', () => {
       gatewayUrl: 'http://localhost:4000',
       tokenExpired: false,
       expiresAt: expect.any(String),
-      session: { authenticated: true, tokenExpired: true },
+      session: { authenticated: true, path: '/tmp/test-home/.kb/session.json', tokenExpired: true },
     });
   });
 });

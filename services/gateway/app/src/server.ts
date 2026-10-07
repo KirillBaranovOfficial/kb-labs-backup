@@ -556,9 +556,9 @@ export async function createServer(
         schema: {
           tags: ["System"],
           summary:
-            "Platform adapter status — mode (real | inmemory | noop) per slot",
+            "Platform adapter status — mode (real | inmemory | noop | degraded) per slot",
           querystring: { type: 'object', properties: {}, additionalProperties: false },
-          response: { 200: { type: 'array', items: { type: 'object', properties: { slot: { type: 'string' }, mode: { type: 'string', enum: ['real', 'inmemory', 'noop'] }, implementation: { type: 'string' }, reason: { type: 'string' }, recordedAt: { type: 'string', format: 'date-time' } }, required: ['slot', 'mode', 'implementation', 'recordedAt'] } } },
+          response: { 200: { type: 'array', items: { type: 'object', properties: { slot: { type: 'string' }, mode: { type: 'string', enum: ['real', 'inmemory', 'noop', 'degraded'] }, implementation: { type: 'string' }, configuredPackage: { type: 'string' }, reason: { type: 'string' }, correlationId: { type: 'string' }, action: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' }, command: { type: 'string' } }, required: ['id', 'label', 'command'] }, recordedAt: { type: 'string', format: 'date-time' } }, required: ['slot', 'mode', 'implementation', 'recordedAt'] } } },
         },
       },
       async () => {

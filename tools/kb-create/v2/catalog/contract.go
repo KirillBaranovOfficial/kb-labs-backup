@@ -45,14 +45,55 @@ func peekSchema(data []byte) (string, error) {
 	return head.Schema, nil
 }
 
-// wrapIndexError keeps a typed launcher error intact so its code reaches the
-// user; any other failure becomes a generic invalid-index error.
-func wrapIndexError(prefix string, err error) error {
+// indexGateError keeps the validation phase and mismatched values attached to
+// the underlying failure until the single loader boundary adds file context.
+type indexGateError struct {
+	gate, expected, actual string
+	err                    error
+}
+
+func (e *indexGateError) Error() string { return e.err.Error() }
+func (e *indexGateError) Unwrap() error { return e.err }
+
+// wrapIndexError is the single error-construction boundary for release-index
+// loading. It keeps typed schema failures and enriches every gate with path,
+// reason, and string-valued envelope details.
+func wrapIndexError(path, gate, expected, actual string, err error) error {
+	reason := fmt.Sprintf("Release index %s failed for %s: %s", gate, path, strings.ReplaceAll(err.Error(), "\n", " "))
 	var typed *diag.Diag
 	if errors.As(err, &typed) {
+		typed.Reason = reason
+		typed.Cause = reason
+		if typed.Meta == nil {
+			typed.Meta = map[string]any{}
+		}
+		typed.Meta["gate"] = gate
+		typed.Meta["path"] = path
+		if expected != "" {
+			typed.Meta["expected"] = expected
+		}
+		if actual != "" {
+			typed.Meta["actual"] = actual
+		}
 		return typed
 	}
-	return contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index is corrupted or invalid.", indexInvalidHint, fmt.Errorf("%s: %w", prefix, err))
+	code, message, hint := contracts.CodeReleaseIndexInvalid, "The release index is corrupted or invalid.", indexInvalidHint
+	if gate == "read" {
+		code, message, hint = contracts.CodeReleaseIndexUnreadable,
+			"The release index at "+path+" cannot be read.", "Check the --index path and file permissions."
+	}
+	diagnostic := contracts.NewDiag(code,
+		message, hint, err)
+	diagnostic.Reason = reason
+	diagnostic.Cause = reason
+	diagnostic.Meta = map[string]any{"gate": gate, "path": path}
+	if expected != "" {
+		diagnostic.Meta["expected"] = expected
+	}
+	if actual != "" {
+		diagnostic.Meta["actual"] = actual
+	}
+	return diagnostic
 }
 
 // CheckLauncher enforces the platform's optional minLauncherVersion. An empty

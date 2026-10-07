@@ -81,6 +81,37 @@ describe('DiscoveryManager', () => {
     });
   });
 
+  // case: S-203.21
+  it('keeps an enabled plugin visible while diagnosing each missing CLI handler', async () => {
+    const pluginDir = path.join(tmpDir, 'plugins', 'missing-handler');
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(path.join(pluginDir, 'package.json'), JSON.stringify({ name: '@kb-labs/missing-handler', version: '1.0.0' }));
+    await fs.writeFile(path.join(pluginDir, 'kb.plugin.json'), JSON.stringify({
+      schema: 'kb.plugin/3', id: '@kb-labs/missing-handler', version: '1.0.0',
+      cli: { commands: [
+        { path: 'missing run', describe: 'Missing handler', handler: './commands/missing.js#default' },
+        { path: 'missing other', describe: 'Another missing handler', handler: './commands/other.js#default' },
+        { path: 'missing invalid', describe: 'Invalid flags', handler: './commands/invalid.js#default', flags: { flag: { type: 'string' } } },
+        { path: 'missing camel', describe: 'Invalid flag name', handler: './commands/camel.js#default', flags: [{ name: 'runId', type: 'string' }] },
+      ] },
+    }));
+    const lock = createEmptyLock();
+    lock.plugins['@kb-labs/missing-handler'] = createMarketplaceEntry({
+      version: '1.0.0', integrity: 'sha256-test', source: 'local', resolvedPath: './plugins/missing-handler', primaryKind: 'plugin', provides: ['plugin', 'cli-command'],
+    });
+    await writeMarketplaceLock(tmpDir, lock);
+
+    const result = await new DiscoveryManager({ root: tmpDir }).discover();
+    expect(result.plugins.map(plugin => plugin.id)).toContain('@kb-labs/missing-handler');
+    expect(result.diagnostics.filter(event => event.code === 'COMMAND_HANDLER_MISSING')).toHaveLength(2);
+    expect(result.diagnostics.filter(event => event.code === 'COMMAND_SCHEMA_INVALID')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ severity: 'error', context: expect.objectContaining({ pluginId: '@kb-labs/missing-handler', entityId: 'missing invalid' }) }),
+      expect.objectContaining({ severity: 'error', context: expect.objectContaining({ pluginId: '@kb-labs/missing-handler', entityId: 'missing camel' }) }),
+    ]));
+    expect(result.diagnostics.filter(event => event.code === 'COMMAND_HANDLER_MISSING')[0]?.remediation)
+      .toContain('kb marketplace plugins doctor');
+  });
+
   it('associates missing shared-store diagnostics with the pinned plugin', async () => {
     const lock = createEmptyLock();
     lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
@@ -246,7 +277,8 @@ describe('DiscoveryManager', () => {
     expect(sigMissing!.severity).toBe('info');
   });
 
-  it('detects duplicate plugin IDs', async () => {
+  // case: S-203.21
+  it('rejects lock keys that do not match the plugin manifest ID', async () => {
     // Two lock entries that resolve to manifests with the same ID
     const dir1 = path.join(tmpDir, 'plugins', 'dup1');
     const dir2 = path.join(tmpDir, 'plugins', 'dup2');
@@ -275,9 +307,7 @@ describe('DiscoveryManager', () => {
     const dm = new DiscoveryManager({ root: tmpDir });
     const result = await dm.discover();
 
-    // First one wins, second gets ENTITY_CONFLICT
-    expect(result.plugins).toHaveLength(1);
-    const conflict = result.diagnostics.find(d => d.code === 'ENTITY_CONFLICT');
-    expect(conflict).toBeDefined();
+    expect(result.plugins).toHaveLength(0);
+    expect(result.diagnostics.filter(d => d.code === 'PLUGIN_ID_MISMATCH')).toHaveLength(2);
   });
 });

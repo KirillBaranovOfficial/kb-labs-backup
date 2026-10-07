@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from invocations import invocation_context, run_command
+from journey_resources import read_installed_platform_resource
 from service_steps import Journey
 
 
@@ -18,16 +19,9 @@ def _request(*args, **kwargs):
 
 
 def _ux_contracts() -> tuple[dict, dict]:
-    installed = Path("/opt/kb-contracts/ux-result")
-    root = installed if installed.is_dir() else Path(__file__).resolve().parents[2] / "contracts" / "ux-result"
-    error_schema_path = (
-        root.parent / "error-envelope.schema.json"
-        if installed.is_dir()
-        else Path(__file__).resolve().parents[2] / "core" / "platform" / "src" / "error-envelope" / "error-envelope.schema.json"
-    )
     return (
-        json.loads((root / "machine-result.schema.json").read_text(encoding="utf-8")),
-        json.loads(error_schema_path.read_text(encoding="utf-8")),
+        json.loads(read_installed_platform_resource("ux-result", "machine-result.schema.json")),
+        json.loads(read_installed_platform_resource("error-envelope.schema.json")),
     )
 
 
@@ -244,7 +238,7 @@ def secured_auth(project_id: str) -> str | None:
         if (not isinstance(envelope, dict)
                 or machine_result.get("ok") is not False
                 or envelope.get("code") != "KB_AUTH_REQUIRED"
-                or envelope.get("hint") != 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".'
+                or envelope.get("hint") != 'Run "kb auth login --gateway-url <url> --email <email>".'
                 or not isinstance(envelope.get("correlationId"), str)
                 or not envelope["correlationId"].strip()):
             return f"secured tools/list with {'missing' if not token else 'invalid'} token returned no KB_AUTH_REQUIRED envelope"
@@ -460,7 +454,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
                             agent_id: str = "orchestrator") -> None:
     """Exercise the documented project Agents session REST lifecycle (S-141)."""
     session_id = ""
-    base = f"/api/v1/projects/{project_id}/rest/v1/plugins/agents/sessions"
+    base = f"/api/v1/projects/{project_id}/rest/api/v1/plugins/agents/sessions"
 
     def create() -> str | None:
         nonlocal session_id
@@ -551,3 +545,18 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
         return None
 
     journey.step("reject undefined project agent ID", "agents", unknown_agent, cases=["S-141.5"])
+
+    def unknown_route() -> str | None:
+        path = f"/api/v1/projects/{project_id}/rest/api/v1/plugins/agents/unknown-route"
+        with invocation_context(step_id="S-141.6"):
+            status, body, _ = _request(path, token=token)
+        error = body.get("error") if isinstance(body, dict) else None
+        if (status != 404 or not isinstance(error, dict)
+                or error.get("code") != "KB_RUNTIME_RESOURCE_NOT_FOUND"
+                or "@kb-labs/agents" not in str(error.get("message", ""))
+                or "unknown-route" not in str(error.get("message", ""))
+                or "kb marketplace plugins doctor --scope project" not in str(error.get("hint", ""))):
+            return "unknown project Agents REST route did not return a catalogued route-specific 404"
+        return None
+
+    journey.step("report an unknown project Agents REST route", "agents", unknown_route, cases=["S-141.6"])

@@ -39,6 +39,9 @@ const (
 	CodeWizardInputInvalid     = "KB_INSTALL_WIZARD_INPUT_INVALID"
 	CodeSecretInputInvalid     = "KB_INSTALL_SECRET_INPUT_INVALID"
 	CodeReleaseIndexInvalid    = "KB_INSTALL_RELEASE_INDEX_INVALID"
+	CodeReleaseIndexSealFailed = "KB_RELEASE_INDEX_SEAL_FAILED"
+	CodeReleaseIndexUnreadable = "KB_INSTALL_RELEASE_INDEX_UNREADABLE"
+	CodeOfflineArtifactMissing = "KB_INSTALL_OFFLINE_ARTIFACT_MISSING"
 	CodeIndexSchemaUnsupported = "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED"
 	CodeLauncherTooOld         = "KB_INSTALL_LAUNCHER_TOO_OLD"
 	CodeArtifactMismatch       = "KB_INSTALL_ARTIFACT_MANIFEST_MISMATCH"
@@ -62,22 +65,6 @@ const (
 	CodeHostSpecInvalid        = "KB_HOST_SPEC_INVALID"
 	CodeHostStateDirUnwritable = "KB_HOST_STATE_DIR_UNWRITABLE"
 )
-
-// CodeInfo is the catalog data kb-create needs to build an envelope offline.
-type CodeInfo struct {
-	Area      string
-	Stage     string
-	Retryable bool
-}
-
-// LookupCode returns the launcher's catalog data for a code.
-func LookupCode(code string) (CodeInfo, bool) {
-	entry, ok := diag.LookupCatalog(code)
-	if !ok {
-		return CodeInfo{}, false
-	}
-	return CodeInfo{Area: entry.Area, Stage: entry.Stage, Retryable: entry.Retryable}, true
-}
 
 // NewDiag constructs the shared clikit diagnostic for a kb-create error code.
 // The wrapped cause remains available through Unwrap; callers may add safe

@@ -4,6 +4,18 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-07
+
+### Offline plans show artifact resolution per artifact
+
+`kb-create plan --offline` exposes the actual source selected for each resolved
+artifact. An artifact is marked `resolvedFrom: "cache"` only when its
+checksum-verified cache entry exists; the plan omits a resolved network URL in
+that case. An offline plan with a missing or corrupt cache entry fails during
+planning, before apply. Online plans identify registry resolution explicitly.
+This keeps offline selection inspectable without treating the request flag as
+proof of where the artifacts can be fetched. Case: S-181.4.
+
 ## 2026-10-01
 
 ### Project membership comes from the platform registry
@@ -331,7 +343,52 @@ next command.
 Cases: PC-002.7, S-003.7, S-017.5, S-018.3, S-054.2, S-054.18, S-199.6,
 S-201.1–S-201.2, S-203.7–S-203.8.
 
+## 2026-10-07
+
+### 2026-10-07: Human CLI passwords stay out of process arguments
+
+`kb auth login` accepts `--password-stdin` for automation and prompts securely
+when a human omits `--password`. Auth catalog hints show the login command
+without a password argument. There is no password environment-variable
+fallback. Cases: S-007.4, S-010.6, S-031.4, S-041.6, S-041.7.
+
 ## 2026-10-06
+
+### Enabled plugin identity must match its manifest
+
+An enabled marketplace lock entry whose canonical package/plugin ID differs
+from `ManifestV3.id` is invalid and contributes no commands or other entities.
+Discovery retains a typed diagnostic, CLI unknown-command output points to
+`kb marketplace plugins doctor --scope <scope>`, and plugin doctor lists the
+failed enabled entry. No silent continue is allowed. Cases: S-203.21.
+
+### Gateway authentication exposes only safe rejection categories
+
+Protected Gateway rejections may include `details.reason` only from the closed
+set `expired`, `invalid`, `unknown-issuer`, `inactive`, and `revoked`. Missing
+or invalid credentials use `KB_AUTH_REQUIRED`; expired, revoked, and inactive
+credentials use their catalogued actionable auth code. The Gateway logs the
+same category with the request correlation ID. It never returns raw verifier
+messages, token claims, token IDs, or secret material. Cases: S-203.20.
+
+### Plugin command declarations have one shared schema
+
+The `@kb-labs/plugin-contracts` CLI declaration schema is the source of truth
+for the SDK authoring types, CLI registration, and discovery. CLI flag names
+use lowercase letters, digits, and hyphens; choices apply only to string
+flags. Invalid first-party declarations fail the workspace manifest test and
+enabled invalid plugins receive a retained discovery diagnostic. Discovery
+and CLI execution use one handler-path resolver. Cases: S-203.21.
+
+### Gateway credential failures use catalogued actionable codes
+
+Missing and invalid credentials remain `KB_AUTH_REQUIRED`. Expired access
+credentials use `KB_AUTH_TOKEN_EXPIRED`; revoked sessions and inactive users
+use their own catalogued codes. Safe `details.reason` values remain available
+for automation. The CLI renders the returned catalog envelope and fills its
+Gateway URL template from the saved auth context. KB-signed JWTs use an
+explicit issuer; tokens without that issuer require a fresh login. Cases:
+S-203.20.
 
 ### macOS user temp directories are valid plugin workspaces
 
@@ -356,3 +413,41 @@ adapter metrics registry, so it does not synthesize analytics or per-call log
 events as a substitute. Local SQLite analytics retains 90 days by default;
 `platform.adapterOptions.analytics.retentionDays` overrides the age in days.
 Cases: S-002, S-121, S-191.
+
+## 2026-10-07
+
+### Team members install a client profile
+
+`kb-create apply --service-profile client` installs the CLI and the user's
+`kb` shim without declaring services, writing host runtime configuration, or
+starting a host. The client profile shares the installer with host profiles
+and uses the existing shim ownership rules. The single-host guard applies only
+to profiles that run a host, so client installation succeeds beside a running
+host. `kb-create status` and `doctor` report `profile: client` as healthy without
+expecting a host. The member then signs in with `kb auth login --gateway-url
+<url> --email <member>` and uses the secured team Gateway. Cases: S-005.1,
+S-005.6–S-005.7.
+
+### One `kb` command belongs to one live platform root
+
+The user has one managed `kb` command. Applying another platform leaves the
+shim with its current owner while that root has a valid V2 receipt. Apply takes
+the shim when it is absent, already points to the requested root, or points to
+a managed target whose receipt is no longer valid. JSON reports the current
+owner when apply leaves the shim in place, and human output gives the direct
+CLI path for the new root. Uninstall removes the shim only when the uninstalling
+root owns it; uninstall does not guess a replacement owner. Doctor reports a
+dangling managed target and repairs it to its requested root only when the
+target root has no valid receipt. User-owned files at the shim path are never
+modified. The decision is enforced in the shared `shim.Ensure` and
+`shim.Remove` boundary used by apply, uninstall, and doctor.
+Cases: PC-001.10–PC-001.11, S-025.9.
+
+### Destructive confirmation without a TTY is invalid usage
+
+Destructive `kb-create` operations require explicit `--yes` when no terminal is
+available. Missing confirmation is invalid command usage and exits 2; a
+terminal cancellation remains an operation cancellation and exits 1. A shared
+confirmation boundary applies this rule to uninstall, rollback, and account
+recovery before any destructive action runs.
+Cases: S-050.3–S-050.4, S-024.4, S-203.12.

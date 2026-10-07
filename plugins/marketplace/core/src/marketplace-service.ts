@@ -28,6 +28,7 @@ import {
   DiagnosticCollector,
   loadManifest,
   extractEntityKinds,
+  DiscoveryManager,
 } from '@kb-labs/core-discovery';
 import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import type {
@@ -634,6 +635,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         issues.push({
           severity: 'error',
           packageId: id,
+          diagnosticCode: 'PACKAGE_NOT_FOUND',
           message: `Pinned package ${id}@${entry.version ?? 'unknown version'} is missing from its configured location`,
           remediation: `Run "kb marketplace install ${id}" to restore`,
         });
@@ -646,6 +648,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         issues.push({
           severity: 'error',
           packageId: id,
+          diagnosticCode: 'PACKAGE_NOT_FOUND',
           message: `Package directory not found: ${pkgRoot}`,
           remediation: `Run "kb marketplace install ${id}" to restore`,
         });
@@ -672,6 +675,34 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           remediation: 'Publish through the official marketplace to get a platform signature',
         });
       }
+    }
+
+    const discovery = await new DiscoveryManager({
+      root: scopeRoot,
+      workspace: false,
+      extensionStore: this.extensionStore,
+    }).discover();
+    for (const failure of discovery.failures) {
+      const event = discovery.diagnostics.find(item => item.context?.pluginId === failure.id && item.severity === 'error');
+      issues.push({
+        severity: 'error',
+        packageId: failure.id,
+        diagnosticCode: failure.diagnosticCode ?? event?.code ?? 'PLUGIN_DISCOVERY_FAILED',
+        message: failure.message,
+        remediation: failure.remediation ?? event?.remediation ?? `Run "kb marketplace plugins doctor --scope ${ctx.scope}" after correcting this plugin.`,
+      });
+    }
+    const failedPluginIds = new Set(discovery.failures.map(failure => failure.id));
+    for (const event of discovery.diagnostics) {
+      const pluginId = event.context?.pluginId;
+      if (event.severity !== 'error' || !pluginId || failedPluginIds.has(pluginId)) { continue; }
+      issues.push({
+        severity: 'error',
+        packageId: pluginId,
+        diagnosticCode: event.code,
+        message: event.message,
+        remediation: event.remediation ?? `Run "kb marketplace plugins doctor --scope ${ctx.scope}" after correcting this plugin.`,
+      });
     }
 
     return {

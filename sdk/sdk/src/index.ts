@@ -150,7 +150,6 @@ export {
 
 // Re-export new flags system from shared-command-kit
 export {
-  defineFlags,
   type FlagSchemaWithInfer,
   type InferFlags,
   type FlagSchemaDefinition,
@@ -164,6 +163,7 @@ export {
   type ValidationResult,
   type SafeValidationResult,
 } from "@kb-labs/shared-command-kit";
+export { defineFlags } from './manifest/flags.js';
 
 // Re-export job definition helpers from shared-command-kit — same
 // PluginContextV3 + composable-hook pattern as CLI commands, so handlers

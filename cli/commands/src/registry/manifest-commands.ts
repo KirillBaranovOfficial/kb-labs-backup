@@ -92,7 +92,10 @@ export function manifestToCommands(manifest: ManifestV3, pkgName: string, pkgRoo
   });
 
   const validation = validateManifests(commandManifests);
-  const valid = validation.success ? validation.data : commandManifests;
+  if (!validation.success) {
+    throw new Error(validation.errors.map(error => error.issues.map(issue => issue.message).join('; ')).join('; '));
+  }
+  const valid = validation.data;
   const commands = valid.map(m => normalizeManifest(m, pkgName));
   validateUniqueIds(commands, pkgName);
   return commands;
@@ -102,7 +105,13 @@ export function manifestToCommands(manifest: ManifestV3, pkgName: string, pkgRoo
  * Synthetic manifest marking a package as unavailable with an actionable hint.
  * Used when a package's manifest file exists but could not be loaded.
  */
-export function createUnavailableManifest(pkgName: string, reason: string, pluginId?: string): CommandManifest {
+export function createUnavailableManifest(
+  pkgName: string,
+  reason: string,
+  pluginId?: string,
+  diagnosticCode?: string,
+  remediation?: string,
+): CommandManifest {
   // Try to extract missing module name from the reason
   let missing: string | null = null;
   const m1 = reason.match(/Cannot find (?:module|package) '([^']+)'/);
@@ -119,18 +128,20 @@ export function createUnavailableManifest(pkgName: string, reason: string, plugi
     segments: [group],
     id: unavailableId,
     group,
-    describe: `Unavailable: ${pkgName} needs a workspace build. Run pnpm build.`,
+    describe: `Unavailable: ${pkgName}. ${reason}`,
     requires: missing ? [missing] : [],
-    loader: async () => {
-      throw new Error(`Cannot load ${pkgName} CLI manifest. ${reason}`);
-    },
+    loader: async () => { throw new Error(`Cannot load ${pkgName} CLI manifest. ${reason}`); },
     _synthetic: true,
     unavailablePlugin: true,
+    unavailableDiagnostic: diagnosticCode ? {
+      code: diagnosticCode,
+      remediation: remediation ?? 'Run `kb marketplace plugins doctor --scope platform` to diagnose this plugin.',
+    } : undefined,
     manifestV2: {
       schema: 'kb.plugin/3',
       id: pluginId ?? pkgName,
       version: '0.0.0',
-      display: { name: pkgName, description: reason },
+      display: { name: pkgName, description: `${diagnosticCode ?? 'PLUGIN_DISCOVERY_FAILED'}: ${reason}` },
       cli: { groupMeta: [{ path: group, describe: `Unavailable: ${pkgName}. Run pnpm build.` }], commands: [] },
     } satisfies ManifestV3,
   };

@@ -16,6 +16,7 @@ export const ERROR_AREAS = [
   'update',
   'runtime',
   'product',
+  'release',
 ] as const;
 export type ErrorArea = (typeof ERROR_AREAS)[number];
 
@@ -77,6 +78,15 @@ export interface ErrorEnvelope {
   details?: Record<string, string>;
   /** Structured findings produced by gate commands. */
   diagnostics?: PlatformDiagnostic[];
+}
+
+/** Thrown to propagate a catalogued envelope through a typed runtime boundary. */
+export class ErrorEnvelopeError extends Error {
+  constructor(public readonly envelope: ErrorEnvelope) {
+    super(envelope.message);
+    this.name = 'ErrorEnvelopeError';
+    Object.setPrototypeOf(this, ErrorEnvelopeError.prototype);
+  }
 }
 
 /** JSON Schema form used by Fastify response validators and serializers. */

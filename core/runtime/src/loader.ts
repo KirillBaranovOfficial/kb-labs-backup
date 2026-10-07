@@ -30,13 +30,31 @@ import {
   getAdapterStatusRegistry,
   resetAdapterStatus,
 } from './adapter-status.js';
-import { ADAPTER_DEFAULTS, type AdapterSlot, type HostServiceEnvironment } from '@kb-labs/core-platform';
+import { ADAPTER_DEFAULTS, AdapterUnavailableError, type AdapterSlot, type HostServiceEnvironment } from '@kb-labs/core-platform';
 import { inmemoryFactories } from '@kb-labs/core-platform/inmemory';
 import { noopFactories } from '@kb-labs/core-platform/noop';
 import { WorkflowEngine } from './core/workflow-engine.js';
 import { getHostGatewayAddresses } from './host-gateway-address.js';
 
 const OPTIONAL_ADAPTER_SLOTS = new Set(['logPersistence', 'logRingBuffer']);
+
+interface AdapterLoadFailureRecord {
+  packageName: string;
+  correlationId: string;
+  cause: string;
+  causeError: unknown;
+  action: { id: string; label: string; command: string };
+}
+
+export function createDegradedAdapterProxy(fallback: object | undefined, error: AdapterUnavailableError): object {
+  const target = fallback ?? Object.create(null) as object;
+  return new Proxy(target, {
+    get(_target, property) {
+      if (property === 'then' || typeof property === 'symbol') {return undefined;}
+      throw error;
+    },
+  });
+}
 
 function selectPackageExport(value: unknown): string | undefined {
   if (typeof value === 'string') {
@@ -163,33 +181,12 @@ export function fillAdapterFallbacksAndRecord(
   container: PlatformContainer,
   adapters: Record<string, AdapterValue | undefined>,
   installedPlatform = false,
+  failures: ReadonlyMap<string, AdapterLoadFailureRecord> = new Map(),
 ): void {
   const status = getAdapterStatusRegistry();
   const now = (): string => new Date().toISOString();
 
   const slots = Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[];
-
-  // Pre-scan: fail-fast before installing any fallbacks if a configured adapter
-  // failed to load. This prevents the platform from starting in a half-initialised
-  // state where some slots have InMemory/NoOp fallbacks while others are missing.
-  const failures: string[] = [];
-  for (const slot of slots) {
-    const configuredPkg = getPrimaryAdapter(adapters[slot]);
-    if (configuredPkg && !container.hasAdapter(slot)) {
-      failures.push(`  - "${slot}" was configured as "${configuredPkg}" but no adapter was loaded.`);
-    }
-  }
-  if (failures.length > 0) {
-    const lines = [
-      'Platform startup aborted: configured adapters failed to load.',
-      ...failures,
-      '',
-      'A configured adapter must succeed at every stage (import, factory, validation).',
-      'Check kb.config.json, .kb/marketplace.lock, and that the listed packages are installed.',
-      'Run `kb platform provision --mode reconcile` (deploy) or `kb marketplace install <pkg>` (dev).',
-    ];
-    throw new Error(lines.join('\n'));
-  }
 
   // Main pass: record real adapters and install InMemory/NoOp fallbacks.
   for (const slot of slots) {
@@ -203,6 +200,37 @@ export function fillAdapterFallbacksAndRecord(
     const desc = ADAPTER_DEFAULTS[slot];
     const configuredPkg = getPrimaryAdapter(adapters[slot]);
     const hasPresent = container.hasAdapter(slot);
+
+    const failure = failures.get(slot);
+    if (failure) {
+      const unavailable = new AdapterUnavailableError(
+        slot,
+        'load-failed',
+        failure.cause,
+        failure.causeError,
+        {
+          userMessage: `Adapter ${slot} is unavailable because ${failure.packageName} failed to load.`,
+          hint: failure.action.command,
+          action: failure.action,
+        },
+      );
+      const fallback = (noopFactories as Record<string, (() => unknown) | undefined>)[slot]?.()
+        ?? (inmemoryFactories as Record<string, (() => unknown) | undefined>)[slot]?.()
+        ?? Object.create(null) as object;
+      const failedAdapter = createDegradedAdapterProxy(fallback as object, unavailable);
+      container.setAdapter(slot, failedAdapter as never);
+      status.record({
+        slot,
+        mode: 'degraded',
+        implementation: failure.packageName,
+        configuredPackage: failure.packageName,
+        reason: 'load-failed',
+        correlationId: failure.correlationId,
+        action: failure.action,
+        recordedAt: now(),
+      });
+      continue;
+    }
 
     // Branch 1: configured + loaded — record as real.
     if (hasPresent && configuredPkg) {
@@ -310,12 +338,12 @@ export function fillAdapterFallbacksAndRecord(
   }
 
   // Boot summary — one line, scannable in logs.
-  const counts = { real: 0, inmemory: 0, noop: 0 };
+  const counts = { real: 0, inmemory: 0, noop: 0, degraded: 0 };
   for (const row of status.list()) {
     counts[row.mode]++;
   }
   container.logger.info(
-    `Adapters initialised: ${counts.real} real, ${counts.inmemory} inmemory, ${counts.noop} noop`,
+    `Adapters initialised: ${counts.real} real, ${counts.inmemory} inmemory, ${counts.noop} noop, ${counts.degraded} degraded`,
     counts,
   );
 }
@@ -779,6 +807,18 @@ export async function initPlatform(
     // Build adapter configs for AdapterLoader
     // Supports both single adapter (string) and multi-adapter (string[]) config
     const adapterConfigs: Record<string, AdapterConfig> = {};
+    const adapterLoadFailures = new Map<string, AdapterLoadFailureRecord>();
+    const recordAdapterLoadFailure = (slot: string, packageName: string, error: unknown): void => {
+      if (adapterLoadFailures.has(slot)) {return;}
+      const cause = configuredAdapterLoadError(slot, packageName, error, platformRoot ?? cwd);
+      const correlationId = randomUUID();
+      const action = cause.action;
+      if (!action) {throw new Error(`Adapter load error for ${slot} has no recovery action.`);}
+      adapterLoadFailures.set(slot, { packageName, correlationId, cause: cause.message, causeError: error, action });
+      platform.logger.error(
+        `Configured adapter failed to load; slot=${slot} adapter=${packageName} correlationId=${correlationId}: ${cause.message}`,
+      );
+    };
 
     // Collect raw middleware declarations from adapter manifests (resolved later by execution backends)
     const rawMiddlewareDecls: RawMiddlewareDecl[] = [];
@@ -843,14 +883,17 @@ export async function initPlatform(
           });
           continue;
         }
-        throw configuredAdapterLoadError(name, primaryAdapter, error, platformRoot ?? cwd);
+        recordAdapterLoadFailure(name, primaryAdapter, error);
       }
     }
 
     // Load adapters with dependency resolution. Configured adapters that
     // fail to load surface in the next pass via `fillAdapterFallbacksAndRecord`,
     // which throws a single combined error listing every failed slot.
-    const loadedAdapters = await loader.loadAdapters(adapterConfigs, loadModule, { logger: platform.logger });
+    const loadedAdapters = await loader.loadAdapters(adapterConfigs, loadModule, {
+      logger: platform.logger,
+      onAdapterLoadFailure: recordAdapterLoadFailure,
+    });
 
     // CRITICAL: Set analytics adapter FIRST (without wrapping) so wrapWithAnalytics() can use it
     if (loadedAdapters.has('analytics')) {
@@ -893,6 +936,7 @@ export async function initPlatform(
       platform,
       adapters as Record<string, AdapterValue | undefined>,
       installedPlatform && !isChildProcess,
+      adapterLoadFailures,
     );
 
     // ══════════════════════════════════════════════════════════════════════

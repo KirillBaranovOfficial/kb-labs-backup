@@ -51,9 +51,9 @@ export type AuthErrorCode =
   | 'user_disabled'
   | 'invalid_current_password'
   | 'weak_password'
-  | 'invalid_invite'
+  | 'KB_AUTH_INVALID_INVITE'
   | 'unknown_invite'
-  | 'invalid_password_reset';
+  | 'KB_AUTH_INVALID_PASSWORD_RESET';
 
 export class AuthError extends Error {
   public override readonly name = 'AuthError';
@@ -200,29 +200,30 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
   // ── refresh ───────────────────────────────────────────────────────
   const refresh = async (refreshToken: string): Promise<SessionResult> => {
     const payload = await verifyUserRefreshToken(refreshToken, opts.jwtConfig);
-    if (!payload) {
-      throw new AuthError('invalid_refresh');
+    if (!payload.ok) {
+      throw new AuthError('invalid_refresh', payload.reason);
     }
+    const verified = payload.payload;
 
     // CD-1: middleware checks user.status on every request, but the
     // refresh endpoint is public (no access cookie to inspect). Check
     // again here so a disabled user cannot extend their session via a
     // still-live refresh cookie.
-    const user = await opts.users.getById(payload.userId);
+    const user = await opts.users.getById(verified.userId);
     if (!user || user.status !== 'active') {
       // Revoke whatever family they presented so the dead refresh is
       // also gone from the store.
-      await opts.sessions.revokeFamily(payload.familyId);
-      throw new AuthError('user_disabled');
+      await opts.sessions.revokeFamily(verified.familyId);
+      throw new AuthError('user_disabled', 'inactive');
     }
 
     let rotated;
     try {
-      rotated = await opts.sessions.rotateRefresh(payload.jti);
+      rotated = await opts.sessions.rotateRefresh(verified.jti);
     } catch (err) {
-      if (err instanceof RefreshReuseDetectedError) {throw new AuthError('refresh_reuse');}
-      if (err instanceof RefreshExpiredError) {throw new AuthError('invalid_refresh');}
-      if (err instanceof RefreshNotFoundError) {throw new AuthError('invalid_refresh');}
+      if (err instanceof RefreshReuseDetectedError) {throw new AuthError('refresh_reuse', 'revoked');}
+      if (err instanceof RefreshExpiredError) {throw new AuthError('invalid_refresh', 'expired');}
+      if (err instanceof RefreshNotFoundError) {throw new AuthError('invalid_refresh', 'revoked');}
       throw err;
     }
 
@@ -233,8 +234,8 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
   // ── logout ────────────────────────────────────────────────────────
   const logout = async (refreshToken: string): Promise<void> => {
     const payload = await verifyUserRefreshToken(refreshToken, opts.jwtConfig);
-    if (!payload) {return;} // idempotent for garbage tokens
-    await opts.sessions.revokeFamily(payload.familyId);
+    if (!payload.ok) {return;} // idempotent for garbage tokens
+    await opts.sessions.revokeFamily(payload.payload.familyId);
   };
 
   // ── changePassword ────────────────────────────────────────────────
@@ -273,7 +274,7 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
   const activate = async (input: ActivateInput): Promise<SessionResult> => {
     const tokenResult = await opts.invites.findByToken(input.activationToken);
     if (tokenResult.kind === 'not_found') {throw new AuthError('unknown_invite');}
-    if (tokenResult.kind === 'invalid') {throw new AuthError('invalid_invite');}
+    if (tokenResult.kind === 'invalid') {throw new AuthError('KB_AUTH_INVALID_INVITE');}
     const invite = tokenResult.invite;
 
     const policyResult = await opts.passwordPolicy.validate(input.password);
@@ -291,7 +292,7 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
     const consumed = await opts.invites.consume(invite.inviteId);
     if (!consumed) {
       // Lost the race (or invite was used/revoked between findByToken and now).
-      throw new AuthError('invalid_invite');
+      throw new AuthError('KB_AUTH_INVALID_INVITE');
     }
 
     // Create the user, credential, and membership. The invite is already
@@ -339,7 +340,7 @@ export const createUserAuthService = (opts: UserAuthServiceOptions) => {
     const polErr = mapPolicyResultToError(policyResult);
     if (polErr) {throw polErr;}
     const reset = await opts.passwordResets.consume(input.token);
-    if (!reset) {throw new AuthError('invalid_password_reset');}
+    if (!reset) {throw new AuthError('KB_AUTH_INVALID_PASSWORD_RESET');}
     const hash = await bcrypt.hash(input.newPassword, opts.bcryptCost);
     await opts.credentials.setCredential({ userId: reset.userId, providerId: 'email-password', hash });
     await opts.sessions.revokeAllUserSessions(reset.userId);

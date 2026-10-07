@@ -237,3 +237,33 @@ def record_runner_failure(path: str | Path, mode: str, failure: str) -> JourneyR
     journey.step(name if separator else "journey runner", "journey.install",
                  lambda: message if separator else failure or "journey failed before capability checks")
     return journey.write_json(path)
+
+
+def record_candidate_provenance(journey: Journey, checkout_commit: str,
+                                candidate: dict[str, str]) -> StepResult:
+    """Add candidate source identity to the journey and fail before case claims."""
+    candidate_commit = candidate.get("commit", "")
+    candidate_version = candidate.get("version", "")
+    details = {
+        "checkoutCommit": checkout_commit,
+        "candidateCommit": candidate_commit,
+        "candidateVersion": candidate_version,
+    }
+    if candidate.get("identityError"):
+        details["identityError"] = candidate["identityError"]
+    if not checkout_commit or not candidate_commit:
+        details["code"] = "KB_JOURNEY_CANDIDATE_IDENTITY_MISSING"
+        failure = ("candidate source identity is missing: "
+                   f"checkout commit={checkout_commit or '<missing>'}, candidate commit={candidate_commit or '<missing>'}")
+        if candidate.get("identityError"):
+            failure += f"; {candidate['identityError']}"
+    elif not (checkout_commit.casefold().startswith(candidate_commit.casefold())
+              or candidate_commit.casefold().startswith(checkout_commit.casefold())):
+        details["code"] = "KB_JOURNEY_CANDIDATE_MISMATCH"
+        failure = (f"candidate source commit {candidate_commit} ({candidate_version or 'unknown version'}) "
+                   f"does not match checkout commit {checkout_commit}")
+    else:
+        failure = None
+
+    return journey.step("candidate provenance", "journey.orchestration",
+                        lambda: failure, details=lambda: details)

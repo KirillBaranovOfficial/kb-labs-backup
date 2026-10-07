@@ -28,12 +28,42 @@ export interface DiscoverManifestsOptions {
   projectRoot?: string;
 }
 
-function pluginToResult(plugin: DiscoveredPlugin, manifest: ManifestV3): DiscoveryResult {
+function pluginToResult(
+  plugin: DiscoveredPlugin,
+  manifest: ManifestV3,
+  diagnostics: DiagnosticEvent[],
+): DiscoveryResult {
   let manifests: CommandManifest[];
   try {
     manifests = manifestToCommands(manifest, plugin.packageName, toPosixPath(plugin.packageRoot));
   } catch (err: unknown) {
-    manifests = [createUnavailableManifest(plugin.packageName, err instanceof Error ? err.message : String(err))];
+    const message = err instanceof Error ? err.message : String(err);
+    const existing = diagnostics.find(event => event.code === 'COMMAND_SCHEMA_INVALID' && event.context?.pluginId === plugin.id);
+    const remediation = existing?.remediation
+      ?? `Correct the command schema in ${plugin.packageName}, rebuild it, and run "kb marketplace plugins doctor --scope ${plugin.scope}".`;
+    if (!existing) {
+      diagnostics.push({
+        severity: 'error',
+        code: 'COMMAND_SCHEMA_INVALID',
+        message: `Plugin "${plugin.id}" command schema is invalid: ${message}`,
+        context: { pluginId: plugin.id, entityKind: 'cli-command' },
+        ts: Date.now(),
+        remediation,
+      });
+    }
+    manifests = [createUnavailableManifest(plugin.packageName, existing?.message ?? message, plugin.id, 'COMMAND_SCHEMA_INVALID', remediation)];
+  }
+  const handlerFailure = diagnostics.find(event => event.severity === 'error'
+    && (event.code === 'COMMAND_HANDLER_MISSING' || event.code === 'COMMAND_HANDLER_UNREADABLE')
+    && event.context?.pluginId === plugin.id);
+  if (handlerFailure && manifests[0]?.unavailableDiagnostic === undefined) {
+    manifests = [createUnavailableManifest(
+      plugin.packageName,
+      handlerFailure.message,
+      plugin.id,
+      handlerFailure.code,
+      handlerFailure.remediation,
+    )];
   }
   return {
     manifests,
@@ -63,14 +93,21 @@ export function toDiscoveryResults(discovered: CoreDiscoveryResult): DiscoveryRe
   for (const plugin of discovered.plugins) {
     const manifest = discovered.manifests.get(plugin.id);
     if (manifest) {
-      results.push(pluginToResult(plugin, manifest));
+      results.push(pluginToResult(plugin, manifest, discovered.diagnostics));
     }
   }
 
   for (const failure of discovered.failures) {
-    if (failure.diagnosticCode !== 'PLUGIN_BUILD_MISSING') { continue; }
+    const diagnosticCode = failure.diagnosticCode
+      ?? discovered.diagnostics.find(event => event.context?.pluginId === failure.id && event.severity === 'error')?.code;
     results.push({
-      manifests: [createUnavailableManifest(failure.packageName, failure.message, failure.id)],
+      manifests: [createUnavailableManifest(
+        failure.packageName,
+        failure.message,
+        failure.id,
+        diagnosticCode,
+        failure.remediation,
+      )],
       source: failure.origin,
       scope: failure.scope,
       packageName: failure.packageName,

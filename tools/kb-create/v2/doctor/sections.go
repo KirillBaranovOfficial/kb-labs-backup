@@ -70,6 +70,15 @@ func InspectInstallation(platformRoot string, state host.State) Section {
 		checks = append(checks, Check{ID: "receipt", Detail: "The active installation receipt cannot be read: " + err.Error(), Hint: "Run \"kb-create apply\" to install, or restore a snapshot with \"kb-create rollback\"."})
 		return NewSection(append(checks, stateCheck(state)))
 	}
+	if active.Plan.ServiceGraph.Profile == "client" {
+		if active.Plan.Host != nil || len(active.Plan.ServiceGraph.Services) != 0 {
+			return NewSection([]Check{{ID: "client-profile", Code: contracts.CodeHostSpecInvalid, Detail: "The client profile unexpectedly declares host services."}})
+		}
+		if _, err := os.Stat(filepath.Join(platformRoot, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
+			return NewSection([]Check{{ID: "client-runtime-config", Detail: "The client profile must not contain host runtime configuration."}})
+		}
+		return NewSection([]Check{{ID: "receipt", OK: true, Detail: "client installation " + active.ID}, stateCheck(state)})
+	}
 	checks = append(checks, Check{ID: "receipt", OK: true, Detail: "platform " + active.Plan.ServiceGraph.PlatformVersion + ", receipt " + active.ID})
 	if _, err := os.Stat(filepath.Join(platformRoot, ".kb", "kb.config.jsonc")); err != nil {
 		checks = append(checks, Check{ID: "config", Detail: "The generated runtime config is missing.", Hint: "Run \"kb-create apply\" again to regenerate it."})
@@ -137,6 +146,11 @@ func adapterChecks(ctx context.Context, client *http.Client, healthURL string, b
 		Slot           string `json:"slot"`
 		Mode           string `json:"mode"`
 		Implementation string `json:"implementation"`
+		Reason         string `json:"reason"`
+		CorrelationID  string `json:"correlationId"`
+		Action         struct {
+			Command string `json:"command"`
+		} `json:"action"`
 	}
 	status, err := getJSON(ctx, client, parsed.String(), &statuses)
 	if status == 0 {
@@ -159,10 +173,13 @@ func adapterChecks(ctx context.Context, client *http.Client, healthURL string, b
 	for _, adapter := range statuses {
 		seen[adapter.Slot] = true
 		provider, hasPersistentProvider := expected[adapter.Slot]
-		fallback := hasPersistentProvider && (adapter.Mode == "inmemory" || adapter.Mode == "noop")
+		fallback := adapter.Mode == "degraded" || hasPersistentProvider && (adapter.Mode == "inmemory" || adapter.Mode == "noop")
 		detail := fmt.Sprintf("%s is loaded in %s mode using %s.", adapter.Slot, adapter.Mode, adapter.Implementation)
 		hint := ""
-		if fallback {
+		if adapter.Mode == "degraded" {
+			detail = fmt.Sprintf("%s is degraded because %s failed to load (reason: %s, correlationId: %s).", adapter.Slot, adapter.Implementation, adapter.Reason, adapter.CorrelationID)
+			hint = adapter.Action.Command
+		} else if fallback {
 			detail = fmt.Sprintf("%s has a configured persistent provider (%s) but loaded the %s fallback.", adapter.Slot, provider, adapter.Mode)
 			hint = fmt.Sprintf("From a project using this platform, run `kb adapter bind %s %s`.", adapter.Slot, provider)
 		}

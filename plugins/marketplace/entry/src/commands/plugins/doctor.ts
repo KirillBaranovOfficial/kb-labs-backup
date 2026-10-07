@@ -9,6 +9,7 @@ interface DoctorInput { flags?: DoctorFlags }
 interface DoctorIssue {
   severity: string;
   packageId: string;
+  diagnosticCode?: string;
   message: string;
   remediation?: string;
 }
@@ -52,7 +53,7 @@ export default defineCommand<unknown, DoctorInput, DoctorResultData>({
           ctx.ui?.warn?.(`Marketplace Doctor (${scopeCtx.scope})`, {
             sections: [
               { header: 'Summary', items: [`Total: ${report.total}`, `Issues: ${report.issues.length}`, `Errors: ${errors.length}`] },
-              { header: 'Issues', items: report.issues.map(i => `${i.severity === 'error' ? '❌' : '⚠'} ${i.packageId}: ${i.message}`) },
+              { header: 'Issues', items: report.issues.map(i => `${i.severity === 'error' ? '❌' : '⚠'} ${i.packageId}${i.diagnosticCode ? ` [${i.diagnosticCode}]` : ''}: ${i.message}`) },
             ],
           });
         }

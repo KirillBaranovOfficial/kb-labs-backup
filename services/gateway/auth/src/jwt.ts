@@ -3,16 +3,17 @@
  * Pure functions — no side effects, no ICache dependency.
  */
 
-import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
+import { SignJWT, jwtVerify, errors, type JWTPayload } from 'jose';
 import { randomUUID } from 'node:crypto';
 import { JwtPayloadSchema, type JwtPayload } from '@kb-labs/gateway-contracts';
 
 const ACCESS_TOKEN_TTL = 15 * 60;       // 15 minutes in seconds
 const REFRESH_TOKEN_TTL = 30 * 24 * 3600; // 30 days in seconds
+export const KB_JWT_ISSUER = 'kb-labs';
 
 // Refresh token schemas stay strict, while `type` selects the verifier.
-const MACHINE_REFRESH_CLAIMS = ['sub', 'iat', 'exp', 'type', 'jti'] as const;
-const USER_REFRESH_CLAIMS = ['sub', 'iat', 'exp', 'tenantId', 'fam', 'type', 'jti'] as const;
+const MACHINE_REFRESH_CLAIMS = ['iss', 'sub', 'iat', 'exp', 'type', 'jti'] as const;
+const USER_REFRESH_CLAIMS = ['iss', 'sub', 'iat', 'exp', 'tenantId', 'fam', 'type', 'jti'] as const;
 
 export type RefreshTokenKind =
   | { kind: 'machine'; hostId: string }
@@ -25,6 +26,14 @@ export interface JwtConfig {
 
 function getSecretKey(secret: string): Uint8Array {
   return new TextEncoder().encode(secret);
+}
+
+function verificationFailure(error: unknown): TokenVerification<never> {
+  if (error instanceof errors.JWTExpired) { return { ok: false, reason: 'expired' }; }
+  if (error instanceof errors.JWTClaimValidationFailed && error.claim === 'iss') {
+    return { ok: false, reason: 'unknown-issuer' };
+  }
+  return { ok: false, reason: 'invalid' };
 }
 
 export interface SignAccessTokenOptions {
@@ -54,6 +63,7 @@ export async function signAccessToken(
     permissions: opts.permissions ?? [],
   })
     .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer(KB_JWT_ISSUER)
     .setSubject(opts.hostId)
     .setIssuedAt(now)
     .setExpirationTime(now + ACCESS_TOKEN_TTL)
@@ -72,6 +82,7 @@ export async function signRefreshToken(
 
   return new SignJWT({ type: 'machine_refresh', jti })
     .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer(KB_JWT_ISSUER)
     .setSubject(hostId)
     .setIssuedAt(now)
     .setExpirationTime(now + REFRESH_TOKEN_TTL)
@@ -81,24 +92,27 @@ export async function signRefreshToken(
 export async function verifyAccessToken(
   token: string,
   config: JwtConfig,
-): Promise<MachineAccessPayload | null> {
+): Promise<TokenVerification<MachineAccessPayload>> {
   try {
     const key = getSecretKey(config.secret);
-    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
+    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'], issuer: KB_JWT_ISSUER });
     const parsed = JwtPayloadSchema.safeParse(payload);
-    if (!parsed.success || parsed.data.type !== 'machine_access') {return null;}
-    return { ...parsed.data, type: 'machine_access' };
-  } catch {
-    return null;
+    if (!parsed.success || parsed.data.type !== 'machine_access') {return { ok: false, reason: 'invalid' };}
+    return { ok: true, payload: { ...parsed.data, type: 'machine_access' } };
+  } catch (error) {
+    return verificationFailure(error);
   }
 }
 
 export async function verifyRefreshToken(
   token: string,
   config: JwtConfig,
-): Promise<{ hostId: string } | null> {
+): Promise<TokenVerification<{ hostId: string }>> {
   const verified = await verifyRefreshTokenKind(token, config);
-  return verified?.kind === 'machine' ? { hostId: verified.hostId } : null;
+  if (!verified.ok) { return verified; }
+  return verified.payload.kind === 'machine'
+    ? { ok: true, payload: { hostId: verified.payload.hostId } }
+    : { ok: false, reason: 'invalid' };
 }
 
 // ─── User-flavoured tokens (ADR-0020, Phase 1.13) ────────────────────────
@@ -132,6 +146,10 @@ export interface UserAccessPayload {
   exp: number;
 }
 
+export type TokenVerification<T> =
+  | { ok: true; payload: T }
+  | { ok: false; reason: 'expired' | 'invalid' | 'unknown-issuer' | 'inactive' | 'revoked' };
+
 export interface UserRefreshPayload {
   userId: string;
   tenantId: string;
@@ -162,6 +180,7 @@ export async function signUserAccessToken(
     jti,
   })
     .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer(KB_JWT_ISSUER)
     .setSubject(opts.userId)
     .setIssuedAt(now)
     .setExpirationTime(now + opts.ttlSec)
@@ -192,6 +211,7 @@ export async function signUserRefreshToken(
     jti,
   })
     .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer(KB_JWT_ISSUER)
     .setSubject(opts.userId)
     .setIssuedAt(now)
     .setExpirationTime(now + opts.ttlSec)
@@ -253,15 +273,18 @@ const normaliseMachineRefresh = (raw: JWTPayload): RefreshTokenKind | null => {
 export async function verifyRefreshTokenKind(
   token: string,
   config: JwtConfig,
-): Promise<RefreshTokenKind | null> {
+): Promise<TokenVerification<RefreshTokenKind>> {
   try {
     const key = getSecretKey(config.secret);
-    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
-    if (payload.type === 'machine_refresh') {return normaliseMachineRefresh(payload);}
+    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'], issuer: KB_JWT_ISSUER });
+    if (payload.type === 'machine_refresh') {
+      const machine = normaliseMachineRefresh(payload);
+      return machine ? { ok: true, payload: machine } : { ok: false, reason: 'invalid' };
+    }
     if (payload.type === 'user_refresh') {
       const user = normaliseRefresh(payload as RawUserClaims);
-      if (!user) {return null;}
-      return {
+      if (!user) {return { ok: false, reason: 'invalid' };}
+      return { ok: true, payload: {
         kind: 'user',
         userId: user.userId,
         tenantId: user.tenantId,
@@ -269,40 +292,43 @@ export async function verifyRefreshTokenKind(
         jti: user.jti,
         iat: user.iat,
         exp: user.exp,
-      };
+      } };
     }
-    return null;
-  } catch {
-    return null;
+    return { ok: false, reason: 'invalid' };
+  } catch (error) {
+    return verificationFailure(error);
   }
 }
 
 export async function verifyUserAccessToken(
   token: string,
   config: JwtConfig,
-): Promise<UserAccessPayload | null> {
+): Promise<TokenVerification<UserAccessPayload>> {
   try {
     const key = getSecretKey(config.secret);
-    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] });
-    return normaliseAccess(payload as RawUserClaims);
-  } catch {
-    return null;
+    const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'], issuer: KB_JWT_ISSUER });
+    const normalised = normaliseAccess(payload as RawUserClaims);
+    return normalised ? { ok: true, payload: normalised } : { ok: false, reason: 'invalid' };
+  } catch (error) {
+    return verificationFailure(error);
   }
 }
 
 export async function verifyUserRefreshToken(
   token: string,
   config: JwtConfig,
-): Promise<UserRefreshPayload | null> {
+): Promise<TokenVerification<UserRefreshPayload>> {
   const verified = await verifyRefreshTokenKind(token, config);
-  if (verified?.kind !== 'user') {return null;}
-  return {
-    userId: verified.userId,
-    tenantId: verified.tenantId,
-    familyId: verified.familyId,
-    jti: verified.jti,
+  if (!verified.ok || verified.payload.kind !== 'user') {
+    return !verified.ok ? verified : { ok: false, reason: 'invalid' };
+  }
+  return { ok: true, payload: {
+    userId: verified.payload.userId,
+    tenantId: verified.payload.tenantId,
+    familyId: verified.payload.familyId,
+    jti: verified.payload.jti,
     type: 'user_refresh',
-    iat: verified.iat,
-    exp: verified.exp,
-  };
+    iat: verified.payload.iat,
+    exp: verified.payload.exp,
+  } };
 }

@@ -53,6 +53,13 @@ func refuseRunningHost(state host.State, platformRoot string) *diag.Diag {
 	return failure
 }
 
+func refuseApplyBesideRunningHost(state host.State, plan contracts.ResolvedInstallPlan, platformRoot string) *diag.Diag {
+	if plan.Host == nil {
+		return nil
+	}
+	return refuseRunningHost(state, platformRoot)
+}
+
 func refuseForeignHost(state host.State, platformRoot string) *diag.Diag {
 	record, alive := activeLauncher(state)
 	if !alive {
@@ -138,17 +145,8 @@ func (i invocation) runRecovery(output *os.File) int {
 			return 2
 		}
 	}
-	if operation == "uninstall" || operation == "rollback" {
-		confirmed, confirmErr := confirmRecovery(i, operation, root, os.Stdin, os.Stdout, term.IsTerminal(os.Stdin.Fd()))
-		if confirmErr != nil {
-			hint := recoveryConfirmationHint(i, operation, root)
-			write(output, failure("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.", hint, confirmErr))
-			return 2
-		}
-		if !confirmed {
-			write(output, failure("KB_INSTALL_OPERATION_CANCELLED", "The operation was cancelled.", "rerun the command and confirm when prompted", nil))
-			return 1
-		}
+	if code := confirmDestructiveOperation(i, operation, root, os.Stdin, os.Stdout, term.IsTerminal(os.Stdin.Fd()), output); code != 0 {
+		return code
 	}
 	active, err := receipt.Read(root)
 	if err != nil {
@@ -239,27 +237,60 @@ func restoreReceiptArtifacts(installer interface {
 
 func recoveryConfirmationHint(i invocation, operation, root string) string {
 	command := fmt.Sprintf("kb-create %s --platform-root %s", operation, strconv.Quote(root))
+	if operation == "recover" {
+		command = fmt.Sprintf("kb-create doctor --platform-root %s --recover", strconv.Quote(root))
+	}
 	if operation == "rollback" && i.Snapshot != "" {
 		command += " --snapshot " + strconv.Quote(i.Snapshot)
 	}
 	if operation == "uninstall" && i.Registry != "" {
 		command += " --registry " + i.Registry
 	}
-	if i.JSON {
+	jsonMode := i.JSON
+	if operation == "recover" {
+		jsonMode = i.Recover.JSON
+	}
+	if jsonMode {
 		command += " --json"
 	}
 	return "rerun `" + command + " --yes`"
 }
 
-func confirmRecovery(i invocation, operation, root string, input io.Reader, output io.Writer, isTTY bool) (bool, error) {
-	if i.Yes {
-		return true, nil
+func confirmDestructiveOperation(i invocation, operation, root string, input io.Reader, prompt io.Writer, isTTY bool, output *os.File) int {
+	yes := i.Yes
+	if operation == "recover" {
+		yes = i.Recover.Yes
 	}
-	if i.JSON || !isTTY {
-		return false, fmt.Errorf("confirmation unavailable without a terminal")
+	if yes {
+		return 0
 	}
+	jsonMode := i.JSON
+	if operation == "recover" {
+		jsonMode = i.Recover.JSON
+	}
+	if jsonMode || !isTTY {
+		hint := recoveryConfirmationHint(i, operation, root)
+		write(output, failure("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.", hint, fmt.Errorf("confirmation unavailable without a terminal")))
+		return 2
+	}
+	confirmed, err := confirmRecovery(operation, root, input, prompt)
+	if err != nil {
+		hint := recoveryConfirmationHint(i, operation, root)
+		write(output, failure("KB_INSTALL_CONFIRMATION_REQUIRED", "This destructive operation requires explicit confirmation.", hint, err))
+		return 2
+	}
+	if !confirmed {
+		write(output, failure("KB_INSTALL_OPERATION_CANCELLED", "The operation was cancelled.", "rerun the command and confirm when prompted", nil))
+		return 1
+	}
+	return 0
+}
+
+func confirmRecovery(operation, root string, input io.Reader, output io.Writer) (bool, error) {
 	if operation == "uninstall" {
 		fmt.Fprintf(output, "This will remove platform root %s, its installed services, active receipt, and saved snapshots. Project files are kept. Continue? [y/N] ", root)
+	} else if operation == "recover" {
+		fmt.Fprintf(output, "This will run the platform's administrator recovery tool for %s. Continue? [y/N] ", root)
 	} else {
 		fmt.Fprintf(output, "This will replace platform root %s and its active receipt with a saved snapshot. Continue? [y/N] ", root)
 	}

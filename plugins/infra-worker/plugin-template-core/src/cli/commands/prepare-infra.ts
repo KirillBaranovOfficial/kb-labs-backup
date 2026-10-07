@@ -1,12 +1,12 @@
 import { defineCommand, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 
 interface PrepareInfraFlags {
-  sourceRef?: string;
-  basePath?: string;
-  createEnvironment?: boolean;
-  templateId?: string;
-  ttlMs?: number;
-  captureSnapshot?: boolean;
+  'source-ref'?: string;
+  'base-path'?: string;
+  'create-environment'?: boolean;
+  'template-id'?: string;
+  'ttl-ms'?: number;
+  'capture-snapshot'?: boolean;
   namespace?: string;
 }
 
@@ -53,21 +53,21 @@ export default defineCommand<unknown, PrepareInfraInput, PrepareInfraResult>({
       input: PrepareInfraInput
     ): Promise<CommandResult<PrepareInfraResult>> {
       const flags = input.flags;
-      const createEnvironment = toBoolean(flags.createEnvironment) ?? false;
-      const captureSnapshot = toBoolean(flags.captureSnapshot) ?? false;
-      const ttlMs = toNumber(flags.ttlMs);
+      const createEnvironment = toBoolean(flags['create-environment']) ?? false;
+      const captureSnapshot = toBoolean(flags['capture-snapshot']) ?? false;
+      const ttlMs = toNumber(flags['ttl-ms']);
 
       const workspace = await ctx.api.workspace.materialize({
-        sourceRef: flags.sourceRef,
-        basePath: flags.basePath,
+        sourceRef: flags['source-ref'],
+        basePath: flags['base-path'],
       });
 
       let environmentId: string | undefined;
       if (createEnvironment) {
         const environment = await ctx.api.environment.create({
-          templateId: flags.templateId,
+          templateId: flags['template-id'],
           ttlMs,
-          workspacePath: workspace.rootPath ?? flags.basePath,
+          workspacePath: workspace.rootPath ?? flags['base-path'],
         });
         environmentId = environment.environmentId;
         await ctx.api.workspace.attach({

@@ -24,6 +24,7 @@ type Response struct {
 	Next            string     `json:"next"`
 	PlatformChannel string     `json:"platformChannel,omitempty"`
 	PlatformVersion string     `json:"platformVersion,omitempty"`
+	Profile         string     `json:"profile,omitempty"`
 	Installation    *Section   `json:"installation,omitempty"`
 	Platform        *Section   `json:"platform,omitempty"`
 	Findings        []Finding  `json:"findings"`

@@ -14,7 +14,7 @@ function flagToProperty(flag: FlagDefinition): JsonSchemaProperty {
     description: flag.description ?? flag.describe,
   };
   if (flag.default !== undefined) { prop.default = flag.default; }
-  if (flag.choices?.length) { prop.enum = flag.choices; }
+  if (flag.type === 'string' && flag.choices?.length) { prop.enum = [...flag.choices]; }
   if (flag.type === 'array') { prop.items = { type: 'string' }; }
   return prop;
 }

@@ -39,6 +39,15 @@
       "hint": "Check your network or proxy settings and retry."
     },
     {
+      "code": "KB_INSTALL_RELEASE_INDEX_UNREADABLE",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The release index at {path} cannot be read.",
+      "hint": "Check the --index path and file permissions."
+    },
+    {
       "code": "KB_INSTALL_RELEASE_INDEX_INVALID",
       "area": "install",
       "stage": "resolve",
@@ -46,6 +55,15 @@
       "retryable": true,
       "message": "The release index is corrupted or its signature does not match.",
       "hint": "Retry the command; if it persists report the correlationId (this is a KB Labs problem)."
+    },
+    {
+      "code": "KB_INSTALL_OFFLINE_ARTIFACT_MISSING",
+      "area": "install",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "Artifact {artifact} is unavailable from the local cache.",
+      "hint": "Run without --offline to download the artifact, or restore its checksum-verified entry in the V2 cache."
     },
     {
       "code": "KB_INSTALL_INDEX_SCHEMA_UNSUPPORTED",
@@ -459,7 +477,7 @@
       "severity": "error",
       "retryable": false,
       "message": "Authentication is required.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email> --password <password>\"."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_AUTH_INVALID_CREDENTIALS",
@@ -471,13 +489,58 @@
       "hint": "Retry, or reset your credentials."
     },
     {
+      "code": "KB_AUTH_INVALID_INVITE",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The invitation is invalid, expired, or already used.",
+      "hint": "Ask the administrator who invited you to send a new invitation."
+    },
+    {
+      "code": "KB_AUTH_INVALID_PASSWORD_RESET",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "This reset link is invalid, expired, or already used.",
+      "hint": "Ask an administrator to issue a new password reset link."
+    },
+    {
+      "code": "KB_AUTH_LAST_ADMIN",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The last active administrator cannot be demoted or disabled.",
+      "hint": "Add another active tenant administrator before changing this account."
+    },
+    {
       "code": "KB_AUTH_TOKEN_EXPIRED",
       "area": "auth",
       "stage": "run",
       "severity": "error",
       "retryable": false,
       "message": "Your session token has expired and could not be refreshed.",
-      "hint": "Run \"kb auth login\"."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
+    },
+    {
+      "code": "KB_AUTH_SESSION_REVOKED",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The saved Gateway session was revoked.",
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
+    },
+    {
+      "code": "KB_AUTH_USER_INACTIVE",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The user account for this Gateway session is inactive.",
+      "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
     },
     {
       "code": "KB_AUTH_FORBIDDEN",
@@ -1029,6 +1092,15 @@
       "hint": "kb marketplace install {package} --scope platform"
     },
     {
+      "code": "KB_ADAPTER_SLOT_MISMATCH",
+      "area": "plugin",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Adapter package {package} does not declare platform slot {slot}.",
+      "hint": "Install a provider that declares {slot} with `kb marketplace install <pkg> --scope platform`, then retry."
+    },
+    {
       "code": "KB_ADAPTER_PROJECT_SCOPE",
       "area": "plugin",
       "stage": "run",
@@ -1234,6 +1306,24 @@
       "retryable": false,
       "message": "The install result did not include a release identifier.",
       "hint": "Inspect the remote install log and correct the install failure before retrying."
+    },
+    {
+      "code": "KB_RELEASE_INDEX_SEAL_FAILED",
+      "area": "release",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "The release index could not be sealed.",
+      "hint": "Fix the release inputs named in the cause, then rerun release-index preparation."
+    },
+    {
+      "code": "KB_INSTALL_SHIM_DANGLING",
+      "area": "install",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "message": "The managed `kb` command points to a platform root without a valid installation receipt.",
+      "hint": "Run `kb-create doctor --fix --platform-root <platform-root>` to point the command at the live installation."
     },
     {
       "code": "KB_SERVICE_HEALTH_TIMEOUT",

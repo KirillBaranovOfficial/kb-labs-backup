@@ -40,12 +40,11 @@
  */
 
 import type { FastifyRequest, FastifyReply, FastifyError } from 'fastify';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
 import type { UsersStore, SessionsStore, ApiTokensStore, JwtConfig, TenantResolver, IPolicyDecisionPoint } from '@kb-labs/gateway-auth';
 import type { AuthContext } from '@kb-labs/gateway-contracts';
 import { verifyUserAccessToken } from '@kb-labs/gateway-auth';
 import { COOKIE_ACCESS } from './user-cookies.js';
-import { extractBearerToken } from './tokens.js';
+import { authRejectionEnvelope, extractBearerToken, gatewayRequestUrl, type AuthRejectionReason } from './tokens.js';
 
 export interface UserAuthContext {
   type: 'user';
@@ -70,12 +69,14 @@ export interface UserAuthMiddlewareDeps {
   jwtConfig: JwtConfig;
 }
 
-const sendUnauthorized = (request: FastifyRequest, reply: FastifyReply, message: string) =>
-  reply.code(401).send({ ok: false, error: createErrorEnvelope('KB_AUTH_REQUIRED', {
-    details: { gatewayUrl: '<url>' },
-    correlationId: String(request.id),
-    cause: message,
-  }) });
+const sendUnauthorized = (
+  request: FastifyRequest,
+  reply: FastifyReply,
+  reason: AuthRejectionReason,
+) => {
+  request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason }, 'Gateway authentication rejected');
+  return reply.code(401).send({ ok: false, error: authRejectionEnvelope(reason, gatewayRequestUrl(request), String(request.id)) });
+};
 
 export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
   return async function userAuthMiddleware(
@@ -94,26 +95,27 @@ export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
     const apiToken = deps.apiTokens && !cookieToken ? await deps.apiTokens.findActive(token) : null;
     if (apiToken) {
       const user = await deps.users.getById(apiToken.userId);
-      if (!user || user.status !== 'active') {return sendUnauthorized(request, reply, 'Token owner is inactive');}
+      if (!user || user.status !== 'active') {return sendUnauthorized(request, reply, 'inactive');}
       const resolvedTenant = deps.tenantResolver.resolve(typeof request.headers.host === 'string' ? request.headers.host : undefined);
-      if (resolvedTenant !== null && resolvedTenant !== apiToken.tenantId) {return sendUnauthorized(request, reply, 'Tenant mismatch');}
+      if (resolvedTenant !== null && resolvedTenant !== apiToken.tenantId) {return sendUnauthorized(request, reply, 'invalid');}
       request.userAuthContext = { type: 'user', source: 'api-token', userId: apiToken.userId, tenantId: apiToken.tenantId, familyId: apiToken.tokenId };
       const permissions = await deps.pdp.enumeratePermissions({ userId: apiToken.userId, tenantId: apiToken.tenantId, type: 'user' });
       request.authContext = { type: 'user', userId: apiToken.userId, namespaceId: apiToken.tenantId, tier: 'free', permissions };
       return;
     }
 
-    const payload = await verifyUserAccessToken(token, deps.jwtConfig);
-    if (!payload) {
+    const verification = await verifyUserAccessToken(token, deps.jwtConfig);
+    if (!verification.ok) {
       if (cookieToken) {
         // A tampered/expired cookie must not silently fall through.
-        return sendUnauthorized(request, reply, 'Invalid session');
+        return sendUnauthorized(request, reply, verification.reason);
       }
       // Bearer token present but not a valid user token (e.g. a machine
       // JWT, which carries a different `type` claim) — fall through so
       // the machine middleware gets a chance to verify it instead.
       return;
     }
+    const payload = verification.payload;
 
     // Cross-tenant guard. The cookie alone doesn't tell us "which
     // tenant origin" the browser thinks it's on — we re-derive from
@@ -130,17 +132,17 @@ export const createUserAuthMiddleware = (deps: UserAuthMiddlewareDeps) => {
       typeof hostHeader === 'string' ? hostHeader : undefined,
     );
     if (resolvedTenant !== null && resolvedTenant !== payload.tenantId) {
-      return sendUnauthorized(request, reply, 'Tenant mismatch');
+      return sendUnauthorized(request, reply, 'invalid');
     }
 
     // CD-1: explicit user.status check on every request. Without this
     // a disabled user keeps acting for the remaining access TTL.
     const user = await deps.users.getById(payload.userId);
     if (!user || user.status !== 'active') {
-      return sendUnauthorized(request, reply, 'Session no longer valid');
+      return sendUnauthorized(request, reply, 'inactive');
     }
     if (!(await deps.sessions.hasActiveFamily(payload.familyId, payload.userId))) {
-      return sendUnauthorized(request, reply, 'Session revoked');
+      return sendUnauthorized(request, reply, 'revoked');
     }
 
     request.userAuthContext = {

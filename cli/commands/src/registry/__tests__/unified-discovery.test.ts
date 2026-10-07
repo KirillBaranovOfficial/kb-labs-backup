@@ -25,6 +25,7 @@ import { createRegistry as createCommandRegistry } from '../service';
 
 async function makePlugin(dir: string, id: string, commandPath: string, version = '1.0.0'): Promise<string> {
   await fs.mkdir(path.join(dir, 'dist'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'dist', 'run.js'), 'export default async () => 0;');
   await fs.writeFile(
     path.join(dir, 'package.json'),
     JSON.stringify({ name: id, version, kb: { manifest: './dist/manifest.js' } }),
@@ -34,7 +35,7 @@ async function makePlugin(dir: string, id: string, commandPath: string, version 
     id,
     version,
     display: { name: id },
-    cli: { commands: [{ path: commandPath, describe: `Command of ${id}`, handler: './dist/run.js' }] },
+    cli: { commands: [{ path: commandPath, describe: `Command of ${id}`, handler: './run.js' }] },
   };
   // Static manifest only: there is no dist/manifest.js, so nothing here can be import()ed.
   await fs.writeFile(path.join(dir, 'dist', 'manifest.json'), JSON.stringify(manifest));

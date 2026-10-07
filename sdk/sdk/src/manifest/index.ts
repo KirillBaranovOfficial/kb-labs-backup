@@ -5,7 +5,8 @@
  */
 
 // Re-export manifest utilities from shared-command-kit
-export { defineManifest, defineCommandFlags } from '@kb-labs/shared-command-kit';
+export { defineManifest } from '@kb-labs/shared-command-kit';
+export { defineCommandFlags } from './flags.js';
 // TODO: V3 migration - permissions helpers need to be rewritten for V3 PermissionSpec structure
 // export { permissions } from '@kb-labs/shared-command-kit';
 

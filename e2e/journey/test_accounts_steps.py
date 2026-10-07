@@ -80,7 +80,7 @@ class SecuredAccountsJourneyTests(unittest.TestCase):
             if path.endswith("/token-2/revoke"):
                 return {"ok": True}
             if path == "/auth/users/root/disable" or path == "/auth/users/root/role":
-                return {"error": "last_admin"}
+                return {"code": "KB_AUTH_LAST_ADMIN"}
             if path == "/auth/invites" and method == "POST":
                 if body and body.get("ttlMs"):
                     return {"inviteId": "expiry-invite", "activationUrl": "https://gateway.test/activate/expired-token"}
@@ -93,7 +93,7 @@ class SecuredAccountsJourneyTests(unittest.TestCase):
             if path.endswith("/invite-1/revoke"):
                 return {"ok": True}
             if path == "/auth/activate":
-                return {"error": "invalid_invite"}
+                return {"code": "KB_AUTH_INVALID_INVITE"}
             raise AssertionError(f"unexpected request: {method} {path} {body!r}")
 
         with patch("steps.accounts._login", return_value=("session-token", "refresh-token")), \

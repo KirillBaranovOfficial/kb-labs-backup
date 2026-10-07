@@ -12,32 +12,49 @@ export function configuredAdapterLoadError(
   cause?: unknown,
   platformRoot?: string,
 ): AdapterUnavailableError {
+  if (cause instanceof AdapterUnavailableError && cause.action) {
+    return cause;
+  }
   const packageName = modulePath.split('/').slice(0, 2).join('/');
   const causeCode = typeof cause === 'object' && cause !== null && 'code' in cause
     ? String(cause.code)
     : undefined;
   const causeMessage = cause instanceof Error ? cause.message : cause === undefined ? undefined : String(cause);
-  const packageMissing = causeCode === 'ERR_MODULE_NOT_FOUND' && causeMessage !== undefined && (
+  const packageRoot = platformRoot ? path.join(platformRoot, 'node_modules', packageName) : undefined;
+  const packageMissing = causeMessage !== undefined && (
+    ((causeCode === 'ERR_MODULE_NOT_FOUND' || causeCode === 'MODULE_NOT_FOUND') && (
     causeMessage.includes(`Cannot find package '${modulePath}'`) ||
     causeMessage.includes(`Cannot find package '${packageName}'`) ||
     causeMessage.includes(`Cannot find module '${modulePath}'`) ||
-    causeMessage.includes(`Cannot find module '${packageName}'`)
+      causeMessage.includes(`Cannot find module '${packageName}'`)
+    )) ||
+    (causeCode === 'ENOENT' && packageRoot !== undefined &&
+      causeMessage.includes(path.join(packageRoot, 'package.json')))
   );
   const diagnosis = causeMessage
     ? ` Cause: ${causeCode ? `${causeCode}: ` : ''}${causeMessage}`
     : '';
-  const nextStep = !packageMissing && platformRoot
-    ? ` Run \`kb-create doctor --platform-root ${JSON.stringify(platformRoot)}\` to inspect the installed platform.`
-    : '';
+  const command = packageMissing
+    ? `kb marketplace install ${packageName} --scope platform`
+    : `kb-create doctor --platform-root ${JSON.stringify(platformRoot ?? '.')}`;
+  const action = {
+    id: packageMissing ? 'install-adapter' : 'diagnose-adapter-load',
+    label: packageMissing ? `Install ${packageName}` : 'Diagnose the installed platform',
+    command,
+  };
+  const nextStep = packageMissing
+    ? ` Install it with \`${command}\`.`
+    : ` Run \`${command}\` to inspect the installed platform.`;
   return new AdapterUnavailableError(
     slot,
     'load-failed',
-    `Configured adapter package "${modulePath}" could not be loaded.${
-      packageMissing
-        ? ` Install it with \`kb marketplace install ${packageName} --scope platform\`.`
-        : nextStep
-    }${diagnosis}`,
+    `Configured adapter package "${modulePath}" could not be loaded.${nextStep}${diagnosis}`,
     cause,
+    {
+      userMessage: `Adapter ${slot} is unavailable because ${packageName} could not be loaded.`,
+      hint: command,
+      action,
+    },
   );
 }
 

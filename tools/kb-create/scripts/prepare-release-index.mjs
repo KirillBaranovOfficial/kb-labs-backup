@@ -541,7 +541,10 @@ const exportValue = {
       }] : []),
     ],
     host,
-    profiles: { default: { platformVersion: resolvedPlatformVersion, services: services.map(({ packageName, ...service }) => service) } },
+    profiles: {
+      default: { platformVersion: resolvedPlatformVersion, services: services.map(({ packageName, ...service }) => service) },
+      client: { profile: 'client', platformVersion: resolvedPlatformVersion, services: [] },
+    },
     binaries,
     members: [...new Set([
       ...services.map(service => service.packageName),

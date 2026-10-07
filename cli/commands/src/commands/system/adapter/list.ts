@@ -1,7 +1,7 @@
 /** Show platform adapters and their built-in fallback. */
 
 import path from 'node:path';
-import { ADAPTER_DEFAULTS, toErrorEnvelope, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { ADAPTER_DEFAULTS, resolveGatewayServiceAddress, toErrorEnvelope, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { discoverAdapters, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
@@ -10,12 +10,27 @@ import { generateExamples } from '../../../utils/generate-examples';
 type AdapterRow = {
   slot: string;
   implementation: string | null;
-  mode: 'real' | 'inmemory' | 'noop' | 'unconfigured';
+  mode: 'real' | 'inmemory' | 'noop' | 'unconfigured' | 'degraded' | 'unknown';
   baseDir?: string;
   networkRequired: boolean;
   requiresConfiguration?: boolean;
   credentialsStatus?: 'configured' | 'missing';
   missingCredentials?: string[];
+  reason?: 'load-failed';
+  correlationId?: string;
+  action?: { id: string; label: string; command: string };
+  runtimeStatus?: 'known' | 'unknown';
+  runtimeReason?: string;
+};
+
+type HostAdapterStatus = {
+  slot: string;
+  mode: 'real' | 'inmemory' | 'noop' | 'degraded';
+  implementation: string;
+  configuredPackage?: string;
+  reason?: 'not-configured' | 'load-failed';
+  correlationId?: string;
+  action?: { id: string; label: string; command: string };
 };
 
 type ListResult = CommandResult & { adapters?: AdapterRow[]; projectRoot?: string; envelope?: ErrorEnvelope };
@@ -70,6 +85,27 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
     const effectiveAdapterOptions = resolvedDefaults.adapterOptions as Record<string, unknown>;
     const discovered = await discoverAdapters(loaded.platformRoot);
+    let hostStatuses = new Map<string, HostAdapterStatus>();
+    let runtimeStatus: 'known' | 'unknown' = 'unknown';
+    let runtimeReason = 'Host runtime status could not be read.';
+    try {
+      const gatewayUrl = resolveGatewayServiceAddress(undefined, {
+        gatewayUrl: ctx.runtime.env('KB_GATEWAY_URL'),
+        gatewayPort: ctx.runtime.env('GATEWAY_PORT'),
+        gatewayHost: ctx.runtime.env('GATEWAY_HOST'),
+        netOffset: Number(ctx.runtime.env('KB_NET_OFFSET')) || 0,
+      });
+      const response = await ctx.runtime.fetch(`${gatewayUrl}/health/adapters`);
+      if (!response.ok) {
+        runtimeReason = `Host returned HTTP ${response.status} for adapter health.`;
+      } else {
+        hostStatuses = new Map((await response.json() as HostAdapterStatus[]).map((status) => [status.slot, status]));
+        runtimeStatus = 'known';
+        runtimeReason = '';
+      }
+    } catch (error) {
+      runtimeReason = error instanceof Error ? error.message : String(error);
+    }
     const rows = (Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[]).map((slot): AdapterRow => {
       const configKey = CONFIG_KEY_BY_SLOT[slot];
       const configured = configKey ? effectiveAdapters[configKey] : undefined;
@@ -99,10 +135,23 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         : undefined;
       const localLogsAvailable = slot === 'logs' &&
         Boolean(effectiveAdapters.logRingBuffer || effectiveAdapters.logPersistence);
+      const hostStatus = hostStatuses.get(slot);
+      const slotRuntimeKnown = runtimeStatus === 'known' && hostStatus !== undefined;
+      const implementation = slotRuntimeKnown
+        ? hostStatus.implementation === 'unavailable' ? null : hostStatus.implementation
+        : localLogsAvailable ? 'HybridLogReader' : packageId ?? (ADAPTER_DEFAULTS[slot].implementation === 'unavailable' ? null : ADAPTER_DEFAULTS[slot].implementation);
       return {
         slot,
-        implementation: localLogsAvailable ? 'HybridLogReader' : packageId ?? (ADAPTER_DEFAULTS[slot].implementation === 'unavailable' ? null : ADAPTER_DEFAULTS[slot].implementation),
-        mode: localLogsAvailable ? 'real' : packageId ? 'real' : ADAPTER_DEFAULTS[slot].defaultFallback === 'noop' ? 'unconfigured' : 'inmemory',
+        implementation,
+        mode: slotRuntimeKnown
+          ? hostStatus.mode === 'noop' && !hostStatus.configuredPackage ? 'unconfigured' : hostStatus.mode
+          : 'unknown',
+        runtimeStatus: slotRuntimeKnown ? 'known' : 'unknown',
+        ...(!slotRuntimeKnown ? { runtimeReason: runtimeStatus === 'known' ? `Host did not report slot ${slot}.` : runtimeReason } : {}),
+        ...(hostStatus?.reason === 'load-failed' ? { reason: hostStatus.reason } : {}),
+        ...(hostStatus?.correlationId ? { correlationId: hostStatus.correlationId } : {}),
+        ...(hostStatus?.action ? { action: hostStatus.action } : {}),
+        ...(!slotRuntimeKnown ? { action: { id: 'start-host', label: 'Start host', command: 'kb-create start' } } : {}),
         ...(baseDir ? { baseDir } : {}),
         networkRequired: localLogsAvailable ? false : packageId ? !LOCAL_PACKAGES.has(packageRoot(packageId)) : false,
         ...(ADAPTER_DEFAULTS[slot].defaultFallback === 'noop' && !packageId ? { requiresConfiguration: true } : {}),
@@ -118,7 +167,9 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
       if (!configuredPackage) {continue;}
       const implementation = packageName(configuredPackage);
-      rows.push({ slot, implementation, mode: 'real', networkRequired: !LOCAL_PACKAGES.has(packageRoot(implementation)) });
+      rows.push({ slot, implementation, mode: 'unknown', runtimeStatus: 'unknown', runtimeReason,
+        action: { id: 'start-host', label: 'Start host', command: 'kb-create start' },
+        networkRequired: !LOCAL_PACKAGES.has(packageRoot(implementation)) });
     }
     return {  adapters: rows, projectRoot: loaded.projectRoot };
   },

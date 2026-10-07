@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import platform
-import re
 import shutil
 import socket
 import subprocess
@@ -13,6 +12,8 @@ from typing import Callable
 
 from platform_update_steps import _json_command
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result)
+from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
+                               workspace_resource)
 from service_steps import Journey
 
 CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
@@ -71,6 +72,9 @@ def _seed_doctor_fixture(source_root: Path, target_root: Path, *, requirement: d
         package_root = target_root / "node_modules" / package
         package_root.mkdir(parents=True, exist_ok=True)
         (package_root / "package.json").write_text(json.dumps({"name": package, "version": item["version"]}) + "\n")
+        if package == "@kb-labs/cli-bin":
+            source_dist = source_root / "node_modules" / package / "dist"
+            shutil.copytree(source_dist, package_root / "dist", symlinks=True)
         if missing_projection and item is selected:
             continue
         manifest = {"schema": "kb.create.artifact-manifest/v2", "id": item["id"],
@@ -199,6 +203,125 @@ def run_analytics_invalid_retention_step(*, mode: str, launcher: str, platform_r
     return journey
 
 
+def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
+                          platform_root: Path, run_command: CommandRunner) -> Journey:
+    """Resolve the sealed stable request exclusively from the local artifact cache."""
+    journey = Journey(mode, f"offline-plan-{mode}")
+
+    def offline_plan() -> None:
+        root = platform_root.parent / "s181-offline-root"
+        plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
+                                           "--platform-channel", "stable", "--offline",
+                                           "--request-platform-root", str(root)], "offline plan").get("plan", {})
+        artifacts = plan.get("artifacts", [])
+        if (plan.get("request", {}).get("source") != "offline" or not artifacts
+                or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
+            raise RuntimeError("offline plan omitted cache provenance or claimed registry/network resolution")
+
+    journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
+                 cases=["S-181.4"])
+    return journey
+
+
+def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Path,
+                                  platform_root: Path, run_command: CommandRunner) -> Journey:
+    """Compare repeat plans while the host runs, excluding declared runtime state."""
+    journey = Journey(mode, f"repeat-plan-readonly-{mode}")
+    root = str(platform_root)
+
+    def repeat_plan() -> None:
+        status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
+                               "status before repeat plan")
+        host = status.get("host", {})
+        if (not isinstance(host, dict) or host.get("state") != "running"
+                or status.get("running") is not True or status.get("reachable") is not True):
+            raise RuntimeError("PC-001.8 requires the installed host to be running and reachable")
+        before = _snapshot_installation_owned_tree(platform_root)
+        args = [launcher, "plan", "--json", "--index", str(stable_index),
+                "--request-platform-root", root, "--service-profile", "default",
+                "--scenario", "commit"]
+        first = _json_command(run_command, args, "first clean-install plan").get("plan", {})
+        second = _json_command(run_command, args, "repeat clean-install plan").get("plan", {})
+        if any(first.get(key) != second.get(key) for key in ("planHash", "artifacts", "serviceGraph")):
+            raise RuntimeError("repeat plan changed planHash, artifacts, or serviceGraph")
+        after = _snapshot_installation_owned_tree(platform_root)
+        changes = _snapshot_changes(before, after)
+        if any(changes.values()):
+            raise RuntimeError(_format_snapshot_changes(changes))
+        status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
+                               "status after repeat plan")
+        host = status.get("host", {})
+        if (not isinstance(host, dict) or host.get("state") != "running"
+                or status.get("running") is not True or status.get("reachable") is not True):
+            raise RuntimeError("host health check failed after PC-001.8: expected running and reachable")
+
+    journey.step("repeat install planning without changing the installed root", "platform.install",
+                 repeat_plan, cases=["PC-001.8"])
+    return journey
+
+
+def _snapshot_tree(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
+    snapshot = {}
+    for path in root.rglob("*"):
+        relative = str(path.relative_to(root))
+        if path.is_symlink():
+            snapshot[relative] = ("symlink", str(path.readlink()))
+        elif path.is_dir():
+            snapshot[relative] = ("directory", None)
+        elif path.is_file():
+            snapshot[relative] = ("file", path.read_bytes())
+    return snapshot
+
+
+def _runtime_state_paths() -> tuple[str, ...]:
+    layout_path = workspace_resource("tools", "kb-create", "v2", "contracts", "platform-layout.json")
+    layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    return tuple(layout["runtimeStatePaths"])
+
+
+def _snapshot_installation_owned_tree(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
+    runtime_paths = tuple(Path(path).parts for path in _runtime_state_paths())
+    snapshot = _snapshot_tree(root)
+    return {
+        path: value for path, value in snapshot.items()
+        if not any(Path(path).parts[:len(runtime_path)] == runtime_path for runtime_path in runtime_paths)
+    }
+
+
+def _service_ids_match(planned_graph: dict, declared_graph: dict) -> bool:
+    planned = planned_graph.get("services", [])
+    declared = declared_graph.get("services", [])
+    if not planned or not declared:
+        return False
+    planned_ids = [service.get("id") for service in planned]
+    declared_ids = [service.get("id") for service in declared]
+    return all(planned_ids) and all(declared_ids) and len(planned_ids) == len(set(planned_ids)) \
+        and len(declared_ids) == len(set(declared_ids)) and set(planned_ids) == set(declared_ids)
+
+
+def _snapshot_changes(before: dict[str, tuple[str, bytes | str | None]],
+                      after: dict[str, tuple[str, bytes | str | None]]) -> dict[str, list[str]]:
+    old_paths, new_paths = set(before), set(after)
+    added = sorted(new_paths - old_paths)
+    removed = sorted(old_paths - new_paths)
+    changed = sorted(path for path in old_paths & new_paths if before[path] != after[path])
+    return {"changed": changed, "added": added, "removed": removed}
+
+
+def _format_snapshot_changes(changes: dict[str, list[str]]) -> str:
+    total = sum(len(paths) for paths in changes.values())
+    remaining = 20
+    categories = []
+    for category in ("changed", "added", "removed"):
+        paths = changes[category]
+        visible = paths[:remaining]
+        remaining -= len(visible)
+        categories.append(f"{category} ({len(paths)}): {', '.join(visible) if visible else 'none'}")
+    shown = min(total, 20)
+    return ("planning changed the active platform root: " + "; ".join(categories)
+            + f"; {total} path(s) total, showing {shown} of {total}")
+
+
 def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                              canary_index: Path, platform_root: Path,
                              secret_value: str, run_command: CommandRunner) -> Journey:
@@ -208,6 +331,18 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     journey's already isolated HOME; callers must pass that HOME's paths.
     """
     journey = Journey(mode, f"installer-cases-{mode}")
+    host_os = "darwin" if sys.platform == "darwin" else "linux" if sys.platform.startswith("linux") else "unsupported"
+    host_arch = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
+    installed_cli_entry = platform_root / "node_modules/@kb-labs/cli-bin/dist/bin.js"
+    required_paths = [*installer_scenario_resources(host_os, host_arch), installed_cli_entry]
+    catalog_root = required_paths[0]
+    missing_resources = [str(path) for path in required_paths
+                         if not (path.is_dir() if path == catalog_root else path.is_file())]
+    if missing_resources:
+        journey.step("preflight installer case fixtures", "journey.orchestration",
+                     lambda: "missing installer journey resource(s): " + ", ".join(missing_resources))
+        return journey
+    fixture_dir = installer_case_fixture_root()
     root = str(platform_root)
     port_conflict_root = platform_root.parent / "pc001-port-conflict-root"
 
@@ -237,8 +372,14 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     # remains the single main journey install and can continue serving later cases.
     apply_root = platform_root.parent / "pc001-apply-root"
     apply_root.mkdir(parents=True, exist_ok=True)
+    selected_plan: dict = {}
 
     def apply_and_check() -> None:
+        selected_plan["serviceGraph"] = _json_command(
+            run_command, [launcher, "plan", "--json", "--index", str(stable_index),
+                          "--request-platform-root", str(apply_root),
+                          "--service-profile", "default", "--scenario", "commit"],
+            "PC-001 selected profile plan").get("plan", {}).get("serviceGraph", {})
         result = _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
                                    "--request-platform-root", str(apply_root),
                                    "--service-profile", "default", "--scenario", "commit"]),
@@ -251,20 +392,17 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     def inspect_generated_config() -> None:
         config_path = apply_root / ".kb/kb.config.jsonc"
-        services_path = apply_root / ".kb/devservices.yaml"
-        if not config_path.is_file() or not services_path.is_file():
-            raise RuntimeError("apply did not generate both runtime config and service declarations")
+        if not config_path.is_file():
+            raise RuntimeError("apply did not generate the runtime config")
         config = json.loads(_without_jsonc_comments(config_path.read_text()))
-        services = services_path.read_text()
-        if not isinstance(config, dict) or not services.strip():
-            raise RuntimeError("generated runtime config or service declarations are empty")
+        if not isinstance(config, dict):
+            raise RuntimeError("generated runtime config is not a JSON object")
         receipt = json.loads((apply_root / ".kb/v2/receipt.json").read_text())
         graph = receipt.get("plan", {}).get("serviceGraph", {})
-        declarations = graph.get("services", [])
-        for service in declarations:
-            name = service if isinstance(service, str) else service.get("id", service.get("name", ""))
-            if name and not re.search(rf"(?m)^\s*{re.escape(str(name))}\s*:", services):
-                raise RuntimeError(f"generated devservices.yaml omits selected service {name}")
+        if (selected_plan["serviceGraph"].get("profile") != "default"
+                or graph.get("profile") != "default"
+                or not _service_ids_match(selected_plan["serviceGraph"], graph)):
+            raise RuntimeError("receipt service declarations do not equal the selected profile plan")
 
     journey.step("inspect generated runtime config and service declarations", "platform.install",
                  inspect_generated_config, cases=["PC-001.5"])
@@ -276,24 +414,11 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                      lambda step=step: None if step.status == "PASS" else step.message,
                      cases=step.cases)
 
-    def repeat_plan() -> None:
-        before = {str(path.relative_to(platform_root)): path.read_bytes()
-                  for path in platform_root.rglob("*") if path.is_file()}
-        first = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
-                                            "--request-platform-root", root, "--service-profile", "default",
-                                            "--scenario", "commit"], "first clean-install plan").get("plan", {})
-        second = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
-                                             "--request-platform-root", root, "--service-profile", "default",
-                                             "--scenario", "commit"], "repeat clean-install plan").get("plan", {})
-        if any(first.get(key) != second.get(key) for key in ("planHash", "artifacts", "serviceGraph")):
-            raise RuntimeError("repeat plan changed planHash, artifacts, or serviceGraph")
-        after = {str(path.relative_to(platform_root)): path.read_bytes()
-                 for path in platform_root.rglob("*") if path.is_file()}
-        if before != after:
-            raise RuntimeError("planning wrote or changed files under the active platform root")
-
-    journey.step("repeat install planning without changing the installed root", "platform.install",
-                 repeat_plan, cases=["PC-001.8"])
+    for step in run_repeat_plan_readonly_step(mode=mode, launcher=launcher, stable_index=stable_index,
+                                              platform_root=platform_root, run_command=run_command).steps:
+        journey.step(step.name, step.capability,
+                     lambda step=step: None if step.status == "PASS" else step.message,
+                     cases=step.cases)
 
     def channel_plan(channel: str, index: Path, root_name: str) -> None:
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(index),
@@ -308,6 +433,8 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                                      "--platform-channel", channel, "--policy", "compatible",
                                      "--request-platform-root", str(platform_root.parent / root_name)]),
                         f"{channel} apply")
+        if applied.get("shim") != {"linked": False, "owner": str(platform_root)}:
+            raise RuntimeError(f"{channel} apply changed the live command owner: {applied.get('shim')}")
         status = _json_command(run_command, [launcher, "status", "--json", "--platform-root",
                                              str(platform_root.parent / root_name)], f"{channel} status")
         installation = status.get("installation", status)
@@ -325,36 +452,75 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     def secret_apply() -> None:
         if not secret_value:
             raise RuntimeError("isolated journey secret is unavailable for S-181.3")
-        result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                              "--platform-channel", "stable", "--request-platform-root", str(secret_root),
-                              "--scenario", "custom", "--scenario-answers",
-                              json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
-                                          "admin.tenant": "journey"}),
-                              "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
-        if result.returncode != 0:
-            raise RuntimeError(f"secret apply: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
+        apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                    "--platform-channel", "stable", "--request-platform-root", str(secret_root),
+                                    "--scenario", "custom", "--scenario-answers",
+                                    json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
+                                                "admin.tenant": "journey"}),
+                                    "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
+        payload = _data(apply_result, "secret apply")
+        if payload.get("shim") != {"linked": False, "owner": str(platform_root)}:
+            raise RuntimeError(f"secret apply changed the live command owner: {payload.get('shim')}")
+        shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
+        if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
+            raise RuntimeError("secondary apply moved the kb shim away from the primary platform root")
+        cli = run_command(["kb", "--help"])
+        if cli.returncode != 0:
+            raise RuntimeError(f"the existing kb shim did not run the primary platform CLI: {cli.stdout[-500:]}")
         receipt_path = secret_root / ".kb/v2/receipt.json"
-        serialized = result.stdout + (receipt_path.read_text() if receipt_path.is_file() else "")
+        serialized = apply_result.stdout + (receipt_path.read_text() if receipt_path.is_file() else "")
         if secret_value in serialized or "KB_JOURNEY_ADMIN_PASSWORD" in serialized:
             raise RuntimeError("secret apply serialized the secret value or environment-variable name")
 
     journey.step("apply a secret through an environment reference", "platform.install", secret_apply,
-                 cases=["S-181.3"])
+                 cases=["S-181.3", "PC-001.10"])
 
-    def offline_plan() -> None:
-        plan = _json_command(run_command([launcher, "plan", "--json", "--index", str(stable_index),
-                                          "--platform-channel", "stable", "--offline",
-                                          "--request-platform-root", str(platform_root.parent / "s181-offline-root")]),
-                             "offline plan").get("plan", {})
-        sources = {item.get("source") for item in plan.get("artifacts", [])}
-        if not sources or sources != {"offline"}:
-            raise RuntimeError(f"offline plan did not identify only offline artifacts: {sorted(map(str, sources))}")
+    def repair_dangling_shim() -> None:
+        shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
+        _data(run_command([launcher, "doctor", "--fix", "--platform-root", str(secret_root), "--json"]),
+              "doctor fix live non-owner")
+        if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
+            raise RuntimeError("doctor --fix changed a shim owned by another live platform")
+        dangling_root = platform_root.parent / "removed-shim-owner"
+        shim_path.unlink(missing_ok=True)
+        shim_path.symlink_to(dangling_root / ".kb/v2/bin/kb")
+        diagnosis = _data(run_command([launcher, "doctor", "--platform-root", str(platform_root), "--json"]),
+                          "doctor dangling shim")
+        finding = next((item for item in diagnosis.get("findings", [])
+                        if item.get("code") == "KB_INSTALL_SHIM_DANGLING"), None)
+        expected_fix = f'kb-create doctor --fix --platform-root "{platform_root}"'
+        if not finding or expected_fix not in finding.get("hint", ""):
+            raise RuntimeError(f"doctor omitted the dangling shim finding or exact repair command: {diagnosis}")
+        _data(run_command([launcher, "doctor", "--fix", "--platform-root", str(platform_root), "--json"]),
+              "doctor fix dangling shim")
+        if shim_path.resolve() != (platform_root / ".kb/v2/bin/kb").resolve():
+            raise RuntimeError("doctor --fix did not link the shim to its requested live platform root")
 
-    journey.step("resolve a fresh request from the local artifact cache", "platform.install", offline_plan,
-                 cases=["S-181.4"])
+    journey.step("diagnose and repair a dangling managed kb command", "platform.install",
+                 repair_dangling_shim, cases=["S-025.9"])
+
+    def uninstall_non_owner() -> None:
+        _data(run_command([launcher, "uninstall", "--platform-root", str(secret_root), "--yes", "--json"]),
+              "uninstall non-owning root")
+        shim_path = Path(shutil.which(launcher) or launcher).absolute().parent / "kb"
+        if not shim_path.is_symlink() or shim_path.readlink() != platform_root / ".kb/v2/bin/kb":
+            raise RuntimeError("uninstall changed the live owner's kb shim")
+        cli = run_command(["kb", "--help"])
+        if cli.returncode != 0:
+            raise RuntimeError(f"kb stopped working after non-owner uninstall: {cli.stdout[-500:]}")
+
+    journey.step("uninstall a platform that does not own the kb command", "platform.install",
+                 uninstall_non_owner, cases=["PC-001.11"])
+
+    for step in run_offline_plan_step(mode=mode, launcher=launcher, stable_index=stable_index,
+                                      platform_root=platform_root, run_command=run_command).steps:
+        journey.step(step.name, step.capability,
+                     lambda step=step: None if step.status == "PASS" else step.message,
+                     cases=step.cases)
 
     for generated_root in (apply_root, platform_root.parent / "s181-stable-root",
                            platform_root.parent / "s181-canary-root", secret_root,
+                           platform_root.parent / "removed-shim-owner",
                            platform_root.parent / "s181-offline-root"):
         shutil.rmtree(generated_root, ignore_errors=True)
     for step in run_installer_fixture_steps(mode=mode, launcher=launcher, platform_root=platform_root,
@@ -369,7 +535,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                                 stable_index: Path, run_command: CommandRunner) -> Journey:
     """Exercise isolated doctor, compatibility, and project-install fixtures."""
     journey = Journey(mode, f"installer-fixtures-{mode}")
-    fixture_dir = Path(__file__).resolve().parents[2] / "e2e/platform/fixtures/installer-cases"
+    fixture_dir = installer_case_fixture_root()
     host_os = "darwin" if sys.platform == "darwin" else "linux" if sys.platform.startswith("linux") else "unsupported"
     host_arch = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
     if host_os == "unsupported":

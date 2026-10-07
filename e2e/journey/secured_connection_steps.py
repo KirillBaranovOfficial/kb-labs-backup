@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import tempfile
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 import urllib.request
@@ -23,11 +22,6 @@ def _expect(value: bool, message: str) -> None:
 
 def _cli(cli: str, env: dict[str, str], *args: str):
     return run_command([cli, *args], env=env, timeout=90)
-
-
-def _journey_home(env: dict[str, str]) -> Path:
-    """Return the isolated HOME passed to child commands, not the runner's HOME."""
-    return Path(env["HOME"])
 
 
 def _json(result, description: str) -> dict:
@@ -66,11 +60,11 @@ def validate_case_response(case_id: str, status: int, value: dict, *, expected: 
         "S-042.1": lambda: status == 201 and bool(value.get("inviteId"))
         and urlparse(str(value.get("activationUrl", ""))).netloc == expected,
         "S-042.2": lambda: status == 200 and value.get("ok") is True,
-        "S-042.3": lambda: status == 422 and value.get("error") == "invalid_invite"
-        and value.get("message") == "Invalid or expired invite",
+        "S-042.3": lambda: status == 422 and value.get("code") == "KB_AUTH_INVALID_INVITE"
+        and bool(value.get("hint")),
         "S-042.5": lambda: status == 200 and value.get("ok") is True,
-        "S-042.6": lambda: status == 400 and value.get("error") == "invalid_password_reset"
-        and value.get("message") == "This reset link is invalid, expired, or already used",
+        "S-042.6": lambda: status == 400 and value.get("code") == "KB_AUTH_INVALID_PASSWORD_RESET"
+        and bool(value.get("hint")),
         "S-005.4": lambda: status == 200 and "projects:read" in value.get("permissions", [])
         and "users:read" not in value.get("permissions", []),
         "S-005.5": lambda: status == 403 and isinstance(value.get("error"), dict)
@@ -87,30 +81,49 @@ def validate_cli_case(case_id: str, returncode: int, output: str, payload: dict 
                       *, email: str = "", gateway: str = "", root: str = "") -> None:
     """Validate CLI observables independently so fake failures exercise each claim."""
     payload = payload or {}
-    session = payload.get("session", {})
+    data = payload.get("data", payload)
+    session = data.get("session", {})
     checks = {
-        "S-005.1": returncode == 0 and payload.get("ok") is True and root == expected_root(payload),
+        "S-005.1": returncode == 0 and payload.get("ok") is True and root == expected_root(payload)
+        and payload.get("profile") == "client" and payload.get("services") == []
+        and isinstance(payload.get("shim"), dict),
         "S-005.2": returncode == 0,
         "S-005.3": returncode == 0 and session.get("authenticated") is True
         and session.get("email") == email and session.get("gatewayUrl") == gateway,
         "S-031.1": returncode == 0 and session.get("authenticated") is True
-        and session.get("tokenExpired") is True and session.get("gatewayUrl") == gateway,
+        and session.get("tokenExpired") is True and session.get("gatewayUrl") == gateway
+        and isinstance(session.get("path"), str)
+        and Path(session["path"]).parent.name == ".kb"
+        and Path(session["path"]).name == "session.json",
         "S-031.2": returncode == 0 and bool(output.strip()),
         "S-031.3": returncode != 0 and "kb auth login" in output.lower()
         and "stack" not in output.lower() and "at " not in output,
         "S-031.4": returncode != 0 and "kb auth login --gateway-url" in output,
         "S-042.4": returncode == 0 and payload.get("ok") is True
-        and bool(payload.get("resetUrl")) and isinstance(payload.get("expiresAt"), (int, float)),
+        and bool(data.get("resetUrl")) and isinstance(data.get("expiresAt"), (int, float)),
     }
     if case_id not in checks:
         raise ValueError(f"no CLI response contract for {case_id}")
     _expect(checks[case_id], f"{case_id} CLI result did not match the case contract")
 
 
+def _session_path(cli: str, env: dict[str, str]) -> Path:
+    result = _cli(cli, env, "auth", "status", "--json")
+    value = _json(result, "kb auth status")
+    path = value.get("data", {}).get("session", {}).get("path")
+    _expect(isinstance(path, str) and bool(path), "kb auth status omitted session.path")
+    return Path(path)
+
+
+
+def _journey_home(env: dict[str, str]) -> Path:
+    """Return the isolated HOME passed to child commands, not the runner's HOME."""
+    return Path(env["HOME"])
+
+
 def expected_root(payload: dict) -> str:
     receipt = payload.get("receipt", {})
     return str(receipt.get("plan", {}).get("request", {}).get("platformRoot", ""))
-
 
 
 def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> None:
@@ -180,8 +193,9 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         _expect(isinstance(member, dict) and bool(member.get("userId")), "admin could not find invited user")
         result = _cli(cli, env, "auth", "reset-link", "--user-id", str(member["userId"]), "--json")
         value = _json(result, "kb auth reset-link")
-        reset_url = str(value.get("resetUrl", ""))
-        expires = value.get("expiresAt")
+        result_data = value.get("data", {})
+        reset_url = str(result_data.get("resetUrl", ""))
+        expires = result_data.get("expiresAt")
         if reset_url:
             state["reset_token"] = reset_url.rstrip("/").rsplit("/", 1)[-1]
         validate_cli_case("S-042.4", result.returncode, result.stdout, value)
@@ -225,49 +239,44 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
     # Keep the secured CLI profile independent from the reset-link flow.
     def apply_isolated_platform():
         home = _journey_home(env)
-        receipt = json.loads((Path(env["KB_JOURNEY_PLATFORM_ROOT"]) / ".kb/v2/receipt.json").read_text())
-        request_data = json.loads(json.dumps(receipt["plan"]["request"]))
-        with tempfile.TemporaryDirectory(prefix="s005-platform-", dir=home) as temp:
-            root = Path(temp) / "platform"
-            request_file = Path(temp) / "request.json"
-            request_file.write_text(json.dumps(request_data) + "\n")
-            index = home / ".local/share/kb-create/release-index.json"
-            result = run_command([env.get("KB_JOURNEY_KB_CREATE_PATH", str(home / ".local/bin/kb-create")),
-                                  "apply", "--index", str(index), "--input", str(request_file),
-                                  "--request-platform-root", str(root), "--json"],
-                                 env=env, cwd=home, timeout=600)
-            value = _json(result, "kb-create apply")
-            actual = value.get("receipt", {}).get("plan", {}).get("request", {}).get("platformRoot")
-            validate_cli_case("S-005.1", result.returncode, result.stdout, value, root=str(actual or ""))
-            _expect(actual == str(root), "kb-create apply did not report the requested isolated platform root")
+        root = home / ".kb/s005-client"
+        index = home / ".local/share/kb-create/release-index.json"
+        result = run_command([env.get("KB_JOURNEY_KB_CREATE_PATH", str(home / ".local/bin/kb-create")),
+                              "apply", "--index", str(index), "--request-platform-root", str(root),
+                              "--service-profile", "client", "--json"],
+                             env=env, cwd=home, timeout=600)
+        value = _json(result, "kb-create apply")
+        actual = value.get("receipt", {}).get("plan", {}).get("request", {}).get("platformRoot")
+        validate_cli_case("S-005.1", result.returncode, result.stdout, value, root=str(actual or ""))
+        _expect(actual == str(root), "kb-create apply did not report the requested isolated platform root")
+        state["client_cli"] = str(root / ".kb/v2/bin/kb")
         return None
 
     journey.step("apply isolated client platform", "auth.secured", apply_isolated_platform, cases=["S-005.1"])
 
     def member_login():
-        result = _cli(cli, env, "auth", "login", "--gateway-url", base,
-                      "--email", member_email, "--password", "NewMemberPass123!")
+        result = run_command([state.get("client_cli", cli), "auth", "login", "--gateway-url", base,
+                              "--email", member_email, "--password-stdin"],
+                             env=env, input="NewMemberPass123!\n", timeout=90)
         validate_cli_case("S-005.2", result.returncode, result.stdout)
+        session = json.loads(_session_path(state.get("client_cli", cli), env).read_text())
+        state["client_access"] = session["accessToken"]
         return None
 
     def member_status():
-        result = _cli(cli, env, "auth", "status", "--json")
+        result = _cli(state.get("client_cli", cli), env, "auth", "status", "--json")
         value = _json(result, "kb auth status")
         validate_cli_case("S-005.3", result.returncode, result.stdout, value,
                           email=member_email, gateway=base)
         return None
 
     def member_permissions():
-        with invocation_context(step_id="journey.setup"):
-            access = _login(base, member_email, "NewMemberPass123!")[0]
-        response = _request(base, "/auth/permissions", token=access)
+        response = _request(base, "/auth/permissions", token=state["client_access"])
         validate_case_response("S-005.4", 200, response)
         return None
 
     def member_users_denied():
-        with invocation_context(step_id="journey.setup"):
-            access, _ = _login(base, member_email, "NewMemberPass123!")
-        status, value = _response(base, "/auth/users", token=access)
+        status, value = _response(base, "/auth/users", token=state["client_access"])
         validate_case_response("S-005.5", status, value)
         return None
 
@@ -280,7 +289,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         with invocation_context(step_id="journey.setup"):
             _cli(cli, env, "auth", "login", "--gateway-url", base, "--email", admin_email,
                  "--password", admin_password)
-        session_path = Path.home() / ".kb/session.json"
+        session_path = _session_path(cli, env)
         session = json.loads(session_path.read_text())
         session["expiresAt"] = 0
         session_path.write_text(json.dumps(session) + "\n")
@@ -295,7 +304,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         return None
 
     def revoked_session():
-        session_path = Path.home() / ".kb/session.json"
+        session_path = _session_path(cli, env)
         session = json.loads(session_path.read_text())
         with invocation_context(step_id="journey.setup"):
             _request(base, "/auth/logout/cli", method="POST",
@@ -309,7 +318,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         return None
 
     def removed_session():
-        (Path.home() / ".kb/session.json").unlink(missing_ok=True)
+        _session_path(cli, env).unlink(missing_ok=True)
         result = _cli(cli, env, "auth", "tokens")
         output = result.stdout + result.stderr
         validate_cli_case("S-031.4", result.returncode, output)

@@ -105,14 +105,16 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		_ = removeProjections(plan.Request.PlatformRoot)
 		return contracts.InstallReceipt{}, fmt.Errorf("write marketplace lock: %w", err)
 	}
-	emit("Render config", true)
-	if _, err := render.Write(plan); err != nil {
+	if plan.Host != nil {
+		emit("Render config", true)
+		if _, err := render.Write(plan); err != nil {
+			emit("Render config", false)
+			return contracts.InstallReceipt{}, fmt.Errorf("render resolved projections: %w", err)
+		}
 		emit("Render config", false)
-		return contracts.InstallReceipt{}, fmt.Errorf("render resolved projections: %w", err)
 	}
-	emit("Render config", false)
 	now := now(deps.Clock)
-	if deps.Host != nil {
+	if deps.Host != nil && plan.Host != nil {
 		emit("Start host", true)
 		if err := deps.Host.Probe(ctx, *plan.Host); err != nil {
 			emit("Start host", false)

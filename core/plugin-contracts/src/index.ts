@@ -42,6 +42,10 @@ export { getLoggerMetadataFromHost } from "./logger-metadata.js";
 export type { PermissionSpec } from "./permissions.js";
 export { DEFAULT_PERMISSIONS } from "./permissions.js";
 
+// CLI manifest declarations
+export { CliCommandDeclSchema, CliFlagDeclSchema } from './cli-schema.js';
+export type { CliFlagDecl } from './cli-schema.js';
+
 // Execution
 export type { ExecutionMeta, RunResult } from "./execution.js";
 export type { ExecutionTarget } from "./execution-target.js";
@@ -269,7 +273,6 @@ export type {
   DisplayMetadata,
   PluginDependency,
   PlatformRequirements,
-  CliFlagDecl,
   CliCommandDecl,
   CliGroupMeta,
   RestRouteDecl,

@@ -23,6 +23,7 @@ import {
   verifyUserAccessToken,
   verifyUserRefreshToken,
   signAccessToken,
+  KB_JWT_ISSUER,
 } from '../jwt.js';
 
 const config = { secret: 'test-secret-at-least-32-chars-long!!' };
@@ -35,59 +36,70 @@ describe('signUserAccessToken / verifyUserAccessToken', () => {
     expect(expiresInSec).toBe(900);
 
     const payload = await verifyUserAccessToken(token, config);
-    expect(payload).not.toBeNull();
-    expect(payload!.userId).toBe('u1');
-    expect(payload!.tenantId).toBe('t1');
-    expect(payload!.familyId).toBe('fam-1');
-    expect(payload!.jti).toBeTypeOf('string');
-    expect(payload!.type).toBe('user_access');
+    expect(payload.ok).toBe(true);
+    if (!payload.ok) { throw new Error(`Unexpected verification failure: ${payload.reason}`); }
+    expect(payload.payload.userId).toBe('u1');
+    expect(payload.payload.tenantId).toBe('t1');
+    expect(payload.payload.familyId).toBe('fam-1');
+    expect(payload.payload.jti).toBeTypeOf('string');
+    expect(payload.payload.type).toBe('user_access');
   });
 
   it('payload contains NO role / scopes / permissions fields (principle #3)', async () => {
     const { token } = await signUserAccessToken({ ...claims, ttlSec: 900 }, config);
     const payload = await verifyUserAccessToken(token, config);
-    expect((payload as unknown as Record<string, unknown>).role).toBeUndefined();
-    expect((payload as unknown as Record<string, unknown>).scopes).toBeUndefined();
-    expect((payload as unknown as Record<string, unknown>).permissions).toBeUndefined();
+    expect(payload.ok && (payload.payload as unknown as Record<string, unknown>).role).toBeUndefined();
+    expect(payload.ok && (payload.payload as unknown as Record<string, unknown>).scopes).toBeUndefined();
+    expect(payload.ok && (payload.payload as unknown as Record<string, unknown>).permissions).toBeUndefined();
   });
 
-  it('returns null for a tampered token', async () => {
+  // case: S-203.20
+  it('returns a typed invalid reason for a tampered token', async () => {
     const { token } = await signUserAccessToken({ ...claims, ttlSec: 900 }, config);
     const tampered = token.slice(0, -5) + 'XXXXX';
-    expect(await verifyUserAccessToken(tampered, config)).toBeNull();
+    expect(await verifyUserAccessToken(tampered, config)).toEqual({ ok: false, reason: 'invalid' });
   });
 
   it('returns null for wrong secret', async () => {
     const { token } = await signUserAccessToken({ ...claims, ttlSec: 900 }, config);
-    expect(await verifyUserAccessToken(token, { secret: 'other-secret-at-least-32-chars-now' })).toBeNull();
+    expect(await verifyUserAccessToken(token, { secret: 'other-secret-at-least-32-chars-now' })).toEqual({ ok: false, reason: 'invalid' });
   });
 
   it('rejects a machine access token by its explicit kind', async () => {
     const { token } = await signAccessToken({
       hostId: 'host-1', namespaceId: 'tenant-1', tier: 'free', type: 'machine_access',
     }, config);
-    expect(await verifyUserAccessToken(token, config)).toBeNull();
+    expect(await verifyUserAccessToken(token, config)).toMatchObject({ ok: false, reason: 'invalid' });
   });
 
-  it('rejects a pre-contract user access token kind', async () => {
+  it('classifies a user access token without the KB issuer as unknown issuer', async () => {
     const now = Math.floor(Date.now() / 1000);
     const token = await new SignJWT({ tenantId: 't1', fam: 'fam-1', type: 'user', jti: 'old-jti' })
       .setProtectedHeader({ alg: 'HS256' }).setSubject('u1').setIssuedAt(now)
       .setExpirationTime(now + 900).sign(new TextEncoder().encode(config.secret));
-    expect(await verifyUserAccessToken(token, config)).toBeNull();
+    expect(await verifyUserAccessToken(token, config)).toEqual({ ok: false, reason: 'unknown-issuer' });
   });
 
   it('rejects expired tokens', async () => {
     // ttlSec: -10 produces a token that is already expired.
     const { token } = await signUserAccessToken({ ...claims, ttlSec: -10 }, config);
-    expect(await verifyUserAccessToken(token, config)).toBeNull();
+    expect(await verifyUserAccessToken(token, config)).toMatchObject({ ok: false, reason: 'expired' });
+  });
+
+  // case: S-203.20
+  it('classifies a correctly signed token from an unrecognized issuer', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({ tenantId: 't1', fam: 'fam-1', type: 'user_access', jti: 'issuer-jti' })
+      .setProtectedHeader({ alg: 'HS256' }).setIssuer('unrecognized').setSubject('u1').setIssuedAt(now)
+      .setExpirationTime(now + 900).sign(new TextEncoder().encode(config.secret));
+    expect(await verifyUserAccessToken(token, config)).toEqual({ ok: false, reason: 'unknown-issuer' });
   });
 
   it('rejects a token without `fam` even if signature is valid (CD-2)', async () => {
     // Sign a similarly-shaped token but without familyId via the refresh
     // helper used incorrectly: verifyUserAccessToken must reject it.
     const refreshToken = await signUserRefreshToken({ ...claims, ttlSec: 900 }, config);
-    expect(await verifyUserAccessToken(refreshToken, config)).toBeNull();
+    expect(await verifyUserAccessToken(refreshToken, config)).toMatchObject({ ok: false, reason: 'invalid' });
   });
 
   it('rejects a token signed with a non-HS256 algorithm (alg pinning)', async () => {
@@ -104,12 +116,13 @@ describe('signUserAccessToken / verifyUserAccessToken', () => {
       jti: 'forged-jti',
     })
       .setProtectedHeader({ alg: 'HS384' })
+      .setIssuer(KB_JWT_ISSUER)
       .setSubject('u1')
       .setIssuedAt(now)
       .setExpirationTime(now + 900)
       .sign(new TextEncoder().encode(config.secret));
 
-    expect(await verifyUserAccessToken(forged, config)).toBeNull();
+    expect(await verifyUserAccessToken(forged, config)).toMatchObject({ ok: false, reason: 'invalid' });
   });
 });
 
@@ -117,23 +130,24 @@ describe('signUserRefreshToken / verifyUserRefreshToken', () => {
   it('round-trips identity + family + jti', async () => {
     const token = await signUserRefreshToken({ ...claims, ttlSec: 60 * 60 }, config);
     const payload = await verifyUserRefreshToken(token, config);
-    expect(payload).not.toBeNull();
-    expect(payload!.userId).toBe('u1');
-    expect(payload!.tenantId).toBe('t1');
-    expect(payload!.familyId).toBe('fam-1');
-    expect(payload!.jti).toBeTypeOf('string');
-    expect(payload!.type).toBe('user_refresh');
+    expect(payload.ok).toBe(true);
+    if (!payload.ok) { throw new Error(`Unexpected verification failure: ${payload.reason}`); }
+    expect(payload.payload.userId).toBe('u1');
+    expect(payload.payload.tenantId).toBe('t1');
+    expect(payload.payload.familyId).toBe('fam-1');
+    expect(payload.payload.jti).toBeTypeOf('string');
+    expect(payload.payload.type).toBe('user_refresh');
   });
 
   it('refresh and access tokens are not interchangeable', async () => {
     const access = (await signUserAccessToken({ ...claims, ttlSec: 900 }, config)).token;
-    expect(await verifyUserRefreshToken(access, config)).toBeNull();
+    expect(await verifyUserRefreshToken(access, config)).toMatchObject({ ok: false, reason: 'invalid' });
   });
 
   it('rejects refresh tokens missing `fam`', async () => {
     // Re-route through the access helper to produce a non-refresh token shape.
     const access = (await signUserAccessToken({ ...claims, ttlSec: 900 }, config)).token;
-    expect(await verifyUserRefreshToken(access, config)).toBeNull();
+    expect(await verifyUserRefreshToken(access, config)).toMatchObject({ ok: false, reason: 'invalid' });
   });
 
   it('rejects pre-contract user refresh token kinds', async () => {
@@ -141,7 +155,7 @@ describe('signUserRefreshToken / verifyUserRefreshToken', () => {
     const token = await new SignJWT({ tenantId: 't1', fam: 'fam-1', type: 'refresh', jti: 'old-jti' })
       .setProtectedHeader({ alg: 'HS256' }).setSubject('u1').setIssuedAt(now)
       .setExpirationTime(now + 900).sign(new TextEncoder().encode(config.secret));
-    expect(await verifyUserRefreshToken(token, config)).toBeNull();
+    expect(await verifyUserRefreshToken(token, config)).toMatchObject({ ok: false, reason: 'unknown-issuer' });
   });
 });
 
@@ -151,6 +165,6 @@ describe('jti is unique per token', () => {
     const b = await signUserAccessToken({ ...claims, ttlSec: 900 }, config);
     const pa = await verifyUserAccessToken(a.token, config);
     const pb = await verifyUserAccessToken(b.token, config);
-    expect(pa!.jti).not.toBe(pb!.jti);
+    expect(pa.ok && pb.ok && pa.payload.jti).not.toBe(pb.ok && pb.payload.jti);
   });
 });

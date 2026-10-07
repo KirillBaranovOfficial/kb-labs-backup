@@ -16,7 +16,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 from invocations import (decode_ux_error_result, decode_ux_success_result, open_http,
-                         read_ux_cli_result, read_ux_http_result, run_command)
+                         read_ux_cli_result, read_ux_http_result, run_command, run_pty_command)
 
 
 def _request(base_url: str, path: str, *, method: str = "GET", token: str | None = None,
@@ -59,9 +59,21 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
     if authenticated:
         if not base_url or not email or not password:
             raise ValueError("secured CLI auth status requires gateway URL, email, and password")
-        login = invoke(["auth", "login", "--gateway-url", base_url, "--email", email, "--password", password])
+        prompt_seen = False
+
+        def answer_password(transcript: str) -> str | None:
+            nonlocal prompt_seen
+            if not prompt_seen and "Password: " in transcript:
+                prompt_seen = True
+                return password + "\n"
+            return None
+
+        login, _ = run_pty_command([cli_path, "auth", "login", "--gateway-url", base_url,
+                                    "--email", email], env=env, on_output=answer_password)
         if login.returncode != 0:
             raise AssertionError(f"kb auth login failed: {(login.stdout + login.stderr)[-400:]}")
+        if not prompt_seen:
+            raise AssertionError("kb auth login did not prompt for the human password")
     status = invoke(["auth", "status", "--json"])
     try:
         status_payload = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))
@@ -73,6 +85,9 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
     if email and session.get("email") != email:
         raise AssertionError(f"kb auth status returned the wrong email: {session!r}")
     if authenticated:
+        session_path = session.get("path")
+        if not isinstance(session_path, str) or not Path(session_path).is_file():
+            raise AssertionError(f"kb auth status did not report its saved session file: {session!r}")
         tokens = invoke(["auth", "tokens", "--json"])
         try:
             tokens_payload = decode_ux_success_result(read_ux_cli_result(tokens.stdout, tokens.returncode))
@@ -113,7 +128,7 @@ def assert_platform_auth_required(result: subprocess.CompletedProcess[str], comm
     if (result.returncode == 0 or not isinstance(failure, dict)
             or failure.get("code") != "KB_AUTH_REQUIRED"
             or failure.get("message") != "Authentication is required."
-            or failure.get("hint") != f'Run "kb auth login --gateway-url {gateway} --email <email> --password <password>".'):
+            or failure.get("hint") != f'Run "kb auth login --gateway-url {gateway} --email <email>".'):
         raise AssertionError(f"unauthenticated {' '.join(command)} returned an unexpected result: {payload!r}")
 
 
@@ -133,12 +148,17 @@ def assert_cli_session_absent(result: subprocess.CompletedProcess[str]) -> None:
 def run_cli_corrupt_session_file(cli_path: str, env: dict[str, str]) -> None:
     """A malformed saved session must produce the catalogued repair envelope."""
     with tempfile.TemporaryDirectory(prefix="kb-journey-auth-home-") as home:
-        session_path = Path(home) / ".kb" / "session.json"
-        session_path.parent.mkdir(parents=True)
-        session_path.write_text("{ invalid json", encoding="utf-8")
         isolated_env = dict(env)
         isolated_env["HOME"] = home
         isolated_env["KB_JOURNEY_HOME_LABEL"] = "corrupt-auth-session"
+        status = run_command([cli_path, "auth", "status", "--json"], env=isolated_env)
+        try:
+            status_data = decode_ux_success_result(read_ux_cli_result(status.stdout, status.returncode))
+        except (json.JSONDecodeError, ValueError) as error:
+            raise AssertionError("kb auth status did not expose the session path") from error
+        session_path = Path(status_data["session"]["path"])
+        session_path.parent.mkdir(parents=True)
+        session_path.write_text("{ invalid json", encoding="utf-8")
         command = [cli_path, "config", "show", "--json"]
         result = run_command(command, env=isolated_env)
         try:

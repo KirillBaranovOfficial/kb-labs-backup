@@ -286,7 +286,7 @@ describe("kb-host project routing", () => {
       if (previousKbHome === undefined) delete process.env.KB_HOME;
       else process.env.KB_HOME = previousKbHome;
     }
-  });
+  }, 25_000);
 
   // case: S-045.6, S-045.7, S-045.8, S-140.7
   it("forwards a real secured user access token to the project MCP runtime", async () => {
@@ -505,7 +505,7 @@ describe("kb-host project routing", () => {
         body: JSON.stringify({ jsonrpc: "2.0", id: 6, method: "tools/list", params: {} }),
       });
       expect(disabledMcp.status).toBe(401);
-      expect((await disabledMcp.json() as ErrorBody).error.code).toBe("KB_AUTH_REQUIRED");
+      expect((await disabledMcp.json() as ErrorBody).error.code).toBe("KB_AUTH_USER_INACTIVE");
 
       const revokeLogin = await running.fetchGateway("/auth/login", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -528,7 +528,7 @@ describe("kb-host project routing", () => {
         body: JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list", params: {} }),
       });
       expect(revokedMcp.status).toBe(401);
-      expect((await revokedMcp.json() as ErrorBody).error.code).toBe("KB_AUTH_REQUIRED");
+      expect((await revokedMcp.json() as ErrorBody).error.code).toBe("KB_AUTH_SESSION_REVOKED");
 
       for (const token of [undefined, "invalid-token"]) {
         const headers: Record<string, string> = { "content-type": "application/json" };

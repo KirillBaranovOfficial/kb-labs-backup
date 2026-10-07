@@ -93,7 +93,7 @@ describe('secured CLI auth ordering', () => {
       error: {
         code: 'KB_AUTH_REQUIRED',
         message: 'Authentication is required.',
-        hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4500 --email <email> --password <password>".',
+        hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4500 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
       },
     });
     expect(mocks.loadPlatformConfiguration).toHaveBeenCalledExactlyOnceWith(

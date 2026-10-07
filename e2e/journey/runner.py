@@ -21,12 +21,14 @@ from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import run_doctor_root_isolation_step, run_installer_case_steps, run_uninstall_decline_step
+from journey_resources import case_catalog_root, journey_module
 from release_index import channel_platform_version, stable_platform_version
-from service_steps import FlowGraph, Journey, record_runner_failure
+from service_steps import FlowGraph, Journey, record_candidate_provenance, record_runner_failure
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
 from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status,
                         run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
-from steps.accounts import run_cli_logout_steps, run_password_and_session_steps, run_secured_account_steps
+from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps, run_invite_lifecycle_steps,
+                            run_last_admin_guard_steps, run_password_and_session_steps)
 from platform_state_dump import PlatformStateDumpOnce
 from scoreboard import release_claims_for_case, write_scoreboards
 from invocations import (decode_ux_error_result, decode_ux_success_result,
@@ -459,9 +461,7 @@ def append_summary(passed: bool):
                 stream.write(f"tree {path}: exists={path.exists()} symlink={path.is_symlink()} target={target!r} resolved={path.resolve(strict=False)}\n")
                 if path.is_file() and path.name in {"kb", "bin.js"}:
                     stream.write(f"file {path}: {path.read_text(errors='replace')[:3000]}\n")
-    copied_catalog = Path(__file__).with_name("scenarios")
-    catalog = copied_catalog if copied_catalog.is_dir() else Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios"
-    write_scoreboards(report.parent, catalog)
+    write_scoreboards(report.parent, case_catalog_root())
     print("\n".join(lines))
 
 
@@ -753,6 +753,27 @@ def main():
     ACTIVE_LAUNCHER = launcher
     version, _ = run([launcher, "--version"], env=env, timeout=30)
     version_ok = version.returncode == 0 and re.fullmatch(r"kb-create [^\s]+\s*", version.stdout) is not None
+    candidate = {}
+    identity, _ = run([launcher, "version", "--json"], env=env, timeout=30)
+    if identity.returncode == 0:
+        try:
+            envelope = json.loads(identity.stdout)
+            data = envelope.get("data", {})
+            if envelope.get("ok") is True and isinstance(data, dict):
+                candidate = {key: value for key, value in data.items() if isinstance(value, str)}
+            else:
+                candidate["identityError"] = "version --json returned no success data"
+        except json.JSONDecodeError as error:
+            candidate["identityError"] = f"version --json returned invalid JSON: {error}"
+    else:
+        candidate["identityError"] = (
+            f"version --json exited {identity.returncode}: {' '.join(identity.stdout.split())[:300]}")
+    provenance = record_candidate_provenance(
+        CASE_JOURNEY, os.getenv("KB_JOURNEY_GIT_REVISION", ""), candidate)
+    if provenance.status != "PASS":
+        fail(provenance.message or "candidate provenance check failed")
+        append_summary(False)
+        return failure_exit()
     record_case("launcher version", version_ok,
                "kb-create --version did not print the launcher version", cases=["PC-001.1"])
     if VARIANT == "occupied-port":
@@ -1002,18 +1023,30 @@ def main():
                 return result
 
             verify_admin = None
+            expire_admin_session = None
             if access_mode == "secured":
                 admin_email = env.get("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
                 admin_password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyPassw0rd!")
 
                 def verify_admin():
-                    with tempfile.TemporaryDirectory(prefix="kb-journey-admin-login-") as auth_home:
-                        auth_env = {**env, "HOME": auth_home}
-                        result, _ = run([str(BIN / "kb"), "auth", "login", "--gateway-url",
-                                         "http://127.0.0.1:4000", "--email", admin_email,
-                                         "--password", admin_password],
-                                        env=auth_env, cwd=PROJECT, timeout=90)
+                    result, _ = run([str(BIN / "kb"), "auth", "login", "--gateway-url",
+                                     "http://127.0.0.1:4000", "--email", admin_email,
+                                     "--password-stdin"],
+                                    env=env, cwd=PROJECT, timeout=90,
+                                    input_text=admin_password + "\n")
                     return result
+
+                def expire_admin_session():
+                    status, _ = run([str(BIN / "kb"), "auth", "status", "--json"],
+                                    env=env, cwd=PROJECT, timeout=30)
+                    envelope = json.loads(status.stdout)
+                    session_path = envelope.get("data", {}).get("session", {}).get("path")
+                    if not session_path:
+                        raise RuntimeError("kb auth status omitted session.path")
+                    session_file = Path(session_path)
+                    session = json.loads(session_file.read_text())
+                    session["expiresAt"] = 0
+                    session_file.write_text(json.dumps(session) + "\n")
 
             platform_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 f"platform-update-{access_mode}.json")
@@ -1029,6 +1062,7 @@ def main():
                     updated_version=str(updated_version),
                     run_command=update_command,
                     verify_user=verify_admin,
+                    expire_user_session=expire_admin_session,
                 )
                 update_result = platform_journey.write_json(platform_report)
             except Exception as error:
@@ -1207,7 +1241,7 @@ def main():
             service_env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
             service_env["KB_JOURNEY_ADMIN_PASSWORD"] = "JourneyPassw0rd!"
             oauth_claims = release_claims_for_case(
-                "S-109", Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios")
+                "S-109", case_catalog_root())
             configured = login_and_configure_secured_admin(
                 service_env, launcher, configure_oidc=bool(oauth_claims))
             if configured is not None:
@@ -1234,6 +1268,8 @@ def main():
             try:
                 payload = decode_ux_success_result(read_ux_cli_result(project_add.stdout, project_add.returncode))
                 project_id = find_project_id(payload)
+                project = payload.get("project", payload) if isinstance(payload, dict) else {}
+                project_result["name"] = str(project.get("name") or "") if isinstance(project, dict) else ""
             except (json.JSONDecodeError, ValueError):
                 project_id = ""
             project_result["id"] = project_id
@@ -1324,17 +1360,34 @@ def main():
                 cases=["S-100.2", "S-100.3", "S-100.4"],
             )
             auth_journey.step(
-                "tenant roles, API token lifecycle, last-admin guard, and invite revocation",
+                "tenant API token lifecycle",
                 "auth.accounts",
-                lambda: run_secured_account_steps(
+                lambda: run_api_token_lifecycle_steps(
                     "http://127.0.0.1:4000",
                     service_env["KB_JOURNEY_ADMIN_EMAIL"],
                     service_env["KB_JOURNEY_ADMIN_PASSWORD"],
                     "auth-reset-member@example.test",
                     "JourneyReplacement123!",
                 ),
-                cases=["S-103.1", "S-103.2", "S-103.3", "S-103.4", "S-103.5",
-                       "S-104.7", "S-105.1", "S-105.2", "S-105.3", "S-105.4"],
+                cases=["S-103.1", "S-103.2", "S-103.3", "S-103.4", "S-103.5"],
+            )
+            auth_journey.step(
+                "last active administrator cannot be disabled or demoted",
+                "auth.accounts",
+                lambda: run_last_admin_guard_steps(
+                    "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                ),
+                cases=["S-104.7"],
+            )
+            auth_journey.step(
+                "revoke pending invites and reject invalid activation tokens",
+                "auth.accounts",
+                lambda: run_invite_lifecycle_steps(
+                    "http://127.0.0.1:4000", service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                    service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                ),
+                cases=["S-105.1", "S-105.2", "S-105.3", "S-105.4"],
             )
             auth_journey.step(
                 "member CLI login and token listing", "auth.accounts",
@@ -1386,7 +1439,7 @@ def main():
         service_env["KB_JOURNEY_STATES"] = json.dumps(outer_graph.states)
         service_env.pop("KB_JOURNEY_PROJECT_B_ID", None)
         service_env.pop("KB_JOURNEY_PROJECT_B_ROOT", None)
-        result, elapsed = run(["python3", "/opt/kb-journey/service_runner.py", "--mode", mode, "--output", str(service_report)],
+        result, elapsed = run(["python3", str(journey_module("service_runner.py")), "--mode", mode, "--output", str(service_report)],
                              env=service_env, timeout=900)
         TIMES[f"{mode} service journeys"] = elapsed
         if service_report.exists():
@@ -1500,8 +1553,7 @@ def main():
             fail(f"{mode} workflow journey: {workflow_result.first_failure}")
             first = workflow_result.first_failure or {}
 
-        project = project_payload.get("project", project_payload) if isinstance(project_payload, dict) else {}
-        project_name = str(project.get("name") or "") if isinstance(project, dict) else ""
+        project_name = project_result.get("name", "")
         studio_env = create_studio_environment(
             service_env,
             mode=mode,
@@ -1516,7 +1568,7 @@ def main():
             studio_env.pop(key, None)
         if mode == "secured":
             oauth_claims = release_claims_for_case(
-                "S-109", Path(__file__).resolve().parents[2] / "docs" / "qa" / "scenarios")
+                "S-109", case_catalog_root())
             if oauth_claims:
                 studio_env["KB_STUDIO_OAUTH_JOURNEY"] = "1"
                 studio_env["KB_STUDIO_OIDC_PROVIDER_ID"] = "corp"

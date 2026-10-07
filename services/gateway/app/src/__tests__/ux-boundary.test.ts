@@ -27,6 +27,27 @@ describe('Gateway UX boundary', () => {
     expect(response.headers['content-type']).toContain('text/plain');
   });
 
+  // case: S-203.2
+  it('returns a resource-not-found envelope for an unknown Gateway route', async () => {
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as unknown as ILogger;
+    registerGatewayUxBoundary(app, logger);
+    await app.ready();
+
+    const response = await app.inject({ method: 'GET', url: '/not-a-gateway-route' });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_RESOURCE_NOT_FOUND',
+        details: { route: 'GET /not-a-gateway-route' },
+        correlationId: expect.any(String),
+      },
+    });
+  });
+
   // case: S-203.1, S-203.2, S-203.3, S-203.6
   it('covers each route discovered from the live Fastify registry', async () => {
     const app = Fastify({ logger: false });

@@ -1,14 +1,88 @@
 package resolve
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"os"
+	"path/filepath"
 	"reflect"
+	stdruntime "runtime"
 	"strings"
 	"testing"
 )
+
+// case: S-181.4
+func TestOfflinePlanReportsChecksumVerifiedCacheResolutionPerArtifact(t *testing.T) {
+	root := t.TempDir()
+	data := []byte("sealed package bytes")
+	digest := sha256.Sum256(data)
+	hash := hex.EncodeToString(digest[:])
+	cachePath := filepath.Join(root, ".kb", "v2", "cache", "packages", hash+".tgz")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: hash,
+			Tarball:  "https://registry.example/platform.tgz",
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
+	}
+
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: root, Source: contracts.SourceOffline}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Artifacts) != 1 || plan.Artifacts[0].ResolvedFrom != "cache" || plan.Artifacts[0].ResolvedURL != "" {
+		t.Fatalf("offline artifact provenance = %#v", plan.Artifacts)
+	}
+
+	onlinePlan, err := Plan(contracts.InstallRequest{PlatformRoot: root}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if onlinePlan.Artifacts[0].ResolvedFrom != "registry" || onlinePlan.Artifacts[0].ResolvedURL != "https://registry.example/platform.tgz" {
+		t.Fatalf("registry artifact provenance = %#v", onlinePlan.Artifacts[0])
+	}
+}
+
+// case: S-181.4
+func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data []byte
+	}{{name: "missing"}, {name: "checksum mismatch", data: []byte("wrong bytes")}} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			wanted := []byte("sealed package bytes")
+			digest := sha256.Sum256(wanted)
+			hash := hex.EncodeToString(digest[:])
+			cachePath := filepath.Join(root, ".kb", "v2", "cache", "packages", hash+".tgz")
+			if test.data != nil {
+				if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(cachePath, test.data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+				Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: hash,
+					Tarball: "https://registry.example/platform.tgz", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+					Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
+			if _, err := Plan(contracts.InstallRequest{PlatformRoot: root, Source: contracts.SourceOffline}, source); err == nil {
+				t.Fatal("offline plan accepted an absent or corrupt cache entry")
+			}
+		})
+	}
+}
 
 func TestAmbiguousProviderFailsFast(t *testing.T) {
 	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{Version: "2.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Requires: []catalog.Requirement{{Capability: "logs"}}}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "a", Version: "1"}, Provides: []string{"logs"}}, {Component: catalog.Component{ID: "b", Version: "1"}, Provides: []string{"logs"}}}}
@@ -18,6 +92,29 @@ func TestAmbiguousProviderFailsFast(t *testing.T) {
 	}
 	if value, ok := err.(*diag.Diag); !ok || value.Code != contracts.CodeProviderAmbiguous {
 		t.Fatalf("%T %#v", err, err)
+	}
+}
+
+// case: S-005.1
+func TestClientProfileResolvesWithoutHostOrServices(t *testing.T) {
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "platform",
+			Profiles: map[string]contracts.ServiceGraph{"default": {}, "client": {}},
+			Binaries: []catalog.Binary{{ID: "kb-create", OS: stdruntime.GOOS, Arch: stdruntime.GOARCH, URL: "https://example.test/kb-create", Filename: "kb-create", SHA256: "binary"}},
+			Members:  []catalog.Component{{ID: "cli-bin", Version: "2.0.0", Package: "@kb-labs/cli-bin", Tarball: "https://example.test/cli-bin.tgz", SHA256: "cli-bin"}},
+		}},
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "client"}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Host != nil || plan.ServiceGraph.Profile != "client" || len(plan.ServiceGraph.Services) != 0 {
+		t.Fatalf("client plan = %#v", plan)
+	}
+	if len(plan.Artifacts) != 2 || plan.Artifacts[0].Kind != "binary" || plan.Artifacts[0].ID != "kb-create" || plan.Artifacts[1].Package != "@kb-labs/cli-bin" || len(plan.ConfigPatches) != 0 {
+		t.Fatalf("client artifacts/config = %#v / %#v", plan.Artifacts, plan.ConfigPatches)
 	}
 }
 

@@ -1,7 +1,7 @@
 ---
 title: "Authentication"
 description: "Sign in to a secured KB Labs install, manage team access, and issue personal API tokens."
-updatedAt: "2026-09-30"
+updatedAt: "2026-10-07"
 order: 3
 ---
 
@@ -14,11 +14,17 @@ Implementation: `services/gateway/app/src/auth/user-routes.ts`, `services/gatewa
 For browser clients, Studio uses `/login`. For scripts, log in with the CLI and inspect the current identity:
 
 ```bash
-kb auth login --gateway-url https://gateway.example.com --email admin@example.com --password '<admin-password>'
+kb auth login --gateway-url https://gateway.example.com --email admin@example.com
 kb auth status
 ```
 
-The CLI stores a refresh token locally and refreshes the short-lived access token when needed. `kb auth logout` revokes the server refresh family before deleting the local session.
+When run in a terminal, the CLI prompts for the password without displaying it. For automation, pass it through standard input instead of an argument:
+
+```bash
+kb auth login --gateway-url https://gateway.example.com --email admin@example.com --password-stdin < ./admin-password.txt
+```
+
+The CLI stores the human session at `~/.kb/session.json`; `kb auth status --json` reports its resolved path as `data.session.path`. The file contains a refresh token and is readable only by its owner. The CLI refreshes the short-lived access token when needed. `kb auth logout` revokes the server refresh family before deleting the local session.
 
 The authenticated user can inspect their profile and effective permissions through `GET /auth/me` and `GET /auth/permissions`. Requests use the session Bearer token from CLI login, or the Studio session cookies.
 
@@ -44,7 +50,7 @@ An administrator can create a one-time reset link in Studio's Users page or from
 kb auth reset-link --user-id usr_123
 ```
 
-Replace `usr_123` with the user's ID shown on the Users page. Share the link out of band. It expires after one hour, works once, and revokes all existing sessions when redeemed. KB Labs does not email the link.
+Replace `usr_123` with the user's ID shown on the Users page. The JSON result contains `resetUrl` and `expiresAt`. Share the link out of band. It expires after 24 hours, works once, and revokes all existing sessions when redeemed. KB Labs does not email the link.
 
 If no administrator can sign in, stop the host and use operator recovery. Supply the new password through standard input:
 

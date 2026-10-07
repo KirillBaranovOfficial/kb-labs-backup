@@ -19,6 +19,7 @@ import (
 	"time"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -39,6 +40,7 @@ import (
 var telemetryEndpoint string
 var telemetryConsent bool
 var buildVersion = "dev"
+var buildCommit = "none"
 
 type repeatedValue []string
 
@@ -49,11 +51,14 @@ func (values *repeatedValue) Set(value string) error {
 	return nil
 }
 
-// SetVersionInfo preserves the released binary's version contract without
-// exposing the retired command dispatcher to V2.
-func SetVersionInfo(version, _ string, _ string) {
+// SetVersionInfo exposes the build identity to diagnostics without changing
+// the human --version output contract.
+func SetVersionInfo(version, commit, _ string) {
 	if version != "" {
 		buildVersion = version
+	}
+	if commit != "" {
+		buildCommit = commit
 	}
 }
 
@@ -207,7 +212,7 @@ func (i invocation) run(output *os.File) int {
 		return 2
 	}
 	if operation == "apply" {
-		if running := refuseRunningHost(state, root); running != nil {
+		if running := refuseApplyBesideRunningHost(state, *response.Plan, root); running != nil {
 			write(output, map[string]any{"ok": false, "error": running})
 			return 2
 		}
@@ -228,9 +233,11 @@ func (i invocation) run(output *os.File) int {
 			}
 			return 2
 		}
-		if err := host.CheckPorts(*response.Plan, operation); err != nil {
-			write(output, map[string]any{"ok": false, "error": asDiag(err)})
-			return 2
+		if response.Plan.Host != nil {
+			if err := host.CheckPorts(*response.Plan, operation); err != nil {
+				write(output, map[string]any{"ok": false, "error": asDiag(err)})
+				return 2
+			}
 		}
 	}
 	started := time.Now()
@@ -290,27 +297,34 @@ func (i invocation) run(output *os.File) int {
 		if i.Operation == "apply" && i.RuntimeDeps != nil && deps.Progress != nil {
 			// The shared apply engine owns artifact, render, host and verification events.
 		}
-		if deps.Host == nil {
+		if deps.Host == nil && response.Plan.Host != nil {
 			deps.Host = prober
 		}
 		receipt, applyErr := runtime.Apply(ctx, *response.Plan, deps)
 		if applyErr == nil {
+			var shimResult shim.EnsureResult
 			if i.Executable != "" {
 				if deps.Progress != nil {
 					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: true})
 				}
-				if shimErr := shim.Ensure(i.Executable, root); shimErr != nil {
+				var shimErr error
+				shimResult, shimErr = shim.Ensure(i.Executable, root)
+				if shimErr != nil {
 					if deps.Progress != nil {
 						deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
 					}
-					write(output, failure("KB_INSTALL_APPLY_FAILED", "installation completed but the kb command shim could not be created", "check the launcher directory and installed platform command, then rerun `kb-create install`", shimErr))
+					writeShimFailure(output, "KB_INSTALL_APPLY_FAILED", root, shimErr)
 					return 1
 				}
 				if deps.Progress != nil {
 					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
 				}
 			}
-			write(output, map[string]any{"ok": true, "operation": operation, "receipt": receipt, "logPath": transcript.Path()})
+			payload := map[string]any{"ok": true, "operation": operation, "receipt": receipt, "logPath": transcript.Path(), "profile": receipt.Plan.ServiceGraph.Profile, "services": receipt.Plan.ServiceGraph.Services}
+			if i.Executable != "" {
+				payload["shim"] = shimResult
+			}
+			write(output, payload)
 			outcome, errorCode = "success", ""
 			return 0
 		}
@@ -367,7 +381,7 @@ func (i invocation) runInstall(output *os.File) int {
 	phaseStart := time.Now()
 	source, err := catalog.LoadFile(index)
 	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "The release index could not be loaded from "+index+".", "Reinstall the launcher with `curl -fsSL https://kblabs.ru/install.sh | sh`, then rerun `kb-create install`.", err))
+		writeHumanFailure(humanOut, asDiag(err))
 		return 2
 	}
 	fmt.Fprintln(humanOut, "Set up KB Labs. Local access is enabled by default; it only accepts connections from this computer.")
@@ -449,6 +463,13 @@ func (i invocation) runInstall(output *os.File) int {
 			writeHumanFailure(humanOut, contracts.NewDiag("KB_INSTALL_APPLY_FAILED", "Installation failed before a structured result was available.", "Run `kb-create doctor`, then rerun `kb-create install`.", nil))
 		}
 		return code
+	}
+	var applied map[string]any
+	if json.Unmarshal(data, &applied) == nil {
+		if status, ok := applied["shim"].(map[string]any); ok && status["linked"] == false {
+			owner, _ := status["owner"].(string)
+			fmt.Fprintf(humanOut, "The kb command is owned by %s; run %s to use this platform.\n", owner, shim.Target(root))
+		}
 	}
 	if planned.Plan.Request.ProjectRoot == "" {
 		fmt.Fprintf(humanOut, "\nKB Labs is installed at %s.\nNext: register a project with `kb project add <path>`.\n", root)
@@ -579,7 +600,11 @@ func writeHumanFailure(output io.Writer, failure *diag.Diag) {
 	if failure == nil {
 		failure = contracts.NewDiag(contracts.CodeApplyFailed, "Installation failed unexpectedly.", "Run `kb-create doctor`, then rerun `kb-create install`.", nil)
 	}
-	fmt.Fprintf(output, "Install failed [%s]: %s\nNext: %s\n", failure.Code, failure.Message, failure.Hint)
+	fmt.Fprintf(output, "Install failed [%s]: %s\n", failure.Code, failure.Message)
+	if failure.Reason != "" {
+		fmt.Fprintf(output, "Why: %s\n", failure.Reason)
+	}
+	fmt.Fprintf(output, "Next: %s\n", failure.Hint)
 }
 
 // runStatus reports the host of the receipt-owned installation without
@@ -590,11 +615,20 @@ func (i invocation) runStatus(output *os.File) int {
 	if root == "" {
 		root = defaultPlatformRoot()
 	}
-	if _, err := receipt.Read(root); err != nil {
+	active, err := receipt.Read(root)
+	if err != nil {
 		if i.JSON {
 			write(output, map[string]any{"ok": true, "operation": "status", "installed": false, "running": false, "reachable": false, "next": "kb-create install"})
 		} else {
 			fmt.Fprintln(output, "Installed: no\nRunning: no\nReachable: no\nNext: kb-create install")
+		}
+		return 0
+	}
+	if active.Plan.ServiceGraph.Profile == "client" {
+		if i.JSON {
+			write(output, map[string]any{"ok": true, "operation": "status", "installed": true, "running": false, "reachable": false, "profile": "client", "services": []contracts.Service{}})
+		} else {
+			fmt.Fprintln(output, "Installed: yes\nProfile: client\nRunning: no (no host is expected)\nReachable: no (no host is expected)\nServices: none")
 		}
 		return 0
 	}
@@ -775,14 +809,41 @@ func write(output *os.File, value any) { _ = json.NewEncoder(output).Encode(valu
 func writeIndexFailure(output *os.File, err error, hint string) {
 	var typed *diag.Diag
 	if errors.As(err, &typed) {
-		write(output, map[string]any{"ok": false, "error": typed})
+		write(output, result.FailureEnvelope(typed))
 		return
 	}
-	write(output, failure("KB_INSTALL_RELEASE_INDEX_INVALID", "release index could not be loaded", hint, err))
+	write(output, result.FailureEnvelope(contracts.NewDiag(
+		contracts.CodeReleaseIndexInvalid, "The release index could not be loaded.", hint, err)))
 }
 
 func failure(code, message, hint string, cause error) map[string]any {
 	return map[string]any{"ok": false, "error": contracts.NewDiag(code, message, hint, cause)}
+}
+
+func writeShimFailure(output *os.File, code, platformRoot string, cause error) {
+	var details map[string]string
+	var message string
+	var failureCause *shim.Failure
+	if errors.As(cause, &failureCause) {
+		reason := failureCause.Reason
+		if failureCause.Cause != nil {
+			reason = failureCause.Cause.Error()
+		}
+		details = map[string]string{"path": failureCause.Path, "reason": reason}
+		message = fmt.Sprintf("Platform files and receipt remain applied at %s, but the kb command shim could not be created.", platformRoot)
+		diagnosticReason := fmt.Sprintf("The filesystem refused shim path %s: %s", failureCause.Path, reason)
+		diagnostic := contracts.NewDiag(code, message,
+			fmt.Sprintf("Fix the filesystem reason for the shim path, then run `kb-create doctor --fix --platform-root %q`.", platformRoot), cause)
+		diagnostic.Reason = diagnosticReason
+		diagnostic.Meta = map[string]any{"path": details["path"], "reason": details["reason"]}
+		write(output, map[string]any{"ok": false, "error": diagnostic})
+		return
+	} else {
+		message = fmt.Sprintf("Platform files and receipt remain applied at %s, but the kb command shim could not be created: %s", platformRoot, cause)
+	}
+	diagnostic := contracts.NewDiag(code, message,
+		fmt.Sprintf("Fix the filesystem reason for the shim path, then run `kb-create doctor --fix --platform-root %q`.", platformRoot), cause)
+	write(output, map[string]any{"ok": false, "error": diagnostic})
 }
 
 func writeFailureDossier(output *os.File, plan contracts.ResolvedInstallPlan, correlationID, logPath string, cause error) {

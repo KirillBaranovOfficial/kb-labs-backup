@@ -1,10 +1,11 @@
-import { createErrorEnvelope, isErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, isErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { randomUUID } from 'node:crypto';
 import { CredentialsManager } from './credentials.js';
 import { SessionManager } from './session.js';
 import type { GatewayCredentials, SessionCredentials } from './types.js';
 import { isGatewayConnectionFailure } from './connection-errors.js';
 import { SavedAuthFileError, savedAuthFileErrorEnvelope } from './saved-auth-file.js';
+import { GatewayAuthResponseError, requiredAuthEnvelope, withGatewayUrl } from './result.js';
 
 type AuthState = {
   gatewayUrl: string;
@@ -12,17 +13,11 @@ type AuthState = {
   refresh: () => Promise<AuthState>;
 };
 
-export class GatewayApiError extends Error {
-  constructor(readonly envelope: ErrorEnvelope) {
-    super(envelope.message);
+export class GatewayApiError extends ErrorEnvelopeError {
+  constructor(envelope: ErrorEnvelope) {
+    super(envelope);
     this.name = 'GatewayApiError';
   }
-}
-
-function requiredAuthEnvelope(gatewayUrl?: string): ErrorEnvelope {
-  return createErrorEnvelope('KB_AUTH_REQUIRED', {
-    details: { gatewayUrl: gatewayUrl || '<url>' },
-  });
 }
 
 async function loadAuth(): Promise<AuthState | null> {
@@ -62,12 +57,13 @@ function authenticatedUrl(input: string, gatewayUrl: string): URL {
 
 /** Shared REST path for platform APIs: attach credentials, refresh once, and map auth status codes. */
 export async function gatewayApiFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
+  const requestGatewayUrl = new URL(String(input)).origin;
   let auth: AuthState | null;
   try { auth = await loadAuth(); }
   catch (error) {
     throw new GatewayApiError(error instanceof SavedAuthFileError
       ? savedAuthFileErrorEnvelope(error)
-      : requiredAuthEnvelope());
+      : requiredAuthEnvelope(requestGatewayUrl));
   }
   const send = (current: AuthState | null): Promise<Response> => {
     const target = current ? authenticatedUrl(String(input), current.gatewayUrl) : new URL(String(input));
@@ -89,12 +85,17 @@ export async function gatewayApiFetch(input: string | URL, init: RequestInit = {
     try {
       auth = await auth.refresh();
       response = await send(auth);
-    } catch {
-      throw new GatewayApiError(requiredAuthEnvelope(auth?.gatewayUrl));
+    } catch (error) {
+      if (error instanceof GatewayAuthResponseError && error.envelope) {
+        throw new GatewayApiError(withGatewayUrl(error.envelope, auth.gatewayUrl));
+      }
+      throw new GatewayApiError(requiredAuthEnvelope(auth.gatewayUrl));
     }
   }
   if (response.status === 401) {
-    throw new GatewayApiError(requiredAuthEnvelope(auth?.gatewayUrl));
+    const gatewayUrl = auth?.gatewayUrl ?? requestGatewayUrl;
+    const rejection = new GatewayAuthResponseError('Gateway request', 401, await response.clone().text(), gatewayUrl);
+    throw new GatewayApiError(rejection.envelope ?? requiredAuthEnvelope(gatewayUrl));
   }
   if (response.status === 403) {
     const body = await response.clone().json().catch(() => null) as { permission?: unknown; error?: unknown } | null;

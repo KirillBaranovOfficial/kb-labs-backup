@@ -6,6 +6,7 @@ import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationErr
 import { HostServiceAddressError } from '../host-service-address.js';
 import {
   ERROR_STAGES,
+  ErrorEnvelopeError,
   createErrorEnvelope,
   errorCatalog,
   getCatalogEntry,
@@ -46,6 +47,19 @@ describe('errors.catalog.json lint', () => {
     });
   });
 
+  it('keeps installer index errors separate from publisher sealing errors', () => {
+    expect(getCatalogEntry('KB_INSTALL_RELEASE_INDEX_INVALID')).toMatchObject({
+      area: 'install',
+      retryable: true,
+      hint: 'Retry the command; if it persists report the correlationId (this is a KB Labs problem).',
+    });
+    expect(getCatalogEntry('KB_RELEASE_INDEX_SEAL_FAILED')).toMatchObject({
+      area: 'release',
+      retryable: false,
+      hint: 'Fix the release inputs named in the cause, then rerun release-index preparation.',
+    });
+  });
+
   it('only uses KB_ codes whose prefix matches the area (adapter codes belong to plugin)', () => {
     const prefixArea: Record<string, string> = {
       INSTALL: 'install',
@@ -61,6 +75,7 @@ describe('errors.catalog.json lint', () => {
       SERVICE: 'runtime',
       ENV: 'config',
       MARKETPLACE: 'plugin',
+      RELEASE: 'release',
     };
     for (const entry of errorCatalog.codes) {
       const prefix = entry.code.split('_')[1] ?? '';
@@ -156,6 +171,14 @@ describe('structured error diagnostics', () => {
 });
 
 describe('toErrorEnvelope (platform errors)', () => {
+  it('preserves a typed catalogued envelope thrown through the platform boundary', () => {
+    const envelope = createErrorEnvelope('KB_AUTH_TOKEN_EXPIRED', {
+      details: { gatewayUrl: 'https://gateway.test', reason: 'expired' },
+      correlationId: 'auth-correlation',
+    });
+    expect(toErrorEnvelope(new ErrorEnvelopeError(envelope))).toEqual(envelope);
+  });
+
   // case: S-191.7
   it('maps invalid adapter options to an actionable KB_CONFIG_INVALID envelope', () => {
     const envelope = toErrorEnvelope(new AdapterConfigError(
@@ -348,6 +371,18 @@ describe('toErrorEnvelope (platform errors)', () => {
       details: { service: 'gateway' },
       correlationId: 'corr-workflow',
       hint: 'Start the host with kb-create start so it can pass live host service addresses to this runtime.',
+    });
+    expect(validateErrorEnvelope(envelope)).toEqual([]);
+  });
+
+  it('catalogues an installed adapter that does not declare the requested slot', () => {
+    const envelope = createErrorEnvelope('KB_ADAPTER_SLOT_MISMATCH', {
+      details: { package: '@kb-labs/adapters-storage-fixture', slot: 'llm' },
+    });
+    expect(envelope).toMatchObject({
+      code: 'KB_ADAPTER_SLOT_MISMATCH',
+      message: 'Adapter package @kb-labs/adapters-storage-fixture does not declare platform slot llm.',
+      hint: 'Install a provider that declares llm with `kb marketplace install <pkg> --scope platform`, then retry.',
     });
     expect(validateErrorEnvelope(envelope)).toEqual([]);
   });

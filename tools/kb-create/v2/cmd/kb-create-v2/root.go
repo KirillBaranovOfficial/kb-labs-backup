@@ -16,6 +16,7 @@ import (
 	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/clikit/stream"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/shim"
 	"github.com/spf13/cobra"
 )
 
@@ -97,6 +98,15 @@ func newRootCommand() *cobra.Command {
 		}
 		root.AddCommand(child)
 	}
+	root.AddCommand(&cobra.Command{
+		Use:   "version",
+		Short: "Show launcher build identity",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			fmt.Fprintf(cmd.OutOrStdout(), "kb-create %s (commit %s)\n", buildVersion, buildCommit)
+			return result.Return(map[string]string{"version": buildVersion, "commit": buildCommit})
+		},
+	})
 	return root
 }
 
@@ -410,6 +420,10 @@ func operationHumanSummary(operation string, payload map[string]any) string {
 	case "rollback":
 		return "Platform rollback completed."
 	case "apply":
+		if status, ok := payload["shim"].(map[string]any); ok && status["linked"] == false {
+			owner, _ := status["owner"].(string)
+			return fmt.Sprintf("Platform installation completed.\nThe kb command is owned by %s; run %s to use this platform.", owner, shim.Target(installRequestRoot(payload)))
+		}
 		return "Platform installation completed."
 	case "plan":
 		return "Install plan resolved."
@@ -418,6 +432,14 @@ func operationHumanSummary(operation string, payload map[string]any) string {
 	default:
 		return fmt.Sprintf("%s completed.", operation)
 	}
+}
+
+func installRequestRoot(payload map[string]any) string {
+	installed, _ := payload["receipt"].(map[string]any)
+	plan, _ := installed["plan"].(map[string]any)
+	request, _ := plan["request"].(map[string]any)
+	root, _ := request["platformRoot"].(string)
+	return root
 }
 
 func stringField(values map[string]any, key string) string {

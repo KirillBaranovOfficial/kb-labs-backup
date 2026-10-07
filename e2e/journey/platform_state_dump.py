@@ -8,6 +8,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import time
 from pathlib import Path
 from typing import Mapping
 from typing import Any
@@ -103,6 +104,52 @@ def _write_secret_fingerprints(source: Path, target: Path) -> int:
         return target.stat().st_size
     except OSError:
         return 0
+
+
+def _write_auth_state_probe(platform_root: Path, target: Path) -> int:
+    """Write aggregate session health and database identity without credential material."""
+    config_path = platform_root / ".kb/kb.config.jsonc"
+    try:
+        config = json.loads(config_path.read_text())
+        filename = config["platform"]["adapterOptions"]["documentDatabase"]["filename"]
+        database = Path(filename)
+        if not database.is_absolute():
+            database = platform_root / database
+        stat = database.stat()
+        connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=1)
+        try:
+            families = [json.loads(row[0]) for row in connection.execute(
+                "SELECT data FROM doc_session_families")]
+            refreshes = [json.loads(row[0]) for row in connection.execute(
+                "SELECT data FROM doc_refresh_tokens")]
+        finally:
+            connection.close()
+        refresh_by_family: dict[str, list[dict[str, Any]]] = {}
+        for refresh in refreshes:
+            refresh_by_family.setdefault(str(refresh.get("familyId", "")), []).append(refresh)
+        users: dict[str, dict[str, Any]] = {}
+        now_ms = time.time_ns() // 1_000_000
+        for family in families:
+            user_id = str(family.get("userId", "unknown"))
+            family_refreshes = refresh_by_family.get(str(family.get("familyId", "")), [])
+            active = any(not item.get("consumedAt") and item.get("expiresAt", 0) > now_ms
+                         for item in family_refreshes)
+            user = users.setdefault(user_id, {"sessionFamilyCount": 0, "active": 0, "inactive": 0})
+            user["sessionFamilyCount"] += 1
+            user["active" if active else "inactive"] += 1
+        payload = {
+            "sessionStorePath": str(database),
+            "databaseFile": {"device": stat.st_dev, "inode": stat.st_ino,
+                             "sizeBytes": stat.st_size, "modifiedTimeNs": stat.st_mtime_ns},
+            "users": users,
+        }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, indent=2) + "\n")
+        return target.stat().st_size
+    except (OSError, sqlite3.Error, KeyError, TypeError, ValueError) as error:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"available": False, "reason": error.__class__.__name__}, indent=2) + "\n")
+        return target.stat().st_size
 
 
 def archive_service_logs(kb_home: str | Path, reports_dir: str | Path, *, platform_root: str | Path,
@@ -221,6 +268,12 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
             entries.append(f"- `installation-secret-fingerprints.json` ({fingerprint_bytes} bytes)")
         elif fingerprint_bytes:
             (destination / "installation-secret-fingerprints.json").unlink(missing_ok=True)
+        auth_probe_bytes = _write_auth_state_probe(root, destination / "auth-state-probe.json")
+        if auth_probe_bytes and used + auth_probe_bytes <= CONTENT_BUDGET:
+            used += auth_probe_bytes
+            entries.append(f"- `auth-state-probe.json` ({auth_probe_bytes} bytes)")
+        elif auth_probe_bytes:
+            (destination / "auth-state-probe.json").unlink(missing_ok=True)
         for source in sorted((root / ".kb/v2/snapshots").glob("*.json")):
             add(source, Path(".kb/v2/snapshots") / source.name)
         home_value = (env or os.environ).get("HOME")

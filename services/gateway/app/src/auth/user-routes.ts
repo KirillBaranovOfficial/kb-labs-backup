@@ -57,6 +57,7 @@ import type {
 } from '@kb-labs/gateway-auth';
 import { registerOAuthRoutes } from './oauth-routes.js';
 import { sendAuthError } from './error-response.js';
+import { authRejectionEnvelope, gatewayRequestUrl } from './tokens.js';
 import { AuthError, verifyCsrfToken } from '@kb-labs/gateway-auth';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import type { UserAuthContext } from './user-auth-middleware.js';
@@ -243,7 +244,11 @@ export function createUserRefreshFn(
     } catch (err) {
       if (err instanceof AuthError) {
         clearSessionCookies(reply, cookieOpts);
-        void sendAuthError(reply, 401, undefined, 'Session expired or revoked');
+        const reason = err.reason === 'expired' || err.reason === 'revoked' || err.reason === 'inactive' || err.reason === 'unknown-issuer'
+          ? err.reason
+          : 'invalid';
+        request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason }, 'Gateway authentication rejected');
+        void reply.code(401).send({ ok: false, error: authRejectionEnvelope(reason, gatewayRequestUrl(request), String(request.id)) });
         return true;
       }
       throw err;
@@ -523,7 +528,11 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       });
     } catch (err) {
       if (err instanceof AuthError) {
-        return sendAuthError(reply, 401, undefined, 'Invalid or expired refresh token');
+        const reason = err.reason === 'expired' || err.reason === 'revoked' || err.reason === 'inactive' || err.reason === 'unknown-issuer'
+          ? err.reason
+          : 'invalid';
+        request.log.warn({ event: 'gateway.auth.rejected', requestId: String(request.id), reason }, 'Gateway authentication rejected');
+        return reply.code(401).send({ ok: false, error: authRejectionEnvelope(reason, gatewayRequestUrl(request), String(request.id)) });
       }
       throw err;
     }
@@ -611,13 +620,12 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
         if (code === 'unknown_invite') {
           // Unknown, expired, revoked, and consumed invite tokens share the
           // same public response so callers cannot distinguish token state.
-          return reply.code(422).send({ error: 'invalid_invite', message: 'Invalid or expired invite' });
+          return sendAuthError(reply, 422, undefined, undefined, 'KB_AUTH_INVALID_INVITE');
         }
-        if (code === 'invalid_invite') {
+        if (code === 'KB_AUTH_INVALID_INVITE') {
           // 422 Unprocessable Entity: the token was found but is expired or already consumed.
-          // The client (activate-page) maps error:'invalid_invite' to the
-          // user-friendly "This invite link is invalid or expired" message.
-          return reply.code(422).send({ error: 'invalid_invite', message: 'Invalid or expired invite' });
+          // The client maps this catalogued envelope to a user-friendly message.
+          return sendAuthError(reply, 422, undefined, undefined, 'KB_AUTH_INVALID_INVITE');
         }
         return reply.code(400).send({ error: 'Bad Request', message: err.message });
       }
@@ -776,8 +784,8 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       await userAuthService.completePasswordReset({ token, newPassword });
       return reply.send({ ok: true });
     } catch (err) {
-      if (err instanceof AuthError && err.code === 'invalid_password_reset') {
-        return reply.code(400).send({ error: 'invalid_password_reset', message: 'This reset link is invalid, expired, or already used' });
+      if (err instanceof AuthError && err.code === 'KB_AUTH_INVALID_PASSWORD_RESET') {
+        return sendAuthError(reply, 400, undefined, undefined, 'KB_AUTH_INVALID_PASSWORD_RESET');
       }
       if (err instanceof AuthError && err.code === 'weak_password') {
         return reply.code(400).send({ error: 'weak_password', message: err.message });
@@ -949,7 +957,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
       }
       if (groupId === 'tenant-member' && currentMembership.groupId === 'tenant-admin'
         && target.status === 'active' && await isLastActiveAdmin(ctx.tenantId, target.userId)) {
-        return reply.code(409).send({ error: 'last_admin', message: 'The last active administrator cannot be demoted' });
+        return sendAuthError(reply, 409, undefined, undefined, 'KB_AUTH_LAST_ADMIN');
       }
       await memberships.setGroup(target.userId, ctx.tenantId, groupId);
       await authAudit.record({ action: 'user.role_changed', actorUserId: ctx.userId, targetUserId: target.userId, tenantId: ctx.tenantId });
@@ -982,7 +990,7 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
         .find((entry) => entry.tenantId === ctx.tenantId);
       if (target.status === 'active' && membership?.tenantId === ctx.tenantId
         && membership.groupId === 'tenant-admin' && await isLastActiveAdmin(ctx.tenantId, target.userId)) {
-        return reply.code(409).send({ error: 'last_admin', message: 'The last active administrator cannot be disabled' });
+        return sendAuthError(reply, 409, undefined, undefined, 'KB_AUTH_LAST_ADMIN');
       }
 
       await users.setStatus(id, 'disabled');

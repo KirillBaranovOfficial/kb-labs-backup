@@ -47,6 +47,7 @@ from mcp_project_steps import (
     unknown_tool,
 )
 from platform_state_dump import archive_service_logs
+from journey_resources import journey_module
 
 
 BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -301,6 +302,25 @@ def request(path: str, *, method="GET", payload=None, token="", accept="applicat
     return status, parsed, response_headers
 
 
+def request_raw(path: str, *, accept="application/json") -> tuple[int, bytes, dict[str, str]]:
+    req = urllib.request.Request(BASE_URL + path, headers={"Accept": accept})
+    try:
+        status, raw, response_headers = open_http(HTTP.open, req, timeout=15, env=os.environ)
+    except (urllib.error.URLError, TimeoutError) as error:
+        raise RuntimeError(f"gateway is unreachable at {BASE_URL}: {error}; start it with `kb-create start`") from error
+    return status, raw, response_headers
+
+
+def expect_html(path: str, capability: str) -> str | None:
+    status, body, headers = request_raw(path, accept="text/html")
+    content_type = headers.get("Content-Type", headers.get("content-type", ""))
+    if status != 200:
+        return f"{capability} unavailable: GET {path} returned HTTP {status}"
+    if not content_type.lower().startswith("text/html") or b"<html" not in body.lower():
+        return f"{capability} returned HTTP 200 without an HTML document"
+    return None
+
+
 def request_ux_success(path: str, *, token="") -> tuple[int, object, dict[str, str]]:
     """Read a Gateway health-style success response through the UX envelope."""
     status, body, headers = request(path, token=token)
@@ -314,7 +334,7 @@ def expect(path: str, expected: set[int], capability: str, *, method="GET", payl
         reason = f"{capability} unavailable: {method} {path} returned HTTP {status}"
         if detail:
             reason += f" ({detail})"
-        reason += "; build and start the capability, then rerun `python3 /opt/kb-journey/service_runner.py`"
+        reason += f"; build and start the capability, then rerun `python3 {journey_module('service_runner.py')}`"
         return reason
     return None
 
@@ -477,7 +497,7 @@ def checks(mode: str):
         yield service_check("project MCP cross-project isolation", "mcp",
                             lambda: "BLOCKED: register project B and provide KB_JOURNEY_PROJECT_B_ID and KB_JOURNEY_PROJECT_B_ROOT",
                             cases=["S-140.5"])
-    yield service_check("Studio shell", "studio", lambda: expect("/", {200}, "Studio shell"))
+    yield service_check("Studio shell", "studio", lambda: expect_html("/", "Studio shell"))
     yield service_check("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
     yield service_check("marketplace registry", "marketplace", lambda: expect(f"/api/v1/projects/{pid}/rest/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
 def declared_capabilities(mode: str) -> set[str]:
@@ -583,7 +603,8 @@ SERVICE_GROUPS = {
     "studio": {"capabilities": {"studio"}, "depends_on": ("host-running", "project-registered")},
     "analytics": {"capabilities": {"analytics"}, "depends_on": ("host-running", "project-registered", "fixtures-installed")},
     "gateway-extra": {"capabilities": {"gateway-extra"}, "depends_on": ("host-running", "session")},
-    "agent-session": {"capabilities": {"agent-session"}, "depends_on": ("host-running", "project-registered")},
+    "agent-session": {"capabilities": {"agent-session"},
+                       "depends_on": ("host-running", "project-registered", "agent-plugin-installed")},
     "project-registry": {"capabilities": {"project-registry"}, "depends_on": ("host-running", "project-registered")},
     "project-identity": {"capabilities": {"project-identity"}, "depends_on": ("host-running", "project-registered")},
     "workspace": {"capabilities": {"workspace"}, "depends_on": ("host-running",)},
@@ -634,8 +655,9 @@ def restore_secured_cli_login(kb_path: str | Path, env: dict[str, str], *, runne
         raise RuntimeError("secured service journey needs admin credentials; rerun with KB_JOURNEY_ADMIN_EMAIL and KB_JOURNEY_ADMIN_PASSWORD")
     command = [str(kb_path), "auth", "login", "--gateway-url",
                env.get("KB_JOURNEY_BASE_URL", BASE_URL), "--email", email,
-               "--password", password]
-    result = run_with_runner(runner, command, cwd=env.get("HOME"), env=env, timeout=90)
+               "--password-stdin"]
+    result = run_with_runner(runner, command, cwd=env.get("HOME"), env=env, timeout=90,
+                             input=password + "\n")
     if result.returncode != 0:
         detail = " ".join((result.stdout + " " + result.stderr).split())
         suffix = f"; {detail}" if detail else ""
@@ -800,12 +822,6 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
                        text=True, timeout=300)
     _output(installed, install)
-    agent_package = "@kb-labs/agent-entry"
-    agent_version = _registry_version(agent_package, registry, env, runner)
-    agent_install = ["kb", "marketplace", "install", f"{agent_package}@{agent_version}", "--json"]
-    agent_installed = runner(agent_install, cwd=str(project_a), env=env, capture_output=True,
-                             text=True, timeout=300)
-    _output(agent_installed, agent_install)
     _write_mcp_commit_plan(project_a, env)
 
     home = Path(env["HOME"])
@@ -864,6 +880,25 @@ def _prepare_and_export_mcp_projects(project_root: str, registry: str, env: dict
             "projectBRoot": project_b_root,
         }), encoding="utf-8")
     return project_b_id, project_b_root
+
+
+def install_project_agents_plugin(project_root: str, registry: str, env: dict[str, str], runner=run_command) -> None:
+    """Install the real Agents fixture before exercising its project REST routes."""
+    package = "@kb-labs/agent-entry"
+    command_runner = runner
+
+    def run(command, **kwargs):
+        options = dict(kwargs)
+        timeout = options.pop("timeout", 120)
+        options.pop("capture_output", None)
+        options.pop("text", None)
+        return run_with_runner(command_runner, command, timeout=timeout, **options)
+
+    version = _registry_version(package, registry, env, run)
+    install = ["kb", "marketplace", "install", f"{package}@{version}", "--json"]
+    result = run(install, cwd=str(Path(project_root).resolve()), env=env,
+                 capture_output=True, text=True, timeout=300)
+    _output(result, install)
 
 
 def main() -> int:
@@ -925,6 +960,16 @@ def main() -> int:
                               fixtures_probe)
         run_service_steps(journey, checks(args.mode), args.mode, graph=graph)
         if PROJECT_ID:
+            if project_root:
+                graph.probe_state(
+                    "agent-plugin-installed", "agent-session", "project Agents plugin",
+                    lambda: install_project_agents_plugin(project_root, registry, os.environ.copy()),
+                )
+            else:
+                graph.probe_state(
+                    "agent-plugin-installed", "agent-session", "project Agents plugin",
+                    lambda: "BLOCKED: journey runner did not receive KB_JOURNEY_PROJECT_ROOT",
+                )
             graph.flow("project agent session flows", "agent-session", "agent-session",
                        lambda: run_agent_session_steps(
                            journey, PROJECT_ID, os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),

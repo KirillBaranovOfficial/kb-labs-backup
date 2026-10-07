@@ -14,13 +14,16 @@ RUN npm install --prefix /opt/kb-studio-playwright @playwright/test@1.59.1 \
 
 ENV PATH="/root/.local/bin:/root/.local/share/pnpm:$PATH"
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
-COPY e2e/journey/*.py /opt/kb-journey/
-COPY e2e/journey/steps /opt/kb-journey/steps
-COPY docs/qa/scenarios /opt/kb-journey/scenarios
+COPY e2e/journey /opt/kb-journey/e2e/journey
+COPY docs/qa/scenarios /opt/kb-journey/docs/qa/scenarios
+COPY e2e/platform/fixtures/installer-cases /opt/kb-journey/e2e/platform/fixtures/installer-cases
+COPY contracts/ux-result /opt/kb-journey/contracts/ux-result
+COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-journey/core/platform/src/error-envelope/error-envelope.schema.json
+COPY tools/kb-create/v2/contracts/platform-layout.json /opt/kb-journey/tools/kb-create/v2/contracts/platform-layout.json
 COPY contracts/ux-result /opt/kb-contracts/ux-result
 COPY core/platform/src/error-envelope/error-envelope.schema.json /opt/kb-contracts/error-envelope.schema.json
 COPY e2e/journey/entrypoint.py /usr/local/bin/kb-journey-runner
-ENV PYTHONPATH="/opt/kb-journey"
+ENV PYTHONPATH="/opt/kb-journey/e2e/journey"
 COPY e2e/journey/studio-playwright.config.mjs /opt/kb-studio-playwright/playwright.config.mjs
 COPY e2e/studio/scenarios/default/cases/fresh-host.spec.ts /opt/kb-studio-playwright/fresh-host.spec.ts
 COPY e2e/studio/scenarios/default/cases/studio-first-tier.spec.ts /opt/kb-studio-playwright/studio-first-tier.spec.ts

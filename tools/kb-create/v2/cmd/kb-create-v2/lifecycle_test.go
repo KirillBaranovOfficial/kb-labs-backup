@@ -99,7 +99,7 @@ func TestConfirmRecoveryTTYYesAndNo(t *testing.T) {
 		want   bool
 	}{{"y\n", true}, {"n\n", false}} {
 		var output bytes.Buffer
-		got, err := confirmRecovery(invocation{}, "uninstall", "/platform", strings.NewReader(test.answer), &output, true)
+		got, err := confirmRecovery("uninstall", "/platform", strings.NewReader(test.answer), &output)
 		if err != nil || got != test.want {
 			t.Fatalf("answer %q: got %v, %v", test.answer, got, err)
 		}
@@ -131,6 +131,31 @@ func TestRecoveryRequiresYesWithoutTTY(t *testing.T) {
 	}
 	if gotReceipt, err := os.ReadFile(receiptPath); err != nil || string(gotReceipt) != string(wantReceipt) {
 		t.Fatalf("receipt changed after refused uninstall: got %q, err %v", gotReceipt, err)
+	}
+}
+
+// case: S-050.4, S-024.4, S-100.2, S-203.12
+func TestDestructiveOperationsShareNonTTYConfirmationExit(t *testing.T) {
+	for _, operation := range []string{"uninstall", "rollback", "recover"} {
+		t.Run(operation, func(t *testing.T) {
+			file, err := os.CreateTemp(t.TempDir(), "confirmation-result")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+
+			code := confirmDestructiveOperation(invocation{JSON: true}, operation, "/platform", strings.NewReader(""), &bytes.Buffer{}, false, file)
+			if code != 2 {
+				t.Fatalf("non-TTY confirmation exit = %d, want 2", code)
+			}
+			if _, err := file.Seek(0, 0); err != nil {
+				t.Fatal(err)
+			}
+			payload := readJSON(t, file.Name())
+			if errorCode(payload) != "KB_INSTALL_CONFIRMATION_REQUIRED" {
+				t.Fatalf("non-TTY confirmation error = %s", errorCode(payload))
+			}
+		})
 	}
 }
 
@@ -321,6 +346,27 @@ func TestRollbackWithoutASnapshotIsRefusedWithTheCatalogError(t *testing.T) {
 	failure := payload["error"].(map[string]any)
 	if failure["message"] != "There is no snapshot to roll back to." || failure["hint"] == "" {
 		t.Fatalf("error = %v", failure)
+	}
+}
+
+// case: S-025.6
+func TestRollbackFailureIncludesOperationLogAndDiagnosticDossier(t *testing.T) {
+	inst := newInstallation(t)
+	payload, code, raw := invoke(t, invocation{Operation: "rollback", PlatformRoot: inst.root,
+		Snapshot: "fixture-missing-snapshot", Yes: true, JSON: true})
+	if code != 1 || errorCode(payload) != contracts.CodeUpdateApplyFailed {
+		t.Fatalf("rollback failure: %d %s", code, raw)
+	}
+	logPath, _ := payload["logPath"].(string)
+	diagnosticPath, _ := payload["diagnosticPath"].(string)
+	if logPath == "" || diagnosticPath == "" {
+		t.Fatalf("rollback failure omitted its log or dossier path: %s", raw)
+	}
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("rollback operation log is not available: %v", err)
+	}
+	if _, err := os.Stat(diagnosticPath); err != nil {
+		t.Fatalf("rollback diagnostic dossier is not available: %v", err)
 	}
 }
 
@@ -640,7 +686,7 @@ func TestDoctorRecoverRefusesWhileTheHostRuns(t *testing.T) {
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
-	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, JSON: true}})
+	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true, JSON: true}})
 	if code != 1 || errorCode(payload) != contracts.CodeRecoveryHostRunning {
 		t.Fatalf("recover: %d %s", code, raw)
 	}
@@ -655,7 +701,7 @@ func TestDoctorRecoverRefusesWhileTheHostRuns(t *testing.T) {
 
 func TestDoctorRecoverNeedsAPlatformThatShipsARecoveryTool(t *testing.T) {
 	inst, _ := recoverInstallation(t, false)
-	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, JSON: true}})
+	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true, JSON: true}})
 	if code != 1 || errorCode(payload) != contracts.CodeRecoveryUnavailable {
 		t.Fatalf("recover: %d %s", code, raw)
 	}
@@ -667,7 +713,7 @@ func TestDoctorRecoverPropagatesTheToolsExitStatus(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 4\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, code, _ := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true}}); code != 4 {
+	if _, code, _ := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true}}); code != 4 {
 		t.Fatalf("exit status = %d, want the tool's 4", code)
 	}
 }
@@ -687,5 +733,22 @@ func TestFreshApplyIsRefusedWhileASupervisedHostRuns(t *testing.T) {
 	}
 	if failure.Hint == "" {
 		t.Fatalf("the refusal must have a hint: %#v", failure)
+	}
+}
+
+// case: S-005.7
+func TestClientApplyIsAllowedBesideASupervisedHost(t *testing.T) {
+	inst := newInstallation(t)
+	state := host.State{Dir: inst.state}
+	if _, code, raw := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start: %s", raw)
+	}
+	clientPlan := contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{Profile: "client"}}
+	if failure := refuseApplyBesideRunningHost(state, clientPlan, filepath.Join(t.TempDir(), "client")); failure != nil {
+		t.Fatalf("client apply refused beside host: %v", failure)
+	}
+	hostPlan := contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{}}
+	if failure := refuseApplyBesideRunningHost(state, hostPlan, filepath.Join(t.TempDir(), "other")); failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" {
+		t.Fatalf("host apply beside host failure = %#v", failure)
 	}
 }

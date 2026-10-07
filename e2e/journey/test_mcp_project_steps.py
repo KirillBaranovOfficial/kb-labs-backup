@@ -42,7 +42,27 @@ def tool_error(code: str, message: str, hint: str):
 
 
 class ProjectMcpJourneyTests(unittest.TestCase):
-    # case: S-141.1, S-141.2, S-141.3, S-141.4, S-141.5
+    def setUp(self):
+        def read_installed_contract(*parts: str) -> bytes:
+            root = Path(__file__).resolve().parents[2]
+            paths = {
+                ("ux-result", "machine-result.schema.json"):
+                    root / "contracts/ux-result/machine-result.schema.json",
+                ("error-envelope.schema.json",):
+                    root / "core/platform/src/error-envelope/error-envelope.schema.json",
+            }
+            return paths[parts].read_bytes()
+
+        self.installed_contract_patch = patch(
+            "mcp_project_steps.read_installed_platform_resource",
+            side_effect=read_installed_contract,
+        )
+        self.installed_contract_patch.start()
+
+    def tearDown(self):
+        self.installed_contract_patch.stop()
+
+    # case: S-141.1, S-141.2, S-141.3, S-141.4, S-141.5, S-141.6
     def test_agent_session_steps_reject_fake_failures_then_claim_full_lifecycle(self):
         journey = Journey("local", "agent-session")
         failures = iter([
@@ -51,14 +71,19 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (500, {"error": "detail failed"}, {}),
             (200, {"message": "session-does-not-exist"}, {}),
             (201, {"data": {"session": {"id": "bad", "agentId": "agent-does-not-exist"}}}, {}),
+            (404, {"error": {"code": "KB_RUNTIME_UNEXPECTED"}}, {}),
         ])
-        with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(failures)):
+        with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(failures)) as request_mock:
             run_agent_session_steps(journey, "prj_a", "token")
         red = journey.result()
         self.assertEqual(red.status, "FAIL")
         self.assertEqual({claim["claimId"] for claim in red.case_run["claims"]}, {
-            "S-141.1", "S-141.2", "S-141.3", "S-141.4", "S-141.5",
+            "S-141.1", "S-141.2", "S-141.3", "S-141.4", "S-141.5", "S-141.6",
         })
+        self.assertEqual(
+            request_mock.call_args_list[0].args[0],
+            "/api/v1/projects/prj_a/rest/api/v1/plugins/agents/sessions",
+        )
 
         session = {"id": "session-1", "agentId": "orchestrator",
                    "task": "Summarize the project", "status": "pending"}
@@ -70,6 +95,11 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (200, {"data": {"sessionId": "session-1", "plan": None}}, {}),
             (404, {"error": {"message": "session-does-not-exist not found"}}, {}),
             (404, {"error": {"code": "KB_AGENT_NOT_FOUND", "message": "Agent ID agent-does-not-exist is not registered."}}, {}),
+            (404, {"error": {
+                "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
+                "message": "REST route GET /api/v1/plugins/agents/unknown-route was not found for plugin @kb-labs/agents.",
+                "hint": "Run `kb marketplace plugins doctor --scope project` to inspect project plugin routes, then use a declared route.",
+            }}, {}),
         ])
         green = Journey("local", "agent-session")
         with patch("service_runner.request", side_effect=lambda *_args, **_kwargs: next(responses)):
@@ -77,7 +107,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         result = green.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
         self.assertEqual({claim["claimId"] for claim in result.case_run["claims"]}, {
-            "S-141.1", "S-141.2", "S-141.3", "S-141.4", "S-141.5",
+            "S-141.1", "S-141.2", "S-141.3", "S-141.4", "S-141.5", "S-141.6",
         })
 
     # case: S-199.3
@@ -119,7 +149,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         auth_error = {"ok": False, "error": {
             "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
-            "hint": 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".',
+            "hint": 'Run "kb auth login --gateway-url <url> --email <email>".',
             "correlationId": "corr-auth",
         }}
         responses = [
@@ -222,7 +252,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         unauthorized = {"ok": False, "error": {
             "code": "KB_AUTH_REQUIRED", "area": "auth", "stage": "login", "severity": "error",
             "retryable": False, "message": "Authentication is required.",
-            "hint": 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".', "correlationId": "corr-auth",
+            "hint": 'Run "kb auth login --gateway-url <url> --email <email>".', "correlationId": "corr-auth",
         }}
         calls = []
 
@@ -292,7 +322,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             return (401, {"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                 "area": "auth", "stage": "login", "severity": "error", "retryable": False,
-                "hint": 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".', "correlationId": "corr-auth",
+                "hint": 'Run "kb auth login --gateway-url <url> --email <email>".', "correlationId": "corr-auth",
             }}, {})
 
         with patch("service_runner.request", side_effect=fake_request):
@@ -308,7 +338,7 @@ class ProjectMcpJourneyTests(unittest.TestCase):
             (401, {"ok": False, "error": {
                 "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
                 "area": "auth", "stage": "login", "severity": "error", "retryable": False,
-                "hint": 'Run "kb auth login --gateway-url <url> --email <email> --password <password>".', "correlationId": "corr-auth",
+                "hint": 'Run "kb auth login --gateway-url <url> --email <email>".', "correlationId": "corr-auth",
             }}, {}),
             (200, {"result": {"tools": []}}, {}),
         ])

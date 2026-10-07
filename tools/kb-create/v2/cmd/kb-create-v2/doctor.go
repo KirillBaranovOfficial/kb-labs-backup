@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/host"
@@ -89,13 +90,17 @@ func (i invocation) runDoctor(output *os.File) int {
 		if readErr != nil {
 			err = fmt.Errorf("read active V2 receipt: %w", readErr)
 		} else {
-			issues, inspectErr := installed.InspectProjections(i.PlatformRoot, active.Plan.Artifacts)
-			if inspectErr != nil {
-				err = inspectErr
-			} else if len(issues) > 0 {
-				manifestFindings = projectionFindings(issues)
+			if active.Plan.ServiceGraph.Profile == "client" {
+				input = doctor.Input{Configured: map[string]bool{}}
 			} else {
-				input, err = automaticDoctorInput(i.PlatformRoot)
+				issues, inspectErr := installed.InspectProjections(i.PlatformRoot, active.Plan.Artifacts)
+				if inspectErr != nil {
+					err = inspectErr
+				} else if len(issues) > 0 {
+					manifestFindings = projectionFindings(issues)
+				} else {
+					input, err = automaticDoctorInput(i.PlatformRoot)
+				}
 			}
 		}
 	}
@@ -106,10 +111,20 @@ func (i invocation) runDoctor(output *os.File) int {
 	findings := doctor.Diagnose(input.Manifests, input.Configured)
 	findings = append(findings, manifestFindings...)
 	response := doctor.Response{Findings: findings, Repair: doctor.PlanRepair(findings)}
+	if i.Executable != "" && i.PlatformRoot != "" {
+		if _, dangling := shim.Dangling(i.Executable); dangling {
+			response.Findings = append(response.Findings, doctor.Finding{
+				Code: "KB_INSTALL_SHIM_DANGLING", Severity: doctor.SeverityError,
+				Component: "kb-create", Path: shim.Path(i.Executable),
+				Hint: fmt.Sprintf("Run `kb-create doctor --fix --platform-root %q`.", i.PlatformRoot),
+			})
+		}
+	}
 	if i.PlatformRoot != "" {
 		if active, readErr := receipt.Read(i.PlatformRoot); readErr == nil {
 			response.PlatformChannel = active.Plan.PlatformChannel
 			response.PlatformVersion = active.Plan.ServiceGraph.PlatformVersion
+			response.Profile = active.Plan.ServiceGraph.Profile
 		}
 		state, stateErr := host.StateHome()
 		if stateErr != nil {
@@ -118,7 +133,7 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		installation := doctor.InspectInstallation(i.PlatformRoot, state)
 		if i.Executable != "" && !shim.Correct(i.Executable, i.PlatformRoot) {
-			installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: "Run `kb-create install` to repair the command shim."})
+			installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: fmt.Sprintf("Run `kb-create doctor --fix --platform-root %q` to repair the command shim when its current owner has been removed.", i.PlatformRoot)})
 			installation.OK = false
 		}
 		platform := i.inspectPlatform(state)
@@ -132,7 +147,7 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		response.Installation, response.Platform = &installation, &platform
 	}
-	response.OK = !doctor.HasErrors(findings) && (response.Installation == nil || response.Installation.OK) && (response.Platform == nil || response.Platform.OK)
+	response.OK = !doctor.HasErrors(response.Findings) && (response.Installation == nil || response.Installation.OK) && (response.Platform == nil || response.Platform.OK)
 	response.Installed = response.Installation != nil && response.Installation.OK
 	if response.Platform != nil {
 		for _, check := range response.Platform.Checks {
@@ -144,6 +159,9 @@ func (i invocation) runDoctor(output *os.File) int {
 	response.Next = "kb-create install"
 	if response.Installed {
 		response.Next = "kb-create start"
+		if response.Profile == "client" {
+			response.Next = "kb auth login --gateway-url <url> --email <member>"
+		}
 		if response.Running {
 			response.Next = "cd ~/any-project && kb commit"
 		}
@@ -177,6 +195,9 @@ func (i invocation) runDoctor(output *os.File) int {
 		}
 		if response.PlatformVersion != "" {
 			fmt.Fprintf(output, "Platform version: %s\n", response.PlatformVersion)
+		}
+		if response.Profile != "" {
+			fmt.Fprintf(output, "Profile: %s\n", response.Profile)
 		}
 		fmt.Fprintf(output, "Installed: %s\nRunning: %s\nReachable: %s\nNext: %s\n", installed, running, reachable, next)
 		var warnings []doctor.Finding
@@ -251,6 +272,9 @@ func writeDoctorPlatformChecks(output *os.File, checks []doctor.Check) {
 // inspectPlatform observes the running host. An installation whose host cannot
 // even be built is reported as such rather than aborting the whole report.
 func (i invocation) inspectPlatform(state host.State) doctor.Section {
+	if active, err := receipt.Read(i.PlatformRoot); err == nil && active.Plan.ServiceGraph.Profile == "client" {
+		return doctor.NewSection(nil)
+	}
 	runner, err := host.NewRunner(i.PlatformRoot, state)
 	if err != nil {
 		return doctor.NewSection([]doctor.Check{{ID: "host-process", Detail: "The host cannot be inspected: " + err.Error(), Hint: "Repair the installation first."}})
@@ -337,6 +361,12 @@ func (i invocation) runDoctorFix(output *os.File, response doctor.Response) int 
 		writeDiagnosticFailure(output, root, correlationID, "", asDiag(err), nil)
 		return 1
 	}
+	if filepath.Base(i.Executable) == "kb-create" {
+		if _, shimErr := shim.Ensure(i.Executable, root); shimErr != nil {
+			writeShimFailure(output, "KB_INSTALL_APPLY_FAILED", root, shimErr)
+			return 1
+		}
+	}
 	fixOK := !unresolvedRequiredInput
 	write(output, map[string]any{"ok": fixOK, "operation": "doctor-fix", "findings": response.Findings, "repair": response.Repair, "snapshot": snapshotSummary(snapshot), "hostRestarted": result.WasRunning})
 	// Safe projection repair is complete even when the repair plan still names
@@ -357,6 +387,9 @@ func (i invocation) runRecover(output *os.File) int {
 	runner, state, setupErr := command.setup()
 	if setupErr != nil {
 		return command.fail(2, setupErr)
+	}
+	if code := confirmDestructiveOperation(i, "recover", i.PlatformRoot, os.Stdin, os.Stdout, term.IsTerminal(os.Stdin.Fd()), output); code != 0 {
+		return code
 	}
 	release, err := state.AcquireOperation("recover")
 	if err != nil {

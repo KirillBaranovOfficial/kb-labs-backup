@@ -9,10 +9,36 @@ from pathlib import Path
 from unittest.mock import patch
 
 from platform_state_dump import (MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDumpOnce,
-                                 archive_service_logs, dump_platform_state)
+                                 _write_auth_state_probe, archive_service_logs, dump_platform_state)
 
 
 class PlatformStateDumpTests(unittest.TestCase):
+    def test_auth_state_probe_reports_aggregate_status_and_database_identity_without_tokens(self):
+        with tempfile.TemporaryDirectory(prefix="journey-auth-probe-") as temporary:
+            root = Path(temporary)
+            database = root / ".kb/database/kb.sqlite"
+            database.parent.mkdir(parents=True)
+            config = root / ".kb/kb.config.jsonc"
+            config.write_text(json.dumps({"platform": {"adapterOptions": {
+                "documentDatabase": {"filename": ".kb/database/kb.sqlite"},
+            }}}))
+            with sqlite3.connect(database) as connection:
+                connection.execute("CREATE TABLE doc_session_families (id TEXT, data TEXT)")
+                connection.execute("CREATE TABLE doc_refresh_tokens (id TEXT, data TEXT)")
+                connection.execute("INSERT INTO doc_session_families VALUES (?, ?)",
+                                   ("family-1", json.dumps({"userId": "user-1", "familyId": "family-1"})))
+                connection.execute("INSERT INTO doc_refresh_tokens VALUES (?, ?)",
+                                   ("refresh-1", json.dumps({"familyId": "family-1", "expiresAt": 9999999999999,
+                                                              "jti": "sensitive-refresh-id"})))
+            output = root / "auth-state-probe.json"
+            self.assertGreater(_write_auth_state_probe(root, output), 0)
+            probe = json.loads(output.read_text())
+            self.assertEqual(probe["sessionStorePath"], str(database))
+            self.assertEqual(probe["users"]["user-1"],
+                             {"sessionFamilyCount": 1, "active": 1, "inactive": 0})
+            self.assertIn("inode", probe["databaseFile"])
+            self.assertNotIn("sensitive-refresh-id", output.read_text())
+
     def test_service_log_archive_finds_each_runtime_log_in_both_modes(self):
         for mode in ("local", "secured"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="journey-service-logs-") as temporary:

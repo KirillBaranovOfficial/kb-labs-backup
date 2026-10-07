@@ -225,7 +225,7 @@ class MarketplaceStepTests(unittest.TestCase):
                         "error": {
                             "code": "KB_AUTH_REQUIRED",
                             "message": "Authentication is required.",
-                            "hint": 'Run "kb auth login --gateway-url http://gateway.test --email <email> --password <password>".',
+                            "hint": 'Run "kb auth login --gateway-url http://gateway.test --email <email>".',
                         },
                     }), "")
                 if args[:2] == ["auth", "login"]:
@@ -249,7 +249,7 @@ class MarketplaceStepTests(unittest.TestCase):
             ])
             self.assertIn(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"), calls)
             self.assertIn(("kb", "auth", "login", "--gateway-url", "http://gateway.test",
-                           "--email", "admin@example.test", "--password", "fixture-password", "--json"), calls)
+                           "--email", "admin@example.test", "--password-stdin", "--json"), calls)
             self.assertIn(("kb", "auth", "status", "--json"), calls)
 
     def test_marketplace_and_adapter_flows_claim_only_asserted_case_steps(self):

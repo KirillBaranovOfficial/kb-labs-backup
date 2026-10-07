@@ -18,6 +18,7 @@ type StatusFlags = {
 
 type SessionStatus = {
   authenticated: boolean;
+  path: string;
   gatewayUrl?: string;
   tokenExpired?: boolean;
   expiresAt?: string;
@@ -58,12 +59,13 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
     const sessionStatus: SessionStatus = session
       ? {
         authenticated: true,
+        path: sessionManager.getFilePath(),
         gatewayUrl: session.gatewayUrl,
         tokenExpired: sessionManager.isExpired(session),
         expiresAt: new Date(session.expiresAt).toISOString(),
         email: session.email,
       }
-      : { authenticated: false };
+      : { authenticated: false, path: sessionManager.getFilePath() };
 
     if (!credentials) {
       if (!flags.json) {

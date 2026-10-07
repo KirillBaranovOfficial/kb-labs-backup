@@ -13,10 +13,13 @@ import (
 	"testing"
 	"time"
 
+	clikitcommand "github.com/kb-labs/clikit/command"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/shim"
 )
 
 func TestRequestWithGeneratedSecretsAddsOnlyDeclaredGeneratedSecretInputs(t *testing.T) {
@@ -33,6 +36,236 @@ func TestRequestWithGeneratedSecretsAddsOnlyDeclaredGeneratedSecretInputs(t *tes
 	if err != nil || changed || len(got.SecretInputs) != 1 {
 		t.Fatalf("second request/changed/error = %#v / %v / %v", got, changed, err)
 	}
+}
+
+// case: S-005.6
+func TestClientStatusAndDoctorAreHealthyWithoutHost(t *testing.T) {
+	root := t.TempDir()
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "client"}}
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "client-r1", Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	statusFile, err := os.CreateTemp(t.TempDir(), "status-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusFile.Close()
+	if code := (invocation{Operation: "status", PlatformRoot: root, JSON: true}).runStatus(statusFile); code != 0 {
+		t.Fatalf("status exit = %d", code)
+	}
+	if _, err := statusFile.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var status map[string]any
+	if err := json.NewDecoder(statusFile).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status["profile"] != "client" || status["installed"] != true || status["running"] != false {
+		t.Fatalf("client status = %#v", status)
+	}
+
+	doctorFile, err := os.CreateTemp(t.TempDir(), "doctor-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer doctorFile.Close()
+	if code := (invocation{Operation: "doctor", PlatformRoot: root, JSON: true}).runDoctor(doctorFile); code != 0 {
+		t.Fatalf("doctor exit = %d", code)
+	}
+	if _, err := doctorFile.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var diagnosis map[string]any
+	if err := json.NewDecoder(doctorFile).Decode(&diagnosis); err != nil {
+		t.Fatal(err)
+	}
+	if diagnosis["profile"] != "client" || diagnosis["ok"] != true || diagnosis["running"] != false {
+		t.Fatalf("client doctor = %#v", diagnosis)
+	}
+}
+
+func TestVersionJSONIncludesBuildCommit(t *testing.T) {
+	previousVersion, previousCommit := buildVersion, buildCommit
+	t.Cleanup(func() { buildVersion, buildCommit = previousVersion, previousCommit })
+	SetVersionInfo("2.3.4", "abc1234", "2026-10-06")
+	var stdout, stderr bytes.Buffer
+	if code := clikitcommand.Execute(newRootCommand(), []string{"version", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("version command exit = %d: %s", code, stderr.String())
+	}
+	var payload struct {
+		OK   bool              `json:"ok"`
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("version JSON is invalid: %s (%v)", stdout.String(), err)
+	}
+	if !payload.OK || payload.Data["version"] != "2.3.4" || payload.Data["commit"] != "abc1234" {
+		t.Fatalf("version identity = %#v", payload)
+	}
+}
+
+func TestHumanReleaseIndexFailurePrintsLoaderReason(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-release-index.json")
+	_, err := catalog.LoadFile(path)
+	if err == nil {
+		t.Fatal("expected release index read failure")
+	}
+	var output bytes.Buffer
+	writeHumanFailure(&output, asDiag(err))
+	if !strings.Contains(output.String(), "Why: Release index read failed for "+path) {
+		t.Fatalf("human output omitted loader reason: %s", output.String())
+	}
+}
+
+// case: S-214.1
+func TestWriteIndexFailureSerializesCanonicalDetails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-release-index.json")
+	_, err := catalog.LoadFile(path)
+	if err == nil {
+		t.Fatal("expected release index read failure")
+	}
+	output, createErr := os.CreateTemp(t.TempDir(), "index-error-*.json")
+	if createErr != nil {
+		t.Fatal(createErr)
+	}
+	defer output.Close()
+	writeIndexFailure(output, err, "supply a valid index")
+	if _, err := output.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code    string            `json:"code"`
+			Cause   string            `json:"cause"`
+			Details map[string]string `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(output).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.OK || payload.Error.Code != contracts.CodeReleaseIndexUnreadable || payload.Error.Details["gate"] != "read" ||
+		payload.Error.Details["path"] != path || !strings.Contains(payload.Error.Cause, "no such file or directory") {
+		t.Fatalf("failure envelope omitted loader diagnostics: %#v", payload)
+	}
+}
+
+// case: PC-001.4
+func TestShimFailureNamesPathReasonAndRepairCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bin", "kb")
+	output, err := os.CreateTemp(t.TempDir(), "result-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeShimFailure(output, contracts.CodeApplyFailed, "/tmp/platform root", &shim.Failure{
+		Path: path, Reason: "permission denied", Cause: os.ErrPermission,
+	})
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := os.ReadFile(output.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Error struct {
+			Code    string            `json:"code"`
+			Hint    string            `json:"hint"`
+			Cause   string            `json:"cause"`
+			Details map[string]string `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Error.Code != contracts.CodeApplyFailed || result.Error.Details["path"] != path || result.Error.Details["reason"] != "permission denied" {
+		t.Fatalf("shim failure omitted its code, path, or filesystem reason: %s", encoded)
+	}
+	if !strings.Contains(result.Error.Hint, `kb-create doctor --fix --platform-root "/tmp/platform root"`) {
+		t.Fatalf("shim failure omitted its repair command: %s", encoded)
+	}
+	if !strings.Contains(result.Error.Cause, path) || !strings.Contains(result.Error.Cause, "permission denied") {
+		t.Fatalf("shim failure omitted its path and filesystem reason: %s", encoded)
+	}
+}
+
+// case: PC-001.8
+func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "platform")
+	marker := filepath.Join(root, ".kb", "user-data.json")
+	if err := os.MkdirAll(filepath.Dir(marker), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("{\"keep\":true}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(home, "release-index.json")
+	release, err := catalog.Seal(catalog.Catalog{
+		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Compatibility: testCompatibility("2.0.0"),
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform",
+			Tarball: "https://example.test/platform.tgz", SHA256: "platform",
+			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}},
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotTree(t, root)
+	output, _ := installOutput(t)
+	code := (invocation{Operation: "plan", Index: index, Direct: directRequest{PlatformRoot: root,
+		PlatformVersion: "2.0.0", Policy: string(contracts.PolicyCompatible)}, JSON: true}).run(output)
+	output.Close()
+	if code != 0 {
+		t.Fatalf("plan exit code = %d", code)
+	}
+	if after := snapshotTree(t, root); !bytes.Equal(before, after) {
+		t.Fatalf("plan changed the platform root: before %q, after %q", before, after)
+	}
+}
+
+func snapshotTree(t *testing.T, root string) []byte {
+	t.Helper()
+	var snapshot bytes.Buffer
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&snapshot, "%s:%t:%o\n", relative, info.IsDir(), info.Mode())
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			snapshot.WriteString(target)
+		}
+		if info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			snapshot.Write(data)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot.Bytes()
 }
 
 type installArtifacts struct{ root string }
@@ -255,7 +488,7 @@ func TestInstallEarlyFailuresUseDiagRendering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != 2 || !strings.Contains(string(data), "Install failed [KB_INSTALL_RELEASE_INDEX_INVALID]") || !strings.Contains(string(data), "Next:") {
+	if code != 2 || !strings.Contains(string(data), "Install failed [KB_INSTALL_RELEASE_INDEX_UNREADABLE]") || !strings.Contains(string(data), "Next:") {
 		t.Fatalf("code/output = %d / %s", code, data)
 	}
 }
