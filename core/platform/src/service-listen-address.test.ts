@@ -13,12 +13,12 @@ import {
 describe('resolveServiceListenAddress', () => {
   it('uses the active root receipt address and verifies its installation identity', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ installationId: 'root-b' }), { status: 200 }));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { installationId: 'root-b' } }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     try {
       await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
       await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
-        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+        installationId: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
       }));
       const target = await resolveCliGatewayTarget(root, { netOffset: 0 });
       expect(target).toEqual({ gatewayUrl: 'http://127.0.0.1:4250', platformRoot: root, installationId: 'root-b' });
@@ -33,12 +33,12 @@ describe('resolveServiceListenAddress', () => {
 
   it('uses the explicit KB_GATEWAY_URL ahead of the active root receipt', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ installationId: 'root-b' }), { status: 200 }));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { installationId: 'root-b' } }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     try {
       await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
       await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
-        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+        installationId: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
       }));
       const target = await resolveCliGatewayTarget(root, { gatewayUrl: 'http://127.0.0.1:4300', gatewayPort: '4301', netOffset: 20 });
       expect(target.gatewayUrl).toBe('http://127.0.0.1:4300');
@@ -50,12 +50,12 @@ describe('resolveServiceListenAddress', () => {
 
   it('keeps an installed root on its receipt when ambient dev network settings are set', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ installationId: 'root-b' }), { status: 200 }));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { installationId: 'root-b' } }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     try {
       await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
       await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
-        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+        installationId: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
       }));
       const target = await resolveCliGatewayTarget(root, {
         gatewayPort: '4300', gatewayHost: '127.0.0.2', netOffset: 200,
@@ -73,11 +73,11 @@ describe('resolveServiceListenAddress', () => {
   // case: S-203.22
   it('rejects a Gateway that identifies as another installed root', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ installationId: 'root-a' }), { status: 200 })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { installationId: 'root-a' } }), { status: 200 })));
     try {
       await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
       await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
-        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+        installationId: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
       }));
       let failure: unknown;
       try {
@@ -105,7 +105,7 @@ describe('resolveServiceListenAddress', () => {
     try {
       await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
       await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
-        id: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+        installationId: 'root-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
       }));
       let failure: unknown;
       try {
@@ -119,6 +119,28 @@ describe('resolveServiceListenAddress', () => {
       });
     } finally {
       vi.unstubAllGlobals();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects receipts without a stable installation ID', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kb-gateway-target-'));
+    try {
+      await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
+      await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+        id: 'transaction-receipt-id', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+      }));
+      let failure: unknown;
+      try {
+        await resolveCliGatewayTarget(root, { netOffset: 0 });
+      } catch (error) {
+        failure = error;
+      }
+      expect(toErrorEnvelope(failure)).toMatchObject({
+        code: 'KB_INSTALL_RECEIPT_UNAVAILABLE',
+        hint: expect.stringContaining('kb-create update --platform-root'),
+      });
+    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });

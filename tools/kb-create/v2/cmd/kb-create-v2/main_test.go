@@ -43,7 +43,7 @@ func TestClientStatusAndDoctorAreHealthyWithoutHost(t *testing.T) {
 	root := t.TempDir()
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
 		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "2.0.0", Profile: "client"}}
-	if err := receipt.Write(root, contracts.InstallReceipt{ID: "client-r1", Plan: plan}); err != nil {
+	if err := receipt.Write(root, contracts.InstallReceipt{ID: "client-r1", InstallationID: "installation-client", Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
 	statusFile, err := os.CreateTemp(t.TempDir(), "status-*.json")

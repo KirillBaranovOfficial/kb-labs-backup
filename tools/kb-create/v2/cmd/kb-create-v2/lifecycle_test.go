@@ -55,7 +55,7 @@ func (r *snapshotRestoreRecorder) Restore(artifacts []contracts.Artifact) error 
 func TestRollbackRestoresSnapshotFilesAfterCommandPackageRestore(t *testing.T) {
 	root := t.TempDir()
 	previousArtifact := contracts.Artifact{ID: "host", Kind: "package", Package: "@kb-labs/host", Version: "1.0.0"}
-	previous := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", Plan: contracts.ResolvedInstallPlan{PlanHash: "old", Artifacts: []contracts.Artifact{previousArtifact}}}
+	previous := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "before", InstallationID: "installation-stable", Plan: contracts.ResolvedInstallPlan{PlanHash: "old", Artifacts: []contracts.Artifact{previousArtifact}}}
 	if err := receipt.Write(root, previous); err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestRollbackRestoresSnapshotFilesAfterCommandPackageRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "after"}); err != nil {
+	if err := receipt.Write(root, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "after", InstallationID: "installation-stable"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(config, []byte("updated config bytes\n"), 0o600); err != nil {
@@ -190,7 +190,7 @@ func versionedReceipt(t *testing.T, version string, port int, hostArgs ...string
 		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5,
 	}
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, ServiceGraph: contracts.ServiceGraph{PlatformVersion: version}, Host: spec}
-	return contracts.InstallReceipt{ID: "receipt-" + version, Plan: plan}
+	return contracts.InstallReceipt{ID: "receipt-" + version, InstallationID: "installation-stable", Plan: plan}
 }
 
 func (i installation) lifecycleHost() lifecycleHost {

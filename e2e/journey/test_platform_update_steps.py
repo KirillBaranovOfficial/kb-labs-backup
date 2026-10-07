@@ -32,6 +32,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
     def _write_receipt(self, version: str):
         self.receipt.write_text(json.dumps({
+            "installationId": "installation-stable-1",
             "plan": {"serviceGraph": {"platformVersion": version}},
             "verification": {"configSha256": hashlib.sha256(self.config.read_bytes()).hexdigest()},
         }))
@@ -67,8 +68,12 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                                      "hostRestarted": True, "logPath": "/logs/rollback.log"})
         elif args[1] == "status":
             stdout = json.dumps({"ok": True, "running": True, "reachable": True})
+        elif args[1] == "restart":
+            stdout = json.dumps({"ok": True, "hostRestarted": True})
         elif args[1] == "doctor":
             stdout = json.dumps({"ok": True, "platform": {"ok": True}})
+        elif args[1] == "adapter":
+            stdout = json.dumps({"ok": True, "adapters": []})
         elif args[1] == "project":
             self.project_user_checks.append(self.user_checks)
             stdout = json.dumps({"ok": True, "projects": [], "total": 0})
@@ -121,20 +126,23 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(secret_checkpoints["afterRollbackHostRestart"], secret_checkpoints["afterMissingSnapshotRecovery"])
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
         self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} |
-                         {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.10", "S-203.11"})
+                         {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.10", "S-203.11",
+                         "PC-001.13", "PC-001.14", "PC-001.15"})
         self.assertEqual([command[1] for command in self.commands], [
-            "status", "project", "plan", "update", "update", "status", "project", "plan", "update",
-            "rollback", "rollback", "rollback", "status", "project", "doctor",
+            "status", "project", "plan", "update", "update", "status", "adapter", "project", "plan", "update",
+            "rollback", "rollback", "rollback", "status", "project", "adapter", "doctor", "restart", "adapter",
         ])
+        for command in (command for command in self.commands if command[1] in ("update", "rollback", "restart")):
+            self.assertIn("--platform-root", command)
         for operation in ("plan", "update"):
             command = next(args for args in self.commands if args[1] == operation)
             self.assertTrue({"--json", "--index", "--input"}.issubset(command))
         rollback = next(args for args in self.commands if args[1] == "rollback" and "missing-journey-snapshot" not in args)
         self.assertIn("--yes", rollback)
         self.assertIn("snapshot-1", rollback)
-        self.assertNotIn("--json", self.commands[4])
-        self.assertNotIn("--json", self.commands[9])
-        self.assertIn("--json", self.commands[10])
+        human_updates = [command for command in self.commands if command[1] == "update" and "--json" not in command]
+        self.assertEqual(len(human_updates), 1)
+        self.assertIn("--json", next(command for command in self.commands if command[1] == "rollback" and "--json" in command))
         self.assertEqual(self.user_checks, 3)
         self.assertEqual(self.project_user_checks, [1, 1, 2])
         self.assertNotIn("S-041.4", steps["verify updated receipt, config, and host status"]["cases"])
@@ -199,7 +207,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             update_index=self.root / "update-index.json", request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_after_rollback,
         )
-        verification = next(step for step in result.result().steps if step["cases"] == ["S-024.3"])
+        verification = next(step for step in result.result().steps if "S-024.3" in step["cases"])
         self.assertEqual(verification["status"], "FAIL")
         self.assertIn("after successful rollback plus host restart", verification["message"])
         self.assertIn("beforeUpdate=", verification["message"])
@@ -217,7 +225,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             update_index=self.root / "update-index.json", request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_recovery,
         )
-        verification = next(step for step in result.result().steps if step["cases"] == ["S-024.3"])
+        verification = next(step for step in result.result().steps if "S-024.3" in step["cases"])
         self.assertEqual(verification["status"], "FAIL")
         self.assertIn("after missing-snapshot recovery", verification["message"])
         self.assertIn("afterRollbackHostRestart=", verification["message"])
@@ -237,7 +245,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_update,
         )
         failure = result.result().first_failure
-        self.assertEqual(failure["cases"], ["S-023.4"])
+        self.assertEqual(failure["cases"], ["S-023.4", "PC-001.13"])
         self.assertIn("installation-secret fingerprint changed during update", failure["message"])
 
     def test_s024_3_fails_when_rollback_changes_installation_secrets(self):
@@ -253,7 +261,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_rollback,
         )
         failure = result.result().first_failure
-        self.assertEqual(failure["cases"], ["S-024.3"])
+        self.assertIn("S-024.3", failure["cases"])
         self.assertIn("installation-secret fingerprint changed during rollback", failure["message"])
 
     def test_failed_update_reports_the_first_failed_case_step(self):

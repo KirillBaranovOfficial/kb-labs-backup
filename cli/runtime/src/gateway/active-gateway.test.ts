@@ -37,9 +37,9 @@ describe('resolveActiveGateway', () => {
   it('uses the receipt URL even when ambient dev network variables are set', async () => {
     await mkdir(path.join(root, '.kb', 'v2'), { recursive: true });
     await writeFile(path.join(root, '.kb', 'v2', 'receipt.json'), JSON.stringify({
-      id: 'installed-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
+      installationId: 'installed-b', verification: { hostHealthUrl: 'http://127.0.0.1:4250/health' },
     }));
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ installationId: 'installed-b' }), { status: 200 })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { installationId: 'installed-b' } }), { status: 200 })));
     const env = { GATEWAY_PORT: '4300', GATEWAY_HOST: '127.0.0.2', KB_NET_OFFSET: '100' };
 
     await expect(resolveActiveGateway({ cwd: root, env })).resolves.toMatchObject({
