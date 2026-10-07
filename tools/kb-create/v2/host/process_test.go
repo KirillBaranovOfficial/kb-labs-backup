@@ -263,9 +263,20 @@ func TestStopWhenNotRunning(t *testing.T) {
 
 func TestStartFailureWhenHostExits(t *testing.T) {
 	f := newRunner(t, 10, 5, "-exit", "7")
+	f.runner.Operation = "apply"
+	f.runner.PlatformRoot = "/tmp/platform"
 	_, err := f.runner.Start(context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
 		t.Fatalf("code %s", code)
+	}
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Meta["exitCode"] != "7" ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fakehost: exiting early") {
+		t.Fatalf("process exit diagnostic = %#v; want exit code and stderr tail", err)
+	}
+	if typed.Message != "The host process failed while starting." || typed.Reason == "" || typed.Cause == "" ||
+		typed.Meta["nextCommand"] != "kb-create apply" {
+		t.Fatalf("apply startup diagnostic = %#v; want catalog message, concrete reason, and apply retry", typed)
 	}
 	if _, statErr := os.Stat(f.runner.State.HostPID()); !os.IsNotExist(statErr) {
 		t.Fatal("pid file must be removed after a failed start")
@@ -273,6 +284,10 @@ func TestStartFailureWhenHostExits(t *testing.T) {
 	data, _ := os.ReadFile(f.runner.State.HostLog())
 	if len(data) == 0 {
 		t.Fatal("host output should be captured in the log file")
+	}
+	launcherLog, err := os.ReadFile(f.runner.State.LauncherLog())
+	if err != nil || !strings.Contains(string(launcherLog), "host.start.failed") || !strings.Contains(string(launcherLog), "exit code 7") {
+		t.Fatalf("launcher failure log = %q, %v; want the process exit reason", launcherLog, err)
 	}
 }
 
@@ -282,8 +297,43 @@ func TestReadyTimeoutKillsHost(t *testing.T) {
 	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
 		t.Fatalf("code %s", code)
 	}
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Meta["readinessURL"] != f.runner.Spec.HealthURL ||
+		typed.Meta["readinessStatus"] != "500" || typed.Meta["waited"] == nil ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fakehost: ready") {
+		t.Fatalf("readiness diagnostic = %#v; want URL, last status, elapsed wait, and stderr tail", err)
+	}
 	if _, dialErr := net.DialTimeout("tcp", f.runner.Spec.HealthAddress(), 200*time.Millisecond); dialErr == nil {
 		t.Fatal("unhealthy host must be killed after the ready timeout")
+	}
+}
+
+func TestTypedStartupEnvelopeIsTheHostFailureCause(t *testing.T) {
+	f := newRunner(t, 10, 5, "-startup-error")
+	f.runner.SecretEnv = func() (map[string]string, error) {
+		return map[string]string{"API_TOKEN": "fake-secret-token"}, nil
+	}
+	_, err := f.runner.Start(context.Background())
+	var typed *diag.Diag
+	if !errors.As(err, &typed) || typed.Code != "KB_HOST_START_FAILED" ||
+		typed.Meta["hostStartupCode"] != "KB_CONFIG_INVALID" ||
+		!strings.Contains(typed.Cause, "KB_CONFIG_INVALID") ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), `"code":"KB_CONFIG_INVALID"`) ||
+		strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "fake-secret-token") ||
+		!strings.Contains(fmt.Sprint(typed.Meta["stderrTail"]), "[REDACTED]") ||
+		typed.Message != "The host process failed while starting." {
+		t.Fatalf("typed startup diagnostic = %#v; want catalogued host code in cause and stderr", err)
+	}
+}
+
+func TestStderrTailIsLimitedToFortyLines(t *testing.T) {
+	buffer := &tailBuffer{limit: 64 * 1024}
+	for i := 0; i < 80; i++ {
+		_, _ = fmt.Fprintf(buffer, "line-%02d\n", i)
+	}
+	tail := strings.Split(buffer.String(), "\n")
+	if len(tail) != 40 || tail[0] != "line-40" || tail[len(tail)-1] != "line-79" {
+		t.Fatalf("stderr tail = %d lines, first %q last %q; want last 40 lines", len(tail), tail[0], tail[len(tail)-1])
 	}
 }
 
