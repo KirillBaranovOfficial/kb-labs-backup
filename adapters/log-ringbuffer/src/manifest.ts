@@ -19,6 +19,10 @@ export const manifest: AdapterManifest = {
   type: "extension",
   implements: "ILogRingBuffer",
   defaultFor: ["logRingBuffer"],
+  configSchema: {
+    maxSize: { type: "number", integer: true, minimum: 1 },
+    ttl: { type: "number", integer: true, minimum: 0 },
+  },
   extends: {
     adapter: "logger",
     hook: "onLog",
