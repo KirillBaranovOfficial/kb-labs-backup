@@ -489,6 +489,15 @@
       "hint": "Retry, or reset your credentials."
     },
     {
+      "code": "KB_AUTH_INVALID_CURRENT_PASSWORD",
+      "area": "auth",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Current password is incorrect",
+      "hint": "Check the current password and retry the password change."
+    },
+    {
       "code": "KB_AUTH_INVALID_INVITE",
       "area": "auth",
       "stage": "run",

@@ -79,6 +79,8 @@ export interface McpDaemonServerOptions {
   endpointPath?: string;
   /** Local gateway mode has no login; secured mode requires a valid gateway token. */
   authMode?: McpAuthMode;
+  /** Public Gateway URL included in catalogued authentication hints when known. */
+  gatewayUrl?: string;
 }
 
 export class McpDaemonServer {
@@ -193,7 +195,9 @@ export class McpDaemonServer {
       const forwardedIdentity = readForwardedIdentity(request.headers, process.env.GATEWAY_INTERNAL_SECRET);
       const authCtx = forwardedIdentity.kind === 'identity' ? forwardedIdentity.auth : null;
       if (rejectsUnauthenticatedRequest(this.opts.authMode ?? 'secured', Boolean(authCtx))) {
-        const unauthenticated = mcpUnauthenticatedResponse();
+        const unauthenticated = mcpUnauthenticatedResponse(
+          this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL ?? '<url>',
+        );
         return reply.code(unauthenticated.statusCode).send(unauthenticated.body);
       }
 
@@ -267,6 +271,7 @@ export class McpDaemonServer {
           analytics: this.opts.platform.analytics,
           collector: this.collector,
           logger: reqLogger,
+          gatewayUrl: this.opts.gatewayUrl ?? process.env.GATEWAY_PUBLIC_URL ?? process.env.KB_GATEWAY_URL,
         });
       });
 

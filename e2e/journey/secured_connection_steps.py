@@ -67,10 +67,9 @@ def validate_case_response(case_id: str, status: int, value: dict, *, expected: 
         and bool(value.get("hint")),
         "S-005.4": lambda: status == 200 and "projects:read" in value.get("permissions", [])
         and "users:read" not in value.get("permissions", []),
-        "S-005.5": lambda: status == 403 and isinstance(value.get("error"), dict)
-        and value["error"].get("code") == "KB_AUTH_FORBIDDEN"
-        and value["error"].get("message") == "Permission denied: users:read"
-        and bool(value["error"].get("hint")),
+        "S-005.5": lambda: status == 403 and value.get("code") == "KB_AUTH_FORBIDDEN"
+        and value.get("message") == "Permission denied: users:read"
+        and bool(value.get("hint")),
     }
     if case_id not in contracts:
         raise ValueError(f"no HTTP response contract for {case_id}")
@@ -97,7 +96,8 @@ def validate_cli_case(case_id: str, returncode: int, output: str, payload: dict 
         and Path(session["path"]).name == "session.json",
         "S-031.2": returncode == 0 and bool(output.strip()),
         "S-031.3": returncode != 0 and "kb auth login" in output.lower()
-        and "stack" not in output.lower() and "at " not in output,
+        and "stack" not in output.lower()
+        and not any(line.lstrip().startswith("at ") for line in output.splitlines()),
         "S-031.4": returncode != 0 and "kb auth login --gateway-url" in output,
         "S-042.4": returncode == 0 and payload.get("ok") is True
         and bool(data.get("resetUrl")) and isinstance(data.get("expiresAt"), (int, float)),

@@ -11,7 +11,7 @@
 
 import { safeColors } from '../colors.js';
 import {
-  isInteractive, enableRawMode, disableRawMode,
+  requireInteractiveInput, enableRawMode, disableRawMode,
   hideCursor, showCursor, clearLines,
   onKeypress, isUpKey, isDownKey, isEnterKey, isEscapeKey, isSpaceKey,
 } from './terminal.js';
@@ -69,9 +69,10 @@ function renderMultiSelect<T>(
 export async function multiSelect<T>(options: MultiSelectOptions<T>): Promise<T[]> {
   const { message, choices, min } = options;
 
-  if (!isInteractive() || choices.length === 0) {
+  if (choices.length === 0) {
     return choices.filter((c) => c.checked).map((c) => c.value);
   }
+  requireInteractiveInput('Run this command in a terminal to choose options.');
 
   let activeIndex = 0;
   const checked = new Set<number>(

@@ -7,7 +7,7 @@
 
 import * as readline from 'node:readline';
 import { safeColors } from '../colors.js';
-import { isInteractive } from './terminal.js';
+import { requireInteractiveInput } from './terminal.js';
 
 export interface TextOptions {
   message: string;
@@ -20,9 +20,7 @@ export interface TextOptions {
 export async function text(options: TextOptions): Promise<string> {
   const { message, placeholder, defaultValue = '', validate, mask = false } = options;
 
-  if (!isInteractive()) {
-    return defaultValue;
-  }
+  requireInteractiveInput('Run this command in a terminal to enter the requested value.');
 
   const hint = placeholder ? safeColors.muted(` (${placeholder})`) : '';
   process.stdout.write(`${safeColors.primary('◆')}  ${safeColors.bold(message)}${hint}\n`);

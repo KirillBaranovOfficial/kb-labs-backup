@@ -223,16 +223,13 @@ func runInvocation(cmd *cobra.Command, inv invocation, operation string) error {
 	}
 	var payload map[string]any
 	if len(bytes.TrimSpace(data)) > 0 {
-		if err := json.Unmarshal(data, &payload); err != nil {
-			return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The command returned an invalid result.")
-		}
-		if operation == "doctor" && !inv.DoctorFix {
-			payload, err = doctorResultPayload(data)
-			if err != nil {
-				return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The doctor report could not be read.")
+		payload, err = operationResultPayload(operation, inv.DoctorFix, inv.Recover.Enabled, data)
+		if err != nil {
+			code, message := "KB_RUNTIME_UNEXPECTED", "The command returned an invalid result."
+			if operation == "doctor" && !inv.DoctorFix && !inv.Recover.Enabled {
+				message = "The doctor report could not be read."
 			}
-		} else {
-			delete(payload, "ok")
+			return diag.Wrap(err, code, message)
 		}
 	}
 	if progressStream != nil {
@@ -246,11 +243,28 @@ func runInvocation(cmd *cobra.Command, inv invocation, operation string) error {
 			command.Printf("%s", human.String())
 		} else if operation == "status" {
 			command.Printf("%s\n", hostHumanSummary(operation, payload))
+		} else if operation == "doctor" && inv.Recover.Enabled {
+			if output, ok := payload["output"].(string); ok && output != "" {
+				command.Printf("%s\n", output)
+			}
+			command.Printf("Administrator account recovery completed.\n")
 		} else {
 			command.Printf("%s\n", operationHumanSummary(operation, payload))
 		}
 	}
 	return result.Return(payload)
+}
+
+func operationResultPayload(operation string, doctorFix, doctorRecover bool, data []byte) (map[string]any, error) {
+	if operation == "doctor" && !doctorFix && !doctorRecover {
+		return doctorResultPayload(data)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, err
+	}
+	delete(payload, "ok")
+	return payload, nil
 }
 
 func doctorResultPayload(data []byte) (map[string]any, error) {
@@ -299,6 +313,7 @@ func errorFromOperationResult(data []byte, exitCode int) error {
 			if _, known := diag.LookupCatalog(result.Code); known {
 				var typed diag.Diag
 				if json.Unmarshal(envelope.Error, &typed) == nil {
+					typed.ProcessExitCode = exitCode
 					return &typed
 				}
 				meta := result.Details
@@ -307,7 +322,7 @@ func errorFromOperationResult(data []byte, exitCode int) error {
 				}
 				return diag.New(result.Code, result.Message,
 					diag.WithHint(result.Hint), diag.WithCause(result.Cause),
-					diag.WithCorrelationID(result.CorrelationID), diag.WithMeta(meta))
+					diag.WithCorrelationID(result.CorrelationID), diag.WithMeta(meta), diag.WithProcessExitCode(exitCode))
 			}
 			if exitCode == diag.ExitInput {
 				meta := result.Details

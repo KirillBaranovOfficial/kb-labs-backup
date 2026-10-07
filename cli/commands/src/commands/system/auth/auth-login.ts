@@ -75,6 +75,8 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
       throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
     }
 
+    const passwordStdinCommand = `cat password.txt | kb auth login --gateway-url ${shellQuote(gatewayUrl)} --email ${shellQuote(email ?? '')} --password-stdin`;
+
     if (flags['password-stdin'] && flags.password) {
       throwSystemCommandError('Choose either --password or --password-stdin.', 'Run `kb auth login --help` and retry with one password source.');
     }
@@ -83,20 +85,13 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
     if (!password && flags['password-stdin']) {
       password = await readPasswordFromStdin();
     } else if (!password && email) {
-      try {
-        password = await promptForPassword();
-      } catch {
-        throwSystemCommandError(
-          'A password prompt requires an interactive terminal.',
-          'Run `kb auth login --gateway-url <url> --email <email> --password-stdin < password.txt` to provide the password through stdin.',
-        );
-      }
+      password = await promptForPassword(passwordStdinCommand);
     }
 
     if (email && !password) {
       throwSystemCommandError(
         'No password was provided for the human login.',
-        'Run `kb auth login --gateway-url <url> --email <email> --password-stdin < password.txt` with a password file on stdin.',
+        passwordStdinCommand,
       );
     }
 
@@ -173,6 +168,10 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
     return { ok: true, gatewayUrl, expiresIn: tokenData.expiresIn, ...(handle ? { handle } : {}) };
   },
 });
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
 
 /** Human (email/password) login branch — see the module docblock. */
 async function humanLogin(

@@ -39,7 +39,7 @@ import { createContextLogger, createErrorEnvelope, resolveGatewayServiceAddress,
 import { isProjectRegistryError, projectErrorEnvelope } from "@kb-labs/core-project-registry";
 import { hasUsablePlatformAuth } from "@kb-labs/cli-runtime/gateway";
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
-import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
+import { isPlatformAuthExempt, isPlatformAuthExemptFlag } from "./platform-auth-policy";
 import { resolveProjectScope } from "./command-scope";
 import { handleExecutionError } from "./execution-error";
 
@@ -147,16 +147,19 @@ export async function executeCli(
   const authCommandPath = authRoute.type === "system-cmd"
     ? authRoute.cmd.category ? `${authRoute.cmd.category} ${authRoute.cmd.name}` : authRoute.cmd.name
     : cmdPath.join(" ");
+  const authExempt = isPlatformAuthExempt(authCommandPath, authCommandKind)
+    || isPlatformAuthExemptFlag("help") && global.help
+    || isPlatformAuthExemptFlag("version") && global.version;
   const accessMode = resolveCliAccessMode();
   let gatewayUrl: string | undefined;
-  if (accessMode === 'secured') {
+  if (accessMode === 'secured' && !authExempt) {
     try {
       gatewayUrl = configuredGatewayUrl();
     } catch (error) {
       return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory);
     }
   }
-  const authCheck: Awaited<ReturnType<typeof hasUsablePlatformAuth>> = accessMode === 'secured'
+  const authCheck: Awaited<ReturnType<typeof hasUsablePlatformAuth>> = accessMode === 'secured' && !authExempt
     ? await hasUsablePlatformAuth()
     : { authenticated: true };
   const authResult = global.version && isPlatformAuthExemptFlag("version")

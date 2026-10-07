@@ -1,4 +1,5 @@
 import type { Readable } from 'node:stream';
+import { requireInteractiveInput } from '@kb-labs/shared-cli-ui/interactive';
 
 export async function readPasswordFromStdin(input: Readable = process.stdin): Promise<string> {
   let value = '';
@@ -8,11 +9,10 @@ export async function readPasswordFromStdin(input: Readable = process.stdin): Pr
   return value.replace(/\r?\n$/, '');
 }
 
-export async function promptForPassword(): Promise<string> {
+export async function promptForPassword(command: string): Promise<string> {
   const input = process.stdin;
-  if (!input.isTTY || !input.setRawMode || !process.stderr.isTTY) {
-    throw new Error('A password is required when stdin is not a terminal.');
-  }
+  requireInteractiveInput(command, 'The password prompt requires an interactive terminal.');
+  if (!input.setRawMode) throw new Error('The terminal does not support secure password input.');
   process.stderr.write('Password: ');
   input.setRawMode(true);
   input.setEncoding('utf8');

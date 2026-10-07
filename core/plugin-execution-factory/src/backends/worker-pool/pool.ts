@@ -102,8 +102,8 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
       onTrackQueueWaitTime: (waitTimeMs) =>
         this.statsTracker.trackQueueWaitTime(waitTimeMs),
       onGetAvailableWorker: () => this.executor.getAvailableWorker(),
-      onExecuteOnWorker: (worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog) =>
-        this.executor.executeOnWorker(worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog),
+      onExecuteOnWorker: (worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint) =>
+        this.executor.executeOnWorker(worker, request, timeoutMs, startTime, onLog, onUIPrompt, onLoggerLog, uiPromptHint),
       onAcquireTimeout: () => {
         this.statsTracker.stats.acquireTimeouts++;
       },
@@ -154,6 +154,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
       onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
       onLoggerLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
       onUIPrompt?: (prompt: UIPromptMessage) => Promise<unknown>;
+      uiPromptHint?: string;
     }
   ): Promise<ExecutionResult> {
     if (this.lifecycleManager.isShuttingDownState()) {
@@ -208,6 +209,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
           options?.onLog,
           options?.onUIPrompt,
           options?.onLoggerLog,
+          options?.uiPromptHint,
         );
       }
 
@@ -243,6 +245,7 @@ export class WorkerPool extends EventEmitter<PoolEvents> {
         options?.onLog,
         options?.onLoggerLog,
         options?.onUIPrompt,
+        options?.uiPromptHint,
       );
     } finally {
       this.statsTracker.decrementPluginConcurrency(pluginId);

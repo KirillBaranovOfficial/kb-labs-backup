@@ -29,14 +29,14 @@ export function rejectsUnauthenticatedRequest(
   return mode === "secured" && !authenticated;
 }
 
-export function mcpUnauthenticatedResponse(): {
+export function mcpUnauthenticatedResponse(gatewayUrl = '<url>'): {
   statusCode: 401;
   body: ReturnType<typeof createUxFailureResult>;
 } {
   return {
     statusCode: 401,
     body: createUxFailureResult(createErrorEnvelope('KB_AUTH_REQUIRED', {
-      details: { gatewayUrl: '<url>' }, correlationId: randomUUID(),
+      details: { gatewayUrl }, correlationId: randomUUID(),
     })),
   };
 }
