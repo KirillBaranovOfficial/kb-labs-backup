@@ -6,6 +6,18 @@ Each entry names the decision, the reason, and the cases that encode it. When a 
 
 ## 2026-10-07
 
+### Credentials are kept per Gateway origin; the marketplace is a KB Labs Gateway
+
+The official marketplace will be a hosted KB Labs Gateway in secured mode, using
+the platform's own accounts, sessions, and API tokens. The CLI therefore keeps
+saved credentials keyed by Gateway origin, uses each one only at the origin that
+issued it, and lets a user stay signed in to several Gateways at once. Public
+plugin installs need no credential. A team's private or paid plugins are fetched
+by the host with the installation's marketplace credential, so members only
+authenticate to their own platform. Author actions use a personal author
+credential scoped to the author's plugin scopes; CI uses short-lived, scope-limited
+publish credentials. Cases: S-216, S-217 (planned).
+
 ### Plugin lock keys are the manifest IDs
 
 The canonical plugin identity is `id` from the package's `kb.plugin/3` manifest,
