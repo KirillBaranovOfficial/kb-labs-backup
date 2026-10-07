@@ -116,6 +116,11 @@ def _session_path(cli: str, env: dict[str, str]) -> Path:
 
 
 
+def _journey_home(env: dict[str, str]) -> Path:
+    """Return the isolated HOME passed to child commands, not the runner's HOME."""
+    return Path(env["HOME"])
+
+
 def expected_root(payload: dict) -> str:
     receipt = payload.get("receipt", {})
     return str(receipt.get("plan", {}).get("request", {}).get("platformRoot", ""))

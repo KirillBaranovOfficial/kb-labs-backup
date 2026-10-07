@@ -1268,6 +1268,8 @@ def main():
             try:
                 payload = decode_ux_success_result(read_ux_cli_result(project_add.stdout, project_add.returncode))
                 project_id = find_project_id(payload)
+                project = payload.get("project", payload) if isinstance(payload, dict) else {}
+                project_result["name"] = str(project.get("name") or "") if isinstance(project, dict) else ""
             except (json.JSONDecodeError, ValueError):
                 project_id = ""
             project_result["id"] = project_id
@@ -1551,8 +1553,7 @@ def main():
             fail(f"{mode} workflow journey: {workflow_result.first_failure}")
             first = workflow_result.first_failure or {}
 
-        project = project_payload.get("project", project_payload) if isinstance(project_payload, dict) else {}
-        project_name = str(project.get("name") or "") if isinstance(project, dict) else ""
+        project_name = project_result.get("name", "")
         studio_env = create_studio_environment(
             service_env,
             mode=mode,
