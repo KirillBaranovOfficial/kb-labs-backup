@@ -116,7 +116,7 @@ export default defineCommand({
 
 function output(ctx: PluginCommandContextV3, asJson: boolean, data: unknown, success: boolean): CommandResult<unknown> {
   if (asJson) {
-    return { ok: true, result: data };
+    return data;
   } else {
     const d = data as Record<string, unknown>;
     if (d['success']) {
@@ -136,6 +136,6 @@ function output(ctx: PluginCommandContextV3, asJson: boolean, data: unknown, suc
     }
   }
   return success
-    ? { ok: true, result: data }
-    : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string' ? data.error : 'Agent rollback failed.', hint: 'Check the session ID, then rerun `kb agent rollback --session-id <id>`.' }, result: data };
+    ? data
+    : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: typeof data === 'object' && data !== null && 'error' in data && typeof data.error === 'string' ? data.error : 'Agent rollback failed.', hint: 'Check the session ID, then rerun `kb agent rollback --session-id <id>`.' } };
 }

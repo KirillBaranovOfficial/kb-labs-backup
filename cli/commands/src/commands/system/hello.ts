@@ -37,6 +37,6 @@ export const hello = defineSystemCommand<HelloFlags, HelloResult>({
       ctx.ui?.write(`${message}\n`);
     }
 
-    return { ok: true, message, status: 'ready' };
+    return {  message, status: 'ready' };
   },
 });

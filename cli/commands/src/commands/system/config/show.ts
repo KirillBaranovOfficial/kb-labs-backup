@@ -8,7 +8,7 @@
  * project root holds only a pointer + mergeable overrides.
  */
 
-import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCataloguedFailure, type CommandResult } from '@kb-labs/shared-command-kit';
 import { loadPlatformConfig } from '@kb-labs/core-runtime';
 import {
   configErrorEnvelope,
@@ -259,7 +259,7 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       const cwd = getContextCwd(ctx);
       const roots = await resolveConfigRoots(cwd);
       if (!roots.projectId) {
-        throw new Error('Effective config requires a registered project.');
+        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.projectRoot}" and retry "kb config show".`, { path: roots.projectRoot });
       }
       const result = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: cwd, loadEnvFile: false, projectId: roots.projectId });
       const rows = buildRows(result);
@@ -273,7 +273,7 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       attachProvenance(rows, effective?.provenance);
 
       return {
-        ok: true,
+
         fields: rows,
         sameLocation: result.sameLocation,
         platformRoot: result.platformRoot,

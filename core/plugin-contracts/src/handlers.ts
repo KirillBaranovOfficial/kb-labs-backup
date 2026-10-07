@@ -70,21 +70,13 @@ export interface CommandError extends Pick<ErrorEnvelope, 'code' | 'message' | '
   details?: Record<string, string>;
 }
 
-export interface CommandSuccess<T = unknown> {
-  ok: true;
-  result?: T;
-  meta?: Record<string, unknown>;
-}
-
 export interface CommandFailure {
   ok: false;
   error: CommandError;
-  result?: unknown;
-  meta?: Record<string, unknown>;
 }
 
-/** Canonical command result returned by plugin commands. */
-export type CommandResult<T = unknown> = CommandSuccess<T> | CommandFailure;
+/** A command returns plain data or the single typed failure result. */
+export type CommandResult<T = unknown> = T | CommandFailure;
 
 /**
  * Final command result with injected standard metadata

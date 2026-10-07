@@ -27,14 +27,14 @@ export default defineCommand<unknown, CLIInput<QaHistoryFlags>, unknown>({
       const history = store.loadRunHistory();
 
       if (flags.json) {
-        return { ok: true, result: [...history].reverse().slice(0, limit) };
+        return [...history].reverse().slice(0, limit);
       } else {
         for (const section of buildHistoryTable(history, limit)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return { ok: true };
+      return {  };
     },
   },
 });

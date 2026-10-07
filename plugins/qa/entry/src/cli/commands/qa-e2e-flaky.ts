@@ -49,8 +49,7 @@ async function runIngest(
   const git = await captureGit(ctx.api.shell, cwd);
   const snap = store.saveE2eFlaky(cases, 0, git);
   ctx.ui?.success?.(`Ingested ${cases.length} e2e case result(s) from ${dir} into flaky history`, {});
-  return { ok: true, result: snap };
-  return { ok: true };
+  return snap;
 }
 
 async function runSync(ctx: PluginCommandContextV3, cwd: string): Promise<boolean> {
@@ -108,7 +107,7 @@ export default defineCommand<unknown, CLIInput<QaE2eFlakyFlags>, unknown>({
           return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `No history was found for case "${flags.case}".`, hint: 'Run `kb qa e2e flaky --agent` to list known cases, then rerun with a valid --case.' } };
         }
         if (json) {
-          return { ok: true, result: timeline };
+          return timeline;
         } else {
           ctx.ui?.success?.(`Case timeline: ${timeline.caseKey}`, {
             sections: [
@@ -123,12 +122,12 @@ export default defineCommand<unknown, CLIInput<QaE2eFlakyFlags>, unknown>({
             ],
           });
         }
-        return { ok: true };
+        return {  };
       }
 
       const overview = analyzeFlakyCases(history, window);
       if (json) {
-        return { ok: true, result: overview };
+        return overview;
       } else {
         ctx.ui?.success?.(`E2E flaky overview (last ${overview.runsAnalyzed} runs)`, {
           sections: [
@@ -142,7 +141,7 @@ export default defineCommand<unknown, CLIInput<QaE2eFlakyFlags>, unknown>({
           ],
         });
       }
-      return { ok: true };
+      return {  };
     },
   },
 });

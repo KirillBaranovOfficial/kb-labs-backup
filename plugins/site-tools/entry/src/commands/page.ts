@@ -196,7 +196,7 @@ async function runPage(
     ],
   });
 
-  return { ok: true };
+  return {};
 }
 
 export default defineCommand({

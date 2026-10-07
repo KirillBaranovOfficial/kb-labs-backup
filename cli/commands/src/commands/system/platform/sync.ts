@@ -19,9 +19,7 @@ type PlatformSyncFlags = {
   root: { type: 'string'; description?: string };
 };
 
-type PlatformSyncCommandResult = CommandResult & {
-  sync?: PlatformSyncResult;
-};
+type PlatformSyncCommandResult = CommandResult & PlatformSyncResult;
 
 function isMode(value: string | undefined): value is PlatformSyncMode {
   return value === 'validate' || value === 'reconcile' || value === 'auto';
@@ -92,7 +90,7 @@ export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, Platfo
     });
 
     if (result.ok) {
-      return { ok: true, status: 'success' as const, sync: result };
+      return result;
     }
 
     throwSystemCommandError(
@@ -104,11 +102,7 @@ export const platformSyncCommand = defineSystemCommand<PlatformSyncFlags, Platfo
   },
   // eslint-disable-next-line sonarjs/cognitive-complexity
   formatter(result, ctx, flags) {
-    const sync = result.sync;
-    if (!sync) {
-
-      return;
-    }
+    const sync = result;
 
     const summary: string[] = [
       `Mode: ${sync.mode}${sync.mode !== (flags.mode as string | undefined) && flags.mode !== 'auto' ? ' (auto-detected)' : ''}`,

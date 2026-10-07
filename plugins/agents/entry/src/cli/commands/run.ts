@@ -165,7 +165,7 @@ export default defineCommand({
             ctx.ui?.success?.(`Plan approved: ${approvedPlan.id} (session: ${sessionId})`);
             ctx.ui?.info?.(`Ready to execute: kb agent run --session-id=${sessionId}`);
             clearTimeout_();
-            return { ok: true, result: { sessionId: sessionId as string } };
+            return { sessionId: sessionId as string };
           } catch {
             if (!jsonOutput) {
 
@@ -333,7 +333,7 @@ export default defineCommand({
               const specSucceeded = specResult.success;
               clearTimeout_();
               return specSucceeded
-                ? { ok: true, result: {
+                ? {
                     sessionId: effectiveSessionId,
                   success: specSucceeded,
                   summary: specResult.summary,
@@ -342,17 +342,8 @@ export default defineCommand({
                   filesRead: specResult.filesRead,
                   iterations: specResult.iterations,
                   tokensUsed: specResult.tokensUsed,
-                } }
-                : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: specResult.summary || 'Agent specification generation failed.', hint: 'Review the agent run output, then rerun `kb agent run --task "<task>"`.' }, result: {
-                    sessionId: effectiveSessionId,
-                    success: specSucceeded,
-                    summary: specResult.summary,
-                    filesCreated: specResult.filesCreated,
-                    filesModified: specResult.filesModified,
-                    filesRead: specResult.filesRead,
-                    iterations: 0,
-                    tokensUsed: 0,
-                  } };
+                }
+                : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: specResult.summary || 'Agent specification generation failed.', hint: 'Review the agent run output, then rerun `kb agent run --task "<task>"`.' } };
             }
           } catch {
             // No plan.json or unreadable — fall through to normal flow
@@ -543,7 +534,7 @@ export default defineCommand({
 
         const runSucceeded = result.success;
         const structuredResult = runSucceeded
-          ? { ok: true as const, result: {
+          ? {
             sessionId: effectiveSessionId,
             success: runSucceeded,
             summary: result.summary,
@@ -553,21 +544,11 @@ export default defineCommand({
             iterations: result.iterations,
             tokensUsed: result.tokensUsed,
             hasPlan: mode === 'plan' && !!result.plan,
-          } }
-          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: result.summary || 'Agent execution failed.', hint: 'Check agent logs with `kb agent logs --session-id <id>`, then rerun `kb agent run --task "<task>"`.' }, result: {
-            sessionId: effectiveSessionId,
-            success: runSucceeded,
-            summary: result.summary,
-            filesCreated: result.filesCreated,
-            filesModified: result.filesModified,
-            filesRead: result.filesRead,
-            iterations: result.iterations,
-            tokensUsed: result.tokensUsed,
-            hasPlan: mode === 'plan' && !!result.plan,
-          } };
+          }
+          : { ok: false as const, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: result.summary || 'Agent execution failed.', hint: 'Check agent logs with `kb agent logs --session-id <id>`, then rerun `kb agent run --task "<task>"`.' } };
 
         if (jsonOutput) {
-          return { ok: true, result: structuredResult };
+          return structuredResult;
         }
 
         return structuredResult;

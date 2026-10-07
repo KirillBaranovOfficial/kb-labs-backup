@@ -130,7 +130,7 @@ export const logsQuery = defineSystemCommand<Flags, LogQueryResult>({
     });
 
     return {
-      ok: true as const,
+
       data: {
         logs: result.logs.map(formatLogJson),
         total: result.total,

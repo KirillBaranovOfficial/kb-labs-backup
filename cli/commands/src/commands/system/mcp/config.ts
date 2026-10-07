@@ -105,7 +105,6 @@ export const mcpConfig = defineSystemCommand<ConfigFlags, CommandResult>({
       ).replace(/\/$/, "");
       const url = `${origin}/api/v1/projects/${encodeURIComponent(project.id)}/mcp`;
       const body = {
-        ok: true as const,
         client,
         projectId: project.id,
         url,

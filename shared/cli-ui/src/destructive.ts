@@ -145,8 +145,15 @@ export function confirmDestructive(
         irreversible: String(signal.irreversible),
         severity: signal.severity,
         confirmWith: signal.confirmWith,
+        confirmationRequired: String(signal.confirmationRequired),
+        destructive: String(signal.destructive),
+        ...(signal.blastRadius ? {
+          blastRadiusCount: String(signal.blastRadius.count ?? ''),
+          blastRadiusUnit: signal.blastRadius.unit ?? '',
+          blastRadiusScope: signal.blastRadius.scope ?? '',
+        } : {}),
+        ...(signal.recovery === undefined ? {} : { recovery: signal.recovery }),
       },
     },
-    result: signal,
   };
 }

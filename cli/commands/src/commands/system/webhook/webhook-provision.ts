@@ -100,6 +100,6 @@ export const webhookProvision = defineSystemCommand<ProvisionFlags, ProvisionRes
       ctx.ui?.write?.('\n⚠  Save the secret now — it will not be shown again.\n');
     }
 
-    return { ok: true, url: data.url, secret: data.secret, rotated: data.rotated };
+    return {  url: data.url, secret: data.secret, rotated: data.rotated };
   },
 });

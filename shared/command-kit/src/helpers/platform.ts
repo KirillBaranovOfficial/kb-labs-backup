@@ -25,12 +25,20 @@ import type {
  * Error thrown when required platform service is not configured.
  */
 export class ServiceNotConfiguredError extends Error {
+  readonly code = 'KB_ADAPTER_NOT_CONFIGURED';
+  readonly details: Record<string, string>;
+
   constructor(
     public readonly service: string,
     public readonly requiredAdapter: string
   ) {
     super(`Service '${service}' is not configured. Add "${requiredAdapter}" to kb.config.json adapters.`);
     this.name = 'ServiceNotConfiguredError';
+    this.details = {
+      service,
+      adapter: `platform.adapters.${service}`,
+      command: `kb adapter bind ${service} ${requiredAdapter}`,
+    };
   }
 }
 

@@ -88,7 +88,7 @@ export default defineCommand({
       if (showStats) {
         const stats = await getDependencyStats(ctx.cwd);
         outputStats(stats, flags, ui);
-        return { ok: true, result: stats };
+        return stats;
       }
 
       if (!removeUnused && !addMissing && !alignVersions) {
@@ -115,7 +115,7 @@ export default defineCommand({
 
       outputResults({ ...result, dryRun: false }, flags, ui);
 
-      return { ok: true, result };
+      return result;
     },
   },
 });

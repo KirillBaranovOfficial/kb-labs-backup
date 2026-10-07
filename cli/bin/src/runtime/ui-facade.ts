@@ -8,7 +8,6 @@
 import { sideBorderBox, sideBorderChain, safeColors, safeSymbols, formatTable, logLine, confirm as promptConfirm, text as promptText, select as promptSelect, multiSelect as promptMultiSelect } from '@kb-labs/shared-cli-ui';
 import type { UIFacade, UILogEntry, MessageOptions, Spinner, SelectChoice, MultiSelectChoice, TableColumn, ChainItem } from '@kb-labs/plugin-contracts';
 import { AdapterUnavailableError, toErrorEnvelope } from '@kb-labs/core-platform';
-import { normalizeJsonResult } from '@kb-labs/cli-runtime';
 
 // Workspace root — used to shorten absolute paths in stack traces
 const WORKSPACE_ROOT = process.cwd();
@@ -55,8 +54,7 @@ export function createCLIUIFacade(presenter?: PresenterDelegate): UIFacade {
     }
   };
   const writeResult = (value: unknown, pretty = false) => {
-    const envelope = normalizeJsonResult(value);
-    console.log(pretty ? JSON.stringify(envelope, null, 2) : JSON.stringify(envelope));
+    console.log(pretty ? JSON.stringify(value, null, 2) : JSON.stringify(value));
   };
 
   return {

@@ -68,7 +68,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
       const result: UndoResult = { restored, backupId: backup.id, errors };
 
       if (outputJson) {
-        return { ok: true, result: result };
+        return result;
       } else {
         ctx.ui?.success?.(`Restored from backup (mode: ${backup.modeAtBackup ?? 'unknown'})`, {
           title: 'DevLink — Undo',
@@ -89,8 +89,8 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
       }
 
       return errors.length > 0
-        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${errors.length} undo operation(s) failed`, hint: 'Run `kb devlink --help` to review the command inputs, then rerun the command.' }, result, meta: { timing: tracker.total() } }
-        : { ok: true, result, meta: { timing: tracker.total() } };
+        ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${errors.length} undo operation(s) failed`, hint: 'Review the reported undo errors, then rerun `kb devlink undo`.', diagnostics: errors.map((error) => ({ code: 'KB_DEVLINK_UNDO_FAILED', severity: 'error', message: error })) } }
+        : result;
     },
   },
 });

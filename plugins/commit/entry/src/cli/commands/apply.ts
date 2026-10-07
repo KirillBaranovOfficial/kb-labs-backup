@@ -59,16 +59,10 @@ export default defineCommand({
         loadLoader.stop();
         ctx.ui?.warn?.('Commit plan is empty. Nothing to apply.');
         return {
-          ok: true,
-          result: {
             success: true,
             commits: [],
             errors: [],
-          },
-          meta: {
-            timing: Date.now() - startTime,
-          },
-        };
+          };
       }
       loadLoader.succeed(`Loaded plan with ${plan.commits.length} commit(s)`);
 
@@ -100,7 +94,7 @@ export default defineCommand({
       };
 
       if (input.json) {
-        return { ok: true, result: output };
+        return output;
       } else {
         if (result.success) {
           // Build commits section
@@ -142,13 +136,7 @@ export default defineCommand({
         }
       }
 
-      return result.success ? {
-        ok: true,
-        result: output,
-        meta: {
-          timing: Date.now() - startTime,
-        },
-      } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit apply failed', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' }, result: output };
+      return result.success ? output : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit apply failed', hint: 'Review the commit apply output, then rerun `kb commit apply`.' } };
     },
   },
 });

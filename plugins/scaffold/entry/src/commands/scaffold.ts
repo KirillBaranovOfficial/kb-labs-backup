@@ -230,7 +230,7 @@ async function runDefault(
         { header: 'Files', items: formatTree(result.files).split('\n').filter(Boolean) },
       ],
     });
-    return { ok: true, result: { outRoot, files: result.files.length } };
+    return { outRoot, files: result.files.length };
   }
 
   if (state.exists && !state.empty) {
@@ -285,7 +285,7 @@ async function runDefault(
     timing,
   });
 
-  return { ok: true, result: { outRoot, files: result.files.length } };
+  return { outRoot, files: result.files.length };
 }
 
 export default defineCommand({

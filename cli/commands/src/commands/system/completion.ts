@@ -3,15 +3,15 @@
  * kb completion install         — bake static completions into shell profile (instant Tab)
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedFailure } from '@kb-labs/shared-command-kit';
 import { promises as fs } from 'node:fs';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import type { TrieBackedRegistry } from '../../registry/service';
 
-type CompletionResult = CommandResult & { script: string; shell: string };
-type InstallResult   = CommandResult & { ok: boolean; status: string; shell: string; profilePath: string; alreadyInstalled: boolean; aliasInstalled: boolean };
+type CompletionResult = { script: string; shell: string };
+type InstallResult = { shell: string; profilePath: string; alreadyInstalled: boolean; aliasInstalled: boolean };
 
 const MARKER        = '# kb completion';
 const ALIAS_MARKER  = '# kb alias';
@@ -257,13 +257,19 @@ export function createCompletionCommand(registry: TrieBackedRegistry) {
           await fs.appendFile(rcPath, `\n${aliasLine(shell)}\n`);
         }
 
-        return { ok: true, status: 'success', shell, profilePath: rcPath, alreadyInstalled, aliasInstalled: !aliasAlreadyInstalled } as InstallResult;
+        return { shell, profilePath: rcPath, alreadyInstalled, aliasInstalled: !aliasAlreadyInstalled } satisfies InstallResult;
       }
 
       // ── print dynamic script ───────────────────────────────────────────────
       const script = dynamicScript(arg);
-      if (!script) { throw new Error(`Unsupported shell: ${arg}. Supported: bash, zsh, fish`); }
-      return { ok: true, script, shell: arg };
+      if (!script) {
+        throwSystemCataloguedFailure(
+          'KB_RUNTIME_INPUT_INVALID',
+          `Unsupported shell: ${arg}. Supported: bash, zsh, fish`,
+          'Run `kb completion bash`, `kb completion zsh`, or `kb completion fish`.',
+        );
+      }
+      return { script, shell: arg };
     },
 
     formatter(result, ctx, flags) {

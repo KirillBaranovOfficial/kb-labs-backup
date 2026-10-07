@@ -19,8 +19,7 @@ export default defineCommand<unknown, CLIInput<StatsFlags>, unknown>({
       const stats = await calculateStats(cwd);
 
       if (flags.json) {
-        return { ok: true, result: stats };
-        return { ok: true };
+        return stats;
       }
 
       ctx.ui?.success?.('Monorepo statistics', {
@@ -34,7 +33,7 @@ export default defineCommand<unknown, CLIInput<StatsFlags>, unknown>({
         }],
       });
 
-      return { ok: true };
+      return {  };
     },
   },
 });

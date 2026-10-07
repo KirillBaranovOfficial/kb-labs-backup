@@ -85,11 +85,7 @@ export interface CommandDefinition<TConfig = unknown, TInput = unknown, TResult 
  *       const target = input.flags.name || 'World';
  *       context.ui.success(`Hello, ${target}!`);
  *
- *       return {
- *         ok: true,
- *         result: { message: `Hello, ${target}!`, target },
- *         meta: { version: 'v3' }
- *       };
+ *       return { message: `Hello, ${target}!`, target };
  *     }
  *   }
  * });
@@ -111,7 +107,7 @@ export function defineCommand<TConfig = unknown, TInput = unknown, TResult = unk
         return (async () => {
           const intent = await definition.handler.intent!(context, input);
           renderDryRunIntent(context.ui, intent);
-          return { ok: true, result: intent as unknown as TResult };
+          return intent as TResult;
         })();
       }
 

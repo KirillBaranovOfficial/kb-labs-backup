@@ -39,15 +39,9 @@ export default defineCommand({
       if (!exists) {
         ctx.ui?.info?.('No commit plan to clear.');
         return {
-          ok: true,
-          result: {
             success: true,
             message: 'No commit plan to clear.',
-          },
-          meta: {
-            timing: Date.now() - startTime,
-          },
-        };
+          };
       }
 
       // Clear plan
@@ -67,15 +61,9 @@ export default defineCommand({
       });
 
       return {
-        ok: true,
-        result: {
           success: true,
           message: 'Commit plan cleared successfully.',
-        },
-        meta: {
-          timing: Date.now() - startTime,
-        },
-      };
+        };
     },
   },
 });

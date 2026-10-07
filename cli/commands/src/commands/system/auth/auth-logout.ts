@@ -59,7 +59,7 @@ export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
       if (!flags.json) {
         ctx.ui?.write?.(`${message}\n`);
       }
-      return { ok: true, message };
+      return {  message };
     }
 
     await Promise.all([credentialsManager.clear(), sessionManager.clear()]);
@@ -69,6 +69,6 @@ export const authLogout = defineSystemCommand<LogoutFlags, CommandResult>({
       ctx.ui?.write?.(`${message}\n`);
     }
 
-    return { ok: true, message };
+    return {  message };
   },
 });

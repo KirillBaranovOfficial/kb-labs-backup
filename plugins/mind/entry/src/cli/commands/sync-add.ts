@@ -18,11 +18,10 @@ export default defineCommand<unknown, CLIInput<SyncPathsFlags>, SyncResponse>({
       const mind = await buildMind(ctx.cwd);
       const res = await mind.syncAdd(paths, input.flags.index);
       if (input.flags.json) {
-        return { ok: true, result: res };
-        return { ok: true, result: res };
+        return res;
       }
       ctx.ui?.success?.(`Sync add → "${res.indexId}": +${res.added} added, ${res.updated} updated`);
-      return { ok: true, result: res };
+      return res;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

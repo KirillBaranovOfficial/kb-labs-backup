@@ -16,6 +16,6 @@ export default defineCommand<unknown, CLIInput<QaCasesListFlags>, unknown>({
       return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'QA case catalog is invalid', hint: 'Run `kb qa cases list --help` to check command inputs, then retry.' }, result };
     }
     if (!input.flags.json) ctx.ui?.success?.(`${catalog.cases.length} QA case(s)`, { sections: [{ items: catalog.cases.map(item => `${item.id} [${item.priority}] ${item.title} (${item.steps.length} steps)`) }] });
-    return { ok: true, result };
+    return result;
   } },
 });

@@ -88,7 +88,6 @@ export * from './io/types.js';
 export * from './presenter/types.js';
 export { createTextPresenter } from './presenter/text.js';
 export { createJsonPresenter } from './presenter/json.js';
-export { normalizeJsonResult } from './presenter/json.js';
 export { colors } from './presenter/colors.js';
 export { createLoader } from './presenter/loader.js';
 

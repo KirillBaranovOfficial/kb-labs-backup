@@ -13,12 +13,11 @@ export default defineCommand<unknown, CLIInput<SyncListFlags>, SyncListResponse>
       const mind = await buildMind(ctx.cwd);
       const res = await mind.syncList(input.flags.index);
       if (input.flags.json) {
-        return { ok: true, result: res };
-        return { ok: true, result: res };
+        return res;
       }
       if (res.documents.length === 0) {
         ctx.ui?.warn?.(`Index "${res.indexId}" has no documents.`);
-        return { ok: true, result: res };
+        return res;
       }
       ctx.ui?.success?.(`"${res.indexId}" — ${res.documents.length} document(s)`, {
         sections: [
@@ -28,7 +27,7 @@ export default defineCommand<unknown, CLIInput<SyncListFlags>, SyncListResponse>
           },
         ],
       });
-      return { ok: true, result: res };
+      return res;
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

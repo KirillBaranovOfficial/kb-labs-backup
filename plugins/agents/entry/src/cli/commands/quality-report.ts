@@ -128,17 +128,14 @@ export default defineCommand({
       const json = Boolean(flags.json);
 
       if (!Number.isFinite(days) || days <= 0) {
-        const err = { success: false, error: '--days must be a positive number' };
-        return { ok: true, result: err };
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error, hint: 'Pass a positive number with `kb agents quality report --days <n>`.' }, result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: '--days must be a positive number', hint: 'Pass a positive number with `kb agents quality report --days <n>`.' } };
       }
 
       const analyticsDir = resolveRuntimeStatePath(process.cwd(), ['analytics', 'buffer']);
       const files = await listEventFiles(analyticsDir, days);
       if (files.length === 0) {
         const out = { success: true, message: 'No analytics files found for selected period', runs: 0 };
-        return { ok: true, result: out };
-        return { ok: true, result: out };
+        return out;
       }
 
       const since = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -152,12 +149,12 @@ export default defineCommand({
       const report = buildReport(runs, regressions, { days, sessionIdFilter });
 
       if (json) {
-        return { ok: true, result: { success: true, report } };
+        return { success: true, report };
       } else {
         printReport(ctx, report);
       }
 
-      return { ok: true, result: report };
+      return report;
     },
   },
 });

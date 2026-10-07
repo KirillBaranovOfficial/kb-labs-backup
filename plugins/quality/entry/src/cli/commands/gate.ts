@@ -45,10 +45,9 @@ export default defineCommand<unknown, CLIInput<GateFlags>, unknown>({
       };
 
       if (flags.json) {
-        return { ok: true, result: result };
         return failed
-          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Quality gate failed', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: { failed } }
-          : { ok: true, result: { failed } };
+          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Quality gate failed', hint: 'Review the reported violations, then rerun `kb quality gate`.', diagnostics: report.violations.map((violation) => ({ code: 'KB_QUALITY_LAYERING_VIOLATION', severity: 'error', message: `${violation.fromPackage} imports ${violation.toPackage} via ${violation.importSpecifier}` })) } }
+          : result;
       }
 
       if (!failed) {
@@ -57,7 +56,7 @@ export default defineCommand<unknown, CLIInput<GateFlags>, unknown>({
             ? `Gate passed — no new violations (${current} pre-existing)`
             : 'Gate passed — no layering violations';
         ctx.ui?.success?.(msg);
-        return { ok: true };
+        return {  };
       }
 
       const sections = [];

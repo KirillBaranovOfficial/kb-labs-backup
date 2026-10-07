@@ -96,7 +96,11 @@ export {
   wrapError,
 } from "./errors.js";
 export type { SerializedError, ErrorCodeType } from "./errors.js";
-export { pluginErrorToEnvelope, toPluginErrorEnvelope, isCataloguedErrorCode } from "./error-envelope.js";
+import { getCatalogEntry } from '@kb-labs/core-platform/error-envelope';
+export { toErrorEnvelope } from "@kb-labs/core-platform/error-envelope";
+export function isCataloguedErrorCode(code: string): boolean {
+  return getCatalogEntry(code) !== undefined;
+}
 
 // Runtime
 export type {
@@ -225,7 +229,6 @@ export type {
   CommandHandler,
   CommandDefinition,
   CommandResult,
-  CommandSuccess,
   CommandFailure,
   CommandError,
   CommandResultWithMeta,

@@ -92,6 +92,7 @@ export type { ManifestForGrantValidation } from './platform/database-governance.
 // Host Wrappers
 export {
   wrapCliResult,
+  isHandlerSuccessEnvelope,
   wrapRestResult,
   unwrapRestData,
   normalizeJsonResult,
@@ -118,7 +119,6 @@ export type {
   ExecutionMeta,
   // CLI types (for wrapCliResult)
   CommandResult,
-  CommandSuccess,
   CommandFailure,
   CommandError,
   CommandResultWithMeta,

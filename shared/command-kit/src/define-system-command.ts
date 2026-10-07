@@ -13,7 +13,7 @@ import {
 import type { CommandResult, PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { formatError } from './errors/index';
 import { createErrorEnvelope, getCatalogEntry, toErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { normalizeJsonResult } from '@kb-labs/plugin-runtime';
+import { isHandlerSuccessEnvelope, normalizeJsonResult } from '@kb-labs/plugin-runtime';
 import { renderErrorEnvelope } from '@kb-labs/shared-cli-ui';
 
 /**
@@ -225,7 +225,7 @@ export interface SystemCommandConfig<
  *       }
  *     }
  *
- *     return { ok: true, message };
+ *     return { message };
  *   },
  * });
  *
@@ -259,7 +259,7 @@ export interface SystemCommandConfig<
  *       }
  *     }
  *
- *     return { ok: true, workflows, total: workflows.length };
+ *     return { workflows, total: workflows.length };
  *   },
  * });
  *
@@ -281,7 +281,7 @@ export interface SystemCommandConfig<
  *     const run = await executeWorkflow(flags['workflow-id']);
  *     ctx.ui?.completeProgress('running', 'Workflow started!');
  *
- *     return { ok: true, run };
+ *     return { run };
  *   },
  * });
  *
@@ -373,8 +373,17 @@ export function defineSystemCommand<
       let result: number | TResult;
       try {
         result = await handler(handlerContext, argv as unknown as TArgv, validatedFlags);
-        if (isCommandFailure(result)) {
+        if (isHandlerSuccessEnvelope(result)) {
           throw createContractViolation();
+        }
+        if (isCommandFailure(result)) {
+          const envelope = toErrorEnvelope(result.error, { correlationId: ctx.requestId });
+          if (jsonMode) {
+            ctx.ui?.json({ ok: false, error: envelope });
+          } else {
+            ctx.ui?.error(renderErrorEnvelope(envelope), { hint: envelope.hint });
+          }
+          return 1;
         }
       } catch (error) {
         const envelope = toErrorEnvelope(error, { correlationId: ctx.requestId });
@@ -414,9 +423,9 @@ export function defineSystemCommand<
 }
 
 function createContractViolation(): Error & { code: string; hint: string } {
-  return Object.assign(new Error('System command handlers must return result data instead of writing through ctx.ui.'), {
+  return Object.assign(new Error('Command handlers must return plain command data instead of writing JSON or envelope output directly.'), {
     code: 'KB_PLUGIN_CONTRACT_VIOLATION',
-    hint: 'Return command data from the handler, or throw a catalogued failure with a message and hint.',
+    hint: 'Return command data without an { ok: true, data: ... } envelope, or throw a typed command failure.',
   });
 }
 
@@ -440,6 +449,19 @@ export function throwSystemCommandError(
     ...(details ? { details } : {}),
     ...(diagnostics ? { diagnostics } : {}),
   });
+}
+
+export function throwSystemCataloguedFailure(
+  code: string,
+  message: string,
+  hint: string,
+  details?: Record<string, string>,
+): never {
+  throwSystemCataloguedError(createErrorEnvelope(code, {
+    message,
+    hint,
+    ...(details ? { details } : {}),
+  }));
 }
 
 export function throwSystemCataloguedError(envelope: ErrorEnvelope): never {

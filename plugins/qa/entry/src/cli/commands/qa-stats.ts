@@ -43,14 +43,14 @@ export default defineCommand<unknown, CLIInput<QaStatsFlags>, unknown>({
       };
 
       if (flags.json) {
-        return { ok: true, result: buildStatsJsonReport(effective) };
+        return buildStatsJsonReport(effective);
       } else {
         for (const section of buildStatsReport(effective)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return { ok: true };
+      return {  };
     },
   },
 });

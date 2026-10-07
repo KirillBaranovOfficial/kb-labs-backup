@@ -24,15 +24,14 @@ export default defineCommand<unknown, CLIInput<HistoryFlags>, unknown>({
 
       if (snapshots.length === 0) {
         ctx.ui?.success?.('No snapshots yet. Run `kb quality snapshot` first.');
-        return { ok: true };
+        return {  };
       }
 
       const limit = flags.limit ?? 10;
       const recent = snapshots.slice(-limit).reverse();
 
       if (flags.json) {
-        return { ok: true, result: { snapshots: recent, delta, latest } };
-        return { ok: true };
+        return { snapshots: recent, delta, latest };
       }
 
       const items = recent.map(s => {
@@ -60,7 +59,7 @@ export default defineCommand<unknown, CLIInput<HistoryFlags>, unknown>({
       }
 
       ctx.ui?.success?.(`Quality history (${recent.length} snapshots)`, { sections });
-      return { ok: true };
+      return {  };
     },
   },
 });

@@ -110,11 +110,10 @@ export async function testCommand<TResult = unknown, TConfig = unknown>(
   let result: TResult | undefined;
   let meta: Record<string, unknown> | undefined;
 
-  if (raw != null && typeof raw === 'object' && 'ok' in raw) {
-    const cmdResult = raw as CommandResult<TResult>;
-    exitCode = cmdResult.ok ? 0 : 1;
-    result = cmdResult.result as TResult | undefined;
-    meta = cmdResult.meta;
+  if (isCommandFailure(raw)) {
+    exitCode = 1;
+    result = undefined;
+    meta = undefined;
   } else if (raw === undefined || raw === null) {
     exitCode = 0;
     result = undefined;
@@ -134,4 +133,9 @@ export async function testCommand<TResult = unknown, TConfig = unknown>(
     ctx: ctx as PluginContextV3,
     cleanup,
   };
+}
+
+function isCommandFailure(value: unknown): value is CommandResult<never> & { ok: false } {
+  return typeof value === 'object' && value !== null && 'ok' in value && value.ok === false &&
+    'error' in value && typeof value.error === 'object' && value.error !== null;
 }

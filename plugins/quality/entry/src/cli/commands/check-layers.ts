@@ -33,15 +33,27 @@ export default defineCommand<unknown, CLIInput<CheckLayersFlags>, unknown>({
         : report;
 
       if (flags.json) {
-        return { ok: true, result: filtered };
         return filtered.totalViolations > 0
-          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Layer violations found', hint: 'Run `kb quality --help` to review the command inputs, then rerun the command.' }, result: filtered }
-          : { ok: true, result: filtered };
+          ? {
+              ok: false,
+              error: {
+                code: 'KB_RUNTIME_COMMAND_FAILED',
+                message: 'Layer violations found',
+                hint: 'Review the reported imports, then rerun `kb quality check layers`.',
+                diagnostics: filtered.violations.map((violation) => ({
+                  code: 'KB_QUALITY_LAYERING_VIOLATION',
+                  severity: 'error',
+                  path: violation.file,
+                  message: `${violation.fromPackage} (Layer ${violation.fromLayer}) imports ${violation.toPackage} (Layer ${violation.toLayer}) via ${violation.importSpecifier}`,
+                })),
+              },
+            }
+          : filtered;
       }
 
       if (filtered.totalViolations === 0) {
         ctx.ui?.success?.('No layering violations found');
-        return { ok: true };
+        return {  };
       }
 
       const byPackage = new Map<string, typeof filtered.violations>();
@@ -57,7 +69,20 @@ export default defineCommand<unknown, CLIInput<CheckLayersFlags>, unknown>({
       }));
 
 
-      return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${filtered.totalViolations} layering violation(s) found in ${filtered.affectedPackages.length} package(s).`, hint: 'Review the reported imports, then rerun `kb quality check-layers`.' } };
+      return {
+        ok: false,
+        error: {
+          code: 'KB_RUNTIME_COMMAND_FAILED',
+          message: `${filtered.totalViolations} layering violation(s) found in ${filtered.affectedPackages.length} package(s).`,
+          hint: 'Review the reported imports, then rerun `kb quality check layers`.',
+          diagnostics: filtered.violations.map((violation) => ({
+            code: 'KB_QUALITY_LAYERING_VIOLATION',
+            severity: 'error',
+            path: violation.file,
+            message: `${violation.fromPackage} (Layer ${violation.fromLayer}) imports ${violation.toPackage} (Layer ${violation.toLayer}) via ${violation.importSpecifier}`,
+          })),
+        },
+      };
     },
   },
 });

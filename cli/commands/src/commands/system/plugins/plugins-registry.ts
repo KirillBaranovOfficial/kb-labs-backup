@@ -2,7 +2,7 @@
  * marketplace:registry command - List all REST API plugin manifests
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../../utils/generate-examples';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { promises as fs } from 'node:fs';
@@ -33,11 +33,10 @@ interface PluginManifestWithPath {
   pluginRoot: string;
 }
 
-type PluginsRegistryResult = CommandResult & {
-  data?: { manifests: ManifestV3[]; manifestsWithPaths: PluginManifestWithPath[]; total: number };
-  manifests?: ManifestV3[];
-  manifestsWithPaths?: PluginManifestWithPath[];
-  total?: number;
+type PluginsRegistryResult = {
+  manifests: ManifestV3[];
+  manifestsWithPaths: PluginManifestWithPath[];
+  total: number;
   plugins?: PluginManifestWithPath[];
 };
 
@@ -306,10 +305,7 @@ export const pluginsRegistry = defineSystemCommand<PluginsRegistryFlags, Plugins
         total: manifests.length,
       };
 
-      return {
-        ok: true,
-        data: jsonData,
-      };
+      return jsonData;
     }
 
     const sections: Array<{ header?: string; items: string[] }> = [
@@ -346,7 +342,6 @@ export const pluginsRegistry = defineSystemCommand<PluginsRegistryFlags, Plugins
     ctx.ui.info('Plugins Registry', { sections });
 
     return {
-      ok: true,
       manifests: manifests.map((p) => p.manifest),
       manifestsWithPaths,
       total: manifests.length,

@@ -16,7 +16,6 @@ function reportPlanned(
   json: boolean,
 ) {
   const payload = {
-    ok: true as const,
     dryRun: true,
     project: outcome.project,
   };
@@ -28,7 +27,7 @@ function reportPlanned(
 
 function reportAdded(ui: Ui | undefined, outcome: Extract<AddProjectOutcome, { status: 'added' }>, json: boolean) {
   const { project } = outcome;
-  const payload = { ok: true as const, project };
+  const payload = { project };
   if (!json) {
     ui?.success(`Registered ${project.name} (${project.id})`);
     ui?.write(`  path: ${project.path}\n`);

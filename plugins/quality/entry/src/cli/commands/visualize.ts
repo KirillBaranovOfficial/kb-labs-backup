@@ -61,7 +61,7 @@ export default defineCommand({
         outputStats(graph, flags, ui);
       }
 
-      return { ok: true, result: { graph } };
+      return { graph };
     },
   },
 });

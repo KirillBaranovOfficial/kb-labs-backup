@@ -2,7 +2,7 @@
  * marketplace:commands command - Show all plugin commands with real invocation syntax
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedFailure, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../../utils/generate-examples';
 import { registry } from '../../../registry/service';
 import type { RegisteredCommand } from '../../../registry/types';
@@ -73,7 +73,11 @@ export const pluginsCommands = defineSystemCommand<PluginsCommandsFlags, Plugins
     const sortOrder = flags.sort || 'alpha';
     const validSorts = ['alpha', 'count', 'type'];
     if (!validSorts.includes(sortOrder)) {
-      throw new Error(`Invalid sort order: ${sortOrder}. Valid options: ${validSorts.join(', ')}`);
+      throwSystemCataloguedFailure(
+        'KB_RUNTIME_INPUT_INVALID',
+        `Invalid sort order: ${sortOrder}. Valid options: ${validSorts.join(', ')}`,
+        `Run \`kb marketplace commands --sort ${validSorts[0]}\`, \`--sort ${validSorts[1]}\`, or \`--sort ${validSorts[2]}\`.`,
+      );
     }
 
     // JSON output
@@ -87,7 +91,7 @@ export const pluginsCommands = defineSystemCommand<PluginsCommandsFlags, Plugins
         }));
       }
       return {
-        ok: true,
+
         groups: output,
         totalGroups,
         totalCommands,
@@ -151,8 +155,7 @@ export const pluginsCommands = defineSystemCommand<PluginsCommandsFlags, Plugins
     }
 
     return {
-      ok: true,
-      status: 'success',
+
       message: `Found ${totalCommands} commands in ${totalGroups} groups`,
       sections,
       json: { groups: jsonGroups, totalGroups, totalCommands },

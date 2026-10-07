@@ -22,8 +22,7 @@ export default defineCommand<unknown, CLIInput<CouplingFlags>, unknown>({
       const report = analyzeCoupling({ rootDir: cwd, layerMap: config?.layers, topN: flags.top });
 
       if (flags.json) {
-        return { ok: true, result: report };
-        return { ok: true };
+        return report;
       }
 
       const sorted =
@@ -43,7 +42,7 @@ export default defineCommand<unknown, CLIInput<CouplingFlags>, unknown>({
         sections: [{ header: `Top ${top.length} by instability`, items }],
       });
 
-      return { ok: true };
+      return {  };
     },
   },
 });

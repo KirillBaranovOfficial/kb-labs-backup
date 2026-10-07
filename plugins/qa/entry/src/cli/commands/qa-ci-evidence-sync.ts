@@ -24,7 +24,7 @@ export default defineCommand<unknown, CLIInput<QaCiEvidenceSyncFlags>, unknown>(
           repository, workflow: input.flags.workflow, limit: input.flags.limit, outputDir: output,
         });
         if (input.flags.json) {
-          return { ok: true, result: result };
+          return result;
         } else {
           ctx.ui?.success?.('Synced CI evidence', {
             sections: [{ header: 'Runs', items: [
@@ -35,7 +35,7 @@ export default defineCommand<unknown, CLIInput<QaCiEvidenceSyncFlags>, unknown>(
             ] }],
           });
         }
-        return { ok: true };
+        return {  };
       } catch (error) {
 
         return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error instanceof Error ? error.message : String(error), hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' } };

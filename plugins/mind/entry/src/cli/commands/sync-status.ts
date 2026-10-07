@@ -12,15 +12,14 @@ export default defineCommand<unknown, CLIInput<SyncListFlags>, unknown>({
       const mind = await buildMind(ctx.cwd);
       const res = await mind.syncStatus(input.flags.index);
       if (input.flags.json) {
-        return { ok: true, result: res };
-        return { ok: true };
+        return res;
       }
       ctx.ui?.success?.(
         `"${res.indexId}": ${res.documents} doc(s), ${res.chunks} chunk(s)` +
           (res.lastIndexedAt ? `, updated ${res.lastIndexedAt}` : '') +
           (res.stale ? ' (stale)' : ''),
       );
-      return { ok: true };
+      return {  };
       } catch (err) {
         return handleError(ctx, err, input.flags.json);
       }

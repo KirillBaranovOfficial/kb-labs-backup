@@ -11,12 +11,16 @@ import { z } from 'zod';
  * Validation error with formatted message.
  */
 export class ValidationError extends Error {
+  readonly code = 'KB_RUNTIME_INPUT_INVALID';
+  readonly details: Record<string, string>;
+
   constructor(
     message: string,
     public readonly issues?: Array<{ path: string; message: string }>
   ) {
     super(message);
     this.name = 'ValidationError';
+    this.details = Object.fromEntries((issues ?? []).map((issue) => [issue.path || 'value', issue.message]));
   }
 }
 

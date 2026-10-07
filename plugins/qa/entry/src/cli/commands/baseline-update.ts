@@ -33,9 +33,9 @@ export default defineCommand<unknown, CLIInput<BaselineUpdateFlags>, unknown>({
       const { flags } = input;
       if (flags['dry-run']) {
         const result = { dryRun: true, operations: [{ type: 'create', resource: 'file', path: '.kb/qa/baseline.json' }] };
-        if (flags.json) return { ok: true, result: result };
+        if (flags.json) return result;
         else ctx.ui?.info?.('Dry-run: would run QA check and stats, then save .kb/qa/baseline.json.');
-        return { ok: true, result };
+        return result;
       }
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
@@ -50,14 +50,14 @@ export default defineCommand<unknown, CLIInput<BaselineUpdateFlags>, unknown>({
       const baseline = store.saveBaseline(check, stats, git);
 
       if (flags.json) {
-        return { ok: true, result: baseline };
+        return baseline;
       } else {
         for (const section of buildBaselineReport(baseline)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return { ok: true };
+      return {  };
     },
   },
 });

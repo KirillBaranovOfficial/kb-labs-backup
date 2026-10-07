@@ -5,7 +5,7 @@
  * grouped by plugin, with severity, codes, and remediation hints.
  */
 
-import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import {
   createRegistry,
@@ -18,9 +18,7 @@ type DiagnosticsFlags = {
   refresh: { type: 'boolean'; description?: string };
 };
 
-type DiagnosticsResult = CommandResult & {
-  data: DiagnosticReport & { status: 'healthy' | 'degraded' | 'unhealthy' };
-};
+type DiagnosticsResult = DiagnosticReport & { status: 'healthy' | 'degraded' | 'unhealthy' };
 
 export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, DiagnosticsResult>({
   name: 'diagnostics',
@@ -52,14 +50,14 @@ export const registryDiagnostics = defineSystemCommand<DiagnosticsFlags, Diagnos
     await registry.dispose();
 
     const status = report.summary.errors > 0 ? 'unhealthy' : report.summary.warnings > 0 ? 'degraded' : 'healthy';
-    return { ok: true, data: { ...report, status } };
+    return { ...report, status };
   },
   formatter(result, ctx, flags) {
-    const text = formatDiagnosticReport(result.data);
+    const text = formatDiagnosticReport(result);
     ctx.ui.info(text);
 
-    if (result.data.summary.errors > 0 || result.data.summary.warnings > 0) {
-      ctx.ui.warn(`${result.data.summary.warnings} warning(s) — no blockers`);
+    if (result.summary.errors > 0 || result.summary.warnings > 0) {
+      ctx.ui.warn(`${result.summary.warnings} warning(s) — no blockers`);
     } else {
       ctx.ui.success('Registry is healthy — no issues found');
     }

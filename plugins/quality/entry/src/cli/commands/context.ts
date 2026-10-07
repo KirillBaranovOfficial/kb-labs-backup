@@ -47,8 +47,7 @@ export default defineCommand<unknown, CLIInput<ContextFlags>, unknown>({
           const summary = Object.fromEntries(
             [...byLayer.entries()].map(([l, names]) => [LAYER_NAMES[l] ?? `layer-${l}`, names])
           );
-          return { ok: true, result: { totalPackages: packages.length, byLayer: summary } };
-          return { ok: true };
+          return { totalPackages: packages.length, byLayer: summary };
         }
 
         const sections = [...byLayer.entries()]
@@ -59,7 +58,7 @@ export default defineCommand<unknown, CLIInput<ContextFlags>, unknown>({
           }));
 
         ctx.ui?.success?.(`Workspace: ${packages.length} packages`, { sections });
-        return { ok: true };
+        return {  };
       }
 
       const pkg = packageMap.get(pkgName);
@@ -93,8 +92,7 @@ export default defineCommand<unknown, CLIInput<ContextFlags>, unknown>({
       };
 
       if (flags.json) {
-        return { ok: true, result: context };
-        return { ok: true };
+        return context;
       }
 
       ctx.ui?.success?.(`Context: ${pkgName}`, {
@@ -119,7 +117,7 @@ export default defineCommand<unknown, CLIInput<ContextFlags>, unknown>({
         ],
       });
 
-      return { ok: true };
+      return {  };
     },
   },
 });

@@ -47,14 +47,14 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
       };
 
       if (flags.json) {
-        return { ok: true, result: buildRunJsonReport(effective) };
+        return buildRunJsonReport(effective);
       } else {
         for (const section of buildRunReport(effective)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return raw.ok ? { ok: true, result: raw } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'QA run failed', hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' }, result: raw };
+      return raw.ok ? raw : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'QA run failed', hint: 'Review failed task output, then rerun `kb qa run`.', diagnostics: raw.results.filter((task) => !task.OK).map((task) => ({ code: 'KB_QA_TASK_FAILED', severity: 'error', path: task.Package, message: task.Error || task.Stderr || `Task ${task.Task} exited ${task.ExitCode}.` })) } };
     },
   },
 });

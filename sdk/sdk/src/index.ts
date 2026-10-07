@@ -39,7 +39,6 @@ export {
 
 // Canonical command result and retry contracts for plugin authors.
 export type {
-  CommandSuccess,
   CommandFailure,
   CommandError,
   ClassifiedFailure,

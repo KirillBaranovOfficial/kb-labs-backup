@@ -36,9 +36,7 @@ export default defineCommand({
 
       const changeId = flags['change-id'] ?? flags.changeId;
       if (!changeId) {
-        const err = { success: false, error: 'Missing required --change-id flag' };
-        return { ok: true, result: err };
-        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error, hint: 'Pass a change ID with `kb agents diff --change-id <id>`.' }, result: err };
+        return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'Missing required --change-id flag', hint: 'Pass a change ID with `kb agents diff --change-id <id>`.' } };
       }
 
       try {
@@ -64,9 +62,7 @@ export default defineCommand({
         }
 
         if (!snapshot) {
-          const err = { success: false, error: `Change not found: ${changeId}` };
-          return { ok: true, result: err };
-          return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: err.error, hint: 'Check the change ID, then rerun `kb agents diff --change-id <id>`.' }, result: err };
+          return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: `Change not found: ${changeId}`, hint: 'Check the change ID, then rerun `kb agents diff --change-id <id>`.' } };
         }
 
         // Calculate diff
@@ -83,20 +79,15 @@ export default defineCommand({
         };
 
         if (flags.json) {
-          return { ok: true, result: response };
+          return response;
         } else {
           printDiff(ctx, snapshot, diff);
         }
 
-        return { ok: true, result: response };
+        return response;
       } catch (err) {
         logger.error('agent:diff error:', err instanceof Error ? err : undefined);
-        const errResponse = {
-          success: false,
-          error: err instanceof Error ? err.message : String(err),
-        };
-        return { ok: true, result: errResponse };
-        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: errResponse.error, hint: 'Check the project files and rerun `kb agents diff --change-id <id>`.' }, result: errResponse };
+        return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: err instanceof Error ? err.message : String(err), hint: 'Check the project files and rerun `kb agents diff --change-id <id>`.' } };
       }
     },
   },

@@ -155,6 +155,6 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
     }
 
     if (!flags.json) ctx.ui.success('\n✅ All validations passed!\n');
-    return { ok: true, valid: true };
+    return {  valid: true };
   },
 });

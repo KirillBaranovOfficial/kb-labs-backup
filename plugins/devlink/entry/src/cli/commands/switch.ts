@@ -104,7 +104,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
 
       if (plan.items.length === 0 && !flags.install) {
         ctx.ui?.info?.('No changes needed — dependencies are already in the requested mode.');
-        return { ok: true, result: { mode, changed: 0 }, meta: { timing: tracker.total() } };
+        return { mode, changed: 0 };
       }
 
       // 4. Always create backup (even if no deps change — install cleans node_modules)
@@ -220,7 +220,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
       };
 
       if (outputJson) {
-        return { ok: true, result: { ...result, cleanedLocks, wsUpdates: wsUpdates.length, installedRepos, installErrors } };
+        return { ...result, cleanedLocks, wsUpdates: wsUpdates.length, installedRepos, installErrors };
       } else {
         const summaryItems = [
           `Mode: ${mode}`,
@@ -256,7 +256,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
         });
       }
 
-      return { ok: true, result, meta: { timing: tracker.total() } };
+      return result;
     },
   },
 });

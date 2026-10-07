@@ -49,7 +49,10 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
 
     if (!credentials) {
       const msg = 'Not authenticated. Run "kb auth login" first.';
-      throwSystemCommandError(msg, "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry.");
+      throw Object.assign(new Error(msg), {
+        code: 'KB_AUTH_REQUIRED',
+        hint: 'Run "kb auth login", then retry "kb webhook list".',
+      });
     }
 
     const qs = flags.plugin ? `?pluginId=${encodeURIComponent(flags.plugin)}` : '';
@@ -97,6 +100,6 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
       }
     }
 
-    return { ok: true, webhooks };
+    return {  webhooks };
   },
 });

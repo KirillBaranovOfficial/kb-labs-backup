@@ -35,7 +35,7 @@ export default defineCommand<unknown, CLIInput<QaCiEvidenceCaptureFlags>, unknow
         mkdirSync(dirname(output), { recursive: true });
         writeFileSync(output, `${JSON.stringify(dossier, null, 2)}\n`);
         if (input.flags.json) {
-          return { ok: true, result: dossier };
+          return dossier;
         } else {
           ctx.ui?.success?.(`Captured CI evidence for run ${dossier.run.id}`, {
             sections: [
@@ -48,7 +48,7 @@ export default defineCommand<unknown, CLIInput<QaCiEvidenceCaptureFlags>, unknow
             ],
           });
         }
-        return { ok: true };
+        return {  };
       } catch (error) {
 
         return { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: error instanceof Error ? error.message : String(error), hint: 'Run `kb qa --help` to review the command inputs, then rerun the command.' } };

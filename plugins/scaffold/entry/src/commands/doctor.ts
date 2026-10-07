@@ -44,8 +44,20 @@ export default defineCommand({
 
       if (input.json) {
         return hasErrors
-          ? { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${errorCount} error(s) found`, hint: 'Inspect the error findings in the result and fix the affected plugin manifests, then rerun `kb scaffold doctor`.' }, result }
-          : { ok: true, result };
+          ? {
+              ok: false,
+              error: {
+                code: 'KB_RUNTIME_COMMAND_FAILED',
+                message: `${errorCount} error(s) found`,
+                hint: 'Inspect error.diagnostics and fix the affected plugin manifests, then rerun `kb scaffold doctor`.',
+                diagnostics: scan.findings.filter((finding) => finding.severity !== 'info').map((finding) => ({
+                  code: 'KB_SCAFFOLD_DOCTOR_FINDING',
+                  severity: finding.severity === 'warn' ? 'warning' : 'error',
+                  message: `${finding.package}: ${finding.message}`,
+                })),
+              },
+            }
+          : result;
       } else if (scan.findings.length === 0) {
         ctx.ui?.success?.(`Scanned ${scan.packagesScanned} package(s) — no issues found.`, {
           title: 'scaffold doctor',
@@ -66,9 +78,7 @@ export default defineCommand({
           items: findings.map((f) => `${f.severity.toUpperCase()}  ${f.message}`),
         }));
 
-        if (hasErrors) {
-
-        } else {
+        if (!hasErrors) {
           ctx.ui?.warn?.(`Found ${warnCount} warning(s) in ${scan.packagesScanned} package(s).`, {
             title: 'scaffold doctor',
             sections,
@@ -76,14 +86,21 @@ export default defineCommand({
         }
       }
 
-      return hasErrors ? {
-        ok: false,
-        error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: `${errorCount} error(s) found`, hint: 'Inspect the error findings above and fix the affected plugin manifests, then rerun `kb scaffold doctor`.' },
-        result,
-      } : {
-        ok: true,
-        result,
-      };
+      return hasErrors
+        ? {
+            ok: false,
+            error: {
+              code: 'KB_RUNTIME_COMMAND_FAILED',
+              message: `${errorCount} error(s) found`,
+              hint: 'Inspect error.diagnostics above and fix the affected plugin manifests, then rerun `kb scaffold doctor`.',
+              diagnostics: scan.findings.filter((finding) => finding.severity !== 'info').map((finding) => ({
+                code: 'KB_SCAFFOLD_DOCTOR_FINDING',
+                severity: finding.severity === 'warn' ? 'warning' : 'error',
+                message: `${finding.package}: ${finding.message}`,
+              })),
+            },
+          }
+        : result;
     },
   },
 });

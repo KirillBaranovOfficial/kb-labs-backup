@@ -60,7 +60,7 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
         if (!json) {
           ctx.ui?.info(`Dry run: would unregister ${project.name} (${project.id}); no files are deleted.`);
         }
-        return { ok: true, dryRun: true, project };
+        return {  dryRun: true, project };
       }
 
       const blocked = confirmDestructive(ctx, {
@@ -88,7 +88,7 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
       if (!json) {
         ctx.ui?.success(`Unregistered ${removed.name} (${removed.id}); files were not touched.`);
       }
-      return { ok: true, project: removed };
+      return {  project: removed };
     } catch (error) {
       if (error instanceof Error && 'code' in error && 'hint' in error) {
         throw error;

@@ -54,7 +54,7 @@ export default defineCommand({
       }
 
       if (input.json) {
-        return { ok: true, result: output };
+        return output;
       } else if (!result.success) {
         // Show error details
 
@@ -73,13 +73,7 @@ export default defineCommand({
         });
       }
 
-      return result.success ? {
-        ok: true,
-        result: output,
-        meta: {
-          timing: Date.now() - startTime,
-        },
-      } : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit push failed', hint: 'Run `kb commit --help` to review the command inputs, then rerun the command.' }, result: output };
+      return result.success ? output : { ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Commit push failed', hint: 'Review the push output, then rerun `kb commit push`.' } };
     },
   },
 });

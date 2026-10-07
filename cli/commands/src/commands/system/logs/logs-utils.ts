@@ -5,6 +5,7 @@
  */
 
 import type { LogRecord, ILogReader } from "@kb-labs/core-platform";
+import { throwSystemCataloguedFailure } from '@kb-labs/shared-command-kit';
 
 // ─── Relative Time Parsing ──────────────────────────────────────────────────
 
@@ -47,8 +48,10 @@ export function parseRelativeTime(input: string): number {
     return date.getTime();
   }
 
-  throw new Error(
+  throwSystemCataloguedFailure(
+    'KB_RUNTIME_INPUT_INVALID',
     `Invalid time format: "${input}". Use relative (1h, 30m, 2d) or ISO date.`,
+    'Use `--since 1h`, `--since 30m`, `--since 2d`, or an ISO date, then retry the logs command.',
   );
 }
 

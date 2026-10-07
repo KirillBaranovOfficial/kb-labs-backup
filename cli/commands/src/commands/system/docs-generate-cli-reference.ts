@@ -161,8 +161,7 @@ export const docsGenerateCliReference = defineSystemCommand<GenerateCliReference
     ];
 
     return {
-      ok: true,
-      status: 'success',
+
       message,
       sections,
       json: {

@@ -63,7 +63,7 @@ export const logsDiagnose = defineSystemCommand<Flags, DiagnoseResult>({
     const diagnostics = computeLogStats(result.logs);
 
     return {
-      ok: true as const,
+
       data: {
         status: diagnostics.errors > 0 ? 'unhealthy' as const : diagnostics.warnings > 0 ? 'degraded' as const : 'healthy' as const,
         period: {

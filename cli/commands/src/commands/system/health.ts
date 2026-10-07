@@ -3,7 +3,6 @@ import { generateExamples } from '../../utils/generate-examples';
 import {
   defineSystemCommand,
   throwSystemCommandError,
-  type SuccessResult,
 } from '@kb-labs/shared-command-kit';
 
 type HealthFlags = {
@@ -17,11 +16,7 @@ type HealthSnapshot = {
   uptimeSec: number;
 };
 
-type HealthSuccess = SuccessResult<{
-  healthStatus: 'healthy' | 'degraded' | 'unhealthy';
-  data: HealthSnapshot;
-}>;
-type HealthResult = HealthSuccess;
+type HealthResult = HealthSnapshot;
 
 export const health = defineSystemCommand<HealthFlags, HealthResult>({
   name: 'health',
@@ -60,12 +55,7 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
 
       ctx.platform?.logger?.info('Health check completed', { status: snapshot.status });
 
-      return {
-        ok: true,
-        status: snapshot.status === 'healthy' ? 'success' as const : 'warning' as const,
-        healthStatus: (snapshot.status as HealthResult['healthStatus']) || 'unhealthy',
-        data: snapshot as HealthSnapshot,
-      };
+      return snapshot as HealthSnapshot;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throwSystemCommandError(message, "Run `kb info health --help` to review valid inputs and recovery steps, then retry.");
@@ -75,7 +65,7 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
   },
   // eslint-disable-next-line sonarjs/cognitive-complexity -- Complex health status formatting with nested conditions for different health states
   formatter(result, ctx) {
-    const snapshot = result.data;
+    const snapshot = result;
     const gitInfo = snapshot.version.git
       ? `${snapshot.version.git.sha}${snapshot.version.git.dirty ? ' (dirty)' : ''}`
       : 'n/a';
@@ -84,7 +74,7 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
       {
         header: 'Status',
         items: [
-          `Status: ${result.healthStatus}`,
+          `Status: ${result.status}`,
           `KB Labs: ${snapshot.version.kbLabs}`,
           `CLI: ${ctx.hostContext?.host === 'cli' ? ctx.hostContext.cliVersion : process.env.CLI_VERSION ?? '0.0.0'}`,
           `REST: ${snapshot.version.rest}`,
@@ -108,7 +98,7 @@ export const health = defineSystemCommand<HealthFlags, HealthResult>({
       },
     ];
 
-    if (result.healthStatus === 'healthy') {
+    if (result.status === 'healthy') {
       ctx.ui.success('System Health', { sections });
     } else {
       ctx.ui.warn('System Health', { sections });

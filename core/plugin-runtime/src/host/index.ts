@@ -9,7 +9,7 @@
  */
 
 // CLI Host
-export { wrapCliResult } from './cli-wrapper.js';
+export { isHandlerSuccessEnvelope, wrapCliResult } from './cli-wrapper.js';
 export { normalizeJsonResult } from './json-result.js';
 
 // REST Host

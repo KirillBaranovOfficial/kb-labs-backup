@@ -142,7 +142,7 @@ export default defineCommand({
 
       // V3: Flags are auto-merged by bootstrap.ts, just use directly
       if (flags.json) {
-        return { ok: true, result: output };
+        return output;
       } else {
         // Build commits section
         const commitsItems = plan.commits.map((commit) => {
@@ -220,13 +220,7 @@ export default defineCommand({
         });
       }
 
-      return {
-        ok: true,
-        result: output,
-        meta: {
-          timing: Date.now() - startTime,
-        },
-      };
+      return output;
     },
   },
 });

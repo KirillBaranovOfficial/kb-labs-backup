@@ -29,14 +29,14 @@ export default defineCommand<unknown, CLIInput<QaTrendsFlags>, unknown>({
       const analysis = analyzeTrends(history, window);
 
       if (flags.json) {
-        return { ok: true, result: analysis };
+        return analysis;
       } else {
         for (const section of buildTrendsReport(analysis)) {
           ctx.ui?.success?.(`${section.header}`, { sections: [{ items: section.lines }] });
         }
       }
 
-      return { ok: true };
+      return {  };
     },
   },
 });

@@ -23,7 +23,7 @@ import {
 } from '@kb-labs/core-config';
 import { loadPlatformConfig, PlatformUserConfigSchema } from '@kb-labs/core-runtime';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
-import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCataloguedFailure, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { promises as fsp } from 'node:fs';
 
@@ -129,7 +129,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
         try {
           text = await fsp.readFile(file, 'utf8');
         } catch {
-          return { ok: true, key, scope, found: false, source: file };
+          return {  key, scope, found: false, source: file };
         }
         let document: unknown;
         try {
@@ -141,7 +141,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
         }
         const hit = valueAtPath(document, segments);
         return {
-          ok: true,
+
           key,
           scope,
           found: hit.found,
@@ -152,7 +152,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       }
 
       if (!roots.projectId) {
-        throw new Error('Effective config requires a registered project.');
+        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.projectRoot}" and retry "kb config get".`, { path: roots.projectRoot });
       }
 
       const runtimeConfig = await loadPlatformConfig({
@@ -170,7 +170,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       const merged = mergeOverlay(platform?.data ?? {}, projectSettings) as Record<string, unknown>;
       const hit = valueAtPath(merged, segments);
       if (!hit.found) {
-        return { ok: true, key, scope: 'effective', found: false, value: null };
+        return {  key, scope: 'effective', found: false, value: null };
       }
       const projectFile = projectSettingsPath({ projectId: roots.projectId });
       const projectHit = valueAtPath(projectSettings, segments);
@@ -185,7 +185,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
         : platformLayers;
       const origin = provenanceFor(buildProvenance(layers, merged), segments);
       return {
-        ok: true,
+
         key,
         scope: 'effective',
         found: true,
