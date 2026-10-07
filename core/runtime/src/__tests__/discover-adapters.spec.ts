@@ -330,7 +330,14 @@ async function writeLock(root: string, installed: Record<string, unknown>): Prom
   const adapters: Record<string, unknown> = {};
   for (const [id, raw] of Object.entries(installed)) {
     const entry = raw as { primaryKind?: string; version: string; integrity: string; resolvedPath: string; enabled?: boolean };
-    const serialized = { version: entry.version, integrity: entry.integrity, resolvedPath: entry.resolvedPath, enabled: entry.enabled ?? true, source: 'platform' };
+    const serialized = {
+      version: entry.version,
+      integrity: entry.integrity,
+      ...(entry.primaryKind === 'adapter' ? {} : { package: id }),
+      resolvedPath: entry.resolvedPath,
+      enabled: entry.enabled ?? true,
+      source: 'platform',
+    };
     (entry.primaryKind === 'adapter' ? adapters : plugins)[id] = serialized;
   }
   await fs.writeFile(

@@ -102,7 +102,7 @@ describe('marketplace-lock v3', () => {
   it('rejects machine-specific paths in project pins', async () => {
     await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
     await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
-      schema: 'kb.marketplace/3', plugins: { demo: { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'marketplace', resolvedPath: '/machine/store/demo' } },
+      schema: 'kb.marketplace/3', plugins: { demo: { version: '1.0.0', integrity: 'sha512-x', package: 'demo-entry', enabled: true, source: 'marketplace', resolvedPath: '/machine/store/demo' } },
     }));
     const diag = new DiagnosticCollector();
     expect(await readMarketplaceLock(tmpDir, diag)).toBeNull();
@@ -135,6 +135,23 @@ describe('marketplace-lock v3', () => {
       code: 'LOCK_SCHEMA_INVALID',
       remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.',
     });
+  });
+
+  // case: S-179.15
+  it('rejects an invalid lock before writing and identifies the plugin missing its package', async () => {
+    const invalidLock = JSON.parse(JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: { '@kb-labs/commit': { version: '1.0.0', integrity: 'sha512-x', enabled: true, source: 'marketplace' } },
+    }));
+
+    await expect(writeMarketplaceLock(tmpDir, invalidLock)).rejects.toMatchObject({
+      name: 'MarketplaceLockValidationError',
+      code: 'LOCK_SCHEMA_INVALID',
+      pluginId: '@kb-labs/commit',
+      remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.',
+      message: expect.stringContaining('@kb-labs/commit'),
+    });
+    await expect(fs.access(path.join(tmpDir, '.kb'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('mutates pins without changing a disabled entry and removes pins', async () => {

@@ -241,6 +241,7 @@ describe('EntityRegistry', () => {
     const lock = createEmptyLock();
     lock.plugins['@kb-labs/missing'] = createMarketplaceEntry({
       version: '1.0.0', integrity: 'sha256-x',
+      package: '@kb-labs/missing',
       resolvedPath: './nonexistent',
       source: 'platform', primaryKind: 'plugin',
       provides: ['plugin'],

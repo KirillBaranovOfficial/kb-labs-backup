@@ -90,14 +90,20 @@ async function registerPlugin(
   provides: string[],
   source: 'marketplace' | 'local' = 'local',
 ) {
-  const entry = createMarketplaceEntry({
+  const entryOptions = {
     version: '1.0.0',
     integrity,
     resolvedPath: path.relative(root, pluginDir),
-    source,
     primaryKind: (provides[0] ?? 'plugin') as any,
     provides: provides as any,
-  });
+  };
+  const entry = source === 'local'
+    ? createMarketplaceEntry({ ...entryOptions, source: 'local' })
+    : createMarketplaceEntry({
+      ...entryOptions,
+      source: 'marketplace',
+      package: JSON.parse(await fs.readFile(path.join(pluginDir, 'package.json'), 'utf8')).name,
+    });
   await addToMarketplaceLock(root, id, entry);
 }
 
@@ -243,6 +249,7 @@ describe('Registry Integration', () => {
     lock.plugins['@kb-labs/ghost'] = createMarketplaceEntry({
       version: '1.0.0',
       integrity: 'sha256-fake',
+      package: '@kb-labs/ghost',
       resolvedPath: './nonexistent',
       source: 'platform',
       primaryKind: 'plugin',

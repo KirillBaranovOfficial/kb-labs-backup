@@ -9,7 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
-import type { PackageSource, InstalledPackage, ResolvedPackage } from '@kb-labs/marketplace-contracts';
+import type { PackageSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
 import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
 import { MarketplaceService, mergeScopedEntries } from '../marketplace-service.js';
@@ -820,13 +820,13 @@ describe('MarketplaceService', () => {
 // mergeScopedEntries — project wins over platform
 // ---------------------------------------------------------------------------
 
-function makeEntry(id: string, version: string): { id: string; version: string; resolvedPath: string; installedAt: string; source: 'marketplace'; primaryKind: 'plugin'; provides: string[]; integrity: string } {
+function makeEntry(id: string, version: string): MarketplaceEntryWithId {
   return {
     id,
     version,
     resolvedPath: `./node_modules/${id}`,
-    installedAt: new Date().toISOString(),
     source: 'marketplace',
+    package: id,
     primaryKind: 'plugin',
     provides: ['plugin'],
     integrity: 'sha256-test',

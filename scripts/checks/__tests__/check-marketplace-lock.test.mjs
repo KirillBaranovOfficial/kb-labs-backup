@@ -41,7 +41,18 @@ test('rejects a v3 marketplace pin without its package name', async () => {
   });
   try {
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /expected version, integrity, package, enabled, source/);
+    assert.match(result.stderr, /must record its npm package name/);
+  } finally { await rm(result.root, { recursive: true, force: true }); }
+});
+
+test('rejects a v3 platform pin without its package name', async () => {
+  const result = await runCheck({
+    schema: 'kb.marketplace/3',
+    plugins: { '@kb-labs/commit': { version: '1.2.3', integrity: 'sha512-abc', enabled: true, source: 'platform' } },
+  });
+  try {
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /must record its npm package name/);
   } finally { await rm(result.root, { recursive: true, force: true }); }
 });
 
@@ -56,7 +67,7 @@ test('reports a v2 lock with the regeneration command', async () => {
 test('rejects a machine path in a project pin', async () => {
   const result = await runCheck({
     schema: 'kb.marketplace/3',
-    plugins: { demo: { version: '1.0.0', integrity: 'sha512-abc', enabled: true, source: 'marketplace', resolvedPath: '/machine/store/demo' } },
+    plugins: { demo: { version: '1.0.0', integrity: 'sha512-abc', package: 'demo-entry', enabled: true, source: 'marketplace', resolvedPath: '/machine/store/demo' } },
   });
   try {
     assert.equal(result.status, 1);
