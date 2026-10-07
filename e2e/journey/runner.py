@@ -20,7 +20,8 @@ from studio_steps import (create_studio_access_tokens, create_studio_environment
 from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from platform_channel_steps import run_platform_channel_steps
-from installer_case_steps import run_doctor_root_isolation_step, run_installer_case_steps, run_uninstall_decline_step
+from installer_case_steps import (assert_default_service_ports_free, run_doctor_root_isolation_step,
+                                  run_installer_case_steps, run_uninstall_decline_step)
 from journey_resources import case_catalog_root, journey_module
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import FlowGraph, Journey, record_candidate_provenance, record_runner_failure
@@ -1223,6 +1224,7 @@ def main():
                 platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command,
             )
         finally:
+            assert_default_service_ports_free(PLATFORM, installer_command)
             started, _ = run([launcher, "start", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=180)
             if started.returncode != 0:
                 raise RuntimeError(f"could not restart the main host after isolated installer fixtures: {started.stderr or started.stdout}")

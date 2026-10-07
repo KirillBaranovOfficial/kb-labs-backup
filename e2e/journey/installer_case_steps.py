@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 from platform_update_steps import _json_command
 from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result)
@@ -183,24 +184,66 @@ def run_analytics_invalid_retention_step(*, mode: str, launcher: str, platform_r
         options.setdefault("analytics", {})["retentionDays"] = 0
         config_path.write_text(json.dumps(config, indent=2) + "\n")
 
-        result = run_command([launcher, "start", "--platform-root", str(platform_root), "--json"])
-        envelope, error = _diagnostic(result, "invalid analytics retention")
-        detail = json.dumps(error, sort_keys=True)
-        expected_hint = (
-            "kb config set --scope platform "
-            "platform.adapterOptions.analytics.retentionDays 90"
-        )
-        if (result.returncode != 1 or envelope.get("ok") is not False
-                or error.get("code") != "KB_CONFIG_INVALID"
-                or "platform.adapterOptions.analytics.retentionDays" not in detail
-                or "positive integer" not in detail
-                or expected_hint not in str(error.get("hint", ""))
-                or error.get("code") == "KB_RUNTIME_UNEXPECTED"):
-            raise RuntimeError(f"invalid analytics retention did not return its catalogued config error: {error}")
+        try:
+            result = run_command([launcher, "start", "--platform-root", str(platform_root), "--json"])
+            envelope, error = _diagnostic(result, "invalid analytics retention")
+            detail = json.dumps(error, sort_keys=True)
+            expected_hint = (
+                "kb config set --scope platform "
+                "platform.adapterOptions.analytics.retentionDays 90"
+            )
+            if (result.returncode != 1 or envelope.get("ok") is not False
+                    or error.get("code") != "KB_CONFIG_INVALID"
+                    or "platform.adapterOptions.analytics.retentionDays" not in detail
+                    or "positive integer" not in detail
+                    or expected_hint not in str(error.get("hint", ""))
+                    or error.get("code") == "KB_RUNTIME_UNEXPECTED"):
+                raise RuntimeError(f"invalid analytics retention did not return its catalogued config error: {error}")
+        finally:
+            stopped = run_command([launcher, "stop", "--platform-root", str(platform_root), "--json"])
+            if stopped.returncode != 0:
+                raise RuntimeError(
+                    "could not stop the invalid-retention fixture host: "
+                    f"{' '.join((stopped.stderr or stopped.stdout).split())[-500:]}"
+                )
 
     journey.step("reject invalid SQLite retention during installed host startup", "platform.install",
                  invalid_retention, cases=["S-191.7"])
     return journey
+
+
+def assert_default_service_ports_free(platform_root: Path, run_command: CommandRunner) -> None:
+    """Name any listener left on the installed plan's ports before main restart."""
+    receipt_path = platform_root / ".kb/v2/receipt.json"
+    try:
+        receipt = json.loads(receipt_path.read_text())
+        plan = receipt["plan"]
+        ports: dict[int, str] = {}
+        host = plan.get("host")
+        if isinstance(host, dict) and isinstance(host.get("healthUrl"), str):
+            port = urlsplit(host["healthUrl"]).port
+            if port is not None:
+                ports[port] = "host"
+        graph = plan.get("serviceGraph", {})
+        for service in graph.get("services", []):
+            if isinstance(service, dict) and isinstance(service.get("port"), int) and service["port"] > 0:
+                ports[service["port"]] = str(service.get("id") or "service")
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        raise RuntimeError(f"cannot verify default ports without the main platform receipt: {error}") from error
+
+    owners = []
+    for port, purpose in sorted(ports.items()):
+        args = ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp", "-Fc"]
+        result = run_command(args)
+        if result.returncode == 1:
+            continue
+        if result.returncode != 0:
+            raise RuntimeError(f"could not inspect listener ownership for default port {port}: {result.stderr.strip()}")
+        pid = next((line[1:] for line in result.stdout.splitlines() if line.startswith("p")), "unknown")
+        command = next((line[1:] for line in result.stdout.splitlines() if line.startswith("c")), "unknown")
+        owners.append(f"port {port} ({purpose}) is owned by pid {pid} ({command})")
+    if owners:
+        raise RuntimeError("installer fixture left default service listener(s): " + "; ".join(owners))
 
 
 def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
