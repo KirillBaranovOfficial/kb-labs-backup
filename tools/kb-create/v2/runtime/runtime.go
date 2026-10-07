@@ -5,6 +5,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,6 +81,16 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	if deps.Artifacts == nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("apply resolved plan: artifact installer is required")
 	}
+	installationID, err := installationID(plan.Request.PlatformRoot, deps.Secrets)
+	if err != nil {
+		return contracts.InstallReceipt{}, err
+	}
+	if plan.Host != nil {
+		if plan.Host.Env == nil {
+			plan.Host.Env = map[string]string{}
+		}
+		plan.Host.Env["KB_INSTALLATION_ID"] = installationID
+	}
 	if err := verifySecrets(plan, deps.Secrets); err != nil {
 		return contracts.InstallReceipt{}, err
 	}
@@ -133,11 +145,62 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		return contracts.InstallReceipt{}, fmt.Errorf("verify installation: %w", err)
 	}
 	emit("Verify installation", false)
-	result := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: receiptID(plan.PlanHash, now), CreatedAt: now, CorrelationID: deps.CorrelationID, Plan: plan, Verification: check}
+	result := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: receiptID(plan.PlanHash, now), InstallationID: installationID, CreatedAt: now, CorrelationID: deps.CorrelationID, Plan: plan, Verification: check}
 	if err := receipt.Write(plan.Request.PlatformRoot, result); err != nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("commit verified receipt: %w", err)
 	}
 	return result, nil
+}
+
+func installationID(platformRoot string, store *secrets.Store) (string, error) {
+	active, err := receipt.Read(platformRoot)
+	if err == nil {
+		if active.InstallationID == "" {
+			return "", contracts.NewDiag(contracts.CodeReceiptUnavailable,
+				"The active install receipt has no installation ID.",
+				fmt.Sprintf("Run `kb-create update --platform-root %q` or reinstall the platform, then retry.", platformRoot), nil)
+		}
+		if store != nil {
+			stored, present, err := store.Get("installation.id")
+			if err != nil {
+				return "", fmt.Errorf("read persistent installation identity: %w", err)
+			}
+			if present && stored != active.InstallationID {
+				return "", contracts.NewDiag(contracts.CodeReceiptUnavailable,
+					"The active receipt and persistent installation ID do not match.",
+					fmt.Sprintf("Run `kb-create update --platform-root %q` or reinstall the platform, then retry.", platformRoot), nil)
+			}
+			if !present {
+				if err := store.Put("installation.id", active.InstallationID); err != nil {
+					return "", fmt.Errorf("persist active installation identity: %w", err)
+				}
+			}
+		}
+		return active.InstallationID, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("read active installation identity: %w", err)
+	}
+	if store != nil {
+		stored, present, err := store.Get("installation.id")
+		if err != nil {
+			return "", fmt.Errorf("read persistent installation identity: %w", err)
+		}
+		if present {
+			return stored, nil
+		}
+	}
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", fmt.Errorf("generate installation identity: %w", err)
+	}
+	identity := hex.EncodeToString(random[:])
+	if store != nil {
+		if err := store.Put("installation.id", identity); err != nil {
+			return "", fmt.Errorf("persist installation identity: %w", err)
+		}
+	}
+	return identity, nil
 }
 
 func verifySecrets(plan contracts.ResolvedInstallPlan, store *secrets.Store) error {

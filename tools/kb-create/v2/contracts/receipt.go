@@ -89,13 +89,14 @@ type Verification struct {
 // InstallReceipt is written only after the renderer and verifier succeed.
 // It is the authoritative input for update, doctor and rollback.
 type InstallReceipt struct {
-	Schema        string              `json:"schema"`
-	ID            string              `json:"id"`
-	CreatedAt     time.Time           `json:"createdAt"`
-	CorrelationID string              `json:"correlationId"`
-	Plan          ResolvedInstallPlan `json:"plan"`
-	Verification  Verification        `json:"verification"`
-	SnapshotID    string              `json:"snapshotId,omitempty"`
+	Schema         string              `json:"schema"`
+	ID             string              `json:"id"`
+	InstallationID string              `json:"installationId"`
+	CreatedAt      time.Time           `json:"createdAt"`
+	CorrelationID  string              `json:"correlationId"`
+	Plan           ResolvedInstallPlan `json:"plan"`
+	Verification   Verification        `json:"verification"`
+	SnapshotID     string              `json:"snapshotId,omitempty"`
 }
 
 type Snapshot struct {

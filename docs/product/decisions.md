@@ -371,6 +371,15 @@ non-secret installation ID. A mismatch reports the local platform root and
 both installation IDs, never a remote filesystem path. Client roots continue
 to use their saved session Gateway URL.
 
+The installation ID is generated once for a platform root, persisted as
+`installation.id` alongside launcher secrets, and recorded as `installationId`
+in every V2 receipt. Update, rollback, and restart preserve it;
+the kb-create host launcher passes it to the Gateway as
+`KB_INSTALLATION_ID`. An installed Gateway without a matching launcher identity
+does not start. A receipt without this field is unavailable and must be updated
+or reinstalled; the transaction-specific receipt `id` is not a platform
+identity.
+
 Saved user sessions and machine credentials may be used only with the Gateway
 origin that issued them. If the selected Gateway origin differs, CLI API
 calls do not send or refresh those credentials and return `KB_AUTH_REQUIRED`
