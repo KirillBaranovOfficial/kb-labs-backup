@@ -5,9 +5,10 @@
  * The secret is shown only here — it cannot be recovered after this call.
  */
 
-import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
-import { CredentialsManager } from '@kb-labs/cli-runtime/gateway';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { gatewayApiFetch, readGatewaySuccessData, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { getContextCwd } from '@kb-labs/shared-cli-ui';
+import { ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 type ProvisionFlags = {
   plugin: { type: 'string'; description: string };
@@ -55,31 +56,24 @@ export const webhookProvision = defineSystemCommand<ProvisionFlags, ProvisionRes
       throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
     }
 
-    const credentialsManager = new CredentialsManager();
-    const credentials = await credentialsManager.load();
-
-    if (!credentials) {
-      const msg = 'Not authenticated. Run "kb auth login" first.';
-      throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
-    }
-
-    const url = `${credentials.gatewayUrl}/api/v1/webhooks/provision`;
+    const target = await resolveActiveGateway({ cwd: getContextCwd(ctx), env: process.env });
+    const url = `${target.gatewayUrl}/api/v1/webhooks/provision`;
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await gatewayApiFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${credentials.accessToken}`,
         },
         body: JSON.stringify({
           pluginId,
           event,
           ...(flags.instance ? { instanceId: flags.instance } : {}),
         }),
-      });
+      }, target, 'machine');
     } catch (err) {
-      const msg = `Cannot reach Gateway at ${credentials.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
+      if (err instanceof ErrorEnvelopeError) { throwSystemCataloguedError(err.envelope); }
+      const msg = `Cannot reach Gateway at ${target.gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
       throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
     }
 

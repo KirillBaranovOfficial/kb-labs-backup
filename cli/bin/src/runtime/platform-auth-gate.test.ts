@@ -27,7 +27,7 @@ describe('platform authentication gate', () => {
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
       message: 'Authentication is required.',
-      hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+      hint: 'Run "kb auth login --gateway-url http://127.0.0.1:4000 --email <email>" and enter your password when prompted.',
     } });
     expect(handler).not.toHaveBeenCalled();
   });
@@ -86,7 +86,7 @@ describe('platform authentication gate', () => {
     }, async () => 0);
     expect(result).toMatchObject({ error: {
       code: 'KB_AUTH_REQUIRED',
-      hint: 'Run "kb auth login --gateway-url https://gateway.example.test --email <email>" and enter your password at the prompt, or provide it with --password-stdin.',
+      hint: 'Run "kb auth login --gateway-url https://gateway.example.test --email <email>" and enter your password when prompted.',
     } });
   });
 

@@ -16,4 +16,7 @@ export { HostAgentTransport } from './host-agent-transport.js';
 export { resolveTransport } from './transport-resolver.js';
 export { hasUsablePlatformAuth } from './platform-auth.js';
 export { GatewayApiError, gatewayApiFetch } from './api-client.js';
+export type { GatewayRequestTarget, GatewayCredentialKind } from './api-client.js';
+export { resolveActiveGateway } from './active-gateway.js';
+export type { ResolveActiveGatewayOptions } from './active-gateway.js';
 export { readGatewaySuccessData } from './result.js';

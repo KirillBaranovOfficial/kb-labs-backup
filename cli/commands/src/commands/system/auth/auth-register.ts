@@ -17,9 +17,10 @@
  * GATEWAY_BOOTSTRAP_ADMIN_PASSWORD).
  */
 
-import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { CredentialsManager, readGatewaySuccessData, SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 type RegisterFlags = {
   'gateway-url': { type: 'string'; description: string };
@@ -39,49 +40,6 @@ function fail(_ctx: PluginContextV3, _json: boolean | undefined, msg: string): R
   throwSystemCommandError(msg, "Run `kb auth register --help` to review valid inputs and recovery steps, then retry.");
 }
 
-/**
- * Resolves the Bearer token to call /auth/register with: a stored human
- * session first (it's the identity that actually carries MACHINE_REGISTER),
- * falling back to stored machine credentials when no session exists.
- * Refreshes either store proactively if its token is expired.
- */
-async function resolveBearerToken(
-  ctx: PluginContextV3,
-  json: boolean | undefined,
-): Promise<{ token: string } | { error: RegisterResult }> {
-  const sessionManager = new SessionManager();
-  const session = await sessionManager.load();
-  if (session) {
-    if (!sessionManager.isExpired(session)) {
-      return { token: session.accessToken };
-    }
-    try {
-      const refreshed = await sessionManager.refresh(session);
-      return { token: refreshed.accessToken };
-    } catch (err) {
-      const msg = `Stored session expired and refresh failed: ${err instanceof Error ? err.message : String(err)}. Run "kb auth login --email/--password" again.`;
-      return { error: fail(ctx, json, msg) };
-    }
-  }
-
-  const credentialsManager = new CredentialsManager();
-  const credentials = await credentialsManager.load();
-  if (!credentials) {
-    const msg = 'Not authenticated. Run "kb auth login" first — /auth/register requires an authenticated admin (MACHINE_REGISTER permission), it is not self-service.';
-    return { error: fail(ctx, json, msg) };
-  }
-  if (!credentialsManager.isExpired(credentials)) {
-    return { token: credentials.accessToken };
-  }
-  try {
-    const refreshed = await credentialsManager.refresh(credentials);
-    return { token: refreshed.accessToken };
-  } catch (err) {
-    const msg = `Stored credentials expired and refresh failed: ${err instanceof Error ? err.message : String(err)}. Run "kb auth login" again.`;
-    return { error: fail(ctx, json, msg) };
-  }
-}
-
 export const authRegister = defineSystemCommand<RegisterFlags, RegisterResult>({
   name: 'register',
   scope: 'platform',
@@ -92,8 +50,8 @@ export const authRegister = defineSystemCommand<RegisterFlags, RegisterResult>({
     'Use these credentials with "kb auth login" to authenticate.',
   category: 'auth',
   examples: [
-    'kb auth register --gateway-url http://localhost:4000 --name my-cli --namespace-id default',
-    'kb auth register --gateway-url http://localhost:4000 --name ci-agent --namespace-id default --json',
+    'kb auth register --gateway-url <gateway-url> --name my-cli --namespace-id default',
+    'kb auth register --gateway-url <gateway-url> --name ci-agent --namespace-id default --json',
   ],
   flags: {
     'gateway-url': { type: 'string', description: 'Gateway server URL' },
@@ -110,29 +68,20 @@ export const authRegister = defineSystemCommand<RegisterFlags, RegisterResult>({
       return fail(ctx, flags.json, 'All flags required: --gateway-url, --name, --namespace-id');
     }
 
-    const resolved = await resolveBearerToken(ctx, flags.json);
-    if ('error' in resolved) {
-      return resolved.error;
-    }
-    const accessToken = resolved.token;
-
     let response: Response;
     try {
-      response = await fetch(`${gatewayUrl}/auth/register`, {
+      response = await gatewayApiFetch(`${gatewayUrl}/auth/register`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, namespaceId }),
-      });
+      }, { gatewayUrl });
     } catch (err) {
+      if (err instanceof ErrorEnvelopeError) { throwSystemCataloguedError(err.envelope); }
       return fail(ctx, flags.json, `Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      let msg = `Registration failed (HTTP ${response.status}): ${body}`;
+      let msg = `Registration failed (HTTP ${response.status}). Retry kb auth register --gateway-url <gateway-url> --name <name> --namespace-id <id>.`;
       if (response.status === 401 || response.status === 403) {
         msg += '\n/auth/register requires an authenticated admin (MACHINE_REGISTER permission) — ' +
           'it is not self-service. Log in as the bootstrap admin first.';

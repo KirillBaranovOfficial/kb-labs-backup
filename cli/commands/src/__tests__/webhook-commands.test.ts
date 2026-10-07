@@ -18,15 +18,18 @@ const CREDS = {
   expiresAt: Date.now() + 900_000,
 };
 
-const mockLoad = vi.fn();
+const { mockLoad, mockFetch, gatewayApiFetch, resolveActiveGateway } = vi.hoisted(() => ({
+  mockLoad: vi.fn(), mockFetch: vi.fn(), gatewayApiFetch: vi.fn(), resolveActiveGateway: vi.fn(),
+}));
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
   CredentialsManager: class {
     load = mockLoad;
   },
   readGatewaySuccessData: async (response: Response) => (await response.json() as { data: unknown }).data,
+  gatewayApiFetch,
+  resolveActiveGateway,
 }));
 
-const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 import { webhookProvision } from '../commands/system/webhook/webhook-provision.js';
@@ -89,6 +92,14 @@ function makeCtx(captured: Captured): PluginContextV3 {
 beforeEach(() => {
   vi.clearAllMocks();
   mockLoad.mockResolvedValue(CREDS);
+  resolveActiveGateway.mockResolvedValue({ gatewayUrl: CREDS.gatewayUrl });
+  gatewayApiFetch.mockImplementation(async (url: string, init: RequestInit = {}) => {
+    if (!await mockLoad()) { throw new Error('KB_AUTH_REQUIRED'); }
+    return mockFetch(url, {
+      ...init,
+      headers: { ...init.headers as Record<string, string>, Authorization: `Bearer ${CREDS.accessToken}` },
+    });
+  });
 });
 
 // ── webhook provision ─────────────────────────────────────────────────────────

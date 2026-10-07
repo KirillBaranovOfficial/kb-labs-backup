@@ -1,11 +1,12 @@
 /** Show platform adapters and their built-in fallback. */
 
 import path from 'node:path';
-import { ADAPTER_DEFAULTS, resolveGatewayServiceAddress, toErrorEnvelope, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { ADAPTER_DEFAULTS, toErrorEnvelope, ErrorEnvelopeError, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { discoverAdapters, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
+import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
 
 type AdapterRow = {
   slot: string;
@@ -85,17 +86,13 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
     const effectiveAdapters = resolvedDefaults.adapters as AdaptersConfig;
     const effectiveAdapterOptions = resolvedDefaults.adapterOptions as Record<string, unknown>;
     const discovered = await discoverAdapters(loaded.platformRoot);
+    const startHostCommand = `kb-create start --platform-root ${JSON.stringify(loaded.platformRoot)}`;
     let hostStatuses = new Map<string, HostAdapterStatus>();
     let runtimeStatus: 'known' | 'unknown' = 'unknown';
     let runtimeReason = 'Host runtime status could not be read.';
     try {
-      const gatewayUrl = resolveGatewayServiceAddress(undefined, {
-        gatewayUrl: ctx.runtime.env('KB_GATEWAY_URL'),
-        gatewayPort: ctx.runtime.env('GATEWAY_PORT'),
-        gatewayHost: ctx.runtime.env('GATEWAY_HOST'),
-        netOffset: Number(ctx.runtime.env('KB_NET_OFFSET')) || 0,
-      });
-      const response = await ctx.runtime.fetch(`${gatewayUrl}/health/adapters`);
+      const gateway = await resolveActiveGateway({ cwd: getContextCwd(ctx), env: process.env, platformRoot: loaded.platformRoot });
+      const response = await ctx.runtime.fetch(`${gateway.gatewayUrl}/health/adapters`);
       if (!response.ok) {
         runtimeReason = `Host returned HTTP ${response.status} for adapter health.`;
       } else {
@@ -104,6 +101,9 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         runtimeReason = '';
       }
     } catch (error) {
+      if (error instanceof ErrorEnvelopeError && error.envelope.code !== 'KB_HOST_UNREACHABLE') {
+        throwSystemCataloguedError(error.envelope);
+      }
       runtimeReason = error instanceof Error ? error.message : String(error);
     }
     const rows = (Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[]).map((slot): AdapterRow => {
@@ -151,7 +151,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         ...(hostStatus?.reason === 'load-failed' ? { reason: hostStatus.reason } : {}),
         ...(hostStatus?.correlationId ? { correlationId: hostStatus.correlationId } : {}),
         ...(hostStatus?.action ? { action: hostStatus.action } : {}),
-        ...(!slotRuntimeKnown ? { action: { id: 'start-host', label: 'Start host', command: 'kb-create start' } } : {}),
+        ...(!slotRuntimeKnown ? { action: { id: 'start-host', label: 'Start host', command: startHostCommand } } : {}),
         ...(baseDir ? { baseDir } : {}),
         networkRequired: localLogsAvailable ? false : packageId ? !LOCAL_PACKAGES.has(packageRoot(packageId)) : false,
         ...(ADAPTER_DEFAULTS[slot].defaultFallback === 'noop' && !packageId ? { requiresConfiguration: true } : {}),
@@ -168,7 +168,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       if (!configuredPackage) {continue;}
       const implementation = packageName(configuredPackage);
       rows.push({ slot, implementation, mode: 'unknown', runtimeStatus: 'unknown', runtimeReason,
-        action: { id: 'start-host', label: 'Start host', command: 'kb-create start' },
+        action: { id: 'start-host', label: 'Start host', command: startHostCommand },
         networkRequired: !LOCAL_PACKAGES.has(packageRoot(implementation)) });
     }
     return { ok: true, adapters: rows, projectRoot: loaded.projectRoot };

@@ -140,6 +140,7 @@ export async function createServer(
   projectRouting?: ProjectRouting,
   hostRoutes?: HostRoutes,
   routeObserver?: (route: RouteOptions) => void,
+  installationIdentity?: { installationId?: string },
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -537,6 +538,14 @@ export async function createServer(
         .catch(() => {});
       return snapshot;
     };
+
+    scope.get(
+      "/health/identity",
+      { schema: { tags: ["System"], summary: "Gateway installation identity", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { installationId: { type: 'string' } }, additionalProperties: false } } } },
+      async () => ({
+        ...(installationIdentity?.installationId ? { installationId: installationIdentity.installationId } : {}),
+      }),
+    );
 
     scope.get(
       "/health",

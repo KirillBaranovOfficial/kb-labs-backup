@@ -336,6 +336,23 @@ when a human omits `--password`. Auth catalog hints show the login command
 without a password argument. There is no password environment-variable
 fallback. Cases: S-007.4, S-010.6, S-031.4, S-041.6, S-041.7.
 
+### 2026-10-07: CLI Gateway routing follows the installed platform root
+
+The CLI resolves a local installed Gateway from the active platform root's
+verified URL in `.kb/v2/receipt.json`. Only `KB_GATEWAY_URL` explicitly
+overrides an installed receipt; `GATEWAY_PORT`, `GATEWAY_HOST`, and
+`KB_NET_OFFSET` select the workspace listener only when there is no installed
+receipt. The Gateway's public `/health/identity` response exposes only the
+non-secret installation ID. A mismatch reports the local platform root and
+both installation IDs, never a remote filesystem path. Client roots continue
+to use their saved session Gateway URL.
+
+Saved user sessions and machine credentials may be used only with the Gateway
+origin that issued them. If the selected Gateway origin differs, CLI API
+calls do not send or refresh those credentials and return `KB_AUTH_REQUIRED`
+with a login hint for the selected Gateway.
+Cases: PC-001.12, S-054.12, S-203.22–S-203.23.
+
 ## 2026-10-06
 
 ### Enabled plugin identity must match its manifest

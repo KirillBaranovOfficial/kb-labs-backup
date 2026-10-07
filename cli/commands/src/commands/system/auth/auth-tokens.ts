@@ -1,6 +1,7 @@
 import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { gatewayApiFetch, readGatewaySuccessData } from '@kb-labs/cli-runtime/gateway';
+import { gatewayApiFetch, readGatewaySuccessData, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
 import type { ErrorEnvelope } from '@kb-labs/core-platform';
+import { getContextCwd } from '@kb-labs/shared-cli-ui';
 
 function errorEnvelope(error: unknown): ErrorEnvelope | null {
   if (typeof error !== 'object' || error === null || !('envelope' in error)) { return null; }
@@ -43,11 +44,7 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
     const fail = (error: string) => {
       throwSystemCommandError(error, 'Run `kb auth tokens --help` to review valid inputs and recovery steps, then retry.');
     };
-    const request = async (path: string, method = 'GET', body?: Record<string, string | number>): Promise<Response> => gatewayApiFetch(`http://127.0.0.1:4000${path}`, {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : {},
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
+    let request: (path: string, method?: string, body?: Record<string, string | number>) => Promise<Response>;
     const showGatewayError = (error: unknown) => {
       const envelope = errorEnvelope(error);
       if (envelope) {
@@ -56,6 +53,12 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
       return fail(error instanceof Error ? error.message : String(error));
     };
     try {
+      const gateway = await resolveActiveGateway({ cwd: getContextCwd(ctx), env: process.env });
+      request = async (path, method = 'GET', body) => gatewayApiFetch(`${gateway.gatewayUrl}${path}`, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      }, gateway);
       if (flags.revoke) {
         const response = await request(`/auth/tokens/${encodeURIComponent(flags.revoke)}/revoke`, 'POST');
         if (!response.ok) {return fail(`Gateway could not revoke token (HTTP ${response.status}). Check the token ID and retry kb auth tokens --revoke <token-id>.`);}

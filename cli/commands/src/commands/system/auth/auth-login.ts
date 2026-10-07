@@ -49,13 +49,13 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
     '~/.kb/session.json. Both auto-refresh on expiry.',
   category: 'auth',
   examples: [
-    'kb auth login --gateway-url http://localhost:4000 --client-id clt_xxx --client-secret cs_xxx',
-    'kb auth login --gateway-url http://localhost:4000 --email admin@example.com',
-    'kb auth login --gateway-url http://localhost:4000 --email admin@example.com --password-stdin < password.txt',
+    'kb auth login --gateway-url <gateway-url> --client-id clt_xxx --client-secret cs_xxx',
+    'kb auth login --gateway-url <gateway-url> --email admin@example.com',
+    'kb auth login --gateway-url <gateway-url> --email admin@example.com --password-stdin < password.txt',
     'kb auth login --gateway-url https://gateway.example.com --client-id clt_xxx --client-secret cs_xxx --json',
   ],
   flags: {
-    'gateway-url': { type: 'string', description: 'Gateway server URL (e.g. http://localhost:4000)' },
+    'gateway-url': { type: 'string', description: 'Gateway server URL' },
     'client-id': { type: 'string', description: 'Client ID from service account registration' },
     'client-secret': { type: 'string', description: 'Client Secret from service account registration' },
     email: { type: 'string', description: 'Email for human (admin) login' },

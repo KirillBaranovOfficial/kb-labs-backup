@@ -1,14 +1,19 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { access, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
 describe('installed platform adapter defaults', () => {
   let tempRoot: string | undefined;
+  let gatewayServer: Server | undefined;
 
   afterEach(async () => {
+    if (gatewayServer?.listening) await new Promise<void>((resolve, reject) => gatewayServer!.close((error) => error ? reject(error) : resolve()));
+    gatewayServer = undefined;
     if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
     tempRoot = undefined;
   });
@@ -80,6 +85,30 @@ describe('installed platform adapter defaults', () => {
       mkdir(home, { recursive: true }),
     ]);
 
+    gatewayServer = createServer((request, response) => {
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/health/identity') {
+        response.end(JSON.stringify({ installationId: 'installed-root-b', platformRoot }));
+        return;
+      }
+      if (request.url === '/health/adapters') {
+        response.end(JSON.stringify([
+          { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs' },
+          { slot: 'kvStore', mode: 'real', implementation: '@kb-labs/adapters-sqlite/kv' },
+          { slot: 'llm', mode: 'real', implementation: '@kb-labs/adapters-openai' },
+        ]));
+        return;
+      }
+      response.statusCode = 404;
+      response.end('{}');
+    });
+    await new Promise<void>((resolve) => gatewayServer!.listen(0, '127.0.0.1', resolve));
+    const gatewayPort = (gatewayServer.address() as AddressInfo).port;
+    await mkdir(path.join(platformRoot, '.kb', 'v2'), { recursive: true });
+    await writeFile(path.join(platformRoot, '.kb', 'v2', 'receipt.json'), JSON.stringify({
+      id: 'installed-root-b', verification: { hostHealthUrl: `http://127.0.0.1:${gatewayPort}/health` },
+    }));
+
     const configPath = path.join(workspaceRoot, '.kb', 'kb.config.jsonc');
     const workspaceConfig = await readFile(configPath, 'utf8');
     const releaseConfig = workspaceConfig.replace(/"mode":\s*"development",\s*/, '');
@@ -112,6 +141,9 @@ describe('installed platform adapter defaults', () => {
 
     const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, KB_HOME: path.join(home, '.kb'), KB_PLATFORM_ROOT: platformRoot, KB_PROJECT_ROOT: projectRoot };
     delete env.KB_NET_OFFSET;
+    delete env.KB_GATEWAY_URL;
+    delete env.GATEWAY_PORT;
+    delete env.GATEWAY_HOST;
     const help = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), '--help'], {
       cwd: projectRoot,
       env,
@@ -137,11 +169,9 @@ describe('installed platform adapter defaults', () => {
 
     await createProjectRegistry({ env }).add(projectRoot);
 
-    const command = spawnSync(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
+    const command = await spawnCli(process.execPath, [path.join(workspaceRoot, 'cli/bin/dist/bin.js'), 'adapter', 'list', '--json'], {
       cwd: projectRoot,
       env,
-      encoding: 'utf8',
-      timeout: 30_000,
     });
 
     expect(command.status, command.stderr || command.stdout).toBe(0);
@@ -161,3 +191,19 @@ describe('installed platform adapter defaults', () => {
     });
   });
 });
+
+function spawnCli(command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, options);
+    let stdout = '';
+    let stderr = '';
+    const timeout = setTimeout(() => child.kill('SIGTERM'), 30_000);
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', (status) => {
+      clearTimeout(timeout);
+      resolve({ status, stdout, stderr });
+    });
+  });
+}
