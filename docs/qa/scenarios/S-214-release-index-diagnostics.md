@@ -19,6 +19,8 @@ changes the active platform.
 
 - [ ] A missing index path, malformed JSON index, unsupported schema index, digest-mismatched index, and structurally invalid index.
 - [ ] A staged package with a secret manifest requirement missing its environment variable or target services.
+- [ ] A staged service or adapter package with and without the emitted declarative manifest artifact.
+- [ ] A sealed index with explicit platform, SDK, and binary compatibility relations at different versions, plus a copy with one relation removed.
 - [ ] An isolated platform root that is not modified by these commands.
 
 ## Steps
@@ -32,6 +34,8 @@ changes the active platform.
 | S-214.5 | Run the same plan command with a correctly sealed index that violates a validation rule | Returns `KB_INSTALL_RELEASE_INDEX_INVALID`; `details.gate` is `validation rule`, `details.path` names the index, and the cause names the failed rule. |
 | S-214.6 | Run `node tools/kb-create/scripts/prepare-release-index.mjs --flow platform --artifacts-dir <stage> --binary-manifest <binary-manifest> --output <index>` with a staged package whose `kb-create.requirements.json` has a secret requirement without `env` and `services` | The sealer prints `KB_RELEASE_INDEX_SEAL_FAILED` with the exact manifest rule in `cause`, `details.gate: "manifest validation"`, `details.rule` naming the failed requirement, `retryable: false`, and a hint to declare `env` and `services` for that requirement. |
 | S-214.7 | Run the same sealer command with a secret manifest requirement that declares `env` and `services` but also declares a default | The sealer prints `KB_RELEASE_INDEX_SEAL_FAILED` with the exact manifest rule in `cause` and `details.rule`, `retryable: false`, and a hint to remove the secret default; it does not suggest adding `env` or `services`. |
+| S-214.8 | Run the sealer command with a staged service or adapter package declaring `kb.manifest` but lacking `dist/manifest.json` | Preparation fails with the package name and the exact build artifact requirement; the package is not omitted from service or adapter classification. |
+| S-214.9 | Run `kb-create plan --index INDEX_WITH_EXPLICIT_RELATIONS --request-platform-root ROOT --json` for an index relating platform Y, SDK X, and binary Z, then repeat with one relation removed | The first plan succeeds when all exact labels are related in the sealed compatibility matrix, even though the versions differ. The second fails with `KB_INSTALL_RELEASE_INDEX_INVALID` and identifies the missing compatibility relation. |
 
 ## Pass criteria
 
