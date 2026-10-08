@@ -48,7 +48,8 @@ describe('kb auth register', () => {
   });
 
   it('retains the admin permission guidance when the Gateway rejects registration', async () => {
-    gatewayApiFetch.mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Forbidden', message: 'Permission denied' }), { status: 403 }));
+    const forbidden = createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'MACHINE_REGISTER' } });
+    gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(forbidden));
     const errors: string[] = [];
     const ctx = {
       host: 'cli', requestId: 'test', pluginId: '@kb-labs/system', pluginVersion: '1.0.0', cwd: process.cwd(),
@@ -61,7 +62,13 @@ describe('kb auth register', () => {
   });
 
   it('reports a non-auth Gateway error without printing a raw response body', async () => {
-    gatewayApiFetch.mockResolvedValueOnce(new Response('internal detail', { status: 500 }));
+    const protocolFailure = createErrorEnvelope('KB_RUNTIME_UNEXPECTED', {
+      message: 'Gateway protocol failure during Gateway registration: expected a canonical UX result from https://gateway-b.test (HTTP 500).',
+      hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
+      details: { operation: 'Gateway registration', gatewayUrl: 'https://gateway-b.test', status: '500' },
+      correlationId: 'fixture-correlation',
+    });
+    gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(protocolFailure));
     const errors: string[] = [];
     const ctx = {
       host: 'cli', requestId: 'test', pluginId: '@kb-labs/system', pluginVersion: '1.0.0', cwd: process.cwd(),

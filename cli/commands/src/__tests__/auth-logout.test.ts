@@ -13,15 +13,9 @@ const mockCredLoad = vi.fn();
 const mockCredClear = vi.fn();
 const mockSessionLoad = vi.fn();
 const mockSessionClear = vi.fn();
+const mockLogout = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: class {
-    load = mockCredLoad;
-    clear = mockCredClear;
-  },
-  SessionManager: class {
-    load = mockSessionLoad;
-    clear = mockSessionClear;
-  },
+  AuthSessionOwner: class { logout = mockLogout; },
 }));
 
 import { authLogout } from '../commands/system/auth/auth-logout.js';
@@ -55,7 +49,12 @@ function makeCtx(captured: { errors: string[]; output: string[]; json: unknown[]
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+  mockLogout.mockImplementation(async () => {
+    const [machine, session] = await Promise.all([mockCredLoad(), mockSessionLoad()]);
+    if (!machine && !session) { return false; }
+    await Promise.all([mockCredClear(), mockSessionClear()]);
+    return true;
+  });
 });
 
 describe('kb auth logout', () => {
@@ -67,9 +66,9 @@ describe('kb auth logout', () => {
     const exitCode = await authLogout.run(makeCtx(captured), [], {});
 
     expect(exitCode).toBe(0);
+    expect(mockLogout).toHaveBeenCalledOnce();
     expect(mockCredClear).toHaveBeenCalled();
     expect(mockSessionClear).toHaveBeenCalled();
-    expect(fetch).toHaveBeenCalledWith('https://gateway.test/auth/logout/cli', expect.objectContaining({ body: JSON.stringify({ refreshToken: 'refresh-b' }) }));
   });
 
   it('LO-02: clears only the store that exists (session-only)', async () => {

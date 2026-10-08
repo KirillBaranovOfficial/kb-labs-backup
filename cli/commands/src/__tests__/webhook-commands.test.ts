@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
@@ -237,7 +238,7 @@ describe('kb webhook provision', () => {
   });
 
   it('WP-08: gateway returns 404 → exitCode 1 with error', async () => {
-    mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Not Found', message: "webhook 'x/y' not found" }, 404));
+    gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND')));
 
     const captured: Captured = { errors: [], output: [], json: [] };
     const exitCode = await webhookProvision.run(makeCtx(captured), [], {
@@ -246,7 +247,8 @@ describe('kb webhook provision', () => {
     });
 
     expect(exitCode).toBe(1);
-    expect(captured.errors.join('')).toContain('404');
+    expect(captured.errors.join('')).toContain('KB_RUNTIME_RESOURCE_NOT_FOUND');
+    expect(captured.errors.join('')).toContain('The requested resource was not found.');
   });
 
   it('WP-09: network error → exitCode 1', async () => {
@@ -367,8 +369,10 @@ describe('kb webhook revoke', () => {
     expect(captured.output.join('')).toContain('prod');
   });
 
-  it('WR-03: 404 treated as idempotent success', async () => {
-    mockFetch.mockResolvedValueOnce(makeEmptyResponse(404));
+  it('WR-03: reports a typed Gateway 404 without rendering a raw response body', async () => {
+    gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', {
+      details: { status: '404', operation: 'Gateway request', gatewayUrl: CREDS.gatewayUrl },
+    })));
 
     const captured: Captured = { errors: [], output: [], json: [] };
     const exitCode = await webhookRevoke.run(makeCtx(captured), [], {
@@ -376,7 +380,8 @@ describe('kb webhook revoke', () => {
       event: 'alert',
     });
 
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
+    expect(captured.errors.join('')).toContain('KB_RUNTIME_RESOURCE_NOT_FOUND');
   });
 
   it('WR-04: --json outputs structured result', async () => {
@@ -415,7 +420,10 @@ describe('kb webhook revoke', () => {
   });
 
   it('WR-07: server error 500 → exitCode 1', async () => {
-    mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Internal Server Error' }, 500));
+    gatewayApiFetch.mockRejectedValueOnce(new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
+      details: { status: '500', operation: 'Webhook revoke', gatewayUrl: CREDS.gatewayUrl },
+      correlationId: 'corr-webhook-revoke',
+    })));
 
     const captured: Captured = { errors: [], output: [], json: [] };
     const exitCode = await webhookRevoke.run(makeCtx(captured), [], {
@@ -425,5 +433,6 @@ describe('kb webhook revoke', () => {
 
     expect(exitCode).toBe(1);
     expect(captured.errors.join('')).toContain('500');
+    expect(captured.errors.join('')).not.toContain('Internal Server Error');
   });
 });

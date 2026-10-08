@@ -4,26 +4,26 @@ const mocks = vi.hoisted(() => ({
   session: null as null | { gatewayUrl: string; accessToken: string; refreshToken: string; expiresAt: number },
   machine: null as null | { gatewayUrl: string; accessToken: string; refreshToken: string; expiresAt: number },
   loadError: null as unknown,
-  refresh: vi.fn(),
-  machineRefresh: vi.fn(),
 }));
 vi.mock('./session.js', () => ({
   SessionManager: class {
     async load() { if (mocks.loadError) throw mocks.loadError; return mocks.session; }
-    isExpired(session: { expiresAt: number }) { return session.expiresAt <= Date.now(); }
-    async refresh() { return mocks.refresh(); }
+    async save() {}
+    async clear() {}
+    getFilePath() { return '/tmp/session.json'; }
   },
 }));
 vi.mock('./credentials.js', () => ({
   CredentialsManager: class {
     async load() { return mocks.machine; }
-    isExpired(credentials: { expiresAt: number }) { return credentials.expiresAt <= Date.now(); }
-    async refresh() { return mocks.machineRefresh(); }
+    async save() {}
+    async clear() {}
   },
 }));
 
 import { gatewayApiFetch } from './api-client.js';
-import { readGatewaySuccessData } from './result.js';
+import { AuthSessionOwner } from './auth-session.js';
+import { decodeGatewayFailure, readGatewaySuccessData } from './result.js';
 import { SavedAuthFileError } from './saved-auth-file.js';
 import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 
@@ -31,7 +31,67 @@ describe('gatewayApiFetch auth mapping', () => {
   afterEach(() => {
     vi.restoreAllMocks(); vi.unstubAllGlobals();
     mocks.session = null; mocks.machine = null; mocks.loadError = null;
-    mocks.refresh.mockReset(); mocks.machineRefresh.mockReset();
+  });
+
+  it('delegates REST credential selection to the auth-session owner', async () => {
+    const load = vi.spyOn(AuthSessionOwner.prototype, 'load').mockResolvedValue(null);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 200 })));
+
+    await gatewayApiFetch('https://gateway.test/api');
+
+    expect(load).toHaveBeenCalledWith('either', undefined);
+  });
+
+  it('maps a non-envelope 403 body to an honest Gateway protocol error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('secret internal response', { status: 403 })));
+
+    await expect(gatewayApiFetch('https://gateway.test/api')).rejects.toMatchObject({
+      envelope: {
+        code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+        message: 'Gateway protocol failure during Gateway request: expected a canonical UX result from https://gateway.test (HTTP 403).',
+        hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
+        details: { gatewayUrl: 'https://gateway.test', status: '403', operation: 'Gateway request' },
+        correlationId: expect.any(String),
+      },
+    });
+  });
+
+  // case: S-203.2
+  it('decodes canonical Gateway failures and never includes a non-canonical body', async () => {
+    const canonical = createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'users:read' }, correlationId: 'gateway-correlation' });
+    await expect(decodeGatewayFailure(new Response(JSON.stringify({ ok: false, error: canonical }), { status: 403 }), {
+      operation: 'Gateway request', gatewayUrl: 'https://gateway.test',
+    })).resolves.toMatchObject({
+      code: 'KB_AUTH_FORBIDDEN', details: { permission: 'users:read', gatewayUrl: 'https://gateway.test' },
+      correlationId: 'gateway-correlation',
+    });
+
+    const malformed = await decodeGatewayFailure(new Response(JSON.stringify({ permission: 'users:read', private: 'raw body' }), { status: 403 }), {
+      operation: 'Gateway request', gatewayUrl: 'https://gateway.test',
+    });
+    expect(malformed).toMatchObject({
+      code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+      message: 'Gateway protocol failure during Gateway request: expected a canonical UX result from https://gateway.test (HTTP 403).',
+      details: { gatewayUrl: 'https://gateway.test', status: '403', operation: 'Gateway request' },
+      correlationId: expect.any(String),
+    });
+    expect(JSON.stringify(malformed)).not.toContain('raw body');
+    expect(JSON.stringify(malformed)).not.toContain('permission');
+  });
+
+  // case: S-203.2
+  it('decodes a parsed failure result without cloning or reading the body again', async () => {
+    const envelope = createErrorEnvelope('KB_AUTH_SESSION_REVOKED', { correlationId: 'already-parsed' });
+    const response = new Response(JSON.stringify({ ok: false, error: envelope }), { status: 200 });
+    const clone = vi.spyOn(response, 'clone');
+    const json = vi.spyOn(response, 'json');
+
+    await expect(readGatewaySuccessData(response, {
+      operation: 'Gateway verification', gatewayUrl: 'https://gateway.test',
+    })).rejects.toMatchObject({ envelope: { code: 'KB_AUTH_SESSION_REVOKED' } });
+
+    expect(json).toHaveBeenCalledTimes(1);
+    expect(clone).not.toHaveBeenCalled();
   });
 
   // case: S-041.18
@@ -48,7 +108,10 @@ describe('gatewayApiFetch auth mapping', () => {
 
   // case: S-041.7
   it('maps a 401 to the catalog required-auth envelope', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 401 })));
+    const envelope = createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'http://127.0.0.1:4000' } });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: false, error: envelope }), {
+      status: 401,
+    })));
     await expect(gatewayApiFetch('http://127.0.0.1:4000/api')).rejects.toMatchObject({
       envelope: {
         code: 'KB_AUTH_REQUIRED',
@@ -61,19 +124,20 @@ describe('gatewayApiFetch auth mapping', () => {
   it('refreshes a session only at its issuing Gateway origin', async () => {
     const session = { gatewayUrl: 'https://gateway-a.test', accessToken: 'stale', refreshToken: 'refresh', expiresAt: 0 };
     mocks.session = session;
-    mocks.refresh.mockResolvedValue({ ...session, accessToken: 'fresh', expiresAt: Date.now() + 60_000 });
-    const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: { accessToken: 'fresh', refreshToken: 'rotated', expiresIn: 900 } })))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetch);
 
     await gatewayApiFetch('https://gateway-a.test/api', {}, { gatewayUrl: 'https://gateway-a.test' });
 
-    expect(mocks.refresh).toHaveBeenCalledOnce();
-    expect(fetch.mock.calls[0]?.[0]).toEqual(new URL('https://gateway-a.test/api'));
-    expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe('Bearer fresh');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1]?.[0]).toEqual(new URL('https://gateway-a.test/api'));
+    expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('Authorization')).toBe('Bearer fresh');
   });
 
   it('uses an issuing-origin machine credential when no user session is saved', async () => {
-    mocks.machine = { gatewayUrl: 'https://gateway-a.test', accessToken: 'machine', refreshToken: 'refresh', expiresAt: Date.now() + 60_000 };
+    mocks.machine = { gatewayUrl: 'https://gateway-a.test', accessToken: 'machine', refreshToken: 'refresh', expiresAt: Date.now() + 600_000 };
     const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetch);
 
@@ -95,7 +159,8 @@ describe('gatewayApiFetch auth mapping', () => {
   // case: S-041.9
   it('maps the permission reported by a 403 response without inventing a role', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      error: 'Forbidden', message: 'Permission denied: users:write', permission: 'users:write',
+      ok: false,
+      error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'users:write' } }),
     }), { status: 403, headers: { 'Content-Type': 'application/json' } })));
     await expect(gatewayApiFetch('http://127.0.0.1:4000/api')).rejects.toMatchObject({
       envelope: {
@@ -149,8 +214,6 @@ describe('gatewayApiFetch auth mapping', () => {
       });
 
       expect(fetch).not.toHaveBeenCalled();
-      expect(mocks.refresh).not.toHaveBeenCalled();
-      expect(mocks.machineRefresh).not.toHaveBeenCalled();
     }
   });
 });
@@ -172,10 +235,12 @@ describe('readGatewaySuccessData', () => {
       const response = new Response(JSON.stringify({ ok: false, error: envelope }), {
         headers: { 'Content-Type': 'application/json' },
       });
-      await expect(readGatewaySuccessData(response)).rejects.toMatchObject({
+      await expect(readGatewaySuccessData(response, { operation: 'Gateway request', gatewayUrl })).rejects.toMatchObject({
         envelope: { ...envelope, details: { gatewayUrl, reason } },
       });
-      await expect(readGatewaySuccessData(new Response(JSON.stringify({ ok: false, error: envelope }))))
+      await expect(readGatewaySuccessData(new Response(JSON.stringify({ ok: false, error: envelope })), {
+        operation: 'Gateway request', gatewayUrl,
+      }))
         .rejects.toBeInstanceOf(ErrorEnvelopeError);
       expect(envelope.hint).toContain(gatewayUrl);
     }
@@ -186,13 +251,23 @@ describe('readGatewaySuccessData', () => {
     const response = new Response(JSON.stringify({ ok: true, data: { accessToken: 'token' } }), {
       headers: { 'Content-Type': 'application/json' },
     });
-    await expect(readGatewaySuccessData<{ accessToken: string }>(response)).resolves.toEqual({ accessToken: 'token' });
+    await expect(readGatewaySuccessData<{ accessToken: string }>(response, {
+      operation: 'Gateway login', gatewayUrl: 'https://gateway.test',
+    })).resolves.toEqual({ accessToken: 'token' });
   });
 
   // case: S-203.2
   it('rejects invalid or failed result envelopes with a safe error', async () => {
     const invalid = new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
-    await expect(readGatewaySuccessData(invalid)).rejects.toThrow('invalid result envelope');
+    await expect(readGatewaySuccessData(invalid, {
+      operation: 'Gateway request', gatewayUrl: 'https://gateway.test',
+    })).rejects.toMatchObject({
+      envelope: {
+        code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+        message: 'Gateway protocol failure during Gateway request: expected a canonical UX result from https://gateway.test (HTTP 200).',
+        details: { operation: 'Gateway request', gatewayUrl: 'https://gateway.test', status: '200' },
+      },
+    });
     const failure = new Response(JSON.stringify({
       ok: false,
       error: {
@@ -200,8 +275,24 @@ describe('readGatewaySuccessData', () => {
         message: 'The operation failed unexpectedly.', hint: 'Copy diagnostics and contact support.', correlationId: 'corr-1',
       },
     }), { headers: { 'Content-Type': 'application/json' } });
-    await expect(readGatewaySuccessData(failure)).rejects.toMatchObject({
+    await expect(readGatewaySuccessData(failure, {
+      operation: 'Gateway request', gatewayUrl: 'https://gateway.test',
+    })).rejects.toMatchObject({
       envelope: { code: 'KB_RUNTIME_UNEXPECTED' },
+    });
+  });
+
+  // case: S-203.2
+  it('maps malformed successful Gateway JSON to the protocol failure envelope', async () => {
+    const malformed = new Response('<html>proxy error</html>', { status: 200 });
+    await expect(readGatewaySuccessData(malformed, {
+      operation: 'Gateway login', gatewayUrl: 'https://gateway.test',
+    })).rejects.toMatchObject({
+      envelope: {
+        code: 'KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE',
+        details: { status: '200', operation: 'Gateway login', gatewayUrl: 'https://gateway.test' },
+        hint: 'Run "kb-create doctor" to check the Gateway, then retry the command.',
+      },
     });
   });
 });

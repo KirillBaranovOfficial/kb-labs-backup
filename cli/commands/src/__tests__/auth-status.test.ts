@@ -14,16 +14,9 @@ const mockCredIsExpired = vi.fn();
 const mockSessionLoad = vi.fn();
 const mockSessionIsExpired = vi.fn();
 const mockSessionPath = vi.fn(() => '/tmp/test-home/.kb/session.json');
+const mockInspect = vi.fn();
 vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  CredentialsManager: class {
-    load = mockCredLoad;
-    isExpired = mockCredIsExpired;
-  },
-  SessionManager: class {
-    load = mockSessionLoad;
-    isExpired = mockSessionIsExpired;
-    getFilePath = mockSessionPath;
-  },
+  AuthSessionOwner: class { inspect = mockInspect; },
 }));
 
 import { authStatus } from '../commands/system/auth/auth-status.js';
@@ -62,6 +55,12 @@ function expectSuccessEnvelope(captured: { json: unknown[] }, data: object): voi
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockInspect.mockImplementation(async () => {
+    const [machine, session] = await Promise.all([mockCredLoad(), mockSessionLoad()]);
+    return { machine, session, sessionPath: mockSessionPath(),
+      machineExpired: machine ? mockCredIsExpired(machine) : false,
+      sessionExpired: session ? mockSessionIsExpired(session) : false };
+  });
 });
 
 // case: S-041.5, S-041.6, S-041.8, S-100.1
@@ -74,6 +73,7 @@ describe('kb auth status', () => {
     const exitCode = await authStatus.run(makeCtx(captured), [], { json: true });
 
     expect(exitCode).toBe(0);
+    expect(mockInspect).toHaveBeenCalledOnce();
     expectSuccessEnvelope(captured, { authenticated: false, session: { authenticated: false, path: '/tmp/test-home/.kb/session.json' } });
   });
 

@@ -11,7 +11,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@kb-labs/core-runtime', () => ({ loadPlatformConfig: mocks.loadPlatformConfig }));
 vi.mock('./session.js', () => ({
-  SessionManager: class { async load() { return mocks.session; } },
+  SessionManager: class {
+    async load() { return mocks.session; }
+    isExpired() { return false; }
+    getFilePath() { return '/tmp/session.json'; }
+  },
 }));
 vi.mock('./credentials.js', () => ({
   CredentialsManager: class { async load() { return null; } },
@@ -45,7 +49,9 @@ describe('resolveActiveGateway', () => {
     await expect(resolveActiveGateway({ cwd: root, env })).resolves.toMatchObject({
       gatewayUrl: 'http://127.0.0.1:4250', installationId: 'installed-b',
     });
-    expect(mocks.loadPlatformConfig).toHaveBeenCalledWith({ startDir: root, env, loadEnvFile: false });
+    expect(mocks.loadPlatformConfig).toHaveBeenCalledWith({
+      startDir: root, env, loadEnvFile: false, projectScope: 'platform',
+    });
   });
 
   it('uses the saved client session URL when there is no local installation receipt', async () => {
