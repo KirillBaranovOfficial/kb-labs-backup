@@ -8,8 +8,10 @@ KB Labs releases the SDK, platform and binaries as one flow with one version (`p
 | Binaries | `vX.Y.Z-binaries` | the binary assets and checksums referenced by that candidate index | as part of the same candidate |
 
 There is no separate `sdk` flow: `sdk-vX.Y.Z` tags are no longer created
-(existing ones stay). The release index generator rejects SDK, platform or
-binary version skew unless `--allow-version-skew` is passed on purpose.
+(existing ones stay). The release flow stamps one version across the first
+platform, SDK and binary release. The index records each staged version and
+its exact compatibility relations; the catalog's compatibility matrix is the
+only gate.
 
 ## Candidate gates
 
@@ -45,10 +47,10 @@ installer/package/config/workflow check. Before candidate build, the release
 journey gate above exercises the declared user scenarios, including service
 startup; a green post-publish smoke does not replace that matrix.
 
-The compatibility matrix is conservative in the first release: it records the
-exact staged Platform/SDK pair (same version) and the SDK's declared runtime peer range. A
-broader compatibility range must be earned by additional release evidence; it
-is never inferred from a shared `2.x` or `3.x` major.
+The first release records exact staged platform, SDK and binary versions and
+their explicit relations in the compatibility matrix. Independent versions
+later are a release-flow data change; the installer, catalog and index
+preparer continue to use the matrix as the only compatibility gate.
 
 ## Promotion checklist
 

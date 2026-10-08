@@ -92,6 +92,14 @@ export async function loadAdapterManifest(source: AdapterManifestSource): Promis
     if (!implementsAdapter) {
       return { kind: 'not-adapter', reason: 'manifest does not declare implements', modulePath };
     }
+    if (mod.manifest.schema !== 'kb.adapter/1') {
+      const actualSchema = typeof mod.manifest.schema === 'string' ? `"${mod.manifest.schema}"` : '(missing)';
+      return {
+        kind: 'failed',
+        reason: `adapter manifest must declare schema "kb.adapter/1"; received ${actualSchema}`,
+        modulePath,
+      };
+    }
     if (!isAdapterManifest(mod.manifest)) {
       return { kind: 'failed', reason: 'built module must export a valid AdapterManifest named manifest', modulePath };
     }

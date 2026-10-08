@@ -9,6 +9,7 @@
 import type { AdapterManifest } from "@kb-labs/sdk/adapters";
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "log-document",
   name: "Document-backed Log Persistence",

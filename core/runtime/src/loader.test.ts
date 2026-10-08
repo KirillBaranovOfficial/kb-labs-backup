@@ -49,6 +49,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
   describe('Context Injection based on Manifest', () => {
     it('should inject only requested contexts from manifest', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'test-adapter',
         name: 'Test Adapter',
@@ -86,6 +87,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
 
     it('should inject only workspace context when adapter requests only workspace', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'file-adapter',
         name: 'File Adapter',
@@ -119,6 +121,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
 
     it('should inject no contexts when manifest does not request any', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'simple-adapter',
         name: 'Simple Adapter',
@@ -149,6 +152,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
 
     it('should handle unknown context names gracefully', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'test-adapter',
         name: 'Test Adapter',
@@ -247,6 +251,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
   describe('FileAnalytics Integration', () => {
     it('should pass workspace and analytics contexts to FileAnalytics via config', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'analytics-file',
         name: 'File Analytics',
@@ -297,6 +302,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
   describe('Backward Compatibility', () => {
     it('should handle adapters without contexts field in manifest', () => {
       const manifest: AdapterManifest = {
+        schema: "kb.adapter/1",
         manifestVersion: '1.0.0',
         id: 'legacy-adapter',
         name: 'Legacy Adapter',

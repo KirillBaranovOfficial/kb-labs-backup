@@ -19,6 +19,7 @@ const required = name => {
 const checksumsPath = required('--checksums');
 const repository = required('--repository');
 const releaseTag = required('--release-tag');
+const version = required('--version');
 const output = required('--output');
 // Author and ops tools are not part of a user installation (ADR-0045): the
 // index lists only what the launcher may install. kb-dev in particular is how
@@ -42,6 +43,7 @@ for (const line of entries) {
   seen.add(key);
   binaries.push({
     id,
+    version,
     os,
     arch,
     filename,

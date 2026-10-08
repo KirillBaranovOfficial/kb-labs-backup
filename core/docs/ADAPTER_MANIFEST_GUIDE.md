@@ -28,6 +28,7 @@ Every adapter must export a `manifest` object:
 import type { AdapterManifest } from '@kb-labs/core-platform';
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'pino-logger',
   name: 'Pino Logger',
@@ -124,6 +125,7 @@ const buffer = platform.getAdapter<ILogRingBuffer>('logRingBuffer');
 
 ```typescript
 interface AdapterManifest {
+  schema: 'kb.adapter/1';
   // Required fields
   manifestVersion: string;
   id: string;
@@ -205,6 +207,7 @@ Extensions connect to core adapters via hooks:
 ```typescript
 // Ring buffer extension
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'log-ring-buffer',
   name: 'Log Ring Buffer',
@@ -333,6 +336,7 @@ const configs = {
 
 ```typescript
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   // ...
   optional: {
     adapters: ['analytics', 'metrics'],
@@ -481,6 +485,7 @@ const records = buffer?.getRecords();
 
 ```typescript
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'my-adapter',
   name: 'My Adapter',

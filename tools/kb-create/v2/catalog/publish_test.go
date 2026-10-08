@@ -92,3 +92,31 @@ func TestSealRejectsShippedBinaryMissingAnAdmittedSDKRelation(t *testing.T) {
 		t.Fatalf("Seal error = %v, want missing admitted SDK relation", err)
 	}
 }
+
+// case: S-214.9
+func TestCompatibilityMatrixAcceptsIndependentPlatformSDKAndBinaryVersions(t *testing.T) {
+	base := Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "4.0.0"},
+		Compatibility: &CompatibilityMatrix{Schema: CompatibilitySchema, Labels: []CompatibilityLabel{
+			{ID: "platform@4.0.0", Kind: "platform", ArtifactID: "platform", Version: "4.0.0", Requires: []CompatibilityRelation{{Label: "sdk@3.2.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}},
+			{ID: "sdk@3.2.0", Kind: "sdk", ArtifactID: "sdk", Version: "3.2.0", Status: "prepared", ValidatedBy: []string{"stage"}},
+			{ID: "binary:kb-create@5.1.0:linux/amd64", Kind: "binary", ArtifactID: "kb-create", Version: "5.1.0", Requires: []CompatibilityRelation{{Label: "platform@4.0.0"}, {Label: "sdk@3.2.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}},
+		}},
+		Platforms: []PlatformBundle{{ID: "platform", Version: "4.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Binaries: []Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}}}},
+		SDKs:      []Component{{ID: "sdk", Version: "3.2.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
+	}
+	sealed, err := Seal(base)
+	if err != nil {
+		t.Fatalf("Seal rejected independent versions: %v", err)
+	}
+	if err := CheckCompatibility(sealed, "4.0.0", "3.2.0", "kb-create", "linux", "amd64", contracts.PolicyStrict); err != nil {
+		t.Fatalf("CheckCompatibility rejected explicit relations: %v", err)
+	}
+
+	missingBinaryRelation := base
+	missingBinaryRelation.Compatibility = &CompatibilityMatrix{Schema: CompatibilitySchema, Labels: append([]CompatibilityLabel(nil), base.Compatibility.Labels...)}
+	missingBinaryRelation.Compatibility.Labels[2].Requires = []CompatibilityRelation{{Label: "platform@4.0.0"}}
+	if _, err := Seal(missingBinaryRelation); err == nil || !strings.Contains(err.Error(), "SDK 3.2.0") {
+		t.Fatalf("Seal error = %v, want missing binary-to-SDK relation", err)
+	}
+}

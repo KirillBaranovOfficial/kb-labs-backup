@@ -169,9 +169,8 @@ func CheckCompatibility(source Catalog, platformVersion, sdkVersion, binaryID, o
 		}
 	}
 	if binaryID != "" {
-		binaryIDPrefix := "binary:" + binaryID + "@" + platformVersion + ":" + os + "/" + arch
-		binary, ok := compatibilityLabel(source.Compatibility.Labels, binaryIDPrefix, "binary")
-		if !ok || !requiresLabel(binary, platformID) || (sdkVersion != "" && !requiresLabel(binary, "sdk@"+sdkVersion)) {
+		binary, ok := compatibilityBinaryLabel(source.Compatibility.Labels, Binary{ID: binaryID, OS: os, Arch: arch}, platformID)
+		if !ok || (sdkVersion != "" && !requiresLabel(binary, "sdk@"+sdkVersion)) {
 			return fmt.Errorf("compatibility matrix does not relate binary %s to the selected platform/SDK", binaryID)
 		}
 	}
@@ -224,6 +223,16 @@ func compatibilityLabel(labels []CompatibilityLabel, id, kind string) (Compatibi
 	return CompatibilityLabel{}, false
 }
 
+func compatibilityBinaryLabel(labels []CompatibilityLabel, binary Binary, platformID string) (CompatibilityLabel, bool) {
+	for _, label := range labels {
+		wantedID := fmt.Sprintf("binary:%s@%s:%s/%s", binary.ID, label.Version, binary.OS, binary.Arch)
+		if label.Kind == "binary" && label.ArtifactID == binary.ID && label.ID == wantedID && requiresLabel(label, platformID) {
+			return label, true
+		}
+	}
+	return CompatibilityLabel{}, false
+}
+
 func requiresLabel(label CompatibilityLabel, wanted string) bool {
 	for _, relation := range label.Requires {
 		if relation.Label == wanted {
@@ -267,9 +276,8 @@ func validateCompatibility(matrix CompatibilityMatrix, source Catalog) error {
 	}
 	for _, platform := range source.Platforms {
 		for _, shipped := range platform.Binaries {
-			id := fmt.Sprintf("binary:%s@%s:%s/%s", shipped.ID, platform.Version, shipped.OS, shipped.Arch)
-			binary, ok := compatibilityLabel(matrix.Labels, id, "binary")
-			if !ok || !requiresLabel(binary, "platform@"+platform.Version) {
+			binary, ok := compatibilityBinaryLabel(matrix.Labels, shipped, "platform@"+platform.Version)
+			if !ok {
 				return fmt.Errorf("compatibility matrix does not relate shipped binary %s to platform %s", shipped.ID, platform.Version)
 			}
 			rangeValue, err := semrange.ParseRange(platform.SDKRange)
@@ -307,7 +315,7 @@ func compatibilityArtifactExists(source Catalog, label CompatibilityLabel) bool 
 	case "binary":
 		for _, platform := range source.Platforms {
 			for _, value := range platform.Binaries {
-				if value.ID == label.ArtifactID && platform.Version == label.Version {
+				if value.ID == label.ArtifactID {
 					return true
 				}
 			}

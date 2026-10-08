@@ -332,22 +332,18 @@ describe('findWorkspacePackages', () => {
 
 describe('workspace adapter candidates', () => {
   const moduleFor = (roles: string | string[]) =>
-    `export const manifest = ${JSON.stringify({ manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: roles })};\n`;
+    `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: roles })};\n`;
 
   it('uses only kb.manifest and classifies undeclared packages as non-adapters', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-result-'));
     try {
-      const preferred = path.join(root, 'preferred.js');
-      const legacy = path.join(root, 'legacy.js');
       await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
-        name: '@fixture/manifest-precedence',
+        name: '@fixture/manifest',
         type: 'module',
-        kbLabs: { manifest: './preferred.js' },
-        kb: { manifest: './legacy.js' },
+        kb: { manifest: './manifest.js' },
       }));
-      await fs.writeFile(preferred, moduleFor('IFirst'));
-      await fs.writeFile(legacy, moduleFor('ISecond'));
-      expect(await loadAdapterManifest({ packageRoot: root })).toMatchObject({ kind: 'adapter', manifest: { implements: 'ISecond' } });
+      await fs.writeFile(path.join(root, 'manifest.js'), moduleFor('IFirst'));
+      expect(await loadAdapterManifest({ packageRoot: root })).toMatchObject({ kind: 'adapter', manifest: { schema: 'kb.adapter/1', implements: 'IFirst' } });
 
       const multiRoleRoot = path.join(root, 'multi-role');
       await fs.mkdir(multiRoleRoot, { recursive: true });
@@ -357,15 +353,12 @@ describe('workspace adapter candidates', () => {
         kb: { manifest: './roles.js' },
       }));
       await fs.writeFile(path.join(multiRoleRoot, 'roles.js'), moduleFor(['IRoleA', 'IRoleB']));
-      expect(await loadAdapterManifest({ packageRoot: multiRoleRoot })).toMatchObject({ kind: 'adapter', manifest: { implements: ['IRoleA', 'IRoleB'] } });
+      expect(await loadAdapterManifest({ packageRoot: multiRoleRoot })).toMatchObject({ kind: 'adapter', manifest: { schema: 'kb.adapter/1', implements: ['IRoleA', 'IRoleB'] } });
 
       await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
         name: '@fixture/undeclared',
         type: 'module',
-        kbLabs: { manifest: './preferred.js' },
       }));
-      await fs.mkdir(path.join(root, 'dist'));
-      await fs.writeFile(path.join(root, 'dist/index.js'), 'export const manifest = { implements: "IFallback" };\n');
       expect(await loadAdapterManifest({ packageRoot: root })).toMatchObject({ kind: 'not-adapter', reason: expect.stringContaining('kb.manifest') });
 
       const brokenRoot = path.join(root, 'broken');
@@ -376,11 +369,9 @@ describe('workspace adapter candidates', () => {
       expect(await loadAdapterManifest({ packageRoot: brokenRoot })).toMatchObject({ kind: 'failed' });
 
       const plainRoot = path.join(root, 'plain');
-      await fs.mkdir(path.join(plainRoot, 'dist'), { recursive: true });
+      await fs.mkdir(plainRoot, { recursive: true });
       await fs.writeFile(path.join(plainRoot, 'package.json'), JSON.stringify({ name: '@fixture/plain', type: 'module' }));
-      await fs.writeFile(path.join(plainRoot, 'dist/index.js'), 'export const manifest = { name: "plain package" };\n');
       expect(await loadAdapterManifest({ packageRoot: plainRoot })).toMatchObject({ kind: 'not-adapter' });
-
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

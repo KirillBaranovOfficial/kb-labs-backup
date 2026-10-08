@@ -36,7 +36,7 @@ on:
 inputs:
   flow:
     type: string
-    description: Release flow to prepare — must match a key under release.flows in .kb/kb.config.json (only "platform"; SDK, platform and binaries release as one flow with one version)
+    description: Release flow to prepare — must match a key under release.flows in .kb/kb.config.json (only "platform"; the first release uses one lockstep version for platform, SDK, and binaries)
     required: true
   channel:
     type: string
@@ -59,11 +59,10 @@ inputs:
       conventional commits since the last tag; force "major" for a deliberate
       breaking release regardless of what commit messages say. This only
       changes the version number: the compatibility matrix in each release's
-      release-index.json already relates platform/SDK/binary versions by
-      exact, explicit pairs (all three share one version) (tools/kb-create/v2/catalog/catalog.go,
-      CheckCompatibility) — nothing is compatible by default, so a major bump
-      does not need a separate "breaking" flag to stop old installs from
-      silently picking it up.
+      release-index.json records exact platform/SDK/binary version relations in
+      kb.release-compatibility/2 (tools/kb-create/v2/catalog/catalog.go,
+      CheckCompatibility). The first release flow stamps one lockstep version;
+      the matrix remains the only compatibility gate.
     required: false
     default: auto
 phases:
@@ -208,7 +207,7 @@ jobs:
         uses: builtin:approval
         with:
           title: "Release ${{ inputs.flow }} (${{ inputs.channel }}) — proceed?"
-          instructions: "Review the release plan, package links, and check results above — including the 'Current release status' section, which shows whether the last stable tag and npm already agree before this candidate. A warning there is not this candidate's fault, but it means the baseline you're releasing on top of is not fully clean — read it before treating this as a routine approve. Approval only prepares the Git state (for stable) and starts the governed release-plugin build in immutable candidate CI. Publishing and the installable channel are separate later transitions, and the channel moves only after green smoke. bump=${{ inputs.bump }} (verify the plan's version numbers match what you expect — 'major' does not add a compatibility gate on top of the version bump; the release-index compatibility matrix already relates versions by exact explicit pairs). skipChecks=${{ inputs.skipChecks }} (if true, pack-install/typecheck/lint/tests did NOT run — verify manually before approving)."
+          instructions: "Review the release plan, package links, and check results above — including the 'Current release status' section, which shows whether the last stable tag and npm already agree before this candidate. A warning there is not this candidate's fault, but it means the baseline you're releasing on top of is not fully clean — read it before treating this as a routine approve. Approval only prepares the Git state (for stable) and starts the governed release-plugin build in immutable candidate CI. Publishing and the installable channel are separate later transitions, and the channel moves only after green smoke. bump=${{ inputs.bump }} (verify the plan's version numbers match what you expect — 'major' does not add a compatibility gate on top of the version bump; the release-index compatibility matrix checks explicit version relations). skipChecks=${{ inputs.skipChecks }} (if true, pack-install/typecheck/lint/tests did NOT run — verify manually before approving)."
 
       - name: Bump versions
         id: version

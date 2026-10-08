@@ -28,7 +28,7 @@ describe('loadAdapterManifest', () => {
       name: '@fixture/cache', type: 'module', kb: { manifest: './manifest.mjs' },
     }));
     await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
-      manifestVersion: '1.0.0', id: 'fixture-cache', name: 'Fixture Cache', version: '1.0.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture-cache', name: 'Fixture Cache', version: '1.0.0',
       type: 'core', implements: 'ICache', configSchema: { directory: { type: 'string' } },
     })};`);
 
@@ -60,8 +60,25 @@ describe('loadAdapterManifest', () => {
     await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
       name: 'broken', type: 'module', kb: { manifest: './manifest.mjs' },
     }));
-    await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = { implements: "ICache" };');
+    await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = { schema: "kb.adapter/1", implements: "ICache" };');
 
     await expect(loadAdapterManifest({ packageRoot })).resolves.toMatchObject({ kind: 'failed' });
+  });
+
+  it.each([
+    ['missing', ''],
+    ['wrong', 'schema: "kb.adapter/2", '],
+  ] as const)('returns failed when a declared adapter manifest has a %s schema', async (_kind, schemaField) => {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-loader-'));
+    const packageRoot = path.join(tempRoot, 'invalid-schema');
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: 'invalid-schema', type: 'module', kb: { manifest: './manifest.mjs' },
+    }));
+    await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = { ${schemaField}implements: "ICache" };`);
+
+    await expect(loadAdapterManifest({ packageRoot })).resolves.toMatchObject({
+      kind: 'failed', reason: expect.stringContaining('adapter manifest must declare schema "kb.adapter/1"'),
+    });
   });
 });
