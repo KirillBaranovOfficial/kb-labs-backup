@@ -57,7 +57,7 @@ class MarketplaceStepTests(unittest.TestCase):
 
             self.assertEqual(config.read_bytes(), original)
             self.assertEqual(journey.steps[-1].status, "PASS")
-            self.assertEqual(journey.steps[-1].cases, ["S-203.24"])
+            self.assertEqual(journey.steps[-1].cases, ["S-203.25"])
             self.assertTrue(any(command[0] == "kb" and command[1] == "version" for command in calls))
 
     def test_commit_route_http_claims_accept_documented_success_and_not_found(self):
@@ -585,7 +585,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 "S-010.7",
                 "S-051.2", "S-051.3", "S-051.4",
                 "S-203.14", "S-203.15", "S-203.16",
-                "S-203.24",
+                "S-203.25",
             })
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)

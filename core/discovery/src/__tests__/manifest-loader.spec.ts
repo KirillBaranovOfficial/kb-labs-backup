@@ -186,7 +186,7 @@ describe('loadManifest', () => {
     if (result.kind === 'manifest') expect(result.loaded.manifest.id).toBe('from-pkg-field');
   });
 
-  // case: S-203.24
+  // case: S-203.25
   it('preserves the declared manifest import failure instead of reporting not found', async () => {
     const pkgDir = path.join(tmpDir, 'import-failure');
     await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
@@ -201,7 +201,7 @@ describe('loadManifest', () => {
     expect(diag.getEvents().map(event => event.code)).not.toContain('MANIFEST_NOT_FOUND');
   });
 
-  // case: S-203.24
+  // case: S-203.25
   it('requires a named manifest export and reports the missing shape as failed', async () => {
     const pkgDir = path.join(tmpDir, 'default-only');
     await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
@@ -214,7 +214,7 @@ describe('loadManifest', () => {
     expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_VALIDATION_ERROR');
   });
 
-  // case: S-203.24
+  // case: S-203.25
   it('requires a recognized schema instead of guessing an entity from legacy fields', async () => {
     const pkgDir = path.join(tmpDir, 'unknown-schema');
     await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
@@ -227,7 +227,7 @@ describe('loadManifest', () => {
     expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_VALIDATION_ERROR');
   });
 
-  // case: S-203.24
+  // case: S-203.25
   it('reports malformed declared kb.plugin.json as a parse failure', async () => {
     const pkgDir = path.join(tmpDir, 'invalid-static');
     await fs.mkdir(pkgDir, { recursive: true });
@@ -239,7 +239,7 @@ describe('loadManifest', () => {
     expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
   });
 
-  // case: S-203.24
+  // case: S-203.25
   it('does not infer a plugin from the package entry point', async () => {
     const pkgDir = path.join(tmpDir, 'entrypoint-only');
     await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });

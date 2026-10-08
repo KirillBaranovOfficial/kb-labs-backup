@@ -21,13 +21,13 @@ describe('readPluginPolicy', () => {
     return root;
   }
 
-  // case: S-203.24
+  // case: S-203.25
   it('treats an absent optional config as an unset policy', async () => {
     const result = await readPluginPolicy(await makeRoot(null));
     expect(result).toEqual({ kind: 'valid', policy: {} });
   });
 
-  // case: S-203.24
+  // case: S-203.25
   it('retains the core-config diagnostic for malformed config', async () => {
     const configRoot = await makeRoot('{"plugins":');
     const result = await readPluginPolicy(configRoot);
@@ -39,7 +39,7 @@ describe('readPluginPolicy', () => {
     }
   });
 
-  // case: S-203.24
+  // case: S-203.25
   it('retains the core-config diagnostic when the config cannot be read', async () => {
     const configRoot = await makeRoot(null);
     await fs.mkdir(path.join(configRoot, '.kb'), { recursive: true });
@@ -53,7 +53,7 @@ describe('readPluginPolicy', () => {
     }
   });
 
-  // case: S-203.24
+  // case: S-203.25
   it('rejects wrongly typed allow and block entries instead of dropping them', async () => {
     const result = await readPluginPolicy(await makeRoot(JSON.stringify({ plugins: { allow: ['valid', 3], block: 'blocked' } })));
     expect(result.kind).toBe('invalid');

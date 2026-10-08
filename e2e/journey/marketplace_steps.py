@@ -184,9 +184,9 @@ def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry:
             else:
                 config_file.write_bytes(original)
 
-    with invocation_context(step_id="S-203.24"):
+    with invocation_context(step_id="S-203.25"):
         journey.step("malformed project plugin policy blocks marketplace plugins and preserves shipped commands",
-                     "marketplace", verify, cases=["S-203.24"])
+                     "marketplace", verify, cases=["S-203.25"])
 
 
 def validate_shared_failure(result: subprocess.CompletedProcess[str], *, json_mode: bool,

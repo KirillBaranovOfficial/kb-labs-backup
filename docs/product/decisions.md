@@ -385,7 +385,7 @@ shipped in the platform-scope lock; npm package names do not grant an exemption.
 Config diagnostics retain their original code and repair hint, followed by a
 doctor command with the affected scope. The governance behavior is proved in
 installed local and secured journeys with a registered project and the
-marketplace-published `@kb-labs/e2e-analytics-emitter` fixture. Cases: S-203.24.
+marketplace-published `@kb-labs/e2e-analytics-emitter` fixture. Cases: S-203.25.
 
 ### CLI authentication has one session owner
 

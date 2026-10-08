@@ -11,7 +11,8 @@ const mockReadInstalledIdentity = vi.hoisted(() => vi.fn().mockResolvedValue(und
 const originalEnv = { ...process.env };
 
 // Mock all heavy bootstrap deps before importing bootstrap
-vi.mock("@kb-labs/core-platform", () => ({
+vi.mock("@kb-labs/core-platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@kb-labs/core-platform")>()),
   GATEWAY_SERVICE_NETWORK: {
     serviceId: "gateway",
     portEnvVar: "GATEWAY_PORT",

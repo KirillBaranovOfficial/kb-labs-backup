@@ -47,7 +47,7 @@ describe('PluginStrategy', () => {
   });
 
   describe('extractProvides', () => {
-    // case: S-203.24
+    // case: S-203.25
     it('returns no kinds when no plugin manifest is declared', async () => {
       await fs.writeFile(path.join(tmpDir, 'package.json'), '{"name":"test"}');
       const result = await strategy.extractProvides(tmpDir);

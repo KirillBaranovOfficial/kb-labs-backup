@@ -113,7 +113,7 @@ describe('Discovery Integration: install → discover → available', () => {
     expect(manifest!.cli?.commands).toHaveLength(1);
   });
 
-  // case: S-203.24
+  // case: S-203.25
   it('fails closed for marketplace plugins when policy config is broken and retains local sources', async () => {
     const marketplace = await installPlugin({ name: 'marketplace', id: '@vendor/marketplace', version: '1.0.0' });
     const firstParty = await installPlugin({ name: 'first-party', id: '@vendor/platform-shipped', version: '1.0.0' });

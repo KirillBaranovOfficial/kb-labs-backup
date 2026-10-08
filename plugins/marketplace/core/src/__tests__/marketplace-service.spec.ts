@@ -643,7 +643,7 @@ describe('MarketplaceService', () => {
       expect(error!.diagnosticCode).toBe('PACKAGE_NOT_FOUND');
     });
 
-    // case: S-203.24
+    // case: S-203.25
     it('preserves the policy diagnostic code, config path, and scoped repair command', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'policy-blocked', '@vendor/policy-blocked');
       const source = createMockSource(new Map([['@vendor/policy-blocked', { dir, version: '1.0.0', integrity }]]));
