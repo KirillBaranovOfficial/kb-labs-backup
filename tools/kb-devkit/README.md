@@ -329,13 +329,17 @@ custom_checks:
     fix: "./node_modules/@acme/devkit-pack/bin/external-readme.sh"
     on: ["check"]
     language: typescript
+    scope: package
 ```
 
 Runtime contract:
 - command runs from workspace root
-- stdin receives JSON with `package`, `preset`, `workspaceRoot`, `check`, `phase`, `config`
+- package-scope checks run once per matching package; stdin receives JSON with `package`, `preset`, `workspaceRoot`, `check`, `phase`, `config`
+- workspace-scope checks run once per invocation and receive `workspace: { root, packages }`; every package includes its resolved `name`, `dir`, `relPath`, `category`, `preset`, and `language`
 - fix commands also receive `issues` and `dryRun`
 - env includes `KB_DEVKIT_MODE`, `KB_DEVKIT_PACKAGE_*`, `KB_DEVKIT_WORKSPACE_ROOT`
+
+Set `scope: workspace` when the check must compare packages or enforce a workspace-wide invariant. It runs once and gets the same resolved package categories that kb-devkit uses for its tasks and package checks.
 
 Expected JSON output:
 

@@ -208,7 +208,8 @@ export class AdapterLoader {
    */
   async buildDependencyGraph(
     configs: Record<string, AdapterConfig>,
-    loadModule: (modulePath: string) => Promise<LoadedAdapterModule>
+    loadModule: (modulePath: string) => Promise<LoadedAdapterModule>,
+    externalAdapters: ReadonlyMap<string, unknown> = new Map(),
   ): Promise<DependencyGraph> {
     const graph = new DependencyGraph();
 
@@ -237,12 +238,12 @@ export class AdapterLoader {
       // Add edges for required dependencies
       for (const depId of node.requiredDeps) {
         const depNode = graph.getNode(depId);
-        if (!depNode) {
+        if (!depNode && !externalAdapters.has(depId)) {
           throw this.createMissingDependencyError(node.name, depId, graph);
         }
         // Edge from dependency to dependent (dependency must load first)
         // db -> logPersistence means db loads before logPersistence
-        graph.addEdge(depId, node.name);
+        if (depNode) {graph.addEdge(depId, node.name);}
       }
 
       // Add edges for optional dependencies (if present)
@@ -306,10 +307,12 @@ export class AdapterLoader {
     sharedDeps: {
       logger?: ILogger;
       onAdapterLoadFailure?: (slot: string, packageName: string, error: unknown) => void;
+      adapters?: ReadonlyMap<string, unknown>;
+      platformServices?: Record<string, () => unknown | Promise<unknown>>;
     } = {},
   ): Promise<Map<string, unknown>> {
     // Step 1: Build dependency graph
-    const graph = await this.buildDependencyGraph(configs, loadModule);
+    const graph = await this.buildDependencyGraph(configs, loadModule, sharedDeps.adapters);
 
     // Step 2: Topological sort
     const sorted = graph.topologicalSort();
@@ -327,7 +330,7 @@ export class AdapterLoader {
 
         // Add required dependencies
         for (const depId of node.requiredDeps) {
-          const depInstance = adapters.get(depId);
+          const depInstance = adapters.get(depId) ?? sharedDeps.adapters?.get(depId);
           if (!depInstance) {
             throw new Error(
               `Required adapter dependency "${depId}" failed to load before "${node.name}".`,
@@ -335,6 +338,16 @@ export class AdapterLoader {
           }
           const alias = aliases.get(depId) ?? depId;
           deps[alias] = depInstance;
+        }
+
+        for (const declaration of node.manifest.requires?.platformServices ?? []) {
+          const service = typeof declaration === 'string' ? declaration : declaration.id;
+          const alias = typeof declaration === 'string' ? service : declaration.alias ?? service;
+          const provider = sharedDeps.platformServices?.[service];
+          if (provider === undefined) {
+            throw new Error(`Adapter "${node.name}" requires platform service "${service}" but no provider is registered.`);
+          }
+          deps[alias] = await provider();
         }
 
         // Add optional dependencies (if present)

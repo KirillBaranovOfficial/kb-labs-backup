@@ -295,32 +295,9 @@ interface RemoteExecutionStream {
 }
 ```
 
-### Варианты адаптеров
+### Текущая реализация
 
-| Адаптер | Транспорт | Когда использовать |
-|---------|-----------|-------------------|
-| `adapters-transport-local` | fork + unix socket | LocalBackend, текущий subprocess |
-| `adapters-transport-tcp` | TCP + JSON protocol | Docker на том же хосте |
-| `adapters-transport-grpc` | gRPC | production, K8s, стриминг |
-| `adapters-transport-http` | HTTP + SSE | простые сценарии, serverless |
-
-### Конфигурация
-
-```json
-{
-  "platform": {
-    "adapters": {
-      "executionTransport": "@kb-labs/adapters-transport-tcp"
-    },
-    "adapterOptions": {
-      "executionTransport": {
-        "connectTimeoutMs": 5000,
-        "requestTimeoutMs": 300000
-      }
-    }
-  }
-}
-```
+Локальное выполнение использует `LocalBackend` и не требует транспортного адаптера. Удалённое выполнение принимает `IExecutionTransport` через параметры фабрики `core/plugin-execution-factory`; production-путь строит `GatewayDispatchTransport` в gateway. Контракт находится в `core/contracts/src/execution-transport.ts`. Поддерживаемого `executionTransport` ключа в конфигурации платформы нет.
 
 ---
 

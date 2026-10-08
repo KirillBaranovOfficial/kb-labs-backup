@@ -223,6 +223,9 @@ export interface AdapterManifest {
    */
   implements: string | string[];
 
+  /** Configuration value used to select this adapter when it implements a typed extension point. */
+  channelType?: string;
+
   /** Capabilities this adapter is the platform's default provider for. */
   defaultFor?: string[];
 
@@ -257,6 +260,13 @@ export interface AdapterManifest {
      * Each will be passed to factory function in `deps` parameter.
      */
     adapters?: AdapterDependency[];
+
+    /** Named platform services injected into the factory dependency object. */
+    platformServices?: Array<
+      | 'resourceBroker'
+      | 'notifierChannels'
+      | { id: 'resourceBroker' | 'notifierChannels'; alias?: string }
+    >;
 
     /**
      * Required platform version (semver range).

@@ -252,6 +252,7 @@ type CustomCheck struct {
 	On         []string `yaml:"on"`       // check | gate
 	Language   string   `yaml:"language"` // any | typescript | go
 	Categories []string `yaml:"categories"`
+	Scope      string   `yaml:"scope"` // package | workspace
 }
 
 type ChecksConfig struct {

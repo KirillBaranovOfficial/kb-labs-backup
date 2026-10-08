@@ -9,9 +9,9 @@ import (
 
 // PackageResult holds all issues for a single package.
 type PackageResult struct {
-	Package  workspace.Package
-	Issues   []Issue
-	Skipped  bool
+	Package workspace.Package
+	Issues  []Issue
+	Skipped bool
 }
 
 // RunAll runs all rules from the registry against all packages in parallel.
@@ -33,6 +33,20 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 	}
 
 	results := make(map[string]PackageResult, len(ws.Packages))
+	workspaceIssues := make([]Issue, 0)
+	for _, rule := range registry.All() {
+		external, ok := rule.(*externalRule)
+		if !ok || external.scope != "workspace" || (len(onlySet) > 0 && !onlySet[rule.Name()]) {
+			continue
+		}
+		workspaceIssues = append(workspaceIssues, external.CheckWorkspace(ws)...)
+	}
+	if len(workspaceIssues) > 0 {
+		results["workspace"] = PackageResult{
+			Package: workspace.Package{Name: "workspace", Dir: ws.Root, RelPath: "."},
+			Issues:  workspaceIssues,
+		}
+	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8) // max 8 goroutines
@@ -57,6 +71,9 @@ func RunAll(ws *workspace.Workspace, cfg *config.DevkitConfig, registry *Registr
 
 			var issues []Issue
 			for _, rule := range rules {
+				if external, ok := rule.(*externalRule); ok && external.scope == "workspace" {
+					continue
+				}
 				// Apply --only filter.
 				if len(onlySet) > 0 && !onlySet[rule.Name()] {
 					continue

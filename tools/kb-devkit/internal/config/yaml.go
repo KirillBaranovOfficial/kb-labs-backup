@@ -223,6 +223,7 @@ type yamlCustomCheck struct {
 	On         []string `yaml:"on"`
 	Language   string   `yaml:"language"`
 	Categories []string `yaml:"categories"`
+	Scope      string   `yaml:"scope"`
 }
 
 type yamlChecks struct {
@@ -323,7 +324,16 @@ func parseYAMLBytes(data []byte) (*DevkitConfig, error) {
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
-	return mapYAML(raw), nil
+	cfg := mapYAML(raw)
+	for _, check := range cfg.Custom {
+		if check.Scope != "" && check.Scope != "package" && check.Scope != "workspace" {
+			return nil, fmt.Errorf("custom check %q has unsupported scope %q (expected package or workspace)", check.Name, check.Scope)
+		}
+		if check.Scope == "workspace" && (check.Language != "" || len(check.Categories) > 0) {
+			return nil, fmt.Errorf("custom check %q uses workspace scope and cannot set package language or categories", check.Name)
+		}
+	}
+	return cfg, nil
 }
 
 func mapYAML(raw yamlConfig) *DevkitConfig {
@@ -434,6 +444,7 @@ func mapYAML(raw yamlConfig) *DevkitConfig {
 			On:         c.On,
 			Language:   c.Language,
 			Categories: c.Categories,
+			Scope:      c.Scope,
 		})
 	}
 

@@ -249,12 +249,10 @@ _No packages found._
 | `@kb-labs/adapters-mongodb` | MongoDB adapter implementing IDocumentDatabase interface |
 | `@kb-labs/adapters-openai` | OpenAI adapter implementing ILLM and IEmbeddings interfaces |
 | `@kb-labs/adapters-pino` | Pino adapter implementing ILogger interface |
-| `@kb-labs/adapters-pino-http` | Pino HTTP transport for streaming logs to REST API |
 | `@kb-labs/adapters-qdrant` | Qdrant adapter implementing IVectorStore interface |
 | `@kb-labs/adapters-redis` | Redis adapter implementing ICache interface |
 | `@kb-labs/adapters-snapshot-localfs` | Local filesystem adapter implementing ISnapshotProvider |
 | `@kb-labs/adapters-sqlite` | SQLite adapter implementing ISQLDatabase interface |
-| `@kb-labs/adapters-transport` | Transport adapters for inter-process communication (IPC, Unix Sockets) |
 | `@kb-labs/adapters-vibeproxy` | VibeProxy adapter implementing ILLM interface for local Anthropic API proxy |
 | `@kb-labs/adapters-workspace-agent` | Workspace adapter that materializes workspaces from a remote Host Agent via Gateway |
 | `@kb-labs/adapters-workspace-localfs` | Local filesystem adapter implementing IWorkspaceProvider |

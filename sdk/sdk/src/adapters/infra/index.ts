@@ -21,7 +21,7 @@ export {
   DEFAULT_TRANSIENT_RETRY_POLICY,
 } from '@kb-labs/core-retry';
 
-// Transport (IPC layer used by adapters/transport)
+// Transport (IPC layer implemented by core/ipc)
 export type {
   ITransport,
   TransportConfig,

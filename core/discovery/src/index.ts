@@ -51,7 +51,8 @@ export { readPluginPolicy, checkPluginPolicy } from './plugin-policy.js';
 export type { PluginPolicy, PolicyVerdict } from './plugin-policy.js';
 
 // Workspace packages are also the development source for configured adapters.
-export { findWorkspacePackages, loadAdapterManifest } from './workspace-source.js';
+export { findWorkspacePackages, loadAdapterManifest, resolveManifestModulePath } from './workspace-source.js';
+export type { AdapterManifestLoadResult } from './workspace-source.js';
 export type { WorkspaceCandidate } from './workspace-source.js';
 
 // Diagnostics

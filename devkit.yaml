@@ -71,17 +71,7 @@ workspace:
       language: typescript
       preset: node-app
 
-    # Adapter support libraries that are not platform adapter providers.
-    adapter-support:
-      match:
-        - "adapters/notifier-router"
-        - "adapters/pino-http"
-        - "adapters/transport"
-      language: typescript
-      preset: node-lib
-
     # Adapter packages — node-lib + SDK-only dependency boundary.
-    # Adapter support libraries above are the explicit exceptions to this broad match.
     adapter:
       match:
         - "adapters/*"
@@ -479,7 +469,7 @@ tasks:
       deps:
         - "^build"
 
-    - categories: [ts-lib, ts-app, adapter, adapter-support]
+    - categories: [ts-lib, ts-app, adapter]
       command: tsup
       inputs:
         - "src/**"
@@ -551,7 +541,7 @@ tasks:
         - "^build"
 
   lint:
-    - categories: [ts-lib, ts-app, adapter-support]
+    - categories: [ts-lib, ts-app]
       command: eslint src/
       inputs:
         - "src/**"
@@ -583,7 +573,7 @@ tasks:
       outputs: []
 
   type-check:
-    - categories: [ts-lib, ts-app, adapter-support]
+    - categories: [ts-lib, ts-app]
       command: tsc --noEmit
       inputs:
         - "src/**"
@@ -628,7 +618,7 @@ tasks:
   # Affected only:
   #   kb-devkit run e2e --affected
   test:
-    - categories: [ts-lib, ts-app, adapter-support]
+    - categories: [ts-lib, ts-app]
       command: vitest run --passWithNoTests
       inputs:
         - "src/**"
@@ -652,7 +642,7 @@ tasks:
       outputs: []
 
   test:coverage:
-    - categories: [ts-lib, ts-app, adapter-support]
+    - categories: [ts-lib, ts-app]
       command: npx vitest run --passWithNoTests --coverage
       inputs:
         - "src/**"
@@ -734,8 +724,7 @@ custom_checks:
   - name: adapter-manifest
     run: node scripts/checks/check-adapter-manifest.mjs
     on: [check]
-    language: typescript
-    categories: [adapter]
+    scope: workspace
 
   - name: test-pyramid
     run: node scripts/checks/check-test-pyramid.mjs

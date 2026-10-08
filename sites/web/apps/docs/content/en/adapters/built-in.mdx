@@ -1,7 +1,7 @@
 ---
 title: "Built-in Adapters"
 description: "Catalog of adapters shipped in the monorepo with their interface and use case."
-updatedAt: "2026-10-01"
+updatedAt: "2026-10-08"
 order: 2
 ---
 
@@ -53,9 +53,8 @@ To swap an adapter, change one line in `kb.config.jsonc` under `platform.adapter
 | Package | Implements | Use when |
 |---|---|---|
 | `@kb-labs/adapters-pino` | `ILogger` | Default. Structured JSON logs to stdout. Standard production choice when something else (Loki, CloudWatch, journald) tails stdout. |
-| `@kb-labs/adapters-pino-http` | `ILogger` | Pino with HTTP request enrichment. Use inside HTTP services that want auto-attached `req`/`res` fields. |
-| `@kb-labs/adapters-log-ringbuffer` | `ILogger` | In-memory ring buffer queryable from the platform. Use alongside Pino when you want recent logs accessible via API without parsing files. |
-| `@kb-labs/adapters-log-sqlite` | `ILogger` | Persists structured logs to a local SQLite file. Searchable with SQL, survives restarts. |
+| `@kb-labs/adapters-log-ringbuffer` | `ILogRingBuffer` | In-memory log buffer for live log streaming. |
+| `@kb-labs/adapters-log-document` | `ILogPersistence` | Persistent log storage backed by the configured document database. |
 
 The default log reader combines the local logger ring buffer with SQLite log
 persistence when that persistence adapter is installed. `kb adapter list
@@ -106,9 +105,9 @@ This provider implements the workspace snapshot-provider contract. It does not
 fill the plugin-visible `snapshotManager` slot, which currently has no runtime
 adapter implementation.
 
-## Transport
+## Execution transport
 
-`@kb-labs/adapters-transport` is a base package consumed by other adapters — not selected directly via `kb.config.jsonc`. Don't worry about it unless you're writing a custom adapter that needs the same HTTP/WebSocket primitives.
+Local execution uses `LocalBackend` and does not require a transport adapter. Remote execution receives the `IExecutionTransport` contract through `core/plugin-execution-factory`; the gateway builds `GatewayDispatchTransport`. There is no `executionTransport` key in platform configuration.
 
 ## Retry classification
 
