@@ -1257,6 +1257,9 @@ importers:
         specifier: workspace:*
         version: link:../workspace
     devDependencies:
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../project-registry
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit

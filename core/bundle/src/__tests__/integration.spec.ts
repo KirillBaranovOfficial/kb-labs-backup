@@ -8,23 +8,27 @@ import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadBundle, clearCaches } from '../index';
+import { registerTestProject, useIsolatedProjectRegistry } from './project-registry';
 
 describe('Bundle Integration Tests', () => {
   let testDir: string;
   let fixtureDir: string;
+  let cleanupRegistry: (() => Promise<void>) | undefined;
 
   beforeEach(async () => {
-    testDir = path.join(tmpdir(), `kb-labs-bundle-integration-${Date.now()}`);
+    testDir = await fsp.mkdtemp(path.join(tmpdir(), 'kb-labs-bundle-integration-'));
     fixtureDir = path.join(__dirname, '../__fixtures__/workspace');
 
     // Copy fixture workspace to test directory
-    await fsp.mkdir(testDir, { recursive: true });
     await copyDir(fixtureDir, testDir);
+    cleanupRegistry = await useIsolatedProjectRegistry(testDir);
 
     clearCaches();
   });
 
   afterEach(async () => {
+    await cleanupRegistry?.();
+    cleanupRegistry = undefined;
     await fsp.rm(testDir, { recursive: true, force: true });
     clearCaches();
   });
@@ -116,6 +120,7 @@ describe('Bundle Integration Tests', () => {
       await fsp.mkdir(emptyDir, { recursive: true });
 
       try {
+        await registerTestProject(emptyDir);
         await expect(
           loadBundle({
             cwd: emptyDir,
