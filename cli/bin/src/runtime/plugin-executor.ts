@@ -14,6 +14,7 @@ import type {
 } from "@kb-labs/plugin-contracts";
 import {
   getHandlerPermissions,
+  matchesPermissionPattern,
   noopTraceContext,
   noopUI,
 } from "@kb-labs/plugin-contracts";
@@ -58,9 +59,7 @@ export async function executePlugin(
     return undefined;
   }
 
-  // Get plugin manifest (with fallback to legacy manifestV2 field)
-  const pluginManifest =
-    manifestCmd.v3Manifest ?? manifestCmd.manifest.manifestV2;
+  const pluginManifest = manifestCmd.manifest.v3Manifest;
   if (!pluginManifest) {
     return undefined;
   }
@@ -193,11 +192,7 @@ function permissionAllowsEnvironmentVariable(
   patterns: string[] | undefined,
   variable: string,
 ): boolean {
-  return patterns?.some((pattern) =>
-    pattern.endsWith("*")
-      ? variable.startsWith(pattern.slice(0, -1))
-      : pattern === variable,
-  ) ?? false;
+  return patterns?.some((pattern) => matchesPermissionPattern(variable, pattern)) ?? false;
 }
 
 export function renderUnavailableAdapterError(

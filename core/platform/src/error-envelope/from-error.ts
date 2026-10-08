@@ -179,18 +179,18 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
   const correlationId = typeof source?.correlationId === 'string'
     ? source.correlationId
     : options.correlationId ?? (code === 'KB_RUNTIME_UNEXPECTED' ? globalThis.crypto.randomUUID() : undefined);
+  const message = code !== 'KB_RUNTIME_UNEXPECTED' && !('errorCode' in (source ?? {})) && typeof source?.message === 'string'
+    ? source.message
+    : undefined;
   const cause = code === 'KB_RUNTIME_UNEXPECTED'
     ? typeof error === 'string' ? error : undefined
     : typeof source?.cause === 'string'
     ? source.cause
-    : error instanceof Error
+    : error instanceof Error && message !== error.message
       ? error.message
-      : typeof error === 'string'
+      : typeof error === 'string' && message !== error
         ? error
         : undefined;
-  const message = code !== 'KB_RUNTIME_UNEXPECTED' && !('errorCode' in (source ?? {})) && typeof source?.message === 'string'
-    ? source.message
-    : undefined;
   const hint = code !== 'KB_RUNTIME_UNEXPECTED' && typeof source?.hint === 'string'
     ? source.hint
     : undefined;

@@ -2,6 +2,7 @@
  * Sandboxed environment variable access
  */
 
+import { matchesPermissionPattern } from '@kb-labs/plugin-contracts';
 import type { PermissionSpec, EnvShim } from '@kb-labs/plugin-contracts';
 
 /**
@@ -37,15 +38,7 @@ export function createEnvShim(options: CreateEnvShimOptions): EnvShim {
     }
 
     // Check whitelist patterns
-    const isAllowed = allowedPatterns.some(pattern => {
-      if (pattern.endsWith('*')) {
-        // Prefix match: "KB_*" matches "KB_ANYTHING"
-        const prefix = pattern.slice(0, -1);
-        return key.startsWith(prefix);
-      }
-      // Exact match
-      return key === pattern;
-    });
+    const isAllowed = allowedPatterns.some(pattern => matchesPermissionPattern(key, pattern));
 
     if (!isAllowed) {
       // Return undefined for non-allowed vars (no error)

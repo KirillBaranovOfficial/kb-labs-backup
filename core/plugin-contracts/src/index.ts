@@ -41,6 +41,7 @@ export { getLoggerMetadataFromHost } from "./logger-metadata.js";
 // Permissions
 export type { PermissionSpec } from "./permissions.js";
 export { DEFAULT_PERMISSIONS } from "./permissions.js";
+export { matchesPermissionPattern } from "./permission-pattern.js";
 
 // CLI manifest declarations
 export { CliCommandDeclSchema, CliFlagDeclSchema } from './cli-schema.js';

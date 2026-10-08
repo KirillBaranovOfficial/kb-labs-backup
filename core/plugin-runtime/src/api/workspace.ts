@@ -4,6 +4,8 @@
  * Adapter from plugin-facing WorkspaceAPI to runtime WorkspaceManager.
  */
 
+import { matchesPermissionPattern } from '@kb-labs/plugin-contracts';
+
 import type {
   WorkspaceAPI,
   WorkspaceMaterializeRequest,
@@ -26,16 +28,6 @@ export interface CreateWorkspaceAPIOptions {
   manager: WorkspaceManagerClient;
 }
 
-function matchesPattern(value: string, pattern: string): boolean {
-  if (pattern === '*') {
-    return true;
-  }
-  if (pattern.endsWith('*')) {
-    return value.startsWith(pattern.slice(0, -1));
-  }
-  return value === pattern;
-}
-
 function checkScope(
   value: string | undefined,
   patterns: string[] | undefined,
@@ -44,7 +36,7 @@ function checkScope(
   if (!value || !patterns?.length) {
     return;
   }
-  const allowed = patterns.some(pattern => matchesPattern(value, pattern));
+  const allowed = patterns.some(pattern => matchesPermissionPattern(value, pattern));
   if (!allowed) {
     throw new Error(deniedMessage);
   }

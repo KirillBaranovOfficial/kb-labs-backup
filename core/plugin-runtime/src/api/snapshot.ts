@@ -4,6 +4,8 @@
  * Adapter from plugin-facing SnapshotAPI to runtime SnapshotManager.
  */
 
+import { matchesPermissionPattern } from '@kb-labs/plugin-contracts';
+
 import type {
   SnapshotAPI,
   SnapshotCaptureRequest,
@@ -29,16 +31,6 @@ export interface CreateSnapshotAPIOptions {
   manager: SnapshotManagerClient;
 }
 
-function matchesPattern(value: string, pattern: string): boolean {
-  if (pattern === '*') {
-    return true;
-  }
-  if (pattern.endsWith('*')) {
-    return value.startsWith(pattern.slice(0, -1));
-  }
-  return value === pattern;
-}
-
 function checkNamespaceScope(
   namespace: string | undefined,
   patterns: string[] | undefined,
@@ -47,7 +39,7 @@ function checkNamespaceScope(
   if (!namespace || !patterns?.length) {
     return;
   }
-  const allowed = patterns.some(pattern => matchesPattern(namespace, pattern));
+  const allowed = patterns.some(pattern => matchesPermissionPattern(namespace, pattern));
   if (!allowed) {
     throw new Error(deniedMessage);
   }

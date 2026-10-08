@@ -238,9 +238,9 @@ async function discoverRestApiPlugins(repoRoot: string): Promise<PluginManifestW
           Array.isArray(manifest.rest.routes) &&
           manifest.rest.routes.length > 0
         ) {
-          const manifestV2 = manifest as ManifestV3;
+          const v3Manifest = manifest as ManifestV3;
           results.push({
-            manifest: manifestV2,
+            manifest: v3Manifest,
             manifestPath: path.resolve(manifestPath),
             pluginRoot: pkgRoot,
           });

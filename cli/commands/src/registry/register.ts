@@ -34,8 +34,8 @@ function validateManifestStructure(manifest: CommandManifest): void {
   if (!manifest.describe) {
     throw new Error(`Missing describe in manifest ${manifest.segments.join(' ')}`);
   }
-  if (!manifest.loader && !manifest.manifestV2) {
-    throw new Error(`Command ${manifest.segments.join(' ')} must have either loader or manifestV2`);
+  if (!manifest.loader && !manifest.v3Manifest) {
+    throw new Error(`Command ${manifest.segments.join(' ')} must have either loader or v3Manifest`);
   }
   if (manifest.flags) {
     for (const flag of manifest.flags) {
@@ -150,7 +150,6 @@ export async function registerManifests(
 
         const cmd: RegisteredCommand = {
           manifest,
-          v3Manifest: manifest.manifestV2,
           available: manifest.unavailablePlugin ? false : availability.available,
           unavailableReason: manifest.unavailablePlugin ? manifest.describe : availability.available ? undefined : availability.reason,
           hint: manifest.unavailablePlugin

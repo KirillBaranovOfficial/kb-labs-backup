@@ -4,6 +4,8 @@
  * Adapter from simplified WorkflowsAPI to full IWorkflowEngine interface.
  */
 
+import { matchesPermissionPattern } from '@kb-labs/plugin-contracts';
+
 import type {
   ExecutionTarget,
   WorkflowsAPI,
@@ -24,16 +26,6 @@ export interface CreateWorkflowsAPIOptions {
     target: ExecutionTarget;
     workflowId: string;
   }) => Promise<void> | void;
-}
-
-function matchesPattern(value: string, pattern: string): boolean {
-  if (pattern === '*') {
-    return true;
-  }
-  if (pattern.endsWith('*')) {
-    return value.startsWith(pattern.slice(0, -1));
-  }
-  return value === pattern;
 }
 
 function checkTargetPermission(
@@ -68,7 +60,7 @@ function checkTargetPermission(
 
   if (executionPerms.namespaces?.length) {
     const allowed = executionPerms.namespaces.some(pattern =>
-      matchesPattern(target.namespace!, pattern)
+      matchesPermissionPattern(target.namespace!, pattern)
     );
     if (!allowed) {
       throw new Error(
@@ -108,14 +100,7 @@ function checkWorkflowPermission(
 
     // Check workflow ID scope if specified
     if (workflowId && workflowPerms.workflowIds) {
-      const allowed = workflowPerms.workflowIds.some(pattern => {
-        if (pattern === '*') {return true;}
-        if (pattern.endsWith('*')) {
-          const prefix = pattern.slice(0, -1);
-          return workflowId.startsWith(prefix);
-        }
-        return pattern === workflowId;
-      });
+      const allowed = workflowPerms.workflowIds.some(pattern => matchesPermissionPattern(workflowId, pattern));
 
       if (!allowed) {
         throw new Error(

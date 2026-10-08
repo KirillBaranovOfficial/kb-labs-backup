@@ -7,10 +7,9 @@
 
 import type { ExecutionRequest, ExecutionResult } from '../../types.js';
 import type { RawMiddlewareDecl } from '@kb-labs/plugin-runtime';
-import type { ErrorEnvelope } from '@kb-labs/core-platform';
+import type { SerializedCataloguedError } from './error-codec.js';
 
-export type SerializedCataloguedError = Pick<ErrorEnvelope, 'code' | 'message' | 'hint'>
-  & Partial<Pick<ErrorEnvelope, 'cause' | 'details'>>;
+export type { SerializedCataloguedError };
 
 // ============================================================================
 // Worker Pool Configuration

@@ -161,7 +161,7 @@ export class TrieBackedRegistry {
     }
 
     // ── groupMeta from ManifestV3 declarations ────────────────────────────────
-    const v3 = cmd.manifest.manifestV2;
+    const v3 = cmd.manifest.v3Manifest;
     if (v3?.cli?.groupMeta) {
       for (const meta of v3.cli.groupMeta) {
         const metaSegs = meta.path.trim().split(/\s+/).filter(Boolean);

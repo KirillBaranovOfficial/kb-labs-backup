@@ -107,7 +107,7 @@ function toCommandManifest(
     examples: decl.examples,
     operationType: decl.operationType,
     package: entry.pluginId,
-    manifestV2: entry.manifest,
+    v3Manifest: entry.manifest,
     pkgRoot: entry.pluginRoot,
   };
 }

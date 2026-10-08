@@ -2,7 +2,7 @@
 
 import { basename } from 'node:path';
 import type { ShellAPI, ExecResult, ExecOptions, PermissionSpec } from '@kb-labs/plugin-contracts';
-import { PermissionError } from '@kb-labs/plugin-contracts';
+import { matchesPermissionPattern, PermissionError } from '@kb-labs/plugin-contracts';
 import type { IProcessExecutor, ProcessExecutionIdentity } from '@kb-labs/core-platform/adapters';
 
 const BLOCKED_COMMANDS = [
@@ -47,7 +47,7 @@ export function createShellAPI(options: CreateShellAPIOptions): ShellAPI {
           throw new PermissionError('Dangerous command blocked', { command: fullCommand, blocked });
         }
       }
-      if (!allowedCommands.includes(command) && !allowedCommands.includes(basename(command)) && !allowedCommands.includes('*')) {
+      if (!allowedCommands.some((pattern) => matchesPermissionPattern(command, pattern) || matchesPermissionPattern(basename(command), pattern))) {
         throw new PermissionError('Command not in whitelist', { command, allowedCommands });
       }
 

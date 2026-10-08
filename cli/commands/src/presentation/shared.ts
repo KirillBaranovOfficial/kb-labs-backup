@@ -19,7 +19,7 @@ export function collectManifestVersions(
   const versions = new Set<string>();
 
   for (const cmd of commands) {
-    const schema = cmd.manifest.manifestV2?.schema;
+    const schema = cmd.manifest.v3Manifest?.schema;
     if (typeof schema === "string") {
       const tail = schema.split("/").pop() ?? schema;
       const match = tail.match(/\d+/);
