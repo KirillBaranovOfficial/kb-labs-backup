@@ -314,6 +314,7 @@ export interface DoctorIssue {
   packageId: string;
   diagnosticCode?: string;
   message: string;
+  path?: string;
   remediation?: string;
 }
 

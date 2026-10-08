@@ -16,7 +16,7 @@ describe('bootstrap command scope resolution', () => {
       );
     }
     const pluginCommand = {
-      manifest: { manifestVersion: '1.0' as const, segments: ['demo'], id: 'demo', group: 'demo', describe: 'demo' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0' as const, segments: ['demo'], id: 'demo', group: 'demo', describe: 'demo' },
       available: true,
       source: 'workspace' as const,
       shadowed: false,

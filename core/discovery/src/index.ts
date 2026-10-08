@@ -40,15 +40,15 @@ export {
 } from './marketplace-lock.js';
 
 // Manifest loader
-export { loadManifest, loadManifestFile } from './manifest-loader.js';
-export type { LoadedManifest } from './manifest-loader.js';
+export { loadManifestFile } from './manifest-loader.js';
+export type { LoadedManifest, ManifestLoadResult } from './manifest-loader.js';
 
 // Integrity (SRI computation for marketplace entries and manifest files)
 export { computeFileIntegrity, computePackageIntegrity, computeManifestIntegrity, parseIntegrity } from './integrity.js';
 
 // Governance gate
 export { readPluginPolicy, checkPluginPolicy } from './plugin-policy.js';
-export type { PluginPolicy, PolicyVerdict } from './plugin-policy.js';
+export type { PluginPolicy, PluginPolicyResult, PolicyVerdict } from './plugin-policy.js';
 
 // Workspace packages are also the development source for configured adapters.
 export { findWorkspacePackages } from './workspace-source.js';

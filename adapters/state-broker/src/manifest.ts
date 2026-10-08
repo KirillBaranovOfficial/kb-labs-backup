@@ -29,5 +29,3 @@ export const manifest: AdapterManifest = {
     },
   },
 };
-
-export default manifest;

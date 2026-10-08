@@ -223,7 +223,7 @@ async function discoverRestApiPlugins(repoRoot: string): Promise<PluginManifestW
       // Load manifest
       try {
         const module = await import(manifestPath);
-        const manifest: unknown = module.default || module.manifest || module;
+        const manifest: unknown = module.manifest;
         
         // Check if it's ManifestV3 with rest.routes
         if (

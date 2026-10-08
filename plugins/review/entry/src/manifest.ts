@@ -87,5 +87,3 @@ export const manifest = {
   // Permissions
   permissions: pluginPermissions,
 };
-
-export default manifest;

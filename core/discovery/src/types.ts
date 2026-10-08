@@ -167,7 +167,7 @@ export interface DiscoveryFailure {
   /** File that failed to load, when known */
   manifestPath?: string;
   /** `manifest`: the manifest exists but could not be loaded. */
-  reason: 'manifest' | 'integrity' | 'package-missing';
+  reason: 'manifest' | 'integrity' | 'package-missing' | 'package-unavailable';
   message: string;
   diagnosticCode?: DiagnosticCode;
   remediation?: string;

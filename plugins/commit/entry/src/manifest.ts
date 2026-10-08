@@ -895,5 +895,3 @@ export const manifest = {
     },
   ],
 };
-
-export default manifest;

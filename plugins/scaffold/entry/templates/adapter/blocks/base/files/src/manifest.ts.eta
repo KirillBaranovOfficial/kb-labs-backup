@@ -21,5 +21,3 @@ export const manifest = defineAdapterManifest({
   type: 'extension',
   implements: 'ILLM',
 });
-
-export default manifest;

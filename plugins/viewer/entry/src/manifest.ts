@@ -36,5 +36,3 @@ export const manifest = {
   },
   permissions,
 };
-
-export default manifest;

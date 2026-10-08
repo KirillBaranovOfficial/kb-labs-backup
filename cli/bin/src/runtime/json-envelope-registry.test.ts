@@ -447,7 +447,7 @@ describe('JSON envelope coverage for the live CLI registry', () => {
 
     const fixtureManifest = path.join(isolatedHome, 'fixture-manifest.json');
     const fixtureManifestContent = JSON.stringify({
-      manifestVersion: 3,
+      schema: 'kb.adapter/1', manifestVersion: 3,
       id: '@fixture/registry-test',
       version: '1.0.0',
       displayName: 'Registry test fixture',

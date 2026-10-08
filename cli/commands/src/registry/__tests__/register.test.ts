@@ -27,7 +27,7 @@ describe('registerManifests', () => {
     vi.mocked(checkRequires).mockReturnValue({ available: true });
 
     const manifests: CommandManifest[] = [{
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['test', 'command'],
       id: 'test:command',
       group: 'test',
@@ -63,7 +63,7 @@ describe('registerManifests', () => {
     });
 
     const manifests: CommandManifest[] = [{
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['test', 'command'],
       id: 'test:command',
       group: 'test',
@@ -98,7 +98,7 @@ describe('registerManifests', () => {
     vi.mocked(checkRequires).mockReturnValue({ available: true });
 
     const workspaceManifest: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['test', 'command'],
       id: 'test:command',
       group: 'test',
@@ -107,7 +107,7 @@ describe('registerManifests', () => {
     };
 
     const nodeModulesManifest: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['test', 'command'],
       id: 'test:command',
       group: 'test',
@@ -148,7 +148,7 @@ describe('registerManifests', () => {
     vi.mocked(checkRequires).mockReturnValue({ available: true });
 
     const invalidManifest: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['test', 'command'],
       id: 'test:command',
       group: 'test',
@@ -178,7 +178,7 @@ describe('registerManifests', () => {
     vi.mocked(checkRequires).mockReturnValue({ available: true });
 
     const agentRun: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['agent', 'run'],
       id: 'run',
       group: 'agent',
@@ -187,7 +187,7 @@ describe('registerManifests', () => {
     };
 
     const workflowRun: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['workflow', 'run'],
       id: 'run',
       group: 'workflow',
@@ -196,7 +196,7 @@ describe('registerManifests', () => {
     };
 
     const reviewRun: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['review', 'run'],
       id: 'run',
       group: 'review',
@@ -249,7 +249,7 @@ describe('registerManifests', () => {
     vi.mocked(checkRequires).mockReturnValue({ available: true });
 
     const first: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['agent', 'run'],
       id: 'run',
       group: 'agent',
@@ -258,7 +258,7 @@ describe('registerManifests', () => {
     };
 
     const duplicate: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['agent', 'run'],
       id: 'run',
       group: 'agent',
@@ -298,7 +298,7 @@ describe('registerManifests', () => {
     vi.mocked(checkRequires).mockReturnValue({ available: true });
 
     const manifestWithInvalidFlag: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['test', 'command'],
       id: 'test:command',
       group: 'test',

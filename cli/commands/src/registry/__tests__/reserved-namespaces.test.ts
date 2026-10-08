@@ -24,7 +24,7 @@ function makeCapturingLogger(): ILogger & { warns: string[] } {
 function makePluginCmd(group: string, id: string, packageName?: string, aliases?: string[]): RegisteredCommand {
   return {
     manifest: {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: [group, id],
       id,
       group,

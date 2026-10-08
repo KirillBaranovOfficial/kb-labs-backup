@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import manifest from '../manifest.js';
+import { manifest } from '../manifest.js';
 
 describe('QA CLI manifest', () => {
   // case: S-203.21

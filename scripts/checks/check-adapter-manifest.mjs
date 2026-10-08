@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const input = JSON.parse(await readStdin());
 const checkName = input.check;
@@ -18,9 +19,38 @@ function issue(packageName, file, message) {
 async function main() {
   const workspace = input.workspace;
   if (!workspace || !Array.isArray(workspace.packages)) {
-    throw new Error('workspace-scoped adapter-manifest check requires devkit workspace package data on stdin');
+    throw new Error('workspace-scoped manifest-declaration check requires devkit workspace package data on stdin');
   }
   const platform = await import('@kb-labs/core-platform');
+
+  const registeredManifestPackages = new Set();
+  const scannedManifestPackages = new Set();
+  for (const pkg of workspace.packages) {
+    const packageJsonPath = path.join(pkg.dir, 'package.json');
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8'));
+    const declaredPath = platform.declaredManifestPath(packageJson);
+    if (!declaredPath) continue;
+    registeredManifestPackages.add(pkg.dir);
+    const modulePath = path.resolve(pkg.dir, declaredPath);
+    try {
+      const module = await import(pathToFileURL(modulePath).href);
+      if (!module.manifest || typeof module.manifest !== 'object' || Array.isArray(module.manifest)) {
+        issue(pkg.name, modulePath, 'declared manifest module must export an object named manifest');
+      }
+    } catch (error) {
+      issue(pkg.name, modulePath, `cannot import declared manifest module: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      scannedManifestPackages.add(pkg.dir);
+    }
+  }
+  for (const packageRoot of registeredManifestPackages) {
+    if (!scannedManifestPackages.has(packageRoot)) {
+      issue(packageRoot, path.join(packageRoot, 'package.json'), 'declared manifest was not scanned');
+    }
+  }
+  if (scannedManifestPackages.size !== registeredManifestPackages.size) {
+    issue('workspace', input.workspaceRoot, 'scanned manifest packages do not match the package.json declarations');
+  }
 
   const platformAdapters = [];
   for (const pkg of workspace.packages) {

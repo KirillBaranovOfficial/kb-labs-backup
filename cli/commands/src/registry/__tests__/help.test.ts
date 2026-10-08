@@ -9,7 +9,7 @@ import type { RegisteredCommand } from '../types';
 describe('renderHelp', () => {
   const createMockCommand = (overrides: Partial<RegisteredCommand> = {}): RegisteredCommand => ({
     manifest: {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['test', 'command'],
       id: 'test:command',
       group: 'test',

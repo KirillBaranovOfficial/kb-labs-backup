@@ -18,5 +18,3 @@ export const manifest: ServiceManifest = {
     GATEWAY_JWT_SECRET: { description: 'Shared JWT secret (same value as gateway)' },
   },
 };
-
-export default manifest;

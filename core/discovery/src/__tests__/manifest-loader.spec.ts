@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { loadManifest } from '../manifest-loader.js';
+import { loadManifestFile } from '../manifest-loader.js';
 import { DiagnosticCollector } from '../diagnostics.js';
 
 describe('loadManifest', () => {
@@ -32,15 +32,17 @@ describe('loadManifest', () => {
     await fs.writeFile(path.join(pkgDir, 'kb.plugin.json'), JSON.stringify(manifest));
     await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: '@kb-labs/my-plugin' }));
 
-    const result = await loadManifest(pkgDir, diag);
+    const result = await loadManifestFile(pkgDir, diag);
 
-    expect(result).not.toBeNull();
-    expect(result!.id).toBe('@kb-labs/my-plugin');
-    expect(result!.version).toBe('1.0.0');
+    expect(result.kind).toBe('manifest');
+    if (result.kind === 'manifest') {
+      expect(result.loaded.manifest.id).toBe('@kb-labs/my-plugin');
+      expect(result.loaded.manifest.version).toBe('1.0.0');
+    }
     expect(diag.hasErrors()).toBe(false);
   });
 
-  it('returns null with warning when kb.plugin.json is not valid ManifestV3', async () => {
+  it('returns a validation failure when kb.plugin.json is not valid ManifestV3', async () => {
     const pkgDir = path.join(tmpDir, 'bad-manifest');
     await fs.mkdir(pkgDir, { recursive: true });
 
@@ -48,28 +50,26 @@ describe('loadManifest', () => {
     await fs.writeFile(path.join(pkgDir, 'kb.plugin.json'), JSON.stringify({ id: 'x', version: '1.0.0' }));
     await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: 'x' }));
 
-    const result = await loadManifest(pkgDir, diag);
+    const result = await loadManifestFile(pkgDir, diag);
 
-    expect(result).toBeNull();
-    const warning = diag.getEvents().find(d => d.code === 'MANIFEST_VALIDATION_ERROR');
-    expect(warning).toBeDefined();
+    expect(result.kind).toBe('failed');
+    const validationError = diag.getEvents().find(d => d.code === 'MANIFEST_VALIDATION_ERROR');
+    expect(validationError).toBeDefined();
   });
 
   // ── No manifest found ────────────────────────────────────────────────
 
-  it('returns null with MANIFEST_NOT_FOUND when no manifest source exists', async () => {
+  it('returns not-plugin when no manifest declaration exists', async () => {
     const pkgDir = path.join(tmpDir, 'empty-plugin');
     await fs.mkdir(pkgDir, { recursive: true });
-    // No kb.plugin.json, no package.json with manifest field, no dist/index.js
+    // No kb.plugin.json or package.json declaration.
     await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: 'empty' }));
 
-    const result = await loadManifest(pkgDir, diag);
+    const result = await loadManifestFile(pkgDir, diag);
 
-    expect(result).toBeNull();
-    const notFound = diag.getEvents().find(d => d.code === 'MANIFEST_NOT_FOUND');
-    expect(notFound).toBeDefined();
-    expect(notFound!.severity).toBe('error');
-    expect(notFound!.remediation).toContain('kb.plugin.json');
+    expect(result.kind).toBe('not-plugin');
+    expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_NOT_PLUGIN');
+    expect(diag.getEvents().map(event => event.code)).not.toContain('MANIFEST_NOT_FOUND');
   });
 
   // ── Resolution via package.json field ────────────────────────────────
@@ -92,11 +92,13 @@ describe('loadManifest', () => {
     const fallback = { schema: 'kb.plugin/3', id: '@kb-labs/canonical-fallback', version: '1.0.0' };
     await fs.writeFile(path.join(pkgDir, 'kb.plugin.json'), JSON.stringify(fallback));
 
-    const result = await loadManifest(pkgDir, diag);
+    const result = await loadManifestFile(pkgDir, diag);
 
-    expect(result).not.toBeNull();
-    expect(result!.id).toBe('@kb-labs/canonical-fallback');
-    expect(result!.version).toBe('1.0.0');
+    expect(result.kind).toBe('manifest');
+    if (result.kind === 'manifest') {
+      expect(result.loaded.manifest.id).toBe('@kb-labs/canonical-fallback');
+      expect(result.loaded.manifest.version).toBe('1.0.0');
+    }
   });
 
   it('loads manifest from package.json kb.manifest field', async () => {
@@ -114,10 +116,10 @@ describe('loadManifest', () => {
       JSON.stringify({ name: '@kb-labs/kb-field', kb: { manifest: './manifest.json' } }),
     );
 
-    const result = await loadManifest(pkgDir, diag);
+    const result = await loadManifestFile(pkgDir, diag);
 
-    expect(result).not.toBeNull();
-    expect(result!.id).toBe('@kb-labs/kb-field');
+    expect(result.kind).toBe('manifest');
+    if (result.kind === 'manifest') expect(result.loaded.manifest.id).toBe('@kb-labs/kb-field');
   });
 
   // ── Path traversal guard ─────────────────────────────────────────────
@@ -130,9 +132,9 @@ describe('loadManifest', () => {
       JSON.stringify({ name: 'x', kb: { manifest: '../../etc/passwd' } }),
     );
 
-    const result = await loadManifest(pkgDir, diag);
+    const result = await loadManifestFile(pkgDir, diag);
 
-    expect(result).toBeNull();
+    expect(result.kind).toBe('failed');
     const traversalError = diag.getEvents().find(d =>
       d.code === 'MANIFEST_VALIDATION_ERROR' && d.message.includes('path traversal'),
     );
@@ -153,10 +155,10 @@ describe('loadManifest', () => {
     };
     await fs.writeFile(path.join(pkgDir, 'kb.plugin.json'), JSON.stringify(manifest));
 
-    const result = await loadManifest(pkgDir, diag);
+    const result = await loadManifestFile(pkgDir, diag);
 
-    expect(result).not.toBeNull();
-    expect(result!.id).toBe('@kb-labs/fallback');
+    expect(result.kind).toBe('manifest');
+    if (result.kind === 'manifest') expect(result.loaded.manifest.id).toBe('@kb-labs/fallback');
   });
 
   // ── Priority order (package.json field wins over kb.plugin.json) ─────
@@ -178,9 +180,75 @@ describe('loadManifest', () => {
       JSON.stringify({ name: 'priority', kb: { manifest: './custom.json' } }),
     );
 
-    const result = await loadManifest(pkgDir, diag);
+    const result = await loadManifestFile(pkgDir, diag);
 
-    expect(result).not.toBeNull();
-    expect(result!.id).toBe('from-pkg-field');
+    expect(result.kind).toBe('manifest');
+    if (result.kind === 'manifest') expect(result.loaded.manifest.id).toBe('from-pkg-field');
+  });
+
+  // case: S-203.24
+  it('preserves the declared manifest import failure instead of reporting not found', async () => {
+    const pkgDir = path.join(tmpDir, 'import-failure');
+    await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
+    await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: '@third-party/broken', kb: { manifest: './dist/manifest.js' } }));
+    await fs.writeFile(path.join(pkgDir, 'dist/manifest.js'), "throw new Error('manifest import exploded');\n");
+
+    const result = await loadManifestFile(pkgDir, diag);
+
+    expect(result.kind).toBe('failed');
+    expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
+    expect(diag.getEvents().map(event => event.message).join('\n')).toContain('manifest import exploded');
+    expect(diag.getEvents().map(event => event.code)).not.toContain('MANIFEST_NOT_FOUND');
+  });
+
+  // case: S-203.24
+  it('requires a named manifest export and reports the missing shape as failed', async () => {
+    const pkgDir = path.join(tmpDir, 'default-only');
+    await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
+    await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: '@third-party/default-only', kb: { manifest: './dist/manifest.js' } }));
+    await fs.writeFile(path.join(pkgDir, 'dist/manifest.js'), 'export default { schema: "kb.plugin/3", id: "@third-party/default-only", version: "1.0.0" };');
+
+    const result = await loadManifestFile(pkgDir, diag);
+
+    expect(result).toMatchObject({ kind: 'failed', cause: expect.stringContaining('must export a named "manifest"') });
+    expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_VALIDATION_ERROR');
+  });
+
+  // case: S-203.24
+  it('requires a recognized schema instead of guessing an entity from legacy fields', async () => {
+    const pkgDir = path.join(tmpDir, 'unknown-schema');
+    await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
+    await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: '@third-party/unknown-schema', kb: { manifest: './dist/manifest.js' } }));
+    await fs.writeFile(path.join(pkgDir, 'dist/manifest.js'), 'export const manifest = { manifestVersion: "1.0.0", id: "@third-party/unknown-schema" };');
+
+    const result = await loadManifestFile(pkgDir, diag);
+
+    expect(result).toMatchObject({ kind: 'failed', cause: expect.stringContaining('recognized schema') });
+    expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_VALIDATION_ERROR');
+  });
+
+  // case: S-203.24
+  it('reports malformed declared kb.plugin.json as a parse failure', async () => {
+    const pkgDir = path.join(tmpDir, 'invalid-static');
+    await fs.mkdir(pkgDir, { recursive: true });
+    await fs.writeFile(path.join(pkgDir, 'kb.plugin.json'), '{"schema":');
+
+    const result = await loadManifestFile(pkgDir, diag);
+
+    expect(result.kind).toBe('failed');
+    expect(diag.getEvents().map(event => event.code)).toContain('MANIFEST_PARSE_ERROR');
+  });
+
+  // case: S-203.24
+  it('does not infer a plugin from the package entry point', async () => {
+    const pkgDir = path.join(tmpDir, 'entrypoint-only');
+    await fs.mkdir(path.join(pkgDir, 'dist'), { recursive: true });
+    await fs.writeFile(path.join(pkgDir, 'package.json'), JSON.stringify({ name: '@third-party/not-a-plugin', main: './dist/index.js' }));
+    await fs.writeFile(path.join(pkgDir, 'dist/index.js'), 'export const manifest = { schema: "kb.plugin/3", id: "@third-party/not-a-plugin", version: "1.0.0" };');
+
+    const result = await loadManifestFile(pkgDir, diag);
+
+    expect(result.kind).toBe('not-plugin');
+    expect(diag.getEvents().map(event => event.code)).not.toContain('MANIFEST_NOT_FOUND');
   });
 });

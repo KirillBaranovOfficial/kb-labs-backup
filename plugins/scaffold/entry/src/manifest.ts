@@ -15,7 +15,7 @@ const permissions = combinePermissions()
   .withQuotas({ timeoutMs: 120000, memoryMb: 256 })
   .build();
 
-const manifest = {
+export const manifest = {
   schema: 'kb.plugin/3',
   id: '@kb-labs/scaffold',
   version: '0.1.0',
@@ -105,5 +105,3 @@ const manifest = {
   },
   permissions,
 } as const;
-
-export default manifest;

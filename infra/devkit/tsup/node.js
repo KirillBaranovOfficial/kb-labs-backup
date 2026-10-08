@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile)
  * Derive tsup entry points from package.json.
  * Reads two sources of published dist artifacts:
  *   1. `exports` — public module surface ("./dist/foo.js" → "src/foo.ts")
- *   2. `kb.manifest` — plugin/adapter manifest loaded at runtime by the
+ *   2. `kb.manifest` — plugin/service/adapter manifest loaded at runtime by the
  *      kb-labs platform; it's referenced as a dist path but not exported,
  *      so it would otherwise be silently omitted from the build.
  * Falls back to ['src/index.ts'] if nothing resolves.
@@ -66,7 +66,7 @@ async function emitManifestJson() {
       return
     }
     const url = new URL(`file://${distPath}`).href
-    const script = `import(${JSON.stringify(url)}).then(m => process.stdout.write(JSON.stringify(m.default ?? m.manifest)))`
+    const script = `import(${JSON.stringify(url)}).then(m => { if (m.manifest === undefined) throw new Error('declared manifest module must export a named "manifest"'); process.stdout.write(JSON.stringify(m.manifest)) })`
     const { stdout } = await execFileAsync(process.execPath, ['-e', script], {
       cwd: process.cwd(),
       timeout: 30_000,
