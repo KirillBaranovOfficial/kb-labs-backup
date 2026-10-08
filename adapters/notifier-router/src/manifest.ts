@@ -9,6 +9,7 @@ export const manifest: AdapterManifest = {
   description: 'Routes platform notifications to configured channels',
   type: 'core',
   implements: 'INotifier',
+  networkRequired: false,
   requires: {
     adapters: ['eventBus'],
     platformServices: [

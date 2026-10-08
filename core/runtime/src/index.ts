@@ -126,6 +126,7 @@ export type {
   NotifierChannelConfig,
   NotifierRoutingRule,
 } from "./config.js";
+export { ADAPTER_CONFIG_KEYS } from "./config.js";
 
 // Analytics context
 export { createAnalyticsContext } from "./analytics-context.js";

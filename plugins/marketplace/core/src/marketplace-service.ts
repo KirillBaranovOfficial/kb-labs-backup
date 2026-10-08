@@ -227,7 +227,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           ? createMarketplaceEntry({ ...entryOptions, source: 'marketplace', package: result.id, resolvedPath: packagePath })
           : createMarketplaceEntry({ ...entryOptions, source: 'local', resolvedPath: packagePath });
 
-      await addToMarketplaceLock(scopeRoot, canonicalId, entry);
+      await addToMarketplaceLock(scopeRoot, canonicalId, entry, ctx.scope);
 
       // Cache manifest
       if (!this.extensionStore) {
@@ -287,7 +287,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
       const packageName = entry.source === 'local' ? undefined : ('package' in entry ? entry.package : id);
 
-      await removeFromMarketplaceLock(scopeRoot, id);
+      await removeFromMarketplaceLock(scopeRoot, id, ctx.scope);
       await removeCacheEntry(scopeRoot, id);
       if (!this.extensionStore && packageName) {
         await this.source.remove(packageName, scopeRoot);
@@ -359,7 +359,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     });
 
     const canonicalId = manifest?.id ?? id;
-    await addToMarketplaceLock(scopeRoot, canonicalId, entry);
+    await addToMarketplaceLock(scopeRoot, canonicalId, entry, ctx.scope);
     await this.cacheManifest(scopeRoot, canonicalId, absPath, primaryKind, integrity, manifest);
 
     if (strategy?.afterInstall) {
@@ -372,7 +372,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async unlink(ctx: ScopeContext, packageId: string): Promise<void> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     await this.withScopeMutation(scopeRoot, async () => {
-      await removeFromMarketplaceLock(scopeRoot, packageId);
+      await removeFromMarketplaceLock(scopeRoot, packageId, ctx.scope);
       await removeCacheEntry(scopeRoot, packageId);
     });
   }
@@ -384,7 +384,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async update(ctx: ScopeContext, packageIds?: string[]): Promise<InstallResult> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag);
+    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope);
     if (!lock) {
       return { installed: [], warnings: ['No marketplace.lock found'], scope: ctx.scope };
     }
@@ -405,7 +405,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async enable(ctx: ScopeContext, packageId: string): Promise<void> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     await this.withScopeMutation(scopeRoot, async () => {
-      const ok = await enablePlugin(scopeRoot, packageId);
+      const ok = await enablePlugin(scopeRoot, packageId, ctx.scope);
       if (!ok) {
         throw new Error(`Package "${packageId}" not found in ${ctx.scope} marketplace.lock`);
       }
@@ -415,7 +415,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async disable(ctx: ScopeContext, packageId: string): Promise<void> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     await this.withScopeMutation(scopeRoot, async () => {
-      const ok = await disablePlugin(scopeRoot, packageId);
+      const ok = await disablePlugin(scopeRoot, packageId, ctx.scope);
       if (!ok) {
         throw new Error(`Package "${packageId}" not found in ${ctx.scope} marketplace.lock`);
       }
@@ -476,7 +476,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const perScope: Array<{ scope: MarketplaceScope; entries: MarketplaceEntryWithId[] }> = [];
     for (const { scope, root } of targets) {
       const diag = new DiagnosticCollector();
-      const lock = await readMarketplaceLock(root, diag);
+      const lock = await readMarketplaceLock(root, diag, scope);
       if (!lock) {
         perScope.push({ scope, entries: [] });
         continue;
@@ -498,7 +498,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async getEntry(ctx: ScopeContext, packageId: string): Promise<MarketplaceLockEntry | null> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag);
+    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope);
     return lock?.plugins[packageId] ?? lock?.adapters?.[packageId] ?? null;
   }
 
@@ -538,7 +538,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   ): Promise<SyncResult> {
     const autoEnable = opts.autoEnable ?? false;
     const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag) ?? createEmptyLock();
+    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope) ?? createEmptyLock();
     const existingIds = new Set([
       ...Object.keys(lock.plugins),
       ...Object.keys(lock.adapters ?? {}),
@@ -561,7 +561,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       await this._syncPackage(ctx.scope, scopeRoot, pkgDir, relPkgJson, existingIds, autoEnable, lock, added, skipped);
     }
 
-    await writeMarketplaceLock(scopeRoot, lock);
+    await writeMarketplaceLock(scopeRoot, lock, ctx.scope);
 
     return { added, skipped, total: Object.keys(lock.plugins).length + Object.keys(lock.adapters ?? {}).length };
   }
@@ -651,7 +651,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   async doctor(ctx: ScopeContext): Promise<DoctorReport> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag);
+    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope);
     const issues: DoctorIssue[] = [];
 
     if (!lock) {

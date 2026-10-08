@@ -73,6 +73,7 @@
     "@kb-labs/adapters-log-document": "workspace:*"
   },
   "devDependencies": {
+    "@kb-labs/core-discovery": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/devkit": "workspace:*",
     "@types/node": "^24.3.3",

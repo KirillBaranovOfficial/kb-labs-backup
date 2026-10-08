@@ -10,6 +10,7 @@ import type {
   LLMExecutionPolicy,
   PIIRedactionConfig,
 } from "@kb-labs/core-platform";
+import type { AdapterSlot } from "@kb-labs/core-platform";
 import type {
   RateLimitConfig,
   RateLimitPreset,
@@ -123,6 +124,26 @@ export interface AdaptersConfig {
   /** Notifier router adapter (e.g., "@kb-labs/notifier-router"). Config goes in adapterOptions.notifier. */
   notifier?: AdapterValue;
 }
+
+/** The platform config keys that configure each plugin-visible adapter slot. */
+export const ADAPTER_CONFIG_KEYS = {
+  logger: ['logger'],
+  analytics: ['analytics'],
+  vectorStore: ['vectorStore'],
+  llm: ['llm'],
+  embeddings: ['embeddings'],
+  cache: ['cache'],
+  config: [],
+  storage: ['storage'],
+  eventBus: ['eventBus'],
+  invoke: [],
+  documentDatabase: ['documentDatabase'],
+  kvStore: ['kvStore'],
+  logs: ['logRingBuffer', 'logPersistence'],
+  artifacts: [],
+  snapshotManager: ['snapshot'],
+  notifier: ['notifier'],
+} as const satisfies Record<AdapterSlot, readonly (keyof AdaptersConfig)[]>;
 
 /**
  * Resource manager configuration.

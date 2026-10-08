@@ -9,6 +9,7 @@ export const manifest: AdapterManifest = {
   description: 'HTTP/unix-socket transport for gateway → service communication',
   type: 'core',
   implements: 'IServiceTransport',
+  networkRequired: true,
   configSchema: {
     services: { type: 'object', required: true },
     offset: { type: 'number' },

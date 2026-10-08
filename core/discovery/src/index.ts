@@ -35,9 +35,11 @@ export {
   createEmptyLock,
   createMarketplaceEntry,
   MarketplaceLockValidationError,
+  validateMarketplaceLock,
   enablePlugin,
   disablePlugin,
 } from './marketplace-lock.js';
+export type { MarketplaceLockScope, MarketplaceLockValidationResult } from './marketplace-lock.js';
 
 // Manifest loader
 export { loadManifest, loadManifestFile } from './manifest-loader.js';

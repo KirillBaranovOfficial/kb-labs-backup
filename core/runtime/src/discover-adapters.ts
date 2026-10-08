@@ -18,6 +18,7 @@ import {
   findWorkspacePackages,
 } from '@kb-labs/core-discovery';
 import { loadAdapterManifest } from '@kb-labs/core-platform';
+import type { AdapterManifest } from '@kb-labs/core-platform';
 import { configuredWorkspaceAdapterInvalidError, configuredWorkspaceAdapterNotBuiltError } from './adapter-module-loader.js';
 
 /**
@@ -31,7 +32,7 @@ export interface DiscoveredAdapter {
   /** Adapter factory function */
   createAdapter: (config?: unknown) => unknown;
   /** Adapter module (full exports) */
-  module: Record<string, unknown>;
+  module: Record<string, unknown> & { manifest: AdapterManifest };
 }
 
 /**
@@ -53,7 +54,7 @@ async function loadAdaptersFromLock(
   discovered: Map<string, DiscoveredAdapter>,
 ): Promise<void> {
   const diag = new DiagnosticCollector();
-  const lock = await readMarketplaceLock(root, diag);
+  const lock = await readMarketplaceLock(root, diag, 'platform');
   if (!lock) { return; }
 
   for (const [pkgId, entry] of Object.entries(lock.adapters ?? {})) {
@@ -80,6 +81,9 @@ async function loadAdaptersFromLock(
       await fs.access(distPath);
       const module = await loadAdapterModule(distPath);
 
+      const manifestResult = await loadAdapterManifest({ packageRoot: pkgRoot });
+      if (manifestResult.kind !== 'adapter') {continue;}
+
       if (typeof module.createAdapter !== 'function') {
         continue;
       }
@@ -88,7 +92,7 @@ async function loadAdaptersFromLock(
         packageName: npmPkgName ?? pkgId,
         pkgRoot,
         createAdapter: module.createAdapter as (config?: unknown) => unknown,
-        module,
+        module: { ...module, manifest: manifestResult.manifest },
       };
 
       // Index by manifest ID and npm package name.
@@ -131,7 +135,7 @@ async function loadWorkspaceAdapters(
       packageName,
       pkgRoot: candidate.packageRoot,
       createAdapter: module.createAdapter as (config?: unknown) => unknown,
-      module,
+      module: { ...module, manifest: manifestResult.manifest },
     });
   }
 }
@@ -155,7 +159,7 @@ export async function loadAdapterChannelFactory(
     candidateRoots.push(...packages.map(pkg => pkg.packageRoot));
   } else {
     const diagnostic = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(platformRoot, diagnostic);
+    const lock = await readMarketplaceLock(platformRoot, diagnostic, 'platform');
     for (const entry of Object.values(lock?.adapters ?? {})) {
       if (entry.enabled && entry.resolvedPath) {
         candidateRoots.push(path.resolve(platformRoot, entry.resolvedPath));

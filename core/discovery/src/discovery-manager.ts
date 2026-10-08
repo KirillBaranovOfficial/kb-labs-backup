@@ -203,7 +203,7 @@ export class DiscoveryManager {
     // with the same lock key (project overrides platform).
     const locked = new Map<string, Candidate>();
     for (const { scope, root } of this.scopes) {
-      const lock = await readMarketplaceLock(root, diag, this.onInputRead);
+      const lock = await readMarketplaceLock(root, diag, 'platform', this.onInputRead);
       if (!lock) {continue;}
       for (const [id, entry] of Object.entries(lock.plugins)) {
         let packageRoot: string | undefined;

@@ -12,6 +12,8 @@ import { DiagnosticCollector } from './diagnostics.js';
 
 const SCHEMA_VERSION = 'kb.marketplace/3' as const;
 
+export type MarketplaceLockScope = 'project' | 'platform';
+
 export class MarketplaceLockValidationError extends Error {
   readonly code = 'LOCK_SCHEMA_INVALID' as const;
   readonly remediation = 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.';
@@ -21,6 +23,10 @@ export class MarketplaceLockValidationError extends Error {
     this.name = 'MarketplaceLockValidationError';
   }
 }
+
+export type MarketplaceLockValidationResult =
+  | { valid: true; lock: MarketplaceLock }
+  | { valid: false; entry?: string; reason: string };
 
 // ---------------------------------------------------------------------------
 // Read
@@ -33,6 +39,7 @@ export class MarketplaceLockValidationError extends Error {
 export async function readMarketplaceLock(
   root: string,
   diag: DiagnosticCollector,
+  scope: MarketplaceLockScope = 'platform',
   onInputRead?: (filePath: string) => void,
 ): Promise<MarketplaceLock | null> {
   const lockPath = path.join(root, DISCOVERY_MARKETPLACE_LOCK);
@@ -66,18 +73,21 @@ export async function readMarketplaceLock(
     return null;
   }
 
-  if (!isValidLock(parsed)) {
+  const validation = validateMarketplaceLock(parsed, scope);
+  if (!validation.valid) {
     const isV2 = typeof parsed === 'object' && parsed !== null && 'schema' in parsed && parsed.schema === 'kb.marketplace/2';
     diag.error('LOCK_SCHEMA_INVALID', isV2
       ? 'Lock file uses kb.marketplace/2 and cannot be read by this version.'
-      : `Lock file schema mismatch — expected ${SCHEMA_VERSION}`, {
+      : validation.entry
+        ? `Invalid marketplace lock entry "${validation.entry}": ${validation.reason}`
+        : validation.reason, {
       filePath: lockPath,
       remediation: 'Run "kb marketplace sync" to regenerate .kb/marketplace.lock in schema v3.',
     });
     return null;
   }
 
-  return parsed;
+  return validation.lock;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +100,7 @@ export async function readMarketplaceLock(
 export async function writeMarketplaceLock(
   root: string,
   lock: MarketplaceLock,
+  scope: MarketplaceLockScope = 'platform',
 ): Promise<void> {
   const lockPath = path.join(root, DISCOVERY_MARKETPLACE_LOCK);
   const serialized = {
@@ -112,15 +123,12 @@ export async function writeMarketplaceLock(
     } : {})
   };
 
-  if (!isValidLock(serialized)) {
-    const pluginId = findInvalidPluginId(serialized);
-    const missingPackage = pluginId !== undefined && isMissingPluginPackage(serialized.plugins[pluginId]);
-    const message = missingPackage
-      ? `Marketplace lock plugin "${pluginId}" is missing its required npm package name.`
-      : pluginId
-        ? `Marketplace lock plugin "${pluginId}" has fields that do not match the schema.`
-        : 'Marketplace lock has fields that do not match the schema.';
-    throw new MarketplaceLockValidationError(message, pluginId);
+  const validation = validateMarketplaceLock(serialized, scope);
+  if (!validation.valid) {
+    const message = validation.entry
+      ? `Marketplace lock entry "${validation.entry}" is invalid: ${validation.reason}`
+      : `Marketplace lock is invalid: ${validation.reason}`;
+    throw new MarketplaceLockValidationError(message, validation.entry);
   }
 
   const dir = path.dirname(lockPath);
@@ -145,9 +153,10 @@ export async function addToMarketplaceLock(
   root: string,
   packageId: string,
   entry: MarketplaceEntry,
+  scope: MarketplaceLockScope = 'platform',
 ): Promise<MarketplaceLock> {
   const diag = new DiagnosticCollector();
-  const existing = await readMarketplaceLock(root, diag) ?? createEmptyLock();
+  const existing = await readMarketplaceLock(root, diag, scope) ?? createEmptyLock();
   if (entry.primaryKind === 'adapter') {
     if (entry.source !== 'platform') {
       throw new MarketplaceLockValidationError(`Marketplace adapter "${packageId}" must use source "platform".`, packageId);
@@ -170,7 +179,7 @@ export async function addToMarketplaceLock(
       enabled: existingEntry?.enabled ?? entry.enabled,
     };
   }
-  await writeMarketplaceLock(root, existing);
+  await writeMarketplaceLock(root, existing, scope);
   return existing;
 }
 
@@ -181,15 +190,16 @@ export async function addToMarketplaceLock(
 export async function removeFromMarketplaceLock(
   root: string,
   packageId: string,
+  scope: MarketplaceLockScope = 'platform',
 ): Promise<boolean> {
   const diag = new DiagnosticCollector();
-  const existing = await readMarketplaceLock(root, diag);
+  const existing = await readMarketplaceLock(root, diag, scope);
   if (!existing || (!(packageId in existing.plugins) && !(packageId in (existing.adapters ?? {})))) {
     return false;
   }
   delete existing.plugins[packageId];
   if (existing.adapters) {delete existing.adapters[packageId];}
-  await writeMarketplaceLock(root, existing);
+  await writeMarketplaceLock(root, existing, scope);
   return true;
 }
 
@@ -243,15 +253,16 @@ async function setPluginEnabled(
   root: string,
   packageId: string,
   enabled: boolean,
+  scope: MarketplaceLockScope,
 ): Promise<boolean> {
   const diag = new DiagnosticCollector();
-  const existing = await readMarketplaceLock(root, diag);
+  const existing = await readMarketplaceLock(root, diag, scope);
   if (!existing || (!(packageId in existing.plugins) && !(packageId in (existing.adapters ?? {})))) {
     return false;
   }
   const entry = existing.plugins[packageId] ?? existing.adapters?.[packageId];
   if (entry) {entry.enabled = enabled;}
-  await writeMarketplaceLock(root, existing);
+  await writeMarketplaceLock(root, existing, scope);
   return true;
 }
 
@@ -259,65 +270,76 @@ async function setPluginEnabled(
  * Mark a plugin as enabled in the marketplace lock.
  * Returns false if the package is not installed.
  */
-export async function enablePlugin(root: string, packageId: string): Promise<boolean> {
-  return setPluginEnabled(root, packageId, true);
+export async function enablePlugin(root: string, packageId: string, scope: MarketplaceLockScope = 'platform'): Promise<boolean> {
+  return setPluginEnabled(root, packageId, true, scope);
 }
 
 /**
  * Mark a plugin as disabled in the marketplace lock.
  * Returns false if the package is not installed.
  */
-export async function disablePlugin(root: string, packageId: string): Promise<boolean> {
-  return setPluginEnabled(root, packageId, false);
+export async function disablePlugin(root: string, packageId: string, scope: MarketplaceLockScope = 'platform'): Promise<boolean> {
+  return setPluginEnabled(root, packageId, false, scope);
 }
 
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
-function isValidLock(value: unknown): value is MarketplaceLock {
-  if (typeof value !== 'object' || value === null) {return false;}
+export function validateMarketplaceLock(value: unknown, scope: MarketplaceLockScope): MarketplaceLockValidationResult {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {return { valid: false, reason: 'lock must be an object' };}
   const obj = value as Record<string, unknown>;
-  return (
-    Object.keys(obj).every((key) => key === 'schema' || key === 'plugins' || key === 'adapters') &&
-    obj.schema === SCHEMA_VERSION &&
-    typeof obj.plugins === 'object' &&
-    obj.plugins !== null &&
-    !Array.isArray(obj.plugins) &&
-    (obj.adapters === undefined || (typeof obj.adapters === 'object' && obj.adapters !== null && !Array.isArray(obj.adapters))) &&
-    Object.entries(obj.plugins).every(([id, raw]) => validPluginEntry(id, raw)) &&
-    Object.entries((obj.adapters ?? {}) as Record<string, unknown>).every(([id, raw]) => {
-      if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id) || typeof raw !== 'object' || raw === null) {return false;}
-      const entry = raw as Record<string, unknown>;
-      return Object.keys(entry).every((key) => ['version', 'integrity', 'resolvedPath', 'enabled', 'source'].includes(key)) &&
-        entry.source === 'platform' && typeof entry.version === 'string' && validIntegrity(entry.integrity) &&
-        typeof entry.resolvedPath === 'string' && typeof entry.enabled === 'boolean';
-    })
-  );
+  const unknownKey = Object.keys(obj).find((key) => !['schema', 'plugins', 'adapters'].includes(key));
+  if (unknownKey) {return { valid: false, reason: `unknown lock field "${unknownKey}"` };}
+  if (obj.schema !== SCHEMA_VERSION) {return { valid: false, reason: `lock schema must be ${SCHEMA_VERSION}` };}
+  if (scope === 'project' && Object.hasOwn(obj, 'adapters')) {return { valid: false, reason: 'project lock must not contain adapters' };}
+  if (typeof obj.plugins !== 'object' || obj.plugins === null || Array.isArray(obj.plugins)) {return { valid: false, reason: 'plugins must be an object' };}
+  if (obj.adapters !== undefined && (typeof obj.adapters !== 'object' || obj.adapters === null || Array.isArray(obj.adapters))) {return { valid: false, reason: 'adapters must be an object' };}
+  for (const [id, raw] of Object.entries(obj.plugins)) {
+    const reason = pluginEntryError(id, raw, scope);
+    if (reason) {return { valid: false, entry: id, reason };}
+  }
+  for (const [id, raw] of Object.entries((obj.adapters ?? {}) as Record<string, unknown>)) {
+    const reason = adapterEntryError(id, raw);
+    if (reason) {return { valid: false, entry: id, reason };}
+  }
+  return { valid: true, lock: value as MarketplaceLock };
 }
 
-function validPluginEntry(id: string, raw: unknown): boolean {
-  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id) || typeof raw !== 'object' || raw === null) {return false;}
+function pluginEntryError(id: string, raw: unknown, scope: MarketplaceLockScope): string | undefined {
+  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id)) {return 'entry ID must be a package name';}
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {return 'entry must be an object';}
   const entry = raw as Record<string, unknown>;
-  if (typeof entry.enabled !== 'boolean' || !['marketplace', 'local', 'platform'].includes(String(entry.source))) {return false;}
+  if (typeof entry.enabled !== 'boolean') {return 'enabled must be a boolean';}
+  if (!['marketplace', 'local', 'platform'].includes(String(entry.source))) {return 'source must be marketplace, local, or platform';}
+  if (scope === 'project' && !['marketplace', 'local'].includes(String(entry.source))) {return 'source must be marketplace or local in project locks';}
   const allowed = entry.source === 'marketplace' ? ['version', 'integrity', 'package', 'enabled', 'source']
     : entry.source === 'local' ? ['link', 'enabled', 'source']
       : ['version', 'integrity', 'package', 'resolvedPath', 'enabled', 'source'];
-  if (Object.keys(entry).some((key) => !allowed.includes(key))) {return false;}
-  if (entry.source === 'marketplace') {return typeof entry.version === 'string' && validIntegrity(entry.integrity) && typeof entry.package === 'string' && VALID_PACKAGE.test(entry.package);}
-  if (entry.source === 'local') {return typeof entry.link === 'string' && !path.isAbsolute(entry.link);}
-  return typeof entry.package === 'string' && VALID_PACKAGE.test(entry.package) && typeof entry.resolvedPath === 'string' && typeof entry.version === 'string' && validIntegrity(entry.integrity);
+  const unknownKey = Object.keys(entry).find((key) => !allowed.includes(key));
+  if (unknownKey) {return `field "${unknownKey}" is not allowed for ${entry.source} entries`;}
+  if (entry.source === 'local') {
+    return typeof entry.link === 'string' && !path.isAbsolute(entry.link) ? undefined : 'link must be a relative path';
+  }
+  if (typeof entry.version !== 'string') {return 'version must be a string';}
+  if (!validIntegrity(entry.integrity)) {return 'integrity must be a valid sha256 or sha512 SRI value';}
+  if (typeof entry.package !== 'string' || !VALID_PACKAGE.test(entry.package)) {return 'package must be a valid npm package name';}
+  if (entry.source === 'platform' && typeof entry.resolvedPath !== 'string') {return 'resolvedPath must be a string';}
+  return undefined;
 }
 
-function findInvalidPluginId(value: unknown): string | undefined {
-  if (typeof value !== 'object' || value === null || !('plugins' in value) || typeof value.plugins !== 'object' || value.plugins === null) {return undefined;}
-  return Object.entries(value.plugins).find(([id, entry]) => !validPluginEntry(id, entry))?.[0];
-}
-
-function isMissingPluginPackage(value: unknown): boolean {
-  return typeof value === 'object' && value !== null && 'source' in value &&
-    (value.source === 'marketplace' || value.source === 'platform') &&
-    (!('package' in value) || typeof value.package !== 'string');
+function adapterEntryError(id: string, raw: unknown): string | undefined {
+  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(id)) {return 'entry ID must be a package name';}
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {return 'entry must be an object';}
+  const entry = raw as Record<string, unknown>;
+  const unknownKey = Object.keys(entry).find((key) => !['version', 'integrity', 'resolvedPath', 'enabled', 'source'].includes(key));
+  if (unknownKey) {return `field "${unknownKey}" is not allowed for adapter entries`;}
+  if (entry.source !== 'platform') {return 'source must be platform';}
+  if (typeof entry.version !== 'string') {return 'version must be a string';}
+  if (!validIntegrity(entry.integrity)) {return 'integrity must be a valid sha256 or sha512 SRI value';}
+  if (typeof entry.resolvedPath !== 'string') {return 'resolvedPath must be a string';}
+  if (typeof entry.enabled !== 'boolean') {return 'enabled must be a boolean';}
+  return undefined;
 }
 
 function validIntegrity(value: unknown): value is string {

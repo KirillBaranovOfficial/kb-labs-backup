@@ -20,6 +20,7 @@ export const manifest = defineAdapterManifest({
   version: '0.1.0',
   type: 'extension',
   implements: 'ILLM',
+  networkRequired: true,
 });
 
 export default manifest;

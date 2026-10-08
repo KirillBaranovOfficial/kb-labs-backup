@@ -12,6 +12,7 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "ICache",
+  networkRequired: false,
   defaultFor: ["cache"],
   capabilities: {
     custom: {

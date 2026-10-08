@@ -19,6 +19,7 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "extension",
   implements: "ILogRingBuffer",
+  networkRequired: false,
   defaultFor: ["logRingBuffer"],
   configSchema: {
     maxSize: { type: "number", integer: true, minimum: 1 },

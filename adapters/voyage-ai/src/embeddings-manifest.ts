@@ -12,6 +12,7 @@ export const manifest: AdapterManifest = {
   license: "MIT",
   type: "core",
   implements: "IEmbeddings",
+  networkRequired: true,
   capabilities: {
     batch: true,
   },

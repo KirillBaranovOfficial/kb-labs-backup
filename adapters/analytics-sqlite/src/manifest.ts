@@ -16,6 +16,7 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'IAnalytics',
+  networkRequired: false,
   defaultFor: ['analytics'],
   contexts: ['workspace', 'analytics'],
   capabilities: {

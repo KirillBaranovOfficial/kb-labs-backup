@@ -226,6 +226,9 @@ export interface AdapterManifest {
    */
   implements: string | string[];
 
+  /** Whether using this adapter requires reaching a network service. */
+  networkRequired: boolean;
+
   /** Configuration value used to select this adapter when it implements a typed extension point. */
   channelType?: string;
 

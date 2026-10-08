@@ -2,11 +2,12 @@
 
 import path from 'node:path';
 import { ADAPTER_DEFAULTS, toErrorEnvelope, ErrorEnvelopeError, type AdapterSlot, type ErrorEnvelope } from '@kb-labs/core-platform';
-import { discoverAdapters, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
+import { ADAPTER_CONFIG_KEYS, discoverAdapters, loadPlatformConfig, resolveInstalledAdapterDefaults, type AdaptersConfig } from '@kb-labs/core-runtime';
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
 import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { projectNetworkRequirement } from './list-projection.js';
 
 type AdapterRow = {
   slot: string;
@@ -35,19 +36,6 @@ type HostAdapterStatus = {
 };
 
 type ListResult = CommandResult & { adapters?: AdapterRow[]; projectRoot?: string; envelope?: ErrorEnvelope };
-
-const LOCAL_PACKAGES = new Set([
-  '@kb-labs/adapters-fs', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-pino',
-  '@kb-labs/adapters-log-ringbuffer', '@kb-labs/adapters-log-document',
-  '@kb-labs/adapters-analytics-sqlite', '@kb-labs/adapters-service-transport-http',
-  '@kb-labs/adapters-state-broker',
-]);
-
-const CONFIG_KEY_BY_SLOT: Partial<Record<AdapterSlot, keyof AdaptersConfig>> = {
-  storage: 'storage', cache: 'cache', logger: 'logger', analytics: 'analytics',
-  vectorStore: 'vectorStore', llm: 'llm', embeddings: 'embeddings',
-  eventBus: 'eventBus', notifier: 'notifier', documentDatabase: 'documentDatabase', kvStore: 'kvStore',
-};
 
 function packageName(spec: string): string {
   const separator = spec.lastIndexOf('@');
@@ -107,14 +95,13 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       runtimeReason = error instanceof Error ? error.message : String(error);
     }
     const rows = (Object.keys(ADAPTER_DEFAULTS) as AdapterSlot[]).map((slot): AdapterRow => {
-      const configKey = CONFIG_KEY_BY_SLOT[slot];
+      const configKeys = ADAPTER_CONFIG_KEYS[slot];
+      const configKey = configKeys.find((key) => effectiveAdapters[key] !== undefined);
       const configured = configKey ? effectiveAdapters[configKey] : undefined;
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
       const packageId = configuredPackage ? packageName(configuredPackage) : undefined;
       const option = configKey ? effectiveAdapterOptions[configKey] : undefined;
-      const schema = packageId
-        ? discovered.get(packageRoot(packageId))?.module.manifest
-        : undefined;
+      const schema = packageId ? discovered.get(packageRoot(packageId))?.module.manifest : undefined;
       const configSchema = schema && typeof schema === 'object' && 'configSchema' in schema &&
         schema.configSchema && typeof schema.configSchema === 'object'
         ? schema.configSchema as Record<string, { required?: boolean; secret?: boolean; env?: string }>
@@ -153,7 +140,7 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
         ...(hostStatus?.action ? { action: hostStatus.action } : {}),
         ...(!slotRuntimeKnown ? { action: { id: 'start-host', label: 'Start host', command: startHostCommand } } : {}),
         ...(baseDir ? { baseDir } : {}),
-        networkRequired: localLogsAvailable ? false : packageId ? !LOCAL_PACKAGES.has(packageRoot(packageId)) : false,
+        networkRequired: projectNetworkRequirement(schema),
         ...(ADAPTER_DEFAULTS[slot].defaultFallback === 'noop' && !packageId ? { requiresConfiguration: true } : {}),
         ...(credentialOptions.length > 0 ? {
           credentialsStatus: missingCredentials.length > 0 ? 'missing' : 'configured',
@@ -167,9 +154,10 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       const configuredPackage = typeof configured === 'string' ? configured : Array.isArray(configured) ? configured[0] : undefined;
       if (!configuredPackage) {continue;}
       const implementation = packageName(configuredPackage);
+      const schema = discovered.get(packageRoot(implementation))?.module.manifest;
       rows.push({ slot, implementation, mode: 'unknown', runtimeStatus: 'unknown', runtimeReason,
         action: { id: 'start-host', label: 'Start host', command: startHostCommand },
-        networkRequired: !LOCAL_PACKAGES.has(packageRoot(implementation)) });
+        networkRequired: projectNetworkRequirement(schema) });
     }
     return {  adapters: rows, projectRoot: loaded.projectRoot };
   },

@@ -11,6 +11,7 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'IWorkspaceProvider',
+  networkRequired: true,
   contexts: ['workspace'],
   capabilities: {
     custom: {
