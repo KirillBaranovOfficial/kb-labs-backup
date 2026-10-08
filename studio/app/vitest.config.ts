@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(__dirname, '../../..');
+// Real jsdom component tests have measured at 8.3s under four-way CPU load.
+const STUDIO_TEST_TIMEOUT_MS = 15_000;
 
 export default defineConfig({
   resolve: {
@@ -26,5 +28,6 @@ export default defineConfig({
     globals: false,
     setupFiles: ['./vitest-setup.ts'],
     maxWorkers: 1,
+    testTimeout: STUDIO_TEST_TIMEOUT_MS,
   },
 });
