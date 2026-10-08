@@ -19,8 +19,13 @@ async function workspaceAdapterManifests(): Promise<Map<string, AdapterManifest>
 
   for (const candidate of packages) {
     const result = await loadAdapterManifest({ packageRoot: candidate.packageRoot });
-    if (result.kind !== 'adapter') {continue;}
+    if (result.kind === 'failed') {
+      expect(result.reason, `${candidate.packageName} must declare networkRequired`).not.toBe('adapter manifest must declare networkRequired as a boolean');
+      continue;
+    }
+    if (result.kind === 'not-adapter') {continue;}
     expect(result.manifest.configSchema, `${candidate.packageName} must declare configSchema`).toBeDefined();
+    expect(result.manifest.networkRequired, `${candidate.packageName} must declare networkRequired`).toBeTypeOf('boolean');
     manifests.set(candidate.packageName, result.manifest);
   }
 
@@ -40,7 +45,11 @@ async function makePlatformRoot(): Promise<string> {
   return platformRoot;
 }
 
-function discovered(packageName: string, manifest: Record<string, unknown>): DiscoveredAdapter {
+function discovered(packageName: string, fields: Pick<AdapterManifest, 'implements'> & Partial<AdapterManifest>): DiscoveredAdapter {
+  const manifest: AdapterManifest = {
+    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: packageName, name: packageName,
+    version: '1.0.0', type: 'core', networkRequired: false, ...fields,
+  };
   return {
     packageName,
     pkgRoot: `/platform/node_modules/${packageName}`,
@@ -183,5 +192,13 @@ describe('resolveDiscoveredAdapterDefaults', () => {
       new Map([[openai.packageName, openai]]), '/project');
 
     expect(resolved.adapters.llm).toBe('@kb-labs/adapters-openai');
+  });
+});
+
+describe('workspace adapter manifest contract', () => {
+  // case: S-179.17
+  it('requires networkRequired on every workspace adapter discovered from the package graph', async () => {
+    const manifests = await workspaceAdapterManifests();
+    expect(manifests.size).toBeGreaterThan(0);
   });
 });

@@ -56,6 +56,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
         version: '1.0.0',
         type: 'core',
         implements: 'ITestAdapter',
+        networkRequired: false,
         contexts: ['workspace', 'analytics'], // Request both contexts
       };
 
@@ -94,6 +95,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
         version: '1.0.0',
         type: 'core',
         implements: 'IFileAdapter',
+        networkRequired: false,
         contexts: ['workspace'], // Only workspace
       };
 
@@ -128,6 +130,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
         version: '1.0.0',
         type: 'core',
         implements: 'ISimpleAdapter',
+        networkRequired: false,
         // No contexts field
       };
 
@@ -159,6 +162,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
         version: '1.0.0',
         type: 'core',
         implements: 'ITestAdapter',
+        networkRequired: false,
         contexts: ['workspace', 'unknown-context', 'analytics'], // unknown-context not in registry
       };
 
@@ -258,6 +262,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
         version: '1.0.0',
         type: 'core',
         implements: 'IAnalytics',
+        networkRequired: false,
         contexts: ['workspace', 'analytics'],
       };
 
@@ -309,6 +314,7 @@ describe('initPlatform - Manifest-based Context Injection', () => {
         version: '1.0.0',
         type: 'core',
         implements: 'ILegacyAdapter',
+        networkRequired: false,
         // No contexts field - legacy adapter
       };
 

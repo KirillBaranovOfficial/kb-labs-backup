@@ -29,7 +29,7 @@ describe('loadAdapterManifest', () => {
     }));
     await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
       schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture-cache', name: 'Fixture Cache', version: '1.0.0',
-      type: 'core', implements: 'ICache', configSchema: { directory: { type: 'string' } },
+      type: 'core', implements: 'ICache', networkRequired: false, configSchema: { directory: { type: 'string' } },
     })};`);
 
     const result = await loadAdapterManifest({ spec: '@fixture/cache', platformRoot: tempRoot });
@@ -37,6 +37,23 @@ describe('loadAdapterManifest', () => {
     if (result.kind !== 'adapter') {throw new Error('expected adapter manifest');}
     expect(result.manifest.requires).toBeUndefined();
     expect(result.manifest.configSchema?.directory?.type).toBe('string');
+  });
+
+  it('rejects an adapter manifest without its required network declaration', async () => {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-loader-'));
+    const packageRoot = path.join(tempRoot, 'missing-network');
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: 'missing-network', type: 'module', kb: { manifest: './manifest.mjs' },
+    }));
+    await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
+      schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'missing-network', name: 'Missing Network', version: '1.0.0',
+      type: 'core', implements: 'ICache',
+    })};`);
+
+    await expect(loadAdapterManifest({ packageRoot })).resolves.toMatchObject({
+      kind: 'failed', reason: 'adapter manifest must declare networkRequired as a boolean',
+    });
   });
 
   it('returns not-adapter for packages without kb.manifest', async () => {

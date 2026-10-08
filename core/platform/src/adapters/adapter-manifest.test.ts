@@ -28,6 +28,7 @@ describe("AdapterManifest", () => {
         description: "Production-ready structured logger based on Pino",
         type: "core",
         implements: "ILogger",
+        networkRequired: false,
         optional: {
           adapters: ["analytics"],
         },
@@ -51,6 +52,7 @@ describe("AdapterManifest", () => {
         version: "1.0.0",
         type: "core",
         implements: "ILogger",
+        networkRequired: false,
       };
 
       expect(manifest.id).toBe("simple-logger");
@@ -70,6 +72,7 @@ describe("AdapterManifest", () => {
         version: "1.0.0",
         type: "extension",
         implements: "ILogRingBuffer",
+        networkRequired: false,
         extends: {
           adapter: "logger",
           hook: "onLog",
@@ -97,6 +100,7 @@ describe("AdapterManifest", () => {
         version: "1.0.0",
         type: "extension",
         implements: "ILogPersistence",
+        networkRequired: false,
         requires: {
           adapters: [{ id: "db", alias: "database" }],
           platform: ">= 1.0.0",
@@ -130,6 +134,7 @@ describe("AdapterManifest", () => {
         version: "1.0.0",
         type: "extension",
         implements: "ILogExtension",
+        networkRequired: false,
         extends: {
           adapter: "logger",
           hook: "onLog",
@@ -152,6 +157,7 @@ describe("AdapterManifest", () => {
         version: "1.0.0",
         type: "proxy",
         implements: "ILogger",
+        networkRequired: false,
         description: "IPC proxy for cross-process logger communication",
       };
 
@@ -191,6 +197,7 @@ describe("AdapterManifest", () => {
         version: "1.0.0",
         type: "core",
         implements: "IComplexAdapter",
+        networkRequired: false,
         requires: {
           adapters: ["db", { id: "cache", alias: "cacheService" }],
         },
@@ -322,6 +329,7 @@ describe("AdapterManifest", () => {
         version: "2.3.1",
         type: "core",
         implements: "IAdapter",
+        networkRequired: false,
         requires: {
           platform: ">= 1.0.0",
         },
@@ -350,6 +358,7 @@ describe("AdapterManifest", () => {
           version: "1.0.0",
           type: "core",
           implements: "ITest",
+          networkRequired: false,
           requires: {
             platform: range,
           },
@@ -373,6 +382,7 @@ describe("AdapterManifest", () => {
           version: "1.0.0",
           type,
           implements: "ITest",
+          networkRequired: false,
         };
 
         expect(["core", "extension", "proxy"]).toContain(manifest.type);
@@ -411,6 +421,7 @@ describe("AdapterManifest", () => {
         version: "1.0.0",
         type: "core",
         implements: "ILogger",
+        networkRequired: false,
         optional: { adapters: ["analytics"] },
         capabilities: { streaming: true },
       };
@@ -427,6 +438,7 @@ describe("AdapterManifest", () => {
         version: "1.0.0",
         type: "extension",
         implements: "ILogRingBuffer",
+        networkRequired: false,
         extends: {
           adapter: "logger",
           hook: "onLog",
@@ -448,6 +460,7 @@ describe("AdapterManifest", () => {
         version: "1.0.0",
         type: "extension",
         implements: "ILogPersistence",
+        networkRequired: false,
         requires: {
           adapters: [{ id: "db", alias: "database" }],
           platform: ">= 1.0.0",

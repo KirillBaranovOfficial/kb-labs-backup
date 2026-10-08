@@ -3,12 +3,89 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { readMarketplaceLock, writeMarketplaceLock, createEmptyLock, addToMarketplaceLock, removeFromMarketplaceLock } from '../marketplace-lock.js';
+import { readMarketplaceLock, writeMarketplaceLock, createEmptyLock, addToMarketplaceLock, removeFromMarketplaceLock, validateMarketplaceLock } from '../marketplace-lock.js';
 import { DiagnosticCollector } from '../diagnostics.js';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 
 describe('marketplace-lock v3', () => {
+  it('identifies the first invalid entry and runtime validation reason', () => {
+    const result = validateMarketplaceLock({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@kb-labs/broken': { version: '1.0.0', integrity: 'sha999-bad', package: '@kb-labs/broken', enabled: true, source: 'marketplace' },
+      },
+    }, 'platform');
+
+    expect(result).toMatchObject({ valid: false, entry: '@kb-labs/broken' });
+    if (!result.valid) {expect(result.reason).toMatch(/integrity/i);}
+  });
+
+  it('rejects machine adapter entries in project scope and accepts them in platform scope', () => {
+    const lock = {
+      schema: 'kb.marketplace/3',
+      plugins: {},
+      adapters: {
+        '@kb-labs/adapters-sqlite': { version: '1.0.0', integrity: 'sha512-YQ==', resolvedPath: 'node_modules/@kb-labs/adapters-sqlite', enabled: true, source: 'platform' },
+      },
+    };
+
+    expect(validateMarketplaceLock(lock, 'project')).toMatchObject({
+      valid: false,
+      reason: 'project lock must not contain adapters',
+    });
+    expect(validateMarketplaceLock(lock, 'platform').valid).toBe(true);
+  });
+
+  it('rejects platform plugin entries in project scope with the offending ID and reason', () => {
+    const lock = {
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@kb-labs/example': { version: '1.0.0', integrity: 'sha512-YQ==', package: '@kb-labs/example', resolvedPath: 'node_modules/@kb-labs/example', enabled: true, source: 'platform' },
+      },
+    };
+
+    expect(validateMarketplaceLock(lock, 'project')).toMatchObject({
+      valid: false,
+      entry: '@kb-labs/example',
+      reason: 'source must be marketplace or local in project locks',
+    });
+    expect(validateMarketplaceLock(lock, 'platform').valid).toBe(true);
+  });
+
+  it('runtime project-scope reads reject platform plugin entries', async () => {
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {
+        '@kb-labs/example': { version: '1.0.0', integrity: 'sha512-YQ==', package: '@kb-labs/example', resolvedPath: 'node_modules/@kb-labs/example', enabled: true, source: 'platform' },
+      },
+    }));
+    const diag = new DiagnosticCollector();
+
+    expect(await readMarketplaceLock(tmpDir, diag, 'project')).toBeNull();
+    expect(diag.getEvents()).toContainEqual(expect.objectContaining({
+      code: 'LOCK_SCHEMA_INVALID',
+      message: expect.stringContaining('@kb-labs/example'),
+    }));
+  });
+
+  it('runtime project-scope reads reject a present adapters section', async () => {
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    await fs.writeFile(path.join(tmpDir, '.kb', 'marketplace.lock'), JSON.stringify({
+      schema: 'kb.marketplace/3',
+      plugins: {},
+      adapters: {},
+    }));
+    const diag = new DiagnosticCollector();
+
+    expect(await readMarketplaceLock(tmpDir, diag, 'project')).toBeNull();
+    expect(diag.getEvents()).toContainEqual(expect.objectContaining({
+      code: 'LOCK_SCHEMA_INVALID',
+      message: expect.stringContaining('project lock must not contain adapters'),
+    }));
+  });
+
   let tmpDir: string;
   beforeEach(async () => { tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-lock-test-')); });
   afterEach(async () => { await fs.rm(tmpDir, { recursive: true, force: true }); });

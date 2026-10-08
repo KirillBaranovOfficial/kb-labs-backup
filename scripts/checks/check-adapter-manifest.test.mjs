@@ -28,12 +28,16 @@ test('adapter-manifest uses devkit categories and validates built manifests', as
     const missingSchema = await runCheck(payload);
     assertIssue(missingSchema, '@fixture/adapter', 'configSchema', 'dist/manifest.js');
 
+    await writeFile(path.join(adapterRoot, 'dist', 'manifest.js'), adapterManifest({ implements: 'IFixture', configSchema: {}, networkRequired: undefined }));
+    const missingNetworkRequirement = await runCheck(payload);
+    assertIssue(missingNetworkRequirement, '@fixture/adapter', 'networkRequired', 'dist/manifest.js');
+
     await writeFile(path.join(adapterRoot, 'dist', 'manifest.js'), adapterManifest({ implements: 'IFixture', configSchema: {} }));
     const outsideCategory = await runCheck(payload);
     assertIssue(outsideCategory, '@fixture/extra', 'outside the devkit adapter category', 'package.json');
 
     extraPackage.category = 'adapter';
-    await writeFile(path.join(extraRoot, 'dist', 'manifest.js'), adapterManifest({ implements: 'IFixture', configSchema: {} }));
+    await writeFile(path.join(extraRoot, 'dist', 'manifest.js'), adapterManifest({ configSchema: {} }));
     const undiscoverableCategory = await runCheck(payload);
     assertIssue(undiscoverableCategory, '@fixture/extra', 'not discoverable by platform adapter discovery', 'package.json');
   } finally {
@@ -54,7 +58,7 @@ async function writeFixturePackage(packageRoot, name, manifest) {
 
 function adapterManifest(fields) {
   return `export const manifest = ${JSON.stringify({
-    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', ...fields,
+    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', networkRequired: true, ...fields,
   })};\n`;
 }
 
