@@ -251,7 +251,7 @@ async function resolveMode(
 
 async function loadLock(root: string): Promise<MarketplaceLock | null> {
   const diag = new DiagnosticCollector();
-  return readMarketplaceLock(root, diag);
+  return readMarketplaceLock(root, diag, 'platform');
 }
 
 async function pathExists(p: string): Promise<boolean> {

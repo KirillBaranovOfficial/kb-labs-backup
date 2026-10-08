@@ -19,6 +19,7 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'IEventBus',
+  networkRequired: false,
   defaultFor: ['eventBus'],
   requires: {
     adapters: [{ id: 'cache', alias: 'cache' }],

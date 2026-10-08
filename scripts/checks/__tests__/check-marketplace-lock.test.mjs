@@ -41,18 +41,30 @@ test('rejects a v3 marketplace pin without its package name', async () => {
   });
   try {
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /must record its npm package name/);
+    assert.match(result.stderr, /package must be a valid npm package name/);
   } finally { await rm(result.root, { recursive: true, force: true }); }
 });
 
-test('rejects a v3 platform pin without its package name', async () => {
+test('rejects a platform source in a project pin with the runtime scope reason', async () => {
   const result = await runCheck({
     schema: 'kb.marketplace/3',
-    plugins: { '@kb-labs/commit': { version: '1.2.3', integrity: 'sha512-abc', enabled: true, source: 'platform' } },
+    plugins: { '@kb-labs/commit': { version: '1.2.3', integrity: 'sha512-abc', package: '@kb-labs/commit', resolvedPath: 'node_modules/@kb-labs/commit', enabled: true, source: 'platform' } },
   });
   try {
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /must record its npm package name/);
+    assert.match(result.stderr, /source must be marketplace or local in project locks/);
+  } finally { await rm(result.root, { recursive: true, force: true }); }
+});
+
+test('rejects malformed integrity with the runtime validation reason and remediation', async () => {
+  const result = await runCheck({
+    schema: 'kb.marketplace/3',
+    plugins: { '@kb-labs/broken': { version: '1.2.3', integrity: 'sha999-invalid', package: '@kb-labs/broken', enabled: true, source: 'marketplace' } },
+  });
+  try {
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /@kb-labs\/broken.*integrity/i);
+    assert.match(result.stderr, /kb marketplace sync/);
   } finally { await rm(result.root, { recursive: true, force: true }); }
 });
 
@@ -71,6 +83,27 @@ test('rejects a machine path in a project pin', async () => {
   });
   try {
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /machine-independent v3 pin/);
+    assert.match(result.stderr, /field "resolvedPath" is not allowed/);
+  } finally { await rm(result.root, { recursive: true, force: true }); }
+});
+
+test('reports the runtime project-scope rule for adapter sections', async () => {
+  const result = await runCheck({ schema: 'kb.marketplace/3', plugins: {}, adapters: {} });
+  try {
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /project lock must not contain adapters/);
+    assert.match(result.stderr, /kb marketplace sync/);
+  } finally { await rm(result.root, { recursive: true, force: true }); }
+});
+
+test('reports the runtime project-scope rule for platform plugin entries', async () => {
+  const result = await runCheck({
+    schema: 'kb.marketplace/3',
+    plugins: { '@kb-labs/example': { version: '1.0.0', integrity: 'sha512-abc', package: '@kb-labs/example', resolvedPath: 'node_modules/@kb-labs/example', enabled: true, source: 'platform' } },
+  });
+  try {
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /@kb-labs\/example.*source must be marketplace or local in project locks/);
+    assert.match(result.stderr, /kb marketplace sync/);
   } finally { await rm(result.root, { recursive: true, force: true }); }
 });

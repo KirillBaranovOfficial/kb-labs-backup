@@ -24,7 +24,7 @@ describe('AdapterStrategy', () => {
     }));
     await fs.writeFile(path.join(root, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
       schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: identity, name: identity, version: '1.0.0', type: 'core',
-      implements: role, ...(requires ? { requires: { adapters: requires } } : {}),
+      implements: role, networkRequired: false, ...(requires ? { requires: { adapters: requires } } : {}),
     })};`);
   }
 

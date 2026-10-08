@@ -19,6 +19,7 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "IVectorStore",
+  networkRequired: true,
   capabilities: {
     search: true,
     batch: true,

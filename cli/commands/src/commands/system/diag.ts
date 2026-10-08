@@ -380,7 +380,7 @@ async function runLockStage(
   ctx: TraceCtx,
 ): Promise<TraceStage & { enrich?: Partial<TraceCtx> }> {
   const collector = new DiagnosticCollector();
-  const lock = await readMarketplaceLock(ctx.cwd, collector);
+  const lock = await readMarketplaceLock(ctx.cwd, collector, 'project');
 
   if (!lock) {
     // Registry already confirmed the command — no lock is fine for workspace plugins
@@ -605,7 +605,7 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
     // 3. Marketplace lock — also surface DiagnosticCollector events
     try {
       const collector = new DiagnosticCollector();
-      const lock = await readMarketplaceLock(cwd, collector);
+      const lock = await readMarketplaceLock(cwd, collector, 'project');
 
       for (const event of collector.getEvents()) {
         if (event.severity === 'error' || event.severity === 'warning') {

@@ -72,7 +72,10 @@ describe('loadDiscoveredAdapterModule', () => {
     await fs.mkdir(dist, { recursive: true });
     await fs.writeFile(path.join(dist, 'index.js'), `export const manifest = { schema: 'kb.adapter/1', implements: 'IDocumentDatabase' }; export function createAdapter() { return { kind: 'document' }; }`);
     await fs.writeFile(path.join(dist, 'kv.js'), `export const manifest = { schema: 'kb.adapter/1', implements: 'IKVStore' }; export function createAdapter() { return { get() { return 'kv'; } }; }`);
-    adapter = { packageName: '@test/sqlite', pkgRoot: root, createAdapter: () => ({}), module: {} };
+    adapter = {
+      packageName: '@test/sqlite', pkgRoot: root, createAdapter: () => ({}),
+      module: { manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'test-sqlite', name: 'Test SQLite', version: '1.0.0', type: 'core', implements: ['IDocumentDatabase', 'IKVStore'], networkRequired: false } },
+    };
   });
 
   afterEach(async () => {
@@ -100,7 +103,7 @@ describe('loadDiscoveredAdapterModule', () => {
       packageName: '@kb-labs/adapters-fs',
       pkgRoot: unbuiltRoot,
       createAdapter: () => undefined,
-      module: {},
+      module: { manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'unbuilt', name: 'Unbuilt', version: '1.0.0', type: 'core', implements: 'IStorage', networkRequired: false } },
     };
 
     await expect(loadWorkspaceAdapterModule('storage', unbuilt, '@kb-labs/adapters-fs'))

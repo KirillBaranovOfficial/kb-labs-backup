@@ -19,6 +19,7 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "ILLM",
+  networkRequired: true,
   defaultFor: ["llm"],
   capabilities: {
     streaming: true,

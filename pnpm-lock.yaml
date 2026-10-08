@@ -67,6 +67,9 @@ importers:
         specifier: workspace:*
         version: link:adapters/log-document
     devDependencies:
+      '@kb-labs/core-discovery':
+        specifier: workspace:*
+        version: link:core/discovery
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:core/platform

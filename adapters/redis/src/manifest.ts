@@ -19,6 +19,7 @@ export const manifest: AdapterManifest = {
   license: "KBPL-1.1",
   type: "core",
   implements: "ICache",
+  networkRequired: true,
   capabilities: {
     custom: {
       ttl: true,

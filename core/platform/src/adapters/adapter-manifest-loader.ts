@@ -66,6 +66,7 @@ function isAdapterManifest(value: unknown): value is AdapterManifest {
     typeof value.id === 'string' &&
     typeof value.name === 'string' &&
     typeof value.version === 'string' &&
+    typeof value.networkRequired === 'boolean' &&
     (value.type === 'core' || value.type === 'extension' || value.type === 'proxy') &&
     ((typeof value.implements === 'string' && value.implements.length > 0) ||
       (Array.isArray(value.implements) && value.implements.length > 0 && value.implements.every((role) => typeof role === 'string')));
@@ -100,6 +101,9 @@ export async function loadAdapterManifest(source: AdapterManifestSource): Promis
         reason: `adapter manifest must declare schema "kb.adapter/1"; received ${actualSchema}`,
         modulePath,
       };
+    }
+    if (typeof mod.manifest.networkRequired !== 'boolean') {
+      return { kind: 'failed', reason: 'adapter manifest must declare networkRequired as a boolean', modulePath };
     }
     if (!isAdapterManifest(mod.manifest)) {
       return { kind: 'failed', reason: 'built module must export a valid AdapterManifest named manifest', modulePath };

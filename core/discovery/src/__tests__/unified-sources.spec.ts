@@ -338,7 +338,7 @@ describe('findWorkspacePackages', () => {
 
 describe('workspace adapter candidates', () => {
   const moduleFor = (roles: string | string[]) =>
-    `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: roles })};\n`;
+    `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: roles, networkRequired: false })};\n`;
 
   it('uses only kb.manifest and classifies undeclared packages as non-adapters', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-result-'));

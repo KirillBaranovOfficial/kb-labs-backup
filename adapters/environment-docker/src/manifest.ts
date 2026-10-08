@@ -19,6 +19,7 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'IEnvironmentProvider',
+  networkRequired: false,
   contexts: ['workspace'],
   capabilities: {
     custom: {

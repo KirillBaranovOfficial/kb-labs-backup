@@ -11,6 +11,7 @@ export const manifest: AdapterManifest = {
   license: 'KBPL-1.1',
   type: 'core',
   implements: 'ISnapshotProvider',
+  networkRequired: false,
   contexts: ['workspace'],
   capabilities: {
     custom: {

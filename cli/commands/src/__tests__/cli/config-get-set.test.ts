@@ -159,7 +159,7 @@ beforeEach(async () => {
     name: '@kb-labs/adapters-openai', type: 'module', kb: { manifest: './manifest.js' },
   }));
   await write(openaiRoot, 'manifest.js', `export const manifest = ${JSON.stringify({
-    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM',
+    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: true,
     configSchema: {
       apiKey: { type: 'string' }, baseURL: { type: 'string' }, defaultModel: { type: 'string' },
       model: { type: 'string' }, temperature: { type: 'number' },
@@ -213,7 +213,7 @@ describe('config set', () => {
     const vibeproxyRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-vibeproxy');
     await fsp.mkdir(vibeproxyRoot, { recursive: true });
     await fsp.writeFile(path.join(vibeproxyRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-vibeproxy', type: 'module', kb: { manifest: './manifest.js' } }));
-    await fsp.writeFile(path.join(vibeproxyRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'vibeproxy', name: 'Vibe Proxy', version: '1.0.0', type: 'core', implements: 'ILLM' })};`);
+    await fsp.writeFile(path.join(vibeproxyRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'vibeproxy', name: 'Vibe Proxy', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: true })};`);
     const { code } = await run(configSet, ['platform.adapters.llm', '@kb-labs/adapters-vibeproxy'], {
       scope: 'platform',
     });
@@ -249,7 +249,7 @@ describe('config set', () => {
     }));
     await write(packageRoot, 'manifest.js', `export const manifest = ${JSON.stringify({
       schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'storage-fixture', name: 'Storage Fixture', version: '1.0.0', type: 'core',
-      implements: 'IStorage', defaultFor: ['storage'],
+      implements: 'IStorage', networkRequired: false, defaultFor: ['storage'],
     })};\n`);
     const before = await fsp.readFile(PLATFORM_FILE(), 'utf8');
 
@@ -472,7 +472,7 @@ describe('config set', () => {
         pkg,
         'index.js',
         `export const manifest = ${JSON.stringify({
-          schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fake-adapter', name: 'Fake Adapter', version: '1.0.0', type: 'core', implements: 'ILLM', configSchema: {
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fake-adapter', name: 'Fake Adapter', version: '1.0.0', type: 'core', implements: 'ILLM', networkRequired: false, configSchema: {
           temperature: { type: 'number' },
           mode: { type: 'string', enum: ['fast', 'careful'] },
         }})};\n`,
