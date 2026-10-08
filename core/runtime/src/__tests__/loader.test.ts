@@ -13,6 +13,11 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createDegradedAdapterProxy, fillAdapterFallbacksAndRecord, initPlatform, resetPlatform } from '../loader.js';
 import { platform } from '../container.js';
 import { getAdapterStatusFor, resetAdapterStatus } from '../adapter-status.js';
@@ -67,6 +72,58 @@ describe('Platform Loader', () => {
   });
 
   describe('Adapter Configuration', () => {
+    // case: S-219.1
+    it('binds and constructs notifier-router through initPlatform', async () => {
+      const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
+      const tempRoot = await mkdtemp(path.join(tmpdir(), 'kb-notifier-loader-'));
+      const workspaceRoot = path.join(tempRoot, 'workspace');
+      const isolatedHome = path.join(tempRoot, 'home');
+      const adapterRoot = path.join(workspaceRoot, 'adapters', 'notifier-router');
+      const telegramRoot = path.join(workspaceRoot, 'adapters', 'telegram');
+      try {
+        await mkdir(adapterRoot, { recursive: true });
+        await mkdir(telegramRoot, { recursive: true });
+        await mkdir(isolatedHome, { recursive: true });
+        await writeFile(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
+        await writeFile(path.join(adapterRoot, 'package.json'), await readFile(path.join(repoRoot, 'adapters/notifier-router/package.json')));
+        await symlink(path.join(repoRoot, 'adapters/notifier-router/dist'), path.join(adapterRoot, 'dist'));
+        await writeFile(path.join(telegramRoot, 'package.json'), await readFile(path.join(repoRoot, 'adapters/telegram/package.json')));
+        await symlink(path.join(repoRoot, 'adapters/telegram/dist'), path.join(telegramRoot, 'dist'));
+
+        const runtimeModule = path.join(repoRoot, 'core/runtime/dist/index.js');
+        const script = `
+          import { initPlatform, platform } from ${JSON.stringify(pathToFileURL(runtimeModule).href)};
+          let telegramRequests = 0;
+          globalThis.fetch = async () => { telegramRequests++; return new Response('{"ok":true}', { status: 200 }); };
+          await initPlatform({
+            adapters: { notifier: '@kb-labs/notifier-router' },
+            adapterOptions: {
+              notifier: {
+                channels: { ops: { type: 'telegram', botToken: 'test-token', chatId: 'test-chat' } },
+                routing: [{ match: { severity: ['info'] }, channels: ['ops'] }],
+              },
+            },
+          }, ${JSON.stringify(workspaceRoot)}, undefined, undefined, { workspaceDevelopment: true });
+          await platform.notifier.notify({ severity: 'info', title: 'loader test', body: 'bound' });
+          console.log('C01_RESULT ' + JSON.stringify({ real: platform.isReal('notifier'), telegramRequests }));
+          process.exit(0);
+        `;
+        const env: NodeJS.ProcessEnv = { ...process.env, HOME: isolatedHome };
+        delete env.KB_PLATFORM_ROOT;
+        delete env.KB_HOME;
+        delete env.KB_NET_OFFSET;
+        const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+          cwd: workspaceRoot,
+          env,
+          encoding: 'utf8',
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout).toContain('C01_RESULT {"real":true,"telegramRequests":1}');
+      } finally {
+        await rm(tempRoot, { recursive: true, force: true });
+      }
+    });
+
     // case: S-211.6
     it('throws the typed unavailable error for method and property reads and remains safely awaitable', async () => {
       const error = new AdapterUnavailableError('llm', 'load-failed', 'adapter load failed');

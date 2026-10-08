@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -105,7 +106,7 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 			},
 		},
 		Custom: []yamlCustomCheck{
-			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}},
+			{Name: "lint", Run: "pnpm lint", On: []string{"check"}, Language: "typescript", Categories: []string{"adapter"}, Scope: "workspace"},
 		},
 	}
 
@@ -128,10 +129,27 @@ func TestYAMLUnmarshalErrorsAndMapping(t *testing.T) {
 	if len(cfg.Custom[0].Categories) != 1 || cfg.Custom[0].Categories[0] != "adapter" {
 		t.Fatalf("mapped custom check categories = %#v", cfg.Custom[0].Categories)
 	}
+	if cfg.Custom[0].Scope != "workspace" {
+		t.Fatalf("mapped custom check scope = %q, want workspace", cfg.Custom[0].Scope)
+	}
 
 	preset := mapPreset(raw.Presets["custom"])
 	if !preset.TSup.MustUsePreset || !preset.ESLint.MustUsePreset || preset.Go.MinVersion != "1.22" {
 		t.Fatalf("mapPreset = %+v", preset)
+	}
+}
+
+func TestCustomCheckRejectsUnknownScope(t *testing.T) {
+	_, err := parseYAMLBytes([]byte("custom_checks:\n  - name: sample\n    run: node check.mjs\n    scope: repository\n"))
+	if err == nil || !strings.Contains(err.Error(), "expected package or workspace") {
+		t.Fatalf("parse unknown custom check scope error = %v, want explicit scope validation", err)
+	}
+}
+
+func TestWorkspaceCustomCheckRejectsPackageFilters(t *testing.T) {
+	_, err := parseYAMLBytes([]byte("custom_checks:\n  - name: sample\n    run: node check.mjs\n    scope: workspace\n    categories: [adapter]\n"))
+	if err == nil || !strings.Contains(err.Error(), "cannot set package language or categories") {
+		t.Fatalf("parse workspace package filter error = %v, want explicit scope validation", err)
 	}
 }
 

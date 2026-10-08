@@ -1,6 +1,7 @@
 package checks
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,6 +97,60 @@ fi
 	if _, err := os.Stat(filepath.Join(pkgDir, "README.md")); err != nil {
 		t.Fatalf("README.md not created: %v", err)
 	}
+}
+
+func TestWorkspaceExternalCheckRunsOnceWithResolvedPackageCategories(t *testing.T) {
+	root := t.TempDir()
+	payloadPath := filepath.Join(root, "payload.json")
+	callsPath := filepath.Join(root, "calls.txt")
+	scriptPath := filepath.Join(root, "check.sh")
+	script := "#!/bin/sh\ncat > '" + payloadPath + "'\nprintf x >> '" + callsPath + "'\nprintf '{\"issues\":[]}\\n'\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	cfg := &config.DevkitConfig{
+		Presets: map[string]config.Preset{"typescript": {Language: "typescript"}},
+		Custom:  []config.CustomCheck{{Name: "workspace-check", Run: scriptPath, On: []string{"check"}, Scope: "workspace"}},
+	}
+	ws := &workspace.Workspace{Root: root, Packages: []workspace.Package{
+		{Name: "@acme/adapter", Dir: filepath.Join(root, "adapters", "adapter"), Category: "adapter", Preset: "typescript", Language: "typescript", RelPath: "adapters/adapter"},
+		{Name: "@acme/library", Dir: filepath.Join(root, "packages", "library"), Category: "ts-lib", Preset: "typescript", Language: "typescript", RelPath: "packages/library"},
+	}}
+	results := RunAll(ws, cfg, Build(cfg, root, "check"), nil)
+	if got := string(mustReadFile(t, callsPath)); got != "x" {
+		t.Fatalf("workspace check calls = %q, want one invocation", got)
+	}
+	var input struct {
+		Workspace struct {
+			Root     string `json:"root"`
+			Packages []struct {
+				Name     string `json:"name"`
+				Category string `json:"category"`
+				RelPath  string `json:"relPath"`
+			} `json:"packages"`
+		} `json:"workspace"`
+	}
+	if err := json.Unmarshal(mustReadFile(t, payloadPath), &input); err != nil {
+		t.Fatalf("decode workspace stdin: %v", err)
+	}
+	if input.Workspace.Root != root || len(input.Workspace.Packages) != 2 {
+		t.Fatalf("workspace input = %#v, want root and both discovered packages", input.Workspace)
+	}
+	if input.Workspace.Packages[0].Category != "adapter" || input.Workspace.Packages[1].Category != "ts-lib" {
+		t.Fatalf("package categories = %#v, want resolved devkit categories", input.Workspace.Packages)
+	}
+	if _, ok := results["workspace"]; ok {
+		t.Fatalf("clean workspace check created a result with issues: %#v", results["workspace"])
+	}
+}
+
+func mustReadFile(t *testing.T, file string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	return data
 }
 
 func TestBuildSkipsDisabledOrMismatchedExternalChecks(t *testing.T) {
