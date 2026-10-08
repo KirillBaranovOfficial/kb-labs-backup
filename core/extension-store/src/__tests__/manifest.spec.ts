@@ -41,6 +41,18 @@ describe('readStaticManifest', () => {
     await expect(readStaticManifest(dir)).resolves.toEqual(manifest);
   });
 
+  it('ignores the non-canonical kbLabs.manifest field', async () => {
+    const manifest = sampleManifest('acme-deploy', '1.0.0');
+    await fs.writeFile(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'acme-deploy', kbLabs: { manifest: './custom/manifest.json' } }),
+    );
+    await fs.mkdir(path.join(dir, 'custom'), { recursive: true });
+    await fs.writeFile(path.join(dir, 'custom', 'manifest.json'), JSON.stringify(manifest));
+
+    await expect(readStaticManifest(dir)).resolves.toBeUndefined();
+  });
+
   it('never imports plugin JS: a kb.manifest field pointing at a .js file is not executed', async () => {
     await fs.writeFile(
       path.join(dir, 'package.json'),

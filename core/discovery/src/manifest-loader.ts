@@ -3,7 +3,7 @@
  * Safe dynamic import of plugin manifests with timeout protection.
  */
 
-import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
+import { declaredManifestPath, isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { DiagnosticCollector } from './diagnostics.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
@@ -80,7 +80,7 @@ export async function loadManifest(
  * Locate and load a ManifestV3 from a package root directory.
  *
  * Resolution order:
- *   1. package.json `kbLabs.manifest` or `kb.manifest` field (relative path).
+ *   1. package.json `kb.manifest` field (relative path).
  *      When the field points at a compiled module (`dist/manifest.js`) and the
  *      build-emitted static sibling (`dist/manifest.json`) exists, the static
  *      file is used and no plugin code is executed. The module is imported only
@@ -103,9 +103,7 @@ export async function loadManifestFile(
     const raw = await fs.readFile(pkgJsonPath, 'utf-8');
     const pkg = JSON.parse(raw) as Record<string, unknown>;
     packageName = typeof pkg.name === 'string' ? pkg.name : undefined;
-    const manifestField =
-      (pkg.kbLabs as Record<string, unknown> | undefined)?.manifest ??
-      (pkg.kb as Record<string, unknown> | undefined)?.manifest;
+    const manifestField = declaredManifestPath(pkg);
 
     if (typeof manifestField === 'string') {
       const manifestPath = path.resolve(resolvedRoot, manifestField);
@@ -158,7 +156,7 @@ export async function loadManifestFile(
   diag.error('MANIFEST_NOT_FOUND', `No manifest found in ${resolvedRoot}`, {
     pluginId,
     filePath: resolvedRoot,
-    remediation: 'Add a kb.plugin.json file or set kbLabs.manifest in package.json',
+    remediation: 'Add a kb.plugin.json file or set kb.manifest in package.json',
   });
   return null;
 }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,54 +8,41 @@ import test from 'node:test';
 
 const checker = fileURLToPath(new URL('./check-adapter-manifest.mjs', import.meta.url));
 
-test('adapter-manifest reports schema and workspace category completeness errors', async () => {
+test('adapter-manifest uses devkit categories and validates built manifests', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-check-'));
   try {
     const adapterRoot = path.join(root, 'adapters', 'adapter');
     const extraRoot = path.join(root, 'packages', 'extra');
-    await mkdir(path.join(adapterRoot, 'dist'), { recursive: true });
-    await mkdir(path.join(extraRoot, 'dist'), { recursive: true });
-    await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'fixture-root', private: true }));
-    await writeFile(path.join(root, 'pnpm-workspace.yaml'), 'packages: ["adapters/*", "packages/*"]\n');
-    await writeFile(path.join(root, 'devkit.yaml'), [
-      'workspace:',
-      '  categories:',
-      '    adapter:',
-      '      match: ["adapters/*"]',
-      '    ts-lib:',
-      '      match: ["packages/*"]',
-      '',
-    ].join('\n'));
     await writeFixturePackage(adapterRoot, '@fixture/adapter', 'export const manifest = { implements: "IFixture" };\n');
+    await writeFixturePackage(extraRoot, '@fixture/extra', 'export const manifest = { implements: "IFixture", configSchema: {} };\n');
 
-    const missingSchema = await runCheck(root, adapterRoot, '@fixture/adapter');
+    const adapterPackage = { name: '@fixture/adapter', dir: adapterRoot, relPath: 'adapters/adapter', category: 'adapter' };
+    const extraPackage = { name: '@fixture/extra', dir: extraRoot, relPath: 'packages/extra', category: 'ts-lib' };
+    const payload = {
+      workspaceRoot: root,
+      check: 'adapter-manifest',
+      package: { Name: adapterPackage.name, Dir: adapterRoot, RelPath: adapterPackage.relPath, Category: 'adapter' },
+      workspace: { root, packages: [adapterPackage, extraPackage] },
+    };
+
+    const missingSchema = await runCheck(payload);
     assertIssue(missingSchema, '@fixture/adapter', 'configSchema', 'dist/manifest.js');
 
     await writeFile(path.join(adapterRoot, 'dist', 'manifest.js'), 'export const manifest = { implements: "IFixture", configSchema: {} };\n');
-    assert.deepEqual(await runCheck(root, adapterRoot, '@fixture/adapter'), []);
+    const outsideCategory = await runCheck(payload);
+    assertIssue(outsideCategory, '@fixture/extra', 'outside the devkit adapter category', 'package.json');
 
-    await writeFixturePackage(extraRoot, '@fixture/extra', 'export const manifest = { implements: "IFixture", configSchema: {} };\n');
-    const outsideCategory = await runCheck(root, adapterRoot, '@fixture/adapter');
-    assertIssue(outsideCategory, '@fixture/extra', 'outside the devkit adapter category', 'dist/manifest.js');
-
-    await writeFile(path.join(root, 'devkit.yaml'), [
-      'workspace:',
-      '  categories:',
-      '    adapter:',
-      '      match: ["adapters/*", "packages/*"]',
-      '    ts-lib:',
-      '      match: ["packages/*"]',
-      '',
-    ].join('\n'));
+    extraPackage.category = 'adapter';
     await writeFile(path.join(extraRoot, 'dist', 'manifest.js'), 'export const manifest = { configSchema: {} };\n');
-    const undiscoverableCategory = await runCheck(root, adapterRoot, '@fixture/adapter');
-    assertIssue(undiscoverableCategory, '@fixture/extra', 'not discoverable by platform adapter discovery', 'dist/manifest.js');
+    const undiscoverableCategory = await runCheck(payload);
+    assertIssue(undiscoverableCategory, '@fixture/extra', 'not discoverable by platform adapter discovery', 'package.json');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
 async function writeFixturePackage(packageRoot, name, manifest) {
+  await mkdir(path.join(packageRoot, 'dist'), { recursive: true });
   await writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
     name,
     version: '1.0.0',
@@ -65,17 +52,7 @@ async function writeFixturePackage(packageRoot, name, manifest) {
   await writeFile(path.join(packageRoot, 'dist', 'manifest.js'), manifest);
 }
 
-async function runCheck(root, packageRoot, packageName) {
-  const input = {
-    workspaceRoot: root,
-    check: 'adapter-manifest',
-    package: {
-      Name: packageName,
-      Dir: packageRoot,
-      RelPath: path.relative(root, packageRoot),
-      Category: 'adapter',
-    },
-  };
+async function runCheck(input) {
   const result = spawnSync(process.execPath, [checker], {
     cwd: path.dirname(checker),
     input: JSON.stringify(input),

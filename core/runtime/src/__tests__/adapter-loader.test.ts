@@ -183,6 +183,42 @@ describe('AdapterLoader', () => {
     expect(createAdapter).toHaveBeenCalledTimes(1);
   });
 
+  it('injects declared platform services and external adapter dependencies through the generic loader', async () => {
+    const loader = new AdapterLoader();
+    const eventBus = { publish: vi.fn() };
+    const broker = { register: vi.fn() };
+    const channels = vi.fn();
+    const createAdapter = vi.fn((_config: unknown, deps: Record<string, unknown>) => deps);
+    const loadModule = vi.fn(async (): Promise<LoadedAdapterModule> => ({
+      manifest: {
+        manifestVersion: '1.0.0', id: 'notifier', name: 'Notifier', version: '1.0.0', type: 'core',
+        implements: 'INotifier', requires: {
+          adapters: ['eventBus'],
+          platformServices: [
+            { id: 'resourceBroker', alias: 'broker' },
+            { id: 'notifierChannels', alias: 'channels' },
+          ],
+        },
+      },
+      createAdapter,
+    }));
+
+    const loaded = await loader.loadAdapters(
+      { notifier: { module: '@kb-labs/notifier-router', config: {} } },
+      loadModule,
+      {
+        adapters: new Map([['eventBus', eventBus]]),
+        platformServices: {
+          resourceBroker: () => broker,
+          notifierChannels: async () => channels,
+        },
+      },
+    );
+
+    expect(loaded.get('notifier')).toEqual({ eventBus, broker, channels });
+    expect((loaded.get('notifier') as Record<string, unknown>).channels).toBe(channels);
+  });
+
   it('should build dependency graph from configs', async () => {
     const loader = new AdapterLoader();
 

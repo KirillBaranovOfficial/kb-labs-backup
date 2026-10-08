@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { access, mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { findWorkspacePackages, loadAdapterManifest } from '@kb-labs/core-discovery';
 import { validatePlatformAdapterOptions } from '@kb-labs/core-config';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
@@ -16,19 +16,10 @@ async function workspaceAdapterManifests(): Promise<Map<string, Record<string, u
   const manifests = new Map<string, Record<string, unknown>>();
 
   for (const candidate of packages) {
-    if (!(await loadAdapterManifest(candidate.packageRoot))) {continue;}
-    const packageJson = JSON.parse(await readFile(path.join(candidate.packageRoot, 'package.json'), 'utf8')) as {
-      kb?: { manifest?: string };
-      kbLabs?: { manifest?: string };
-    };
-    const manifestPath = packageJson.kbLabs?.manifest ?? packageJson.kb?.manifest;
-    if (!manifestPath) {throw new Error(`${candidate.packageName} has no declared adapter manifest path`);}
-    const modulePath = path.resolve(candidate.packageRoot, manifestPath);
-    await access(modulePath);
-    const loaded = await import(pathToFileURL(modulePath).href) as { manifest?: Record<string, unknown> };
-    if (!loaded.manifest) {throw new Error(`${candidate.packageName} does not export its declared adapter manifest`);}
-    expect(loaded.manifest.configSchema, `${candidate.packageName} must declare configSchema`).toBeDefined();
-    manifests.set(candidate.packageName, loaded.manifest);
+    const result = await loadAdapterManifest(candidate.packageRoot);
+    if (result.kind !== 'adapter') {continue;}
+    expect(result.manifest.configSchema, `${candidate.packageName} must declare configSchema`).toBeDefined();
+    manifests.set(candidate.packageName, result.manifest);
   }
 
   expect(manifests.size).toBeGreaterThan(0);
@@ -41,7 +32,7 @@ async function makePlatformRoot(): Promise<string> {
   await mkdir(scopePath, { recursive: true });
   const packages = await findWorkspacePackages(workspaceRoot);
   for (const candidate of packages) {
-    if (!(await loadAdapterManifest(candidate.packageRoot))) {continue;}
+    if ((await loadAdapterManifest(candidate.packageRoot)).kind !== 'adapter') {continue;}
     await symlink(candidate.packageRoot, path.join(scopePath, candidate.packageName.slice('@kb-labs/'.length)));
   }
   return platformRoot;

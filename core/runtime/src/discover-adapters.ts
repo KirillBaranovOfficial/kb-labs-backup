@@ -119,9 +119,9 @@ async function loadWorkspaceAdapters(
     } catch {
       throw configuredWorkspaceAdapterNotBuiltError(slot, packageName);
     }
-    const manifest = await loadAdapterManifest(candidate.packageRoot);
-    if (!manifest?.implements) {
-      throw configuredWorkspaceAdapterInvalidError(slot, packageName, 'its KB adapter manifest is missing the implements value');
+    const manifestResult = await loadAdapterManifest(candidate.packageRoot);
+    if (manifestResult.kind !== 'adapter') {
+      throw configuredWorkspaceAdapterInvalidError(slot, packageName, manifestResult.reason);
     }
     const module = await loadAdapterModule(distPath);
     if (typeof module.createAdapter !== 'function') {
@@ -141,6 +141,61 @@ export interface WorkspaceAdapterDiscoveryOptions {
   development: boolean;
   /** Adapter package paths configured by the platform, including subpath entries. */
   configuredPackages: readonly { packageName: string; slot: string }[];
+}
+
+/** Load a channel factory from the same package source used for platform adapters. */
+export async function loadAdapterChannelFactory(
+  channelType: string,
+  platformRoot: string,
+  development: boolean,
+): Promise<(config: unknown, channelId: string) => unknown> {
+  const candidateRoots: string[] = [];
+  if (development) {
+    const packages = await findWorkspacePackages(platformRoot);
+    candidateRoots.push(...packages.map(pkg => pkg.packageRoot));
+  } else {
+    const diagnostic = new DiagnosticCollector();
+    const lock = await readMarketplaceLock(platformRoot, diagnostic);
+    for (const entry of Object.values(lock?.adapters ?? {})) {
+      if (entry.enabled && entry.resolvedPath) {
+        candidateRoots.push(path.resolve(platformRoot, entry.resolvedPath));
+      }
+    }
+  }
+
+  const matches: string[] = [];
+  for (const candidateRoot of candidateRoots) {
+    const manifestResult = await loadAdapterManifest(candidateRoot);
+    if (manifestResult.kind !== 'adapter') { continue; }
+    const implementsValue = manifestResult.manifest.implements;
+    const interfaces = Array.isArray(implementsValue) ? implementsValue : [implementsValue];
+    if (manifestResult.manifest.channelType === channelType && interfaces.includes('INotifierChannel')) {
+      matches.push(candidateRoot);
+    }
+  }
+  if (matches.length !== 1) {
+    const reason = matches.length === 0 ? 'no installed adapter manifest matches this channel type' : 'multiple adapter manifests match this channel type';
+    throw new Error(`Notifier channel type "${channelType}" is unavailable: ${reason}.`);
+  }
+  const packageRoot = matches[0]!;
+
+  const packageMetadata = JSON.parse(
+    await fs.readFile(path.join(packageRoot, 'package.json'), 'utf-8'),
+  ) as { main?: string };
+  const modulePath = path.resolve(packageRoot, packageMetadata.main ?? 'dist/index.js');
+  const relativePath = path.relative(path.resolve(packageRoot), modulePath);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error(`Notifier channel type "${channelType}" has a main path outside its package root.`);
+  }
+  const module = await loadAdapterModule(modulePath) as {
+    createChannel?: unknown;
+    default?: unknown;
+  };
+  const factory = module.createChannel ?? module.default;
+  if (typeof factory !== 'function') {
+    throw new Error(`Notifier channel type "${channelType}" does not export createChannel.`);
+  }
+  return factory as (config: unknown, channelId: string) => unknown;
 }
 
 /**

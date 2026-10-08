@@ -113,7 +113,10 @@ describe('discoverAdapters (lock-based)', () => {
     const distDir = path.join(packageRoot, 'dist');
     await fs.mkdir(distDir, { recursive: true });
     await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
-    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-sqlite' }));
+    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@kb-labs/adapters-sqlite',
+      kb: { manifest: './dist/index.js' },
+    }));
     await fs.writeFile(path.join(distDir, 'index.js'), 'export const manifest = { implements: "IDocumentDatabase" }; export function createAdapter() { return {}; }');
 
     const result = await discoverAdapters(tmpDir, {

@@ -74,7 +74,7 @@ describe('loadManifest', () => {
 
   // ── Resolution via package.json field ────────────────────────────────
 
-  it('loads manifest from package.json kbLabs.manifest field', async () => {
+  it('ignores kbLabs.manifest and continues to the canonical static plugin manifest', async () => {
     const pkgDir = path.join(tmpDir, 'pkg-field');
     await fs.mkdir(pkgDir, { recursive: true });
 
@@ -89,12 +89,14 @@ describe('loadManifest', () => {
       path.join(pkgDir, 'package.json'),
       JSON.stringify({ name: '@kb-labs/pkg-field', kbLabs: { manifest: `./${manifestFile}` } }),
     );
+    const fallback = { schema: 'kb.plugin/3', id: '@kb-labs/canonical-fallback', version: '1.0.0' };
+    await fs.writeFile(path.join(pkgDir, 'kb.plugin.json'), JSON.stringify(fallback));
 
     const result = await loadManifest(pkgDir, diag);
 
     expect(result).not.toBeNull();
-    expect(result!.id).toBe('@kb-labs/pkg-field');
-    expect(result!.version).toBe('2.0.0');
+    expect(result!.id).toBe('@kb-labs/canonical-fallback');
+    expect(result!.version).toBe('1.0.0');
   });
 
   it('loads manifest from package.json kb.manifest field', async () => {
@@ -125,7 +127,7 @@ describe('loadManifest', () => {
     await fs.mkdir(pkgDir, { recursive: true });
     await fs.writeFile(
       path.join(pkgDir, 'package.json'),
-      JSON.stringify({ name: 'x', kbLabs: { manifest: '../../etc/passwd' } }),
+      JSON.stringify({ name: 'x', kb: { manifest: '../../etc/passwd' } }),
     );
 
     const result = await loadManifest(pkgDir, diag);
@@ -173,7 +175,7 @@ describe('loadManifest', () => {
     await fs.writeFile(path.join(pkgDir, 'custom.json'), JSON.stringify(customManifest));
     await fs.writeFile(
       path.join(pkgDir, 'package.json'),
-      JSON.stringify({ name: 'priority', kbLabs: { manifest: './custom.json' } }),
+      JSON.stringify({ name: 'priority', kb: { manifest: './custom.json' } }),
     );
 
     const result = await loadManifest(pkgDir, diag);

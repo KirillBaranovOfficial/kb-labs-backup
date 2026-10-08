@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import { glob } from 'glob';
 import { parse as parseYaml } from 'yaml';
 import { pathToFileURL } from 'node:url';
+import { declaredManifestPath } from '@kb-labs/plugin-contracts';
 import { DISCOVERY_PACKAGE_MANIFEST, DISCOVERY_WORKSPACE_FILE } from './discovery-inputs.js';
 
 export interface WorkspaceCandidate {
@@ -21,30 +22,51 @@ export interface WorkspaceCandidate {
   packageRoot: string;
 }
 
-/** Load the adapter manifest using the same `implements` discriminator as marketplace. */
-export async function loadAdapterManifest(packageRoot: string): Promise<{
-  implements?: string;
-  requires?: { adapters?: Array<string | { id: string; alias?: string }> };
-} | null> {
+export type AdapterManifestLoadResult =
+  | { kind: 'adapter'; manifest: Record<string, unknown>; modulePath: string }
+  | { kind: 'not-adapter'; reason: string; modulePath?: string }
+  | { kind: 'failed'; reason: string; modulePath?: string };
+
+/** Resolve the package's built manifest module using discovery's package metadata rules. */
+export async function resolveManifestModulePath(packageRoot: string): Promise<string | undefined> {
+  const rawPackage = JSON.parse(await fs.readFile(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST), 'utf-8')) as Record<string, unknown>;
+  const manifestField = declaredManifestPath(rawPackage);
+  if (!manifestField) {return undefined;}
+  const distPath = path.resolve(packageRoot, manifestField);
+  const relativePath = path.relative(path.resolve(packageRoot), distPath);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error('declared manifest path escapes package root');
+  }
+  return distPath;
+}
+
+/** Load the adapter manifest through the same built module discovery will use. */
+export async function loadAdapterManifest(packageRoot: string): Promise<AdapterManifestLoadResult> {
+  let modulePath: string | undefined;
   try {
-    const rawPackage = JSON.parse(await fs.readFile(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST), 'utf-8')) as {
-      kb?: { manifest?: unknown };
-      kbLabs?: { manifest?: unknown };
-    };
-    const manifestField = rawPackage.kb?.manifest ?? rawPackage.kbLabs?.manifest;
-    const distPath = typeof manifestField === 'string'
-      ? path.resolve(packageRoot, manifestField)
-      : path.join(packageRoot, 'dist', 'index.js');
-    const relativePath = path.relative(path.resolve(packageRoot), distPath);
-    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {return null;}
-    await fs.access(distPath);
-    const mod = await import(pathToFileURL(distPath).href);
-    if (mod.manifest && typeof mod.manifest === 'object' && mod.manifest.implements) {
-      return mod.manifest as { implements: string };
+    modulePath = await resolveManifestModulePath(packageRoot);
+    if (!modulePath) {
+      return { kind: 'not-adapter', reason: 'package.json does not declare kb.manifest' };
     }
-    return null;
-  } catch {
-    return null;
+    await fs.access(modulePath);
+    const mod = await import(pathToFileURL(modulePath).href) as { manifest?: unknown };
+    if (!mod.manifest || typeof mod.manifest !== 'object' || Array.isArray(mod.manifest)) {
+      return { kind: 'failed', reason: 'built module must export an object named manifest', modulePath };
+    }
+    const manifest = mod.manifest as Record<string, unknown>;
+    const implementsAdapter =
+      (typeof manifest.implements === 'string' && manifest.implements.length > 0) ||
+      (Array.isArray(manifest.implements) && manifest.implements.length > 0);
+    if (!implementsAdapter) {
+      return { kind: 'not-adapter', reason: 'manifest does not declare implements', modulePath };
+    }
+    return { kind: 'adapter', manifest, modulePath };
+  } catch (error) {
+    return {
+      kind: 'failed',
+      reason: error instanceof Error ? error.message : String(error),
+      ...(modulePath ? { modulePath } : {}),
+    };
   }
 }
 
@@ -56,14 +78,6 @@ async function readPackageJson(file: string): Promise<Record<string, unknown> | 
   } catch {
     return null;
   }
-}
-
-/** The manifest file named by package.json `kbLabs.manifest` / `kb.manifest`, if any. */
-export function declaredManifest(pkg: Record<string, unknown>): string | undefined {
-  const kbLabs = pkg.kbLabs as Record<string, unknown> | undefined;
-  const kb = pkg.kb as Record<string, unknown> | undefined;
-  const field = kbLabs?.manifest ?? kb?.manifest;
-  return typeof field === 'string' ? field : undefined;
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -83,13 +97,14 @@ async function exists(file: string): Promise<boolean> {
 async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | null> {
   const pkg = await readPackageJson(path.join(packageRoot, DISCOVERY_PACKAGE_MANIFEST));
   if (!pkg || typeof pkg.name !== 'string') {return null;}
-  const manifestRel = declaredManifest(pkg);
-  if (!manifestRel) {return null;}
-
-  const manifestFile = path.resolve(packageRoot, manifestRel);
-  const built =
-    (await exists(manifestFile)) ||
-    (await exists(manifestFile.replace(/\.[cm]?js$/, '.json')));
+  let manifestFile: string | undefined;
+  try {
+    manifestFile = await resolveManifestModulePath(packageRoot);
+  } catch {
+    return null;
+  }
+  if (!manifestFile) {return null;}
+  const built = await exists(manifestFile) || await exists(manifestFile.replace(/\.[cm]?js$/, '.json'));
   return built ? { packageName: pkg.name, packageRoot } : null;
 }
 

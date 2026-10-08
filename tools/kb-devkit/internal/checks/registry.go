@@ -49,6 +49,7 @@ func Build(cfg *config.DevkitConfig, workspaceRoot, phase string) *Registry {
 			phase:         phase,
 			language:      c.Language,
 			categories:    c.Categories,
+			scope:         c.Scope,
 			workspaceRoot: workspaceRoot,
 			checkConfig:   packCfg,
 		})
@@ -66,6 +67,10 @@ func (r *Registry) RulesFor(preset config.Preset) []Rule {
 	var result []Rule
 	for _, rule := range r.rules {
 		if external, ok := rule.(*externalRule); ok {
+			if external.scope == "workspace" {
+				result = append(result, rule)
+				continue
+			}
 			if matchesLanguage(config.CustomCheck{Language: external.language}, preset.Language) {
 				result = append(result, rule)
 			}

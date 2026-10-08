@@ -60,10 +60,9 @@ describe('first-party plugin CLI declarations', () => {
       const packageRoot = path.dirname(path.join(repositoryRoot, packageFile));
       const packageJson = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8')) as {
         name?: string;
-        kbLabs?: { manifest?: string };
         kb?: { manifest?: string };
       };
-      if (!packageJson.kbLabs?.manifest && !packageJson.kb?.manifest) { continue; }
+      if (!packageJson.kb?.manifest) { continue; }
       if (!await declaresPluginV3(packageRoot)) { continue; }
 
       const diagnostic = new DiagnosticCollector();

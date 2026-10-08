@@ -4,7 +4,7 @@
  *
  * The store never imports plugin JS: a version's manifest is captured once, at
  * install time, from its build-emitted static `dist/manifest.json` (or the
- * `kb.manifest`/`kbLabs.manifest` package.json field when it already points at
+ * `kb.manifest` package.json field when it already points at
  * a `.json` file). A package without a usable static manifest simply gets no
  * `manifest` field in its entry — enforcing that every entry has one is a
  * follow-up (ADR-0048 R6, task 7.4), not this task.
@@ -12,7 +12,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
+import { declaredManifestPath, isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 
 function isWithinRoot(filePath: string, root: string): boolean {
   const resolved = path.resolve(filePath);
@@ -39,7 +39,7 @@ async function readJsonManifest(filePath: string): Promise<ManifestV3 | undefine
 /**
  * Read a package's static manifest without ever executing its code.
  *
- * Resolution order: the package.json `kb.manifest`/`kbLabs.manifest` field when
+ * Resolution order: the package.json `kb.manifest` field when
  * it names a `.json` file (or has a `.js` sibling `.json` build artifact), then
  * the conventional `dist/manifest.json`. Returns `undefined` when no static
  * manifest is found or the field points outside the package (path traversal).
@@ -50,9 +50,7 @@ export async function readStaticManifest(packageRoot: string): Promise<ManifestV
   try {
     const raw = await fs.readFile(path.join(resolvedRoot, 'package.json'), 'utf-8');
     const pkg = JSON.parse(raw) as Record<string, unknown>;
-    const manifestField =
-      (pkg.kbLabs as Record<string, unknown> | undefined)?.manifest ??
-      (pkg.kb as Record<string, unknown> | undefined)?.manifest;
+    const manifestField = declaredManifestPath(pkg);
 
     if (typeof manifestField === 'string') {
       const staticPath = path.resolve(

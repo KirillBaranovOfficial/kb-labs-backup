@@ -9,6 +9,14 @@ import type { PermissionSpec } from "./permissions.js";
 import type { HostType } from "./host-context.js";
 import type { PluginServices } from "./platform.js";
 import type { CliFlagDecl } from './cli-schema.js';
+
+/** Return the only supported manifest declaration from parsed package.json data. */
+export function declaredManifestPath(pkgJson: Record<string, unknown>): string | undefined {
+  const kb = pkgJson.kb;
+  if (!kb || typeof kb !== 'object' || Array.isArray(kb)) {return undefined;}
+  const manifestPath = (kb as Record<string, unknown>).manifest;
+  return typeof manifestPath === 'string' && manifestPath.length > 0 ? manifestPath : undefined;
+}
 // ─── Studio V2 (Module Federation Pages) ───────────────────────────
 
 /**

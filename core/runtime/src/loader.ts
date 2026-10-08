@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { PlatformContainer } from './container.js';
-import type { PlatformConfig, CoreFeaturesConfig, ResourceBrokerConfig, LLMAdapterOptions, AdapterValue, NotifierAdapterOptions } from './config.js';
+import type { PlatformConfig, CoreFeaturesConfig, ResourceBrokerConfig, LLMAdapterOptions, AdapterValue } from './config.js';
 import { platform } from './container.js';
 import { createAnalyticsContext } from './analytics-context.js';
 import { AdapterLoader } from './adapter-loader.js';
@@ -196,7 +196,6 @@ export function fillAdapterFallbacksAndRecord(
     if (status.get(slot)) {
       continue;
     }
-
     const desc = ADAPTER_DEFAULTS[slot];
     const configuredPkg = getPrimaryAdapter(adapters[slot]);
     const hasPresent = container.hasAdapter(slot);
@@ -394,21 +393,25 @@ function initializeCoreFeatures(
  */
 function initializeResourceBroker(
   container: PlatformContainer,
-  config: ResourceBrokerConfig = {}
+  config: ResourceBrokerConfig = {},
+  existingBroker?: ResourceBroker,
 ): ResourceBroker {
-  // Create backend (distributed or in-memory)
-  let backend: RateLimitBackend;
+  let broker = existingBroker;
+  if (!broker) {
+    // Create backend (distributed or in-memory)
+    let backend: RateLimitBackend;
 
-  if (config.distributed) {
-    // For distributed mode, we need StateBroker
-    // This will be implemented when StateBroker is available
-    platform.logger.warn('Distributed ResourceBroker not yet implemented, using InMemory');
-    backend = new InMemoryRateLimitBackend();
-  } else {
-    backend = new InMemoryRateLimitBackend();
+    if (config.distributed) {
+      // For distributed mode, we need StateBroker
+      // This will be implemented when StateBroker is available
+      platform.logger.warn('Distributed ResourceBroker not yet implemented, using InMemory');
+      backend = new InMemoryRateLimitBackend();
+    } else {
+      backend = new InMemoryRateLimitBackend();
+    }
+
+    broker = new ResourceBroker(backend);
   }
-
-  const broker = new ResourceBroker(backend);
 
   // Register LLM resource with broker (queuing applied later by assemblePlatform.resourceBrokerFactory)
   if (container.isReal('llm')) {
@@ -684,6 +687,11 @@ export async function initPlatform(
       analytics: analyticsContext,
     };
 
+    // Platform services are available to generic adapter factories through
+    // their manifest declarations, independent of adapter slot names.
+    const resourceBroker = initializeResourceBroker(platform, core.resourceBroker);
+    platform.initResourceBroker(resourceBroker);
+
     // Module loader function - defined before loop so we can pre-load manifests
     const loadModule = async (modulePath: string): Promise<LoadedAdapterModule> => {
       try {
@@ -804,6 +812,27 @@ export async function initPlatform(
       }
     };
 
+    const notifierChannels = async (): Promise<Record<string, unknown>> => {
+      const options = (adapterOptions.notifier ?? {}) as {
+        channels?: Record<string, { type: string; [key: string]: unknown }>;
+      };
+      const channels: Record<string, unknown> = {};
+      for (const [id, channelConfig] of Object.entries(options.channels ?? {})) {
+        try {
+          const { loadAdapterChannelFactory } = await import('./discover-adapters.js');
+          const createChannel = await loadAdapterChannelFactory(channelConfig.type, platformRoot ?? cwd, workspaceDevelopment);
+          channels[id] = createChannel(channelConfig, id);
+        } catch (channelError) {
+          platform.logger.warn('initPlatform: failed to load notifier channel', {
+            type: channelConfig.type,
+            channelId: id,
+            error: channelError instanceof Error ? channelError.message : String(channelError),
+          });
+        }
+      }
+      return channels;
+    };
+
     // Build adapter configs for AdapterLoader
     // Supports both single adapter (string) and multi-adapter (string[]) config
     const adapterConfigs: Record<string, AdapterConfig> = {};
@@ -887,12 +916,35 @@ export async function initPlatform(
       }
     }
 
+    const externalAdapterDependencies = new Map<string, unknown>();
+    for (const config of Object.values(adapterConfigs)) {
+      const module = await loadModule(config.module);
+      for (const dependency of module.manifest.requires?.adapters ?? []) {
+        const token = typeof dependency === 'string' ? dependency : dependency.id;
+        if (adapterConfigs[token] || platform.getAdapter(token)) {continue;}
+        if (!Object.hasOwn(ADAPTER_DEFAULTS, token)) {continue;}
+        const slot = token as AdapterSlot;
+        const fallback = ADAPTER_DEFAULTS[slot].defaultFallback === 'inmemory'
+          ? (inmemoryFactories as Record<string, (() => unknown) | undefined>)[slot]?.()
+          : (noopFactories as Record<string, (() => unknown) | undefined>)[slot]?.();
+        if (fallback) {
+          platform.setAdapter(token, fallback as never);
+          externalAdapterDependencies.set(token, fallback);
+        }
+      }
+    }
+
     // Load adapters with dependency resolution. Configured adapters that
     // fail to load surface in the next pass via `fillAdapterFallbacksAndRecord`,
     // which throws a single combined error listing every failed slot.
     const loadedAdapters = await loader.loadAdapters(adapterConfigs, loadModule, {
       logger: platform.logger,
       onAdapterLoadFailure: recordAdapterLoadFailure,
+      adapters: externalAdapterDependencies,
+      platformServices: {
+        resourceBroker: () => resourceBroker,
+        notifierChannels,
+      },
     });
 
     // CRITICAL: Set analytics adapter FIRST (without wrapping) so wrapWithAnalytics() can use it
@@ -911,7 +963,7 @@ export async function initPlatform(
     }
 
     // Get dependency graph for extension connection
-    const graph = await loader.buildDependencyGraph(adapterConfigs, loadModule);
+    const graph = await loader.buildDependencyGraph(adapterConfigs, loadModule, externalAdapterDependencies);
     loader.connectExtensions(loadedAdapters, graph);
 
     // Create ConfigAdapter (ALWAYS present, not loaded dynamically)
@@ -925,13 +977,6 @@ export async function initPlatform(
       });
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // Fill remaining slots with InMemory/NoOp fallbacks per ADAPTER_DEFAULTS,
-    // record what's wired into each slot, and fail-fast on any configured
-    // adapter that didn't load. After this call, every slot in
-    // ADAPTER_DEFAULTS is filled (or, for snapshotManager which has no
-    // sensible NoOp, is intentionally left undefined).
-    // ══════════════════════════════════════════════════════════════════════
     fillAdapterFallbacksAndRecord(
       platform,
       adapters as Record<string, AdapterValue | undefined>,
@@ -1242,8 +1287,7 @@ export async function initPlatform(
     // Initialize ResourceBroker for queue and rate limiting (optional)
     let _assemblyBroker: IResourceBroker | undefined;
     try {
-      const resourceBroker = initializeResourceBroker(platform, core.resourceBroker);
-      platform.initResourceBroker(resourceBroker);
+      initializeResourceBroker(platform, core.resourceBroker, resourceBroker);
       _assemblyBroker = resourceBroker;
       platform.logger.debug('initPlatform initialized ResourceBroker');
     } catch (error) {
@@ -1341,73 +1385,6 @@ export async function initPlatform(
         'Pass assemblyHook: makeAssemblyHook() to launchPlatform() or runService(). ' +
         'Without assembly: no rate limiting, no analytics, no LLM router, no PII redaction.',
       );
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // Notifier adapter — dynamic import to avoid circular dep (adapters/* → core)
-    // Channels are resolved here (composition root) so the router stays
-    // decoupled from specific channel implementations.
-    // ══════════════════════════════════════════════════════════════════════
-    if (typeof adapters.notifier === 'string') {
-      const notifierOptions = (adapterOptions.notifier ?? {}) as NotifierAdapterOptions;
-      try {
-        // Built-in type → package map. Extend here as new channel types are added.
-        const channelTypePackages: Record<string, string> = {
-          telegram: '@kb-labs/adapters-telegram',
-        };
-
-        // Resolve and instantiate each channel by type.
-        const channels: Record<string, import('@kb-labs/core-platform').INotifierChannel> = {};
-        for (const [id, channelCfg] of Object.entries(notifierOptions.channels ?? {})) {
-          const pkg = channelTypePackages[channelCfg.type];
-          if (!pkg) {
-            platform.logger.warn('initPlatform: unknown notifier channel type, skipping', {
-              channelId: id,
-              type: channelCfg.type,
-            });
-            continue;
-          }
-          try {
-            const channelModule = await import(pkg);
-            const channelFactory = channelModule.createChannel ?? channelModule.default;
-            if (typeof channelFactory === 'function') {
-              channels[id] = channelFactory(channelCfg, id);
-            } else {
-              platform.logger.warn('initPlatform: channel package has no createChannel export', { pkg, channelId: id });
-            }
-          } catch (channelErr) {
-            platform.logger.warn('initPlatform: failed to load notifier channel', {
-              pkg,
-              channelId: id,
-              error: channelErr instanceof Error ? channelErr.message : String(channelErr),
-            });
-          }
-        }
-
-        const notifierPkg = adapters.notifier;
-        const notifierModule = await import(notifierPkg);
-        const notifierFactory = notifierModule.createAdapter ?? notifierModule.default;
-        if (typeof notifierFactory === 'function') {
-          const notifier = notifierFactory(notifierOptions, {
-            eventBus: platform.eventBus,
-            broker: platform.resourceBroker,
-            logger: platform.logger,
-            channels,
-          });
-          platform.setAdapter('notifier', notifier);
-          platform.logger.info('initPlatform initialized notifier adapter', {
-            pkg: notifierPkg,
-            channels: Object.keys(channels),
-          });
-        } else {
-          platform.logger.warn('Notifier adapter has no createAdapter export', { pkg: adapters.notifier });
-        }
-      } catch (err) {
-        platform.logger.warn('Failed to load notifier adapter', {
-          pkg: adapters.notifier,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
     }
 
     // Store raw middleware declarations for execution backends to resolve at plugin run time
