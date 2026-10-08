@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { isUxResult } from '@kb-labs/core-platform/ux-result';
 import { createErrorEnvelope, ErrorEnvelopeError, isErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
 
@@ -18,33 +19,61 @@ export function withGatewayUrl(envelope: ErrorEnvelope, gatewayUrl?: string): Er
   };
 }
 
-export class GatewayAuthResponseError extends Error {
-  readonly envelope?: ErrorEnvelope;
-
-  constructor(readonly operation: string, readonly status: number, body: string, gatewayUrl?: string) {
-    super(`${operation} failed (${status}).`);
-    this.name = 'GatewayAuthResponseError';
-    try {
-      const parsed: unknown = JSON.parse(body);
-      if (isUxResult(parsed) && !parsed.ok && isErrorEnvelope(parsed.error)) {
-        this.envelope = withGatewayUrl(parsed.error, gatewayUrl);
-      }
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) { throw error; }
-      // A non-JSON response retains the existing status-based handling.
-    }
+/** Convert a parsed failure response into one canonical envelope without trusting unknown body fields. */
+function decodeGatewayFailureBody(
+  parsed: unknown,
+  status: number,
+  context: { operation: string; gatewayUrl: string },
+): ErrorEnvelope {
+  if (isUxResult(parsed) && !parsed.ok && isErrorEnvelope(parsed.error)) {
+    return withGatewayUrl(parsed.error, context.gatewayUrl);
   }
+
+  const details = {
+    status: String(status),
+    operation: context.operation,
+    gatewayUrl: context.gatewayUrl,
+  };
+  return createErrorEnvelope('KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE', {
+    details,
+    correlationId: randomUUID(),
+  });
+}
+
+/** The sole decoder for failed Gateway responses. It never includes an untrusted body in an error. */
+export async function decodeGatewayFailure(
+  response: Response,
+  context: { operation: string; gatewayUrl: string },
+): Promise<ErrorEnvelope> {
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) { throw error; }
+  }
+  return decodeGatewayFailureBody(parsed, response.status, context);
 }
 
 /** Decode the canonical success envelope returned by Gateway JSON routes. */
-export async function readGatewaySuccessData<T>(response: Response): Promise<T> {
-  const result: unknown = await response.json();
+export async function readGatewaySuccessData<T>(
+  response: Response,
+  context: { operation: string; gatewayUrl: string },
+): Promise<T> {
+  if (!response.ok) {
+    throw new ErrorEnvelopeError(await decodeGatewayFailure(response, context));
+  }
+  let result: unknown;
+  try {
+    result = await response.json();
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) { throw error; }
+    throw new ErrorEnvelopeError(decodeGatewayFailureBody(undefined, response.status, context));
+  }
   if (!isUxResult(result)) {
-    throw new Error('Gateway returned an invalid result envelope. Check the Gateway version and retry.');
+    throw new ErrorEnvelopeError(decodeGatewayFailureBody(result, response.status, context));
   }
   if (!result.ok) {
-    const responseGatewayUrl = response.url ? new URL(response.url).origin : undefined;
-    throw new ErrorEnvelopeError(withGatewayUrl(result.error, responseGatewayUrl));
+    throw new ErrorEnvelopeError(decodeGatewayFailureBody(result, response.status, context));
   }
   return result.data as T;
 }

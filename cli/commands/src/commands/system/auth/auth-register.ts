@@ -80,20 +80,11 @@ export const authRegister = defineSystemCommand<RegisterFlags, RegisterResult>({
       return fail(ctx, flags.json, `Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    if (!response.ok) {
-      let msg = `Registration failed (HTTP ${response.status}). Retry kb auth register --gateway-url <gateway-url> --name <name> --namespace-id <id>.`;
-      if (response.status === 401 || response.status === 403) {
-        msg += '\n/auth/register requires an authenticated admin (MACHINE_REGISTER permission) — ' +
-          'it is not self-service. Log in as the bootstrap admin first.';
-      }
-      return fail(ctx, flags.json, msg);
-    }
-
     const data = await readGatewaySuccessData<{
       clientId: string;
       clientSecret: string;
       hostId: string;
-    }>(response);
+    }>(response, { operation: 'Gateway registration', gatewayUrl });
 
     if (!flags.json) {
       ctx.ui?.write?.('Service account created successfully.\n\n');

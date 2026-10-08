@@ -1,13 +1,10 @@
-import { CredentialsManager } from './credentials.js';
-import { SessionManager } from './session.js';
-import { createErrorEnvelope, type ErrorEnvelope } from '@kb-labs/core-platform';
+import { createErrorEnvelope, ErrorEnvelopeError, type ErrorEnvelope } from '@kb-labs/core-platform';
 import { randomUUID } from 'node:crypto';
-import { GatewayAuthResponseError, requiredAuthEnvelope, withGatewayUrl } from './result.js';
+import { withGatewayUrl } from './result.js';
 import { SavedAuthFileError, savedAuthFileErrorEnvelope } from './saved-auth-file.js';
 import { isGatewayConnectionFailure } from './connection-errors.js';
-import type { GatewayCredentials, SessionCredentials } from './types.js';
 import type { GatewayRequestTarget } from './api-client.js';
-import { authRequiredForGateway, credentialMatchesGatewayOrigin } from './auth-origin.js';
+import { AuthSessionOwner, AuthSessionVerificationError } from './auth-session.js';
 
 /**
  * Return whether a saved human session or machine credential can authenticate
@@ -30,65 +27,30 @@ export function hasUsablePlatformAuth(target?: GatewayRequestTarget): Promise<Pl
 }
 
 async function verifySavedAuth(target?: GatewayRequestTarget): Promise<PlatformAuthCheck> {
-  const sessions = new SessionManager();
-  let session: SessionCredentials | null;
+  const owner = new AuthSessionOwner();
+  let verificationResult;
   try {
-    session = await sessions.load();
+    verificationResult = await owner.verify(target);
   } catch (error) {
-    return classifyFailure(error);
+    const gatewayUrl = target?.gatewayUrl
+      ?? (error instanceof AuthSessionVerificationError ? error.gatewayUrl : undefined);
+    return classifyFailure(error instanceof AuthSessionVerificationError ? error.cause : error, gatewayUrl, target?.platformRoot);
   }
-  if (session) {
-    const gatewayUrl = target?.gatewayUrl ?? session.gatewayUrl;
-    if (!credentialMatchesGatewayOrigin(session.gatewayUrl, gatewayUrl)) {
-      return { authenticated: false, error: authRequiredForGateway(gatewayUrl).envelope };
-    }
-    try {
-      const current = sessions.isExpired(session) ? await sessions.refresh(session) : session;
-      return await verifies(gatewayUrl, current.accessToken, target?.platformRoot);
-    } catch (error) {
-      return classifyFailure(error, gatewayUrl, target?.platformRoot);
-    }
-  }
-
-  const credentials = new CredentialsManager();
-  let machine: GatewayCredentials | null;
-  try {
-    machine = await credentials.load();
-  } catch (error) {
-    return classifyFailure(error);
-  }
-  if (!machine) { return { authenticated: false }; }
-  const gatewayUrl = target?.gatewayUrl ?? machine.gatewayUrl;
-  if (!credentialMatchesGatewayOrigin(machine.gatewayUrl, gatewayUrl)) {
-    return { authenticated: false, error: authRequiredForGateway(gatewayUrl).envelope };
-  }
-  try {
-    const current = credentials.isExpired(machine) ? await credentials.refresh(machine) : machine;
-    return await verifies(gatewayUrl, current.accessToken, target?.platformRoot);
-  } catch (error) {
-    return classifyFailure(error, gatewayUrl, target?.platformRoot);
-  }
+  if (!verificationResult) { return { authenticated: false }; }
+  return verifies(owner, verificationResult.auth.gatewayUrl, verificationResult.response, target?.platformRoot);
 }
 
-async function verifies(gatewayUrl: string, accessToken: string, platformRoot?: string): Promise<PlatformAuthCheck> {
-  try {
-    const response = await fetch(`${gatewayUrl.replace(/\/$/, '')}/auth/me`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (response.status === 401) {
-      return classifyFailure(
-        new GatewayAuthResponseError('Gateway verification', 401, await response.text(), gatewayUrl),
-        gatewayUrl,
-      );
-    }
-    if (!response.ok) { return { authenticated: false, error: gatewayResponseFailure(response.status) }; }
-    return { authenticated: true };
-  } catch (error) {
-    return classifyFailure(error, gatewayUrl, platformRoot);
+async function verifies(owner: AuthSessionOwner, gatewayUrl: string, response: Response, platformRoot?: string): Promise<PlatformAuthCheck> {
+  if (!response.ok) {
+    return classifyFailure(await owner.decodeFailure('Gateway verification', response, gatewayUrl), gatewayUrl, platformRoot);
   }
+  return { authenticated: true };
 }
 
 function classifyFailure(error: unknown, gatewayUrl?: string, platformRoot?: string): PlatformAuthCheck {
+  if (error instanceof ErrorEnvelopeError) {
+    return { authenticated: false, error: withGatewayUrl(error.envelope, gatewayUrl) };
+  }
   if (error instanceof SavedAuthFileError) {
     return { authenticated: false, error: savedAuthFileErrorEnvelope(error) };
   }
@@ -101,31 +63,15 @@ function classifyFailure(error: unknown, gatewayUrl?: string, platformRoot?: str
       }),
     };
   }
-  if (error instanceof GatewayAuthResponseError && error.status === 401) {
-    return error.envelope
-      ? { authenticated: false, error: withGatewayUrl(error.envelope, gatewayUrl) }
-      : gatewayUrl
-        ? { authenticated: false, error: requiredAuthEnvelope(gatewayUrl) }
-        : { authenticated: false };
-  }
   return {
     authenticated: false,
-    error: error instanceof GatewayAuthResponseError
-      ? gatewayResponseFailure(error.status)
-      : commandFailed(),
+    error: commandFailed(),
   };
 }
 
 function commandFailed(): ErrorEnvelope {
   return createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
     message: 'The Gateway could not verify the saved session.',
-    hint: 'Run "kb-create doctor" to check the host, then retry the command.',
-  });
-}
-
-function gatewayResponseFailure(status: number): ErrorEnvelope {
-  return createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
-    message: `The Gateway could not verify the saved session (HTTP ${status}).`,
     hint: 'Run "kb-create doctor" to check the host, then retry the command.',
   });
 }

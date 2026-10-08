@@ -13,19 +13,16 @@ import type {
   IGatewayClient,
   GatewayClientConfig,
   GatewayExecuteRequest,
-  GatewayCredentials,
-  ICredentialsManager,
 } from './types.js';
-import { authRequiredForGateway, credentialMatchesGatewayOrigin } from './auth-origin.js';
+import { AuthSessionOwner } from './auth-session.js';
 
 export class HttpSseGatewayTransport implements IGatewayClient {
   private readonly config: GatewayClientConfig;
-  private readonly credentials: ICredentialsManager;
+  private readonly auth = new AuthSessionOwner();
   private abortControllers = new Map<string, AbortController>();
 
-  constructor(config: GatewayClientConfig, credentials: ICredentialsManager) {
+  constructor(config: GatewayClientConfig) {
     this.config = config;
-    this.credentials = credentials;
   }
 
   async *execute(request: GatewayExecuteRequest): AsyncIterable<ExecutionEvent> {
@@ -47,7 +44,7 @@ export class HttpSseGatewayTransport implements IGatewayClient {
 
     // 401 → auto-refresh and retry once
     if (response.status === 401 && this.config.autoRefresh !== false) {
-      const refreshed = await this.credentials.refresh(creds);
+      const refreshed = await creds.refresh();
       const retryResponse = await fetch(url, {
         method: 'POST',
         headers: {
@@ -58,13 +55,15 @@ export class HttpSseGatewayTransport implements IGatewayClient {
         body: JSON.stringify(request),
         signal: controller.signal,
       });
+      if (!retryResponse.ok) {
+        throw await this.auth.decodeFailure('Gateway execute', retryResponse, this.config.gatewayUrl);
+      }
       yield* this.readNdjsonStream(retryResponse, controller);
       return;
     }
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`Gateway execute failed (${response.status}): ${body}`);
+      throw await this.auth.decodeFailure('Gateway execute', response, this.config.gatewayUrl);
     }
 
     // Track abort controller for cancellation
@@ -82,7 +81,7 @@ export class HttpSseGatewayTransport implements IGatewayClient {
 
     // Send cancel request to Gateway
     const creds = await this.getValidCredentials();
-    await fetch(`${this.config.gatewayUrl}/api/v1/execute/${executionId}/cancel`, {
+    const response = await fetch(`${this.config.gatewayUrl}/api/v1/execute/${executionId}/cancel`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -90,6 +89,9 @@ export class HttpSseGatewayTransport implements IGatewayClient {
       },
       body: JSON.stringify({ reason: reason ?? 'user' }),
     });
+    if (!response.ok) {
+      throw await this.auth.decodeFailure('Gateway cancel', response, this.config.gatewayUrl);
+    }
   }
 
   async *subscribe(executionId: string): AsyncIterable<ExecutionEvent> {
@@ -107,8 +109,7 @@ export class HttpSseGatewayTransport implements IGatewayClient {
     });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`Gateway subscribe failed (${response.status}): ${body}`);
+      throw await this.auth.decodeFailure('Gateway subscribe', response, this.config.gatewayUrl);
     }
 
     yield* this.readNdjsonStream(response, controller);
@@ -135,20 +136,14 @@ export class HttpSseGatewayTransport implements IGatewayClient {
 
   // ── Private ──
 
-  private async getValidCredentials(): Promise<GatewayCredentials> {
-    const creds = await this.credentials.load();
+  private async getValidCredentials() {
+    const creds = await this.auth.load(this.config.credentialKind, { gatewayUrl: this.config.gatewayUrl }, {
+      refreshExpired: this.config.autoRefresh !== false,
+    });
     if (!creds) {
       throw new Error(
         'Gateway credentials not found. Run "kb auth login" to authenticate.',
       );
-    }
-
-    if (!credentialMatchesGatewayOrigin(creds.gatewayUrl, this.config.gatewayUrl)) {
-      throw authRequiredForGateway(this.config.gatewayUrl);
-    }
-
-    if (this.credentials.isExpired(creds) && this.config.autoRefresh !== false) {
-      return this.credentials.refresh(creds);
     }
 
     return creds;

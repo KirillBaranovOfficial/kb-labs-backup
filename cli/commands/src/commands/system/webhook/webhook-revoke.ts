@@ -73,13 +73,6 @@ export const webhookRevoke = defineSystemCommand<RevokeFlags, RevokeResult>({
       throwSystemCommandError(msg, "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry.");
     }
 
-    // 204 = revoked, 404 = not found (idempotent — treat as ok)
-    if (!response.ok && response.status !== 404) {
-      const body = await response.text().catch(() => '');
-      const msg = `Revoke failed (HTTP ${response.status}): ${body}`;
-      throwSystemCommandError(msg, "Run `kb webhook revoke --help` to review valid inputs and recovery steps, then retry.");
-    }
-
     const label = flags.instance
       ? `${pluginId}/${event}/${flags.instance}`
       : `${pluginId}/${event}`;

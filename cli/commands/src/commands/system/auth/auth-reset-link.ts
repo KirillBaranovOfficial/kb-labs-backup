@@ -33,8 +33,9 @@ export const authResetLink = defineSystemCommand<ResetLinkFlags, CommandResult &
     try {
       const gateway = await resolveActiveGateway({ cwd: getContextCwd(ctx), env: process.env });
       const response = await gatewayApiFetch(`${gateway.gatewayUrl}/auth/users/${encodeURIComponent(flags['user-id'])}/password-reset-link`, { method: 'POST' }, gateway);
-      if (!response.ok) { return fail(`Gateway could not create the reset link (HTTP ${response.status}). Check the user ID and retry kb auth reset-link.`); }
-      const result = await readGatewaySuccessData<{ resetUrl: string; expiresAt: number }>(response);
+      const result = await readGatewaySuccessData<{ resetUrl: string; expiresAt: number }>(response, {
+        operation: 'Password reset link creation', gatewayUrl: gateway.gatewayUrl,
+      });
       if (!flags.json) { ctx.ui?.write?.(`Password reset link (expires ${new Date(result.expiresAt).toISOString()}):\n${result.resetUrl}\n`); }
       return {  resetUrl: result.resetUrl, expiresAt: result.expiresAt };
     } catch (error) {

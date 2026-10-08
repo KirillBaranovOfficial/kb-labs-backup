@@ -18,7 +18,6 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as net from 'node:net';
 import type { IGatewayClient } from './types.js';
-import { CredentialsManager } from './credentials.js';
 import { HttpSseGatewayTransport } from './http-sse-transport.js';
 import { HostAgentTransport } from './host-agent-transport.js';
 import { getHostServiceAddress, HostServiceAddressError } from '@kb-labs/core-platform';
@@ -46,9 +45,7 @@ export async function resolveTransport(): Promise<IGatewayClient | null> {
     }
   }
   if (gatewayUrl) {
-    // Auth tokens from credentials.json if available (non-fatal if absent)
-    const credentialsManager = new CredentialsManager();
-    return new HttpSseGatewayTransport({ gatewayUrl }, credentialsManager);
+    return new HttpSseGatewayTransport({ gatewayUrl, credentialKind: 'either' });
   }
 
   // 3. No gateway configured — fall back to local execution

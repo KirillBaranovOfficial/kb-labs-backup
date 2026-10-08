@@ -77,15 +77,9 @@ export const webhookProvision = defineSystemCommand<ProvisionFlags, ProvisionRes
       throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
     }
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      let detail = '';
-      try { detail = JSON.parse(body)?.message ?? body; } catch { detail = body; }
-      const msg = `Provision failed (HTTP ${response.status})${detail ? ': ' + detail : ''}`;
-      throwSystemCommandError(msg, "Run `kb webhook provision --help` to review valid inputs and recovery steps, then retry.");
-    }
-
-    const data = await readGatewaySuccessData<{ url: string; secret: string; rotated: boolean }>(response);
+    const data = await readGatewaySuccessData<{ url: string; secret: string; rotated: boolean }>(response, {
+      operation: 'Webhook provisioning', gatewayUrl: target.gatewayUrl,
+    });
 
     if (!flags.json) {
       ctx.ui?.write?.(data.rotated ? '⟳  Secret rotated (old secret valid for 24h grace period)\n' : '✓  Webhook provisioned\n');

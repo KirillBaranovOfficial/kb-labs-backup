@@ -58,13 +58,9 @@ export const webhookList = defineSystemCommand<ListFlags, ListResult>({
       throwSystemCommandError(msg, "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry.");
     }
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      const msg = `List failed (HTTP ${response.status}): ${body}`;
-      throwSystemCommandError(msg, "Run `kb webhook list --help` to review valid inputs and recovery steps, then retry.");
-    }
-
-    const data = await readGatewaySuccessData<{ webhooks: WebhookEntry[] }>(response);
+    const data = await readGatewaySuccessData<{ webhooks: WebhookEntry[] }>(response, {
+      operation: 'Webhook listing', gatewayUrl: target.gatewayUrl,
+    });
     const webhooks = data.webhooks ?? [];
 
     if (!flags.json) {

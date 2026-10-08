@@ -14,8 +14,9 @@
  * Both branches auto-refresh on expiry and chmod their store 0o600.
  */
 
-import { defineSystemCommand, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
-import { CredentialsManager, readGatewaySuccessData, SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { defineSystemCommand, throwSystemCataloguedError, throwSystemCommandError, type CommandResult } from '@kb-labs/shared-command-kit';
+import { AuthSessionOwner } from '@kb-labs/cli-runtime/gateway';
+import { isErrorEnvelope } from '@kb-labs/core-platform';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
 import { promptForPassword, readPasswordFromStdin } from './password-input.js';
 
@@ -104,73 +105,35 @@ export const authLogin = defineSystemCommand<LoginFlags, LoginResult>({
       throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
     }
 
-    // Exchange credentials for tokens
-    const tokenUrl = `${gatewayUrl}/auth/token`;
-    let tokenResponse: Response;
+    const owner = new AuthSessionOwner();
+    let credentials: Awaited<ReturnType<AuthSessionOwner['loginMachine']>>;
     try {
-      tokenResponse = await fetch(tokenUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, clientSecret }),
-      });
-    } catch (err) {
-      const msg = `Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
-      throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
+      credentials = await owner.loginMachine(gatewayUrl, clientId, clientSecret);
+    } catch (error) {
+      reportLoginFailure(error);
     }
-
-    if (!tokenResponse.ok) {
-      const body = await tokenResponse.text().catch(() => '');
-      const msg = `Authentication failed (HTTP ${tokenResponse.status}): ${body}`;
-      throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
-    }
-
-    const tokenData = await readGatewaySuccessData<{
-      accessToken: string;
-      refreshToken: string;
-      expiresIn: number;
-    }>(tokenResponse);
-
-    // Fetch profile (handle, namespaceId) via /auth/me
-    let handle: string | undefined;
-    let namespaceId: string | undefined;
-    try {
-      const meRes = await fetch(`${gatewayUrl}/auth/me`, {
-        headers: { Authorization: `Bearer ${tokenData.accessToken}` },
-      });
-      if (meRes.ok) {
-        const profile = await readGatewaySuccessData<{ handle?: string; namespaceId?: string }>(meRes);
-        handle = profile.handle;
-        namespaceId = profile.namespaceId;
-      }
-    } catch {
-      // /auth/me failure is non-fatal — credentials still saved without profile
-    }
-
-    // Save credentials
-    const credentialsManager = new CredentialsManager();
-    const expiresAt = Date.now() + tokenData.expiresIn * 1000;
-
-    await credentialsManager.save({
-      gatewayUrl,
-      accessToken: tokenData.accessToken,
-      refreshToken: tokenData.refreshToken,
-      expiresAt,
-      handle,
-      namespaceId,
-    });
+    const expiresIn = credentials.expiresAt - Date.now();
 
     if (!flags.json) {
       ctx.ui?.write?.(`Authenticated with Gateway at ${gatewayUrl}\n`);
-      if (handle) { ctx.ui?.write?.(`Handle: ${handle}\n`); }
-      ctx.ui?.write?.(`Token expires in ${Math.floor(tokenData.expiresIn / 60)} minutes (auto-refresh enabled).\n`);
+      if (credentials.handle) { ctx.ui?.write?.(`Handle: ${credentials.handle}\n`); }
+      ctx.ui?.write?.(`Token expires in ${Math.floor(expiresIn / 60000)} minutes (auto-refresh enabled).\n`);
     }
 
-    return {  gatewayUrl, expiresIn: tokenData.expiresIn, ...(handle ? { handle } : {}) };
+    return { gatewayUrl, expiresIn: Math.floor(expiresIn / 1000), ...(credentials.handle ? { handle: credentials.handle } : {}) };
   },
 });
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function reportLoginFailure(error: unknown): never {
+  if (typeof error === 'object' && error !== null && 'envelope' in error && isErrorEnvelope(error.envelope)) {
+    throwSystemCataloguedError(error.envelope);
+  }
+  throwSystemCommandError('Gateway authentication failed. Check the Gateway URL and credentials, then retry.',
+    'Run `kb auth login --help` to review valid inputs and recovery steps, then retry.');
 }
 
 /** Human (email/password) login branch — see the module docblock. */
@@ -181,70 +144,26 @@ async function humanLogin(
   email: string,
   password: string,
 ): Promise<LoginResult> {
-  let loginResponse: Response;
+  const owner = new AuthSessionOwner();
+  let result: Awaited<ReturnType<AuthSessionOwner['loginSession']>>;
   try {
-    loginResponse = await fetch(`${gatewayUrl}/auth/login/cli`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-  } catch (err) {
-    const msg = `Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`;
-    throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
+    result = await owner.loginSession(gatewayUrl, email, password);
+  } catch (error) {
+    reportLoginFailure(error);
   }
-
-  if (!loginResponse.ok) {
-    const body = await loginResponse.text().catch(() => '');
-    const msg = `Authentication failed (HTTP ${loginResponse.status}): ${body}`;
-    throwSystemCommandError(msg, "Run `kb auth login --help` to review valid inputs and recovery steps, then retry.");
-  }
-
-  const loginData = await readGatewaySuccessData<{
-    accessToken: string;
-    refreshToken: string;
-    expiresIn: number;
-    tenantId?: string;
-  }>(loginResponse);
-
-  // Fetch profile via /auth/me for parity with the machine branch — non-fatal
-  // on failure, the session is still saved without a resolved email/tenantId.
-  let profileEmail: string | undefined = email;
-  let tenantId: string | undefined = loginData.tenantId;
-  try {
-    const meRes = await fetch(`${gatewayUrl}/auth/me`, {
-      headers: { Authorization: `Bearer ${loginData.accessToken}` },
-    });
-    if (meRes.ok) {
-      const profile = await readGatewaySuccessData<{ email?: string; tenantId?: string }>(meRes);
-      profileEmail = profile.email ?? profileEmail;
-      tenantId = profile.tenantId ?? tenantId;
-    }
-  } catch {
-    // /auth/me failure is non-fatal — session still saved without profile
-  }
-
-  const sessionManager = new SessionManager();
-  const expiresAt = Date.now() + loginData.expiresIn * 1000;
-
-  await sessionManager.save({
-    gatewayUrl,
-    accessToken: loginData.accessToken,
-    refreshToken: loginData.refreshToken,
-    expiresAt,
-    email: profileEmail,
-    tenantId,
-  });
+  const profileEmail = result.credential.email;
+  const tenantId = result.credential.tenantId;
 
   if (!flags.json) {
     ctx.ui?.write?.(`Authenticated with Gateway at ${gatewayUrl}\n`);
     if (profileEmail) { ctx.ui?.write?.(`Email: ${profileEmail}\n`); }
-    ctx.ui?.write?.(`Token expires in ${Math.floor(loginData.expiresIn / 60)} minutes (auto-refresh enabled).\n`);
+    ctx.ui?.write?.(`Token expires in ${Math.floor(result.expiresIn / 60)} minutes (auto-refresh enabled).\n`);
   }
 
   return {
 
     gatewayUrl,
-    expiresIn: loginData.expiresIn,
+    expiresIn: result.expiresIn,
     ...(profileEmail ? { email: profileEmail } : {}),
     ...(tenantId ? { tenantId } : {}),
   };

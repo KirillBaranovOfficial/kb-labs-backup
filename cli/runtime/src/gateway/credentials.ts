@@ -9,20 +9,13 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import type { GatewayCredentials, ICredentialsManager } from './types.js';
-import { GatewayAuthResponseError, readGatewaySuccessData } from './result.js';
 import { isSavedCredentialBase, readSavedAuthFile } from './saved-auth-file.js';
-
-/** Default credentials file path */
-const CREDENTIALS_PATH = path.join(os.homedir(), '.kb', 'credentials.json');
-
-/** Buffer before expiry to trigger refresh (60 seconds) */
-const EXPIRY_BUFFER_MS = 60_000;
 
 export class CredentialsManager implements ICredentialsManager {
   private readonly filePath: string;
 
   constructor(filePath?: string) {
-    this.filePath = filePath ?? CREDENTIALS_PATH;
+    this.filePath = filePath ?? path.join(os.homedir(), '.kb', 'credentials.json');
   }
 
   async load(): Promise<GatewayCredentials | null> {
@@ -45,40 +38,6 @@ export class CredentialsManager implements ICredentialsManager {
     }
   }
 
-  isExpired(credentials: GatewayCredentials): boolean {
-    return Date.now() >= credentials.expiresAt - EXPIRY_BUFFER_MS;
-  }
-
-  async refresh(credentials: GatewayCredentials): Promise<GatewayCredentials> {
-    const gatewayUrl = credentials.gatewayUrl;
-    const url = `${gatewayUrl}/auth/refresh`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: credentials.refreshToken }),
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new GatewayAuthResponseError('Token refresh', response.status, body, gatewayUrl);
-    }
-
-    const data = await readGatewaySuccessData<{
-      accessToken: string;
-      refreshToken: string;
-      expiresIn: number;
-    }>(response);
-
-    const updated: GatewayCredentials = {
-      gatewayUrl,
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken,
-      expiresAt: Date.now() + data.expiresIn * 1000,
-    };
-
-    await this.save(updated);
-    return updated;
-  }
 }
 
 function isGatewayCredentials(value: unknown): value is GatewayCredentials {
