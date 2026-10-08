@@ -127,7 +127,7 @@ describe('one discovery pipeline: CLI and registry agree', () => {
     const results = await discoverManifests(projectRoot, { platformRoot, projectRoot });
     const out = new Map<string, { source: string; scope: string; manifest: ManifestV3 | undefined }>();
     for (const r of results) {
-      const manifest = r.manifests[0]?.manifestV2;
+      const manifest = r.manifests[0]?.v3Manifest;
       out.set(manifest?.id ?? r.packageName, { source: r.source, scope: r.scope, manifest });
     }
     return out;
@@ -188,6 +188,6 @@ describe('one discovery pipeline: CLI and registry agree', () => {
   it('single-root development (KB_PLATFORM_ROOT == project root) keeps working', async () => {
     const results = await discoverManifests(platformRoot);
 
-    expect(results.map(r => r.manifests[0]?.manifestV2?.id).sort()).toEqual(['@x/linked', '@x/plat', '@x/ws']);
+    expect(results.map(r => r.manifests[0]?.v3Manifest?.id).sort()).toEqual(['@x/linked', '@x/plat', '@x/ws']);
   });
 });

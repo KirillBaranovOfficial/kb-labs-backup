@@ -207,7 +207,7 @@ describe('Collision Detection', () => {
         group: 'custom',
         describe: 'Custom plugin',
         loader: async () => ({ run: async () => 0 }),
-        manifestV2: {
+        v3Manifest: {
           schema: 'kb.plugin/3' as const,
           id: '@kb-labs/my-plugin',
           version: '1.0.0',

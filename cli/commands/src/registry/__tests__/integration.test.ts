@@ -45,7 +45,7 @@ describe("Registry Integration", () => {
       group: "test",
       describe: "Test command",
       flags: [{ name: "verbose", type: "boolean", alias: "v" }],
-      manifestV2: structuredClone(baseManifestV3),
+      v3Manifest: structuredClone(baseManifestV3),
       loader: async () => ({
         run: async (ctx: any, _argv: string[], flags: any) => {
           ctx.presenter.info(flags.verbose ? "Verbose mode enabled" : "Run executed");
@@ -110,7 +110,7 @@ describe("Registry Integration", () => {
       group: "test",
       describe: "Test command",
       requires: ["@kb-labs/missing-package"],
-      manifestV2: structuredClone(baseManifestV3),
+      v3Manifest: structuredClone(baseManifestV3),
       loader: async () => ({ run: async () => 0 }),
     };
 
@@ -158,7 +158,7 @@ describe("Registry Integration", () => {
       id: "test:command",
       group: "test",
       describe: "Node command",
-      manifestV2: structuredClone(baseManifestV3),
+      v3Manifest: structuredClone(baseManifestV3),
       loader: async () => ({ run: async () => 0 }),
     };
 
@@ -168,7 +168,7 @@ describe("Registry Integration", () => {
       id: "test:command",
       group: "test",
       describe: "Workspace command",
-      manifestV2: structuredClone(baseManifestV3),
+      v3Manifest: structuredClone(baseManifestV3),
       loader: async () => ({ run: async () => 0 }),
     };
 

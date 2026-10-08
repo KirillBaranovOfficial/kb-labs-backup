@@ -42,7 +42,7 @@ function createRegisteredCommand(manifest: ManifestV3): RegisteredCommand {
       group: "test",
       describe: "Test command",
       loader: async () => ({ run: vi.fn() }),
-      manifestV2: manifest,
+      v3Manifest: manifest,
     },
     available: true,
     source: "workspace",

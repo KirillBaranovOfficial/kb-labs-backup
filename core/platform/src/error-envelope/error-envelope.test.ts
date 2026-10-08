@@ -146,6 +146,30 @@ describe('renderTemplate', () => {
   });
 });
 
+describe('createErrorEnvelope', () => {
+  it('omits a cause that repeats the resolved message', () => {
+    const envelope = createErrorEnvelope('KB_ADAPTER_NOT_INSTALLED', {
+      details: { package: '@kb-labs/not-installed' },
+      cause: 'Adapter package @kb-labs/not-installed is not installed on this platform.',
+    });
+
+    expect(envelope).toMatchObject({
+      code: 'KB_ADAPTER_NOT_INSTALLED',
+      message: 'Adapter package @kb-labs/not-installed is not installed on this platform.',
+    });
+    expect(envelope).not.toHaveProperty('cause');
+  });
+
+  it('retains a cause that adds information beyond the message', () => {
+    const envelope = createErrorEnvelope('KB_ADAPTER_NOT_INSTALLED', {
+      details: { package: '@kb-labs/not-installed' },
+      cause: 'The package is missing from platform node_modules.',
+    });
+
+    expect(envelope.cause).toBe('The package is missing from platform node_modules.');
+  });
+});
+
 describe('structured error diagnostics', () => {
   it('keeps gate findings as typed diagnostics', () => {
     const envelope = createErrorEnvelope('KB_RUNTIME_COMMAND_FAILED', {
@@ -179,6 +203,16 @@ describe('structured error diagnostics', () => {
 });
 
 describe('toErrorEnvelope (platform errors)', () => {
+  it('does not promote a catalogued error message into a duplicate cause', () => {
+    const message = 'Adapter package @kb-labs/not-installed is not installed on this platform.';
+    const error = Object.assign(new Error(message), { code: 'KB_ADAPTER_NOT_INSTALLED' });
+
+    const envelope = toErrorEnvelope(error);
+
+    expect(envelope).toMatchObject({ code: 'KB_ADAPTER_NOT_INSTALLED', message });
+    expect(envelope).not.toHaveProperty('cause');
+  });
+
   it('preserves a typed catalogued envelope thrown through the platform boundary', () => {
     const envelope = createErrorEnvelope('KB_AUTH_TOKEN_EXPIRED', {
       details: { gatewayUrl: 'https://gateway.test', reason: 'expired' },

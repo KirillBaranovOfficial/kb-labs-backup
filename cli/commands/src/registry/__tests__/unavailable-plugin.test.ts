@@ -136,7 +136,7 @@ describe('failed enabled plugins', () => {
         code: 'PLUGIN_ID_MISMATCH',
         remediation: 'Correct the manifest id or reinstall the package with its canonical plugin ID.',
       });
-      expect(route.command.manifest.manifestV2?.cli?.groupMeta?.[0]?.path).toBe('release');
+      expect(route.command.manifest.v3Manifest?.cli?.groupMeta?.[0]?.path).toBe('release');
       expect(route.command.manifest.describe).toContain('pnpm build');
     }
   });

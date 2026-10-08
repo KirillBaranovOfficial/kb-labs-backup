@@ -388,17 +388,19 @@ describe('kb adapter bind', () => {
     expect(configError).toEqual(bindError);
   });
 
-  // case: S-051.3
+  // case: S-051.3, S-203.4
   it('renders the missing adapter next step through the shared human presenter', async () => {
     const { ctx, errors } = context();
 
     const code = await adapterBind.run(ctx, ['storage', '@kb-labs/not-installed'], {});
 
     expect(code).toBe(1);
-    expect(errors.join('\n')).toContain(
+    expect(errors).toEqual([
       'Adapter package @kb-labs/not-installed is not installed on this platform. [KB_ADAPTER_NOT_INSTALLED]\n' +
-      '  Hint:  kb marketplace install @kb-labs/not-installed --scope platform',
-    );
+      '  Hint:  kb marketplace install @kb-labs/not-installed --scope platform\n' +
+      '  Correlation ID: adapter-bind-test',
+    ]);
+    expect(errors[0]).not.toContain('Cause:');
   });
 
   it('validates a binding without writing in dry-run mode', async () => {

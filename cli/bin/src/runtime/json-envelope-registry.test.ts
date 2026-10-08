@@ -207,7 +207,7 @@ async function sourceFilesBelow(directory: string): Promise<string[]> {
 
 function pluginHandlerSource(command: PluginCommandFixture): string | undefined {
   const root = command.pkgRoot;
-  const manifest = command.v3Manifest ?? command.manifest.manifestV2;
+  const manifest = command.manifest.v3Manifest;
   if (!root || !manifest) return undefined;
   const commandPath = command.manifest.segments.join(' ');
   const declaration = manifest.cli?.commands.find((candidate) => candidate.path.trim().split(/\s+/).join(' ') === commandPath);
@@ -334,7 +334,7 @@ describe('JSON envelope coverage for the live CLI registry', () => {
       }
 
       const plugin = command.plugin!;
-      const manifest = plugin.v3Manifest ?? plugin.manifest.manifestV2;
+      const manifest = plugin.manifest.v3Manifest;
       if (!manifest?.cli?.commands.some((declaration) => declaration.path.trim().split(/\s+/).join(' ') === commandKey)) {
         continue; // Synthetic unavailable registry entries have no handler source.
       }
@@ -348,7 +348,7 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     }
 
     const scannedHandlerCommands = commands
-      .filter((command) => command.kind === 'system' || Boolean(command.plugin?.v3Manifest ?? command.plugin?.manifest.manifestV2))
+      .filter((command) => command.kind === 'system' || Boolean(command.plugin?.manifest.v3Manifest))
       .filter((command) => command.kind === 'system'
         ? (sourcesBySystemName.get(command.system!.name)?.length ?? 0) > 0
         : Boolean(pluginHandlerSource(command.plugin!)))
