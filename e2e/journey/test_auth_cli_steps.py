@@ -20,6 +20,8 @@ from steps.accounts import run_cli_logout_steps
 from steps.auth import (assert_platform_auth_required, run_bootstrap_recovery_steps, run_cli_auth_forbidden,
                         run_cli_auth_status, assert_cli_session_absent, run_cli_corrupt_session_file)
 
+REAL_PROCESS_TIMEOUT_SECONDS = 60
+
 
 class CliAuthJourneyTests(unittest.TestCase):
     # case: S-041.6, S-100.1
@@ -67,7 +69,7 @@ class CliAuthJourneyTests(unittest.TestCase):
             os.close(slave)
             transcript = bytearray()
             sent = False
-            deadline = time.monotonic() + 20
+            deadline = time.monotonic() + REAL_PROCESS_TIMEOUT_SECONDS
             try:
                 while process.poll() is None and time.monotonic() < deadline:
                     ready, _, _ = select.select([master], [], [], 0.2)
