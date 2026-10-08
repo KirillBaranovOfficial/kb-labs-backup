@@ -3,6 +3,7 @@ import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { explainBundle, clearCaches } from '../index';
+import { useIsolatedProjectRegistry } from './project-registry';
 
 async function copyDir(src: string, dest: string): Promise<void> {
   await fsp.mkdir(dest, { recursive: true });
@@ -17,16 +18,19 @@ async function copyDir(src: string, dest: string): Promise<void> {
 
 describe('explainBundle', () => {
   let testDir: string;
+  let cleanupRegistry: (() => Promise<void>) | undefined;
   const fixtureDir = path.join(__dirname, '../__fixtures__/workspace');
 
   beforeEach(async () => {
-    testDir = path.join(tmpdir(), `kb-labs-explain-${Date.now()}`);
-    await fsp.mkdir(testDir, { recursive: true });
+    testDir = await fsp.mkdtemp(path.join(tmpdir(), 'kb-labs-explain-'));
     await copyDir(fixtureDir, testDir);
+    cleanupRegistry = await useIsolatedProjectRegistry(testDir);
     clearCaches();
   });
 
   afterEach(async () => {
+    await cleanupRegistry?.();
+    cleanupRegistry = undefined;
     await fsp.rm(testDir, { recursive: true, force: true });
     clearCaches();
   });
