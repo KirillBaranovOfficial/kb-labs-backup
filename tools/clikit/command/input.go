@@ -78,5 +78,6 @@ func markBoundary(command *cobra.Command) {
 }
 
 func invalidInput(cmd *cobra.Command) error {
-	return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("The arguments for %s are invalid.", cmd.CommandPath()))
+	return diag.New("KB_RUNTIME_INPUT_INVALID", fmt.Sprintf("The arguments for %s are invalid.", cmd.CommandPath()),
+		diag.WithHint(fmt.Sprintf("Run `%s --help` to see supported flags and arguments.", cmd.CommandPath())))
 }

@@ -4,46 +4,42 @@
 package v2cli
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"github.com/kb-labs/clikit/diag"
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
+
 	clikitcommand "github.com/kb-labs/clikit/command"
-	"github.com/kb-labs/clikit/result"
-	"github.com/kb-labs/create/v2/artifacts"
-	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
-	"github.com/kb-labs/create/v2/host"
-	"github.com/kb-labs/create/v2/logs"
 	"github.com/kb-labs/create/v2/preflight"
-	"github.com/kb-labs/create/v2/receipt"
-	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/scenario"
 	"github.com/kb-labs/create/v2/secrets"
 	"github.com/kb-labs/create/v2/shim"
-	"github.com/kb-labs/create/v2/telemetry"
-	"github.com/kb-labs/create/v2/transport"
-	"github.com/kb-labs/create/v2/wizard"
+	"github.com/spf13/cobra"
 )
 
-var telemetryEndpoint string
-var telemetryConsent bool
 var buildVersion = "dev"
 var buildCommit = "none"
 
 type repeatedValue []string
+
+type applyCommandResult struct {
+	OK        bool                     `json:"ok"`
+	Operation string                   `json:"operation"`
+	Receipt   contracts.InstallReceipt `json:"receipt"`
+	LogPath   string                   `json:"logPath"`
+	Profile   string                   `json:"profile"`
+	Services  []contracts.Service      `json:"services"`
+	Shim      *shim.EnsureResult       `json:"shim,omitempty"`
+}
 
 func (values *repeatedValue) String() string { return strings.Join(*values, ",") }
 func (values *repeatedValue) Type() string   { return "string" }
@@ -76,25 +72,28 @@ type directRequest struct {
 	Offline                                                                                                                                   bool
 }
 
-// invocation is one parsed non-host command line. Every field is an input; the
-// run method reads nothing from package state except the build version.
-type invocation struct {
-	Operation, Index, Input, DoctorInput, PlatformRoot, Snapshot, Registry, SecretEnv string
-	DoctorFix                                                                         bool
-	Recover                                                                           recoverRequest
-	ScenarioID, ScenarioAnswers                                                       string
-	ScenarioResume                                                                    bool
-	Direct                                                                            directRequest
-	// Executable is the launcher binary re-executed to supervise the host.
-	Executable       string
-	Foreground       bool
-	JSON             bool
-	Yes              bool
+type commandDependencies struct {
+	Runtime          *runtime.Dependencies
+	NodeCheck        func() error
 	InstallInput     io.Reader
 	InstallOutput    io.Writer
-	RuntimeDeps      *runtime.Dependencies
-	NodePreflight    func() error
-	ProjectRegistrar func(string) (string, error)
+	ProjectRegistrar func(string, string) (string, error)
+	Command          *cobra.Command
+	Executable       string
+}
+
+func productionCommandDependencies(command *cobra.Command) commandDependencies {
+	return commandDependencies{
+		Runtime:       &runtime.Dependencies{},
+		NodeCheck:     func() error { return preflight.EnsureNode(nil) },
+		InstallInput:  os.Stdin,
+		InstallOutput: command.OutOrStdout(),
+		Command:       command,
+		Executable:    executablePath(),
+		ProjectRegistrar: func(platformRoot, projectRoot string) (string, error) {
+			return registerInstalledProject(platformRoot, projectRoot, nil)
+		},
+	}
 }
 
 func updateCompatibilityDiag(failure *diag.Diag) *diag.Diag {
@@ -121,595 +120,14 @@ func planHasGateway(plan contracts.ResolvedInstallPlan) bool {
 	return false
 }
 
-func (i invocation) hostCommand(output *os.File) hostCommand {
-	return hostCommand{PlatformRoot: i.PlatformRoot, Foreground: i.Foreground, Executable: i.Executable, Version: buildVersion, JSON: i.JSON, Out: output, Err: os.Stderr}
-}
-
-func (i invocation) ensureNode() error {
-	if i.NodePreflight != nil {
-		return i.NodePreflight()
-	}
-	return preflight.EnsureNode(nil)
-}
-
-func (i invocation) run(output *os.File) int {
-	operation := i.Operation
-	if i.PlatformRoot != "" {
-		root, err := filepath.Abs(i.PlatformRoot)
-		if err != nil {
-			write(output, failure(contracts.CodeInputRequired, "platform root path is invalid", "pass a valid --platform-root path", err))
-			return 2
-		}
-		i.PlatformRoot = filepath.Clean(root)
-	}
-	switch operation {
-	case "install", "plan", "apply", "update", "uninstall", "rollback", "doctor", "status":
-	default:
-		write(output, failure("KB_INSTALL_OPERATION_INVALID", "operation is not supported", "use plan, apply, update, uninstall, rollback, doctor, status, start, stop or restart", nil))
-		return 2
-	}
-	if operation == "doctor" {
-		return i.runDoctor(output)
-	}
-	if operation == "status" {
-		return i.runStatus(output)
-	}
-	if operation == "install" {
-		return i.runInstall(output)
-	}
-	if operation == "apply" || operation == "update" {
-		if err := i.ensureNode(); err != nil {
-			write(output, failure(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.", "Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`).", err))
-			return 2
-		}
-	}
-	if operation == "uninstall" || operation == "rollback" {
-		return i.runRecovery(output)
-	}
-	if i.Index == "" || (i.Input == "" && i.Direct.PlatformRoot == "") {
-		write(output, failure("KB_INSTALL_INPUT_REQUIRED", "--index and either --input or --request-platform-root are required", "pass immutable release index plus V2 request JSON or direct CI flags", nil))
-		return 2
-	}
-	source, err := catalog.LoadFile(i.Index)
-	if err != nil {
-		writeIndexFailure(output, err, "supply a valid immutable V2 release index")
-		return 2
-	}
-	var response transport.PlanResponse
-	if i.Input != "" {
-		data, err := os.ReadFile(i.Input)
-		if err != nil {
-			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", err))
-			return 2
-		}
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
-	} else {
-		request, requestErr := i.Direct.normalize()
-		if requestErr != nil {
-			write(output, failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr))
-			return 2
-		}
-		if i.ScenarioID != "" {
-			compiled, scenarioErr := compileScenario(i.ScenarioID, i.ScenarioAnswers, i.ScenarioResume, request)
-			if scenarioErr != nil {
-				write(output, failure("KB_INSTALL_SCENARIO_INVALID", "scenario could not be compiled", "inspect scenario answers and manifest requirements", scenarioErr))
-				return 2
-			}
-			request = compiled
-		}
-		data, _ := json.Marshal(request)
-		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
-	}
-	if !response.OK {
-		if operation == "update" && response.Error != nil {
-			response.Error = updateCompatibilityDiag(response.Error)
-		}
-		write(output, response)
-		return 2
-	}
-	state, stateErr := host.StateHome()
-	if stateErr != nil {
-		write(output, map[string]any{"ok": false, "error": asDiag(stateErr)})
-		return 2
-	}
-	var releaseOperation func()
-	if operation == "apply" {
-		releaseOperation, err = state.AcquireOperation(operation)
-		if err != nil {
-			write(output, map[string]any{"ok": false, "error": asDiag(err)})
-			return 2
-		}
-		defer releaseOperation()
-	}
-	if response.Plan.Host != nil && planHasGateway(*response.Plan) &&
-		(operation == "plan" || operation == "apply" || operation == "update") {
-		root := response.Plan.Request.PlatformRoot
-		registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
-		knownByRoot := make(map[string]gateway.Root)
-		rememberRoot := func(candidate string) {
-			if candidate == "" || filepath.Clean(candidate) == filepath.Clean(root) {
-				return
-			}
-			activeOwner, ownerErr := receipt.Read(candidate)
-			if ownerErr == nil {
-				if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" {
-					knownByRoot[filepath.Clean(candidate)] = gateway.Root{PlatformRoot: filepath.Clean(candidate), URL: ownerURL}
-				}
-			}
-		}
-		if operation == "apply" || operation == "plan" {
-			if owner, ok := shim.Owner(i.Executable); ok {
-				rememberRoot(owner)
-			}
-			if activeHost, ok := host.ActiveHost(state); ok {
-				rememberRoot(activeHost.PlatformRoot)
-			}
-		}
-		known := make([]gateway.Root, 0, len(knownByRoot))
-		for _, knownRoot := range knownByRoot {
-			known = append(known, knownRoot)
-		}
-		requestedURL := response.Plan.Request.GatewayURL
-		active, activeErr := receipt.Read(root)
-		if requestedURL == "" && activeErr == nil {
-			requestedURL = recordedGatewayURL(active)
-		}
-		defaultURL, err := gateway.OriginFromHealthURL(response.Plan.Host.HealthURL)
-		if err != nil {
-			write(output, failure(contracts.CodeHostSpecInvalid, "the release Gateway address is invalid", "select a release with a valid loopback Gateway health URL", err))
-			return 2
-		}
-		selectedURL, err := registry.AllocateWithKnown(root, defaultURL, requestedURL, known)
-		if err != nil {
-			write(output, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", err))
-			return 2
-		}
-		claimant, claimed, err := registry.ClaimantAmong(root, selectedURL, known)
-		if err != nil {
-			write(output, failure(contracts.CodeApplyFailed, "installed Gateway addresses could not be read", "check the launcher state directory and rerun `kb-create apply`", err))
-			return 2
-		}
-		if claimed {
-			failure := contracts.NewDiag(contracts.CodePortInUse,
-				"Gateway address "+selectedURL+" is already assigned to installed root "+claimant.PlatformRoot+".",
-				"Choose another `--gateway-url`, then rerun `kb-create apply`.", nil)
-			failure.Meta = map[string]any{"address": selectedURL, "platformRoot": claimant.PlatformRoot}
-			write(output, map[string]any{"ok": false, "error": failure})
-			return 2
-		}
-		if selectedURL != response.Plan.Request.GatewayURL {
-			request := response.Plan.Request
-			request.GatewayURL = selectedURL
-			data, _ := json.Marshal(request)
-			response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
-			if !response.OK {
-				if operation == "update" && response.Error != nil {
-					response.Error = updateCompatibilityDiag(response.Error)
-				}
-				write(output, response)
-				return 2
-			}
-		}
-	}
-	if operation == "update" {
-		active, readErr := receipt.Read(response.Plan.Request.PlatformRoot)
-		if readErr != nil {
-			write(output, failure(contracts.CodeReceiptUnavailable, "active V2 receipt could not be read", "run apply first or restore a named V2 snapshot", readErr))
-			return 2
-		}
-		if validationErr := resolve.ValidateUpdate(active, *response.Plan, source); validationErr != nil {
-			write(output, map[string]any{"ok": false, "error": updateCompatibilityDiag(asDiag(validationErr))})
-			return 2
-		}
-	}
-	if operation == "apply" || operation == "update" {
-		request, changed, requestErr := requestWithGeneratedSecrets(response.Plan.Request, response.Plan.Artifacts)
-		if requestErr != nil {
-			write(output, failure(contracts.CodeInputRequired, "the install request could not include generated secrets.", "rerun `kb-create install` with the selected platform manifest", requestErr))
-			return 2
-		}
-		if changed {
-			data, _ := json.Marshal(request)
-			response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
-			if !response.OK {
-				if operation == "update" && response.Error != nil {
-					response.Error = updateCompatibilityDiag(response.Error)
-				}
-				write(output, response)
-				return 2
-			}
-		}
-	}
-	root := response.Plan.Request.PlatformRoot
-	if operation == "apply" {
-		if running := refuseApplyBesideRunningHost(state, *response.Plan, root); running != nil {
-			write(output, map[string]any{"ok": false, "error": running})
-			return 2
-		}
-	} else if operation == "update" {
-		if running := refuseForeignHost(state, root); running != nil {
-			write(output, map[string]any{"ok": false, "error": running})
-			return 2
-		}
-	}
-	if operation == "apply" || operation == "plan" {
-		root := response.Plan.Request.PlatformRoot
-		if operation == "apply" {
-			if err := preflight.CheckInstallResources(root); err != nil {
-				var typed *diag.Diag
-				if errors.As(err, &typed) {
-					write(output, map[string]any{"ok": false, "error": typed})
-				} else {
-					write(output, failure(contracts.CodeResourceCheckFailed, "The launcher could not check available memory and disk space.", "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again.", err))
-				}
-				return 2
-			}
-		}
-		if response.Plan.Host != nil {
-			if err := host.CheckPorts(*response.Plan, operation); err != nil {
-				write(output, map[string]any{"ok": false, "error": asDiag(err)})
-				return 2
-			}
-		}
-	}
-	started := time.Now()
-	outcome, errorCode := "failure", "KB_INSTALL_OPERATION_FAILED"
-	defer func() {
-		telemetry.Send(telemetryEndpoint, telemetryConsent, telemetry.New(operation, outcome, errorCode, string(response.Plan.Request.Platform.Channel), string(response.Plan.Request.Source), len(response.Plan.Artifacts), time.Since(started)))
-	}()
-	if operation == "plan" {
-		write(output, response)
-		outcome, errorCode = "success", ""
-		return 0
-	}
-	correlationID := fmt.Sprintf("%s-%d", operation, time.Now().UTC().UnixNano())
-	transcript, err := logs.New(root, correlationID, nil)
-	if err != nil {
-		write(output, failure("KB_INSTALL_LOG_UNAVAILABLE", "could not create local operation log", "check that the platform root is writable", err))
-		return 2
-	}
-	defer transcript.Close()
-	store := secrets.Store{PlatformRoot: root}
-	if err := populateSecrets(store, i.SecretEnv); err != nil {
-		write(output, failure("KB_INSTALL_SECRET_INPUT_INVALID", "secret input could not be stored", "use --secret-env requirement=ENV_VAR and set the environment variable", err))
-		return 2
-	}
-	if err := secrets.EnsureGenerated(response.Plan, store); err != nil {
-		write(output, failure(contracts.CodeApplyFailed, "the session signing secret could not be generated or stored.", "check that the platform root is writable, then rerun `kb-create install`", err))
-		return 2
-	}
-	if operation == "update" {
-		release, lockErr := state.AcquireOperation(operation)
-		if lockErr != nil {
-			write(output, map[string]any{"ok": false, "error": asDiag(lockErr)})
-			return 2
-		}
-		defer release()
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	offlineArtifacts := response.Plan.Request.Source == contracts.SourceOffline
-	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: root, Registry: i.Registry, Offline: offlineArtifacts, Log: transcript}, Binaries: artifacts.Binaries{Root: root, Offline: offlineArtifacts}}
-	prober := host.Prober{PlatformRoot: root, State: state, Operation: operation}
-	deps := runtime.Dependencies{Artifacts: artifactExecutor, CorrelationID: correlationID, Secrets: &store}
-	if i.RuntimeDeps != nil {
-		if i.RuntimeDeps.Artifacts != nil {
-			deps.Artifacts = i.RuntimeDeps.Artifacts
-		}
-		if i.RuntimeDeps.Host != nil {
-			deps.Host = i.RuntimeDeps.Host
-		}
-		if i.RuntimeDeps.Clock != nil {
-			deps.Clock = i.RuntimeDeps.Clock
-		}
-		if i.RuntimeDeps.Secrets != nil {
-			deps.Secrets = i.RuntimeDeps.Secrets
-		}
-		deps.Progress = i.RuntimeDeps.Progress
-	}
-	if operation == "apply" {
-		if i.Operation == "apply" && i.RuntimeDeps != nil && deps.Progress != nil {
-			// The shared apply engine owns artifact, render, host and verification events.
-		}
-		if deps.Host == nil && response.Plan.Host != nil {
-			deps.Host = prober
-		}
-		appliedReceipt, applyErr := runtime.Apply(ctx, *response.Plan, deps)
-		if applyErr == nil {
-			if response.Plan.Host != nil {
-				roots := []gateway.Root{}
-				if owner, ok := shim.Owner(i.Executable); ok && filepath.Clean(owner) != filepath.Clean(root) {
-					if activeOwner, ownerErr := receipt.Read(owner); ownerErr == nil {
-						if ownerURL := recordedGatewayURL(activeOwner); ownerURL != "" {
-							roots = append(roots, gateway.Root{PlatformRoot: owner, URL: ownerURL})
-						}
-					}
-				}
-				origin, originErr := gateway.OriginFromHealthURL(appliedReceipt.Verification.HostHealthURL)
-				if originErr != nil {
-					write(output, failure(contracts.CodeHostSpecInvalid, "the applied Gateway address could not be recorded", "rerun `kb-create update --platform-root` after checking the receipt", originErr))
-					return 1
-				}
-				roots = append(roots, gateway.Root{PlatformRoot: root, URL: origin})
-				registry := gateway.Registry{Path: filepath.Join(state.Dir, "gateway-roots.json")}
-				if err := registry.RegisterMany(roots); err != nil {
-					write(output, failure(contracts.CodeApplyFailed, "the installation succeeded but its Gateway address could not be indexed", "check launcher state permissions, then rerun `kb-create apply`", err))
-					return 1
-				}
-			}
-			var shimResult shim.EnsureResult
-			if i.Executable != "" {
-				if deps.Progress != nil {
-					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: true})
-				}
-				var shimErr error
-				shimResult, shimErr = shim.Ensure(i.Executable, root)
-				if shimErr != nil {
-					if deps.Progress != nil {
-						deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
-					}
-					writeShimFailure(output, "KB_INSTALL_APPLY_FAILED", root, shimErr)
-					return 1
-				}
-				if deps.Progress != nil {
-					deps.Progress.Emit(runtime.ProgressEvent{Phase: "Create kb shim", Start: false})
-				}
-			}
-			payload := map[string]any{"ok": true, "operation": operation, "receipt": appliedReceipt, "logPath": transcript.Path(), "profile": appliedReceipt.Plan.ServiceGraph.Profile, "services": appliedReceipt.Plan.ServiceGraph.Services}
-			if i.Executable != "" {
-				payload["shim"] = shimResult
-			}
-			write(output, payload)
-			outcome, errorCode = "success", ""
-			return 0
-		}
-		writeFailureDossier(output, *response.Plan, correlationID, transcript.Path(), applyErr)
-		return 1
-	}
-	return i.runUpdate(ctx, output, *response.Plan, deps, prober, state, correlationID, transcript.Path(), &outcome, &errorCode)
+func progressWriteFailure(err error, next string) *diag.Diag {
+	command := "kb-create " + next
+	return contracts.NewDiag("KB_RUNTIME_UNEXPECTED", "Command progress could not be written.",
+		fmt.Sprintf("Check that command output is writable, then run `%s` to verify the installation.", command), err)
 }
 
 // runInstall is the human frontend. It gathers answers, prints the shared
 // resolver's plan, then invokes the same apply engine used by JSON callers.
-func (i invocation) runInstall(output *os.File) int {
-	if i.JSON {
-		return i.runJSONInstall(output)
-	}
-	var humanOut io.Writer = output
-	if i.InstallOutput != nil {
-		humanOut = i.InstallOutput
-	}
-	if err := i.ensureNode(); err != nil {
-		writeHumanFailure(humanOut, contracts.NewDiag(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.", "Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`).", err))
-		return 2
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewDiag(contracts.CodeInputRequired, "The home directory could not be determined.", "Set HOME to a writable directory, then rerun `kb-create install`.", err))
-		return 2
-	}
-	index := i.Index
-	if index == "" {
-		index = filepath.Join(home, ".local", "share", "kb-create", "release-index.json")
-	}
-	root := i.Direct.PlatformRoot
-	if root == "" {
-		root = i.PlatformRoot
-	}
-	if root == "" {
-		root = filepath.Join(home, "kb-platform")
-	}
-	root, err = filepath.Abs(root)
-	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `kb-create install --platform-root PATH`.", err))
-		return 2
-	}
-	if err := preflight.CheckInstallResources(root); err != nil {
-		var typed *diag.Diag
-		if errors.As(err, &typed) {
-			writeHumanFailure(humanOut, typed)
-		} else {
-			writeHumanFailure(humanOut, contracts.NewDiag(contracts.CodeResourceCheckFailed, "The launcher could not check available memory and disk space.", "Check that the platform root is on a mounted writable filesystem, then run `kb-create install` again.", err))
-		}
-		return 2
-	}
-	phaseStart := time.Now()
-	source, err := catalog.LoadFile(index)
-	if err != nil {
-		writeHumanFailure(humanOut, asDiag(err))
-		return 2
-	}
-	fmt.Fprintln(humanOut, "Set up KB Labs. Local access is enabled by default; it only accepts connections from this computer.")
-	input := i.InstallInput
-	if input == nil {
-		input = os.Stdin
-	}
-	request, err := wizard.RequestScenario(source, root, "explore", i.Direct.ProjectRoot, wizard.IO{In: input, Out: humanOut})
-	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the answers and rerun `kb-create install`.", err))
-		return 2
-	}
-	encoded, err := json.Marshal(request)
-	if err != nil {
-		writeHumanFailure(humanOut, contracts.NewDiag(contracts.CodeInputRequired, "The install request could not be encoded.", "Rerun `kb-create install`; if this repeats, report the launcher version.", err))
-		return 2
-	}
-	planned := transport.PlanWith(encoded, source, resolve.Options{LauncherVersion: buildVersion})
-	if !planned.OK {
-		writeHumanFailure(humanOut, planned.Error)
-		return 2
-	}
-	fmt.Fprintf(humanOut, "  ✓ Resolve (%s)\n", time.Since(phaseStart).Round(time.Millisecond))
-	fmt.Fprintf(humanOut, "\nPlan: platform %s at %s, %d artifacts", planned.Plan.ServiceGraph.PlatformVersion, root, len(planned.Plan.Artifacts))
-	if planned.Plan.Request.ProjectRoot != "" {
-		fmt.Fprintf(humanOut, "; project %s", planned.Plan.Request.ProjectRoot)
-	}
-	fmt.Fprintln(humanOut)
-	for _, artifact := range planned.Plan.Artifacts {
-		fmt.Fprintf(humanOut, "  - %s %s (%s)\n", artifact.ID, artifact.Version, artifact.Kind)
-	}
-	fmt.Fprintln(humanOut, "\nApplying installation…")
-	requestFile, err := os.CreateTemp("", "kb-create-request-*.json")
-	if err != nil {
-		writeHumanFailure(humanOut, temporaryFileError(err))
-		return 2
-	}
-	defer os.Remove(requestFile.Name())
-	if _, err := requestFile.Write(encoded); err != nil {
-		requestFile.Close()
-		writeHumanFailure(humanOut, temporaryFileError(err))
-		return 2
-	}
-	if err := requestFile.Close(); err != nil {
-		writeHumanFailure(humanOut, temporaryFileError(err))
-		return 2
-	}
-	result, err := os.CreateTemp("", "kb-create-result-*.json")
-	if err != nil {
-		writeHumanFailure(humanOut, temporaryFileError(err))
-		return 2
-	}
-	defer os.Remove(result.Name())
-	deps := i.RuntimeDeps
-	if deps == nil {
-		deps = &runtime.Dependencies{}
-	}
-	if !i.JSON {
-		deps.Progress = &humanProgress{out: humanOut, started: map[string]time.Time{}}
-	}
-	code := (invocation{Operation: "apply", Index: index, Input: requestFile.Name(), Registry: i.Registry, SecretEnv: i.SecretEnv, Executable: i.Executable, RuntimeDeps: deps, NodePreflight: func() error { return nil }}).run(result)
-	if err := result.Close(); err != nil {
-		writeHumanFailure(humanOut, temporaryFileError(err))
-		return 2
-	}
-	data, err := os.ReadFile(result.Name())
-	if err != nil {
-		writeHumanFailure(humanOut, temporaryFileError(err))
-		return 2
-	}
-	var envelope struct {
-		OK    bool       `json:"ok"`
-		Error *diag.Diag `json:"error"`
-	}
-	if json.Unmarshal(data, &envelope) != nil || code != 0 || !envelope.OK {
-		if envelope.Error != nil {
-			writeHumanFailure(humanOut, envelope.Error)
-		} else {
-			writeHumanFailure(humanOut, contracts.NewDiag("KB_INSTALL_APPLY_FAILED", "Installation failed before a structured result was available.", "Run `kb-create doctor`, then rerun `kb-create install`.", nil))
-		}
-		return code
-	}
-	var applied map[string]any
-	if json.Unmarshal(data, &applied) == nil {
-		if status, ok := applied["shim"].(map[string]any); ok && status["linked"] == false {
-			owner, _ := status["owner"].(string)
-			fmt.Fprintf(humanOut, "The kb command is owned by %s; run %s to use this platform.\n", owner, shim.Target(root))
-		}
-	}
-	if planned.Plan.Request.ProjectRoot == "" {
-		fmt.Fprintf(humanOut, "\nKB Labs is installed at %s.\nNext: register a project with `kb project add <path>`.\n", root)
-		return 0
-	}
-	projectID, registerErr := i.registerInstalledProject(root, planned.Plan.Request.ProjectRoot)
-	if registerErr != nil {
-		write(output, map[string]any{"ok": false, "error": projectRegistrationFailure(root, planned.Plan.Request.ProjectRoot, registerErr)})
-		return 1
-	}
-	fmt.Fprintf(humanOut, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `kb-create status --platform-root %q` and `kb project show %s`.\n", root, projectID, planned.Plan.Request.ProjectRoot, root, projectID)
-	return 0
-}
-
-func (i invocation) runJSONInstall(output *os.File) int {
-	if i.Index == "" || (i.Input == "" && i.Direct.PlatformRoot == "") {
-		write(output, failure(contracts.CodeInputRequired, "install needs a release index and an install request", "pass --index and either --input REQUEST.json or --request-platform-root PATH, then rerun `kb-create install --json`", nil))
-		return 2
-	}
-	if i.Input != "" {
-		return i.applyInstallAndRegister(output, i.Input)
-	}
-	_, err := catalog.LoadFile(i.Index)
-	if err != nil {
-		writeIndexFailure(output, err, "supply a valid immutable V2 release index")
-		return 2
-	}
-	request, err := i.Direct.normalize()
-	if err != nil {
-		write(output, failure(contracts.CodeInputRequired, "install request is invalid", "correct the install flags or supply --input REQUEST.json", err))
-		return 2
-	}
-	if i.ScenarioID != "" {
-		request, err = compileScenario(i.ScenarioID, i.ScenarioAnswers, i.ScenarioResume, request)
-		if err != nil {
-			write(output, failure(contracts.CodeScenarioInvalid, "install scenario answers are invalid", "correct --scenario-answers and rerun `kb-create install --json`", err))
-			return 2
-		}
-	}
-	data, err := json.Marshal(request)
-	if err != nil {
-		write(output, failure(contracts.CodeInputRequired, "install request could not be encoded", "supply a valid install request and rerun `kb-create install --json`", err))
-		return 2
-	}
-	requestFile, err := os.CreateTemp("", "kb-create-install-request-*.json")
-	if err != nil {
-		write(output, failure("KB_RUNTIME_UNEXPECTED", "install request could not be staged", "check temporary-directory permissions and rerun `kb-create install --json`", err))
-		return 1
-	}
-	defer os.Remove(requestFile.Name())
-	if _, err := requestFile.Write(data); err != nil {
-		_ = requestFile.Close()
-		write(output, failure("KB_RUNTIME_UNEXPECTED", "install request could not be staged", "check temporary-directory permissions and rerun `kb-create install --json`", err))
-		return 1
-	}
-	if err := requestFile.Close(); err != nil {
-		write(output, failure("KB_RUNTIME_UNEXPECTED", "install request could not be staged", "check temporary-directory permissions and rerun `kb-create install --json`", err))
-		return 1
-	}
-	return i.applyInstallAndRegister(output, requestFile.Name())
-}
-
-func (i invocation) applyInstallAndRegister(output *os.File, requestPath string) int {
-	result, err := os.CreateTemp("", "kb-create-install-result-*.json")
-	if err != nil {
-		write(output, failure("KB_RUNTIME_UNEXPECTED", "install result could not be staged", "check temporary-directory permissions and rerun `kb-create install --json`", err))
-		return 1
-	}
-	defer os.Remove(result.Name())
-	apply := i
-	apply.Operation, apply.Input = "apply", requestPath
-	apply.Direct = directRequest{}
-	code := apply.run(result)
-	if err := result.Close(); err != nil {
-		write(output, failure("KB_RUNTIME_UNEXPECTED", "install result could not be read", "check temporary-directory permissions and rerun `kb-create install --json`", err))
-		return 1
-	}
-	data, err := os.ReadFile(result.Name())
-	if err != nil {
-		write(output, failure("KB_RUNTIME_UNEXPECTED", "install result could not be read", "check temporary-directory permissions and rerun `kb-create install --json`", err))
-		return 1
-	}
-	if code != 0 {
-		_, _ = output.Write(data)
-		return code
-	}
-	var applied struct {
-		OK      bool                     `json:"ok"`
-		Receipt contracts.InstallReceipt `json:"receipt"`
-	}
-	if err := json.Unmarshal(data, &applied); err != nil || !applied.OK {
-		write(output, failure("KB_RUNTIME_UNEXPECTED", "install result was invalid", "rerun `kb-create install --json`; if this repeats, report the launcher version", err))
-		return 1
-	}
-	request := applied.Receipt.Plan.Request
-	if request.ProjectRoot != "" {
-		if _, err := i.registerInstalledProject(request.PlatformRoot, request.ProjectRoot); err != nil {
-			write(output, map[string]any{"ok": false, "error": projectRegistrationFailure(request.PlatformRoot, request.ProjectRoot, err)})
-			return 1
-		}
-	}
-	_, _ = output.Write(data)
-	return 0
-}
-
 func projectRegistrationFailure(platformRoot, projectRoot string, cause error) *diag.Diag {
 	failure := contracts.NewDiag(contracts.CodeApplyFailed,
 		"The platform is installed, but the selected project could not be registered.",
@@ -722,24 +140,9 @@ func projectCLIPath(platformRoot string) string {
 	return filepath.Join(platformRoot, ".kb", "v2", "bin", "kb")
 }
 
-func (i invocation) registerInstalledProject(platformRoot, projectRoot string) (string, error) {
-	if projectRoot == "" {
-		return "", nil
-	}
-	abs, err := filepath.Abs(projectRoot)
-	if err != nil {
-		return "", fmt.Errorf("resolve project root: %w", err)
-	}
-	canonical, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", fmt.Errorf("project directory %q must exist: %w", projectRoot, err)
-	}
-	return i.registerProject(platformRoot, filepath.Clean(canonical))
-}
-
-func (i invocation) registerProject(platformRoot, projectRoot string) (string, error) {
-	if i.ProjectRegistrar != nil {
-		return i.ProjectRegistrar(projectRoot)
+func registerProject(platformRoot, projectRoot string, registrar func(string) (string, error)) (string, error) {
+	if registrar != nil {
+		return registrar(projectRoot)
 	}
 	command := exec.Command(projectCLIPath(platformRoot), "project", "add", projectRoot, "--json")
 	output, err := command.Output()
@@ -775,72 +178,29 @@ type humanProgress struct {
 	started map[string]time.Time
 }
 
-func temporaryFileError(err error) *diag.Diag {
-	if errors.Is(err, syscall.ENOSPC) {
-		return contracts.NewDiag("KB_INSTALL_NO_DISK_SPACE", "The launcher ran out of disk space while staging the install.", "Free disk space and rerun `kb-create install`.", err)
-	}
-	return contracts.NewDiag("KB_INSTALL_NO_WRITE_ACCESS", "The launcher could not create or write its temporary install files.", "Check temporary-directory permissions, then rerun `kb-create install`.", err)
-}
-
-func (p *humanProgress) Emit(event runtime.ProgressEvent) {
+func (p *humanProgress) Emit(event runtime.ProgressEvent) error {
 	if event.Start {
 		p.started[event.Phase] = time.Now()
-		fmt.Fprintf(p.out, "  … %s\n", event.Phase)
-		return
+		if _, err := fmt.Fprintf(p.out, "  … %s\n", event.Phase); err != nil {
+			delete(p.started, event.Phase)
+			return progressWriteFailure(err, "apply")
+		}
+		return nil
 	}
 	started, ok := p.started[event.Phase]
 	if !ok {
-		return
+		return nil
 	}
-	fmt.Fprintf(p.out, "  ✓ %s (%s)\n", event.Phase, time.Since(started).Round(time.Millisecond))
+	if _, err := fmt.Fprintf(p.out, "  ✓ %s (%s)\n", event.Phase, time.Since(started).Round(time.Millisecond)); err != nil {
+		return progressWriteFailure(err, "apply")
+	}
 	delete(p.started, event.Phase)
-}
-
-func writeHumanFailure(output io.Writer, failure *diag.Diag) {
-	if failure == nil {
-		failure = contracts.NewDiag(contracts.CodeApplyFailed, "Installation failed unexpectedly.", "Run `kb-create doctor`, then rerun `kb-create install`.", nil)
-	}
-	fmt.Fprintf(output, "Install failed [%s]: %s\n", failure.Code, failure.Message)
-	if failure.Reason != "" {
-		fmt.Fprintf(output, "Why: %s\n", failure.Reason)
-	}
-	fmt.Fprintf(output, "Next: %s\n", failure.Hint)
+	return nil
 }
 
 // runStatus reports the host of the receipt-owned installation without
 // resolving a new release, so it is safe for stable, canary and exact-version
 // installations: it describes the immutable decision that was actually applied.
-func (i invocation) runStatus(output *os.File) int {
-	root := i.PlatformRoot
-	if root == "" {
-		root = defaultPlatformRoot()
-	}
-	active, err := receipt.Read(root)
-	if err != nil {
-		if i.JSON {
-			write(output, map[string]any{"ok": true, "operation": "status", "installed": false, "running": false, "reachable": false, "next": "kb-create install"})
-		} else {
-			fmt.Fprintln(output, "Installed: no\nRunning: no\nReachable: no\nNext: kb-create install")
-		}
-		return 0
-	}
-	if active.Plan.ServiceGraph.Profile == "client" {
-		if i.JSON {
-			write(output, map[string]any{"ok": true, "operation": "status", "installed": true, "running": false, "reachable": false, "profile": "client", "services": []contracts.Service{}})
-		} else {
-			fmt.Fprintln(output, "Installed: yes\nProfile: client\nRunning: no (no host is expected)\nReachable: no (no host is expected)\nServices: none")
-		}
-		return 0
-	}
-	command := i.hostCommand(output)
-	command.PlatformRoot = root
-	runner, state, setupErr := command.setup()
-	if setupErr != nil {
-		return command.fail(2, setupErr)
-	}
-	return command.hostStatus(context.Background(), runner, state)
-}
-
 func requestWithGeneratedSecrets(request contracts.InstallRequest, artifacts []contracts.Artifact) (contracts.InstallRequest, bool, error) {
 	known := make(map[string]bool, len(request.SecretInputs))
 	for _, id := range request.SecretInputs {
@@ -1002,54 +362,6 @@ func parseComponents(value string) ([]contracts.ComponentRequest, error) {
 	return result, nil
 }
 
-func write(output *os.File, value any) { _ = json.NewEncoder(output).Encode(value) }
-
-// writeIndexFailure emits the shared diagnostic from the index gate as is
-// (schema unsupported, corrupt digest); anything else is a generic load failure.
-func writeIndexFailure(output *os.File, err error, hint string) {
-	var typed *diag.Diag
-	if errors.As(err, &typed) {
-		write(output, result.FailureEnvelope(typed))
-		return
-	}
-	write(output, result.FailureEnvelope(contracts.NewDiag(
-		contracts.CodeReleaseIndexInvalid, "The release index could not be loaded.", hint, err)))
-}
-
-func failure(code, message, hint string, cause error) map[string]any {
-	return map[string]any{"ok": false, "error": contracts.NewDiag(code, message, hint, cause)}
-}
-
-func writeShimFailure(output *os.File, code, platformRoot string, cause error) {
-	var details map[string]string
-	var message string
-	var failureCause *shim.Failure
-	if errors.As(cause, &failureCause) {
-		reason := failureCause.Reason
-		if failureCause.Cause != nil {
-			reason = failureCause.Cause.Error()
-		}
-		details = map[string]string{"path": failureCause.Path, "reason": reason}
-		message = fmt.Sprintf("Platform files and receipt remain applied at %s, but the kb command shim could not be created.", platformRoot)
-		diagnosticReason := fmt.Sprintf("The filesystem refused shim path %s: %s", failureCause.Path, reason)
-		diagnostic := contracts.NewDiag(code, message,
-			fmt.Sprintf("Fix the filesystem reason for the shim path, then run `kb-create doctor --fix --platform-root %q`.", platformRoot), cause)
-		diagnostic.Reason = diagnosticReason
-		diagnostic.Meta = map[string]any{"path": details["path"], "reason": details["reason"]}
-		write(output, map[string]any{"ok": false, "error": diagnostic})
-		return
-	} else {
-		message = fmt.Sprintf("Platform files and receipt remain applied at %s, but the kb command shim could not be created: %s", platformRoot, cause)
-	}
-	diagnostic := contracts.NewDiag(code, message,
-		fmt.Sprintf("Fix the filesystem reason for the shim path, then run `kb-create doctor --fix --platform-root %q`.", platformRoot), cause)
-	write(output, map[string]any{"ok": false, "error": diagnostic})
-}
-
-func writeFailureDossier(output *os.File, plan contracts.ResolvedInstallPlan, correlationID, logPath string, cause error) {
-	var resolutionDiag *diag.Diag
-	if !errors.As(cause, &resolutionDiag) {
-		resolutionDiag = contracts.NewDiag(contracts.CodeApplyFailed, "V2 operation did not reach a verified installation", "Inspect the local log and diagnostic dossier, then fix the reported prerequisite or run doctor --fix.", cause)
-	}
-	writeDiagnosticFailure(output, plan.Request.PlatformRoot, correlationID, logPath, resolutionDiag, &plan)
+func failure(code, message, hint string, cause error) *diag.Diag {
+	return contracts.NewDiag(code, message, hint, cause)
 }

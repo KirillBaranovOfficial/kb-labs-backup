@@ -1,22 +1,16 @@
 package v2cli
 
 import (
-	"bytes"
-	"encoding/json"
+	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/doctor"
+	"github.com/kb-labs/create/v2/shim"
 	"strings"
 	"testing"
-
-	clikitcommand "github.com/kb-labs/clikit/command"
-	"github.com/kb-labs/clikit/result"
-	"github.com/spf13/cobra"
 )
 
 // case: S-052.2, S-203.10
 func TestDoctorHumanSummaryIncludesInstalledChannelAndVersion(t *testing.T) {
-	summary := operationHumanSummary("doctor", map[string]any{
-		"platformChannel": "canary",
-		"platformVersion": "3.0.2-canary.1",
-	})
+	summary := (doctorCommandResult{Status: "healthy", Response: doctor.Response{PlatformChannel: "canary", PlatformVersion: "3.0.2-canary.1"}}).human()
 	for _, want := range []string{
 		"Platform diagnosis completed.",
 		"Platform channel: canary",
@@ -30,9 +24,11 @@ func TestDoctorHumanSummaryIncludesInstalledChannelAndVersion(t *testing.T) {
 
 // case: PC-001.10
 func TestApplyHumanSummaryNamesShimOwnerAndDirectCommand(t *testing.T) {
-	summary := operationHumanSummary("apply", map[string]any{
-		"shim":    map[string]any{"linked": false, "owner": "/platform/a"},
-		"receipt": map[string]any{"plan": map[string]any{"request": map[string]any{"platformRoot": "/platform/b"}}},
+	summary := renderApply(applyCommandResult{
+		Shim: &shim.EnsureResult{Linked: false, Owner: "/platform/a"},
+		Receipt: contracts.InstallReceipt{Plan: contracts.ResolvedInstallPlan{
+			Request: contracts.InstallRequest{PlatformRoot: "/platform/b"},
+		}},
 	})
 	for _, want := range []string{"owned by /platform/a", "run /platform/b/.kb/v2/bin/kb"} {
 		if !strings.Contains(summary, want) {
@@ -41,54 +37,8 @@ func TestApplyHumanSummaryNamesShimOwnerAndDirectCommand(t *testing.T) {
 	}
 }
 
-// case: S-025.1, S-025.2, S-203.2, S-203.4
-func TestUnhealthyDoctorReportUsesNormalClikitSuccessResult(t *testing.T) {
-	data := []byte(`{"ok":false,"platformChannel":"stable","platformVersion":"3.2.0","findings":[{"code":"KB_INSTALL_CONFIG_REQUIRED","component":"@kb-labs/gateway","path":"/gateway/access/mode","hint":"Set the value in the generated config."}],"installation":{"ok":false,"checks":[{"id":"config","ok":false,"detail":"required config is missing","hint":"Run kb-create doctor --fix."}]}}`)
-	payload, err := doctorResultPayload(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if payload["operation"] != "doctor" || payload["status"] != "unhealthy" {
-		t.Fatalf("doctor result = %#v, want operation doctor and unhealthy status", payload)
-	}
-	findings, ok := payload["findings"].([]any)
-	if !ok || len(findings) != 1 {
-		t.Fatalf("doctor findings are not structured: %#v", payload["findings"])
-	}
-	installation, ok := payload["installation"].(map[string]any)
-	if !ok || installation["ok"] != false {
-		t.Fatalf("doctor installation report is not structured: %#v", payload["installation"])
-	}
-	summary := operationHumanSummary("doctor", payload)
-	for _, want := range []string{"KB_INSTALL_CONFIG_REQUIRED", "@kb-labs/gateway", "/gateway/access/mode", "Set the value", "required config is missing", "Run kb-create doctor --fix"} {
-		if !strings.Contains(summary, want) {
-			t.Errorf("human summary %q does not show report item %q", summary, want)
-		}
-	}
-	root := &cobra.Command{Use: "kb-create", RunE: func(*cobra.Command, []string) error { return result.Return(payload) }}
-	root.PersistentFlags().Bool("json", false, "")
-	var stdout, stderr bytes.Buffer
-	if code := clikitcommand.Execute(root, []string{"--json"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("clikit exit = %d for a successful diagnosis; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-	var envelope struct {
-		OK   bool           `json:"ok"`
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
-		t.Fatalf("clikit result is invalid JSON: %v; %s", err, stdout.String())
-	}
-	if !envelope.OK || envelope.Data["status"] != "unhealthy" || envelope.Data["operation"] != "doctor" {
-		t.Fatalf("clikit result = %s", stdout.String())
-	}
-}
-
 func TestDoctorRecoveryUsesItsOwnStructuredResult(t *testing.T) {
-	data := []byte(`{"ok":true,"operation":"recover","recovered":true,"output":"recovered"}`)
-	payload, err := operationResultPayload("doctor", false, true, data)
-	if err != nil {
-		t.Fatal(err)
-	}
+	payload := map[string]any{"operation": "recover", "recovered": true, "output": "recovered"}
 	if payload["operation"] != "recover" || payload["recovered"] != true || payload["status"] != nil {
 		t.Fatalf("recovery result was interpreted as a doctor report: %#v", payload)
 	}

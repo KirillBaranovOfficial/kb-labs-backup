@@ -1,8 +1,7 @@
 package v2cli
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -20,104 +19,136 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type commandFlags struct {
-	index, input, requestRoot, projectRoot, platformVersion, platformChannel  string
-	gatewayURL                                                                string
-	sdkVersion, serviceProfile, plugins, adapters, policy, secretEnv          string
-	doctorInput, scenarioID, scenarioAnswers, platformRoot, snapshotID        string
-	registry, telemetryURL, operation                                         string
-	providers                                                                 repeatedValue
-	offline, scenarioResume, doctorFix, doctorRecover                         bool
-	recoverPasswordStdin, recoverGenerate, recoverYes, foreground, jsonOutput bool
-	telemetryAllowed                                                          bool
-	recoverEmail, recoverTenant                                               string
+type operationDescriptor struct {
+	Name    string
+	Short   string
+	Hidden  bool
+	Args    cobra.PositionalArgs
+	Flags   []string
+	Human   func(any) string
+	Handler func(context.Context, *cobra.Command, *commandFlagReader, commandDependencies) (any, *diag.Diag)
+}
+
+type versionCommandInput struct{}
+type streamCompletion struct{ ExitCode int }
+
+var operationDescriptors = []operationDescriptor{
+	{Name: "install", Short: "Install KB Labs interactively", Args: cobra.NoArgs, Flags: []string{"index", "input", "request-platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderInstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		deps.Command = cmd
+		input := installCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Resume: flags.Bool("resume"), SecretEnv: flags.String("secret-env"), Registry: flags.String("registry"), Executable: deps.Executable, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+		if jsonMode(cmd) {
+			return executeInstallStream(ctx, input, deps)
+		}
+		return executeInstall(ctx, input, deps)
+	}},
+	{Name: "plan", Short: "Resolve an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "request-platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "scenario", "scenario-answers", "resume", "telemetry-endpoint", "telemetry-consent"}, Human: renderPlan, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		input := planCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Resume: flags.Bool("resume"), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable), TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+		return executePlan(ctx, input)
+	}},
+	{Name: "apply", Short: "Apply an install request", Args: cobra.NoArgs, Flags: []string{"index", "input", "request-platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "registry", "telemetry-endpoint", "telemetry-consent"}, Human: renderApply, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		deps.Command = cmd
+		input := applyCommandInput{Plan: planInput{Index: flags.String("index"), RequestFile: flags.String("input"), Direct: readDirectRequest(flags), Executable: deps.Executable, KnownGateways: knownGatewayRoots(deps.Executable)}, Registry: flags.String("registry"), SecretEnv: flags.String("secret-env"), Executable: deps.Executable, TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+		if jsonMode(cmd) {
+			return executeApplyStream(ctx, input, deps)
+		}
+		return executeApply(ctx, input, deps)
+	}},
+	{Name: "status", Short: "Show installation status", Args: cobra.NoArgs, Flags: []string{"platform-root"}, Human: renderStatus, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		return executeStatus(ctx, statusCommandInput{PlatformRoot: flags.String("platform-root"), Executable: deps.Executable})
+	}},
+	{Name: "doctor", Short: "Diagnose or repair an installation", Args: cobra.NoArgs, Flags: []string{"platform-root", "doctor-input", "fix", "recover", "email", "tenant", "password-stdin", "generate", "yes", "foreground"}, Human: renderDoctor, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		input := doctorCommandInput{PlatformRoot: flags.String("platform-root"), Executable: deps.Executable, InputFile: flags.String("doctor-input"), Fix: flags.Bool("fix"), Foreground: flags.Bool("foreground"), Recover: recoverRequest{Enabled: flags.Bool("recover"), Email: flags.String("email"), Tenant: flags.String("tenant"), PasswordStdin: flags.Bool("password-stdin"), Generate: flags.Bool("generate"), Yes: flags.Bool("yes"), JSON: jsonMode(cmd)}}
+		return executeDoctor(ctx, input)
+	}},
+	{Name: "start", Short: "Start the local host", Args: cobra.NoArgs, Flags: []string{"platform-root", "foreground"}, Human: renderStart, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		return executeHostStart(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Foreground: flags.Bool("foreground"), Executable: deps.Executable, Version: buildVersion})
+	}},
+	{Name: "stop", Short: "Stop the local host", Args: cobra.NoArgs, Flags: []string{"platform-root"}, Human: renderStop, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		return executeHostStop(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Executable: deps.Executable, Version: buildVersion})
+	}},
+	{Name: "restart", Short: "Restart the local host", Args: cobra.NoArgs, Flags: []string{"platform-root"}, Human: renderRestart, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		return executeHostRestart(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Executable: deps.Executable, Version: buildVersion})
+	}},
+	{Name: "update", Short: "Update the installation", Args: cobra.NoArgs, Flags: []string{"index", "input", "platform-root", "project-root", "platform-version", "platform-channel", "gateway-url", "sdk-version", "service-profile", "plugins", "adapters", "provider", "policy", "offline", "secret-env", "scenario", "scenario-answers", "resume", "registry", "telemetry-endpoint", "telemetry-consent"}, Human: renderUpdate, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		input := updateCommandInput{Index: flags.String("index"), RequestFile: flags.String("input"), ScenarioID: flags.String("scenario"), Answers: flags.String("scenario-answers"), Direct: readUpdateRequest(flags), Resume: flags.Bool("resume"), Executable: deps.Executable, SecretEnv: flags.String("secret-env"), Registry: flags.String("registry"), TelemetryEndpoint: flags.String("telemetry-endpoint"), TelemetryConsent: flags.Bool("telemetry-consent")}
+		return executeUpdate(ctx, input, deps)
+	}},
+	{Name: "uninstall", Short: "Remove the installation", Args: cobra.NoArgs, Flags: []string{"platform-root", "registry", "yes"}, Human: renderUninstall, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		return executeUninstall(ctx, uninstallCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd})
+	}},
+	{Name: "rollback", Short: "Restore a saved snapshot", Args: cobra.NoArgs, Flags: []string{"platform-root", "registry", "snapshot", "yes"}, Human: renderRollback, Handler: func(ctx context.Context, cmd *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		return executeRollback(ctx, rollbackCommandInput{PlatformRoot: flags.String("platform-root"), Registry: flags.String("registry"), Executable: deps.Executable, Snapshot: flags.String("snapshot"), Yes: flags.Bool("yes"), JSON: jsonMode(cmd), Command: cmd})
+	}},
+	{Name: "supervise", Short: "Run the host supervisor", Hidden: true, Args: cobra.NoArgs, Flags: []string{"platform-root", "foreground"}, Human: renderSupervise, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
+		return executeHostSupervise(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Foreground: flags.Bool("foreground"), Executable: deps.Executable, Version: buildVersion})
+	}},
+	{Name: "version", Short: "Show launcher build identity", Args: cobra.NoArgs, Human: renderVersion, Handler: func(ctx context.Context, _ *cobra.Command, _ *commandFlagReader, _ commandDependencies) (any, *diag.Diag) {
+		return executeVersion(ctx, versionCommandInput{})
+	}},
+}
+
+func readDirectRequest(flags *commandFlagReader) directRequest {
+	return readDirectRequestAt(flags, "request-platform-root")
+}
+
+func readUpdateRequest(flags *commandFlagReader) directRequest {
+	return readDirectRequestAt(flags, "platform-root")
+}
+
+func readDirectRequestAt(flags *commandFlagReader, platformRootFlag string) directRequest {
+	return directRequest{PlatformRoot: flags.String(platformRootFlag), ProjectRoot: flags.String("project-root"), PlatformVersion: flags.String("platform-version"), PlatformChannel: flags.String("platform-channel"), GatewayURL: flags.String("gateway-url"), SDKVersion: flags.String("sdk-version"), ServiceProfile: flags.String("service-profile"), Plugins: flags.String("plugins"), Adapters: flags.String("adapters"), Providers: strings.Join(flags.Strings("provider"), ","), Policy: flags.String("policy"), Offline: flags.Bool("offline")}
+}
+
+func executablePath() string {
+	path, _ := os.Executable()
+	return path
 }
 
 func newRootCommand() *cobra.Command {
-	flags := &commandFlags{}
-	root := &cobra.Command{
-		Use:           "kb-create",
-		Short:         "Install, update, and diagnose a local KB Labs platform",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 && !cmd.Flags().Changed("operation") {
-				return cmd.Help()
-			}
-			return runSafely(func() error { return flags.run(cmd, flags.defaultOperation(), args) })
-		},
-	}
-	p := root.PersistentFlags()
-	p.StringVar(&flags.index, "index", "", "path to immutable release index JSON")
-	p.StringVar(&flags.input, "input", "", "path to install request JSON")
-	p.StringVar(&flags.requestRoot, "request-platform-root", "", "platform root for a direct request")
-	p.StringVar(&flags.projectRoot, "project-root", "", "project directory to register after installation")
-	p.StringVar(&flags.platformVersion, "platform-version", "", "exact platform version")
-	p.StringVar(&flags.platformChannel, "platform-channel", "", "platform channel: stable, canary, experimental")
-	p.StringVar(&flags.gatewayURL, "gateway-url", "", "Gateway origin for this installation, for example http://127.0.0.1:4100")
-	p.StringVar(&flags.sdkVersion, "sdk-version", "", "exact SDK version")
-	p.StringVar(&flags.serviceProfile, "service-profile", "", "platform-owned service profile")
-	p.StringVar(&flags.plugins, "plugins", "", "comma-separated plugin IDs or id@version pins")
-	p.StringVar(&flags.adapters, "adapters", "", "comma-separated adapter IDs or id@version pins")
-	p.Var(&flags.providers, "provider", "provider preference capability=adapter (repeatable)")
-	p.StringVar(&flags.policy, "policy", "strict", "compatibility policy: strict or compatible")
-	p.BoolVar(&flags.offline, "offline", false, "use the offline artifact source")
-	p.StringVar(&flags.secretEnv, "secret-env", "", "requirement=ENV_VAR secret sources (never serialized)")
-	p.StringVar(&flags.doctorInput, "doctor-input", "", "path to manifest-derived doctor JSON")
-	p.StringVar(&flags.scenarioID, "scenario", "", "built-in install scenario ID")
-	p.StringVar(&flags.scenarioAnswers, "scenario-answers", "", "JSON object of scenario answers")
-	p.BoolVar(&flags.scenarioResume, "resume", false, "resume persisted non-secret scenario answers")
-	p.BoolVar(&flags.doctorFix, "fix", false, "apply manifest-declared safe defaults")
-	p.BoolVar(&flags.doctorRecover, "recover", false, "recover the administrator account")
-	p.StringVar(&flags.recoverEmail, "email", "", "administrator email for recovery")
-	p.StringVar(&flags.recoverTenant, "tenant", "", "tenant ID for recovery")
-	p.BoolVar(&flags.recoverPasswordStdin, "password-stdin", false, "read recovery password from stdin")
-	p.BoolVar(&flags.recoverGenerate, "generate", false, "generate and print a recovery password once")
-	p.BoolVar(&flags.recoverYes, "yes", false, "confirm recovery, uninstall, or rollback")
-	p.StringVar(&flags.operation, "operation", "plan", "operation for the flag-based interface")
-	p.StringVar(&flags.platformRoot, "platform-root", "", "platform root for lifecycle operations")
-	p.StringVar(&flags.snapshotID, "snapshot", "", "snapshot ID for rollback")
-	p.StringVar(&flags.registry, "registry", "", "npm registry for exact artifact installation")
-	p.StringVar(&flags.telemetryURL, "telemetry-endpoint", "", "opt-in anonymous telemetry endpoint")
-	p.BoolVar(&flags.foreground, "foreground", false, "run the host directly in this process")
-	p.BoolVar(&flags.jsonOutput, "json", false, "emit machine-readable output")
-	p.BoolVar(&flags.telemetryAllowed, "telemetry-consent", false, "allow anonymous operational telemetry")
-	for _, item := range []struct{ name, short string }{
-		{"install", "Install KB Labs interactively"}, {"plan", "Resolve an install request"},
-		{"apply", "Apply an install request"}, {"status", "Show installation status"},
-		{"doctor", "Diagnose or repair an installation"}, {"start", "Start the local host"},
-		{"stop", "Stop the local host"}, {"restart", "Restart the local host"},
-		{"update", "Update the installation"}, {"uninstall", "Remove the installation"},
-		{"rollback", "Restore a saved snapshot"}, {"supervise", "Run the host supervisor"},
-	} {
-		operation := item.name
-		child := &cobra.Command{Use: operation, Short: item.short, Args: cobra.ArbitraryArgs,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return runSafely(func() error { return flags.run(cmd, operation, args) })
+	root := &cobra.Command{Use: "kb-create", Short: "Install, update, and diagnose a local KB Labs platform", SilenceUsage: true, SilenceErrors: true}
+	registerPersistentFlags(root)
+	for _, registered := range operationDescriptors {
+		descriptor := registered
+		values := make(map[string]any, len(descriptor.Flags))
+		child := &cobra.Command{Use: descriptor.Name, Short: descriptor.Short, Args: descriptor.Args,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				return callDescriptor(cmd, descriptor, values, productionCommandDependencies(cmd))
 			}}
-		if operation == "supervise" {
-			child.Hidden = true
-		}
+		child.Hidden = descriptor.Hidden
+		registerLocalFlags(child, descriptor.Flags, values)
 		root.AddCommand(child)
 	}
-	root.AddCommand(&cobra.Command{
-		Use:   "version",
-		Short: "Show launcher build identity",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			fmt.Fprintf(cmd.OutOrStdout(), "kb-create %s (commit %s)\n", buildVersion, buildCommit)
-			return result.Return(map[string]string{"version": buildVersion, "commit": buildCommit})
-		},
-	})
 	return root
+}
+
+func lookupOperationDescriptor(name string) (operationDescriptor, bool) {
+	for _, descriptor := range operationDescriptors {
+		if descriptor.Name == name {
+			return descriptor, true
+		}
+	}
+	return operationDescriptor{}, false
+}
+
+func callDescriptor(cmd *cobra.Command, descriptor operationDescriptor, values map[string]any, deps commandDependencies) error {
+	output, failure := descriptor.Handler(cmd.Context(), cmd, newCommandFlagReader(cmd, values), deps)
+	if failure != nil {
+		return runSafely(func() error { return failure })
+	}
+	if completion, ok := output.(streamCompletion); ok {
+		return result.StreamComplete(completion.ExitCode)
+	}
+	if !jsonMode(cmd) && descriptor.Human != nil {
+		if human := descriptor.Human(output); human != "" {
+			command.Printf("%s\n", human)
+		}
+	}
+	return result.Return(output)
 }
 
 func runSafely(run func() error) error {
 	err := run()
 	if err == nil || result.IsStreamComplete(err) {
-		return err
-	}
-	if _, ok := result.ReturnedData(err); ok {
 		return err
 	}
 	var typed *diag.Diag
@@ -142,374 +173,69 @@ func runSafely(run func() error) error {
 	return diag.FromErrorWithLogger(err, slog.New(slog.NewJSONHandler(file, nil)))
 }
 
-func (f *commandFlags) defaultOperation() string {
-	if f.operation == "" {
-		return "plan"
-	}
-	return f.operation
-}
-
-func (f *commandFlags) run(cmd *cobra.Command, operation string, _ []string) error {
-	telemetryEndpoint, telemetryConsent = f.telemetryURL, f.telemetryAllowed
-	executable, _ := os.Executable()
-	inv := invocation{
-		Operation: operation, Index: f.index, Input: f.input, DoctorInput: f.doctorInput,
-		PlatformRoot: f.platformRoot, Snapshot: f.snapshotID, Registry: f.registry,
-		SecretEnv: f.secretEnv, DoctorFix: f.doctorFix,
-		Recover: recoverRequest{Enabled: f.doctorRecover, Email: f.recoverEmail, Tenant: f.recoverTenant,
-			PasswordStdin: f.recoverPasswordStdin, Generate: f.recoverGenerate, Yes: f.recoverYes, JSON: f.jsonOutput},
-		ScenarioID: f.scenarioID, ScenarioAnswers: f.scenarioAnswers, ScenarioResume: f.scenarioResume,
-		Direct: directRequest{PlatformRoot: f.requestRoot, ProjectRoot: f.projectRoot, PlatformVersion: f.platformVersion,
-			PlatformChannel: f.platformChannel, SDKVersion: f.sdkVersion, ServiceProfile: f.serviceProfile,
-			GatewayURL: f.gatewayURL,
-			Plugins:    f.plugins, Adapters: f.adapters, Providers: strings.Join(f.providers, ","), Policy: f.policy, Offline: f.offline},
-		Executable: executable, Foreground: f.foreground, JSON: f.jsonOutput, Yes: f.recoverYes,
-		InstallInput: os.Stdin,
-	}
-	return runInvocation(cmd, inv, operation)
-}
-
-func runInvocation(cmd *cobra.Command, inv invocation, operation string) error {
-	if operation == "supervise" || isHostOperation(operation) {
-		return runHostThroughBoundary(cmd, inv, operation)
-	}
-	humanMode := !inv.JSON
-	if humanMode && operation != "install" && operation != "uninstall" && operation != "rollback" {
-		inv.JSON = true
-	}
-	var progressStream *stream.Writer
-	if inv.JSON && operation == "install" {
-		progressStream = stream.New(command.StreamWriter(cmd))
-		deps := inv.RuntimeDeps
-		if deps == nil {
-			deps = &runtime.Dependencies{}
-		}
-		deps.Progress = streamProgress{writer: progressStream}
-		inv.RuntimeDeps = deps
-	}
-	output, err := os.CreateTemp("", "kb-create-result-*.json")
-	if err != nil {
-		return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The command could not start.")
-	}
-	path := output.Name()
-	defer os.Remove(path)
-	var human bytes.Buffer
-	if operation == "install" && !inv.JSON {
-		inv.InstallOutput = &human
-	}
-	exitCode := inv.run(output)
-	if err := output.Close(); err != nil {
-		return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The command output could not be read.")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The command result could not be read.")
-	}
-	if exitCode != 0 {
-		failure := errorFromOperationResult(data, exitCode)
-		if progressStream != nil {
-			var typed *diag.Diag
-			if !errors.As(failure, &typed) {
-				typed = diag.FromError(failure)
-			}
-			if err := progressStream.Fail(typed); err != nil {
-				return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
-			}
-			streamExit := diag.ExitCode(typed)
-			if exitCode == diag.ExitInput {
-				streamExit = diag.ExitInput
-			}
-			_ = progressStream.Finish(streamExit)
-			return result.StreamComplete(progressStream.ExitCode())
-		}
-		return failure
-	}
-	var payload map[string]any
-	if len(bytes.TrimSpace(data)) > 0 {
-		payload, err = operationResultPayload(operation, inv.DoctorFix, inv.Recover.Enabled, data)
-		if err != nil {
-			code, message := "KB_RUNTIME_UNEXPECTED", "The command returned an invalid result."
-			if operation == "doctor" && !inv.DoctorFix && !inv.Recover.Enabled {
-				message = "The doctor report could not be read."
-			}
-			return diag.Wrap(err, code, message)
-		}
-	}
-	if progressStream != nil {
-		if err := progressStream.Finish(diag.ExitOK); err != nil {
-			return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
-		}
-		return result.StreamComplete(progressStream.ExitCode())
-	}
-	if humanMode {
-		if operation == "install" && human.Len() > 0 {
-			command.Printf("%s", human.String())
-		} else if operation == "status" {
-			command.Printf("%s\n", hostHumanSummary(operation, payload))
-		} else if operation == "doctor" && inv.Recover.Enabled {
-			if output, ok := payload["output"].(string); ok && output != "" {
-				command.Printf("%s\n", output)
-			}
-			command.Printf("Administrator account recovery completed.\n")
-		} else {
-			command.Printf("%s\n", operationHumanSummary(operation, payload))
-		}
-	}
-	return result.Return(payload)
-}
-
-func operationResultPayload(operation string, doctorFix, doctorRecover bool, data []byte) (map[string]any, error) {
-	if operation == "doctor" && !doctorFix && !doctorRecover {
-		return doctorResultPayload(data)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
-	}
-	delete(payload, "ok")
-	return payload, nil
-}
-
-func doctorResultPayload(data []byte) (map[string]any, error) {
-	var payload map[string]any
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
-	}
-	healthy, ok := payload["ok"].(bool)
-	if !ok {
-		return nil, errors.New("doctor report has no boolean health result")
-	}
-	delete(payload, "ok")
-	payload["operation"] = "doctor"
-	payload["status"] = "unhealthy"
-	if healthy {
-		payload["status"] = "healthy"
-	}
-	return payload, nil
-}
-
 type streamProgress struct{ writer *stream.Writer }
 
-func (p streamProgress) Emit(event runtime.ProgressEvent) {
+func (p streamProgress) Emit(event runtime.ProgressEvent) error {
 	state := "completed"
 	if event.Start {
 		state = "started"
 	}
-	_ = p.writer.Event(map[string]any{"phase": event.Phase, "state": state})
+	if err := p.writer.Event(map[string]any{"phase": event.Phase, "state": state}); err != nil {
+		return progressWriteFailure(err, "apply")
+	}
+	return nil
 }
 
-func errorFromOperationResult(data []byte, exitCode int) error {
-	var envelope struct {
-		Error          json.RawMessage `json:"error"`
-		LogPath        string          `json:"logPath"`
-		DiagnosticPath string          `json:"diagnosticPath"`
-	}
-	if json.Unmarshal(data, &envelope) == nil && len(envelope.Error) > 0 {
-		var result struct {
-			Code          string         `json:"code"`
-			Message       string         `json:"message"`
-			Hint          string         `json:"hint"`
-			Cause         string         `json:"cause"`
-			CorrelationID string         `json:"correlationId"`
-			Details       map[string]any `json:"details"`
-			Meta          map[string]any `json:"meta"`
-		}
-		if json.Unmarshal(envelope.Error, &result) == nil && result.Code != "" {
-			if _, known := diag.LookupCatalog(result.Code); known {
-				var typed diag.Diag
-				if json.Unmarshal(envelope.Error, &typed) == nil {
-					if envelope.LogPath != "" || envelope.DiagnosticPath != "" {
-						if typed.Meta == nil {
-							typed.Meta = map[string]any{}
-						}
-						if envelope.LogPath != "" {
-							typed.Meta["logPath"] = envelope.LogPath
-						}
-						if envelope.DiagnosticPath != "" {
-							typed.Meta["diagnosticPath"] = envelope.DiagnosticPath
-						}
-					}
-					typed.ProcessExitCode = exitCode
-					return &typed
-				}
-				meta := result.Details
-				if meta == nil {
-					meta = result.Meta
-				}
-				meta = cloneOperationMeta(meta)
-				if envelope.LogPath != "" {
-					meta["logPath"] = envelope.LogPath
-				}
-				if envelope.DiagnosticPath != "" {
-					meta["diagnosticPath"] = envelope.DiagnosticPath
-				}
-				return diag.New(result.Code, result.Message,
-					diag.WithHint(result.Hint), diag.WithCause(result.Cause),
-					diag.WithCorrelationID(result.CorrelationID), diag.WithMeta(meta), diag.WithProcessExitCode(exitCode))
-			}
-			if exitCode == diag.ExitInput {
-				meta := result.Details
-				if meta == nil {
-					meta = result.Meta
-				}
-				return diag.New("KB_RUNTIME_INPUT_INVALID", result.Message,
-					diag.WithHint(result.Hint), diag.WithCause(result.Cause),
-					diag.WithCorrelationID(result.CorrelationID), diag.WithMeta(meta))
-			}
-		}
-	}
-	if exitCode == diag.ExitInput {
-		return diag.New("KB_RUNTIME_INPUT_INVALID", "The command input is invalid.")
-	}
-	return errors.New("kb-create command failed unexpectedly")
+func renderPlan(any) string { return "Install plan resolved." }
+func renderVersion(any) string {
+	return fmt.Sprintf("kb-create %s (commit %s)", buildVersion, buildCommit)
 }
 
-func cloneOperationMeta(meta map[string]any) map[string]any {
-	cloned := make(map[string]any, len(meta))
-	for key, value := range meta {
-		cloned[key] = value
-	}
-	return cloned
+func executeVersion(_ context.Context, _ versionCommandInput) (map[string]any, *diag.Diag) {
+	return map[string]any{"version": buildVersion, "commit": buildCommit}, nil
 }
+func renderUpdate(any) string    { return "Platform update completed." }
+func renderRollback(any) string  { return "Platform rollback completed." }
+func renderUninstall(any) string { return "Platform uninstalled." }
+func renderStart(any) string     { return "KB Labs host started." }
+func renderStop(any) string      { return "KB Labs host stopped." }
+func renderRestart(any) string   { return "KB Labs host restarted." }
+func renderSupervise(any) string { return "KB Labs host supervisor started." }
 
-func runHostThroughBoundary(cmd *cobra.Command, inv invocation, operation string) error {
-	output, err := os.CreateTemp("", "kb-create-host-*.json")
-	if err != nil {
-		return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The host command could not start.")
-	}
-	path := output.Name()
-	defer os.Remove(path)
-	hostCommand := inv.hostCommand(output)
-	hostCommand.JSON = true
-	hostCommand.Out, hostCommand.Err = output, io.Discard
-	exitCode := hostCommand.run(operation)
-	if err := output.Close(); err != nil {
-		return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The host command result could not be read.")
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The host command result could not be read.")
-	}
-	if exitCode != 0 {
-		return errorFromOperationResult(data, exitCode)
-	}
-	var payload map[string]any
-	if len(bytes.TrimSpace(data)) > 0 {
-		if err := json.Unmarshal(data, &payload); err != nil {
-			return diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "The host command returned an invalid result.")
-		}
-		delete(payload, "ok")
-	}
-	if inv.JSON {
-		return result.Return(payload)
-	}
-	command.Printf("%s\n", hostHumanSummary(operation, payload))
-	return result.Return(payload)
-}
-
-func operationHumanSummary(operation string, payload map[string]any) string {
-	switch operation {
-	case "doctor":
-		lines := []string{"Platform diagnosis completed."}
-		if status, _ := payload["status"].(string); status != "" {
-			lines = append(lines, "Status: "+status)
-		}
-		if channel, _ := payload["platformChannel"].(string); channel != "" {
-			lines = append(lines, "Platform channel: "+channel)
-		}
-		if version, _ := payload["platformVersion"].(string); version != "" {
-			lines = append(lines, "Platform version: "+version)
-		}
-		if findings, ok := payload["findings"].([]any); ok {
-			for _, raw := range findings {
-				finding, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-				line := "Finding " + stringField(finding, "code")
-				if component := stringField(finding, "component"); component != "" {
-					line += ": package=" + component
-				}
-				if path := stringField(finding, "path"); path != "" {
-					line += " path=" + path
-				}
-				lines = append(lines, line)
-				if hint := stringField(finding, "hint"); hint != "" {
-					lines = append(lines, "Hint: "+hint)
-				}
-			}
-		}
-		for _, sectionName := range []string{"installation", "platform"} {
-			section, _ := payload[sectionName].(map[string]any)
-			checks, _ := section["checks"].([]any)
-			for _, raw := range checks {
-				check, ok := raw.(map[string]any)
-				if !ok || check["ok"] == true {
-					continue
-				}
-				line := strings.ToUpper(sectionName[:1]) + sectionName[1:] + " check " + stringField(check, "id")
-				if code := stringField(check, "code"); code != "" {
-					line += " (" + code + ")"
-				}
-				if detail := stringField(check, "detail"); detail != "" {
-					line += ": " + detail
-				}
-				lines = append(lines, line)
-				if hint := stringField(check, "hint"); hint != "" {
-					lines = append(lines, "Next: "+hint)
-				}
-			}
-		}
-		return strings.Join(lines, "\n")
-	case "update":
-		return "Platform update completed."
-	case "rollback":
-		return "Platform rollback completed."
-	case "apply":
-		if status, ok := payload["shim"].(map[string]any); ok && status["linked"] == false {
-			owner, _ := status["owner"].(string)
-			return fmt.Sprintf("Platform installation completed.\nThe kb command is owned by %s; run %s to use this platform.", owner, shim.Target(installRequestRoot(payload)))
-		}
+func renderApply(value any) string {
+	payload, ok := value.(applyCommandResult)
+	if !ok {
 		return "Platform installation completed."
-	case "plan":
-		return "Install plan resolved."
-	case "uninstall":
-		return "Platform uninstalled."
-	default:
-		return fmt.Sprintf("%s completed.", operation)
 	}
+	if payload.Shim != nil && !payload.Shim.Linked {
+		return fmt.Sprintf("Platform installation completed.\nThe kb command is owned by %s; run %s to use this platform.", payload.Shim.Owner, shim.Target(payload.Receipt.Plan.Request.PlatformRoot))
+	}
+	return "Platform installation completed."
 }
 
-func installRequestRoot(payload map[string]any) string {
-	installed, _ := payload["receipt"].(map[string]any)
-	plan, _ := installed["plan"].(map[string]any)
-	request, _ := plan["request"].(map[string]any)
-	root, _ := request["platformRoot"].(string)
-	return root
+func renderStatus(value any) string {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	installed, _ := payload["installed"].(bool)
+	running, _ := payload["running"].(bool)
+	reachable, _ := payload["reachable"].(bool)
+	installation, _ := payload["installation"].(map[string]any)
+	channel, _ := installation["platformChannel"].(string)
+	version, _ := installation["platformVersion"].(string)
+	return fmt.Sprintf("Installed: %t\nPlatform channel: %s\nPlatform version: %s\nRunning: %t\nReachable: %t", installed, channel, version, running, reachable)
+}
+
+func renderDoctor(value any) string {
+	diagnosis, ok := value.(doctorCommandResult)
+	if !ok {
+		return "Platform diagnosis completed."
+	}
+	return diagnosis.human()
 }
 
 func stringField(values map[string]any, key string) string {
 	value, _ := values[key].(string)
 	return value
-}
-
-func hostHumanSummary(operation string, payload map[string]any) string {
-	switch operation {
-	case "status":
-		installed, _ := payload["installed"].(bool)
-		running, _ := payload["running"].(bool)
-		reachable, _ := payload["reachable"].(bool)
-		installation, _ := payload["installation"].(map[string]any)
-		channel, _ := installation["platformChannel"].(string)
-		version, _ := installation["platformVersion"].(string)
-		return fmt.Sprintf("Installed: %t\nPlatform channel: %s\nPlatform version: %s\nRunning: %t\nReachable: %t", installed, channel, version, running, reachable)
-	case "start":
-		return "KB Labs host started."
-	case "stop":
-		return "KB Labs host stopped."
-	case "restart":
-		return "KB Labs host restarted."
-	default:
-		return "KB Labs host supervisor started."
-	}
 }

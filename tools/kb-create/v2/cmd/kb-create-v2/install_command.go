@@ -1,0 +1,212 @@
+package v2cli
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/stream"
+	"github.com/kb-labs/create/v2/catalog"
+	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/preflight"
+	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/wizard"
+)
+
+type installCommandInput struct {
+	Index, RequestFile, ScenarioID, Answers, SecretEnv, Registry, Executable string
+	TelemetryEndpoint                                                        string
+	Direct                                                                   directRequest
+	Resume, JSON, TelemetryConsent                                           bool
+}
+
+func executeInstall(ctx context.Context, installInput installCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
+	installInput.JSON = false
+	return install(ctx, installInput, deps)
+}
+
+func executeInstallStream(ctx context.Context, installInput installCommandInput, deps commandDependencies) (streamCompletion, *diag.Diag) {
+	completion, failure := installJSON(ctx, installInput, deps)
+	return completion, failure
+}
+
+func install(ctx context.Context, input installCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
+	out := deps.InstallOutput
+	if out == nil {
+		out = os.Stdout
+	}
+	if err := deps.NodeCheck(); err != nil {
+		failure := contracts.NewDiag(contracts.CodeNodeVersion, "Node.js 24.x is required before installation.",
+			"Install Node.js 24, then run `kb-create install` (for nvm: `nvm install 24 && nvm use 24`).", err)
+		failure.ProcessExitCode = diag.ExitInput
+		return applyCommandResult{}, failure
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The home directory could not be determined.", "Set HOME to a writable directory, then rerun `kb-create install`.", err)
+	}
+	index := input.Index
+	if index == "" {
+		index = filepath.Join(home, ".local", "share", "kb-create", "release-index.json")
+	}
+	root := input.Direct.PlatformRoot
+	if root == "" {
+		root = filepath.Join(home, "kb-platform")
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `kb-create install --request-platform-root PATH`.", err)
+	}
+	if err := preflight.CheckInstallResources(root); err != nil {
+		return applyCommandResult{}, asDiag(err)
+	}
+	source, err := catalog.LoadFile(index)
+	if err != nil {
+		return applyCommandResult{}, indexFailure(err, "supply a valid immutable V2 release index")
+	}
+	if _, err := fmt.Fprintln(out, "Set up KB Labs. Local access is enabled by default; it only accepts connections from this computer."); err != nil {
+		return applyCommandResult{}, progressWriteFailure(err, "install")
+	}
+	inputReader := deps.InstallInput
+	if inputReader == nil {
+		inputReader = os.Stdin
+	}
+	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, wizard.IO{In: inputReader, Out: out})
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the answers and rerun `kb-create install`.", err)
+	}
+	started := time.Now()
+	resolved, failure := resolvePlan(planInput{Index: index, Request: &request, Executable: input.Executable, KnownGateways: knownGatewayRoots(input.Executable)})
+	if failure != nil {
+		return applyCommandResult{}, failure
+	}
+	plan := resolved.Plan
+	if _, err := fmt.Fprintf(out, "  ✓ Resolve (%s)\n", time.Since(started).Round(time.Millisecond)); err != nil {
+		return applyCommandResult{}, progressWriteFailure(err, "install")
+	}
+	if _, err := fmt.Fprintf(out, "\nPlan: platform %s at %s, %d artifacts", plan.ServiceGraph.PlatformVersion, root, len(plan.Artifacts)); err != nil {
+		return applyCommandResult{}, progressWriteFailure(err, "install")
+	}
+	if plan.Request.ProjectRoot != "" {
+		if _, err := fmt.Fprintf(out, "; project %s", plan.Request.ProjectRoot); err != nil {
+			return applyCommandResult{}, progressWriteFailure(err, "install")
+		}
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
+		return applyCommandResult{}, progressWriteFailure(err, "install")
+	}
+	for _, artifact := range plan.Artifacts {
+		if _, err := fmt.Fprintf(out, "  - %s %s (%s)\n", artifact.ID, artifact.Version, artifact.Kind); err != nil {
+			return applyCommandResult{}, progressWriteFailure(err, "install")
+		}
+	}
+	if _, err := fmt.Fprintln(out, "\nApplying installation…"); err != nil {
+		return applyCommandResult{}, progressWriteFailure(err, "install")
+	}
+	deps.Runtime.Progress = &humanProgress{out: out, started: map[string]time.Time{}}
+	result, failure := executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
+		Executable: input.Executable, Progress: deps.Runtime.Progress, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent}, deps)
+	if failure != nil {
+		return applyCommandResult{}, failure
+	}
+	if result.Shim != nil && !result.Shim.Linked {
+		if _, err := fmt.Fprintf(out, "The kb command is owned by %s; run %s to use this platform.\n", result.Shim.Owner, shim.Target(root)); err != nil {
+			return applyCommandResult{}, progressWriteFailure(err, "install")
+		}
+	}
+	if plan.Request.ProjectRoot == "" {
+		if _, err := fmt.Fprintf(out, "\nKB Labs is installed at %s.\nNext: register a project with `kb project add <path>`.\n", root); err != nil {
+			return applyCommandResult{}, progressWriteFailure(err, "install")
+		}
+		return result, nil
+	}
+	projectID, err := deps.ProjectRegistrar(root, plan.Request.ProjectRoot)
+	if err != nil {
+		return applyCommandResult{}, projectRegistrationFailure(root, plan.Request.ProjectRoot, err)
+	}
+	if _, err := fmt.Fprintf(out, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `kb-create status --platform-root %q` and `kb project show %s`.\n", root, projectID, plan.Request.ProjectRoot, root, projectID); err != nil {
+		return applyCommandResult{}, progressWriteFailure(err, "install")
+	}
+	return result, nil
+}
+
+func installJSON(ctx context.Context, input installCommandInput, deps commandDependencies) (streamCompletion, *diag.Diag) {
+	writer := stream.New(clikitcommand.StreamWriter(deps.Command))
+	if input.Index == "" || (input.RequestFile == "" && input.Direct.PlatformRoot == "") {
+		failure := contracts.NewDiag(contracts.CodeInputRequired, "install needs a release index and an install request", "pass --index and either --input REQUEST.json or --request-platform-root PATH, then rerun `kb-create install --json`", nil)
+		failure.ProcessExitCode = diag.ExitInput
+		return finishInstallStreamFailure(writer, failure)
+	}
+	resolved, failure := resolvePlan(planInput{Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
+		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable,
+		KnownGateways: knownGatewayRoots(input.Executable)})
+	if failure != nil {
+		return finishInstallStreamFailure(writer, inputFailure(failure))
+	}
+	deps.Runtime.Progress = streamProgress{writer: writer}
+	result, failure := executeApplyPlanJSON(ctx, input, resolved, deps)
+	if failure != nil {
+		failure.ProcessExitCode = diag.ExitError
+		if err := writer.Fail(failure); err != nil {
+			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
+		}
+		if err := writer.Finish(failure.ProcessExitCode); err != nil {
+			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
+		}
+		return streamCompletion{ExitCode: writer.ExitCode()}, nil
+	}
+	request := result.Receipt.Plan.Request
+	if request.ProjectRoot != "" {
+		if _, err := deps.ProjectRegistrar(request.PlatformRoot, request.ProjectRoot); err != nil {
+			failure := projectRegistrationFailure(request.PlatformRoot, request.ProjectRoot, err)
+			failure.ProcessExitCode = diag.ExitError
+			if writeErr := writer.Fail(failure); writeErr != nil {
+				return streamCompletion{}, diag.Wrap(writeErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
+			}
+			if finishErr := writer.Finish(failure.ProcessExitCode); finishErr != nil {
+				return streamCompletion{}, diag.Wrap(finishErr, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
+			}
+			return streamCompletion{ExitCode: writer.ExitCode()}, nil
+		}
+	}
+	if err := writer.Finish(diag.ExitOK); err != nil {
+		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
+	}
+	return streamCompletion{ExitCode: writer.ExitCode()}, nil
+}
+
+func finishInstallStreamFailure(writer *stream.Writer, failure *diag.Diag) (streamCompletion, *diag.Diag) {
+	if err := writer.Fail(failure); err != nil {
+		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
+	}
+	if err := writer.Finish(diag.ExitCode(failure)); err != nil {
+		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
+	}
+	return streamCompletion{ExitCode: writer.ExitCode()}, nil
+}
+
+func executeApplyPlanJSON(ctx context.Context, input installCommandInput, resolved resolvedPlan, deps commandDependencies) (applyCommandResult, *diag.Diag) {
+	return executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
+		Executable: input.Executable, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent}, deps)
+}
+
+func registerInstalledProject(platformRoot, projectRoot string, registrar func(string) (string, error)) (string, error) {
+	if projectRoot == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("project directory %q must exist: %w", projectRoot, err)
+	}
+	return registerProject(platformRoot, filepath.Clean(canonical), registrar)
+}
+
+func renderInstall(any) string { return "" }

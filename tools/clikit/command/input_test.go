@@ -37,3 +37,20 @@ func TestInstallInputBoundaryNormalizesFlagParseFailures(t *testing.T) {
 		t.Fatalf("error = %v, want KB_RUNTIME_INPUT_INVALID", err)
 	}
 }
+
+// case: S-203.24
+func TestInstallInputBoundaryNamesTheCommandHelpAction(t *testing.T) {
+	root := &cobra.Command{Use: "kb-create", SilenceErrors: true, SilenceUsage: true}
+	child := &cobra.Command{Use: "status", Args: cobra.NoArgs, Run: func(*cobra.Command, []string) {}}
+	root.AddCommand(child)
+	InstallInputBoundary(root)
+	root.SetArgs([]string{"status", "unexpected"})
+	_, err := root.ExecuteC()
+	var failure *diag.Diag
+	if !errors.As(err, &failure) || failure.Code != "KB_RUNTIME_INPUT_INVALID" {
+		t.Fatalf("error = %v, want KB_RUNTIME_INPUT_INVALID", err)
+	}
+	if want := "Run `kb-create status --help` to see supported flags and arguments."; failure.Hint != want {
+		t.Fatalf("hint = %q, want %q", failure.Hint, want)
+	}
+}

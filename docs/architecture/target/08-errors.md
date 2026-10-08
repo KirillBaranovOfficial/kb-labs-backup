@@ -98,7 +98,7 @@
 | `KB_INSTALL_INTERRUPTED` | установка прервана | `kb-create apply` продолжит с места | L |
 | `KB_INSTALL_TOOLCHAIN_UNSUPPORTED` | (есть) версия Node/pnpm не подходит | нужные версии | L |
 | `KB_INSTALL_APPLY_FAILED` | (есть) установка не дошла до проверенного состояния | лог и досье, `doctor --fix` | L |
-| `KB_INSTALL_OPERATION_INVALID` / `_OPERATION_FAILED` | (есть) неизвестная операция / операция не дошла до проверенной установки | список операций; лог и досье | L |
+| `KB_INSTALL_OPERATION_FAILED` | (есть) операция не дошла до проверенной установки | лог и досье | L |
 | `KB_INSTALL_SCENARIO_INVALID` / `_WIZARD_INPUT_INVALID` / `_SECRET_INPUT_INVALID` / `_DOCTOR_INPUT_INVALID` | (есть) ответы сценария/мастера, секрет или вход doctor не приняты | что поправить | L |
 | `KB_INSTALL_RECOVERY_FAILED` / `_RECEIPT_UNAVAILABLE` / `_STATUS_UNHEALTHY` | (есть) восстановление не дошло до проверенного состояния / нет активного receipt / граф сервисов не готов | `doctor --fix`, снимок | L |
 | `KB_INSTALL_LOG_UNAVAILABLE` / `_DIAGNOSTIC_UNAVAILABLE` | (есть) нельзя записать лог/досье | права на каталог | L |

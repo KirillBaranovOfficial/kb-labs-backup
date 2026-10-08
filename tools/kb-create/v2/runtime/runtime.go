@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ type ArtifactInstaller interface {
 	Restore([]contracts.Artifact) error
 }
 type ProgressArtifactInstaller interface {
-	InstallWithProgress([]contracts.Artifact, func(string, bool)) error
+	InstallWithProgress([]contracts.Artifact, func(string, bool) error) error
 }
 type ArtifactUninstaller interface {
 	Uninstall([]contracts.Artifact) error
@@ -50,7 +51,7 @@ type ProgressEvent struct {
 	Start bool
 }
 
-type ProgressSink interface{ Emit(ProgressEvent) }
+type ProgressSink interface{ Emit(ProgressEvent) error }
 
 type systemClock struct{}
 
@@ -70,10 +71,11 @@ type Dependencies struct {
 // Apply is the one V2 fresh-install operation. It deliberately has no
 // dependency on legacy manifests, state or package scanning.
 func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Dependencies) (contracts.InstallReceipt, error) {
-	emit := func(phase string, start bool) {
+	emit := func(phase string, start bool) error {
 		if deps.Progress != nil {
-			deps.Progress.Emit(ProgressEvent{Phase: phase, Start: start})
+			return deps.Progress.Emit(ProgressEvent{Phase: phase, Start: start})
 		}
+		return nil
 	}
 	if plan.Schema != contracts.ResolvedPlanSchema {
 		return contracts.InstallReceipt{}, fmt.Errorf("apply resolved plan: unsupported schema %q", plan.Schema)
@@ -103,9 +105,13 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	if phased, ok := deps.Artifacts.(ProgressArtifactInstaller); ok {
 		artifactErr = phased.InstallWithProgress(plan.Artifacts, emit)
 	} else {
-		emit("Download and verify artifacts / install packages", true)
+		if err := emit("Download and verify artifacts / install packages", true); err != nil {
+			return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+		}
 		artifactErr = deps.Artifacts.Install(plan.Artifacts)
-		emit("Download and verify artifacts / install packages", false)
+		if err := emit("Download and verify artifacts / install packages", false); err != nil {
+			artifactErr = errors.Join(artifactErr, err)
+		}
 	}
 	if artifactErr != nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("apply exact artifacts: %w", artifactErr)
@@ -118,33 +124,45 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 		return contracts.InstallReceipt{}, fmt.Errorf("write marketplace lock: %w", err)
 	}
 	if plan.Host != nil {
-		emit("Render config", true)
-		if _, err := render.Write(plan); err != nil {
-			emit("Render config", false)
-			return contracts.InstallReceipt{}, fmt.Errorf("render resolved projections: %w", err)
+		if err := emit("Render config", true); err != nil {
+			return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
 		}
-		emit("Render config", false)
+		if _, err := render.Write(plan); err != nil {
+			progressErr := emit("Render config", false)
+			return contracts.InstallReceipt{}, fmt.Errorf("render resolved projections: %w", errors.Join(err, progressErr))
+		}
+		if err := emit("Render config", false); err != nil {
+			return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+		}
 	}
 	now := now(deps.Clock)
 	if deps.Host != nil && plan.Host != nil {
-		emit("Start host", true)
-		if err := deps.Host.Probe(ctx, *plan.Host); err != nil {
-			emit("Start host", false)
-			_ = removeProjections(plan.Request.PlatformRoot)
-			return contracts.InstallReceipt{}, fmt.Errorf("start the resolved host: %w", err)
+		if err := emit("Start host", true); err != nil {
+			return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
 		}
-		emit("Start host", false)
+		if err := deps.Host.Probe(ctx, *plan.Host); err != nil {
+			progressErr := emit("Start host", false)
+			_ = removeProjections(plan.Request.PlatformRoot)
+			return contracts.InstallReceipt{}, fmt.Errorf("start the resolved host: %w", errors.Join(err, progressErr))
+		}
+		if err := emit("Start host", false); err != nil {
+			return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+		}
 	}
-	emit("Verify installation", true)
+	if err := emit("Verify installation", true); err != nil {
+		return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+	}
 	check, err := verify.Run(plan, now)
 	if err != nil {
-		emit("Verify installation", false)
+		progressErr := emit("Verify installation", false)
 		// A fresh run has no prior receipt to restore. Remove only V2-owned
 		// projections so an incomplete installation cannot masquerade as installed.
 		_ = removeProjections(plan.Request.PlatformRoot)
-		return contracts.InstallReceipt{}, fmt.Errorf("verify installation: %w", err)
+		return contracts.InstallReceipt{}, fmt.Errorf("verify installation: %w", errors.Join(err, progressErr))
 	}
-	emit("Verify installation", false)
+	if err := emit("Verify installation", false); err != nil {
+		return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+	}
 	result := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: receiptID(plan.PlanHash, now), InstallationID: installationID, CreatedAt: now, CorrelationID: deps.CorrelationID, Plan: plan, Verification: check}
 	if err := receipt.Write(plan.Request.PlatformRoot, result); err != nil {
 		return contracts.InstallReceipt{}, fmt.Errorf("commit verified receipt: %w", err)

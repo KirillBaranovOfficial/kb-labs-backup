@@ -279,7 +279,7 @@ KB_INSTALL_CONFIG_REQUIRED
 Owner: @kb-labs/plugin-x@4.1.0
 Requirement: adapters.llm.apiKey (secret)
 Current state: missing
-Hint: kb-create doctor --fix --input adapters.llm.apiKey
+Hint: set OPENAI_API_KEY, then run `kb-create apply --index release-index.json --request-platform-root /path/to/platform --secret-env adapters.llm.apiKey=OPENAI_API_KEY --json`
 ```
 
 `doctor --fix` must not invent a secret or silently choose between competing
@@ -326,7 +326,7 @@ secured install:
 
 ```bash
 export ADMIN_PASSWORD=... JWT_SECRET="$(openssl rand -hex 64)"
-kb-create --operation apply --index release-index.json --input request.json \
+kb-create apply --index release-index.json --input request.json \
   --secret-env gateway.bootstrap.password=ADMIN_PASSWORD,gateway.jwtSecret=JWT_SECRET
 # request.json: values {"gateway.access.mode":"\"secured\"","gateway.bootstrap.adminEmail":"\"admin@example.com\""}
 #               secretInputs ["gateway.bootstrap.password","gateway.jwtSecret"]

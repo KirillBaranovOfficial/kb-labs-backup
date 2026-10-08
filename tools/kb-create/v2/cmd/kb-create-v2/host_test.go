@@ -16,10 +16,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
 )
+
+func TestStartStatusErrorRemainsAnError(t *testing.T) {
+	statusErr := diag.New(contracts.CodeReceiptUnavailable, "status could not read the active receipt")
+	got := startStatusDiagnostic(statusErr)
+	if got.Code != statusErr.Code || got.Message != statusErr.Message {
+		t.Fatalf("status diagnostic = %#v, want the status failure", got)
+	}
+}
 
 var (
 	buildOnce sync.Once
@@ -188,29 +197,13 @@ func TestOtherPlatformRootCannotObserveOrControlPerUserHost(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fixOutput, err := os.CreateTemp(t.TempDir(), "doctor-fix-cross-root")
-	if err != nil {
-		t.Fatal(err)
+	fixValue, fixFailure, code, _ := executeForTest(t, operationTestSetup{Operation: "doctor", PlatformRoot: rootB, Fix: true, JSON: true})
+	if code != 0 || fixFailure != nil {
+		t.Fatalf("doctor --fix B: %d %#v", code, fixFailure)
 	}
-	if code := (invocation{Operation: "doctor", PlatformRoot: rootB, DoctorFix: true, JSON: true}).run(fixOutput); code != 0 {
-		fixOutput.Close()
-		data, _ := os.ReadFile(fixOutput.Name())
-		t.Fatalf("doctor --fix B: %d %s", code, data)
-	}
-	if err := fixOutput.Close(); err != nil {
-		t.Fatal(err)
-	}
-	fixData, err := os.ReadFile(fixOutput.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixEnvelope struct {
-		Data struct {
-			HostRestarted bool `json:"hostRestarted"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(fixData, &fixEnvelope); err != nil || fixEnvelope.Data.HostRestarted {
-		t.Fatalf("doctor --fix B reported a restart or invalid result: %v %s", err, fixData)
+	fixResult := fixValue.(doctorFixResult)
+	if fixResult.HostRestarted {
+		t.Fatalf("doctor --fix B reported a restart: %#v", fixResult)
 	}
 	statusB := runForRoot(t, inst, rootB, "status")
 	if statusB["host"].(map[string]any)["state"] != "stopped" {
