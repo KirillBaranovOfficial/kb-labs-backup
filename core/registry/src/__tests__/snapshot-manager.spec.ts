@@ -92,7 +92,7 @@ describe('SnapshotManager — manifest staleness (#23)', () => {
     // Point the manifest at dist/manifest.js (the exact artifact named in #23)
     writeFileSync(
       join(pluginRoot, 'package.json'),
-      JSON.stringify({ name: '@kb-labs/foo', version: '1.0.0', kbLabs: { manifest: './dist/manifest.js' } }),
+      JSON.stringify({ name: '@kb-labs/foo', version: '1.0.0', kb: { manifest: './dist/manifest.js' } }),
     );
     const manifestArtifact = join(pluginRoot, 'dist', 'manifest.js');
     writeFileSync(manifestArtifact, 'export const manifest = {};');

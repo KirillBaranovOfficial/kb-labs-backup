@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findWorkspacePackages, loadAdapterManifest } from '@kb-labs/core-discovery';
+import { findWorkspacePackages } from '@kb-labs/core-discovery';
+import { loadAdapterManifest } from '@kb-labs/core-platform';
+import type { AdapterManifest } from '@kb-labs/core-platform';
 import { validatePlatformAdapterOptions } from '@kb-labs/core-config';
 import { resolveRuntimeStatePath } from '@kb-labs/core-project-registry';
 import { resolveDiscoveredAdapterDefaults } from '../default-adapters.js';
@@ -11,12 +13,12 @@ import type { DiscoveredAdapter } from '../discover-adapters.js';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../');
 
-async function workspaceAdapterManifests(): Promise<Map<string, Record<string, unknown>>> {
+async function workspaceAdapterManifests(): Promise<Map<string, AdapterManifest>> {
   const packages = await findWorkspacePackages(workspaceRoot);
-  const manifests = new Map<string, Record<string, unknown>>();
+  const manifests = new Map<string, AdapterManifest>();
 
   for (const candidate of packages) {
-    const result = await loadAdapterManifest(candidate.packageRoot);
+    const result = await loadAdapterManifest({ packageRoot: candidate.packageRoot });
     if (result.kind !== 'adapter') {continue;}
     expect(result.manifest.configSchema, `${candidate.packageName} must declare configSchema`).toBeDefined();
     manifests.set(candidate.packageName, result.manifest);
@@ -32,7 +34,7 @@ async function makePlatformRoot(): Promise<string> {
   await mkdir(scopePath, { recursive: true });
   const packages = await findWorkspacePackages(workspaceRoot);
   for (const candidate of packages) {
-    if ((await loadAdapterManifest(candidate.packageRoot)).kind !== 'adapter') {continue;}
+    if ((await loadAdapterManifest({ packageRoot: candidate.packageRoot })).kind !== 'adapter') {continue;}
     await symlink(candidate.packageRoot, path.join(scopePath, candidate.packageName.slice('@kb-labs/'.length)));
   }
   return platformRoot;

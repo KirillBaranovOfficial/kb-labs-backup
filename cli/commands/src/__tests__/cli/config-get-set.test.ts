@@ -156,16 +156,16 @@ beforeEach(async () => {
   await fsp.mkdir(path.join(platformRoot, 'node_modules', '@kb-labs', 'cli-bin'), { recursive: true });
   const openaiRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-openai');
   await write(openaiRoot, 'package.json', JSON.stringify({
-    name: '@kb-labs/adapters-openai', type: 'module', exports: './manifest.js',
+    name: '@kb-labs/adapters-openai', type: 'module', kb: { manifest: './manifest.js' },
   }));
-  await write(openaiRoot, 'manifest.js', `export const manifest = {
-    implements: 'ILLM',
+  await write(openaiRoot, 'manifest.js', `export const manifest = ${JSON.stringify({
+    manifestVersion: '1.0.0', id: 'openai', name: 'OpenAI', version: '1.0.0', type: 'core', implements: 'ILLM',
     configSchema: {
       apiKey: { type: 'string' }, baseURL: { type: 'string' }, defaultModel: { type: 'string' },
       model: { type: 'string' }, temperature: { type: 'number' },
       mode: { type: 'string', enum: ['fast', 'careful'] },
     },
-  };\n`);
+  })};\n`);
   await fsp.mkdir(projectRoot, { recursive: true });
   projectRoot = await fsp.realpath(projectRoot);
   await write(platformRoot, '.kb/kb.config.jsonc', PLATFORM_CONFIG);
@@ -212,8 +212,8 @@ describe('config set', () => {
   it('--scope platform writes the platform user config', async () => {
     const vibeproxyRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-vibeproxy');
     await fsp.mkdir(vibeproxyRoot, { recursive: true });
-    await fsp.writeFile(path.join(vibeproxyRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-vibeproxy', type: 'module', exports: './manifest.js' }));
-    await fsp.writeFile(path.join(vibeproxyRoot, 'manifest.js'), 'export const manifest = { implements: "ILLM" };');
+    await fsp.writeFile(path.join(vibeproxyRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-vibeproxy', type: 'module', kb: { manifest: './manifest.js' } }));
+    await fsp.writeFile(path.join(vibeproxyRoot, 'manifest.js'), `export const manifest = ${JSON.stringify({ manifestVersion: '1.0.0', id: 'vibeproxy', name: 'Vibe Proxy', version: '1.0.0', type: 'core', implements: 'ILLM' })};`);
     const { code } = await run(configSet, ['platform.adapters.llm', '@kb-labs/adapters-vibeproxy'], {
       scope: 'platform',
     });
@@ -245,11 +245,12 @@ describe('config set', () => {
   it('rejects an installed adapter package that does not declare the requested slot', async () => {
     const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-storage-fixture');
     await write(packageRoot, 'package.json', JSON.stringify({
-      name: '@kb-labs/adapters-storage-fixture', type: 'module', exports: './manifest.js',
+      name: '@kb-labs/adapters-storage-fixture', type: 'module', kb: { manifest: './manifest.js' },
     }));
-    await write(packageRoot, 'manifest.js', `export const manifest = {
+    await write(packageRoot, 'manifest.js', `export const manifest = ${JSON.stringify({
+      manifestVersion: '1.0.0', id: 'storage-fixture', name: 'Storage Fixture', version: '1.0.0', type: 'core',
       implements: 'IStorage', defaultFor: ['storage'],
-    };\n`);
+    })};\n`);
     const before = await fsp.readFile(PLATFORM_FILE(), 'utf8');
 
     const { code, out } = await run(configSet, [
@@ -465,15 +466,16 @@ describe('config set', () => {
       await write(
         pkg,
         'package.json',
-        JSON.stringify({ name: '@fake/adapter', type: 'module', exports: { '.': { import: './index.js' } } }),
+        JSON.stringify({ name: '@fake/adapter', type: 'module', kb: { manifest: './index.js' } }),
       );
       await write(
         pkg,
         'index.js',
-        `export const manifest = { configSchema: {
+        `export const manifest = ${JSON.stringify({
+          manifestVersion: '1.0.0', id: 'fake-adapter', name: 'Fake Adapter', version: '1.0.0', type: 'core', implements: 'ILLM', configSchema: {
           temperature: { type: 'number' },
           mode: { type: 'string', enum: ['fast', 'careful'] },
-        } };\n`,
+        }})};\n`,
       );
       await write(
         platformRoot,

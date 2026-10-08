@@ -76,7 +76,12 @@ describe('discoverAdapters (lock-based)', () => {
 
     await fs.writeFile(
       path.join(pkgDir, 'package.json'),
-      JSON.stringify({ name: '@test/my-adapter', main: 'dist/index.js' }),
+      JSON.stringify({ name: '@test/my-adapter', type: 'module', kb: { manifest: './dist/manifest.js' } }),
+    );
+
+    await fs.writeFile(
+      path.join(distDir, 'manifest.js'),
+      validAdapterManifest('ITestAdapter'),
     );
 
     await fs.writeFile(
@@ -115,9 +120,11 @@ describe('discoverAdapters (lock-based)', () => {
     await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), 'packages:\n  - "adapters/*"\n');
     await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
       name: '@kb-labs/adapters-sqlite',
-      kb: { manifest: './dist/index.js' },
+      type: 'module',
+      kb: { manifest: './dist/manifest.js' },
     }));
-    await fs.writeFile(path.join(distDir, 'index.js'), 'export const manifest = { implements: "IDocumentDatabase" }; export function createAdapter() { return {}; }');
+    await fs.writeFile(path.join(distDir, 'manifest.js'), validAdapterManifest('IDocumentDatabase'));
+    await fs.writeFile(path.join(distDir, 'index.js'), 'export function createAdapter() { return {}; }');
 
     const result = await discoverAdapters(tmpDir, {
       development: true,
@@ -129,7 +136,7 @@ describe('discoverAdapters (lock-based)', () => {
 
   it('classifies configured workspace adapters from their declared manifest, not package names', async () => {
     const adapterRoot = path.join(tmpDir, 'packages', 'storage');
-    await writeWorkspacePackage(tmpDir, adapterRoot, '@example/storage', 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
+    await writeWorkspacePackage(tmpDir, adapterRoot, '@example/storage', `${validAdapterManifest('IStorage')} export function createAdapter() { return {}; }`);
 
     const result = await discoverAdapters(tmpDir, {
       development: true,
@@ -157,8 +164,8 @@ describe('discoverAdapters (lock-based)', () => {
   it('loads only configured workspace packages', async () => {
     const configuredRoot = path.join(tmpDir, 'packages', 'configured');
     const unrelatedRoot = path.join(tmpDir, 'packages', 'unrelated');
-    await writeWorkspacePackage(tmpDir, configuredRoot, '@example/configured', 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
-    await writeWorkspacePackage(tmpDir, unrelatedRoot, '@kb-labs/adapters-unrelated', 'export const manifest = { implements: "ICache" }; export function createAdapter() { throw new Error("must not import unconfigured adapter"); }');
+    await writeWorkspacePackage(tmpDir, configuredRoot, '@example/configured', `${validAdapterManifest('IStorage')} export function createAdapter() { return {}; }`);
+    await writeWorkspacePackage(tmpDir, unrelatedRoot, '@kb-labs/adapters-unrelated', `${validAdapterManifest('ICache')} export function createAdapter() { throw new Error("must not import unconfigured adapter"); }`);
 
     const result = await discoverAdapters(tmpDir, {
       development: true,
@@ -189,7 +196,7 @@ describe('discoverAdapters (lock-based)', () => {
   // case: S-179.11
   it('fails when a configured workspace adapter does not export createAdapter', async () => {
     const packageRoot = path.join(tmpDir, 'packages', 'invalid');
-    await writeWorkspacePackage(tmpDir, packageRoot, '@example/invalid', 'export const manifest = { implements: "IStorage" };');
+    await writeWorkspacePackage(tmpDir, packageRoot, '@example/invalid', validAdapterManifest('IStorage'));
 
     await expect(discoverAdapters(tmpDir, {
       development: true,
@@ -206,7 +213,7 @@ describe('discoverAdapters (lock-based)', () => {
   it('does not activate workspace packages in an installed platform with pnpm-workspace.yaml', async () => {
     const adapterRoot = path.join(tmpDir, 'packages', 'built');
     const packageName = '@kb-labs/adapters-installed-workspace';
-    await writeWorkspacePackage(tmpDir, adapterRoot, packageName, 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
+    await writeWorkspacePackage(tmpDir, adapterRoot, packageName, `${validAdapterManifest('IStorage')} export function createAdapter() { return {}; }`);
 
     const result = await discoverAdapters(tmpDir, {
       development: false,
@@ -220,7 +227,7 @@ describe('discoverAdapters (lock-based)', () => {
     const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'project-workspace-'));
     try {
       const projectPackage = '@kb-labs/adapters-project';
-      await writeWorkspacePackage(projectRoot, path.join(projectRoot, 'packages', 'project'), projectPackage, 'export const manifest = { implements: "IStorage" }; export function createAdapter() { return {}; }');
+      await writeWorkspacePackage(projectRoot, path.join(projectRoot, 'packages', 'project'), projectPackage, `${validAdapterManifest('IStorage')} export function createAdapter() { return {}; }`);
       const result = await discoverAdapters(tmpDir, {
         development: true,
         configuredPackages: [{ packageName: projectPackage, slot: 'storage' }],
@@ -366,8 +373,9 @@ async function buildAdapter(
 
   await fs.writeFile(
     path.join(pkgDir, 'package.json'),
-    JSON.stringify({ name: pkgName, main: 'dist/index.js' }),
+    JSON.stringify({ name: pkgName, type: 'module', kb: { manifest: './dist/manifest.js' } }),
   );
+  await fs.writeFile(path.join(distDir, 'manifest.js'), validAdapterManifest('ITestAdapter'));
   await fs.writeFile(
     path.join(distDir, 'index.js'),
     `export function createAdapter() { return { source: "${tag}" }; }\n`,
@@ -390,9 +398,14 @@ async function writeWorkspacePackage(workspaceRoot: string, packageRoot: string,
   await fs.mkdir(distDir, { recursive: true });
   await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
     name: packageName,
+    type: 'module',
     kb: { manifest: './dist/manifest.js' },
   }));
   await fs.writeFile(path.join(distDir, 'manifest.js'), indexSource.replace('createAdapter', 'unusedFactory'));
   await fs.writeFile(path.join(distDir, 'index.js'), indexSource);
   await fs.writeFile(path.join(workspaceRoot, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+}
+
+function validAdapterManifest(role: string): string {
+  return `export const manifest = { manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: ${JSON.stringify(role)} };`;
 }
