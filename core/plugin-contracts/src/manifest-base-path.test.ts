@@ -1,13 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { declaredManifestPath, resolvePluginBasePath, type PluginRouteSurface } from "./manifest.js";
-
-describe("declaredManifestPath", () => {
-  it("reads only the canonical kb.manifest field", () => {
-    expect(declaredManifestPath({ kb: { manifest: "./dist/manifest.js" } })).toBe("./dist/manifest.js");
-    expect(declaredManifestPath({ kbLabs: { manifest: "./dist/legacy.js" } })).toBeUndefined();
-    expect(declaredManifestPath({})).toBeUndefined();
-  });
-});
+import { resolvePluginBasePath, type PluginRouteSurface } from "./manifest.js";
 
 describe("resolvePluginBasePath", () => {
   const configBasePath = "/api/v1";

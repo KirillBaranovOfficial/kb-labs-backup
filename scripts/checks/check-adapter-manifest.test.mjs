@@ -13,8 +13,8 @@ test('adapter-manifest uses devkit categories and validates built manifests', as
   try {
     const adapterRoot = path.join(root, 'adapters', 'adapter');
     const extraRoot = path.join(root, 'packages', 'extra');
-    await writeFixturePackage(adapterRoot, '@fixture/adapter', 'export const manifest = { implements: "IFixture" };\n');
-    await writeFixturePackage(extraRoot, '@fixture/extra', 'export const manifest = { implements: "IFixture", configSchema: {} };\n');
+    await writeFixturePackage(adapterRoot, '@fixture/adapter', adapterManifest({ implements: 'IFixture' }));
+    await writeFixturePackage(extraRoot, '@fixture/extra', adapterManifest({ implements: 'IFixture', configSchema: {} }));
 
     const adapterPackage = { name: '@fixture/adapter', dir: adapterRoot, relPath: 'adapters/adapter', category: 'adapter' };
     const extraPackage = { name: '@fixture/extra', dir: extraRoot, relPath: 'packages/extra', category: 'ts-lib' };
@@ -28,12 +28,12 @@ test('adapter-manifest uses devkit categories and validates built manifests', as
     const missingSchema = await runCheck(payload);
     assertIssue(missingSchema, '@fixture/adapter', 'configSchema', 'dist/manifest.js');
 
-    await writeFile(path.join(adapterRoot, 'dist', 'manifest.js'), 'export const manifest = { implements: "IFixture", configSchema: {} };\n');
+    await writeFile(path.join(adapterRoot, 'dist', 'manifest.js'), adapterManifest({ implements: 'IFixture', configSchema: {} }));
     const outsideCategory = await runCheck(payload);
     assertIssue(outsideCategory, '@fixture/extra', 'outside the devkit adapter category', 'package.json');
 
     extraPackage.category = 'adapter';
-    await writeFile(path.join(extraRoot, 'dist', 'manifest.js'), 'export const manifest = { configSchema: {} };\n');
+    await writeFile(path.join(extraRoot, 'dist', 'manifest.js'), adapterManifest({ implements: 'IFixture', configSchema: {} }));
     const undiscoverableCategory = await runCheck(payload);
     assertIssue(undiscoverableCategory, '@fixture/extra', 'not discoverable by platform adapter discovery', 'package.json');
   } finally {
@@ -50,6 +50,12 @@ async function writeFixturePackage(packageRoot, name, manifest) {
     kb: { manifest: './dist/manifest.js' },
   }));
   await writeFile(path.join(packageRoot, 'dist', 'manifest.js'), manifest);
+}
+
+function adapterManifest(fields) {
+  return `export const manifest = ${JSON.stringify({
+    manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', ...fields,
+  })};\n`;
 }
 
 async function runCheck(input) {

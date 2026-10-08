@@ -12,11 +12,16 @@ import * as crypto from 'node:crypto';
 import type { PackageSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
 import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
-import { MarketplaceService, mergeScopedEntries } from '../marketplace-service.js';
+import { NoOpLogger } from '@kb-labs/core-platform/noop';
+import { MarketplaceService, mergeScopedEntries, type MarketplaceServiceOptions } from '../marketplace-service.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger'>): MarketplaceService {
+  return new MarketplaceService({ ...options, logger: new NoOpLogger() });
+}
 
 function computeIntegrity(content: string): string {
   return `sha256-${crypto.createHash('sha256').update(Buffer.from(content)).digest('base64')}`;
@@ -55,7 +60,9 @@ async function createAdapterDir(tmpDir: string, name: string, id: string): Promi
     version: '1.0.0',
     kb: { manifest: './dist/adapter-manifest.js' },
   }));
-  await fs.writeFile(path.join(dir, 'dist', 'adapter-manifest.js'), 'export const manifest = { implements: "ITestAdapter" };');
+  await fs.writeFile(path.join(dir, 'dist', 'adapter-manifest.js'), `export const manifest = ${JSON.stringify({
+    manifestVersion: '1.0.0', id, name: id, version: '1.0.0', type: 'core', implements: 'ITestAdapter',
+  })};`);
   return dir;
 }
 
@@ -137,7 +144,7 @@ describe('MarketplaceService', () => {
         install,
         async remove() {},
       };
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const { PackageClassificationError } = await import('../marketplace-service.js');
 
       await expect(service.install({ scope: 'platform' }, ['@kb-labs/unknown-entry']))
@@ -173,7 +180,7 @@ describe('MarketplaceService', () => {
       };
       const sourceInstall = vi.spyOn(source, 'install');
       const sourceRemove = vi.spyOn(source, 'remove');
-      const service = new MarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
 
       await service.install({ scope: 'project', projectRoot }, ['@kb-labs/store-plugin']);
       await service.uninstall({ scope: 'project', projectRoot }, ['@kb-labs/store-plugin']);
@@ -190,7 +197,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/test-plugin', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.install({ scope: "platform" }, ['@kb-labs/test-plugin']);
 
       expect(result.installed).toHaveLength(1);
@@ -242,7 +249,7 @@ describe('MarketplaceService', () => {
         resolve: storeResolve,
         async listEntries() { return []; },
       };
-      const service = new MarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
 
       const result = await service.install({ scope: 'platform' }, [packageId]);
 
@@ -273,7 +280,7 @@ describe('MarketplaceService', () => {
         resolve: storeResolve,
         async listEntries() { return []; },
       };
-      const service = new MarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
 
       const result = await service.install({ scope: 'platform' }, [packageId]);
 
@@ -292,7 +299,7 @@ describe('MarketplaceService', () => {
         ['@kb-labs/b', { dir: dir2, version: '2.0.0', integrity: int2 }],
       ]));
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.install({ scope: "platform" }, ['@kb-labs/a', '@kb-labs/b']);
 
       expect(result.installed).toHaveLength(2);
@@ -326,7 +333,7 @@ describe('MarketplaceService', () => {
         }
       };
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await Promise.all([
         service.install({ scope: 'platform' }, ['@kb-labs/serial-a']),
         service.install({ scope: 'platform' }, ['@kb-labs/serial-b']),
@@ -343,7 +350,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/hook-fail', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       // Register a strategy with a failing afterInstall hook
       service.registerStrategy({
@@ -369,7 +376,7 @@ describe('MarketplaceService', () => {
         new Map([['mind', { dir, version: '0.0.2', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       const { InvalidEntityError } = await import('../marketplace-service.js');
       await expect(
@@ -393,7 +400,7 @@ describe('MarketplaceService', () => {
         remove: removeSpy,
       };
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/to-remove']);
 
       // Verify installed
@@ -416,7 +423,7 @@ describe('MarketplaceService', () => {
         ['@kb-labs/y', { dir: d2, version: '1.0.0', integrity: i2 }],
       ]));
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/x', '@kb-labs/y']);
       await service.uninstall({ scope: "platform" }, ['@kb-labs/x', '@kb-labs/y']);
 
@@ -432,7 +439,7 @@ describe('MarketplaceService', () => {
       const { dir } = await createPluginDir(tmpDir, 'local-plugin', '@kb-labs/local-plugin');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.link({ scope: "platform" }, path.relative(tmpDir, dir));
 
       expect(result.id).toBe('@kb-labs/local-plugin');
@@ -465,7 +472,7 @@ describe('MarketplaceService', () => {
         cli: { commands: [{ path: 'local-plugin ping', handler: './ping.js' }] },
       };
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.link(
         { scope: 'platform' },
         path.relative(tmpDir, dir),
@@ -481,7 +488,7 @@ describe('MarketplaceService', () => {
 
     it('rejects path outside workspace root (path traversal)', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       await expect(service.link({ scope: "platform" }, '../../etc/passwd')).rejects.toThrow('outside platform root');
     });
@@ -492,7 +499,7 @@ describe('MarketplaceService', () => {
       const { dir } = await createPluginDir(tmpDir, 'to-unlink', '@kb-labs/to-unlink');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.link({ scope: "platform" }, path.relative(tmpDir, dir));
       await service.unlink({ scope: "platform" }, '@kb-labs/to-unlink');
 
@@ -510,7 +517,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/toggle', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/toggle']);
 
       await service.disable({ scope: "platform" }, '@kb-labs/toggle');
@@ -524,14 +531,14 @@ describe('MarketplaceService', () => {
 
     it('throws when enabling a non-existent package', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       await expect(service.enable({ scope: "platform" }, '@kb-labs/ghost')).rejects.toThrow('not found');
     });
 
     it('throws when disabling a non-existent package', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       await expect(service.disable({ scope: "platform" }, '@kb-labs/ghost')).rejects.toThrow('not found');
     });
@@ -546,7 +553,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/listed', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/listed']);
 
       const list = await service.list({ scope: "platform" });
@@ -560,7 +567,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/filter-me', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/filter-me']);
 
       const plugins = await service.list({ scope: "platform" }, { kind: 'plugin' });
@@ -572,7 +579,7 @@ describe('MarketplaceService', () => {
 
     it('returns empty list when no lock file', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       const list = await service.list({ scope: "platform" });
       expect(list).toEqual([]);
@@ -584,7 +591,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/entry-get', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/entry-get']);
 
       const entry = await service.getEntry({ scope: "platform" }, '@kb-labs/entry-get');
@@ -605,7 +612,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/healthy', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/healthy']);
 
       const report = await service.doctor({ scope: "platform" });
@@ -622,7 +629,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/will-vanish', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/will-vanish']);
 
       // Delete the package directory
@@ -640,7 +647,7 @@ describe('MarketplaceService', () => {
     it('reports discovery failures for enabled plugin entries with their diagnostic code', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'id-mismatch', '@kb-labs/id-mismatch');
       const source = createMockSource(new Map([['@kb-labs/id-mismatch', { dir, version: '1.0.0', integrity }]]));
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: 'platform' }, ['@kb-labs/id-mismatch']);
       await fs.writeFile(path.join(dir, 'kb.plugin.json'), JSON.stringify({
         schema: 'kb.plugin/3', id: '@kb-labs/other-id', version: '1.0.0',
@@ -659,7 +666,7 @@ describe('MarketplaceService', () => {
     it('lists enabled plugins with missing command handlers and their discovery code', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'missing-handler', '@kb-labs/missing-handler');
       const source = createMockSource(new Map([['@kb-labs/missing-handler', { dir, version: '1.0.0', integrity }]]));
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: 'platform' }, ['@kb-labs/missing-handler']);
       await fs.rm(path.join(dir, 'dist', 'h.js'));
 
@@ -677,7 +684,7 @@ describe('MarketplaceService', () => {
     it('lists enabled plugins with invalid command schemas and their discovery code', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'invalid-command-schema', '@kb-labs/invalid-command-schema');
       const source = createMockSource(new Map([['@kb-labs/invalid-command-schema', { dir, version: '1.0.0', integrity }]]));
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: 'platform' }, ['@kb-labs/invalid-command-schema']);
       await fs.writeFile(path.join(dir, 'kb.plugin.json'), JSON.stringify({
         schema: 'kb.plugin/3',
@@ -701,7 +708,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/tampered', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/tampered']);
 
       // Tamper with package.json
@@ -721,7 +728,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/unsigned', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/unsigned']);
 
       const report = await service.doctor({ scope: "platform" });
@@ -731,7 +738,7 @@ describe('MarketplaceService', () => {
 
     it('returns ok: true with empty lock', async () => {
       const source = createMockSource(new Map());
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
 
       const report = await service.doctor({ scope: "platform" });
       expect(report.ok).toBe(true);
@@ -745,7 +752,7 @@ describe('MarketplaceService', () => {
       await createPluginDir(tmpDir, 'found-plugin', '@kb-labs/found-plugin');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       const result = await service.sync({ scope: "platform" }, {
         include: ['packages/*'],
       });
@@ -762,7 +769,7 @@ describe('MarketplaceService', () => {
     // case: S-179.4
     it('records workspace adapters in the platform adapters lock section', async () => {
       const adapterDir = await createAdapterDir(tmpDir, 'found-adapter', '@kb-labs/found-adapter');
-      const service = new MarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()) });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source: createMockSource(new Map()) });
 
       const result = await service.sync({ scope: 'platform' }, { include: ['packages/*'] });
 
@@ -783,7 +790,7 @@ describe('MarketplaceService', () => {
         new Map([['@kb-labs/existing', { dir, version: '1.0.0', integrity }]]),
       );
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.install({ scope: "platform" }, ['@kb-labs/existing']);
 
       const result = await service.sync({ scope: "platform" }, { include: ['packages/*'] });
@@ -796,7 +803,7 @@ describe('MarketplaceService', () => {
       await createPluginDir(tmpDir, 'auto-disabled', '@kb-labs/auto-disabled');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.sync({ scope: "platform" }, { include: ['packages/*'], autoEnable: false });
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());
@@ -807,7 +814,7 @@ describe('MarketplaceService', () => {
       await createPluginDir(tmpDir, 'auto-enabled', '@kb-labs/auto-enabled');
       const source = createMockSource(new Map());
 
-      const service = new MarketplaceService({ platformRoot: tmpDir, source });
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
       await service.sync({ scope: "platform" }, { include: ['packages/*'], autoEnable: true });
 
       const lock = await readMarketplaceLock(tmpDir, new DiagnosticCollector());

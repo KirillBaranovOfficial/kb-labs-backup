@@ -61,6 +61,9 @@ export type {
   AdapterMiddlewareDecl,
   RawMiddlewareDecl,
 } from "./adapters/adapter-manifest.js";
+export { adapterManifestProvidesSlot } from "./adapters/adapter-manifest.js";
+export { declaredManifestPath, loadAdapterManifest, resolveAdapterManifestModulePath, resolveInstalledAdapterPackageRoot } from "./adapters/adapter-manifest-loader.js";
+export type { AdapterManifestLoadResult, AdapterManifestSource } from "./adapters/adapter-manifest-loader.js";
 
 export type { IAnalytics } from "./adapters/analytics.js";
 

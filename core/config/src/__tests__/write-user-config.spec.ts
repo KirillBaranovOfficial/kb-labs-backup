@@ -301,9 +301,9 @@ describe('setUserConfigValue: schema validation', () => {
     const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'analytics-fixture');
     await fsp.mkdir(packageRoot, { recursive: true });
     await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
-      name: '@kb-labs/analytics-fixture', type: 'module', exports: './manifest.js',
+      name: '@kb-labs/analytics-fixture', type: 'module', kb: { manifest: './manifest.js' },
     }));
-    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { configSchema: {
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { manifestVersion: '1.0.0', id: 'analytics-fixture', name: 'Analytics Fixture', version: '1.0.0', type: 'core', implements: 'IAnalytics', configSchema: {
       retentionDays: { type: 'number', integer: true, minimum: 1, minimumMessage: 'Must be a positive integer', hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90' }
     } };`);
 
@@ -324,9 +324,9 @@ describe('setUserConfigValue: schema validation', () => {
     const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'schema-less-fixture');
     await fsp.mkdir(packageRoot, { recursive: true });
     await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
-      name: '@kb-labs/schema-less-fixture', type: 'module', exports: './manifest.js',
+      name: '@kb-labs/schema-less-fixture', type: 'module', kb: { manifest: './manifest.js' },
     }));
-    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), 'export const manifest = { implements: "IAnalytics" };');
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { manifestVersion: '1.0.0', id: 'schema-less-fixture', name: 'Schema-less Fixture', version: '1.0.0', type: 'core', implements: 'IAnalytics' };`);
 
     await expect(validatePlatformAdapterOptions(platformRoot, {
       adapters: { analytics: '@kb-labs/schema-less-fixture' },
@@ -415,8 +415,8 @@ describe('setUserConfigValue: schema validation', () => {
     const platformRoot = path.join(dir, 'platform');
     const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-storage-fixture');
     await fsp.mkdir(packageRoot, { recursive: true });
-    await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-storage-fixture', type: 'module', exports: './manifest.js' }));
-    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), 'export const manifest = { implements: "IStorage", defaultFor: ["storage"] };');
+    await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-storage-fixture', type: 'module', kb: { manifest: './manifest.js' } }));
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { manifestVersion: '1.0.0', id: 'storage-fixture', name: 'Storage Fixture', version: '1.0.0', type: 'core', implements: 'IStorage', defaultFor: ['storage'] };`);
     const validate = createAdapterOptionsValidator(
       ['platform', 'adapters', 'llm'],
       { platformRoot, effectiveAdapters: { llm: '@kb-labs/adapters-openai' } },

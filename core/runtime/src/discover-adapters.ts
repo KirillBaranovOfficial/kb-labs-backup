@@ -16,8 +16,8 @@ import {
   readMarketplaceLock,
   DiagnosticCollector,
   findWorkspacePackages,
-  loadAdapterManifest,
 } from '@kb-labs/core-discovery';
+import { loadAdapterManifest } from '@kb-labs/core-platform';
 import { configuredWorkspaceAdapterInvalidError, configuredWorkspaceAdapterNotBuiltError } from './adapter-module-loader.js';
 
 /**
@@ -119,7 +119,7 @@ async function loadWorkspaceAdapters(
     } catch {
       throw configuredWorkspaceAdapterNotBuiltError(slot, packageName);
     }
-    const manifestResult = await loadAdapterManifest(candidate.packageRoot);
+    const manifestResult = await loadAdapterManifest({ packageRoot: candidate.packageRoot });
     if (manifestResult.kind !== 'adapter') {
       throw configuredWorkspaceAdapterInvalidError(slot, packageName, manifestResult.reason);
     }
@@ -165,7 +165,7 @@ export async function loadAdapterChannelFactory(
 
   const matches: string[] = [];
   for (const candidateRoot of candidateRoots) {
-    const manifestResult = await loadAdapterManifest(candidateRoot);
+    const manifestResult = await loadAdapterManifest({ packageRoot: candidateRoot });
     if (manifestResult.kind !== 'adapter') { continue; }
     const implementsValue = manifestResult.manifest.implements;
     const interfaces = Array.isArray(implementsValue) ? implementsValue : [implementsValue];

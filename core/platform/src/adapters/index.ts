@@ -12,6 +12,9 @@ export type {
   AdapterCapabilities,
   AdapterFactory,
 } from "./adapter-manifest.js";
+export { adapterManifestProvidesSlot } from "./adapter-manifest.js";
+export { declaredManifestPath, loadAdapterManifest, resolveAdapterManifestModulePath, resolveInstalledAdapterPackageRoot } from "./adapter-manifest-loader.js";
+export type { AdapterManifestLoadResult, AdapterManifestSource } from "./adapter-manifest-loader.js";
 
 // Analytics
 export type {

@@ -15,8 +15,13 @@ import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { DiscoveryManager } from '@kb-labs/core-discovery';
 import { createExtensionStore } from '@kb-labs/core-extension-store';
+import { NoOpLogger } from '@kb-labs/core-platform/noop';
 import type { PackageSource, InstalledPackage, ResolvedPackage } from '@kb-labs/marketplace-contracts';
-import { MarketplaceService } from '../marketplace-service.js';
+import { MarketplaceService, type MarketplaceServiceOptions } from '../marketplace-service.js';
+
+function makeMarketplaceService(options: Omit<MarketplaceServiceOptions, 'logger'>): MarketplaceService {
+  return new MarketplaceService({ ...options, logger: new NoOpLogger() });
+}
 
 describe('Marketplace → Discovery Integration', () => {
   let tmpDir: string;
@@ -81,7 +86,7 @@ describe('Marketplace → Discovery Integration', () => {
       },
     };
 
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
     const installResult = await marketplace.install({ scope: "platform" }, ['@kb-labs/commit-entry']);
 
     expect(installResult.installed).toHaveLength(1);
@@ -139,7 +144,7 @@ describe('Marketplace → Discovery Integration', () => {
       async remove() {},
     };
     const storeOne = createExtensionStore({ root: storeOneRoot, installer });
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, projectRoot, source, extensionStore: storeOne });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source, extensionStore: storeOne });
     await marketplace.install({ scope: 'project' }, ['@kb-labs/portable']);
 
     const lockFile = path.join(projectRoot, '.kb', 'marketplace.lock');
@@ -178,7 +183,7 @@ describe('Marketplace → Discovery Integration', () => {
       async remove() {},
     };
     const store = createExtensionStore({ root: path.join(tmpDir, 'machine-store'), installer });
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store });
 
     await marketplace.install({ scope: 'platform' }, ['@kb-labs/platform-entry']);
 
@@ -211,7 +216,7 @@ describe('Marketplace → Discovery Integration', () => {
       async remove() {},
     };
 
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
     await marketplace.install({ scope: "platform" }, ['@kb-labs/temp']);
 
     // Verify installed
@@ -241,7 +246,7 @@ describe('Marketplace → Discovery Integration', () => {
       async remove() {},
     };
 
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
     await marketplace.install({ scope: "platform" }, ['@kb-labs/optional']);
 
     // Disable
@@ -271,7 +276,7 @@ describe('Marketplace → Discovery Integration', () => {
       async remove() {},
     };
 
-    const marketplace = new MarketplaceService({ platformRoot: tmpDir, source });
+    const marketplace = makeMarketplaceService({ platformRoot: tmpDir, source });
     const linkResult = await marketplace.link({ scope: "platform" }, 'packages/local-dev');
 
     expect(linkResult.id).toBe('@kb-labs/local-dev');
