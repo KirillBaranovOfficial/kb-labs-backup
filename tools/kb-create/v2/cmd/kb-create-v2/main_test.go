@@ -15,7 +15,7 @@ import (
 	"time"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
-	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/stream"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
@@ -50,42 +50,29 @@ func TestClientStatusAndDoctorAreHealthyWithoutHost(t *testing.T) {
 	if err := receipt.Write(root, contracts.InstallReceipt{ID: "client-r1", InstallationID: "installation-client", Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
-	statusFile, err := os.CreateTemp(t.TempDir(), "status-*.json")
-	if err != nil {
-		t.Fatal(err)
+	statusResult, statusFailure, statusCode, _ := executeForTest(t, operationTestSetup{Operation: "status", PlatformRoot: root, JSON: true})
+	if statusCode != 0 || statusFailure != nil {
+		t.Fatalf("status exit = %d, failure=%v", statusCode, statusFailure)
 	}
-	defer statusFile.Close()
-	if code := (invocation{Operation: "status", PlatformRoot: root, JSON: true}).runStatus(statusFile); code != 0 {
-		t.Fatalf("status exit = %d", code)
-	}
-	if _, err := statusFile.Seek(0, 0); err != nil {
-		t.Fatal(err)
-	}
-	var status map[string]any
-	if err := json.NewDecoder(statusFile).Decode(&status); err != nil {
-		t.Fatal(err)
-	}
-	if status["profile"] != "client" || status["installed"] != true || status["running"] != false {
-		t.Fatalf("client status = %#v", status)
+	statusData := statusResult.(map[string]any)
+	if statusData["profile"] != "client" || statusData["installed"] != true || statusData["running"] != false {
+		t.Fatalf("client status = %#v", statusData)
 	}
 
-	doctorFile, err := os.CreateTemp(t.TempDir(), "doctor-*.json")
+	diagnosis, doctorFailure, doctorCode, _ := executeForTest(t, operationTestSetup{Operation: "doctor", PlatformRoot: root, JSON: true})
+	if doctorCode != 0 || doctorFailure != nil {
+		t.Fatalf("doctor exit = %d, failure=%v", doctorCode, doctorFailure)
+	}
+	diagnosisBytes, err := json.Marshal(diagnosis)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer doctorFile.Close()
-	if code := (invocation{Operation: "doctor", PlatformRoot: root, JSON: true}).runDoctor(doctorFile); code != 0 {
-		t.Fatalf("doctor exit = %d", code)
-	}
-	if _, err := doctorFile.Seek(0, 0); err != nil {
+	var diagnosisData map[string]any
+	if err := json.Unmarshal(diagnosisBytes, &diagnosisData); err != nil {
 		t.Fatal(err)
 	}
-	var diagnosis map[string]any
-	if err := json.NewDecoder(doctorFile).Decode(&diagnosis); err != nil {
-		t.Fatal(err)
-	}
-	if diagnosis["profile"] != "client" || diagnosis["ok"] != true || diagnosis["running"] != false {
-		t.Fatalf("client doctor = %#v", diagnosis)
+	if diagnosisData["profile"] != "client" || diagnosisData["ok"] != true || diagnosisData["running"] != false {
+		t.Fatalf("client doctor = %#v", diagnosisData)
 	}
 }
 
@@ -110,10 +97,7 @@ func TestVersionJSONIncludesBuildCommit(t *testing.T) {
 }
 
 func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	listener := testListenerWithPortHeadroom(t, 100)
 	port := listener.Addr().(*net.TCPAddr).Port
 	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	release, err := catalog.Seal(catalog.Catalog{
@@ -246,10 +230,10 @@ func TestHumanReleaseIndexFailurePrintsLoaderReason(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected release index read failure")
 	}
-	var output bytes.Buffer
-	writeHumanFailure(&output, asDiag(err))
-	if !strings.Contains(output.String(), "Why: Release index read failed for "+path) {
-		t.Fatalf("human output omitted loader reason: %s", output.String())
+	var output, stderr bytes.Buffer
+	clikitcommand.Execute(newRootCommand(), []string{"install", "--index", path}, &output, &stderr)
+	if !strings.Contains(output.String()+stderr.String(), "Release index read failed for "+path) {
+		t.Fatalf("human output omitted loader reason: %s %s", output.String(), stderr.String())
 	}
 }
 
@@ -260,68 +244,27 @@ func TestWriteIndexFailureSerializesCanonicalDetails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected release index read failure")
 	}
-	output, createErr := os.CreateTemp(t.TempDir(), "index-error-*.json")
-	if createErr != nil {
-		t.Fatal(createErr)
-	}
-	defer output.Close()
-	writeIndexFailure(output, err, "supply a valid index")
-	if _, err := output.Seek(0, 0); err != nil {
-		t.Fatal(err)
-	}
-	var payload struct {
-		OK    bool `json:"ok"`
-		Error struct {
-			Code    string            `json:"code"`
-			Cause   string            `json:"cause"`
-			Details map[string]string `json:"details"`
-		} `json:"error"`
-	}
-	if err := json.NewDecoder(output).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.OK || payload.Error.Code != contracts.CodeReleaseIndexUnreadable || payload.Error.Details["gate"] != "read" ||
-		payload.Error.Details["path"] != path || !strings.Contains(payload.Error.Cause, "no such file or directory") {
-		t.Fatalf("failure envelope omitted loader diagnostics: %#v", payload)
+	failure := indexFailure(err, "supply a valid index")
+	if failure.Code != contracts.CodeReleaseIndexUnreadable || failure.Meta["gate"] != "read" ||
+		failure.Meta["path"] != path || !strings.Contains(failure.Cause, "no such file or directory") {
+		t.Fatalf("failure envelope omitted loader diagnostics: %#v", failure)
 	}
 }
 
 // case: PC-001.4
 func TestShimFailureNamesPathReasonAndRepairCommand(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bin", "kb")
-	output, err := os.CreateTemp(t.TempDir(), "result-*.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeShimFailure(output, contracts.CodeApplyFailed, "/tmp/platform root", &shim.Failure{
+	failure := shimFailure(contracts.CodeApplyFailed, "/tmp/platform root", &shim.Failure{
 		Path: path, Reason: "permission denied", Cause: os.ErrPermission,
 	})
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
+	if failure.Code != contracts.CodeApplyFailed || failure.Meta["path"] != path || failure.Meta["reason"] != "permission denied" {
+		t.Fatalf("shim failure omitted its code, path, or filesystem reason: %#v", failure)
 	}
-	encoded, err := os.ReadFile(output.Name())
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(failure.Hint, `kb-create doctor --fix --platform-root "/tmp/platform root"`) {
+		t.Fatalf("shim failure omitted its repair command: %#v", failure)
 	}
-	var result struct {
-		Error struct {
-			Code    string            `json:"code"`
-			Hint    string            `json:"hint"`
-			Cause   string            `json:"cause"`
-			Details map[string]string `json:"details"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(encoded, &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Error.Code != contracts.CodeApplyFailed || result.Error.Details["path"] != path || result.Error.Details["reason"] != "permission denied" {
-		t.Fatalf("shim failure omitted its code, path, or filesystem reason: %s", encoded)
-	}
-	if !strings.Contains(result.Error.Hint, `kb-create doctor --fix --platform-root "/tmp/platform root"`) {
-		t.Fatalf("shim failure omitted its repair command: %s", encoded)
-	}
-	if !strings.Contains(result.Error.Cause, path) || !strings.Contains(result.Error.Cause, "permission denied") {
-		t.Fatalf("shim failure omitted its path and filesystem reason: %s", encoded)
+	if !strings.Contains(failure.Cause, path) || !strings.Contains(failure.Cause, "permission denied") {
+		t.Fatalf("shim failure omitted its path and filesystem reason: %#v", failure)
 	}
 }
 
@@ -357,13 +300,10 @@ func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := snapshotTree(t, root)
-	output, _ := installOutput(t)
-	code := (invocation{Operation: "plan", Index: index, Direct: directRequest{PlatformRoot: root,
-		PlatformVersion: "2.0.0", Policy: string(contracts.PolicyCompatible)}, JSON: true}).run(output)
-	output.Close()
-	if code != 0 {
-		data, _ := os.ReadFile(output.Name())
-		t.Fatalf("plan exit code = %d: %s", code, data)
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "plan", Index: index, Direct: directRequest{PlatformRoot: root,
+		PlatformVersion: "2.0.0", Policy: string(contracts.PolicyCompatible)}, JSON: true})
+	if code != 0 || failure != nil {
+		t.Fatalf("plan exit code = %d: %v", code, failure)
 	}
 	if after := snapshotTree(t, root); !bytes.Equal(before, after) {
 		t.Fatalf("plan changed the platform root: before %q, after %q", before, after)
@@ -409,16 +349,22 @@ type installArtifacts struct{ root string }
 func (a installArtifacts) Install(items []contracts.Artifact) error {
 	return a.InstallWithProgress(items, nil)
 }
-func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progress func(string, bool)) error {
+func (a installArtifacts) InstallWithProgress(items []contracts.Artifact, progress func(string, bool) error) error {
 	if progress != nil {
-		progress("Download and verify artifacts", true)
-		progress("Download and verify artifacts", false)
-		progress("Install packages", true)
+		if err := progress("Download and verify artifacts", true); err != nil {
+			return err
+		}
+		if err := progress("Download and verify artifacts", false); err != nil {
+			return err
+		}
+		if err := progress("Install packages", true); err != nil {
+			return err
+		}
 	}
 	bin := filepath.Join(a.root, "node_modules", "@kb-labs", "cli-bin", "dist")
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		if progress != nil {
-			progress("Install packages", false)
+			err = errors.Join(err, progress("Install packages", false))
 		}
 		return err
 	}
@@ -448,14 +394,17 @@ type installHost struct{}
 
 func (installHost) Probe(context.Context, contracts.HostSpec) error { return nil }
 
-func installOutput(t *testing.T) (*os.File, string) {
+func installOutput(t *testing.T) (*bytes.Buffer, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "screen.txt")
 	file, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return file, path
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &bytes.Buffer{}, path
 }
 
 // case: PC-001.16, S-054.2
@@ -463,12 +412,11 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("KB_HOME", filepath.Join(home, ".kb"))
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
+	listener := testListenerWithPortHeadroom(t, 100)
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
 	root := filepath.Join(home, "kb-platform")
 	index := filepath.Join(home, "release-index.json")
 	compatibility := testCompatibility("2.0.0")
@@ -505,14 +453,11 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	if err := os.WriteFile(launcher, []byte("launcher"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	output, outputPath := installOutput(t)
+	_, outputPath := installOutput(t)
 	var screen bytes.Buffer
-	code := (invocation{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}}, NodePreflight: func() error { return nil }}).run(output)
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: index, Direct: directRequest{PlatformRoot: root}, Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}}, NodePreflight: func() error { return nil }})
 	if code != 0 {
-		t.Fatalf("exit code %d, screen:\n%s", code, screen.String())
+		t.Fatalf("exit code %d, failure=%v, screen:\n%s", code, failure, screen.String())
 	}
 	for _, expected := range []string{"Resolve (", "Download and verify artifacts (", "Install packages (", "Render config (", "Start host (", "Verify installation (", "Create kb shim (", "KB Labs is installed", "kb project add <path>"} {
 		if !strings.Contains(screen.String(), expected) {
@@ -556,18 +501,13 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 		t.Fatalf("automatic doctor after clean sealed install should have no findings: err=%v stdout=%s", err, doctorOutput.String())
 	}
 	secondaryRoot := filepath.Join(home, "kb-platform-secondary")
-	secondaryOutput, _ := installOutput(t)
-	secondaryCode := (invocation{Operation: "apply", Index: index,
+	_, _, secondaryCode, secondaryText := executeForTest(t, operationTestSetup{Operation: "apply", Index: index,
 		Direct:     directRequest{PlatformRoot: secondaryRoot, PlatformChannel: "stable", ServiceProfile: "default", Policy: "compatible"},
 		Executable: launcher, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: secondaryRoot}, Host: installHost{}},
 		NodePreflight: func() error { return nil }, JSON: true,
-	}).run(secondaryOutput)
-	if err := secondaryOutput.Close(); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if secondaryCode != 0 {
-		data, _ := os.ReadFile(secondaryOutput.Name())
-		t.Fatalf("secondary no-flag apply exit %d: %s", secondaryCode, data)
+		t.Fatalf("secondary no-flag apply exit %d: %s", secondaryCode, secondaryText)
 	}
 	secondaryReceipt, err := receipt.Read(secondaryRoot)
 	if err != nil || secondaryReceipt.Verification.HostHealthURL != fmt.Sprintf("http://127.0.0.1:%d/health", port+100) {
@@ -600,7 +540,7 @@ func TestRegisterProjectInvokesPlainProjectAdd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	projectID, err := (invocation{Executable: filepath.Join(home, "bin", "kb-create")}).registerProject(root, projectPath)
+	projectID, err := registerProject(root, projectPath, nil)
 	if err != nil || projectID != "prj_test123" {
 		t.Fatalf("projectID/error = %q / %v", projectID, err)
 	}
@@ -654,19 +594,15 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	}
 	var registered string
 	var screen bytes.Buffer
-	output, _ := installOutput(t)
-	code := (invocation{
+	_, failure, code, _ := executeForTest(t, operationTestSetup{
 		Operation: "install", Index: index, Direct: directRequest{PlatformRoot: platformRoot, ProjectRoot: projectRoot},
 		Executable: launcher, InstallInput: strings.NewReader(strings.Repeat("\n", 12)), InstallOutput: &screen,
 		RuntimeDeps:      &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}},
 		NodePreflight:    func() error { return nil },
 		ProjectRegistrar: func(path string) (string, error) { registered = path; return "prj_test123", nil },
-	}).run(output)
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if code != 0 || registered != projectRoot {
-		t.Fatalf("code=%d registered=%q screen:\n%s", code, registered, screen.String())
+		t.Fatalf("code=%d failure=%v registered=%q screen:\n%s", code, failure, registered, screen.String())
 	}
 	for _, expected := range []string{projectRoot, "prj_test123", "Verification: platform installed", "kb project show prj_test123"} {
 		if !strings.Contains(screen.String(), expected) {
@@ -678,9 +614,8 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	}
 
 	failedRoot := filepath.Join(home, "kb-platform-registration-failure")
-	failedOutput, failedPath := installOutput(t)
 	var failedScreen bytes.Buffer
-	failedCode := (invocation{
+	_, failure, failedCode, _ := executeForTest(t, operationTestSetup{
 		Operation: "install", Index: index,
 		Direct:        directRequest{PlatformRoot: failedRoot, ProjectRoot: projectRoot},
 		InstallInput:  strings.NewReader(strings.Repeat("\n", 12)),
@@ -690,21 +625,9 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 		ProjectRegistrar: func(string) (string, error) {
 			return "", errors.New("project registry unavailable")
 		},
-	}).run(failedOutput)
-	if err := failedOutput.Close(); err != nil {
-		t.Fatal(err)
-	}
-	failedData, err := os.ReadFile(failedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var failure struct {
-		OK    bool       `json:"ok"`
-		Error *diag.Diag `json:"error"`
-	}
-	if err := json.Unmarshal(failedData, &failure); err != nil || failedCode != 1 || failure.OK || failure.Error == nil ||
-		failure.Error.Code != contracts.CodeApplyFailed || !strings.Contains(failure.Error.Hint, "kb project add") {
-		t.Fatalf("project registration failure = code %d, output %s, decode error %v", failedCode, failedData, err)
+	})
+	if failedCode != 1 || failure == nil || failure.Code != contracts.CodeApplyFailed || !strings.Contains(failure.Hint, "kb project add") {
+		t.Fatalf("project registration failure = code %d, output %#v", failedCode, failure)
 	}
 }
 
@@ -715,7 +638,7 @@ func writeJSONInstallFixture(t *testing.T, home string) string {
 		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
 		Compatibility: testCompatibility("2.0.0"),
 		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform",
-			Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHostOnFreePort(t),
+			Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHostOnFreePortWithPortHeadroom(t, 100),
 			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}},
 			Config:   []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}}},
 		Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "1.0.0",
@@ -749,8 +672,7 @@ func TestJSONScenarioInstallRegistersCanonicalProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := map[string]string{}
-	output, path := installOutput(t)
-	code := (invocation{
+	_, failure, code, raw := executeForTest(t, operationTestSetup{
 		Operation: "install", JSON: true, Index: index, ScenarioID: "custom",
 		ScenarioAnswers: `{"access.mode":"local"}`,
 		Direct:          directRequest{PlatformRoot: root, ProjectRoot: project},
@@ -760,13 +682,9 @@ func TestJSONScenarioInstallRegistersCanonicalProject(t *testing.T) {
 			registry[path] = "prj_json"
 			return registry[path], nil
 		},
-	}).run(output)
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if code != 0 || registry[canonical] != "prj_json" {
-		data, _ := os.ReadFile(path)
-		t.Fatalf("JSON scenario install exit=%d registry=%v output=%s", code, registry, data)
+		t.Fatalf("JSON scenario install exit=%d registry=%v failure=%v output=%s", code, registry, failure, raw)
 	}
 }
 
@@ -794,8 +712,7 @@ func TestJSONRequestFileInstallRegistersCanonicalProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := map[string]string{}
-	output, path := installOutput(t)
-	code := (invocation{
+	_, failure, code, raw := executeForTest(t, operationTestSetup{
 		Operation: "install", JSON: true, Index: index, Input: requestPath,
 		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
 		NodePreflight: func() error { return nil },
@@ -803,41 +720,26 @@ func TestJSONRequestFileInstallRegistersCanonicalProject(t *testing.T) {
 			registry[path] = "prj_input"
 			return registry[path], nil
 		},
-	}).run(output)
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if code != 0 || registry[canonical] != "prj_input" {
-		data, _ := os.ReadFile(path)
-		t.Fatalf("JSON request install exit=%d registry=%v output=%s", code, registry, data)
+		t.Fatalf("JSON request install exit=%d registry=%v failure=%v output=%s", code, registry, failure, raw)
 	}
 }
 
 func TestInstallEarlyFailuresUseDiagRendering(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	output, path := installOutput(t)
-	code := (invocation{Operation: "install", Index: filepath.Join(t.TempDir(), "missing.json"), NodePreflight: func() error { return nil }}).run(output)
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code != 2 || !strings.Contains(string(data), "Install failed [KB_INSTALL_RELEASE_INDEX_UNREADABLE]") || !strings.Contains(string(data), "Next:") {
-		t.Fatalf("code/output = %d / %s", code, data)
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", Index: filepath.Join(t.TempDir(), "missing.json"), NodePreflight: func() error { return nil }})
+	if code != 2 || failure == nil || failure.Code != contracts.CodeReleaseIndexUnreadable || failure.Hint == "" {
+		t.Fatalf("code/failure = %d / %#v", code, failure)
 	}
 }
 
 func TestInstallChecksNodeBeforeQuestions(t *testing.T) {
-	output, path := installOutput(t)
+	_, path := installOutput(t)
 	var screen bytes.Buffer
-	code := (invocation{Operation: "install", InstallInput: strings.NewReader("\n"), InstallOutput: &screen, NodePreflight: func() error { return errors.New("node missing") }}).run(output)
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if code != 2 || !strings.Contains(screen.String(), "Install failed [KB_INSTALL_NODE_VERSION]") || strings.Contains(screen.String(), "Platform channel") || !strings.Contains(screen.String(), "Next:") {
-		t.Fatalf("code/output = %d / %s", code, screen.String())
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "install", InstallInput: strings.NewReader("\n"), InstallOutput: &screen, NodePreflight: func() error { return errors.New("node missing") }})
+	if code != 2 || failure == nil || failure.Code != contracts.CodeNodeVersion || strings.Contains(screen.String(), "Platform channel") {
+		t.Fatalf("code/failure/output = %d / %#v / %s", code, failure, screen.String())
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatal(err)
@@ -845,34 +747,46 @@ func TestInstallChecksNodeBeforeQuestions(t *testing.T) {
 }
 
 func TestApplyReportsNodeVersionCodeBeforeResolution(t *testing.T) {
-	output, path := installOutput(t)
-	code := (invocation{Operation: "apply", NodePreflight: func() error { return errors.New("Node.js v22.11.0 is unsupported") }}).run(output)
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
+	_, failure, code, _ := executeForTest(t, operationTestSetup{Operation: "apply", NodePreflight: func() error { return errors.New("Node.js v22.11.0 is unsupported") }})
+	if failure == nil {
+		t.Fatalf("expected Node version failure, exit=%d", code)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code != 2 || !strings.Contains(string(data), "KB_INSTALL_NODE_VERSION") || !strings.Contains(string(data), "Install Node.js 24") || strings.Contains(string(data), "KB_INSTALL_INPUT_REQUIRED") {
+	data := fmt.Sprint(failure) + " " + failure.Hint
+	if code != 2 || failure.Code != contracts.CodeNodeVersion || !strings.Contains(data, "Install Node.js 24") || strings.Contains(data, "KB_INSTALL_INPUT_REQUIRED") {
 		t.Fatalf("code/output = %d / %s", code, data)
 	}
 }
 
 func TestHumanProgressUsesElapsedPhaseEvents(t *testing.T) {
-	output, path := installOutput(t)
+	output := &bytes.Buffer{}
 	p := &humanProgress{out: output, started: map[string]time.Time{}}
 	p.started["Install packages"] = time.Now().Add(-time.Millisecond)
-	p.Emit(runtime.ProgressEvent{Phase: "Install packages"})
-	if err := output.Close(); err != nil {
+	if err := p.Emit(runtime.ProgressEvent{Phase: "Install packages"}); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "Install packages") || !strings.Contains(string(data), "ms)") {
+	data := output.String()
+	if !strings.Contains(data, "Install packages") || !strings.Contains(data, "ms)") {
 		t.Fatalf("progress output = %s", data)
+	}
+}
+
+type writeFailure struct{ err error }
+
+func (failure writeFailure) Write([]byte) (int, error) { return 0, failure.err }
+
+func TestStreamProgressPropagatesWriterFailure(t *testing.T) {
+	want := errors.New("closed stream")
+	progress := streamProgress{writer: stream.New(writeFailure{err: want})}
+	if err := progress.Emit(runtime.ProgressEvent{Phase: "Install packages", Start: true}); !errors.Is(err, want) {
+		t.Fatalf("stream progress error = %v, want %v", err, want)
+	}
+}
+
+func TestHumanProgressPropagatesWriterFailure(t *testing.T) {
+	want := errors.New("closed terminal")
+	progress := &humanProgress{out: writeFailure{err: want}, started: map[string]time.Time{}}
+	if err := progress.Emit(runtime.ProgressEvent{Phase: "Install packages", Start: true}); !errors.Is(err, want) {
+		t.Fatalf("human progress error = %v, want %v", err, want)
 	}
 }
 
@@ -891,6 +805,35 @@ func testHostOnFreePort(t *testing.T) *contracts.HostSpec {
 		t.Fatal(err)
 	}
 	return &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)}
+}
+
+func testHostOnFreePortWithPortHeadroom(t *testing.T, headroom int) *contracts.HostSpec {
+	t.Helper()
+	listener := testListenerWithPortHeadroom(t, headroom)
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)}
+}
+
+func testListenerWithPortHeadroom(t *testing.T, headroom int) net.Listener {
+	t.Helper()
+	for range 128 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		if port+headroom <= 65535 {
+			return listener
+		}
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Fatal("could not reserve a loopback port with the required allocation headroom")
+	return nil
 }
 
 func testCompatibility(version string) *catalog.CompatibilityMatrix {
@@ -921,9 +864,21 @@ func TestHelpListsRegisteredCommandsAndFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, expected := range []string{"install", "Install KB Labs interactively", "--provider", "apply"} {
+	for _, expected := range []string{"install", "Install KB Labs interactively", "apply"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("help is missing %q: %s", expected, text)
 		}
+	}
+	if strings.Contains(text, "--provider") {
+		t.Fatalf("root help includes command-local --provider: %s", text)
+	}
+	install := findCommand(root, "kb-create install")
+	var installHelp bytes.Buffer
+	install.SetOut(&installHelp)
+	if err := install.Help(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(installHelp.String(), "--provider") {
+		t.Fatalf("install help is missing --provider: %s", installHelp.String())
 	}
 }

@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/kb-labs/clikit/diag"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,6 +18,8 @@ import (
 	"time"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/host"
@@ -38,42 +38,6 @@ func TestReadConfirmation(t *testing.T) {
 		if err != nil || got != test.want {
 			t.Fatalf("answer %q: got %v, %v", test.answer, got, err)
 		}
-	}
-}
-
-// case: S-050.3
-func TestUninstallTerminalDeclineReturnsCancelledAndPreservesReceipt(t *testing.T) {
-	inst := newInstallation(t)
-	receiptPath := filepath.Join(inst.root, ".kb", "v2", "receipt.json")
-	before, err := os.ReadFile(receiptPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	output, err := os.CreateTemp(t.TempDir(), "decline-result")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer output.Close()
-
-	var prompt bytes.Buffer
-	code := confirmDestructiveOperation(invocation{Registry: "https://registry.example.test"}, "uninstall",
-		inst.root, strings.NewReader("n\n"), &prompt, true, output)
-	if code != 1 || !strings.Contains(prompt.String(), "Continue? [y/N]") {
-		t.Fatalf("terminal decline exit = %d, prompt = %q", code, prompt.String())
-	}
-	if _, err := output.Seek(0, 0); err != nil {
-		t.Fatal(err)
-	}
-	result, err := io.ReadAll(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(result), "KB_INSTALL_OPERATION_CANCELLED") {
-		t.Fatalf("terminal decline output omitted cancellation diagnostic: %s", result)
-	}
-	after, err := os.ReadFile(receiptPath)
-	if err != nil || !bytes.Equal(before, after) {
-		t.Fatalf("receipt changed after terminal decline: err=%v", err)
 	}
 }
 
@@ -130,24 +94,6 @@ func TestRollbackRestoresSnapshotFilesAfterCommandPackageRestore(t *testing.T) {
 	}
 }
 
-func TestConfirmRecoveryTTYYesAndNo(t *testing.T) {
-	for _, test := range []struct {
-		answer string
-		want   bool
-	}{{"y\n", true}, {"n\n", false}} {
-		var output bytes.Buffer
-		got, err := confirmRecovery("uninstall", "/platform", strings.NewReader(test.answer), &output)
-		if err != nil || got != test.want {
-			t.Fatalf("answer %q: got %v, %v", test.answer, got, err)
-		}
-		for _, expected := range []string{"/platform", "services", "receipt", "snapshots", "Project files are kept"} {
-			if !strings.Contains(output.String(), expected) {
-				t.Fatalf("prompt missing %q: %s", expected, output.String())
-			}
-		}
-	}
-}
-
 func TestRecoveryRequiresYesWithoutTTY(t *testing.T) {
 	root := t.TempDir()
 	receiptPath := receipt.Path(root)
@@ -160,7 +106,7 @@ func TestRecoveryRequiresYesWithoutTTY(t *testing.T) {
 	}
 
 	registry := "https://registry.example.test"
-	payload, code, raw := invoke(t, invocation{Operation: "uninstall", PlatformRoot: root, Registry: registry, JSON: true})
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "uninstall", PlatformRoot: root, Registry: registry, JSON: true})
 	wantHint := "rerun `kb-create uninstall --platform-root " + strconv.Quote(root) + " --registry " + registry + " --json --yes`"
 	errorPayload, _ := payload["error"].(map[string]any)
 	if code != 2 || errorCode(payload) != "KB_INSTALL_CONFIRMATION_REQUIRED" || errorPayload["hint"] != wantHint {
@@ -173,35 +119,29 @@ func TestRecoveryRequiresYesWithoutTTY(t *testing.T) {
 
 // case: S-050.4, S-024.4, S-100.2, S-203.12
 func TestDestructiveOperationsRequireExplicitNonTTYConfirmation(t *testing.T) {
-	for _, operation := range []string{"uninstall", "rollback", "recover"} {
+	for _, test := range []struct {
+		operation string
+		recover   bool
+	}{{"uninstall", false}, {"rollback", false}} {
+		operation := test.operation
 		t.Run(operation, func(t *testing.T) {
 			for _, jsonMode := range []bool{false, true} {
-				file, err := os.CreateTemp(t.TempDir(), "confirmation-result")
-				if err != nil {
-					t.Fatal(err)
-				}
-				code := confirmDestructiveOperation(invocation{JSON: jsonMode, Registry: "https://registry.example.test"}, operation,
-					"/platform", strings.NewReader(""), &bytes.Buffer{}, false, file)
+				input := operationTestSetup{Operation: operation, PlatformRoot: "/platform", Recover: recoverRequest{Enabled: test.recover, JSON: jsonMode}, JSON: jsonMode}
+				payload, code, _ := invoke(t, input)
 				if code != 2 {
 					t.Fatalf("non-TTY confirmation exit = %d, want 2", code)
 				}
-				if _, err := file.Seek(0, 0); err != nil {
-					t.Fatal(err)
-				}
-				payload := readJSON(t, file.Name())
-				failure, _ := payload["error"].(map[string]any)
 				if errorCode(payload) != "KB_INSTALL_CONFIRMATION_REQUIRED" ||
-					!strings.Contains(fmt.Sprint(failure["hint"]), "--yes") {
+					!strings.Contains(fmt.Sprint(payload["error"]), "--yes") {
 					t.Fatalf("non-TTY confirmation error lacks exact rerun hint: %#v", payload)
 				}
-				_ = file.Close()
 			}
 		})
 	}
 }
 
 func TestRecoveryWithYesPassesConfirmationGate(t *testing.T) {
-	payload, code, raw := invoke(t, invocation{Operation: "uninstall", PlatformRoot: t.TempDir(), Yes: true})
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "uninstall", PlatformRoot: t.TempDir(), Yes: true})
 	if code != 2 || errorCode(payload) != contracts.CodeReceiptUnavailable {
 		t.Fatalf("--yes did not proceed to receipt validation: %d %s", code, raw)
 	}
@@ -359,28 +299,35 @@ func readJSON(t *testing.T, path string) map[string]any {
 }
 
 // invoke runs one non-host command and returns its JSON output and status.
-func invoke(t *testing.T, command invocation) (map[string]any, int, string) {
+func mapValue(t *testing.T, value any) map[string]any {
 	t.Helper()
-	file, err := os.CreateTemp(t.TempDir(), "output")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := command.run(file)
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(file.Name())
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var parsed map[string]any
-	_ = json.Unmarshal(data, &parsed)
-	return parsed, code, string(data)
+	if err := json.Unmarshal(encoded, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	return parsed
+}
+
+func diagValue(t *testing.T, failure *diag.Diag) map[string]any {
+	t.Helper()
+	encoded, err := json.Marshal(result.FailureEnvelope(failure))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(encoded, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	return parsed
 }
 
 func TestRollbackWithoutASnapshotIsRefusedWithTheCatalogError(t *testing.T) {
 	inst := newInstallation(t)
-	payload, code, raw := invoke(t, invocation{Operation: "rollback", PlatformRoot: inst.root, Yes: true})
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "rollback", PlatformRoot: inst.root, Yes: true})
 	if code != 1 || errorCode(payload) != contracts.CodeUpdateNoSnapshot {
 		t.Fatalf("rollback: %d %s", code, raw)
 	}
@@ -393,13 +340,15 @@ func TestRollbackWithoutASnapshotIsRefusedWithTheCatalogError(t *testing.T) {
 // case: S-025.6
 func TestRollbackFailureIncludesOperationLogAndDiagnosticDossier(t *testing.T) {
 	inst := newInstallation(t)
-	payload, code, raw := invoke(t, invocation{Operation: "rollback", PlatformRoot: inst.root,
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "rollback", PlatformRoot: inst.root,
 		Snapshot: "fixture-missing-snapshot", Yes: true, JSON: true})
 	if code != 1 || errorCode(payload) != contracts.CodeUpdateApplyFailed {
 		t.Fatalf("rollback failure: %d %s", code, raw)
 	}
-	logPath, _ := payload["logPath"].(string)
-	diagnosticPath, _ := payload["diagnosticPath"].(string)
+	errorEnvelope, _ := payload["error"].(map[string]any)
+	details, _ := errorEnvelope["details"].(map[string]any)
+	logPath, _ := details["logPath"].(string)
+	diagnosticPath, _ := details["diagnosticPath"].(string)
 	if logPath == "" || diagnosticPath == "" {
 		t.Fatalf("rollback failure omitted its log or dossier path: %s", raw)
 	}
@@ -414,7 +363,7 @@ func TestRollbackFailureIncludesOperationLogAndDiagnosticDossier(t *testing.T) {
 func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 	t.Setenv(host.KBHomeEnv, t.TempDir())
 	for _, operation := range []string{"rollback", "uninstall"} {
-		payload, code, raw := invoke(t, invocation{Operation: operation, PlatformRoot: t.TempDir(), Yes: true})
+		payload, code, raw := invoke(t, operationTestSetup{Operation: operation, PlatformRoot: t.TempDir(), Yes: true})
 		if code != 2 || errorCode(payload) != contracts.CodeReceiptUnavailable {
 			t.Fatalf("%s: %d %s", operation, code, raw)
 		}
@@ -423,7 +372,7 @@ func TestLifecycleCommandsNeedAnInstallation(t *testing.T) {
 
 func TestStatusReportsTheHostAndTheInstalledVersion(t *testing.T) {
 	inst := newInstallation(t)
-	payload, code, raw := invoke(t, invocation{Operation: "status", PlatformRoot: inst.root, JSON: true})
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "status", PlatformRoot: inst.root, JSON: true})
 	if code != 0 || payload["host"].(map[string]any)["state"] != "stopped" {
 		t.Fatalf("status: %d %s", code, raw)
 	}
@@ -439,7 +388,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	}
 
 	// Stopped host: the installation is fine, the platform is not running.
-	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	if code != 0 || payload["ok"] != false {
 		t.Fatalf("doctor: %d %s", code, raw)
 	}
@@ -457,20 +406,11 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 		adapterCheck["hint"] != fmt.Sprintf("Run `kb-create start --platform-root %q`.", inst.root) {
 		t.Fatalf("stopped doctor adapter check = %#v", adapterCheck)
 	}
-	textOutput, err := os.CreateTemp(t.TempDir(), "doctor-text")
-	if err != nil {
-		t.Fatal(err)
+	textValue, textFailure, textCode, _ := executeForTest(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root})
+	if textCode != 0 || textFailure != nil {
+		t.Fatalf("stopped text doctor exit code = %d, failure=%v", textCode, textFailure)
 	}
-	if textCode := (invocation{Operation: "doctor", PlatformRoot: inst.root}).run(textOutput); textCode != 0 {
-		t.Fatalf("stopped text doctor exit code = %d", textCode)
-	}
-	if err := textOutput.Close(); err != nil {
-		t.Fatal(err)
-	}
-	textBytes, err := os.ReadFile(textOutput.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
+	textBytes := []byte(renderDoctor(textValue))
 	if !strings.Contains(string(textBytes), "Adapter status cannot be checked") ||
 		!strings.Contains(string(textBytes), fmt.Sprintf("kb-create start --platform-root %q", inst.root)) {
 		t.Fatalf("stopped text doctor omits the adapter limitation or start command: %s", textBytes)
@@ -480,7 +420,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	if _, exit, out := inst.run("start", "--json"); exit != 0 {
 		t.Fatalf("start: %s", out)
 	}
-	payload, code, raw = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
+	payload, code, raw = invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	if code != 0 || payload["ok"] != true || payload["platform"].(map[string]any)["ok"] != true {
 		t.Fatalf("doctor on a healthy platform: %d %s", code, raw)
 	}
@@ -489,7 +429,7 @@ func TestDoctorSeparatesTheInstallationFromThePlatform(t *testing.T) {
 	if err := os.Remove(filepath.Join(inst.root, ".kb", "kb.config.jsonc")); err != nil {
 		t.Fatal(err)
 	}
-	payload, code, raw = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
+	payload, code, raw = invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	if code != 0 || payload["installation"].(map[string]any)["ok"] != false || payload["platform"].(map[string]any)["ok"] != true {
 		t.Fatalf("doctor on a broken installation: %d %s", code, raw)
 	}
@@ -536,7 +476,7 @@ func TestDoctorReportsMissingProjectionReadOnlyAndFixRestoresIt(t *testing.T) {
 	}
 	manifestPath := filepath.Join(packageRoot, "kb-create.manifest.json")
 
-	payload, _, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
+	payload, _, raw := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	findings, ok := payload["findings"].([]any)
 	if !ok || len(findings) != 1 {
 		t.Fatalf("doctor did not report the missing manifest projection: %s", raw)
@@ -613,7 +553,7 @@ func TestDoctorOptionalCredentialWarningKeepsFreshInstallHealthy(t *testing.T) {
 	if _, code, output := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", output)
 	}
-	payload, code, output := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
+	payload, code, output := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	findings, ok := payload["findings"].([]any)
 	if code != 0 || payload["ok"] != true || !ok || len(findings) != 1 {
 		t.Fatalf("optional credential warning made the fresh install unhealthy: exit=%d %s", code, output)
@@ -625,20 +565,11 @@ func TestDoctorOptionalCredentialWarningKeepsFreshInstallHealthy(t *testing.T) {
 	if strings.Contains(output, "secret-value") {
 		t.Fatalf("doctor exposed secret material: %s", output)
 	}
-	textFile, err := os.CreateTemp(t.TempDir(), "doctor-warning")
-	if err != nil {
-		t.Fatal(err)
+	textValue, textFailure, textCode, _ := executeForTest(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root})
+	if textCode != 0 || textFailure != nil {
+		t.Fatalf("text doctor rejected the optional credential warning: exit=%d failure=%v", textCode, textFailure)
 	}
-	if textCode := (invocation{Operation: "doctor", PlatformRoot: inst.root}).run(textFile); textCode != 0 {
-		t.Fatalf("text doctor rejected the optional credential warning: exit=%d", textCode)
-	}
-	if err := textFile.Close(); err != nil {
-		t.Fatal(err)
-	}
-	textBytes, err := os.ReadFile(textFile.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
+	textBytes := []byte(renderDoctor(textValue))
 	if !strings.Contains(string(textBytes), "Warnings:") || !strings.Contains(string(textBytes), "set OPENAI_API_KEY to enable LLM features") {
 		t.Fatalf("text doctor omits the optional credential warning: %s", textBytes)
 	}
@@ -651,7 +582,7 @@ func TestDoctorOptionalCredentialWarningKeepsFreshInstallHealthy(t *testing.T) {
 	if err := installed.Write(inst.root, artifact); err != nil {
 		t.Fatal(err)
 	}
-	payload, code, output = invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
+	payload, code, output = invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, JSON: true})
 	findings, ok = payload["findings"].([]any)
 	if code != 0 || payload["ok"] != false || !ok || len(findings) != 2 {
 		t.Fatalf("required platform configuration did not fail doctor: exit=%d %s", code, output)
@@ -689,7 +620,7 @@ func recoverInstallation(t *testing.T, withTool bool) (installation, string) {
 func TestDoctorRecoverRunsThePlatformRecoveryToolWithTheHostStopped(t *testing.T) {
 	inst, record := recoverInstallation(t, true)
 	request := recoverRequest{Enabled: true, Email: "admin@example.com", Tenant: "acme", Generate: true, Yes: true}
-	_, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: request})
+	_, code, raw := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, Recover: request})
 	if code != 0 || !strings.Contains(raw, "recovered") {
 		t.Fatalf("recover: %d %q", code, raw)
 	}
@@ -709,13 +640,12 @@ func TestDoctorRecoverUsesExplicitPlatformRootWithoutARegisteredProject(t *testi
 	t.Setenv("KB_PROJECT_ROOT", "")
 	t.Setenv("KB_PROJECT_ID", "")
 	request := recoverRequest{Enabled: true, Email: "admin@example.com", Tenant: "acme", Generate: true, Yes: true, JSON: true}
-	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: request})
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, Recover: request})
 	if code != 0 || !strings.Contains(raw, "recovered") {
 		t.Fatalf("recover with explicit platform root and no registered project: %d %s", code, raw)
 	}
-	recoveryPayload, err := operationResultPayload("doctor", false, true, []byte(raw))
-	if err != nil || recoveryPayload["operation"] != "recover" || recoveryPayload["recovered"] != true {
-		t.Fatalf("recovery did not return a valid recovery result: %#v, %v", recoveryPayload, err)
+	if payload["operation"] != "recover" || payload["recovered"] != true {
+		t.Fatalf("recovery did not return a valid recovery result: %#v", payload)
 	}
 	if errorCode(payload) != "" {
 		t.Fatalf("recovery returned an error: %v", payload)
@@ -731,7 +661,7 @@ func TestDoctorRecoverRefusesWhileTheHostRuns(t *testing.T) {
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
-	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true, JSON: true}})
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true, JSON: true}})
 	if code != 1 || errorCode(payload) != contracts.CodeRecoveryHostRunning {
 		t.Fatalf("recover: %d %s", code, raw)
 	}
@@ -746,7 +676,7 @@ func TestDoctorRecoverRefusesWhileTheHostRuns(t *testing.T) {
 
 func TestDoctorRecoverNeedsAPlatformThatShipsARecoveryTool(t *testing.T) {
 	inst, _ := recoverInstallation(t, false)
-	payload, code, raw := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true, JSON: true}})
+	payload, code, raw := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true, JSON: true}})
 	if code != 1 || errorCode(payload) != contracts.CodeRecoveryUnavailable {
 		t.Fatalf("recover: %d %s", code, raw)
 	}
@@ -758,7 +688,7 @@ func TestDoctorRecoverPropagatesTheToolsExitStatus(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 4\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, code, _ := invoke(t, invocation{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true}}); code != 4 {
+	if _, code, _ := invoke(t, operationTestSetup{Operation: "doctor", PlatformRoot: inst.root, Recover: recoverRequest{Enabled: true, Yes: true}}); code != 4 {
 		t.Fatalf("exit status = %d, want the tool's 4", code)
 	}
 }

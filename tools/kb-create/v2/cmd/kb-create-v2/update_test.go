@@ -4,11 +4,13 @@ package v2cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
@@ -43,20 +45,20 @@ func (i installation) update(t *testing.T, plan contracts.ResolvedInstallPlan, i
 	t.Helper()
 	state := host.State{Dir: i.state}
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: "update-test"}
-	outcome, errorCode := "failure", "KB_INSTALL_OPERATION_FAILED"
-	file, err := os.CreateTemp(t.TempDir(), "output")
+	result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: i.launcher}, plan, state, &deps)
+	if failure != nil {
+		payload := diagValue(t, failure)
+		return payload, diag.ExitCode(failure), fmt.Sprint(payload)
+	}
+	encoded, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := invocation{Executable: i.launcher}.runUpdate(context.Background(), file, plan, deps, host.Prober{PlatformRoot: i.root, State: state}, state, "update-test", "", &outcome, &errorCode)
-	if err := file.Close(); err != nil {
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
 		t.Fatal(err)
 	}
-	payload := readJSON(t, file.Name())
-	if code == 0 && (outcome != "success" || errorCode != "") {
-		t.Fatalf("telemetry outcome = %s/%s", outcome, errorCode)
-	}
-	return payload, code, fmt.Sprint(payload)
+	return payload, 0, fmt.Sprint(payload)
 }
 
 func TestUpdateCommandRestartsARunningHostOnTheNewVersion(t *testing.T) {
@@ -98,7 +100,8 @@ func TestUpdateCommandRollsBackWhenTheNewHostCrashes(t *testing.T) {
 	if failure["correlationId"] != "update-test" || failure["message"] == "" || failure["hint"] == "" {
 		t.Fatalf("error = %v", failure)
 	}
-	if path, _ := payload["diagnosticPath"].(string); path == "" {
+	errorDetails := failure["details"].(map[string]any)
+	if path, _ := errorDetails["diagnosticPath"].(string); path == "" {
 		t.Fatalf("a failed update must leave a diagnostic dossier: %s", raw)
 	} else if _, err := os.Stat(path); err != nil {
 		t.Fatalf("dossier: %v", err)

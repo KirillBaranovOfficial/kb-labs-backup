@@ -62,18 +62,11 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 			if err := os.WriteFile(requestPath, request, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			output, err := os.CreateTemp(t.TempDir(), "update-output")
-			if err != nil {
-				t.Fatal(err)
-			}
-			code := (invocation{
+			_, failure, code, _ := executeForTest(t, operationTestSetup{
 				Operation: "update", Index: indexPath, Input: requestPath,
 				NodePreflight: func() error { return nil },
-			}).run(output)
-			if err := output.Close(); err != nil {
-				t.Fatal(err)
-			}
-			payload := readJSON(t, output.Name())
+			})
+			payload := diagValue(t, failure)
 			if code != 2 || errorCode(payload) != test.wantCode {
 				t.Fatalf("update = code %d, error %s: %#v", code, errorCode(payload), payload)
 			}
@@ -130,19 +123,12 @@ func TestUpdateMapsTargetPlanCompatibilityToUpdateCode(t *testing.T) {
 	if err := os.WriteFile(index, encoded, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	output, err := os.CreateTemp(t.TempDir(), "update-output")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := (invocation{
-		Operation: "update", Index: index,
-		Direct:        directRequest{PlatformRoot: inst.root, PlatformVersion: "3.2.0", SDKVersion: "3.2.0", Policy: "compatible"},
+	_, failure, code, _ := executeForTest(t, operationTestSetup{
+		Operation: "update", Index: index, PlatformRoot: inst.root,
+		Direct:        directRequest{PlatformVersion: "3.2.0", SDKVersion: "3.2.0", Policy: "compatible"},
 		NodePreflight: func() error { return nil },
-	}).run(output)
-	if err := output.Close(); err != nil {
-		t.Fatal(err)
-	}
-	payload := readJSON(t, output.Name())
+	})
+	payload := diagValue(t, failure)
 	if code != 2 || errorCode(payload) != "KB_UPDATE_INCOMPATIBLE" {
 		t.Fatalf("update target plan = code %d, error %s: %#v", code, errorCode(payload), payload)
 	}

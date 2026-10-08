@@ -89,7 +89,7 @@ func TestInstallationSectionReportsInvalidReceiptHostSpec(t *testing.T) {
 	}
 	section := InspectInstallation(root, state)
 	got := check(t, section, "host-spec")
-	if got.OK || got.Code != contracts.CodeHostSpecInvalid || !strings.Contains(got.Detail, "command is required") || !strings.Contains(got.Hint, "kb-create apply --platform-root") {
+	if got.OK || got.Code != contracts.CodeHostSpecInvalid || !strings.Contains(got.Detail, "command is required") || !strings.Contains(got.Hint, "kb-create apply --request-platform-root") {
 		t.Fatalf("host-spec check = %+v", got)
 	}
 }

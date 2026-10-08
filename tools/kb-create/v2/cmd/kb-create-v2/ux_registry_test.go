@@ -6,7 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -74,6 +76,77 @@ func TestRegisteredCommandsUseSharedResultBoundary(t *testing.T) {
 		}
 		if err := json.Unmarshal(invalid.Bytes(), &failure); err != nil || failure.OK || failure.Error.Code != "KB_RUNTIME_INPUT_INVALID" {
 			t.Errorf("%s invalid flag result = %s, want typed KB_RUNTIME_INPUT_INVALID", command.CommandPath(), invalid.String())
+		}
+	}
+}
+
+func TestOperationDescriptorsMatchRegisteredCommandTree(t *testing.T) {
+	root := newRootCommand()
+	want := make(map[string]operationDescriptor, len(operationDescriptors))
+	for _, descriptor := range operationDescriptors {
+		if _, exists := want[descriptor.Name]; exists {
+			t.Fatalf("duplicate operation descriptor %q", descriptor.Name)
+		}
+		want[descriptor.Name] = descriptor
+	}
+	got := make(map[string]*cobra.Command)
+	for _, command := range registeredCommands(root) {
+		got[command.Name()] = command
+	}
+	if len(got) != len(want) {
+		t.Fatalf("registered command count = %d, descriptor count = %d", len(got), len(want))
+	}
+	for name, descriptor := range want {
+		command := got[name]
+		if command == nil {
+			t.Errorf("descriptor %q is not registered in Cobra", name)
+			continue
+		}
+		if command.Short != descriptor.Short || command.Hidden != descriptor.Hidden {
+			t.Errorf("Cobra command %q metadata does not match its descriptor", name)
+		}
+		if descriptor.Handler == nil {
+			t.Errorf("descriptor %q has no handler", name)
+		}
+		gotFlags := localFlagNames(command)
+		wantFlags := make([]string, len(descriptor.Flags))
+		copy(wantFlags, descriptor.Flags)
+		sort.Strings(gotFlags)
+		sort.Strings(wantFlags)
+		if !reflect.DeepEqual(gotFlags, wantFlags) {
+			t.Errorf("command %q local flags = %v, descriptor flags = %v", name, gotFlags, wantFlags)
+		}
+	}
+	for name := range got {
+		if _, exists := want[name]; !exists {
+			t.Errorf("Cobra command %q has no operation descriptor", name)
+		}
+	}
+}
+
+// case: S-203.24
+func TestCommandRejectsUndeclaredFlagsAndPositionalArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"status", "--snapshot", "unexpected", "--json"},
+		{"status", "unexpected", "--json"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := clikitcommand.Execute(newRootCommand(), args, &stdout, &stderr)
+		if code != 2 {
+			t.Errorf("args %q exit = %d, want 2; stdout=%s stderr=%s", args, code, stdout.String(), stderr.String())
+		}
+		var envelope struct {
+			OK    bool `json:"ok"`
+			Error struct {
+				Code string `json:"code"`
+				Hint string `json:"hint"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.OK || envelope.Error.Code != "KB_RUNTIME_INPUT_INVALID" {
+			t.Errorf("args %q result = %s, want invalid-input envelope", args, stdout.String())
+		}
+		if !strings.Contains(envelope.Error.Hint, "kb-create status --help") {
+			t.Errorf("args %q hint = %q, want command help", args, envelope.Error.Hint)
 		}
 	}
 }
@@ -240,8 +313,9 @@ func TestJSONInstallProgressEndsWithTerminalRecord(t *testing.T) {
 	var stdout bytes.Buffer
 	cmd := &cobra.Command{Use: "kb-create install"}
 	cmd.SetOut(&stdout)
-	inv := invocation{Operation: "install", Index: index, JSON: true, Direct: directRequest{PlatformRoot: platformRoot}, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}}, NodePreflight: func() error { return nil }}
-	err = runInvocation(cmd, inv, "install")
+	inv := operationTestSetup{Operation: "install", Index: index, JSON: true, Direct: directRequest{PlatformRoot: platformRoot}, RuntimeDeps: &runtime.Dependencies{Artifacts: installArtifacts{root: platformRoot}, Host: installHost{}}, NodePreflight: func() error { return nil }}
+	descriptor, _ := lookupOperationDescriptor("install")
+	err = descriptorTestCall(cmd, descriptor, inv)
 	if code, ok := result.StreamExitCode(err); !ok || code != 0 {
 		t.Fatalf("stream result = %v, %v; out=%s", code, ok, stdout.String())
 	}
@@ -281,7 +355,8 @@ func TestJSONInstallFailureEndsWithTerminalRecord(t *testing.T) {
 	var stdout bytes.Buffer
 	cmd := &cobra.Command{Use: "kb-create install"}
 	cmd.SetOut(&stdout)
-	err := runInvocation(cmd, invocation{Operation: "install", JSON: true}, "install")
+	descriptor, _ := lookupOperationDescriptor("install")
+	err := descriptorTestCall(cmd, descriptor, operationTestSetup{Operation: "install", JSON: true})
 	if code, ok := result.StreamExitCode(err); !ok || code != 2 {
 		t.Fatalf("stream result = %v, %v; out=%s", code, ok, stdout.String())
 	}
