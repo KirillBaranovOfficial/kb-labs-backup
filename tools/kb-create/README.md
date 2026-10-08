@@ -71,13 +71,15 @@ Release automation creates the index with
 `go run ./v2/cmd/kb-create-release-index --input manifest-export.json
 --manifest-root staging-root --output release-index.json` after generating the
 binary manifest from the exact published checksums with
-`node scripts/prepare-binary-manifest.mjs`. The command reads the exact V2
-manifests staged with each artifact and replaces any hand-authored config
-projection; missing/mismatched manifests fail the release. The resulting
-index contains the shared compatibility matrix for platform, SDK and binaries,
-rejects channels that point outside its platform set, and seals the canonical
-payload with a digest. `kb-create` verifies both the digest and matrix before
-resolving.
+`node scripts/prepare-binary-manifest.mjs --checksums checksums.txt --repository OWNER/REPO --release-tag TAG --version VERSION --output binary-manifest.json`.
+The version comes from the release plan and is recorded on each binary entry.
+The common `@kb-labs/devkit/tsup/node` build hook emits each service and adapter
+manifest as `dist/manifest.json`; release-index preparation reads only that
+artifact and fails when a staged package declares a manifest but the artifact
+is missing. The resulting index records the actual platform, SDK, and binary
+versions and their explicit compatibility relations in the matrix, then seals
+the canonical payload with a digest. `kb-create` verifies the digest and uses
+the matrix as its compatibility gate.
 
 Secret input uses `--secret-env requirement.id=ENV_VAR`, so CI/agents pass a
 reference to process environment rather than secret text through argv/JSON.

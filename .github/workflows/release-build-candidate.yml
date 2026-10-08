@@ -280,6 +280,7 @@ jobs:
             --checksums dist/checksums.txt \
             --repository "$REPOSITORY" \
             --release-tag "v${VERSION}-binaries" \
+            --version "$VERSION" \
             --output .kb/release/binary-manifest.json
 
       - name: Seal unified release index

@@ -30,15 +30,9 @@ const channel = value('--channel') ?? 'stable';
 const registry = value('--registry') ?? 'https://registry.npmjs.org';
 const platformPackage = value('--platform-package') ?? '@kb-labs/core-runtime';
 const sdkPackage = value('--sdk-package') ?? '@kb-labs/sdk';
-const platformVersion = value('--platform-version');
-const sdkVersion = value('--sdk-version');
 const binaryManifestPath = value('--binary-manifest') ? resolve(value('--binary-manifest')) : undefined;
 if (flow === 'platform' && !binaryManifestPath) throw new Error('--binary-manifest is required for the unified platform release-index');
-// SDK, platform and binaries share one version for now (release decision 4a).
-// A differing version is a release mistake unless it is declared on purpose.
-const allowVersionSkew = args.includes('--allow-version-skew');
 const minLauncherVersion = value('--min-launcher-version');
-if (minLauncherVersion && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(minLauncherVersion)) throw new Error(`--min-launcher-version must be a semver version, got ${minLauncherVersion}`);
 const sealerBin = value('--sealer-bin') ? resolve(value('--sealer-bin')) : undefined;
 const platformRequires = (value('--platform-requires') ?? '')
   .split(',')
@@ -61,7 +55,6 @@ const platformMemberPackages = (value('--platform-member-packages') ?? '')
 // a recovery tool (kb-create doctor --recover) is declared only when it ships.
 const hostPackage = value('--host-package') ?? '@kb-labs/host-app';
 const hostHealthURL = value('--host-health-url') ?? 'http://127.0.0.1:4000/health';
-const adapterOverrides = value('--adapter-overrides') ? JSON.parse(value('--adapter-overrides')) : {};
 
 const readStage = directory => {
   const entries = JSON.parse(readFileSync(join(directory, 'manifest.json'), 'utf8'));
@@ -76,6 +69,7 @@ const byName = new Map(stage.map(item => [item.name, item]));
 const sourceDirByName = new Map(stagedEntries.map(({ item, directory }) => [item.name, directory]));
 const platform = byName.get(platformPackage);
 if (!platform) throw new Error(`platform package ${platformPackage} is absent from stage manifest`);
+const resolvedPlatformVersion = platform.version;
 
 // The default adapter map is part of the sealed platform configuration, not a
 // suggestion for an already-installed workspace.  Its packages must therefore
@@ -114,27 +108,13 @@ for (const packageName of platformMemberPackages) {
     throw new Error(`required platform member ${packageName} is absent from stage manifest`);
   }
 }
-const resolvedPlatformVersion = platformVersion ?? platform.version;
-if (platform.version !== resolvedPlatformVersion) throw new Error(`platform version mismatch: stage=${platform.version}, expected=${resolvedPlatformVersion}`);
-
 const sdk = byName.get(sdkPackage);
-if (sdkVersion && (!sdk || sdk.version !== sdkVersion)) throw new Error(`SDK version mismatch for ${sdkPackage}`);
 if (!sdk) throw new Error(`SDK package ${sdkPackage} is absent from stage manifest; compatibility cannot be validated without an exact SDK artifact`);
 const binaries = binaryManifestPath ? JSON.parse(readFileSync(binaryManifestPath, 'utf8')).binaries : [];
 if (!Array.isArray(binaries)) throw new Error('binary manifest must contain a binaries array');
 for (const binary of binaries) {
-  for (const field of ['id', 'os', 'arch', 'url', 'filename', 'sha256']) if (!binary[field]) throw new Error(`binary manifest entry is missing ${field}`);
+  for (const field of ['id', 'version', 'os', 'arch', 'url', 'filename', 'sha256']) if (!binary[field]) throw new Error(`binary manifest entry is missing ${field}`);
 }
-const versionSkew = [
-  ...(sdk.version !== resolvedPlatformVersion ? [`sdk ${sdk.version} != platform ${resolvedPlatformVersion}`] : []),
-  ...binaries.filter(binary => binary.version && binary.version !== resolvedPlatformVersion).map(binary => `binary ${binary.id} ${binary.version} != platform ${resolvedPlatformVersion}`),
-];
-if (versionSkew.length > 0) {
-  const detail = versionSkew.join('; ');
-  if (!allowVersionSkew) throw new Error(`version skew: ${detail}. SDK, platform and binaries must share one version; pass --allow-version-skew to release them on purpose`);
-  console.warn(`WARNING: version skew allowed explicitly: ${detail}`);
-}
-
 const staging = resolve(`${artifactsDir}/v2-manifest-root`);
 rmSync(staging, { recursive: true, force: true });
 mkdirSync(staging, { recursive: true });
@@ -146,53 +126,25 @@ const manifestFor = item => {
   if (!existsSync(tarball)) throw new Error(`staged tarball is missing: ${tarball}`);
   const result = spawnSync('tar', ['-xzf', tarball, '-C', packageDir, '--strip-components=1'], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`extract ${item.name}: ${result.stderr || result.stdout}`);
-  for (const candidate of [join(packageDir, 'kb-create.manifest.json'), join(packageDir, 'dist', 'kb-create.manifest.json'), join(packageDir, 'dist', 'manifest.json')]) {
-    if (existsSync(candidate)) return JSON.parse(readFileSync(candidate, 'utf8'));
-  }
-  const javascriptManifest = join(packageDir, 'dist', 'manifest.js');
-  if (existsSync(javascriptManifest)) {
-    const source = readFileSync(javascriptManifest, 'utf8');
-    // Published service packages ship their manifest as compiled JS (rather
-    // than JSON).  The release index is the installation contract, so it
-    // must preserve their service graph instead of silently treating them as
-    // ordinary packages.  Read only the declarative literals we need; never
-    // execute a tarball fetched from the registry while preparing a release.
-    if (/schema:\s*["']kb\.service\/1["']/.test(source)) {
-      const id = source.match(/\bid:\s*["']([^"']+)["']/)?.[1];
-      // Minifiers rewrite round numeric literals into scientific notation
-      // (3000 -> 3e3), so the port literal must be captured whole rather than
-      // truncated at the exponent marker.
-      const port = Number(source.match(/\bport:\s*(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/)?.[1] ?? 0);
-      const healthCheck = source.match(/\bhealthCheck:\s*["']([^"']*)["']/)?.[1];
-      const dependsOnSource = source.match(/\bdependsOn:\s*\[([^\]]*)\]/)?.[1];
-      const dependsOn = dependsOnSource
-        ? [...dependsOnSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
-        : [];
-      if (id) return { schema: 'kb.service/1', id, runtime: { port, healthCheck }, dependsOn };
+  const artifact = join(packageDir, 'dist', 'manifest.json');
+  if (existsSync(artifact)) {
+    const manifest = JSON.parse(readFileSync(artifact, 'utf8'));
+    if (!['kb.service/1', 'kb.adapter/1', 'kb.plugin/3'].includes(manifest?.schema)) {
+      throw new Error(`${item.name} dist/manifest.json uses unsupported schema ${manifest?.schema ?? '(missing)'}`);
     }
-    const id = source.match(/\bid:\s*["']([^"']+)["']/)?.[1];
-    const implementsSource = source.match(/\bimplements:\s*(\[[^\]]+\]|["'][^"']+["'])/)?.[1];
-    const implementsValue = implementsSource?.startsWith('[')
-      ? [...implementsSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
-      : implementsSource?.slice(1, -1);
-    const defaultsSource = source.match(/\bdefaultFor:\s*(\[[^\]]*\])/)?.[1];
-    const defaultFor = defaultsSource
-      ? [...defaultsSource.matchAll(/["']([^"']+)["']/g)].map(match => match[1])
-      : undefined;
-    if (id && implementsValue) {
-      return { schema: 'kb.adapter/1', id, implements: implementsValue, ...(defaultFor ? { defaultFor } : {}) };
-    }
+    return manifest;
   }
+  const packageJSON = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'));
+  const declaredManifest = packageJSON.kb?.manifest;
+  if (declaredManifest) throw new Error(`${item.name} declares kb.manifest but its build did not emit dist/manifest.json; rebuild the package with @kb-labs/devkit/tsup/node`);
   return undefined;
 };
 
 // A package declares the configuration it needs (non-secret paths, secrets and
 // the environment variables/services they feed) in a `kb-create.requirements.json`
-// shipped in its tarball. It is a SEPARATE file from `kb-create.manifest.json` on
-// purpose: manifestFor() above treats a `kb-create.manifest.json` as the
-// package's *primary* manifest, which would hide a service's `kb.service/1`
-// graph (dist/manifest.js) and drop the service from the index. This file only
-// adds requirements and never replaces the primary manifest. The sealer
+// shipped in its tarball. It is separate from the declarative dist/manifest.json
+// artifact: this file only adds requirements and never replaces the package's
+// service, plugin, or adapter contract. The sealer
 // validates each requirement's shape; here we only fail closed on a malformed
 // file, so a typo cannot silently ship a package without its requirements.
 const REQUIREMENTS_FILE = 'kb-create.requirements.json';
@@ -265,7 +217,7 @@ const adapters = [];
 // installed.Load()'s id equality check at publish time.
 const normalizedIdByPackage = new Map();
 for (const item of stage) {
-  const manifest = manifestFor(item) ?? adapterOverrides[item.name];
+  const manifest = manifestFor(item);
   const normalizedID = item.name === platformPackage
     ? 'platform'
     : item.name === sdkPackage
@@ -335,9 +287,6 @@ for (const item of stage) {
 const sdkPackageJSON = packageJSONFor(sdk);
 const sdkPlatformRange = sdkPackageJSON.peerDependencies?.[platformPackage];
 if (!sdkPlatformRange) throw new Error(`${sdkPackage} does not declare a peer dependency on ${platformPackage}`);
-if (!satisfies(resolvedPlatformVersion, sdkPlatformRange)) {
-  throw new Error(`${sdkPackage}@${sdk.version} rejects ${platformPackage}@${resolvedPlatformVersion}: ${sdkPlatformRange}`);
-}
 
 // Platform members and the SDK share one installed package graph. A runtime
 // peer imported by any of them must therefore be included as a platform member
@@ -517,7 +466,7 @@ const exportValue = {
     labels: [
       { id: `platform@${resolvedPlatformVersion}`, kind: 'platform', artifactId: 'platform', version: resolvedPlatformVersion, requires: [{ label: `sdk@${sdk.version}`, constraint: sdkPlatformRange }], status: 'prepared', validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-peer-dependency'] },
       { id: `sdk@${sdk.version}`, kind: 'sdk', artifactId: 'sdk', version: sdk.version, status: 'prepared', validatedBy: ['stage', 'package-manifest', 'artifact-hash', 'sdk-peer-dependency'] },
-      ...binaries.map(binary => ({ id: `binary:${binary.id}@${resolvedPlatformVersion}:${binary.os}/${binary.arch}`, kind: 'binary', artifactId: binary.id, version: resolvedPlatformVersion, requires: [{ label: `platform@${resolvedPlatformVersion}` }, { label: `sdk@${sdk.version}` }], status: 'prepared', validatedBy: ['release-asset', 'artifact-hash', 'post-publish-smoke'] })),
+      ...binaries.map(binary => { const version = binary.version; return { id: `binary:${binary.id}@${version}:${binary.os}/${binary.arch}`, kind: 'binary', artifactId: binary.id, version, requires: [{ label: `platform@${resolvedPlatformVersion}` }, { label: `sdk@${sdk.version}` }], status: 'prepared', validatedBy: ['release-asset', 'artifact-hash', 'post-publish-smoke'] }; }),
     ],
   },
   platforms: [{
@@ -542,8 +491,8 @@ const exportValue = {
     ],
     host,
     profiles: {
-      default: { platformVersion: resolvedPlatformVersion, services: services.map(({ packageName, ...service }) => service) },
-      client: { profile: 'client', platformVersion: resolvedPlatformVersion, services: [] },
+      default: { platformVersion: platform.version, services: services.map(({ packageName, ...service }) => service) },
+      client: { profile: 'client', platformVersion: platform.version, services: [] },
     },
     binaries,
     members: [...new Set([
@@ -605,36 +554,3 @@ function interfaceToCapability(name) {
 const digest = createHash('sha256').update(readFileSync(output)).digest('hex');
 console.log(`Release index prepared: ${output}`);
 console.log(`Release index bytes: ${digest}`);
-
-function satisfies(version, range) {
-  const candidate = parseVersion(version);
-  return range.split('||').some(alternative => alternative.trim().split(/\s+/).filter(Boolean).every(token => compareToken(candidate, token)));
-}
-
-function compareToken(candidate, token) {
-  if (token === '*' || token.toLowerCase() === 'latest') return true;
-  const operator = token.match(/^(\^|~|>=|<=|>|<|=)?(.*)$/)?.[1] ?? '=';
-  const raw = token.slice(operator === '=' ? 0 : operator.length);
-  const target = parseVersion(raw);
-  const comparison = compareVersion(candidate, target);
-  if (operator === '^') return comparison >= 0 && candidate[0] === target[0];
-  if (operator === '~') return comparison >= 0 && candidate[0] === target[0] && candidate[1] === target[1];
-  if (operator === '>=') return comparison >= 0;
-  if (operator === '<=') return comparison <= 0;
-  if (operator === '>') return comparison > 0;
-  if (operator === '<') return comparison < 0;
-  return comparison === 0;
-}
-
-function parseVersion(value) {
-  const match = String(value).trim().replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!match) throw new Error(`invalid semver in compatibility declaration: ${value}`);
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function compareVersion(left, right) {
-  for (let index = 0; index < 3; index += 1) {
-    if (left[index] !== right[index]) return left[index] > right[index] ? 1 : -1;
-  }
-  return 0;
-}

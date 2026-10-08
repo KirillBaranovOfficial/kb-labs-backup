@@ -13,6 +13,7 @@ import { defineAdapterManifest } from '@kb-labs/sdk/adapters';
  *  - "proxy"     — forwards calls to a remote runtime
  */
 export const manifest = defineAdapterManifest({
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: '<%= it.name %>',
   name: '<%= it.name %>',

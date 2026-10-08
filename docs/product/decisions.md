@@ -541,3 +541,13 @@ command for supplying input through a supported flag or stdin. Plugin prompts
 in workflow, Studio, REST, MCP, and worker execution fail at the prompt
 boundary; callers must pass the value as explicit workflow or request input.
 Cases: S-041.6, S-215.1.
+
+### Release compatibility versions
+
+The first release stamps one lockstep version across platform packages, the SDK,
+and release binaries. The `kb.release-compatibility/2` matrix is the only
+compatibility gate: the release index records each artifact's actual version and
+its exact relations, and the catalog accepts a candidate only when those
+relations are present. Independent versions later are a release-flow data
+change; the installer, catalog, and index preparer do not add a second equality
+rule. Cases: S-214.8–S-214.9.

@@ -37,6 +37,7 @@ We implement a **manifest-based context injection system** where:
 1. **Adapters declare contexts in manifest**
    ```typescript
    export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
      // ...
      contexts: ['workspace', 'analytics'], // Request specific contexts
    };
@@ -98,6 +99,7 @@ Extended `AdapterManifest` interface:
 
 ```typescript
 export interface AdapterManifest {
+  schema: 'kb.adapter/1';
   // ... existing fields
 
   /**

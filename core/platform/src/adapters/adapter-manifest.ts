@@ -139,6 +139,9 @@ export interface AdapterCapabilities {
  * ```
  */
 export interface AdapterManifest {
+  /** Declarative adapter manifest contract consumed by discovery and release preparation. */
+  schema: 'kb.adapter/1';
+
   /**
    * Manifest schema version.
    * Used for compatibility checking and evolution.
