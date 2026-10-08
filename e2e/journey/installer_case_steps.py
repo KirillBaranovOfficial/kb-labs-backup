@@ -994,7 +994,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 or payload.get("operation") != "doctor" or payload.get("status") != "unhealthy"
                 or not failed or failed[0].get("code") != "KB_HOST_SPEC_INVALID"
                 or "command is required" not in str(failed[0].get("detail", ""))
-                or "kb-create apply --platform-root" not in str(failed[0].get("hint", ""))):
+                or "kb-create apply --request-platform-root" not in str(failed[0].get("hint", ""))):
             raise RuntimeError("doctor did not report the invalid receipt host specification as an unhealthy diagnosis")
         shutil.rmtree(root, ignore_errors=True)
 

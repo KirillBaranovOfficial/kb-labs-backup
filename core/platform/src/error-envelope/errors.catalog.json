@@ -138,15 +138,6 @@
       "hint": "Free memory, then rerun `kb-create install`."
     },
     {
-      "code": "KB_INSTALL_OPERATION_INVALID",
-      "area": "install",
-      "stage": "preflight",
-      "severity": "error",
-      "retryable": false,
-      "message": "The requested operation is not supported.",
-      "hint": "Use plan, apply, update, uninstall, rollback, doctor, wizard or status."
-    },
-    {
       "code": "KB_INSTALL_INCOMPATIBLE_COMPONENTS",
       "area": "install",
       "stage": "resolve",

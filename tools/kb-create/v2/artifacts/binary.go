@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -107,26 +108,38 @@ func (c Composite) Install(items []contracts.Artifact) error {
 
 // InstallWithProgress exposes the real download/verification and package
 // installation boundaries to the shared apply engine's frontends.
-func (c Composite) InstallWithProgress(items []contracts.Artifact, progress func(string, bool)) error {
+func (c Composite) InstallWithProgress(items []contracts.Artifact, progress func(string, bool) error) error {
 	if progress != nil {
-		progress("Download and verify artifacts", true)
+		if err := progress("Download and verify artifacts", true); err != nil {
+			return fmt.Errorf("report artifact progress: %w", err)
+		}
 	}
 	// A binary is small and independently hash-verifiable, so install it first.
 	// If pnpm then fails, remove V2-owned binaries immediately; a later update
 	// additionally restores the pre-mutation snapshot and package lock state.
 	if err := c.Binaries.Install(items); err != nil {
 		if progress != nil {
-			progress("Download and verify artifacts", false)
+			if progressErr := progress("Download and verify artifacts", false); progressErr != nil {
+				return errors.Join(err, fmt.Errorf("report artifact progress: %w", progressErr))
+			}
 		}
 		return err
 	}
 	if progress != nil {
-		progress("Download and verify artifacts", false)
-		progress("Install packages", true)
+		if err := progress("Download and verify artifacts", false); err != nil {
+			removeErr := c.Binaries.Remove(items)
+			return errors.Join(fmt.Errorf("report artifact progress: %w", err), removeErr)
+		}
+		if err := progress("Install packages", true); err != nil {
+			removeErr := c.Binaries.Remove(items)
+			return errors.Join(fmt.Errorf("report artifact progress: %w", err), removeErr)
+		}
 	}
 	if err := c.Packages.Install(items); err != nil {
 		if progress != nil {
-			progress("Install packages", false)
+			if progressErr := progress("Install packages", false); progressErr != nil {
+				err = errors.Join(err, fmt.Errorf("report artifact progress: %w", progressErr))
+			}
 		}
 		if removeErr := c.Binaries.Remove(items); removeErr != nil {
 			return fmt.Errorf("install packages: %w; remove staged binaries: %v", err, removeErr)
@@ -134,7 +147,9 @@ func (c Composite) InstallWithProgress(items []contracts.Artifact, progress func
 		return err
 	}
 	if progress != nil {
-		progress("Install packages", false)
+		if err := progress("Install packages", false); err != nil {
+			return fmt.Errorf("report artifact progress: %w", err)
+		}
 	}
 	return nil
 }

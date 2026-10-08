@@ -23,7 +23,6 @@ const (
 
 // Error codes emitted by kb-create's operation layer.
 const (
-	CodeOperationInvalid       = "KB_INSTALL_OPERATION_INVALID"
 	CodeToolchainUnsupported   = "KB_INSTALL_TOOLCHAIN_UNSUPPORTED"
 	CodeNodeVersion            = "KB_INSTALL_NODE_VERSION"
 	CodeMemoryInsufficient     = "KB_INSTALL_MEMORY_INSUFFICIENT"
