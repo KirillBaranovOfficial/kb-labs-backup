@@ -153,7 +153,7 @@ function renderCommandLimits(
     return 1;
   }
 
-  const manifest = registered.manifest.manifestV2;
+  const manifest = registered.manifest.v3Manifest;
   if (!manifest) {
     renderError(
       `Command '${registered.manifest.segments.join(' ')}' is missing manifest metadata.`,
@@ -220,8 +220,8 @@ function renderCommandLimits(
 
 function findManifest(commands: RegisteredCommand[]): ManifestV3 | undefined {
   for (const cmd of commands) {
-    if (cmd.manifest.manifestV2) {
-      return cmd.manifest.manifestV2;
+    if (cmd.manifest.v3Manifest) {
+      return cmd.manifest.v3Manifest;
     }
   }
   return undefined;

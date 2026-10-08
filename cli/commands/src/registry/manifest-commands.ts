@@ -86,7 +86,7 @@ export function manifestToCommands(manifest: ManifestV3, pkgName: string, pkgRoo
       loader: createManifestV3Loader(cmd.path),
       package: pkgName,
       operationType: cmd.operationType,
-      manifestV2: manifest,
+      v3Manifest: manifest,
       pkgRoot,
     };
   });
@@ -137,7 +137,7 @@ export function createUnavailableManifest(
       code: diagnosticCode,
       remediation: remediation ?? 'Run `kb marketplace plugins doctor --scope platform` to diagnose this plugin.',
     } : undefined,
-    manifestV2: {
+    v3Manifest: {
       schema: 'kb.plugin/3',
       id: pluginId ?? pkgName,
       version: '0.0.0',

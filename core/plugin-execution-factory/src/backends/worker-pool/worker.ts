@@ -29,7 +29,7 @@ interface WithMiddlewareDecls {
 import type { ExecutionRequest, ExecutionResult, PlatformTransportFactory, PlatformTransportServer } from '../../types.js';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { InteractiveInputRequiredError } from '@kb-labs/plugin-contracts';
-import { createErrorEnvelope, ErrorEnvelopeError, toErrorEnvelope } from '@kb-labs/core-platform';
+import { serializeCataloguedError, rebuildCataloguedError } from './error-codec.js';
 import { WorkerCrashedError, TimeoutError } from '../../errors.js';
 
 /**
@@ -135,26 +135,6 @@ function killProcessTree(rootPid: number): void {
   } catch {
     // Already exited.
   }
-}
-
-function serializeCataloguedError(error: unknown): SerializedCataloguedError {
-  const envelope = toErrorEnvelope(error);
-  return {
-    code: envelope.code,
-    message: envelope.message,
-    hint: envelope.hint,
-    ...(envelope.cause ? { cause: envelope.cause } : {}),
-    ...(envelope.details ? { details: envelope.details } : {}),
-  };
-}
-
-function rebuildCataloguedError(error: SerializedCataloguedError): ErrorEnvelopeError {
-  return new ErrorEnvelopeError(createErrorEnvelope(error.code, {
-    message: error.message,
-    hint: error.hint,
-    ...(error.cause ? { cause: error.cause } : {}),
-    ...(error.details ? { details: error.details } : {}),
-  }));
 }
 
 /**

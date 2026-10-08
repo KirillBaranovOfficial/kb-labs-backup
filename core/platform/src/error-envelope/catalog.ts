@@ -79,7 +79,7 @@ export function createErrorEnvelope(code: string, options: CreateEnvelopeOptions
     message: options.message ?? renderTemplate(entry.message, details),
     hint: options.hint ?? renderTemplate(entry.hint, details),
   };
-  if (options.cause) {
+  if (options.cause && options.cause !== envelope.message) {
     envelope.cause = options.cause;
   }
   if (options.actions && options.actions.length > 0) {

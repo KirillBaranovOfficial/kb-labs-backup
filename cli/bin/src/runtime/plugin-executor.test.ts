@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdapterUnavailableError, resolveCliGatewayTarget } from '@kb-labs/core-platform';
+import * as pluginContracts from '@kb-labs/plugin-contracts';
 import type { RegisteredCommand } from '@kb-labs/cli-commands';
 
 const { executeCommandV3, resolveActiveGateway } = vi.hoisted(() => ({ executeCommandV3: vi.fn(), resolveActiveGateway: vi.fn() }));
@@ -39,16 +40,20 @@ describe('plugin executor adapter errors', () => {
 
   // case: S-010.7
   it('passes the configured gateway address to the plugin backend without changing process.env', async () => {
+    const matcher = vi.spyOn(pluginContracts, 'matchesPermissionPattern');
     executeCommandV3.mockResolvedValue(0);
     const previousGatewayUrl = process.env.KB_GATEWAY_URL;
     const manifestCmd = {
       pkgRoot: '/platform/plugins/marketplace',
-      manifest: { id: '@kb-labs/marketplace-entry', segments: ['marketplace', 'plugins', 'doctor'] },
-      v3Manifest: {
+      manifest: {
+        id: '@kb-labs/marketplace-entry',
+        segments: ['marketplace', 'plugins', 'doctor'],
+        v3Manifest: {
         id: '@kb-labs/marketplace-entry',
         version: '1.0.0',
         permissions: { env: { read: ['KB_GATEWAY_URL'] } },
         cli: { commands: [{ path: 'marketplace plugins doctor', handler: 'dist/index.js#doctor' }] },
+        },
       },
     } as unknown as RegisteredCommand;
     const context = {
@@ -74,6 +79,7 @@ describe('plugin executor adapter errors', () => {
       });
 
       expect(exitCode).toBe(0);
+      expect(matcher).toHaveBeenCalledWith('KB_GATEWAY_URL', 'KB_GATEWAY_URL');
       expect(executeCommandV3).toHaveBeenCalledWith(expect.objectContaining({
         env: { KB_GATEWAY_URL: 'http://127.0.0.1:43323' },
       }));
@@ -90,12 +96,15 @@ describe('plugin executor adapter errors', () => {
     delete process.env.GATEWAY_PORT;
     const manifestCmd = {
       pkgRoot: '/platform/plugins/marketplace',
-      manifest: { id: '@kb-labs/marketplace-entry', segments: ['marketplace', 'plugins', 'doctor'] },
-      v3Manifest: {
+      manifest: {
+        id: '@kb-labs/marketplace-entry',
+        segments: ['marketplace', 'plugins', 'doctor'],
+        v3Manifest: {
         id: '@kb-labs/marketplace-entry',
         version: '1.0.0',
         permissions: { env: { read: ['KB_GATEWAY_URL'] } },
         cli: { commands: [{ path: 'marketplace plugins doctor', handler: 'dist/index.js#doctor' }] },
+        },
       },
     } as unknown as RegisteredCommand;
 
@@ -131,12 +140,15 @@ describe('plugin executor adapter errors', () => {
     process.env.GATEWAY_PORT = '4000oops';
     const manifestCmd = {
       pkgRoot: '/platform/plugins/marketplace',
-      manifest: { id: '@kb-labs/marketplace-entry', segments: ['marketplace', 'plugins', 'doctor'] },
-      v3Manifest: {
+      manifest: {
+        id: '@kb-labs/marketplace-entry',
+        segments: ['marketplace', 'plugins', 'doctor'],
+        v3Manifest: {
         id: '@kb-labs/marketplace-entry',
         version: '1.0.0',
         permissions: { env: { read: ['KB_GATEWAY_URL'] } },
         cli: { commands: [{ path: 'marketplace plugins doctor', handler: 'dist/index.js#doctor' }] },
+        },
       },
     } as unknown as RegisteredCommand;
 

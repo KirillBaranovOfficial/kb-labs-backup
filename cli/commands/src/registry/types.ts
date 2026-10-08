@@ -33,7 +33,7 @@ export interface CommandManifest {
   };
   permissions?: string[];
   telemetry?: 'opt-in' | 'off';
-  manifestV2?: ManifestV3;
+  v3Manifest?: ManifestV3;
   pkgRoot?: string;
   /** Internal flag: true for synthetic "unavailable" manifests (the manifest file exists but failed to load). */
   _synthetic?: boolean;
@@ -49,7 +49,6 @@ export type FlagDefinition = CliFlagDecl & { choices?: readonly string[]; descri
 
 export interface RegisteredCommand {
   manifest: CommandManifest;
-  v3Manifest?: ManifestV3;   // Full V3 manifest (clean naming, replaces manifestV2 field)
   available: boolean;
   unavailableReason?: string;
   hint?: string;

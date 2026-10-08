@@ -33,7 +33,7 @@ export const CommandManifestSchema = z.object({
   engine: EngineSchema,
   permissions: z.array(z.string()).optional(),
   telemetry: z.enum(['opt-in', 'off']).optional(),
-  manifestV2: z.any().optional(),
+  v3Manifest: z.any().optional(),
   pkgRoot: z.string().optional(),
   _synthetic: z.boolean().optional(),
   unavailablePlugin: z.boolean().optional(),

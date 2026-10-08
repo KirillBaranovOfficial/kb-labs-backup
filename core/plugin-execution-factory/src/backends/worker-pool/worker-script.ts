@@ -23,7 +23,8 @@ import type {
   UIPromptResultMessage,
   SerializedCataloguedError,
 } from './types.js';
-import { createErrorEnvelope, ErrorEnvelopeError, getCatalogEntry, toErrorEnvelope } from '@kb-labs/core-platform';
+import { ErrorEnvelopeError, getCatalogEntry, toErrorEnvelope } from '@kb-labs/core-platform';
+import { serializeCataloguedError, rebuildCataloguedError } from './error-codec.js';
 import type { PlatformServices, UIFacade, SelectChoice, MultiSelectChoice } from '@kb-labs/plugin-contracts';
 import { IPCTransport, UnixSocketTransport, createProxyPlatform } from '@kb-labs/core-ipc';
 import type { ITransport } from '@kb-labs/core-ipc';
@@ -77,25 +78,6 @@ async function ipcPrompt(
       reject(unavailablePrompt(prompt.message, 'The worker could not send the prompt to its host.'));
     });
   });
-}
-
-function rebuildCataloguedError(error: SerializedCataloguedError): ErrorEnvelopeError {
-  return new ErrorEnvelopeError(createErrorEnvelope(error.code, {
-    message: error.message,
-    hint: error.hint,
-    ...(error.cause ? { cause: error.cause } : {}),
-    ...(error.details ? { details: error.details } : {}),
-  }));
-}
-
-function serializeCataloguedError(envelope: ReturnType<typeof toErrorEnvelope>): SerializedCataloguedError {
-  return {
-    code: envelope.code,
-    message: envelope.message,
-    hint: envelope.hint,
-    ...(envelope.cause ? { cause: envelope.cause } : {}),
-    ...(envelope.details ? { details: envelope.details } : {}),
-  };
 }
 
 function hasCataloguedCode(error: unknown): error is { code: string } {
