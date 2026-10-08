@@ -53,6 +53,8 @@ export interface SessionCredentials {
 export interface GatewayClientConfig {
   /** Gateway URL selected by the CLI active-root resolver. */
   gatewayUrl: string;
+  /** Identity kinds accepted by this transport request. */
+  credentialKind: 'either' | 'session' | 'machine';
   /** Timeout for HTTP requests in ms. @default 30000 */
   requestTimeoutMs?: number;
   /** Auto-refresh tokens on 401. @default true */
@@ -119,10 +121,6 @@ export interface ICredentialsManager {
   save(credentials: GatewayCredentials): Promise<void>;
   /** Clear credentials (logout) */
   clear(): Promise<void>;
-  /** Check if access token is expired */
-  isExpired(credentials: GatewayCredentials): boolean;
-  /** Refresh tokens via Gateway API */
-  refresh(credentials: GatewayCredentials): Promise<GatewayCredentials>;
 }
 
 /**
@@ -136,8 +134,4 @@ export interface ISessionManager {
   save(session: SessionCredentials): Promise<void>;
   /** Clear session (logout) */
   clear(): Promise<void>;
-  /** Check if access token is expired */
-  isExpired(session: SessionCredentials): boolean;
-  /** Refresh tokens via Gateway's CLI session endpoint (/auth/refresh/cli) */
-  refresh(session: SessionCredentials): Promise<SessionCredentials>;
 }

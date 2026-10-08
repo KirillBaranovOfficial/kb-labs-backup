@@ -9,6 +9,7 @@
 export * from './types.js';
 export { CredentialsManager } from './credentials.js';
 export { SessionManager } from './session.js';
+export { AuthSessionOwner } from './auth-session.js';
 export { HttpSseGatewayTransport } from './http-sse-transport.js';
 export { TerminalEventRenderer } from './renderer.js';
 export type { IEventRenderer } from './renderer.js';

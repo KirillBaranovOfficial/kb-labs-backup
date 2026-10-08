@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { registerBuiltinCommands, registerBuiltinSystemCommands, registry, type RouteResult } from '@kb-labs/cli-commands';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 const mocks = vi.hoisted(() => {
   const logger = {
@@ -254,7 +255,8 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     process.env.KB_LOG_STREAM = 'stderr';
     globalThis.fetch = vi.fn((input: string | URL | Request) => {
       if (rejectUnauthenticatedWebhookRequests && String(input).includes('/api/v1/webhooks')) {
-        return Promise.resolve(new Response('', { status: 401 }));
+        const error = createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'https://gateway.test' } });
+        return Promise.resolve(new Response(JSON.stringify({ ok: false, error }), { status: 401 }));
       }
       return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { webhooks: [], tokens: [] } }), {
         status: 200,

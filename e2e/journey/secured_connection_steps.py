@@ -84,8 +84,8 @@ def validate_cli_case(case_id: str, returncode: int, output: str, payload: dict 
     session = data.get("session", {})
     checks = {
         "S-005.1": returncode == 0 and payload.get("ok") is True and root == expected_root(payload)
-        and payload.get("profile") == "client" and payload.get("services") == []
-        and isinstance(payload.get("shim"), dict),
+        and data.get("profile") == "client" and data.get("services") == []
+        and isinstance(data.get("shim"), dict),
         "S-005.2": returncode == 0,
         "S-005.3": returncode == 0 and session.get("authenticated") is True
         and session.get("email") == email and session.get("gatewayUrl") == gateway,
@@ -122,7 +122,7 @@ def _journey_home(env: dict[str, str]) -> Path:
 
 
 def expected_root(payload: dict) -> str:
-    receipt = payload.get("receipt", {})
+    receipt = payload.get("data", payload).get("receipt", {})
     return str(receipt.get("plan", {}).get("request", {}).get("platformRoot", ""))
 
 
@@ -246,7 +246,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
                               "--service-profile", "client", "--json"],
                              env=env, cwd=home, timeout=600)
         value = _json(result, "kb-create apply")
-        actual = value.get("receipt", {}).get("plan", {}).get("request", {}).get("platformRoot")
+        actual = value.get("data", {}).get("receipt", {}).get("plan", {}).get("request", {}).get("platformRoot")
         validate_cli_case("S-005.1", result.returncode, result.stdout, value, root=str(actual or ""))
         _expect(actual == str(root), "kb-create apply did not report the requested isolated platform root")
         state["client_cli"] = str(root / ".kb/v2/bin/kb")

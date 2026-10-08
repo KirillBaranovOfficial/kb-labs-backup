@@ -61,7 +61,6 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
       }, gateway);
       if (flags.revoke) {
         const response = await request(`/auth/tokens/${encodeURIComponent(flags.revoke)}/revoke`, 'POST');
-        if (!response.ok) {return fail(`Gateway could not revoke token (HTTP ${response.status}). Check the token ID and retry kb auth tokens --revoke <token-id>.`);}
         if (!flags.json) { ctx.ui?.write?.(`Revoked API token ${flags.revoke}.\n`); }
         return {  revoked: flags.revoke };
       }
@@ -75,14 +74,16 @@ export const authTokens = defineSystemCommand<TokenFlags, CommandResult & { toke
           name: flags.name,
           ...(days === undefined ? {} : { expiresInDays: days }),
         });
-        if (!response.ok) {return fail(`Gateway could not create the API token (HTTP ${response.status}). Retry kb auth tokens --name <name>.`);}
-        const result = await readGatewaySuccessData<{ token: string; tokenRecord: TokenRecord }>(response);
+        const result = await readGatewaySuccessData<{ token: string; tokenRecord: TokenRecord }>(response, {
+          operation: 'API token creation', gatewayUrl: gateway.gatewayUrl,
+        });
         if (!flags.json) { ctx.ui?.write?.(`Token ${result.tokenRecord.name}${result.tokenRecord.expiresAt ? ` (expires ${new Date(result.tokenRecord.expiresAt).toISOString()})` : ' (no expiry)'}:\n${result.token}\n`); }
         return {  token: result.token, tokenRecord: result.tokenRecord };
       }
       const response = await request('/auth/tokens');
-      if (!response.ok) {return fail(`Gateway could not list API tokens (HTTP ${response.status}). Retry kb auth tokens.`);}
-      const result = await readGatewaySuccessData<{ tokens: TokenRecord[] }>(response);
+      const result = await readGatewaySuccessData<{ tokens: TokenRecord[] }>(response, {
+        operation: 'API token listing', gatewayUrl: gateway.gatewayUrl,
+      });
       if (!flags.json && result.tokens.length === 0) {ctx.ui?.write?.('No API tokens. Create one with `kb auth tokens --name "nightly CI"`.\n');}
       else if (!flags.json) {ctx.ui?.write?.(result.tokens.map((token) => `${token.tokenId}  ${token.name}  ${token.expiresAt ? `expires ${new Date(token.expiresAt).toISOString()}` : 'no expiry'}${token.revokedAt ? '  revoked' : ''}`).join('\n') + '\n');}
       return {  tokens: result.tokens };

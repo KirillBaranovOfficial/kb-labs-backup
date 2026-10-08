@@ -13,10 +13,10 @@ export async function promptForPassword(command: string): Promise<string> {
   const input = process.stdin;
   requireInteractiveInput(command, 'The password prompt requires an interactive terminal.');
   if (!input.setRawMode) throw new Error('The terminal does not support secure password input.');
-  process.stderr.write('Password: ');
   input.setRawMode(true);
   input.setEncoding('utf8');
   input.resume();
+  process.stderr.write('Password: ');
   return new Promise((resolve, reject) => {
     let password = '';
     const cleanup = () => {

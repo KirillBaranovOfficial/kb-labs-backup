@@ -354,6 +354,15 @@
       "hint": "Run \"kb-create start\", or \"kb-create doctor\" if the host should already be running."
     },
     {
+      "code": "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": true,
+      "message": "Gateway protocol failure during {operation}: expected a canonical UX result from {gatewayUrl} (HTTP {status}).",
+      "hint": "Run \"kb-create doctor\" to check the Gateway, then retry the command."
+    },
+    {
       "code": "KB_HOST_IDENTITY_MISMATCH",
       "area": "host",
       "stage": "run",

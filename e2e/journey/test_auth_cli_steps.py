@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import pty
+import select
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -16,6 +22,89 @@ from steps.auth import (assert_platform_auth_required, run_bootstrap_recovery_st
 
 
 class CliAuthJourneyTests(unittest.TestCase):
+    # case: S-041.6, S-100.1
+    def test_real_tty_password_prompt_never_echoes_password(self):
+        class GatewayHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.dumps({"ok": True, "data": {
+                    "accessToken": "access", "refreshToken": "refresh", "expiresIn": 900,
+                }}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                body = json.dumps({"ok": True, "data": {"email": "member@example.test", "tenantId": "test"}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format, *_args):
+                return
+
+        gateway = HTTPServer(("127.0.0.1", 0), GatewayHandler)
+        thread = threading.Thread(target=gateway.serve_forever, daemon=True)
+        thread.start()
+        root = Path(__file__).resolve().parents[2]
+        password = "TtyPassword123!"
+        session_created = False
+        with tempfile.TemporaryDirectory(prefix="auth-pty-home-") as home:
+            env = os.environ.copy()
+            env["HOME"] = home
+            env.pop("KB_PLATFORM_ROOT", None)
+            env.pop("KB_HOME", None)
+            env.pop("KB_NET_OFFSET", None)
+            master, slave = pty.openpty()
+            process = subprocess.Popen(
+                ["node", str(root / "cli/bin/dist/bin.js"), "auth", "login", "--gateway-url",
+                 f"http://127.0.0.1:{gateway.server_port}", "--email", "member@example.test"],
+                cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+            )
+            os.close(slave)
+            transcript = bytearray()
+            sent = False
+            deadline = time.monotonic() + 20
+            try:
+                while process.poll() is None and time.monotonic() < deadline:
+                    ready, _, _ = select.select([master], [], [], 0.2)
+                    if not ready:
+                        continue
+                    try:
+                        chunk = os.read(master, 8192)
+                    except OSError:
+                        break
+                    transcript.extend(chunk)
+                    if not sent and b"Password: " in transcript:
+                        sent = True
+                        os.write(master, (password + "\n").encode())
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                    self.fail("TTY login did not finish against the local Gateway fixture")
+                while select.select([master], [], [], 0)[0]:
+                    try:
+                        chunk = os.read(master, 8192)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    transcript.extend(chunk)
+            finally:
+                os.close(master)
+                gateway.shutdown()
+                gateway.server_close()
+                thread.join(timeout=2)
+            session_created = (Path(home) / ".kb" / "session.json").is_file()
+        output = transcript.decode(errors="replace")
+        self.assertTrue(sent, f"TTY login did not show its password prompt: {output!r}")
+        self.assertEqual(process.returncode, 0, output)
+        self.assertNotIn(password, output)
+        self.assertTrue(session_created)
+
     # case: S-041.7, S-041.17
     def test_cli_gate_requires_the_complete_case_error_envelope(self):
         result = subprocess.CompletedProcess(

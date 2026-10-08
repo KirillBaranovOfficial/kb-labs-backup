@@ -5,25 +5,12 @@
  * separate from CredentialsManager's machine-identity store).
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { SessionManager, sessionFilePath } from '../gateway/session.js';
 import type { SessionCredentials } from '../gateway/types.js';
-
-const mockFetch = vi.fn();
-vi.stubGlobal('fetch', mockFetch);
-
-function makeJsonResponse(body: unknown, status = 200): Response {
-  const result = status >= 200 && status < 300 ? { ok: true, data: body } : body;
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    text: async () => JSON.stringify(result),
-    json: async () => result,
-  } as unknown as Response;
-}
 
 const SESSION: SessionCredentials = {
   gatewayUrl: 'http://localhost:4000',
@@ -39,7 +26,6 @@ let filePath: string;
 let manager: SessionManager;
 
 beforeEach(async () => {
-  vi.clearAllMocks();
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-session-test-'));
   filePath = path.join(tmpDir, 'session.json');
   manager = new SessionManager(filePath);
@@ -107,33 +93,4 @@ describe('SessionManager', () => {
     await expect(manager.clear()).resolves.not.toThrow();
   });
 
-  it('SM-05: isExpired() true when past expiresAt (with buffer)', () => {
-    expect(manager.isExpired({ ...SESSION, expiresAt: Date.now() - 1 })).toBe(true);
-    expect(manager.isExpired({ ...SESSION, expiresAt: Date.now() + 120_000 })).toBe(false);
-  });
-
-  it('SM-06: refresh() hits /auth/refresh/cli, not /auth/refresh, and persists the result', async () => {
-    mockFetch.mockResolvedValueOnce(
-      makeJsonResponse({ accessToken: 'new-access', refreshToken: 'new-refresh', expiresIn: 900 }),
-    );
-
-    const updated = await manager.refresh(SESSION);
-
-    expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:4000/auth/refresh/cli',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ refreshToken: SESSION.refreshToken }),
-      }),
-    );
-    expect(updated.accessToken).toBe('new-access');
-    expect(await manager.load()).toEqual(updated);
-  });
-
-  it('SM-07: refresh() throws on a non-ok response and does not persist', async () => {
-    mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Unauthorized' }, 401));
-
-    await expect(manager.refresh(SESSION)).rejects.toThrow(/401/);
-    expect(await manager.load()).toBeNull();
-  });
 });

@@ -10,7 +10,7 @@
  */
 
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
-import { CredentialsManager, SessionManager } from '@kb-labs/cli-runtime/gateway';
+import { AuthSessionOwner } from '@kb-labs/cli-runtime/gateway';
 
 type StatusFlags = {
   json: { type: 'boolean'; description: string };
@@ -49,23 +49,18 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
     json: { type: 'boolean', description: 'Output in JSON format' },
   },
   async handler(ctx, _argv, flags) {
-    const credentialsManager = new CredentialsManager();
-    const sessionManager = new SessionManager();
-    const [credentials, session] = await Promise.all([
-      credentialsManager.load(),
-      sessionManager.load(),
-    ]);
+    const { machine: credentials, session, sessionPath, sessionExpired, machineExpired } = await new AuthSessionOwner().inspect();
 
     const sessionStatus: SessionStatus = session
       ? {
         authenticated: true,
-        path: sessionManager.getFilePath(),
+        path: sessionPath,
         gatewayUrl: session.gatewayUrl,
-        tokenExpired: sessionManager.isExpired(session),
+        tokenExpired: sessionExpired,
         expiresAt: new Date(session.expiresAt).toISOString(),
         email: session.email,
       }
-      : { authenticated: false, path: sessionManager.getFilePath() };
+      : { authenticated: false, path: sessionPath };
 
     if (!credentials) {
       if (!flags.json) {
@@ -78,7 +73,7 @@ export const authStatus = defineSystemCommand<StatusFlags, StatusResult>({
       return {  authenticated: false, session: sessionStatus };
     }
 
-    const expired = credentialsManager.isExpired(credentials);
+    const expired = machineExpired;
     const expiresAt = new Date(credentials.expiresAt).toISOString();
     const timeLeft = credentials.expiresAt - Date.now();
     const minutesLeft = Math.max(0, Math.floor(timeLeft / 60000));

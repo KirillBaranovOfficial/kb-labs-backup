@@ -365,6 +365,19 @@ next command.
 Cases: PC-002.7, S-003.7, S-017.5, S-018.3, S-054.2, S-054.18, S-199.6,
 S-201.1–S-201.2, S-203.7–S-203.8.
 
+## 2026-10-08
+
+### CLI authentication has one session owner
+
+The CLI auth-session owner selects a saved human session before a machine
+credential when a caller accepts either kind. A caller that requires one kind
+requests that kind explicitly; an unusable or wrong-origin preferred session
+does not silently fall through to another identity. REST, platform auth
+preflight, and SSE accept either kind, with the human session preferred. The
+owner enforces issuing-origin isolation, refresh, verification, and safe
+Gateway error decoding for every caller. Login and logout use the same owner.
+Cases: S-005, S-031, S-041, S-042, S-100.
+
 ## 2026-10-07
 
 ### 2026-10-07: Human CLI passwords stay out of process arguments
