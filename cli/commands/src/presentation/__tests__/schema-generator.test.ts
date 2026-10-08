@@ -4,7 +4,7 @@ import type { CommandManifest } from '../../registry/types.js';
 
 function makeManifest(overrides: Partial<CommandManifest> = {}): CommandManifest {
   return {
-    manifestVersion: '1.0',
+    schema: 'kb.adapter/1', manifestVersion: '1.0',
     segments: ['workflow', 'runs', 'list'],
     id: 'list',
     group: 'workflow',

@@ -61,7 +61,7 @@ async function createAdapterDir(tmpDir: string, name: string, id: string): Promi
     kb: { manifest: './dist/adapter-manifest.js' },
   }));
   await fs.writeFile(path.join(dir, 'dist', 'adapter-manifest.js'), `export const manifest = ${JSON.stringify({
-    manifestVersion: '1.0.0', id, name: id, version: '1.0.0', type: 'core', implements: 'ITestAdapter',
+    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id, name: id, version: '1.0.0', type: 'core', implements: 'ITestAdapter',
   })};`);
   return dir;
 }
@@ -641,6 +641,47 @@ describe('MarketplaceService', () => {
       expect(error).toBeDefined();
       expect(error!.message).toContain('not found');
       expect(error!.diagnosticCode).toBe('PACKAGE_NOT_FOUND');
+    });
+
+    // case: S-203.24
+    it('preserves the policy diagnostic code, config path, and scoped repair command', async () => {
+      const { dir, integrity } = await createPluginDir(tmpDir, 'policy-blocked', '@vendor/policy-blocked');
+      const source = createMockSource(new Map([['@vendor/policy-blocked', { dir, version: '1.0.0', integrity }]]));
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(projectRoot, { recursive: true });
+      const resolved = await source.resolve('@vendor/policy-blocked');
+      const storeEntry = {
+        schema: 'kb.store-entry/1' as const,
+        name: resolved.id,
+        version: resolved.version,
+        kind: 'plugin' as const,
+        integrity,
+        installedAt: new Date().toISOString(),
+      };
+      const stored: ResolvedStoreEntry = { entry: storeEntry, packageRoot: dir, entryDir: path.join(tmpDir, 'store', 'entries', 'policy-blocked') };
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return stored; },
+        async resolve() { return stored; },
+        async listEntries() { return [storeEntry]; },
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source, extensionStore: store });
+      await service.install({ scope: 'project', projectRoot }, ['@vendor/policy-blocked']);
+      const configPath = path.join(projectRoot, '.kb', 'kb.config.json');
+      await fs.writeFile(configPath, JSON.stringify({ plugins: { block: 7 } }));
+
+      const report = await service.doctor({ scope: 'project', projectRoot });
+
+      expect(report.ok).toBe(false);
+      expect(report.issues).toContainEqual(expect.objectContaining({
+        packageId: '@vendor/policy-blocked',
+        diagnosticCode: 'PLUGIN_POLICY_TYPE_INVALID',
+        path: configPath,
+        message: expect.stringContaining('plugins.block must be an array'),
+        remediation: expect.stringContaining('kb marketplace plugins doctor --scope project'),
+      }));
     });
 
     // case: S-203.21

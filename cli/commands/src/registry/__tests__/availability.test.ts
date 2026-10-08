@@ -26,7 +26,7 @@ describe('checkRequires', () => {
 
   it('should return available: true for manifest without requires', () => {
     const manifest: CommandManifest = {
-      manifestVersion: "1.0",
+      schema: 'kb.adapter/1', manifestVersion: "1.0",
       segments: ['test', 'command'],
       id: "test:command",
       group: "test",
@@ -44,7 +44,7 @@ describe('checkRequires', () => {
 
   it('should return available: true when all dependencies are resolved', () => {
     const manifest: CommandManifest = {
-      manifestVersion: "1.0",
+      schema: 'kb.adapter/1', manifestVersion: "1.0",
       segments: ['test', 'command'],
       id: "test:command",
       group: "test",
@@ -62,7 +62,7 @@ describe('checkRequires', () => {
 
   it('should return available: false when dependency is missing', () => {
     const manifest: CommandManifest = {
-      manifestVersion: "1.0",
+      schema: 'kb.adapter/1', manifestVersion: "1.0",
       segments: ['test', 'command'],
       id: "test:command",
       group: "test",
@@ -85,7 +85,7 @@ describe('checkRequires', () => {
 
   it("should check dependencies from current working directory", () => {
     const manifest: CommandManifest = {
-      manifestVersion: "1.0",
+      schema: 'kb.adapter/1', manifestVersion: "1.0",
       segments: ['test', 'command'],
       id: "test:command",
       group: "test",

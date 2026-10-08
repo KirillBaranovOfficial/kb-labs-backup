@@ -55,15 +55,13 @@ async function makePlugin(f: PluginFixture): Promise<string> {
 async function lockEntry(
   root: string,
   dir: string,
-  source: 'platform' | 'marketplace' | 'local',
+  source: 'platform' | 'local',
   enabled = true,
 ): Promise<ReturnType<typeof createMarketplaceEntry>> {
   const entryOptions = {
     version: '1.0.0',
     integrity: await computePackageIntegrity(dir),
     resolvedPath: path.relative(root, dir) || '.',
-    // These discovery fixtures test the location-based runtime path. v3
-    // project marketplace pins are exercised by the store integration test.
     primaryKind: 'plugin',
     provides: ['plugin'],
   };
@@ -109,10 +107,10 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
     await fs.writeFile(path.join(platform, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
 
     await writeLock(platform, {
-      '@x/plat': await lockEntry(platform, platformPlugin, 'marketplace'),
+      '@x/plat': await lockEntry(platform, platformPlugin, 'platform'),
       '@x/linked': await lockEntry(platform, linkedPlugin, 'local'),
     });
-    await writeLock(project, { '@x/proj': await lockEntry(project, projectPlugin, 'marketplace') });
+    await writeLock(project, { '@x/proj': await lockEntry(project, projectPlugin, 'platform') });
 
     const result = await new DiscoveryManager({ root: project, platformRoot: platform }).discover();
     const byId = new Map(result.plugins.map(p => [p.id, p]));
@@ -127,7 +125,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
 
   it('reads the static manifest.json and never imports the compiled module', async () => {
     const dir = await makePlugin({ dir: path.join(project, 'node_modules', 'safe'), id: '@x/safe', throwingModule: true });
-    await writeLock(project, { '@x/safe': await lockEntry(project, dir, 'marketplace') });
+    await writeLock(project, { '@x/safe': await lockEntry(project, dir, 'platform') });
 
     const result = await new DiscoveryManager({ root: project }).discover();
 
@@ -139,7 +137,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
 
   it('falls back to importing the compiled module when there is no static manifest', async () => {
     const dir = await makePlugin({ dir: path.join(project, 'node_modules', 'js'), id: '@x/js', staticJson: false, workingModule: true });
-    await writeLock(project, { '@x/js': await lockEntry(project, dir, 'marketplace') });
+    await writeLock(project, { '@x/js': await lockEntry(project, dir, 'platform') });
 
     const result = await new DiscoveryManager({ root: project }).discover();
 
@@ -160,8 +158,8 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
     const projectCopy = await makePlugin({ dir: path.join(project, 'node_modules', 'dup'), id: '@x/dup', version: '2.0.0' });
     await makePlugin({ dir: path.join(platform, 'packages', 'dup'), id: '@x/dup', version: '3.0.0' });
     await fs.writeFile(path.join(platform, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-    await writeLock(platform, { '@x/dup': await lockEntry(platform, platformCopy, 'marketplace') });
-    await writeLock(project, { '@x/dup': await lockEntry(project, projectCopy, 'marketplace') });
+    await writeLock(platform, { '@x/dup': await lockEntry(platform, platformCopy, 'platform') });
+    await writeLock(project, { '@x/dup': await lockEntry(project, projectCopy, 'platform') });
 
     const result = await new DiscoveryManager({ root: project, platformRoot: platform }).discover();
 
@@ -189,7 +187,7 @@ describe('DiscoveryManager — one pipeline over locks and workspace', () => {
 
   it('a disabled lock entry is skipped', async () => {
     const dir = await makePlugin({ dir: path.join(project, 'node_modules', 'off'), id: '@x/off' });
-    await writeLock(project, { '@x/off': await lockEntry(project, dir, 'marketplace', false) });
+    await writeLock(project, { '@x/off': await lockEntry(project, dir, 'platform', false) });
 
     const result = await new DiscoveryManager({ root: project }).discover();
 
@@ -243,23 +241,31 @@ describe('plugins.allow / plugins.block / plugins.linked gate', () => {
     const entries: Record<string, ReturnType<typeof createMarketplaceEntry>> = {};
     for (const id of ids) {
       const dir = await makePlugin({ dir: path.join(root, 'node_modules', id.replace('/', '__')), id });
-      entries[id] = await lockEntry(root, dir, 'marketplace');
+      entries[id] = await lockEntry(root, dir, 'platform');
     }
     await writeLock(root, entries);
     await fs.writeFile(path.join(root, '.kb', 'kb.config.json'), JSON.stringify({ plugins }));
   }
 
   async function ids(): Promise<{ found: string[]; codes: string[] }> {
-    const result = await new DiscoveryManager({ root }).discover();
+    const result = await new DiscoveryManager({ root, scope: 'project' }).discover();
     return { found: result.plugins.map(p => p.id).sort(), codes: result.diagnostics.map(d => d.code) };
   }
 
-  it('block hides a third-party package but never a @kb-labs one', async () => {
-    await install(['@x/bad', '@kb-labs/core'], { block: ['@x/bad', '@kb-labs/core'] });
+  it('applies policy from provenance and ignores package-name prefixes', async () => {
+    const thirdParty = await makePlugin({ dir: path.join(root, 'node_modules', 'kb-labs-name'), id: '@kb-labs/name-only' });
+    const bad = await makePlugin({ dir: path.join(root, 'node_modules', 'bad'), id: '@x/bad' });
+    const shipped = await makePlugin({ dir: path.join(root, 'packages', 'shipped'), id: '@vendor/shipped' });
+    await fs.writeFile(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    await writeLock(root, {
+      '@kb-labs/name-only': await lockEntry(root, thirdParty, 'platform'),
+      '@x/bad': await lockEntry(root, bad, 'platform'),
+    });
+    await fs.writeFile(path.join(root, '.kb', 'kb.config.json'), JSON.stringify({ plugins: { block: ['@x/bad', '@vendor/shipped', '@kb-labs/name-only'] } }));
 
     const { found, codes } = await ids();
 
-    expect(found).toEqual(['@kb-labs/core']);
+    expect(found).toEqual(['@vendor/shipped']);
     expect(codes).toContain('PLUGIN_BLOCKED');
   });
 
@@ -332,7 +338,7 @@ describe('findWorkspacePackages', () => {
 
 describe('workspace adapter candidates', () => {
   const moduleFor = (roles: string | string[]) =>
-    `export const manifest = ${JSON.stringify({ manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: roles })};\n`;
+    `export const manifest = ${JSON.stringify({ schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: roles })};\n`;
 
   it('uses only kb.manifest and classifies undeclared packages as non-adapters', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-result-'));

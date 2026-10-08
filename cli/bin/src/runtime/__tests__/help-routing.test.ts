@@ -5,7 +5,7 @@ import { hasNestedCommands } from "../help-routing";
 function command(segments: string[]): RegisteredCommand {
   return {
     manifest: {
-      manifestVersion: "1.0",
+      schema: 'kb.adapter/1', manifestVersion: "1.0",
       segments,
       id: segments.join(":"),
       group: segments[0]!,

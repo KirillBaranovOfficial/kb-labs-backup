@@ -113,6 +113,48 @@ describe('Discovery Integration: install → discover → available', () => {
     expect(manifest!.cli?.commands).toHaveLength(1);
   });
 
+  // case: S-203.24
+  it('fails closed for marketplace plugins when policy config is broken and retains local sources', async () => {
+    const marketplace = await installPlugin({ name: 'marketplace', id: '@vendor/marketplace', version: '1.0.0' });
+    const firstParty = await installPlugin({ name: 'first-party', id: '@vendor/platform-shipped', version: '1.0.0' });
+    const linked = await installPlugin({ name: 'linked', id: '@vendor/linked', version: '1.0.0' });
+    const firstPartyPackageJsonPath = path.join(firstParty.dir, 'package.json');
+    const firstPartyPackageJson = JSON.parse(await fs.readFile(firstPartyPackageJsonPath, 'utf8')) as Record<string, unknown>;
+    firstPartyPackageJson.kb = { manifest: './kb.plugin.json' };
+    await fs.writeFile(firstPartyPackageJsonPath, JSON.stringify(firstPartyPackageJson));
+    await fs.writeFile(path.join(tmpDir, 'pnpm-workspace.yaml'), 'packages:\n  - "plugins/*"\n');
+    await fs.mkdir(path.join(tmpDir, '.kb'), { recursive: true });
+    const configPath = path.join(tmpDir, '.kb', 'kb.config.json');
+    await fs.writeFile(configPath, '{"plugins":');
+
+    const lock = createEmptyLock();
+    lock.plugins['@vendor/marketplace'] = createMarketplaceEntry({
+      version: '1.0.0', integrity: marketplace.integrity, resolvedPath: marketplace.relPath,
+      package: '@vendor/marketplace', source: 'platform', primaryKind: 'plugin', provides: ['plugin'],
+    });
+    lock.plugins['@vendor/linked'] = createMarketplaceEntry({
+      version: '1.0.0', integrity: linked.integrity, resolvedPath: linked.relPath,
+      source: 'local', primaryKind: 'plugin', provides: ['plugin'],
+    });
+    await writeMarketplaceLock(tmpDir, lock);
+
+    const result = await new DiscoveryManager({ root: tmpDir, scope: 'project' }).discover();
+
+    expect(result.plugins.map(plugin => plugin.id).sort()).toEqual(['@vendor/linked', '@vendor/platform-shipped']);
+    expect(result.failures.map(failure => failure.id)).toContain('@vendor/marketplace');
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'JSON_PARSE_FAILED',
+        context: expect.objectContaining({ filePath: configPath }),
+        remediation: expect.stringContaining('python3 -m json.tool'),
+      }),
+      expect.objectContaining({
+        code: 'JSON_PARSE_FAILED',
+        context: expect.objectContaining({ filePath: configPath }),
+      }),
+    ]));
+  });
+
   it('discovers multiple plugins with different entity kinds', async () => {
     const commit = await installPlugin({
       name: 'commit',

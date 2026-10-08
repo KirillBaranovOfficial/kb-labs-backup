@@ -11,7 +11,7 @@ describe('V3 manifest ownership', () => {
       cli: { commands: [{ path: 'test run', describe: 'Run test', handler: 'dist/run.js' }] },
     };
     const manifest: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['test', 'run'],
       id: 'run',
       group: 'test',
@@ -24,7 +24,7 @@ describe('V3 manifest ownership', () => {
 
   it('allows system commands without a plugin manifest', () => {
     const manifest: CommandManifest = {
-      manifestVersion: '1.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0',
       segments: ['hello'],
       id: 'hello',
       group: 'system',

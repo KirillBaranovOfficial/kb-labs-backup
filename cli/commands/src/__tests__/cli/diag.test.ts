@@ -219,7 +219,7 @@ describe('diag — base (no --command)', () => {
             id: 'manifest:quality-entry',
             group: 'quality',
             describe: 'Commands from @kb-labs/quality-entry are unavailable',
-            manifestVersion: '1.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0',
             loader: async () => { throw new Error('Cannot load'); },
           },
         ],
@@ -424,7 +424,7 @@ describe('diag --command', () => {
             segments: ['quality', 'manifest:quality-entry'],
             id: 'manifest:quality-entry',
             describe: 'Commands from @kb-labs/quality-entry are unavailable',
-            manifestVersion: '1.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0',
             loader: async () => { throw new Error('Cannot load'); },
           },
         ],
@@ -466,9 +466,9 @@ describe('diag --command', () => {
         source: 'workspace',
         scope: 'platform',
         manifests: [
-          { _synthetic: false, group: 'workflow', segments: ['workflow', 'run'],   id: 'run',   describe: 'Run a workflow',  manifestVersion: '1.0', loader: vi.fn() },
-          { _synthetic: false, group: 'workflow', segments: ['workflow', 'list'],  id: 'list',  describe: 'List workflows', manifestVersion: '1.0', loader: vi.fn() },
-          { _synthetic: false, group: 'workflow', segments: ['workflow', 'abort'], id: 'abort', describe: 'Abort workflow', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'workflow', segments: ['workflow', 'run'],   id: 'run',   describe: 'Run a workflow',  schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'workflow', segments: ['workflow', 'list'],  id: 'list',  describe: 'List workflows', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'workflow', segments: ['workflow', 'abort'], id: 'abort', describe: 'Abort workflow', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
         ],
       },
     ]);
@@ -503,7 +503,7 @@ describe('diag --command', () => {
         scope: 'platform',
         manifests: [
           // Non-synthetic but structurally invalid (missing describe)
-          { _synthetic: false, group: 'myplug', segments: ['myplug', 'go'], id: 'go', describe: '', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'myplug', segments: ['myplug', 'go'], id: 'go', describe: '', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
         ],
       },
     ]);
@@ -574,7 +574,7 @@ describe('diag --command', () => {
         source: 'workspace',
         scope: 'platform',
         manifests: [
-          { _synthetic: false, group: 'state', segments: ['state', 'get'], id: 'get', describe: 'Get state', manifestVersion: '1.0', loader: vi.fn() },
+          { _synthetic: false, group: 'state', segments: ['state', 'get'], id: 'get', describe: 'Get state', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
         ],
       },
     ]);
@@ -732,7 +732,7 @@ describe('diag --command (review-fix scenarios)', () => {
       segments: ['bigplug', `cmd${i}`],
       id: `cmd${i}`,
       describe: `Command ${i}`,
-      manifestVersion: '1.0' as const,
+      schema: 'kb.adapter/1', manifestVersion: '1.0' as const,
       loader: vi.fn(),
     }));
     // reset to clear any previous mockResolvedValue, then set fresh
@@ -793,7 +793,7 @@ describe('diag --command (review-fix scenarios)', () => {
       pkgRoot: '/test',
       source: 'workspace',
       scope: 'platform',
-      manifests: [{ _synthetic: false, group: 'nopathplug', segments: ['nopathplug', 'run'], id: 'run', describe: 'Run', manifestVersion: '1.0' as const, loader: vi.fn() }],
+      manifests: [{ _synthetic: false, group: 'nopathplug', segments: ['nopathplug', 'run'], id: 'run', describe: 'Run', schema: 'kb.adapter/1', manifestVersion: '1.0' as const, loader: vi.fn() }],
     }]);
 
     const lockMock = await getLockMock();

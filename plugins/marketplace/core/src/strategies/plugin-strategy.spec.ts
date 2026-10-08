@@ -47,10 +47,11 @@ describe('PluginStrategy', () => {
   });
 
   describe('extractProvides', () => {
-    it('returns [plugin] as minimum', async () => {
+    // case: S-203.24
+    it('returns no kinds when no plugin manifest is declared', async () => {
       await fs.writeFile(path.join(tmpDir, 'package.json'), '{"name":"test"}');
       const result = await strategy.extractProvides(tmpDir);
-      expect(result).toContain('plugin');
+      expect(result).toEqual([]);
     });
   });
 });

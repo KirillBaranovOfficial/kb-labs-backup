@@ -33,9 +33,27 @@ test('adapter-manifest uses devkit categories and validates built manifests', as
     assertIssue(outsideCategory, '@fixture/extra', 'outside the devkit adapter category', 'package.json');
 
     extraPackage.category = 'adapter';
-    await writeFile(path.join(extraRoot, 'dist', 'manifest.js'), adapterManifest({ implements: 'IFixture', configSchema: {} }));
+    await writeFile(path.join(extraRoot, 'dist', 'manifest.js'), adapterManifest({ configSchema: {} }));
     const undiscoverableCategory = await runCheck(payload);
     assertIssue(undiscoverableCategory, '@fixture/extra', 'not discoverable by platform adapter discovery', 'package.json');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('manifest declaration check rejects a default-only manifest module', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kb-named-manifest-check-'));
+  try {
+    const packageRoot = path.join(root, 'packages', 'default-only');
+    await writeFixturePackage(packageRoot, '@fixture/default-only', adapterManifest({ implements: 'IFixture', configSchema: {} }));
+    await writeFile(path.join(packageRoot, 'dist', 'manifest.js'), 'export default { schema: "kb.plugin/3" };\n');
+    const pkg = { name: '@fixture/default-only', dir: packageRoot, relPath: 'packages/default-only', category: 'ts-lib' };
+    const issues = await runCheck({
+      workspaceRoot: root, check: 'adapter-manifest',
+      package: { Name: pkg.name, Dir: packageRoot, RelPath: pkg.relPath, Category: pkg.category },
+      workspace: { root, packages: [pkg] },
+    });
+    assertIssue(issues, pkg.name, 'must export an object named manifest', 'manifest.js');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -54,7 +72,7 @@ async function writeFixturePackage(packageRoot, name, manifest) {
 
 function adapterManifest(fields) {
   return `export const manifest = ${JSON.stringify({
-    manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', ...fields,
+    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', ...fields,
   })};\n`;
 }
 

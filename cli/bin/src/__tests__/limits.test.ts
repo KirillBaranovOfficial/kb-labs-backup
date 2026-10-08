@@ -36,7 +36,7 @@ function createManifest(): ManifestV3 {
 function createRegisteredCommand(manifest: ManifestV3): RegisteredCommand {
   return {
     manifest: {
-      manifestVersion: "1.0",
+      schema: 'kb.adapter/1', manifestVersion: "1.0",
       segments: ["test", "run"],
       id: "run",
       group: "test",

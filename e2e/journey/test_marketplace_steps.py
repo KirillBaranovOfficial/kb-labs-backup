@@ -5,11 +5,13 @@ import sys
 import tempfile
 import unittest
 import urllib.request
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               run_plugin_policy_diagnostic_step,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
@@ -18,6 +20,46 @@ from invocations import invocation_context, open_http, run_command
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):
+        with tempfile.TemporaryDirectory(prefix="kb-policy-journey-unit-") as directory:
+            project = Path(directory)
+            config = project / ".kb" / "kb.config.json"
+            config.parent.mkdir()
+            original = b'{"preserved": true}\n'
+            config.write_bytes(original)
+            calls = []
+
+            def runner(command, **_kwargs):
+                calls.append(command)
+                if command[0] == "kb" and command[1:3] == ["marketplace", "install"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {}}), "")
+                if command[0] == "kb" and command[1:4] == ["marketplace", "plugins", "doctor"]:
+                    return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {
+                        "code": "KB_RUNTIME_COMMAND_FAILED", "message": "Marketplace doctor found issues",
+                        "hint": "Run doctor", "diagnostics": [{
+                            "code": "PLUGIN_POLICY_TYPE_INVALID", "severity": "error",
+                            "path": str(config), "message": "@kb-labs/e2e-analytics-emitter is unavailable: plugins.block must be an array",
+                            "hint": f"Repair the policy; kb marketplace plugins doctor --scope project",
+                        }],
+                    }}), "")
+                if command[0] == "kb" and command[1:3] == ["journey", "analytics"]:
+                    return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {
+                        "code": "KB_RUNTIME_COMMAND_NOT_FOUND", "message": "Unknown command journey analytics emit",
+                        "hint": "Run kb help",
+                    }}), "")
+                if command[0] == "kb" and command[1] == "version":
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"version": "1.0.0"}}), "")
+                raise AssertionError(f"unexpected command: {command}")
+
+            journey = Journey("local", "policy-test")
+            with patch("marketplace_steps._registry_version", return_value="1.0.0"):
+                run_plugin_policy_diagnostic_step(journey, project, "http://registry.test", {"HOME": directory}, runner)
+
+            self.assertEqual(config.read_bytes(), original)
+            self.assertEqual(journey.steps[-1].status, "PASS")
+            self.assertEqual(journey.steps[-1].cases, ["S-203.24"])
+            self.assertTrue(any(command[0] == "kb" and command[1] == "version" for command in calls))
+
     def test_commit_route_http_claims_accept_documented_success_and_not_found(self):
         response = {"ok": False, "error": {"code": "KB_PLUGIN_NOT_INSTALLED",
             "message": "Plugin is not installed in this project.",
@@ -321,6 +363,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     versions = {
                         "@kb-labs/commit-entry": "2.120.1",
                         "@kb-labs/qa-entry": "2.120.1",
+                        "@kb-labs/e2e-analytics-emitter": "1.0.0",
                         "@kb-labs/adapters-fs": "2.107.0",
                     }
                     return subprocess.CompletedProcess(command, 0, json.dumps(versions[package_id]), "")
@@ -346,6 +389,15 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 1,
                         f"{error['message']} [{error['code']}]\n  Hint:  {error['hint']}\n", "")
                 elif args[:3] == ["marketplace", "plugins", "doctor"]:
+                    policy_config = json.loads((cwd_path / ".kb" / "kb.config.json").read_text())
+                    if policy_config.get("plugins", {}).get("block") == 7:
+                        return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {
+                            "code": "KB_RUNTIME_COMMAND_FAILED", "message": "Marketplace doctor found issues", "hint": "Run doctor",
+                            "diagnostics": [{"code": "PLUGIN_POLICY_TYPE_INVALID", "severity": "error",
+                                "path": str(cwd_path / ".kb" / "kb.config.json"),
+                                "message": "@kb-labs/e2e-analytics-emitter is unavailable: plugins.block must be an array",
+                                "hint": "Repair config; kb marketplace plugins doctor --scope project"}],
+                        }}), "")
                     if env.get("GATEWAY_PORT") == "not-a-port":
                         return subprocess.CompletedProcess(command, 1, json.dumps({
                             "ok": False,
@@ -366,6 +418,12 @@ class MarketplaceStepTests(unittest.TestCase):
                                 "hint": 'Run "kb-create start", or "kb-create doctor" if the host should already be running.',
                             },
                         }), "")
+                elif args[:3] == ["journey", "analytics", "emit"]:
+                    return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": {
+                        "code": "KB_RUNTIME_COMMAND_NOT_FOUND", "message": "Unknown command journey analytics emit", "hint": "Run kb help",
+                    }}), "")
+                elif args[:1] == ["version"]:
+                    stdout = json.dumps({"version": "1.0.0"})
                 elif args[:2] == ["marketplace", "install"]:
                     package_id, version = args[2].rsplit("@", 1)
                     platform = "--scope" in args and args[args.index("--scope") + 1] == "platform"
@@ -527,6 +585,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 "S-010.7",
                 "S-051.2", "S-051.3", "S-051.4",
                 "S-203.14", "S-203.15", "S-203.16",
+                "S-203.24",
             })
             actual = {claim["claimId"] for claim in journey.result().case_run["claims"]}
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)

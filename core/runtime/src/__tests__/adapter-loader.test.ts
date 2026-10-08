@@ -14,7 +14,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'logger',
-      manifest: { manifestVersion: '1.0.0', id: 'logger', name: 'Logger', version: '1.0.0', type: 'core', implements: 'ILogger' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'logger', name: 'Logger', version: '1.0.0', type: 'core', implements: 'ILogger' },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -24,7 +24,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'cache',
-      manifest: { manifestVersion: '1.0.0', id: 'cache', name: 'Cache', version: '1.0.0', type: 'core', implements: 'ICache' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'cache', name: 'Cache', version: '1.0.0', type: 'core', implements: 'ICache' },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -44,7 +44,7 @@ describe('DependencyGraph', () => {
     // logger -> logBuffer -> logPersistence
     graph.addNode({
       name: 'logger',
-      manifest: { manifestVersion: '1.0.0', id: 'logger', name: 'Logger', version: '1.0.0', type: 'core', implements: 'ILogger' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'logger', name: 'Logger', version: '1.0.0', type: 'core', implements: 'ILogger' },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -54,7 +54,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'logBuffer',
-      manifest: { manifestVersion: '1.0.0', id: 'logBuffer', name: 'Log Buffer', version: '1.0.0', type: 'extension', implements: 'ILogBuffer' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'logBuffer', name: 'Log Buffer', version: '1.0.0', type: 'extension', implements: 'ILogBuffer' },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -64,7 +64,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'logPersistence',
-      manifest: { manifestVersion: '1.0.0', id: 'logPersistence', name: 'Log Persistence', version: '1.0.0', type: 'extension', implements: 'ILogPersistence' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'logPersistence', name: 'Log Persistence', version: '1.0.0', type: 'extension', implements: 'ILogPersistence' },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: ['db'],
@@ -74,7 +74,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'db',
-      manifest: { manifestVersion: '1.0.0', id: 'db', name: 'Database', version: '1.0.0', type: 'core', implements: 'ISQLDatabase' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'db', name: 'Database', version: '1.0.0', type: 'core', implements: 'ISQLDatabase' },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: [],
@@ -99,7 +99,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'a',
-      manifest: { manifestVersion: '1.0.0', id: 'a', name: 'A', version: '1.0.0', type: 'core', implements: 'IA' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'a', name: 'A', version: '1.0.0', type: 'core', implements: 'IA' },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: ['b'],
@@ -109,7 +109,7 @@ describe('DependencyGraph', () => {
 
     graph.addNode({
       name: 'b',
-      manifest: { manifestVersion: '1.0.0', id: 'b', name: 'B', version: '1.0.0', type: 'core', implements: 'IB' },
+      manifest: { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'b', name: 'B', version: '1.0.0', type: 'core', implements: 'IB' },
       module: {} as LoadedAdapterModule,
       config: {},
       requiredDeps: ['a'],
@@ -140,7 +140,7 @@ describe('AdapterLoader', () => {
       healthy: { module: '@example/healthy', config: {} },
     }, async (modulePath) => ({
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: modulePath.includes('broken') ? 'broken' : 'healthy',
         name: modulePath,
         version: '1.0.0',
@@ -173,7 +173,7 @@ describe('AdapterLoader', () => {
     const configs = { cache: { module: '@example/cache', config: {} } };
     const loadModule = vi.fn(async (): Promise<LoadedAdapterModule> => ({
       manifest: {
-        manifestVersion: '1.0.0', id: 'cache', name: 'Cache', version: '1.0.0', type: 'core', implements: 'ICache',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'cache', name: 'Cache', version: '1.0.0', type: 'core', implements: 'ICache',
       },
       createAdapter,
     }));
@@ -191,7 +191,7 @@ describe('AdapterLoader', () => {
     const createAdapter = vi.fn((_config: unknown, deps: Record<string, unknown>) => deps);
     const loadModule = vi.fn(async (): Promise<LoadedAdapterModule> => ({
       manifest: {
-        manifestVersion: '1.0.0', id: 'notifier', name: 'Notifier', version: '1.0.0', type: 'core',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'notifier', name: 'Notifier', version: '1.0.0', type: 'core',
         implements: 'INotifier', requires: {
           adapters: ['eventBus'],
           platformServices: [
@@ -231,7 +231,7 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-pino') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'pino-logger',
             name: 'Pino Logger',
             version: '1.0.0',
@@ -244,7 +244,7 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-sqlite') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'sqlite-db',
             name: 'SQLite Database',
             version: '1.0.0',
@@ -275,7 +275,7 @@ describe('AdapterLoader', () => {
     const loadModule = vi.fn(async () => {
       return {
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'log-persistence',
           name: 'Log Persistence',
           version: '1.0.0',
@@ -304,7 +304,7 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-redis') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'redis-cache',
             name: 'Redis Cache',
             version: '1.0.0',
@@ -318,7 +318,7 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-eventbus-cache') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'eventbus-cache',
             name: 'EventBus Cache',
             version: '1.0.0',
@@ -350,7 +350,7 @@ describe('AdapterLoader', () => {
     const loadModule = vi.fn(async () => {
       return {
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'pino-logger',
           name: 'Pino Logger',
           version: '1.0.0',
@@ -382,7 +382,7 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-sqlite') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'sqlite-stores',
             name: 'SQLite',
             version: '1.0.0',
@@ -395,7 +395,7 @@ describe('AdapterLoader', () => {
       if (modulePath === '@kb-labs/adapters-log-document') {
         return {
           manifest: {
-            manifestVersion: '1.0.0',
+            schema: 'kb.adapter/1', manifestVersion: '1.0.0',
             id: 'log-document',
             name: 'Log Persistence',
             version: '1.0.0',
@@ -437,7 +437,7 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'logger',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'logger',
         name: 'Logger',
         version: '1.0.0',
@@ -454,7 +454,7 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'logRingBuffer',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'logRingBuffer',
         name: 'Log Ring Buffer',
         version: '1.0.0',
@@ -497,7 +497,7 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'logger',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'logger',
         name: 'Logger',
         version: '1.0.0',
@@ -515,7 +515,7 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'ext1',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'ext1',
         name: 'Extension 1',
         version: '1.0.0',
@@ -533,7 +533,7 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'ext2',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'ext2',
         name: 'Extension 2',
         version: '1.0.0',
@@ -551,7 +551,7 @@ describe('AdapterLoader', () => {
     graph.addNode({
       name: 'ext3',
       manifest: {
-        manifestVersion: '1.0.0',
+        schema: 'kb.adapter/1', manifestVersion: '1.0.0',
         id: 'ext3',
         name: 'Extension 3',
         version: '1.0.0',
@@ -587,7 +587,7 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'ext1',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'ext1',
           name: 'Extension 1',
           version: '1.0.0',
@@ -625,7 +625,7 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'ext1',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'ext1',
           name: 'Extension 1',
           version: '1.0.0',
@@ -664,7 +664,7 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'ext1',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'ext1',
           name: 'Extension 1',
           version: '1.0.0',
@@ -705,7 +705,7 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'bad-ext',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'bad-ext',
           name: 'Bad Extension',
           version: '1.0.0',
@@ -724,7 +724,7 @@ describe('AdapterLoader', () => {
       graph.addNode({
         name: 'good-ext',
         manifest: {
-          manifestVersion: '1.0.0',
+          schema: 'kb.adapter/1', manifestVersion: '1.0.0',
           id: 'good-ext',
           name: 'Good Extension',
           version: '1.0.0',

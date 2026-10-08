@@ -28,7 +28,7 @@ describe('loadAdapterManifest', () => {
       name: '@fixture/cache', type: 'module', kb: { manifest: './manifest.mjs' },
     }));
     await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), `export const manifest = ${JSON.stringify({
-      manifestVersion: '1.0.0', id: 'fixture-cache', name: 'Fixture Cache', version: '1.0.0',
+      schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture-cache', name: 'Fixture Cache', version: '1.0.0',
       type: 'core', implements: 'ICache', configSchema: { directory: { type: 'string' } },
     })};`);
 

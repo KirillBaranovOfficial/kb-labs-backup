@@ -407,5 +407,5 @@ async function writeWorkspacePackage(workspaceRoot: string, packageRoot: string,
 }
 
 function validAdapterManifest(role: string): string {
-  return `export const manifest = { manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: ${JSON.stringify(role)} };`;
+  return `export const manifest = { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', implements: ${JSON.stringify(role)} };`;
 }

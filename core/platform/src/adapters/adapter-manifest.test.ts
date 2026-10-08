@@ -20,7 +20,7 @@ describe("AdapterManifest", () => {
   describe("Core Adapter Manifest", () => {
     it("should define valid core adapter manifest (Pino logger)", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "pino-logger",
         name: "Pino Logger",
         version: "1.0.0",
@@ -43,7 +43,7 @@ describe("AdapterManifest", () => {
 
     it("should define minimal core adapter manifest", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "simple-logger",
         name: "Simple Logger",
         version: "1.0.0",
@@ -61,7 +61,7 @@ describe("AdapterManifest", () => {
   describe("Extension Adapter Manifest", () => {
     it("should define extension adapter without dependencies (ring buffer)", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "log-ringbuffer",
         name: "Log Ring Buffer",
         version: "1.0.0",
@@ -87,7 +87,7 @@ describe("AdapterManifest", () => {
 
     it("should define extension adapter with dependencies (SQLite persistence)", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "log-persistence",
         name: "SQLite Log Persistence",
         version: "1.0.0",
@@ -119,7 +119,7 @@ describe("AdapterManifest", () => {
 
     it("should support default priority (0) when not specified", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "log-extension",
         name: "Log Extension",
         version: "1.0.0",
@@ -140,7 +140,7 @@ describe("AdapterManifest", () => {
   describe("Proxy Adapter Manifest", () => {
     it("should define proxy adapter manifest (IPC proxy)", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "logger-ipc-proxy",
         name: "Logger IPC Proxy",
         version: "1.0.0",
@@ -178,7 +178,7 @@ describe("AdapterManifest", () => {
 
     it("should support mixed required and optional dependencies", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "complex-adapter",
         name: "Complex Adapter",
         version: "1.0.0",
@@ -308,7 +308,7 @@ describe("AdapterManifest", () => {
   describe("Manifest Versioning", () => {
     it("should require semver version strings", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "versioned-adapter",
         name: "Versioned Adapter",
         version: "2.3.1",
@@ -335,7 +335,7 @@ describe("AdapterManifest", () => {
 
       ranges.forEach((range) => {
         const manifest: AdapterManifest = {
-          manifestVersion: "1.0.0",
+          schema: 'kb.adapter/1', manifestVersion: "1.0.0",
           id: "test",
           name: "Test",
           version: "1.0.0",
@@ -357,7 +357,7 @@ describe("AdapterManifest", () => {
 
       validTypes.forEach((type) => {
         const manifest: AdapterManifest = {
-          manifestVersion: "1.0.0",
+          schema: 'kb.adapter/1', manifestVersion: "1.0.0",
           id: "test",
           name: "Test",
           version: "1.0.0",
@@ -394,7 +394,7 @@ describe("AdapterManifest", () => {
   describe("Real-world Examples", () => {
     it("should compile example from ADR: Pino Logger", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "pino-logger",
         name: "Pino Logger",
         version: "1.0.0",
@@ -409,7 +409,7 @@ describe("AdapterManifest", () => {
 
     it("should compile example from ADR: Ring Buffer", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "log-ringbuffer",
         name: "Log Ring Buffer",
         version: "1.0.0",
@@ -429,7 +429,7 @@ describe("AdapterManifest", () => {
 
     it("should compile example from ADR: SQLite Persistence", () => {
       const manifest: AdapterManifest = {
-        manifestVersion: "1.0.0",
+        schema: 'kb.adapter/1', manifestVersion: "1.0.0",
         id: "log-persistence",
         name: "SQLite Log Persistence",
         version: "1.0.0",

@@ -67,13 +67,13 @@ describe('first-party plugin CLI declarations', () => {
 
       const diagnostic = new DiagnosticCollector();
       const loaded = await loadManifestFile(packageRoot, diagnostic);
-      if (!loaded) {
+      if (loaded.kind !== 'manifest') {
         failures.push(`${packageJson.name ?? packageRoot}: manifest could not be loaded (${diagnostic.getEvents().map(event => event.code).join(', ')})`);
         continue;
       }
-      expect(loaded.manifest.schema, `${packageJson.name} must load a kb.plugin/3 manifest`).toBe('kb.plugin/3');
+      expect(loaded.loaded.manifest.schema, `${packageJson.name} must load a kb.plugin/3 manifest`).toBe('kb.plugin/3');
       manifestsChecked += 1;
-      for (const command of loaded.manifest.cli?.commands ?? []) {
+      for (const command of loaded.loaded.manifest.cli?.commands ?? []) {
         const parsed = CliCommandDeclSchema.safeParse(command);
         if (!parsed.success) {
           failures.push(`${packageJson.name ?? packageRoot}:${command.path}: ${parsed.error.issues.map(issue => issue.message).join('; ')}`);

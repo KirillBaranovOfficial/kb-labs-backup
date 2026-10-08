@@ -1,4 +1,5 @@
 export const manifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'e2e-llm-deterministic',
   name: 'E2E Deterministic LLM',
