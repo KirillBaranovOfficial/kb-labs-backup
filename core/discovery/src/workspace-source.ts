@@ -23,11 +23,16 @@ export interface WorkspaceCandidate {
 
 const IGNORED_DIRS = ['.kb/**', '**/node_modules/**'];
 
+function isMissingFile(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
 async function readPackageJson(file: string): Promise<Record<string, unknown> | null> {
   try {
     return JSON.parse(await fs.readFile(file, 'utf-8')) as Record<string, unknown>;
-  } catch {
-    return null;
+  } catch (error) {
+    if (isMissingFile(error)) return null;
+    throw error;
   }
 }
 
@@ -35,8 +40,9 @@ async function exists(file: string): Promise<boolean> {
   try {
     await fs.access(file);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isMissingFile(error)) return false;
+    throw error;
   }
 }
 
@@ -51,8 +57,9 @@ async function toCandidate(packageRoot: string): Promise<WorkspaceCandidate | nu
   let manifestFile: string | undefined;
   try {
     manifestFile = await resolveAdapterManifestModulePath({ packageRoot });
-  } catch {
-    return null;
+  } catch (error) {
+    if (isMissingFile(error)) return null;
+    throw error;
   }
   if (!manifestFile) {return null;}
   const built = await exists(manifestFile) || await exists(manifestFile.replace(/\.[cm]?js$/, '.json'));
@@ -75,8 +82,8 @@ async function workspacePackageRoots(
     if (Array.isArray(parsed?.packages)) {
       patterns = parsed.packages.filter((p): p is string => typeof p === 'string');
     }
-  } catch {
-    // no workspace file — handled below
+  } catch (error) {
+    if (!isMissingFile(error)) throw error;
   }
 
   if (!patterns) {

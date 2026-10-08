@@ -85,6 +85,7 @@ export interface AdapterCapabilities {
  * @example Core adapter (Pino logger)
  * ```typescript
  * export const manifest: AdapterManifest = {
+ *   schema: 'kb.adapter/1',
  *   manifestVersion: '1.0.0',
  *   id: 'pino-logger',
  *   name: 'Pino Logger',
@@ -99,6 +100,7 @@ export interface AdapterCapabilities {
  * @example Extension adapter (Ring buffer)
  * ```typescript
  * export const manifest: AdapterManifest = {
+ *   schema: 'kb.adapter/1',
  *   manifestVersion: '1.0.0',
  *   id: 'log-ringbuffer',
  *   name: 'Log Ring Buffer',
@@ -118,6 +120,7 @@ export interface AdapterCapabilities {
  * @example Extension with dependency (SQLite persistence)
  * ```typescript
  * export const manifest: AdapterManifest = {
+ *   schema: 'kb.adapter/1',
  *   manifestVersion: '1.0.0',
  *   id: 'log-persistence',
  *   name: 'SQLite Log Persistence',
@@ -139,6 +142,8 @@ export interface AdapterCapabilities {
  * ```
  */
 export interface AdapterManifest {
+  /** Entity discriminator used by shared discovery. */
+  schema: 'kb.adapter/1';
   /**
    * Manifest schema version.
    * Used for compatibility checking and evolution.

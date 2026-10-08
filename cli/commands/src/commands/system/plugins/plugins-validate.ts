@@ -32,7 +32,7 @@ async function validateManifestAgainstContracts(
   try {
     // Dynamic import of contracts
     const contractsModule = await import(path.resolve(contractsPath));
-    const contracts = contractsModule.pluginContractsManifest || contractsModule.default;
+    const contracts = contractsModule.pluginContractsManifest;
 
     if (!contracts) {
       return { ok: false, issues: ['Contracts file does not export pluginContractsManifest'] };
@@ -118,7 +118,7 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
       // Remove .ts extension and import
       const modulePath = manifestPath.replace(/\.ts$/, '');
       const manifestModule = await import(modulePath);
-      manifest = manifestModule.manifest || manifestModule.default;
+      manifest = manifestModule.manifest;
     } catch (error) {
       // Fallback to JSON parsing
       try {
@@ -127,6 +127,10 @@ export const pluginValidate = defineSystemCommand<PluginValidateFlags, PluginVal
 
         throwSystemCommandError('Failed to parse manifest', "Run `kb marketplace plugin:validate --help` to review valid inputs and recovery steps, then retry.");
       }
+    }
+
+    if (manifest === undefined) {
+      throwSystemCommandError('Manifest module must export a named "manifest"', "Add `export const manifest = ...` to the declared manifest module, then rerun `kb marketplace plugin:validate`.");
     }
 
     // Validate manifest structure

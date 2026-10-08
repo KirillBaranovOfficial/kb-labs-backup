@@ -5,4 +5,4 @@
  */
 
 // Re-export manifest
-export { manifest, default as manifestDefault } from './manifest.js';
+export { manifest } from './manifest.js';

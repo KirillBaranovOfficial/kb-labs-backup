@@ -183,7 +183,7 @@ Key points:
 `src/index.ts`:
 
 ```ts
-export { default as manifest } from './manifest.js';
+export { manifest } from './manifest.js';
 ```
 
 The plugin's runtime entry point just re-exports the manifest. The handler files are loaded separately by the runtime via the paths in the manifest.

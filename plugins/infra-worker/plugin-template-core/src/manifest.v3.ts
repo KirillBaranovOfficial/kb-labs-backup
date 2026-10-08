@@ -86,5 +86,3 @@ export const manifest: ManifestV3 = {
     ],
   },
 };
-
-export default manifest;

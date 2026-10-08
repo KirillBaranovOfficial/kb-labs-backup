@@ -11,6 +11,7 @@ interface DoctorIssue {
   packageId: string;
   diagnosticCode?: string;
   message: string;
+  path?: string;
   remediation?: string;
 }
 
@@ -67,7 +68,7 @@ export default defineCommand<unknown, DoctorInput, DoctorResultData>({
             diagnostics: report.issues.map((issue) => ({
               code: issue.diagnosticCode ?? 'KB_MARKETPLACE_DIAGNOSTIC',
               severity: issue.severity === 'error' ? 'error' as const : 'warning' as const,
-              path: issue.packageId,
+              path: issue.path ?? issue.packageId,
               message: issue.message,
               ...(issue.remediation ? { hint: issue.remediation } : {}),
             })),

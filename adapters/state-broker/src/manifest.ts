@@ -1,6 +1,7 @@
 import type { AdapterManifest } from "@kb-labs/sdk/adapters";
 
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "state-broker",
   name: "StateBroker Cache",
@@ -28,5 +29,3 @@ export const manifest: AdapterManifest = {
     },
   },
 };
-
-export default manifest;

@@ -18,5 +18,3 @@ export const manifest: ServiceManifest = {
     NODE_ENV: { description: 'Environment mode', default: 'development' },
   },
 };
-
-export default manifest;

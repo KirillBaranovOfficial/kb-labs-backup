@@ -26,7 +26,7 @@ import { readMarketplaceLock } from './marketplace-lock.js';
 import { loadManifestFile } from './manifest-loader.js';
 import { computePackageIntegrity } from './integrity.js';
 import { findWorkspaceCandidates } from './workspace-source.js';
-import { readPluginPolicy, checkPluginPolicy, type PluginPolicy } from './plugin-policy.js';
+import { readPluginPolicy, checkPluginPolicy, isFirstPartyPluginSource, type PluginPolicy, type PluginPolicyResult } from './plugin-policy.js';
 
 // ---------------------------------------------------------------------------
 // Options
@@ -42,6 +42,8 @@ export interface DiscoveryOptions {
    * When unset (or equal to root) there is a single root, reported as platform scope.
    */
   platformRoot?: string;
+  /** Scope assigned when discovering one root without a separate platform root. Defaults to platform. */
+  scope?: 'platform' | 'project';
   /** Timeout for each manifest import in milliseconds (default: 5000) */
   importTimeoutMs?: number;
   /** Whether to verify integrity hashes (default: true) */
@@ -99,6 +101,20 @@ interface CandidateOutcome {
   failure?: DiscoveryFailure;
 }
 
+function isMissingFile(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
+}
+
+async function hasFile(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch (error) {
+    if (isMissingFile(error)) return false;
+    throw error;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Discovery Manager
 // ---------------------------------------------------------------------------
@@ -128,13 +144,13 @@ export class DiscoveryManager {
   private readonly extensionStore: IExtensionStore;
   private readonly onInputRead?: (filePath: string) => void;
   /** plugins.allow/block/linked per scope root, read at the start of discover() */
-  private policies = new Map<string, PluginPolicy>();
+  private policies = new Map<string, PluginPolicyResult>();
 
   constructor(opts: DiscoveryOptions = {}) {
     const root = opts.root ?? process.cwd();
     this.scopes = opts.platformRoot && opts.platformRoot !== root
       ? [{ scope: 'platform', root: opts.platformRoot }, { scope: 'project', root }]
-      : [{ scope: 'platform', root }];
+      : [{ scope: opts.scope ?? 'platform', root }];
     this.importTimeoutMs = opts.importTimeoutMs ?? 5_000;
     this.verifyIntegrity = opts.verifyIntegrity ?? true;
     this.workspace = opts.workspace ?? true;
@@ -152,9 +168,17 @@ export class DiscoveryManager {
    */
   async discover(): Promise<DiscoveryResult> {
     const diag = new DiagnosticCollector();
-    this.policies = new Map(
-      await Promise.all(this.scopes.map(async ({ root }) => [root, await readPluginPolicy(root, this.onInputRead)] as const)),
-    );
+    const policyResults = await Promise.all(this.scopes.map(async ({ scope, root }) => [scope, root, await readPluginPolicy(root, this.onInputRead)] as const));
+    this.policies = new Map(policyResults.map(([, root, result]) => [root, result]));
+    for (const [scope, , result] of policyResults) {
+      if (result.kind !== 'invalid') continue;
+      for (const issue of result.diagnostics) {
+        diag.error(issue.code, issue.message, {
+          filePath: issue.path ?? result.configPath,
+          remediation: `${issue.hint ?? issue.message} Then run \`kb marketplace plugins doctor --scope ${scope}\`.`,
+        });
+      }
+    }
     const candidates = await this.collectCandidates(diag);
 
     const outcomes = await Promise.all(candidates.map(c => this.processCandidate(c)));
@@ -295,7 +319,16 @@ export class DiscoveryManager {
     // Check the package directory exists
     try {
       await fs.access(packageRoot);
-    } catch {
+    } catch (error) {
+      if (!isMissingFile(error)) {
+        const message = `Package directory cannot be accessed: ${packageRoot}: ${error instanceof Error ? error.message : String(error)}`;
+        diag.error('PACKAGE_UNAVAILABLE', message, {
+          pluginId: id,
+          filePath: packageRoot,
+          remediation: `Check permissions for "${packageRoot}", then run "kb marketplace plugins doctor --scope ${candidate.scope}".`,
+        });
+        return fail('package-unavailable', message);
+      }
       const message = `Package directory not found: ${packageRoot}`;
       diag.error('PACKAGE_NOT_FOUND', message, {
         pluginId: id,
@@ -325,9 +358,9 @@ export class DiscoveryManager {
         };
         const manifestTarget = packageJson.kb?.manifest;
         const staticManifest = path.join(packageRoot, 'dist', 'manifest.json');
-        const hasStaticManifest = await fs.access(staticManifest).then(() => true).catch(() => false);
+        const hasStaticManifest = await hasFile(staticManifest);
         const hasCompiledManifest = manifestTarget
-          ? await fs.access(path.resolve(packageRoot, manifestTarget)).then(() => true).catch(() => false)
+          ? await hasFile(path.resolve(packageRoot, manifestTarget))
           : false;
         if (manifestTarget && !hasStaticManifest && !hasCompiledManifest) {
           const remediation = 'Run `pnpm build` and retry the command.';
@@ -335,14 +368,19 @@ export class DiscoveryManager {
           diag.error('PLUGIN_BUILD_MISSING', message, { pluginId: id, filePath: path.resolve(packageRoot, manifestTarget), remediation });
           return fail('manifest', message, path.resolve(packageRoot, manifestTarget), 'PLUGIN_BUILD_MISSING', remediation);
         }
-      } catch {
-        // Let the manifest loader report malformed or unreadable package metadata.
+      } catch (error) {
+        if (!isMissingFile(error)) {
+          const message = `Package metadata cannot be read: ${packageJsonPath}: ${error instanceof Error ? error.message : String(error)}`;
+          const remediation = `Repair package.json and rebuild the linked package, then run \`kb marketplace plugins doctor --scope ${candidate.scope}\`.`;
+          diag.error('MANIFEST_PARSE_ERROR', message, { pluginId: id, filePath: packageJsonPath, remediation });
+          return fail('manifest', message, packageJsonPath, 'MANIFEST_PARSE_ERROR', remediation);
+        }
       }
     }
 
     // Load manifest
     const loaded = await loadManifestFile(packageRoot, diag, this.importTimeoutMs);
-    if (!loaded) {
+    if (loaded.kind === 'failed') {
       const events = diag.getEvents();
       if (events.some(e => e.code === 'MANIFEST_NOT_PLUGIN')) {
         if (entry?.primaryKind === 'plugin') {
@@ -356,7 +394,16 @@ export class DiscoveryManager {
       const { cause, failedFile } = describeLoadFailure(events, packageRoot);
       return fail('manifest', cause || `No manifest could be loaded from ${packageRoot}`, failedFile);
     }
-    const { manifest } = loaded;
+    if (loaded.kind === 'not-plugin') {
+      if (entry?.primaryKind === 'plugin') {
+        const message = `Enabled plugin "${id}" does not declare a plugin manifest.`;
+        const remediation = `Install a package that declares kb.manifest or kb.plugin.json, or remove "${id}" from the marketplace lock.`;
+        diag.error('MANIFEST_NOT_PLUGIN', message, { pluginId: id, filePath: packageRoot, remediation });
+        return fail('manifest', message, packageRoot, 'MANIFEST_NOT_PLUGIN', remediation);
+      }
+      return { events: diag.getEvents() };
+    }
+    const { manifest } = loaded.loaded;
 
     // Validate manifest ID matches expected package ID
     if (entry && manifest.id !== id) {
@@ -368,11 +415,28 @@ export class DiscoveryManager {
         filePath: packageRoot,
         remediation,
       });
-      return fail('manifest', message, loaded.manifestPath, 'PLUGIN_ID_MISMATCH', remediation);
+      return fail('manifest', message, loaded.loaded.manifestPath, 'PLUGIN_ID_MISMATCH', remediation);
+    }
+
+    // A present but invalid policy closes the marketplace gate for third-party packages in this scope.
+    const policyResult = this.policies.get(candidate.root);
+    const resolvedPackageName = loaded.loaded.packageName ?? candidate.packageName ?? manifest.id;
+    const provenance = { origin: candidate.origin, scope: candidate.scope, lockSource: entry?.source } as const;
+    if (!isFirstPartyPluginSource(provenance) && policyResult?.kind === 'invalid') {
+      const issue = policyResult.diagnostics[0]!;
+      const message = `Plugin "${resolvedPackageName}" is unavailable: ${issue.message}`;
+      const remediation = `${issue.hint ?? issue.message} Then run \`kb marketplace plugins doctor --scope ${candidate.scope}\`.`;
+      diag.error(issue.code, message, {
+        pluginId: manifest.id,
+        entityId: resolvedPackageName,
+        filePath: policyResult.configPath,
+        remediation,
+      });
+      return fail('manifest', message, policyResult.configPath, issue.code, remediation);
     }
 
     // Governance gate (plugins.allow / plugins.block / plugins.linked) for installed third-party packages
-    if (candidate.origin === 'node_modules' && !this.passesPolicy(candidate, loaded.packageName, manifest.id, diag)) {
+    if (candidate.origin === 'node_modules' && !this.passesPolicy(candidate, loaded.loaded.packageName, manifest.id, diag)) {
       return { events: diag.getEvents() };
     }
 
@@ -381,13 +445,13 @@ export class DiscoveryManager {
       const validation = CliCommandDeclSchema.safeParse(command);
       if (!validation.success) {
         invalidCliCommandPaths.add(command.path);
-        const remediation = `Correct the CLI command schema in ${loaded.packageName ?? manifest.id}, rebuild it, then run "kb marketplace plugins doctor --scope ${candidate.scope}".`;
+        const remediation = `Correct the CLI command schema in ${loaded.loaded.packageName ?? manifest.id}, rebuild it, then run "kb marketplace plugins doctor --scope ${candidate.scope}".`;
         diag.error('COMMAND_SCHEMA_INVALID',
           `CLI command "${command.path}" in plugin "${manifest.id}" is invalid: ${validation.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}.`, {
             pluginId: manifest.id,
             entityKind: 'cli-command',
             entityId: command.path,
-            filePath: loaded.manifestPath,
+            filePath: loaded.loaded.manifestPath,
             remediation,
           });
       }
@@ -400,7 +464,7 @@ export class DiscoveryManager {
         await fs.access(absoluteHandlerPath);
       } catch (error) {
         const failure = describeHandlerAccessFailure(error);
-        const packageName = loaded.packageName ?? manifest.id;
+        const packageName = loaded.loaded.packageName ?? manifest.id;
         const buildCommand = `pnpm --filter ${packageName}... build`;
         const remediation = failure.code === 'COMMAND_HANDLER_MISSING'
           ? `Run \`${buildCommand}\`, then run \`kb marketplace plugins doctor --scope ${candidate.scope}\`.`
@@ -428,11 +492,11 @@ export class DiscoveryManager {
       id: manifest.id,
       version: manifest.version,
       packageRoot,
-      packageName: loaded.packageName ?? candidate.packageName ?? manifest.id,
+      packageName: loaded.loaded.packageName ?? candidate.packageName ?? manifest.id,
       scope: candidate.scope,
       origin: candidate.origin,
-      manifestPath: loaded.manifestPath,
-      manifestKind: loaded.kind,
+      manifestPath: loaded.loaded.manifestPath,
+      manifestKind: loaded.loaded.kind,
       source: entry
         ? { kind: entry.source === 'platform' ? 'marketplace' : entry.source, path: entry.link ?? entry.resolvedPath ?? packageRoot }
         : { kind: 'local', path: relativeTo(candidate.root, packageRoot) },
@@ -454,7 +518,11 @@ export class DiscoveryManager {
     diag: DiagnosticCollector,
   ): boolean {
     const packageName = loadedName ?? candidate.packageName ?? manifestId;
-    const verdict = checkPluginPolicy(this.policies.get(candidate.root) ?? {}, [candidate.id, manifestId, packageName]);
+    const policyResult = this.policies.get(candidate.root);
+    const policy = policyResult?.kind === 'valid' ? policyResult.policy : {};
+    const verdict = checkPluginPolicy(policy, [candidate.id, manifestId, packageName], {
+      origin: candidate.origin, scope: candidate.scope, lockSource: candidate.entry?.source,
+    });
     if (verdict === 'ok') {return true;}
 
     const config = `${candidate.root}/.kb/kb.config.json`;

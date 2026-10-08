@@ -62,6 +62,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isAdapterManifest(value: unknown): value is AdapterManifest {
   if (!isRecord(value)) {return false;}
   return typeof value.manifestVersion === 'string' &&
+    value.schema === 'kb.adapter/1' &&
     typeof value.id === 'string' &&
     typeof value.name === 'string' &&
     typeof value.version === 'string' &&

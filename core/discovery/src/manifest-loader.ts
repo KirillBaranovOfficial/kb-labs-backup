@@ -1,308 +1,200 @@
-/**
- * @module @kb-labs/core-discovery/manifest-loader
- * Safe dynamic import of plugin manifests with timeout protection.
- */
+/** Safe loader for declared plugin manifests. */
 
-import { declaredManifestPath } from '@kb-labs/core-platform';
+import { declaredManifestPath, ENTITY_MANIFEST_KINDS, manifestKindFromSchema } from '@kb-labs/core-platform';
 import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { DiagnosticCollector } from './diagnostics.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+
+const RECOGNIZED_SCHEMAS = Object.keys(ENTITY_MANIFEST_KINDS).join(', ');
 
 const DEFAULT_IMPORT_TIMEOUT_MS = 5_000;
-
-/**
- * Validate that a resolved path stays within the allowed root directory.
- * Prevents path traversal attacks via manifest fields like `"../../etc/passwd"`.
- */
-function isWithinRoot(filePath: string, root: string): boolean {
-  const resolved = path.resolve(filePath);
-  const resolvedRoot = path.resolve(root);
-  return resolved.startsWith(resolvedRoot + path.sep) || resolved === resolvedRoot;
+class ManifestImportTimeoutError extends Error {
+  constructor(filePath: string, timeoutMs: number) {
+    super(`Import timeout after ${timeoutMs}ms: ${filePath}`);
+    this.name = 'ManifestImportTimeoutError';
+  }
 }
 
-/**
- * Safely import a module with a timeout guard.
- * Cleans up the timer on success to avoid resource leaks.
- */
-async function safeImport<T = unknown>(
-  modulePath: string,
-  timeoutMs: number = DEFAULT_IMPORT_TIMEOUT_MS,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`Import timeout after ${timeoutMs}ms: ${modulePath}`)),
-      timeoutMs,
-    );
-  });
+export interface LoadedManifest {
+  manifest: ManifestV3;
+  manifestPath: string;
+  kind: 'static' | 'module';
+  packageName?: string;
+}
 
+export type ManifestLoadResult =
+  | { kind: 'manifest'; loaded: LoadedManifest }
+  | { kind: 'not-plugin'; packageName?: string }
+  | { kind: 'failed'; cause: string; manifestPath?: string };
+
+async function safeImport(filePath: string, timeoutMs: number): Promise<Record<string, unknown>> {
+  let timer: ReturnType<typeof setTimeout>;
   try {
     return await Promise.race([
-      import(modulePath) as Promise<T>,
-      timeoutPromise,
+      import(pathToFileURL(filePath).href) as Promise<Record<string, unknown>>,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ManifestImportTimeoutError(filePath, timeoutMs)), timeoutMs);
+      }),
     ]);
   } finally {
     clearTimeout(timer!);
   }
 }
 
-/** A manifest together with where it was read from. */
-export interface LoadedManifest {
-  manifest: ManifestV3;
-  /** File the manifest was read from (static JSON or compiled module). */
-  manifestPath: string;
-  /**
-   * `static`: parsed from a JSON file, no plugin code executed.
-   * `module`: obtained by `import()`ing the compiled manifest module.
-   */
-  kind: 'static' | 'module';
-  /** `name` from the package's package.json, when readable. */
-  packageName?: string;
+function isMissingFile(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
-const PLUGIN_SCHEMA = 'kb.plugin/3';
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
-/**
- * Attempt to locate and load a ManifestV3 from a package root directory.
- * Convenience wrapper over {@link loadManifestFile} for callers that do not
- * need to know where the manifest came from.
- */
-export async function loadManifest(
-  packageRoot: string,
+function failed(
   diag: DiagnosticCollector,
-  timeoutMs: number = DEFAULT_IMPORT_TIMEOUT_MS,
-): Promise<ManifestV3 | null> {
-  const loaded = await loadManifestFile(packageRoot, diag, timeoutMs);
-  return loaded ? loaded.manifest : null;
+  pluginId: string,
+  filePath: string,
+  code: 'MANIFEST_PARSE_ERROR' | 'MANIFEST_VALIDATION_ERROR' | 'MANIFEST_LOAD_TIMEOUT',
+  message: string,
+  cause?: unknown,
+): ManifestLoadResult {
+  const timeout = code === 'MANIFEST_LOAD_TIMEOUT';
+  diag.error(code, message, {
+    pluginId,
+    filePath,
+    stack: cause instanceof Error ? cause.stack : undefined,
+    remediation: timeout
+      ? 'Check for circular dependencies or blocking top-level await in the declared manifest module.'
+      : 'Repair the declared manifest, then run "kb marketplace plugins doctor --scope <scope>".',
+  });
+  return { kind: 'failed', cause: message, manifestPath: filePath };
 }
 
-/**
- * Locate and load a ManifestV3 from a package root directory.
- *
- * Resolution order:
- *   1. package.json `kb.manifest` field (relative path).
- *      When the field points at a compiled module (`dist/manifest.js`) and the
- *      build-emitted static sibling (`dist/manifest.json`) exists, the static
- *      file is used and no plugin code is executed. The module is imported only
- *      when there is no usable static manifest.
- *   2. `kb.plugin.json` in package root
- *   3. Manifest exported from package entry point (`dist/index.js`)
- */
+async function readManifestJson(
+  filePath: string,
+  pluginId: string,
+  packageName: string | undefined,
+  diag: DiagnosticCollector,
+  required: boolean,
+): Promise<ManifestLoadResult | undefined> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(filePath, 'utf8');
+  } catch (error) {
+    if (isMissingFile(error) && !required) return undefined;
+    return failed(diag, pluginId, filePath, 'MANIFEST_PARSE_ERROR', `Failed to read manifest ${filePath}: ${errorMessage(error)}`, error);
+  }
+  let candidate: unknown;
+  try {
+    candidate = JSON.parse(raw);
+  } catch (error) {
+    return failed(diag, pluginId, filePath, 'MANIFEST_PARSE_ERROR', `Failed to parse manifest ${filePath}: ${errorMessage(error)}`, error);
+  }
+  const schemaKind = manifestKindFromSchema(candidate !== null && typeof candidate === 'object' && 'schema' in candidate ? candidate.schema : undefined);
+  if (schemaKind === 'adapter' || schemaKind === 'service') {
+    diag.info('MANIFEST_NOT_PLUGIN', `Manifest ${filePath} declares another KB Labs entity schema — skipping`, {
+      pluginId,
+      filePath,
+    });
+    return { kind: 'not-plugin', packageName };
+  }
+  if (schemaKind !== 'plugin' || !isManifestV3(candidate)) {
+    const message = schemaKind === undefined
+      ? `Manifest ${filePath} must declare a recognized schema (${RECOGNIZED_SCHEMAS})`
+      : `Manifest ${filePath} is not a valid ManifestV3`;
+    diag.error('MANIFEST_VALIDATION_ERROR', message, {
+      pluginId,
+      filePath,
+      remediation: 'Ensure the manifest has schema "kb.plugin/3" and the required id and version fields.',
+    });
+    return { kind: 'failed', cause: message, manifestPath: filePath };
+  }
+  return { kind: 'manifest', loaded: { manifest: candidate, manifestPath: filePath, kind: 'static', packageName } };
+}
+
+async function loadDeclaredModule(
+  filePath: string,
+  pluginId: string,
+  packageName: string | undefined,
+  diag: DiagnosticCollector,
+  timeoutMs: number,
+): Promise<ManifestLoadResult> {
+  const staticPath = filePath.replace(/\.[cm]?js$/, '.json');
+  if (staticPath !== filePath) {
+    const staticResult = await readManifestJson(staticPath, pluginId, packageName, diag, false);
+    if (staticResult) return staticResult;
+  }
+  try {
+    const mod = await safeImport(filePath, timeoutMs);
+    const candidate = mod.manifest;
+    if (candidate === undefined) {
+      const message = `Declared manifest module ${filePath} must export a named "manifest"`;
+      return failed(diag, pluginId, filePath, 'MANIFEST_VALIDATION_ERROR', message);
+    }
+    const kind = manifestKindFromSchema(candidate !== null && typeof candidate === 'object' && 'schema' in candidate ? candidate.schema : undefined);
+    if (kind === 'adapter' || kind === 'service') {
+      diag.info('MANIFEST_NOT_PLUGIN', `Declared manifest ${filePath} is not a plugin manifest — skipping`, {
+        pluginId,
+        filePath,
+      });
+      return { kind: 'not-plugin', packageName };
+    }
+    if (kind === 'plugin' && isManifestV3(candidate)) {
+      return { kind: 'manifest', loaded: { manifest: candidate, manifestPath: filePath, kind: 'module', packageName } };
+    }
+    const message = kind === undefined
+      ? `Declared manifest module ${filePath} must declare a recognized schema (${RECOGNIZED_SCHEMAS})`
+      : `Imported module ${filePath} does not export a valid ManifestV3`;
+    return failed(diag, pluginId, filePath, 'MANIFEST_VALIDATION_ERROR', message);
+  } catch (error) {
+    const timeout = error instanceof ManifestImportTimeoutError;
+    const code = timeout ? 'MANIFEST_LOAD_TIMEOUT' : 'MANIFEST_PARSE_ERROR';
+    return failed(diag, pluginId, filePath, code, `Failed to import declared manifest ${filePath}: ${errorMessage(error)}`, error);
+  }
+}
+
+/** Load a plugin only from package.json's kb.manifest or root kb.plugin.json. */
 export async function loadManifestFile(
   packageRoot: string,
   diag: DiagnosticCollector,
   timeoutMs: number = DEFAULT_IMPORT_TIMEOUT_MS,
-): Promise<LoadedManifest | null> {
-  const pluginId = path.basename(packageRoot);
-  const resolvedRoot = path.resolve(packageRoot);
-
-  // --- 1. Check package.json for manifest field ---
-  const pkgJsonPath = path.join(resolvedRoot, 'package.json');
+): Promise<ManifestLoadResult> {
+  const root = path.resolve(packageRoot);
+  const pluginId = path.basename(root);
+  const pkgJsonPath = path.join(root, 'package.json');
   let packageName: string | undefined;
+  let manifestField: string | undefined;
   try {
-    const raw = await fs.readFile(pkgJsonPath, 'utf-8');
-    const pkg = JSON.parse(raw) as Record<string, unknown>;
+    const pkg = JSON.parse(await fs.readFile(pkgJsonPath, 'utf8')) as Record<string, unknown>;
     packageName = typeof pkg.name === 'string' ? pkg.name : undefined;
-    const manifestField = declaredManifestPath(pkg);
-
-    if (typeof manifestField === 'string') {
-      const manifestPath = path.resolve(resolvedRoot, manifestField);
-
-      // Path traversal guard
-      if (!isWithinRoot(manifestPath, resolvedRoot)) {
-        diag.error('MANIFEST_VALIDATION_ERROR',
-          `Manifest path "${manifestField}" escapes package root — possible path traversal`, {
-          pluginId,
-          filePath: manifestPath,
-          remediation: 'Use a relative path within the package directory',
-        });
-        return null;
-      }
-
-      return await loadFromManifestField(manifestPath, pluginId, packageName, diag, timeoutMs);
+    manifestField = declaredManifestPath(pkg);
+  } catch (error) {
+    if (!isMissingFile(error)) {
+      return failed(diag, pluginId, pkgJsonPath, 'MANIFEST_PARSE_ERROR', `Failed to read or parse package metadata at ${pkgJsonPath}: ${errorMessage(error)}`, error);
     }
-  } catch {
-    // package.json missing or unreadable — continue
   }
 
-  // --- 2. Try kb.plugin.json ---
-  const kbPluginJsonPath = path.join(resolvedRoot, 'kb.plugin.json');
-  try {
-    await fs.access(kbPluginJsonPath);
-    const raw = await fs.readFile(kbPluginJsonPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (isManifestV3(parsed)) {
-      return { manifest: parsed, manifestPath: kbPluginJsonPath, kind: 'static', packageName };
+  if (manifestField) {
+    const manifestPath = path.resolve(root, manifestField);
+    const relative = path.relative(root, manifestPath);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      return failed(diag, pluginId, manifestPath, 'MANIFEST_VALIDATION_ERROR', `Declared manifest path "${manifestField}" escapes package root — possible path traversal`);
     }
-    diag.warning('MANIFEST_VALIDATION_ERROR', `kb.plugin.json exists but is not a valid ManifestV3`, {
-      pluginId,
-      filePath: kbPluginJsonPath,
-      remediation: 'Ensure the file has schema: "kb.plugin/3" and required fields (id, version)',
-    });
-    return null;
-  } catch {
-    // No kb.plugin.json — continue
+    if (manifestPath.endsWith('.json')) {
+      const result = await readManifestJson(manifestPath, pluginId, packageName, diag, true);
+      return result!;
+    }
+    return loadDeclaredModule(manifestPath, pluginId, packageName, diag, timeoutMs);
   }
 
-  // --- 3. Try dist/index.js (always within package root, no traversal risk) ---
-  try {
-    const entryPoint = path.join(resolvedRoot, 'dist', 'index.js');
-    await fs.access(entryPoint);
-    return await importManifestFile(entryPoint, pluginId, packageName, diag, timeoutMs);
-  } catch {
-    // No dist/index.js or import failed
-  }
+  const kbPluginJsonPath = path.join(root, 'kb.plugin.json');
+  const staticResult = await readManifestJson(kbPluginJsonPath, pluginId, packageName, diag, false);
+  if (staticResult) return staticResult;
 
-  diag.error('MANIFEST_NOT_FOUND', `No manifest found in ${resolvedRoot}`, {
+  diag.info('MANIFEST_NOT_PLUGIN', `Package ${root} does not declare kb.manifest or kb.plugin.json — skipping`, {
     pluginId,
-    filePath: resolvedRoot,
-    remediation: 'Add a kb.plugin.json file or set kb.manifest in package.json',
+    filePath: root,
   });
-  return null;
-}
-
-/**
- * Import a manifest from a specific file path.
- */
-async function importManifestFile(
-  filePath: string,
-  pluginId: string,
-  packageName: string | undefined,
-  diag: DiagnosticCollector,
-  timeoutMs: number,
-): Promise<LoadedManifest | null> {
-  try {
-    const mod = await safeImport<Record<string, unknown>>(filePath, timeoutMs);
-    const candidate = mod.manifest ?? mod.default ?? mod;
-
-    if (isManifestV3(candidate)) {
-      return { manifest: candidate, manifestPath: filePath, kind: 'module', packageName };
-    }
-
-    if (reportNonPluginSchema(candidate, pluginId, filePath, diag)) {
-      return null;
-    }
-
-    diag.warning('MANIFEST_VALIDATION_ERROR', `Imported module is not a valid ManifestV3`, {
-      pluginId,
-      filePath,
-      remediation: 'Ensure the module exports a ManifestV3 object with schema: "kb.plugin/3"',
-    });
-    return null;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = message.includes('Import timeout');
-
-    diag.error(
-      isTimeout ? 'MANIFEST_LOAD_TIMEOUT' : 'MANIFEST_PARSE_ERROR',
-      `Failed to load manifest from ${filePath}: ${message}`,
-      {
-        pluginId,
-        filePath,
-        stack: err instanceof Error ? err.stack : undefined,
-        remediation: isTimeout
-          ? 'Check for circular dependencies or blocking top-level await in the module'
-          : 'Ensure the manifest file is valid JavaScript/JSON',
-      },
-    );
-    return null;
-  }
-}
-
-/**
- * Resolve the file named by `kb.manifest`: prefer the build-emitted static JSON
- * next to a compiled module, fall back to importing the module.
- */
-async function loadFromManifestField(
-  manifestPath: string,
-  pluginId: string,
-  packageName: string | undefined,
-  diag: DiagnosticCollector,
-  timeoutMs: number,
-): Promise<LoadedManifest | null> {
-  const isJson = manifestPath.endsWith('.json');
-  const staticPath = isJson ? manifestPath : manifestPath.replace(/\.[cm]?js$/, '.json');
-
-  if (staticPath !== manifestPath || isJson) {
-    const fromStatic = await readStaticManifest(staticPath, pluginId, packageName, diag);
-    if (fromStatic !== undefined) {
-      return fromStatic;
-    }
-  }
-  if (isJson) {
-    diag.error('MANIFEST_NOT_FOUND', `Manifest file not found: ${manifestPath}`, {
-      pluginId,
-      filePath: manifestPath,
-      remediation: 'Build the package so that the manifest is emitted',
-    });
-    return null;
-  }
-
-  return importManifestFile(manifestPath, pluginId, packageName, diag, timeoutMs);
-}
-
-/**
- * Read a static manifest JSON.
- * Returns the loaded manifest, `null` when the file is a definitive non-answer
- * (a manifest of another schema), and `undefined` when it is absent or unusable
- * so the caller may fall back to the compiled module.
- */
-async function readStaticManifest(
-  filePath: string,
-  pluginId: string,
-  packageName: string | undefined,
-  diag: DiagnosticCollector,
-): Promise<LoadedManifest | null | undefined> {
-  let raw: string;
-  try {
-    raw = await fs.readFile(filePath, 'utf-8');
-  } catch {
-    return undefined;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    diag.warning('MANIFEST_PARSE_ERROR',
-      `Static manifest ${filePath} is not valid JSON (${(err as Error).message}) — falling back to the compiled module`, {
-      pluginId,
-      filePath,
-    });
-    return undefined;
-  }
-
-  if (isManifestV3(parsed)) {
-    return { manifest: parsed, manifestPath: filePath, kind: 'static', packageName };
-  }
-  if (reportNonPluginSchema(parsed, pluginId, filePath, diag)) {
-    return null;
-  }
-  diag.warning('MANIFEST_VALIDATION_ERROR',
-    `Static manifest ${filePath} is not a valid ManifestV3 — falling back to the compiled module`, {
-    pluginId,
-    filePath,
-  });
-  return undefined;
-}
-
-/**
- * A manifest of another kind (e.g. `kb.service/1`) is not an error: the package
- * simply is not a plugin. Returns true when the candidate was such a manifest.
- */
-function reportNonPluginSchema(
-  candidate: unknown,
-  pluginId: string,
-  filePath: string,
-  diag: DiagnosticCollector,
-): boolean {
-  if (typeof candidate !== 'object' || candidate === null) {return false;}
-  const schema = (candidate as { schema?: unknown }).schema;
-  if (typeof schema !== 'string' || schema === PLUGIN_SCHEMA) {return false;}
-  diag.info('MANIFEST_NOT_PLUGIN', `${filePath} declares schema "${schema}", not ${PLUGIN_SCHEMA} — skipping`, {
-    pluginId,
-    filePath,
-  });
-  return true;
+  return { kind: 'not-plugin', packageName };
 }

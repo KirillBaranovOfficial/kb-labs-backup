@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile)
  * Derive tsup entry points from package.json.
  * Reads two sources of published dist artifacts:
  *   1. `exports` — public module surface ("./dist/foo.js" → "src/foo.ts")
- *   2. `kb.manifest` — plugin/adapter manifest loaded at runtime by the
+ *   2. `kb.manifest` — plugin/service/adapter manifest loaded at runtime by the
  *      kb-labs platform; it's referenced as a dist path but not exported,
  *      so it would otherwise be silently omitted from the build.
  * Falls back to ['src/index.ts'] if nothing resolves.
@@ -79,12 +79,12 @@ function resolveManifestDistPath() {
  */
 function emitManifestJsonFast(distPath) {
   const js = readFileSync(distPath, 'utf8')
+  if (!/export\s*\{[^}]*\bmanifest\b[^}]*\}/s.test(js)) return null
   // tsup ESM output pattern (from inspecting actual built files):
   //   var manifest = { schema: "kb.service/1", id: "...", ... };
-  //   var manifest_default = manifest;
-  //   export { manifest_default as default, manifest };
-  // Capture everything between `var manifest =` and the next `var manifest_default`.
-  const match = js.match(/var\s+manifest\s*=\s*(\{[\s\S]*?\n\});\s*\nvar\s+manifest_default/)
+  //   export { manifest };
+  // Capture the object literal assigned to the sole supported named export.
+  const match = js.match(/var\s+manifest\s*=\s*(\{[\s\S]*?\n\})\s*;\s*(?=(?:var\s|export\s*\{))/)
   if (!match) return null
   // eslint-disable-next-line no-new-func
   const obj = new Function(`"use strict"; return (${match[1]})`)()
@@ -94,7 +94,7 @@ function emitManifestJsonFast(distPath) {
 
 /**
  * Fallback path: spawn a fresh `node` process to `import()` the compiled
- * module and dump the resolved default export as JSON on stdout.
+ * module and dump its named `manifest` export as JSON on stdout.
  *
  * Running in a separate process (rather than `import()` in-process) sidesteps
  * the same-process module-cache staleness problem the fast path avoids by
@@ -109,19 +109,20 @@ function emitManifestJsonFast(distPath) {
  */
 async function emitManifestJsonViaSubprocess(distPath) {
   const url = new URL(`file://${distPath}`).href
-  const script = `import(${JSON.stringify(url)}).then(m => process.stdout.write(JSON.stringify(m.default ?? m.manifest)))`
+  const script = `import(${JSON.stringify(url)}).then(m => { if (m.manifest === undefined) throw new Error('Declared manifest module must export a named "manifest"'); process.stdout.write(JSON.stringify(m.manifest)) })`
   const { stdout } = await execFileAsync(process.execPath, ['-e', script], {
     cwd: process.cwd(),
     timeout: 30_000,
   })
   const obj = JSON.parse(stdout)
-  if (!obj || typeof obj !== 'object') return null
+  if (!obj || typeof obj !== 'object') throw new Error(`Declared manifest module ${distPath} did not export an object named manifest`)
   return obj
 }
 
 /**
  * tsup `onSuccess`: emit dist/manifest.json from the compiled manifest
- * module, for both service (`kb.service/*`) and plugin (`kb.plugin/*`)
+ * module, for service (`kb.service/*`), plugin (`kb.plugin/*`), and adapter
+ * (`kb.adapter/*`) schemas
  * schemas, so kb-create (a Go binary) can read install-relevant fields
  * without executing JS.
  */
@@ -135,7 +136,7 @@ async function emitManifestJson() {
   } catch (err) {
     fastPathError = err
   }
-  if (!obj || typeof obj.schema !== 'string' || !/^kb\.(service|plugin)\//.test(obj.schema)) {
+  if (!obj || typeof obj.schema !== 'string' || !/^kb\.(service|plugin|adapter)\//.test(obj.schema)) {
     try {
       obj = await emitManifestJsonViaSubprocess(distPath)
     } catch (err) {
@@ -143,8 +144,8 @@ async function emitManifestJson() {
       return
     }
   }
-  if (!obj || typeof obj.schema !== 'string' || !/^kb\.(service|plugin)\//.test(obj.schema)) {
-    console.warn(`[kb-devkit] manifest at ${distPath} has no recognizable kb.service/kb.plugin schema — skipping JSON emission`)
+  if (!obj || typeof obj.schema !== 'string' || !/^kb\.(service|plugin|adapter)\//.test(obj.schema)) {
+    console.warn(`[kb-devkit] manifest at ${distPath} has no recognizable KB Labs entity schema — skipping JSON emission`)
     return
   }
   try {

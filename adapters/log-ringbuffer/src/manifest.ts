@@ -9,6 +9,7 @@ import type { AdapterManifest } from "@kb-labs/sdk/adapters";
  * Adapter manifest for log ring buffer extension.
  */
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: "1.0.0",
   id: "log-ringbuffer",
   name: "Log Ring Buffer",

@@ -132,6 +132,63 @@ def _entries(payload: dict) -> list[dict]:
     return entries
 
 
+def run_plugin_policy_diagnostic_step(journey: Journey, project: Path, registry: str,
+                                      env: dict[str, str], runner: CommandRunner) -> None:
+    """Prove a malformed project policy blocks the installed third-party fixture only."""
+    fixture_package = "@kb-labs/e2e-analytics-emitter"
+    config_file = project / ".kb" / "kb.config.json"
+
+    def verify() -> None:
+        version = _registry_version(fixture_package, registry, env, runner)
+        install = ["marketplace", "install", f"{fixture_package}@{version}", "--json"]
+        _json(_run(["kb", *install], cwd=project, env=env, runner=runner), install)
+        original = config_file.read_bytes() if config_file.exists() else None
+        try:
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            config = json.loads(original) if original is not None else {}
+            config["plugins"] = {**(config.get("plugins", {}) if isinstance(config.get("plugins"), dict) else {}), "block": 7}
+            config_file.write_text(json.dumps(config, indent=2) + "\n")
+
+            doctor = ["marketplace", "plugins", "doctor", "--scope", "project", "--json"]
+            result = _run(["kb", *doctor], cwd=project, env=env, runner=runner)
+            try:
+                envelope = read_ux_cli_result(result.stdout, result.returncode)
+                error = decode_ux_error_result(envelope)
+            except (json.JSONDecodeError, ValueError) as parse_error:
+                raise RuntimeError("marketplace doctor did not return its typed policy diagnostic") from parse_error
+            diagnostics = error.get("diagnostics") if isinstance(error, dict) else None
+            expected_hint = f"kb marketplace plugins doctor --scope project"
+            if result.returncode == 0 or not isinstance(diagnostics, list) or not any(
+                isinstance(item, dict)
+                and item.get("code") == "PLUGIN_POLICY_TYPE_INVALID"
+                and item.get("path") == str(config_file)
+                and expected_hint in str(item.get("hint", ""))
+                and fixture_package in str(item.get("message", ""))
+                for item in diagnostics
+            ):
+                raise RuntimeError("marketplace doctor omitted the typed plugins.block diagnostic, config path, or repair hint")
+
+            blocked = ["journey", "analytics", "emit", "--marker", "policy-blocked", "--json"]
+            blocked_result = _run(["kb", *blocked], cwd=project, env=env, runner=runner)
+            if blocked_result.returncode == 0:
+                raise RuntimeError("third-party analytics command remained registered with an invalid project policy")
+            blocked_error = decode_ux_error_result(read_ux_cli_result(blocked_result.stdout, blocked_result.returncode))
+            if fixture_package in str(blocked_error.get("message", "")):
+                raise RuntimeError("third-party analytics command ran instead of being excluded from discovery")
+
+            first_party = ["version", "--json"]
+            _json(_run(["kb", *first_party], cwd=project, env=env, runner=runner), first_party)
+        finally:
+            if original is None:
+                config_file.unlink(missing_ok=True)
+            else:
+                config_file.write_bytes(original)
+
+    with invocation_context(step_id="S-203.24"):
+        journey.step("malformed project plugin policy blocks marketplace plugins and preserves shipped commands",
+                     "marketplace", verify, cases=["S-203.24"])
+
+
 def validate_shared_failure(result: subprocess.CompletedProcess[str], *, json_mode: bool,
                             code: str, message: str, hint: str) -> None:
     """Validate the common human or machine failure contract used by S-051."""
@@ -192,6 +249,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
                  lambda: assert_auth_required("S-041.7"), cases=["S-041.7"])
     if journey.steps[-1].status != "PASS":
         return
+
 
     journey.step("S-010.6 secured marketplace requires the catalogued login error", "marketplace",
                  lambda: assert_auth_required("S-010.6"), cases=["S-010.6"])
@@ -266,6 +324,9 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         return
     with invocation_context(step_id="S-010.1"):
         wait_for_marketplace_ready(project, base_env, runner)
+        run_plugin_policy_diagnostic_step(journey, project, registry, base_env, runner)
+        if journey.steps[-1].status != "PASS":
+            return
         commit_version = _registry_version(commit_install_package, registry, base_env, runner)
         unrelated_version = _registry_version(unrelated_package, registry, base_env, runner)
     platform_list = ["marketplace", "plugins", "list", "--scope", "platform", "--json"]

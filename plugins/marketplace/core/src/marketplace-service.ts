@@ -27,7 +27,7 @@ import {
   enablePlugin,
   disablePlugin,
   DiagnosticCollector,
-  loadManifest,
+  loadManifestFile,
   extractEntityKinds,
   DiscoveryManager,
 } from '@kb-labs/core-discovery';
@@ -711,6 +711,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
     const discovery = await new DiscoveryManager({
       root: scopeRoot,
+      scope: ctx.scope,
       workspace: false,
       extensionStore: this.extensionStore,
     }).discover();
@@ -721,6 +722,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         packageId: failure.id,
         diagnosticCode: failure.diagnosticCode ?? event?.code ?? 'PLUGIN_DISCOVERY_FAILED',
         message: failure.message,
+        path: event?.context?.filePath,
         remediation: failure.remediation ?? event?.remediation ?? `Run "kb marketplace plugins doctor --scope ${ctx.scope}" after correcting this plugin.`,
       });
     }
@@ -806,11 +808,11 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           return;
         }
         const diag = new DiagnosticCollector();
-        const manifest = await loadManifest(packageRoot, diag);
-        if (manifest) {
+        const result = await loadManifestFile(packageRoot, diag);
+        if (result.kind === 'manifest') {
           await setCacheEntry(scopeRoot, packageId, {
             manifestType: 'plugin',
-            manifest,
+            manifest: result.loaded.manifest,
             cachedAt: new Date().toISOString(),
             integrity,
           });

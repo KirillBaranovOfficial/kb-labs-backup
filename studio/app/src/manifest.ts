@@ -17,5 +17,3 @@ export const manifest: ServiceManifest = {
     HOST: { description: 'Bind host', default: '127.0.0.1' },
   },
 };
-
-export default manifest;

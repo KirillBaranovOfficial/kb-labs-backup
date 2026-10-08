@@ -63,6 +63,8 @@ export type {
 } from "./adapters/adapter-manifest.js";
 export { adapterManifestProvidesSlot } from "./adapters/adapter-manifest.js";
 export { declaredManifestPath, loadAdapterManifest, resolveAdapterManifestModulePath, resolveInstalledAdapterPackageRoot } from "./adapters/adapter-manifest-loader.js";
+export { ENTITY_MANIFEST_KINDS, manifestKindFromSchema } from "./entity-manifest-kind.js";
+export type { EntityManifestKind } from "./entity-manifest-kind.js";
 export type { AdapterManifestLoadResult, AdapterManifestSource } from "./adapters/adapter-manifest-loader.js";
 
 export type { IAnalytics } from "./adapters/analytics.js";

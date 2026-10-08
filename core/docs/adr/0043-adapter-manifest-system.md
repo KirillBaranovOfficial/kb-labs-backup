@@ -124,6 +124,7 @@ Adapters export a factory function that receives dependencies:
 ```typescript
 // Pino Logger (core adapter)
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'pino-logger',
   name: 'Pino Logger',
@@ -154,6 +155,7 @@ export function createAdapter(
 ```typescript
 // Ring Buffer (extension adapter)
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'log-ringbuffer',
   name: 'Log Ring Buffer',
@@ -180,6 +182,7 @@ export function createAdapter(
 ```typescript
 // SQLite Persistence (extension with dependency)
 export const manifest: AdapterManifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'log-persistence',
   name: 'SQLite Log Persistence',

@@ -116,13 +116,13 @@ async function tryLoadManifestForTrace(
   pkgName: string,
 ): Promise<ManifestLoadError | null> {
   try {
-    const mod = await import(pathToFileURL(manifestPath).href) as { manifest?: unknown; default?: unknown };
-    const raw = mod.manifest ?? mod.default;
+    const mod = await import(pathToFileURL(manifestPath).href) as { manifest?: unknown };
+    const raw = mod.manifest;
 
     if (!raw || typeof raw !== 'object') {
       return {
         code: 'NO_EXPORT',
-        message: 'No manifest export — add: export { manifest } or export default manifest',
+        message: 'No named manifest export — add: export const manifest = ...',
       };
     }
 

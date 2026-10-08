@@ -367,6 +367,26 @@ S-201.1–S-201.2, S-203.7–S-203.8.
 
 ## 2026-10-08
 
+### Plugin discovery fails closed on an unusable governance policy
+
+An absent optional config leaves plugin governance unset. Once a config file is
+present, an unreadable, malformed, or wrongly typed `plugins.allow` or
+`plugins.block` policy is a discovery diagnostic and cannot be treated as an
+empty policy. Discovery fails closed for marketplace-installed third-party
+packages in the affected scope, while first-party, linked, and workspace
+plugins remain available for development and platform operation. Plugin
+manifests are recognized only through `kb.manifest` or `kb.plugin.json`; a
+package entry point is not evidence that a package is a plugin. Declared
+manifest modules export one named `manifest`; loaders, build emitters, and
+diagnostic commands do not fall back to a default export or module namespace.
+Entity kind comes only from the registered `schema` value. First-party status
+comes from discovery provenance: workspace and linked candidates, plus entries
+shipped in the platform-scope lock; npm package names do not grant an exemption.
+Config diagnostics retain their original code and repair hint, followed by a
+doctor command with the affected scope. The governance behavior is proved in
+installed local and secured journeys with a registered project and the
+marketplace-published `@kb-labs/e2e-analytics-emitter` fixture. Cases: S-203.24.
+
 ### CLI authentication has one session owner
 
 The CLI auth-session owner selects a saved human session before a machine
