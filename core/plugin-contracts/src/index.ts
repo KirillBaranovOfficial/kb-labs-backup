@@ -298,7 +298,6 @@ export type {
 export {
   isManifestV3,
   isServiceManifest,
-  declaredManifestPath,
   getHandlerPath,
   getHandlerPermissions,
   resolvePluginBasePath,

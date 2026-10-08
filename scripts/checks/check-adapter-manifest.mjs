@@ -20,11 +20,11 @@ async function main() {
   if (!workspace || !Array.isArray(workspace.packages)) {
     throw new Error('workspace-scoped adapter-manifest check requires devkit workspace package data on stdin');
   }
-  const discovery = await import('@kb-labs/core-discovery');
+  const platform = await import('@kb-labs/core-platform');
 
   const platformAdapters = [];
   for (const pkg of workspace.packages) {
-    const result = await discovery.loadAdapterManifest(pkg.dir);
+    const result = await platform.loadAdapterManifest({ packageRoot: pkg.dir });
     const loaded = result.kind === 'adapter'
       ? { manifest: result.manifest, modulePath: result.modulePath }
       : { modulePath: result.modulePath, error: result.reason };

@@ -3,7 +3,8 @@
  * Safe dynamic import of plugin manifests with timeout protection.
  */
 
-import { declaredManifestPath, isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
+import { declaredManifestPath } from '@kb-labs/core-platform';
+import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { DiagnosticCollector } from './diagnostics.js';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';

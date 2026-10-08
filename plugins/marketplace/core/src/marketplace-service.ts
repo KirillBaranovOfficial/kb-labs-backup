@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import type { IExtensionStore } from '@kb-labs/core-extension-store';
+import type { ILogger } from '@kb-labs/core-platform';
 import { glob } from 'glob';
 import type { EntityKind, MarketplaceLock, MarketplaceLockEntry } from '@kb-labs/core-discovery';
 import {
@@ -72,6 +73,8 @@ export interface MarketplaceServiceOptions {
   registrySource?: PackageSource;
   /** Shared machine store. When set, packages never enter project node_modules. */
   extensionStore?: IExtensionStore;
+  /** Platform logger used by lifecycle strategies. */
+  logger: ILogger;
   /** Additional strategies beyond built-in plugin/adapter */
   strategies?: EntityKindStrategy[];
 }
@@ -85,6 +88,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   private readonly source: PackageSource;
   private readonly registrySource?: PackageSource;
   private readonly extensionStore?: IExtensionStore;
+  private readonly logger: ILogger;
   private readonly strategies = new Map<EntityKind, EntityKindStrategy>();
   /**
    * Package-manager and marketplace-lock mutations share a scope root. They
@@ -100,10 +104,11 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     this.source = opts.source;
     this.registrySource = opts.registrySource;
     this.extensionStore = opts.extensionStore;
+    this.logger = opts.logger;
 
     // Built-in strategies
     this.registerStrategy(new PluginStrategy());
-    this.registerStrategy(new AdapterStrategy());
+    this.registerStrategy(new AdapterStrategy(this.logger, opts.platformRoot));
 
     // User-supplied strategies
     if (opts.strategies) {

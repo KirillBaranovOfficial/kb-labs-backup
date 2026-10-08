@@ -443,6 +443,30 @@ export interface AdapterManifest {
   >;
 }
 
+const ADAPTER_SLOT_CONTRACTS: Record<string, string> = {
+  logger: 'ILogger',
+  cache: 'ICache',
+  storage: 'IStorage',
+  eventBus: 'IEventBus',
+  documentDatabase: 'IDocumentDatabase',
+  kvStore: 'IKVStore',
+  analytics: 'IAnalytics',
+  llm: 'ILLM',
+  embeddings: 'IEmbeddings',
+  vectorStore: 'IVectorStore',
+  logs: 'ILogReader',
+  snapshotManager: 'ISnapshotManager',
+};
+
+/** Whether a manifest declares the platform slot through its identity fields. */
+export function adapterManifestProvidesSlot(manifest: AdapterManifest, slot: string): boolean {
+  if (manifest.defaultFor?.includes(slot)) {return true;}
+  const contract = ADAPTER_SLOT_CONTRACTS[slot];
+  if (!contract) {return false;}
+  const roles = Array.isArray(manifest.implements) ? manifest.implements : [manifest.implements];
+  return roles.includes(contract);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware declarations (pipeline extension points)
 // ═══════════════════════════════════════════════════════════════════════════

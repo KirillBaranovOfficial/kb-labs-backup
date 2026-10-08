@@ -12,7 +12,8 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { declaredManifestPath, isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
+import { declaredManifestPath } from '@kb-labs/core-platform';
+import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 
 function isWithinRoot(filePath: string, root: string): boolean {
   const resolved = path.resolve(filePath);
