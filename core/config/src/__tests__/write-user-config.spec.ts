@@ -303,7 +303,7 @@ describe('setUserConfigValue: schema validation', () => {
     await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
       name: '@kb-labs/analytics-fixture', type: 'module', kb: { manifest: './manifest.js' },
     }));
-    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { manifestVersion: '1.0.0', id: 'analytics-fixture', name: 'Analytics Fixture', version: '1.0.0', type: 'core', implements: 'IAnalytics', configSchema: {
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'analytics-fixture', name: 'Analytics Fixture', version: '1.0.0', type: 'core', implements: 'IAnalytics', configSchema: {
       retentionDays: { type: 'number', integer: true, minimum: 1, minimumMessage: 'Must be a positive integer', hint: 'kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90' }
     } };`);
 
@@ -319,22 +319,40 @@ describe('setUserConfigValue: schema validation', () => {
     }]);
   });
 
-  it('keeps missing adapter configSchema a typed error when options are configured', async () => {
-    const platformRoot = path.join(dir, 'schema-less-platform');
-    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'schema-less-fixture');
+  it('rejects an adapter manifest without its configSchema before using options', async () => {
+    const platformRoot = path.join(dir, 'missing-config-schema-platform');
+    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'missing-config-schema-fixture');
     await fsp.mkdir(packageRoot, { recursive: true });
     await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
-      name: '@kb-labs/schema-less-fixture', type: 'module', kb: { manifest: './manifest.js' },
+      name: '@kb-labs/missing-config-schema-fixture', type: 'module', kb: { manifest: './manifest.js' },
     }));
-    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { manifestVersion: '1.0.0', id: 'schema-less-fixture', name: 'Schema-less Fixture', version: '1.0.0', type: 'core', implements: 'IAnalytics' };`);
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), 'export const manifest = { schema: "kb.adapter/1", manifestVersion: "1.0.0", id: "missing-config-schema-fixture", name: "Missing Config Schema Fixture", version: "1.0.0", type: "core", implements: "IAnalytics" };');
 
     await expect(validatePlatformAdapterOptions(platformRoot, {
-      adapters: { analytics: '@kb-labs/schema-less-fixture' },
+      adapters: { analytics: '@kb-labs/missing-config-schema-fixture' },
+      adapterOptions: { analytics: { retentionDays: 30 } },
+    })).resolves.toMatchObject([{
+      path: 'platform.adapterOptions.analytics',
+      message: 'Cannot load a configSchema for configured adapter @kb-labs/missing-config-schema-fixture.',
+    }]);
+  });
+
+  it('keeps missing adapter configSchema a typed error when options are configured', async () => {
+    const platformRoot = path.join(dir, 'missing-config-schema-platform');
+    const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'missing-config-schema-fixture');
+    await fsp.mkdir(packageRoot, { recursive: true });
+    await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@kb-labs/missing-config-schema-fixture', type: 'module', kb: { manifest: './manifest.js' },
+    }));
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'missing-config-schema-fixture', name: 'Missing Config Schema Fixture', version: '1.0.0', type: 'core', implements: 'IAnalytics' };`);
+
+    await expect(validatePlatformAdapterOptions(platformRoot, {
+      adapters: { analytics: '@kb-labs/missing-config-schema-fixture' },
       adapterOptions: { analytics: { retentionDays: 30 } },
     })).resolves.toEqual([{
       path: 'platform.adapterOptions.analytics',
-      message: 'Cannot load a configSchema for configured adapter @kb-labs/schema-less-fixture.',
-      hint: 'Repair the installed adapter manifest for @kb-labs/schema-less-fixture, then run `kb-create start` again.',
+      message: 'Cannot load a configSchema for configured adapter @kb-labs/missing-config-schema-fixture.',
+      hint: 'Repair the installed adapter manifest for @kb-labs/missing-config-schema-fixture, then run `kb-create start` again.',
     }]);
   });
 
@@ -416,7 +434,7 @@ describe('setUserConfigValue: schema validation', () => {
     const packageRoot = path.join(platformRoot, 'node_modules', '@kb-labs', 'adapters-storage-fixture');
     await fsp.mkdir(packageRoot, { recursive: true });
     await fsp.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@kb-labs/adapters-storage-fixture', type: 'module', kb: { manifest: './manifest.js' } }));
-    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { manifestVersion: '1.0.0', id: 'storage-fixture', name: 'Storage Fixture', version: '1.0.0', type: 'core', implements: 'IStorage', defaultFor: ['storage'] };`);
+    await fsp.writeFile(path.join(packageRoot, 'manifest.js'), `export const manifest = { schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'storage-fixture', name: 'Storage Fixture', version: '1.0.0', type: 'core', implements: 'IStorage', defaultFor: ['storage'] };`);
     const validate = createAdapterOptionsValidator(
       ['platform', 'adapters', 'llm'],
       { platformRoot, effectiveAdapters: { llm: '@kb-labs/adapters-openai' } },

@@ -61,7 +61,7 @@ async function createAdapterDir(tmpDir: string, name: string, id: string): Promi
     kb: { manifest: './dist/adapter-manifest.js' },
   }));
   await fs.writeFile(path.join(dir, 'dist', 'adapter-manifest.js'), `export const manifest = ${JSON.stringify({
-    manifestVersion: '1.0.0', id, name: id, version: '1.0.0', type: 'core', implements: 'ITestAdapter',
+    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id, name: id, version: '1.0.0', type: 'core', implements: 'ITestAdapter',
   })};`);
   return dir;
 }

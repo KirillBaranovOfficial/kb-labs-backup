@@ -54,7 +54,7 @@ async function writeFixturePackage(packageRoot, name, manifest) {
 
 function adapterManifest(fields) {
   return `export const manifest = ${JSON.stringify({
-    manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', ...fields,
+    schema: 'kb.adapter/1', manifestVersion: '1.0.0', id: 'fixture', name: 'Fixture', version: '1.0.0', type: 'core', ...fields,
   })};\n`;
 }
 

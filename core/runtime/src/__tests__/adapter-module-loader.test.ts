@@ -70,8 +70,8 @@ describe('loadDiscoveredAdapterModule', () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'adapter-module-loader-'));
     const dist = path.join(root, 'dist');
     await fs.mkdir(dist, { recursive: true });
-    await fs.writeFile(path.join(dist, 'index.js'), `export const manifest = { implements: 'IDocumentDatabase' }; export function createAdapter() { return { kind: 'document' }; }`);
-    await fs.writeFile(path.join(dist, 'kv.js'), `export const manifest = { implements: 'IKVStore' }; export function createAdapter() { return { get() { return 'kv'; } }; }`);
+    await fs.writeFile(path.join(dist, 'index.js'), `export const manifest = { schema: 'kb.adapter/1', implements: 'IDocumentDatabase' }; export function createAdapter() { return { kind: 'document' }; }`);
+    await fs.writeFile(path.join(dist, 'kv.js'), `export const manifest = { schema: 'kb.adapter/1', implements: 'IKVStore' }; export function createAdapter() { return { get() { return 'kv'; } }; }`);
     adapter = { packageName: '@test/sqlite', pkgRoot: root, createAdapter: () => ({}), module: {} };
   });
 

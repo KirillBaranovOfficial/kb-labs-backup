@@ -89,10 +89,10 @@ describe('resolveDiscoveredAdapterDefaults', () => {
   it('uses installed manifest defaults, local data paths, and the SQLite KV entry point', () => {
     const sqlite = discovered('@kb-labs/adapters-sqlite', {
       defaultFor: ['documentDatabase', 'kvStore'],
-      implements: ['IDocumentDatabase', 'IKVStore'],
+      schema: 'kb.adapter/1', implements: ['IDocumentDatabase', 'IKVStore'],
     });
     const storage = discovered('@kb-labs/adapters-fs', {
-      defaultFor: ['storage'], implements: 'IStorage',
+      defaultFor: ['storage'], schema: 'kb.adapter/1', implements: 'IStorage',
     });
     const resolved = resolveDiscoveredAdapterDefaults({
       adapters: {}, adapterOptions: { storage: { baseDir: 'user/data' } },
@@ -119,13 +119,13 @@ describe('resolveDiscoveredAdapterDefaults', () => {
     try {
       const sqlite = discovered('@kb-labs/adapters-sqlite', {
         defaultFor: ['documentDatabase', 'kvStore'],
-        implements: ['IDocumentDatabase', 'IKVStore'],
+        schema: 'kb.adapter/1', implements: ['IDocumentDatabase', 'IKVStore'],
       });
       const storage = discovered('@kb-labs/adapters-fs', {
-        defaultFor: ['storage'], implements: 'IStorage',
+        defaultFor: ['storage'], schema: 'kb.adapter/1', implements: 'IStorage',
       });
       const analytics = discovered('@kb-labs/adapters-analytics-sqlite', {
-        defaultFor: ['analytics'], implements: 'IAnalytics',
+        defaultFor: ['analytics'], schema: 'kb.adapter/1', implements: 'IAnalytics',
       });
       const resolved = resolveDiscoveredAdapterDefaults({ adapters: {}, adapterOptions: {} }, new Map([
         [sqlite.packageName, sqlite], [storage.packageName, storage], [analytics.packageName, analytics],
@@ -148,7 +148,7 @@ describe('resolveDiscoveredAdapterDefaults', () => {
 
   it('keeps an explicit provider binding ahead of the discovered default', () => {
     const fallback = discovered('@kb-labs/adapters-analytics-sqlite', {
-      defaultFor: ['analytics'], implements: 'IAnalytics',
+      defaultFor: ['analytics'], schema: 'kb.adapter/1', implements: 'IAnalytics',
     });
     const resolved = resolveDiscoveredAdapterDefaults({
       adapters: { analytics: '@kb-labs/adapters-analytics-custom' }, adapterOptions: {},
@@ -160,7 +160,7 @@ describe('resolveDiscoveredAdapterDefaults', () => {
   it('does not implicitly select a provider whose manifest requires configuration', () => {
     const configuredProvider = discovered('@kb-labs/adapters-service-transport-http', {
       defaultFor: ['serviceTransport'],
-      implements: 'IServiceTransport',
+      schema: 'kb.adapter/1', implements: 'IServiceTransport',
       configSchema: { services: { type: 'object', required: true } },
     });
     const resolved = resolveDiscoveredAdapterDefaults({ adapters: {}, adapterOptions: {} },
@@ -173,7 +173,7 @@ describe('resolveDiscoveredAdapterDefaults', () => {
   it('allows a required secret credential with an environment source as an implicit default', () => {
     const openai = discovered('@kb-labs/adapters-openai', {
       defaultFor: ['llm'],
-      implements: 'ILLM',
+      schema: 'kb.adapter/1', implements: 'ILLM',
       configSchema: {
         apiKey: { type: 'string', required: true, secret: true, env: 'OPENAI_API_KEY' },
         model: { type: 'string', default: 'gpt-4o' },
