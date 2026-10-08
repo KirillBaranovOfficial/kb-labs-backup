@@ -216,10 +216,19 @@ class StudioJourneyTests(unittest.TestCase):
             executable = browsers_path / PLAYWRIGHT_HEADLESS_SHELL
             executable.parent.mkdir(parents=True)
             executable.write_text("fake executable for preflight")
-            command = [sys.executable, "-u", "-c",
-                       "import time; [print(f'playwright line {i}', flush=True) for i in range(45)]; time.sleep(5)"]
+            command = ["playwright"]
             streamed = io.StringIO()
-            with patch("studio_steps.subprocess.Popen", wraps=subprocess.Popen) as popen:
+            def timeout_after_output(_command, *, env, timeout, on_output_line, start_new_session):
+                self.assertEqual(_command, command)
+                self.assertEqual(env, {"PLAYWRIGHT_BROWSERS_PATH": str(browsers_path)})
+                self.assertEqual(timeout, 0.2)
+                self.assertTrue(start_new_session)
+                lines = "".join(f"playwright line {i}\n" for i in range(45))
+                for line in lines.splitlines():
+                    on_output_line(line)
+                raise subprocess.TimeoutExpired(command, timeout, output=lines)
+
+            with patch("studio_steps.run_streaming_command", side_effect=timeout_after_output) as run_streaming:
                 with redirect_stdout(streamed):
                     passed, _elapsed, message = run_studio_browser_step(
                         command, {"PLAYWRIGHT_BROWSERS_PATH": str(browsers_path)},
@@ -227,7 +236,7 @@ class StudioJourneyTests(unittest.TestCase):
             saved = json.loads(report.read_text())
             log = (Path(directory) / "studio-playwright-local.log").read_text()
 
-        popen.assert_called_once()
+        run_streaming.assert_called_once()
         self.assertFalse(passed)
         self.assertIn("timed out after 0.2s", message)
         self.assertIn("playwright line 44", message)
