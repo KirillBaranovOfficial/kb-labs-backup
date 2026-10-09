@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 from datetime import datetime, timezone
+import uuid
 from urllib.parse import urlparse
 import urllib.request
 
@@ -35,8 +36,10 @@ def _json(result, description: str) -> dict:
 
 
 def _response(base: str, path: str, *, method: str = "GET", token: str = "",
-              body: dict | None = None) -> tuple[int, dict]:
+              body: dict | None = None, extra_headers: dict[str, str] | None = None,
+              return_envelope: bool = False) -> tuple[int, dict]:
     headers = {"Accept": "application/json"}
+    headers.update(extra_headers or {})
     if token:
         headers["Authorization"] = f"Bearer {token}"
     data = json.dumps(body).encode() if body is not None else None
@@ -48,6 +51,8 @@ def _response(base: str, path: str, *, method: str = "GET", token: str = "",
         envelope = read_ux_http_result(raw, status)
     except json.JSONDecodeError as error:
         raise AssertionError(f"{method} {path} did not return JSON") from error
+    if return_envelope:
+        return status, envelope
     payload = (decode_ux_success_result(envelope) if 200 <= status < 300
                else decode_ux_error_result(envelope))
     _expect(isinstance(payload, dict), f"{method} {path} did not return a JSON object")
@@ -74,6 +79,43 @@ def validate_case_response(case_id: str, status: int, value: dict, *, expected: 
     if case_id not in contracts:
         raise ValueError(f"no HTTP response contract for {case_id}")
     _expect(contracts[case_id](), f"{case_id} response did not match the case contract")
+
+
+def validate_hidden_health_response(health_status: int, health_body: dict,
+                                    unknown_status: int, unknown_body: dict) -> None:
+    """Require denied auth health to be indistinguishable from an unknown Gateway path."""
+    for status, body, description in (
+        (health_status, health_body, "denied /health/auth"),
+        (unknown_status, unknown_body, "unknown Gateway path"),
+    ):
+        _expect(status == 404, f"{description} returned HTTP {status}, expected 404")
+        _expect(set(body) == {"ok", "error"} and body.get("ok") is False,
+                f"{description} did not return the canonical UX error envelope")
+        error = body["error"]
+        _expect(isinstance(error, dict), f"{description} did not return an error object")
+        _expect(error.get("code") == "KB_RUNTIME_RESOURCE_NOT_FOUND",
+                f"{description} did not return KB_RUNTIME_RESOURCE_NOT_FOUND")
+        _expect(not any(key in error for key in ("readiness", "checks", "activeAdmins", "authEnabled")),
+                f"{description} exposed readiness details")
+
+    normalized_health = dict(health_body)
+    normalized_unknown = dict(unknown_body)
+    normalized_health["error"] = dict(health_body["error"])
+    normalized_unknown["error"] = dict(unknown_body["error"])
+    normalized_health["error"].pop("correlationId", None)
+    normalized_unknown["error"].pop("correlationId", None)
+    _expect(normalized_health == normalized_unknown,
+            "denied /health/auth response differed from unknown Gateway path beyond correlationId")
+
+
+def validate_local_health_response(status: int, body: dict) -> None:
+    """Require an anonymous unproxied loopback request to reach readiness output."""
+    _expect(status == 200, f"local /health/auth returned HTTP {status}, expected 200")
+    data = body.get("data")
+    _expect(body.get("ok") is True and isinstance(data, dict),
+            "local /health/auth did not return the canonical UX success envelope")
+    _expect({"authEnabled", "tenantId", "activeAdmins", "bootstrap", "issues"}.issubset(data),
+            "local /health/auth omitted readiness output")
 
 
 def validate_cli_case(case_id: str, returncode: int, output: str, payload: dict | None = None,
@@ -140,6 +182,20 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
     member_password = "MemberPass123!"
 
     state: dict[str, str] = {}
+
+    def hidden_auth_health():
+        local_status, local_body = _response(base, "/health/auth", return_envelope=True)
+        validate_local_health_response(local_status, local_body)
+        health_status, health_error = _response(
+            base, "/health/auth", extra_headers={"X-Forwarded-For": "203.0.113.10"},
+            return_envelope=True)
+        unknown_path = f"/api/v1/__journey_unknown_{uuid.uuid4().hex}"
+        unknown_status, unknown_error = _response(base, unknown_path, return_envelope=True)
+        validate_hidden_health_response(health_status, health_error, unknown_status, unknown_error)
+        return None
+
+    journey.step("hide auth readiness from proxied anonymous requests", "auth.secured",
+                 hidden_auth_health, cases=["S-041.15"])
 
     def invite():
         with invocation_context(step_id="journey.setup"):
@@ -242,7 +298,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         root = home / ".kb/s005-client"
         index = home / ".local/share/kb-create/release-index.json"
         result = run_command([env.get("KB_JOURNEY_KB_CREATE_PATH", str(home / ".local/bin/kb-create")),
-                              "apply", "--index", str(index), "--request-platform-root", str(root),
+                              "apply", "--index", str(index), "--platform-root", str(root),
                               "--service-profile", "client", "--json"],
                              env=env, cwd=home, timeout=600)
         value = _json(result, "kb-create apply")

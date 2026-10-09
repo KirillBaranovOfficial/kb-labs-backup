@@ -96,10 +96,10 @@ func hostSpecCheck(platformRoot string, active contracts.InstallReceipt) Check {
 	}
 	spec, err := host.NewSpec(platformRoot, *active.Plan.Host)
 	if err != nil {
-		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host specification is invalid: " + err.Error() + ".", Hint: fmt.Sprintf("Run `kb-create apply --request-platform-root %q` to regenerate the installed host specification.", platformRoot)}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host specification is invalid: " + err.Error() + ".", Hint: fmt.Sprintf("Run `kb-create apply --platform-root %q` to regenerate the installed host specification.", platformRoot)}
 	}
 	if _, err := exec.LookPath(spec.Command); err != nil {
-		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host command " + spec.Command + " is not installed.", Hint: fmt.Sprintf("Run `kb-create apply --request-platform-root %q` or `kb-create rollback --platform-root %q` to restore the platform files.", platformRoot, platformRoot)}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host command " + spec.Command + " is not installed.", Hint: fmt.Sprintf("Run `kb-create apply --platform-root %q` or `kb-create rollback --platform-root %q` to restore the platform files.", platformRoot, platformRoot)}
 	}
 	return Check{ID: "host-spec", OK: true, Detail: spec.Command}
 }

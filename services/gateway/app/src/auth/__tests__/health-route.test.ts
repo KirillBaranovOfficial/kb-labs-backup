@@ -14,6 +14,7 @@ import type { ICache } from '@kb-labs/core-platform';
 import type { AuthReadiness } from '@kb-labs/gateway-auth';
 import { createAuthMiddleware } from '../middleware.js';
 import { registerAuthHealthRoute, isLocalOperatorRequest } from '../health-route.js';
+import { registerGatewayUxErrorResponses } from '../../ux-boundary.js';
 import { logAuthReadiness } from '../../bootstrap.js';
 
 const READINESS: AuthReadiness = {
@@ -33,6 +34,7 @@ let calls: number;
 beforeEach(async () => {
   calls = 0;
   app = Fastify({ logger: false, trustProxy: true });
+  registerGatewayUxErrorResponses(app);
   // Real machine-auth middleware in front: proves the route is reachable
   // without a token (PUBLIC_ROUTES) yet still self-gates.
   app.addHook('onRequest', createAuthMiddleware(fakeCache, { secret: 'x'.repeat(40) }, { authEnabled: true }));
@@ -64,9 +66,10 @@ describe('GET /health/auth — served', () => {
   });
 });
 
-describe('GET /health/auth — denied with a plain 404 (never 401/403, never the body)', () => {
-  const expectHidden = (r: { statusCode: number; body: string }) => {
+describe('GET /health/auth — denied with the catalogued not-found 404 (never 401/403 or readiness data)', () => {
+  const expectHidden = (r: { statusCode: number; body: string; json: () => unknown }) => {
     expect(r.statusCode).toBe(404);
+    expect(r.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND' } });
     expect(r.body).not.toContain('no_active_admin');
     expect(calls).toBe(0); // the readiness is not even computed
   };

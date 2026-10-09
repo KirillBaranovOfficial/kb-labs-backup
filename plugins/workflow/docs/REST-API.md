@@ -185,7 +185,7 @@ Plugin crons use `source: "plugin"` and a handler target. They appear in the sam
 - `POST /api/v1/crons/{id}/enable`
 - `POST /api/v1/crons/{id}/disable`
 
-These operations persist `enabled` to the project cron file and reload the schedule. A plugin cron returns HTTP `409` with `code: "CRON_PLUGIN_READ_ONLY"`.
+These operations persist `enabled` to the project cron file and reload the schedule. A plugin cron returns HTTP `409` with `code: "KB_RUNTIME_CRON_PLUGIN_READ_ONLY"`.
 
 ## Error Responses
 

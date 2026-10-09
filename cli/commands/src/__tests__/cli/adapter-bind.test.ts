@@ -11,11 +11,15 @@ import { adapterList } from '../../commands/system/adapter/list.js';
 import { adapterUnbind } from '../../commands/system/adapter/unbind.js';
 import { configSet } from '../../commands/system/config/set.js';
 
-vi.mock('@kb-labs/cli-runtime/gateway', () => ({
-  resolveActiveGateway: async ({ env }: { env: NodeJS.ProcessEnv }) => ({
-    gatewayUrl: env.KB_GATEWAY_URL ?? 'http://127.0.0.1:4000',
-  }),
-}));
+vi.mock('@kb-labs/cli-runtime/gateway', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@kb-labs/cli-runtime/gateway')>();
+  return {
+    ...original,
+    resolveActiveGateway: async ({ env }: { env: NodeJS.ProcessEnv }) => ({
+      gatewayUrl: env.KB_GATEWAY_URL ?? 'http://127.0.0.1:4000',
+    }),
+  };
+});
 
 let sandbox: string;
 let platformRoot: string;
@@ -54,7 +58,7 @@ function dataOf<T>(envelope: unknown): T {
 }
 
 function mockAdapterHealth(ctx: PluginContextV3, statuses: Array<Record<string, unknown>>): void {
-  vi.spyOn(ctx.runtime, 'fetch').mockResolvedValue(new Response(JSON.stringify(statuses), { status: 200 }));
+  vi.spyOn(ctx.runtime, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ok: true, data: statuses }), { status: 200 }));
 }
 
 beforeEach(async () => {
@@ -82,7 +86,7 @@ describe('kb adapter list', () => {
   it('reports a runtime adapter load failure with its recovery command', async () => {
     const { ctx, outputs } = context();
     vi.stubEnv('KB_GATEWAY_URL', 'http://127.0.0.1:4000');
-    vi.spyOn(ctx.runtime, 'fetch').mockResolvedValue(new Response(JSON.stringify([
+    vi.spyOn(ctx.runtime, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ok: true, data: [
       {
         slot: 'llm',
         mode: 'degraded',
@@ -97,7 +101,7 @@ describe('kb adapter list', () => {
         },
         recordedAt: '2026-10-06T00:00:00.000Z',
       },
-    ]), { status: 200 }));
+    ] }), { status: 200 }));
 
     const code = await adapterList.run(ctx, [], { json: true });
     expect(code).toBe(0);
@@ -177,6 +181,24 @@ describe('kb adapter list', () => {
     });
     expect(adapters.find(({ slot }) => slot === 'kvStore')).toMatchObject({
       implementation: '@kb-labs/adapters-sqlite/kv', mode: 'real', networkRequired: false,
+    });
+  });
+
+  // case: S-054.1
+  it('decodes adapter health through the shared Gateway success envelope', async () => {
+    const { ctx, outputs } = context();
+    mockAdapterHealth(ctx, [
+      { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs', configuredPackage: '@kb-labs/adapters-fs' },
+    ]);
+
+    const code = await adapterList.run(ctx, [], { json: true });
+
+    expect(code).toBe(0);
+    const adapters = dataOf<{ adapters: Array<Record<string, unknown>> }>(outputs[0]).adapters;
+    expect(adapters.find(({ slot }) => slot === 'storage')).toMatchObject({
+      implementation: '@kb-labs/adapters-fs',
+      mode: 'real',
+      runtimeStatus: 'known',
     });
   });
 

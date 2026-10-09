@@ -103,7 +103,7 @@ declare module 'fastify' {
 export function createAuthMiddleware(
   cache: ICache,
   jwtConfig: JwtConfig,
-  options: { authEnabled?: boolean; internalSecret?: string; userAuth?: UserAuthMiddlewareDeps; webhookManifests?: WebhookManifest[]; studioEnabled?: boolean } = {},
+  options: { authEnabled?: boolean; internalSecret?: string; userAuth?: UserAuthMiddlewareDeps; webhookManifests?: WebhookManifest[]; studioEnabled?: boolean; studioPublicAsset?: (method: string, path: string) => Promise<boolean> } = {},
 ) {
   const authEnabled = options.authEnabled !== false;
   const userAuth = options.userAuth ? createUserAuthMiddleware(options.userAuth) : undefined;
@@ -114,6 +114,8 @@ export function createAuthMiddleware(
       return reply.code(401).send({ ok: false, error: authRejectionEnvelope(undefined, gatewayRequestUrl(request), String(request.id)) });
     };
     if (isCorsPreflight(request)) { sendCorsPreflight(request, reply); return; }
+    // No registered route can dispatch this request; preserve the shared 404 instead of masking it as an auth failure.
+    if (!request.routeOptions.url) { return; }
     if (!request.url.startsWith('/internal/')) { stripForwardedIdentityHeaders(request.headers); }
     if (!authEnabled) {
       request.authContext = LOCAL_ADMIN_CONTEXT;
@@ -125,6 +127,7 @@ export function createAuthMiddleware(
     const routePath = rawPath.replace(/\/+/g, '/').replace(/\/+$/, '') || '/';
     const registryPublicRead = request.method === 'GET' && isRegistryPublicReadRoute(routePath);
     if (isPlatformPublicRoute(request.method, routePath) && !registryPublicRead) { return; }
+    if (options.studioPublicAsset && await options.studioPublicAsset(request.method, routePath)) { return; }
     if (!registryPublicRead && options.studioEnabled && ['GET', 'HEAD'].includes(request.method) && isStudioFallbackRoute(routePath)) { return; }
     const optionalRegistryToken = (request.query as Record<string, string | undefined>)['access_token'];
     if (registryPublicRead && !extractBearerToken(request.headers.authorization) && !optionalRegistryToken && !request.headers.cookie) {

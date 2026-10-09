@@ -67,6 +67,52 @@ def read_ux_cli_result(stdout: str, returncode: int) -> dict[str, Any]:
     return value
 
 
+def read_ux_cli_stream(stdout: str, returncode: int) -> list[dict[str, Any]]:
+    """Validate JSONL UX records and the terminal record's process status."""
+    records = []
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as error:
+            try:
+                _invalid_ux_result("CLI stream contains a non-JSON record")
+            except ValueError as failure:
+                raise failure from error
+        if not isinstance(value, dict):
+            _invalid_ux_result("CLI stream record is not an object")
+        if value.get("ok") is True:
+            decode_ux_success_result(value)
+        else:
+            decode_ux_error_result(value)
+        records.append(value)
+    if not records:
+        _invalid_ux_result("CLI stream is empty")
+    result_records = []
+    for record in records[:-1]:
+        meta = record.get("meta", {})
+        stream_meta = meta.get("stream", {}) if isinstance(meta, dict) else {}
+        if isinstance(stream_meta, dict) and stream_meta.get("result") is True:
+            result_records.append(record)
+    terminal = records[-1]
+    terminal_meta = terminal.get("meta", {})
+    stream = terminal_meta.get("stream", {}) if isinstance(terminal_meta, dict) else {}
+    exit_code = stream.get("exitCode") if isinstance(stream, dict) else None
+    if (terminal.get("ok") is not True or terminal.get("data", "not-null") is not None
+            or not isinstance(stream, dict) or stream.get("terminal") is not True
+            or exit_code not in {0, 1, 2}
+            or (returncode == 0) != (exit_code == 0)):
+        _invalid_ux_result("CLI stream terminal record does not match its process exit code")
+    if len(result_records) > 1:
+        _invalid_ux_result("CLI stream contains multiple result records")
+    if exit_code == 0 and any(record.get("ok") is not True for record in records[:-1]):
+        _invalid_ux_result("successful CLI stream contains an error record")
+    if exit_code != 0 and not any(record.get("ok") is False for record in records[:-1]):
+        _invalid_ux_result("failed CLI stream omits its error record")
+    return records
+
+
 def describe_cli_failure(command: str, stdout: str, stderr: str, returncode: int) -> str:
     """Describe a failed CLI invocation using its typed error when available."""
     detail = " ".join(f"{stdout} {stderr}".split())

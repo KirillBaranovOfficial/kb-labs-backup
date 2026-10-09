@@ -259,13 +259,13 @@ export const configShow = defineSystemCommand<ConfigShowFlags, ConfigShowResult>
       const cwd = getContextCwd(ctx);
       const roots = await resolveConfigRoots(cwd);
       if (!roots.projectId) {
-        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.projectRoot}" and retry "kb config show".`, { path: roots.projectRoot });
+        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config show".`, { path: roots.configRoot });
       }
       const result = await loadPlatformConfig({ moduleUrl: import.meta.url, startDir: cwd, loadEnvFile: false, projectId: roots.projectId });
       const rows = buildRows(result);
 
       // Platform provenance remains available from the platform config layer.
-      const effective = await loadEffectiveConfig(result.projectRoot, {
+      const effective = await loadEffectiveConfig(roots.configRoot, {
         platformRoot: result.platformRoot,
         projectId: roots.projectId,
         pluginDefaults: manifestSettingsLayers(result),

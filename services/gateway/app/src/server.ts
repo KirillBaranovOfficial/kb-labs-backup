@@ -187,6 +187,7 @@ export async function createServer(
     studioEnabled,
     internalSecret: process.env.GATEWAY_INTERNAL_SECRET,
     webhookManifests,
+    ...(studioStatic ? { studioPublicAsset: studioStatic.isPublicAsset } : {}),
     ...(userAuth ? { userAuth: {
       users: userAuth.users,
       sessions: userAuth.sessions,
@@ -631,6 +632,15 @@ export async function createServer(
         );
         const ready = missingRequiredUpstreams.length === 0;
         const projectStatus = projectRouting?.status();
+        const upstreamComponents = Object.fromEntries(
+          requiredUpstreams.map((id) => [
+            `upstream:${id}`,
+            {
+              ready: (upstreams[id]?.status ?? "down") === "up",
+              status: upstreams[id]?.status ?? "down",
+            },
+          ]),
+        );
 
         return reply.code(ready ? 200 : 503).send(
           createServiceReadyResponse({
@@ -643,18 +653,7 @@ export async function createServer(
               gatewayAdapters: {
                 ready: true,
               },
-              restUpstream: {
-                ready: (upstreams.rest?.status ?? "down") === "up",
-                status: upstreams.rest?.status ?? "down",
-              },
-              workflowUpstream: {
-                ready: (upstreams.workflow?.status ?? "down") === "up",
-                status: upstreams.workflow?.status ?? "down",
-              },
-              marketplaceUpstream: {
-                ready: (upstreams.marketplace?.status ?? "down") === "up",
-                status: upstreams.marketplace?.status ?? "down",
-              },
+              ...upstreamComponents,
               ...(projectStatus
                 ? {
                     // Lazy: a project runtime is ready once started on demand,

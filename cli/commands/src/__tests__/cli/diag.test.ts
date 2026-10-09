@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { noopUI, noopTraceContext } from '@kb-labs/plugin-contracts';
 import type { PluginContextV3 } from '@kb-labs/plugin-contracts';
+import type { DetailedDiscovery } from '../../registry/discover.js';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────────
 
@@ -124,6 +125,11 @@ async function getDiscoverMock() {
   return mod as unknown as { discoverManifests: ReturnType<typeof vi.fn> };
 }
 
+async function setDiscoveryResult(results: unknown[], diagnostics = discoverState.diagnostics): Promise<void> {
+  const state = await import('../../registry/discovery-state.js');
+  state.setRegisteredDiscovery({ results, diagnostics } as unknown as DetailedDiscovery);
+}
+
 async function getLockMock() {
   const mod = await import('@kb-labs/core-discovery');
   return mod.readMarketplaceLock as unknown as ReturnType<typeof vi.fn>;
@@ -137,9 +143,14 @@ async function getFsMock() {
 // ── Tests: base diag ──────────────────────────────────────────────────────────
 
 describe('diag — base (no --command)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mockCollectorInstance.getEvents.mockReturnValue([]);
+    discoverState.diagnostics = [];
+    await setDiscoveryResult([]);
+    const discovery = await getDiscoverMock();
+    discovery.discoverManifests.mockReset();
+    discovery.discoverManifests.mockResolvedValue([]);
   });
 
   it('exits 0 when everything is healthy', async () => {
@@ -205,7 +216,7 @@ describe('diag — base (no --command)', () => {
 
   it('surfaces synthetic manifests as manifest-load-failure with remediation', async () => {
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/quality-entry',
         manifestPath: '/test/workspace/plugins/quality/entry/dist/manifest.js',
@@ -224,7 +235,9 @@ describe('diag — base (no --command)', () => {
           },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const jsonSpy = vi.fn();
     const diag = await getDiag();
@@ -235,6 +248,7 @@ describe('diag — base (no --command)', () => {
     expect(failures).toHaveLength(1);
     expect(failures[0]?.status).toBe('error');
     expect(failures[0]?.remediation).toMatch(/pnpm.*build/);
+    expect(discover.discoverManifests).not.toHaveBeenCalled();
   });
 
   it('includes code and remediation on all diagnostic items in --json output', async () => {
@@ -282,6 +296,14 @@ describe('diag --command', () => {
       },
       rest: [],
     });
+    await setDiscoveryResult([{
+      packageName: '@kb-labs/marketplace-entry',
+      manifestPath: '/test/node_modules/@kb-labs/marketplace-entry/dist/manifest.js',
+      pkgRoot: '/test/node_modules/@kb-labs/marketplace-entry',
+      source: 'linked',
+      scope: 'platform',
+      manifests: [{ _synthetic: false, group: 'marketplace', segments: ['marketplace', 'plugins', 'list'], id: 'list', describe: 'List plugins', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
+    }]);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
@@ -300,6 +322,29 @@ describe('diag --command', () => {
     expect(result.verdict.rootCause).toBe('NONE');
     const registryStage = result.stages.find(s => s.code === 'REGISTRY_OK');
     expect(registryStage).toBeDefined();
+  });
+
+  it('reports when the shared discovered command is missing from the dispatch registry', async () => {
+    const reg = await getRegistryMock();
+    reg.resolve.mockReturnValue({ type: 'not-found', input: ['commit', 'open'], suggestions: [] });
+    const { discoverManifestsDetailed } = await import('../../registry/discover.js');
+    await setDiscoveryResult([{
+        packageName: '@kb-labs/commit-entry',
+        manifestPath: '/project/.kb/plugins/commit-entry/dist/manifest.json',
+        pkgRoot: '/project/.kb/plugins/commit-entry',
+        source: 'linked',
+        scope: 'project',
+        manifests: [{ _synthetic: false, group: 'commit', segments: ['commit', 'open'], id: 'open', describe: 'Open a change', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() }],
+      }]);
+
+    const jsonSpy = vi.fn();
+    const diag = await getDiag();
+    await diag.run(makeCtx({ json: jsonSpy }), [], { json: true, command: 'commit open' });
+
+    const result = readData<{ status: string; stages: Array<{ code: string }> }>(jsonSpy);
+    expect(result.status).toBe('unhealthy');
+    expect(result.stages.map(({ code }) => code)).toContain('COMMAND_REGISTRATION_MISSING');
+    expect(discoverManifestsDetailed).not.toHaveBeenCalled();
   });
 
   it('reports REQUIRES_MISSING when command is unavailable', async () => {
@@ -410,7 +455,7 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['quality', 'report'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/quality-entry',
         manifestPath: '/test/workspace/plugins/quality/entry/dist/manifest.js',
@@ -429,7 +474,9 @@ describe('diag --command', () => {
           },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
@@ -458,7 +505,7 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['workflow', 'rum'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/workflow-entry',
         manifestPath: '/test/dist/manifest.js',
@@ -471,7 +518,9 @@ describe('diag --command', () => {
           { _synthetic: false, group: 'workflow', segments: ['workflow', 'abort'], id: 'abort', describe: 'Abort workflow', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
@@ -494,7 +543,7 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['myplug', 'go'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/myplug-entry',
         manifestPath: '/test/dist/manifest.js',
@@ -506,7 +555,9 @@ describe('diag --command', () => {
           { _synthetic: false, group: 'myplug', segments: ['myplug', 'go'], id: 'go', describe: '', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const { preflightManifests } = await import('../../registry/register.js');
     (preflightManifests as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -545,6 +596,7 @@ describe('diag --command', () => {
       remediation: 'Remove it from plugins.block in .kb/kb.config.json',
       ts: 0,
     }];
+    await setDiscoveryResult([], discoverState.diagnostics);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({ plugins: {} });
@@ -566,7 +618,7 @@ describe('diag --command', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['state', 'get'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([
+    const discovered = [
       {
         packageName: '@kb-labs/state-entry',
         manifestPath: '/missing/dist/manifest.js',
@@ -577,7 +629,9 @@ describe('diag --command', () => {
           { _synthetic: false, group: 'state', segments: ['state', 'get'], id: 'get', describe: 'Get state', schema: 'kb.adapter/1', manifestVersion: '1.0', loader: vi.fn() },
         ],
       },
-    ]);
+    ];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({
@@ -737,14 +791,16 @@ describe('diag --command (review-fix scenarios)', () => {
     }));
     // reset to clear any previous mockResolvedValue, then set fresh
     discoverMod.discoverManifests.mockReset();
-    discoverMod.discoverManifests.mockResolvedValue([{
+    const discovered = [{
       packageName: '@kb-labs/bigplug-entry',
       manifestPath: '/test/dist/manifest.js',
       pkgRoot: '/test',
       source: 'workspace' as const,
       scope: 'platform' as const,
       manifests: manyCommands,
-    }]);
+    }];
+    discoverMod.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
     lockMock.mockResolvedValue({ plugins: { '@kb-labs/bigplug-entry': { enabled: true, resolvedPath: '/test' } } });
@@ -787,14 +843,16 @@ describe('diag --command (review-fix scenarios)', () => {
     reg.resolve.mockReturnValue({ type: 'not-found', input: ['nopathplug', 'run'], suggestions: [] });
 
     const discover = await getDiscoverMock();
-    discover.discoverManifests.mockResolvedValue([{
+    const discovered = [{
       packageName: '@kb-labs/nopathplug-entry',
       manifestPath: '/test/dist/manifest.js',
       pkgRoot: '/test',
       source: 'workspace',
       scope: 'platform',
       manifests: [{ _synthetic: false, group: 'nopathplug', segments: ['nopathplug', 'run'], id: 'run', describe: 'Run', schema: 'kb.adapter/1', manifestVersion: '1.0' as const, loader: vi.fn() }],
-    }]);
+    }];
+    discover.discoverManifests.mockResolvedValue(discovered);
+    await setDiscoveryResult(discovered);
 
     const lockMock = await getLockMock();
     // Entry exists but resolvedPath is empty string

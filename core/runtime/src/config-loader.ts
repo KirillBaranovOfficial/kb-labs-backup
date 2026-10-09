@@ -64,6 +64,7 @@ import { AdapterProjectScopeError, PlatformConfigError } from "@kb-labs/core-pla
 
 import { CONFIG_FIELD_SCOPE, type PlatformConfig } from "./config.js";
 import { interpolateConfig } from "./config-interpolation.js";
+import { requireProjectContext } from "./project-context.js";
 import { applyLocalNetworkOffset } from "./config-net-offset.js";
 import { PLATFORM_CONFIG_PRODUCT } from "./schema/platform-config-schema.js";
 
@@ -110,7 +111,7 @@ export interface LoadPlatformConfigOptions {
   loadEnvFile?: boolean;
 }
 
-export interface LoadPlatformConfigResult {
+interface LoadPlatformConfigResultBase {
   /**
    * Effective `platform` configuration: project config deep-merged on top of
    * platform defaults. Always defined — an empty object when neither layer
@@ -148,8 +149,6 @@ export interface LoadPlatformConfigResult {
   }>;
   /** Resolved platform root (where `node_modules/@kb-labs/*` lives). */
   platformRoot: string;
-  /** Resolved registered project root. */
-  projectRoot: string;
   /** `true` when both roots resolve to the same directory (dev mode). */
   sameLocation: boolean;
   /** Diagnostics about how each config layer was loaded. */
@@ -182,6 +181,11 @@ export interface LoadPlatformConfigResult {
     overlayDiagnostics?: Diagnostic[];
   };
 }
+
+export type LoadPlatformConfigResult = LoadPlatformConfigResultBase & (
+  | { projectScope: 'required'; projectRoot: string }
+  | { projectScope: 'platform'; projectRoot?: string }
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Internals
@@ -365,9 +369,12 @@ async function readConfigFile(configPath: string): Promise<{
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-async function loadPluginSettingsDefaults(roots: RootsResolution): Promise<NonNullable<LoadPlatformConfigResult['pluginSettingsDefaults']>> {
+async function loadPluginSettingsDefaults(
+  roots: RootsResolution,
+  projectScope: 'required' | 'platform',
+): Promise<NonNullable<LoadPlatformConfigResult['pluginSettingsDefaults']>> {
   const discovery = await new DiscoveryManager({
-    root: roots.projectRoot,
+    root: projectScope === 'platform' ? roots.platformRoot : roots.projectRoot!,
     platformRoot: roots.platformRoot,
   }).discover();
   const packages = new Map(discovery.plugins.map((plugin) => [plugin.id, plugin]));
@@ -420,6 +427,15 @@ async function loadPluginSettingsDefaults(roots: RootsResolution): Promise<NonNu
  * unreadable, malformed, or invalid file throws `PlatformConfigError`; callers
  * must render that failure instead of starting with a different config.
  */
+export function loadPlatformConfig(
+  options: LoadPlatformConfigOptions & { projectScope: 'platform' },
+): Promise<LoadPlatformConfigResultBase & { projectScope: 'platform'; projectRoot?: string }>;
+export function loadPlatformConfig(
+  options?: LoadPlatformConfigOptions & { projectScope?: 'required' },
+): Promise<LoadPlatformConfigResultBase & { projectScope: 'required'; projectRoot: string }>;
+export function loadPlatformConfig(
+  options: LoadPlatformConfigOptions,
+): Promise<LoadPlatformConfigResult>;
 export async function loadPlatformConfig(
   options: LoadPlatformConfigOptions = {},
 ): Promise<LoadPlatformConfigResult> {
@@ -455,21 +471,26 @@ export async function loadPlatformConfig(
     env,
     projectScope,
   });
+  const configRoot = projectScope === 'platform'
+    ? roots.platformRoot
+    : requireProjectContext(roots.projectRoot, startDir);
   const projectId = options.projectScope === 'platform' ? undefined : options.projectId ?? env.KB_PROJECT_ID;
 
   if (shouldLoadEnv) {
-    // Precedence is process env > project .env > platform .env. The loader
-    // never overwrites existing keys, so the higher-priority project layer
-    // must be loaded first.
-    loadEnvFromDirectory(roots.projectRoot, env);
-    if (path.resolve(roots.platformRoot) !== path.resolve(roots.projectRoot)) {
+    if (projectScope === 'required') {
+      // Precedence is process env > project .env > platform .env. The loader
+      // never overwrites existing keys, so the higher-priority project layer
+      // must be loaded first.
+      loadEnvFromDirectory(configRoot, env);
+    }
+    if (projectScope === 'platform' || path.resolve(roots.platformRoot) !== path.resolve(configRoot)) {
       loadEnvFromDirectory(roots.platformRoot, env);
     }
   }
 
   // Derived platform environment belongs to the shared config/bootstrap path,
   // not individual service launchers. It must exist before interpolation.
-  ensurePlatformEnvironment(roots.projectRoot, env);
+  ensurePlatformEnvironment(configRoot, env);
 
   // Project settings are platform-owned. Only platform-root config files are
   // read here; repository `.kb/kb.config.*` files are intentionally ignored.
@@ -505,7 +526,7 @@ export async function loadPlatformConfig(
         ...roots,
         platformRoot: resolved,
         sameLocation:
-          path.resolve(resolved) === path.resolve(roots.projectRoot),
+          roots.projectRoot !== undefined && path.resolve(resolved) === path.resolve(roots.projectRoot),
       };
     }
   }
@@ -617,7 +638,7 @@ export async function loadPlatformConfig(
     appliedOverlays.push(overlay.path);
   }
 
-  const pluginSettingsDefaults = await loadPluginSettingsDefaults(roots);
+  const pluginSettingsDefaults = await loadPluginSettingsDefaults(roots, projectScope);
   const defaultsData: Record<string, unknown> = {
     plugins: Object.fromEntries(pluginSettingsDefaults.map(({ configSection, data }) => [configSection, data])),
   };
@@ -665,14 +686,13 @@ export async function loadPlatformConfig(
     env,
   );
 
-  return {
+  const result: LoadPlatformConfigResultBase = {
     platformConfig: effective,
     rawConfig: rawProjectConfig,
     rawPlatformConfig,
     effectiveConfig,
     pluginSettingsDefaults,
     platformRoot: roots.platformRoot,
-    projectRoot: roots.projectRoot,
     sameLocation: roots.sameLocation,
     sources: {
       platformDefaults: platformDefaultsSource,
@@ -695,4 +715,8 @@ export async function loadPlatformConfig(
           : undefined,
     },
   };
+  if (projectScope === 'platform') {
+    return { ...result, projectScope, projectRoot: roots.projectRoot };
+  }
+  return { ...result, projectScope, projectRoot: configRoot };
 }

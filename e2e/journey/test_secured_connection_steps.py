@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from secured_connection_steps import validate_case_response, validate_cli_case
+from secured_connection_steps import (validate_case_response, validate_cli_case,
+                                      validate_hidden_health_response, validate_local_health_response)
 
 
 class SecuredConnectionContractTests(unittest.TestCase):
@@ -22,6 +23,35 @@ class SecuredConnectionContractTests(unittest.TestCase):
                         "S-031.3", "S-031.4", "S-042.4"):
             with self.subTest(case_id=case_id), self.assertRaisesRegex(AssertionError, case_id):
                 validate_cli_case(case_id, 1, "simulated command failure with stack trace", {})
+
+    def test_s041_15_requires_identical_hidden_not_found_responses(self):
+        health_body = {"ok": False, "error": {
+            "code": "KB_RUNTIME_RESOURCE_NOT_FOUND", "message": "Resource not found.",
+            "correlationId": "health-request",
+        }}
+        unknown_body = {"ok": False, "error": {
+            "code": "KB_RUNTIME_RESOURCE_NOT_FOUND", "message": "Resource not found.",
+            "correlationId": "unknown-request",
+        }}
+        validate_hidden_health_response(404, health_body, 404, unknown_body)
+
+        for health_status, body in (
+            (200, health_body),
+            (404, {"ok": False, "error": {**health_body["error"], "code": "KB_AUTH_REQUIRED"}}),
+            (404, {"ok": False, "error": {**health_body["error"], "activeAdmins": 0}}),
+            (404, {"ok": False, "error": {**health_body["error"], "message": "different"}}),
+            (404, {"ok": False, "error": {"code": "KB_RUNTIME_RESOURCE_NOT_FOUND"}, "readiness": {}}),
+        ):
+            with self.subTest(status=health_status, body=body), self.assertRaises(AssertionError):
+                validate_hidden_health_response(health_status, body, 404, unknown_body)
+
+    def test_s041_15_requires_local_anonymous_readiness_output(self):
+        readiness = {"authEnabled": True, "tenantId": "tenant", "activeAdmins": 1,
+                     "bootstrap": {"status": "ready"}, "issues": []}
+        validate_local_health_response(200, {"ok": True, "data": readiness})
+        for status, body in ((401, {"ok": False}), (200, {"ok": True, "data": {}})):
+            with self.subTest(status=status, body=body), self.assertRaises(AssertionError):
+                validate_local_health_response(status, body)
 
     def test_s031_session_status_requires_the_canonical_path(self):
         payload = {"ok": True, "data": {"session": {

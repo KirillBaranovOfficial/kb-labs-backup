@@ -8,7 +8,7 @@ import { findRepoRoot } from '@kb-labs/core-sys'
 import {
   createProjectRegistry,
   findProjectContainingPath,
-  ProjectRegistryError,
+  requireProjectContext,
 } from '@kb-labs/core-project-registry'
 
 import type {
@@ -100,14 +100,26 @@ export async function findRegisteredProjectRoot(
   env: Record<string, string | undefined> = process.env,
   gitExec: GitExec = defaultGitExec,
 ): Promise<string | undefined> {
-  const registry = createProjectRegistry({ env })
-  const containing = await findProjectContainingPath(registry, startDir)
-  if (containing) return containing.project.path
+  return (await findRegisteredProject(startDir, env, gitExec))?.rootDir
+}
 
-  const mappedPath = await gitCheckoutMapping(startDir, gitExec)
+async function findRegisteredProject(
+  startDir: string,
+  env: Record<string, string | undefined>,
+  gitExec: GitExec,
+): Promise<ProjectRootResolution | undefined> {
+  const current = path.resolve(startDir)
+  const registry = createProjectRegistry({ env })
+  const containing = await findProjectContainingPath(registry, current)
+  if (containing) {
+    return { rootDir: containing.project.path, source: 'registry', cwdDir: current }
+  }
+
+  const mappedPath = await gitCheckoutMapping(current, gitExec)
   if (!mappedPath) return undefined
   const mappedProject = await findProjectContainingPath(registry, mappedPath)
-  return mappedProject?.project.path
+  if (!mappedProject) return undefined
+  return { rootDir: mappedProject.project.path, source: 'worktree', cwdDir: current }
 }
 
 /**
@@ -120,16 +132,9 @@ export async function resolveProjectRoot(
 ): Promise<ProjectRootResolution> {
   const { cwd, env = process.env, startDir = process.cwd() } = options
   const current = path.resolve(cwd ?? startDir)
-  const rootDir = await findRegisteredProjectRoot(current, env)
-  if (!rootDir) {
-    throw new ProjectRegistryError(
-      'KB_PROJECT_UNKNOWN',
-      `No registered project contains "${current}".`,
-      { path: current },
-    )
-  }
-  const direct = await findProjectContainingPath(createProjectRegistry({ env }), current)
-  return { rootDir, source: direct ? 'registry' : 'worktree', cwdDir: current }
+  const project = await findRegisteredProject(current, env, defaultGitExec)
+  if (!project) requireProjectContext(undefined, current)
+  return project
 }
 
 /**
@@ -301,8 +306,7 @@ async function resolvePlatformRootFromModuleUrl(
  * 5. Repository root discovered via `findRepoRoot`.
  * 6. Fallback to `startDir` / `process.cwd()`.
  *
- * In monorepo dev mode steps 4 or 5 will typically match the workspace root,
- * so `platformRoot` and `projectRoot` resolve to the same directory.
+ * In monorepo dev mode steps 4 or 5 will typically match the workspace root.
  */
 export async function resolvePlatformRoot(
   options: ResolvePlatformRootOptions = {},
@@ -386,24 +390,38 @@ export async function resolvePlatformRoot(
  * })
  * ```
  *
- * In dev mode `platformRoot === projectRoot` and `sameLocation` is `true`.
- * In installed mode they differ: `platformRoot` points at the platform
- * installation while `projectRoot` points at the user's project directory.
+ * `platformRoot` always points at the platform installation. `projectRoot`
+ * points at the registered project containing `startDir`, or is absent when
+ * no project is registered.
  */
 export async function resolveRoots(
   options: ResolveRootsOptions = {},
 ): Promise<RootsResolution> {
   const platform = await resolvePlatformRoot(options)
   if (options.projectScope === 'platform') {
+    const project = await findRegisteredProject(
+      options.cwd ?? options.startDir ?? process.cwd(),
+      options.env ?? process.env,
+      defaultGitExec,
+    )
+    const projectStartDir = project?.cwdDir ?? path.resolve(options.cwd ?? options.startDir ?? process.cwd())
+    let sameLocation = false
+    if (project) {
+      const [platformCanonical, projectCanonical] = await Promise.all([
+        fsp.realpath(platform.rootDir).catch(() => path.resolve(platform.rootDir)),
+        fsp.realpath(project.rootDir).catch(() => path.resolve(project.rootDir)),
+      ])
+      sameLocation = platformCanonical === projectCanonical
+    }
     return {
       platformRoot: platform.rootDir,
-      projectRoot: platform.rootDir,
-      projectStartDir: path.resolve(options.cwd ?? options.startDir ?? process.cwd()),
-      sameLocation: true,
+      projectRoot: project?.rootDir,
+      projectStartDir,
+      sameLocation,
       sources: {
         platform: platform.source,
-        project: 'platform',
-        projectStartDir: path.resolve(options.cwd ?? options.startDir ?? process.cwd()),
+        ...(project ? { project: project.source } : {}),
+        projectStartDir,
       },
     }
   }

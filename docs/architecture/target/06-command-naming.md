@@ -27,7 +27,8 @@ kb-create <verb> [flags]
 | `enable` / `disable` | включить / выключить в скоупе | `kb plugin enable commit` |
 | `get` / `set` | прочитать / изменить значение | `kb config set llm.model gpt-x` |
 | `update` | обновить до версии | `kb plugin update` |
-| `run` | выполнить действие продукта | `kb commit run` |
+| `run` | выполнить действие продукта | `kb workflow run hello` |
+| `commit` | создать conventional commit из изменений | `kb commit commit` |
 | `status` | текущее состояние | `kb health status` |
 | `doctor` | диагностика с рекомендациями | `kb-create doctor` |
 | `start` / `stop` | жизненный цикл процесса | `kb-create start` |

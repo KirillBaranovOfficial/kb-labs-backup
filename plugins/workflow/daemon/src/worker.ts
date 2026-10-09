@@ -72,7 +72,7 @@ export interface CreateWorkflowWorkerOptions {
   workspaceRoot: string;
   platformRoot?: string;
   projectRoot?: string;
-  projectId?: string;
+  projectId: string;
   concurrency?: number;
   /** Default timeout for step execution (ms). Default: 120000 (2 minutes) */
   defaultTimeout?: number;
@@ -130,12 +130,18 @@ export async function createWorkflowWorker(
     workspaceRoot,
     platformRoot = process.env["KB_PLATFORM_ROOT"],
     projectRoot = process.env["KB_PROJECT_ROOT"] ?? workspaceRoot,
-    projectId = process.env["KB_PROJECT_ID"],
+    projectId,
     concurrency = 5,
     defaultTimeout = 120000,
     analytics,
     debugMode = process.env["WORKFLOW_DEBUG"] === "true",
   } = options;
+  const workerLogger = createContextLogger(logger, {
+    applicationId: "workflow-daemon",
+    serviceId: "workflow",
+    instanceId: `${process.pid}`,
+    layer: "service",
+  }).forComponent("workflow-worker").with({ projectId });
 
   // Clean up stale worktrees from previous daemon runs on startup.
   const wsProvider = platform.getAdapter<IWorkspaceProvider>("workspace");
@@ -262,14 +268,12 @@ export async function createWorkflowWorker(
     // Get run and job from state store using IDs from queue entry
     const run = await engine.getRun(entry.runId);
     if (!run) {
-      logger.error(
-        "Data inconsistency: Run not found for job entry",
-        undefined,
-        {
-          runId: entry.runId,
-          jobId: entry.jobId,
-        },
-      );
+      workerLogger.warn("Dequeued workflow job is missing from this project state", {
+        runId: entry.runId,
+        jobId: entry.jobId,
+        projectId,
+        outcome: "dropped",
+      });
       return true; // Entry was processed (but run missing - data corruption)
     }
 

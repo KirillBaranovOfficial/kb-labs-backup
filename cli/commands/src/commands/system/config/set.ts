@@ -125,7 +125,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
 
       const roots = await resolveConfigRoots(getContextCwd(ctx), scope === 'platform' ? 'platform' : 'required');
       if (scope === 'project' && !roots.projectId) {
-        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Project config requires a registered project.', `Run "kb project add ${roots.projectRoot}" and retry "kb config set".`, { path: roots.projectRoot });
+        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Project config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config set".`, { path: roots.configRoot });
       }
       const file = await userConfigFileForScope(roots, scope);
       const runtimeConfig = await loadPlatformConfig({
@@ -135,7 +135,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
         projectScope: scope === 'platform' ? 'platform' : 'required',
         ...(roots.projectId ? { projectId: roots.projectId } : {}),
       });
-      const platform = await loadEffectiveConfig(roots.projectRoot, {
+      const platform = await loadEffectiveConfig(roots.configRoot, {
         platformRoot: roots.platformRoot,
         ...(roots.projectId ? { projectId: roots.projectId } : {}),
         pluginDefaults: manifestSettingsLayers(runtimeConfig),

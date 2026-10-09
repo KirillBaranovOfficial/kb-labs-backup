@@ -51,7 +51,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		failure.ProcessExitCode = diag.ExitInput
 		return updateCommandResult{}, failure
 	}
-	resolved, failure := resolvePlan(planInput{Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
+	resolved, failure := resolvePlan(planInput{Operation: "update", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
 		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable})
 	if failure != nil {
 		return updateCommandResult{}, inputFailure(updateCompatibilityDiag(failure))

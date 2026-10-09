@@ -52,7 +52,7 @@ function makePlugin(
   const segments = group ? [group, id] : [id];
   return {
     manifest: {
-      schema: 'kb.adapter/1', manifestVersion: '1.0',
+      manifestVersion: '1.0',
       segments,
       id,
       group,
@@ -80,7 +80,7 @@ function makePluginCmd(
 ): RegisteredCommand {
   return {
     manifest: {
-      schema: 'kb.adapter/1', manifestVersion: '1.0',
+      manifestVersion: '1.0',
       segments: [group, id],
       id,
       group,
@@ -150,7 +150,7 @@ describe('Collision Detection', () => {
     // 2. Try to register plugin with alias 'sc' — collision
     const pluginCmd: RegisteredCommand = {
       manifest: {
-        schema: 'kb.adapter/1', manifestVersion: '1.0',
+        manifestVersion: '1.0',
         segments: ['test', 'plugin-cmd'],
         id: 'plugin-cmd',
         group: 'test',
@@ -201,7 +201,7 @@ describe('Collision Detection', () => {
 
     const pluginCmd: RegisteredCommand = {
       manifest: {
-        schema: 'kb.adapter/1', manifestVersion: '1.0',
+        manifestVersion: '1.0',
         segments: ['custom', 'my-plugin'],
         id: 'my-plugin',
         group: 'custom',
@@ -403,7 +403,7 @@ describe('Validation', () => {
     // Manufacture a command with empty segments (bypass TypeScript to simulate a bad manifest)
     const cmd: RegisteredCommand = {
       manifest: {
-        schema: 'kb.adapter/1', manifestVersion: '1.0',
+        manifestVersion: '1.0',
         segments: [],
         id: '',
         group: '',
@@ -427,7 +427,7 @@ describe('Validation', () => {
 
     const cmd: RegisteredCommand = {
       manifest: {
-        schema: 'kb.adapter/1', manifestVersion: '1.0',
+        manifestVersion: '1.0',
         segments: ['__complete', 'hijack'],
         id: 'hijack',
         group: '__complete',
@@ -451,7 +451,7 @@ describe('Validation', () => {
 
     const cmd: RegisteredCommand = {
       manifest: {
-        schema: 'kb.adapter/1', manifestVersion: '1.0',
+        manifestVersion: '1.0',
         segments: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],  // 7 segments — over the limit
         id: 'g',
         group: 'a',
@@ -475,7 +475,7 @@ describe('Validation', () => {
 
     const cmd: RegisteredCommand = {
       manifest: {
-        schema: 'kb.adapter/1', manifestVersion: '1.0',
+        manifestVersion: '1.0',
         segments: ['tools', 'format'],
         id: 'format',
         group: 'tools',

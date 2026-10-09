@@ -7,6 +7,7 @@ import { loadRestApiConfig } from "@kb-labs/rest-api-core";
 import { createServer } from "./server";
 import { createRegistry, type IEntityRegistry } from "@kb-labs/core-registry";
 import type { IServiceTransport } from "@kb-labs/core-platform";
+import { requireProjectContext } from "@kb-labs/core-runtime";
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { requireEnvironmentSecret, runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import { getListenOptions } from "@kb-labs/shared-http";
@@ -57,8 +58,9 @@ export async function setup({
   platformRoot,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
+  const projectRoot = requireProjectContext(repoRoot);
   // Platform launch has already loaded the layered environment.
-  const { config, diagnostics } = await loadRestApiConfig(repoRoot);
+  const { config, diagnostics } = await loadRestApiConfig(projectRoot);
 
   // Now we can use platform.logger (configured from kb.config.json)
   const startupRequestId = `rest-startup-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -86,7 +88,7 @@ export async function setup({
   }
 
   bootstrapLogger.info("Resolved service roots", {
-    projectRoot: repoRoot,
+    projectRoot,
     platformRoot,
   });
   bootstrapLogger.info("Platform adapters initialized");
@@ -104,8 +106,8 @@ export async function setup({
   // but project marketplace.lock wins on conflict (project overrides platform).
   const registryInitStart = performance.now();
   const registry = await createRegistry({
-    root: repoRoot,
-    platformRoot: platformRoot !== repoRoot ? platformRoot : undefined,
+    root: projectRoot,
+    platformRoot: platformRoot !== projectRoot ? platformRoot : undefined,
     cache: {
       ttlMs: snapshotTTL,
       adapter: platform.cache,
@@ -134,7 +136,7 @@ export async function setup({
     });
   });
 
-  const server = await createServer(config, repoRoot, registry);
+  const server = await createServer(config, projectRoot, registry);
 
   // Start system metrics collector
   bootstrapLogger.info("Starting system metrics collector");

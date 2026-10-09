@@ -33,7 +33,6 @@ export interface WorkspaceFs {
 export type ProjectRootSource =
   | 'registry'
   | 'worktree'
-  | 'platform'
 
 export interface ProjectRootResolution {
   rootDir: string
@@ -127,15 +126,15 @@ export interface ResolvePlatformRootOptions {
 export interface ResolveRootsOptions
   extends ResolvePlatformRootOptions,
     ResolveProjectRootOptions {
-  /** Resolve only platform identity; the returned projectRoot aliases platformRoot. */
+  /** Resolve platform identity without requiring a registered project. */
   projectScope?: 'required' | 'platform'
 }
 
 export interface RootsResolution {
   /** Where `node_modules/@kb-labs/*` lives. */
   platformRoot: string
-  /** Where `.kb/kb.config.json` and per-project state live. */
-  projectRoot: string
+  /** Registered project containing the start directory, when one exists. */
+  projectRoot?: string
   /** Directory used to discover the registered project, including a worktree path. */
   projectStartDir: string
   /**
@@ -146,7 +145,7 @@ export interface RootsResolution {
   /** How each root was resolved (for diagnostics). */
   sources: {
     platform: PlatformRootSource
-    project: ProjectRootSource
+    project?: ProjectRootSource
     projectStartDir: string
   }
 }

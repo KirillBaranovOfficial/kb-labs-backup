@@ -2,6 +2,7 @@ package transport
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
@@ -19,6 +20,18 @@ func TestPlanReturnsStructuredFailureForBadRequest(t *testing.T) {
 	response := Plan([]byte(`not-json`), catalog.Catalog{})
 	if response.OK || response.Error == nil || response.Error.Code == "" {
 		t.Fatalf("response = %#v", response)
+	}
+}
+
+// case: S-039.4
+func TestPlanPreservesRequestValidationFieldAndCorrection(t *testing.T) {
+	response := Plan([]byte(`{"schema":"kb.create/v2","platformRoot":""}`), catalog.Catalog{})
+	if response.OK || response.Error == nil || response.Error.Code != contracts.CodeInputRequired {
+		t.Fatalf("response = %#v", response)
+	}
+	if response.Error.Meta["field"] != "platformRoot" ||
+		!strings.Contains(response.Error.Hint, "platformRoot") || !strings.Contains(response.Error.Hint, "request JSON") {
+		t.Fatalf("validation response omitted field or correction: %#v", response.Error)
 	}
 }
 

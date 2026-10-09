@@ -21,6 +21,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { AuthReadiness } from '@kb-labs/gateway-auth';
+import { sendGatewayNotFound } from '../ux-boundary.js';
 
 const FORWARDING_HEADERS = ['x-forwarded-for', 'x-real-ip', 'forwarded', 'x-forwarded-host', 'x-forwarded-proto'] as const;
 
@@ -61,7 +62,7 @@ export const registerAuthHealthRoute = (
     { schema: { tags: ['System'], summary: 'Auth readiness (local operator only)' } },
     async (request, reply) => {
       if (!isLocalOperatorRequest(request)) {
-        return reply.code(404).send({ error: 'Not Found' });
+        return sendGatewayNotFound(reply, String(request.id));
       }
       return getReadiness();
     },

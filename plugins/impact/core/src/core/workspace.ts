@@ -1,15 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { SubRepo } from '@kb-labs/impact-contracts';
-import { findRegisteredProjectContainingPathSync } from '@kb-labs/core-project-registry';
+import { findRegisteredProjectContainingPathSync, requireProjectContext } from '@kb-labs/core-project-registry';
 
 export function findWorkspaceRoot(cwd?: string): string {
   const current = resolve(cwd ?? process.cwd());
   const project = findRegisteredProjectContainingPathSync(current);
-  if (project) {
-    return project.path;
-  }
-  throw new Error(`No registered project contains "${current}". Register it with: kb project add "${current}"`);
+  return requireProjectContext(project?.path, current);
 }
 
 /**

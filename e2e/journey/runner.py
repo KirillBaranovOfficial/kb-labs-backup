@@ -22,7 +22,9 @@ from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
 from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import (assert_default_service_ports_free, run_doctor_root_isolation_step,
-                                  run_installer_case_steps, run_uninstall_decline_step)
+                                  run_installer_case_steps, run_invalid_request_step,
+                                  run_apply_scenario_step,
+                                  run_uninstall_decline_step)
 from journey_resources import case_catalog_root, journey_module
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, record_candidate_provenance, record_runner_failure,
@@ -790,7 +792,7 @@ def main():
                "kb-create --version did not print the launcher version", cases=["PC-001.1"])
     if VARIANT == "occupied-port":
         args = [launcher, "apply", "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
-                "--request-platform-root", str(PLATFORM), "--scenario", "commit", "--registry", REGISTRY]
+                "--platform-root", str(PLATFORM), "--scenario", "commit", "--registry", REGISTRY]
         result, elapsed = run(args, env=env, timeout=90)
         TIMES["apply"] = elapsed
         passed = result.returncode != 0 and "KB_INSTALL_PORT_IN_USE" in result.stdout and "4000" in result.stdout
@@ -836,7 +838,7 @@ def main():
         operation = "plan" if VARIANT in {"input", "relative-path"} else "install"
         install_scenario = "custom" if VARIANT.endswith("secured") else SCENARIO
         args = [launcher, operation, "--json", "--index", str(HOME / ".local/share/kb-create/release-index.json"),
-                "--request-platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
+                "--platform-root", str(PLATFORM), "--service-profile", "default", "--scenario", install_scenario,
                 "--registry", REGISTRY, "--project-root", str(PROJECT)]
         if VARIANT.endswith("secured"):
             answers = json.dumps({
@@ -929,7 +931,7 @@ def main():
         elif operation == "install":
             if FRONT_DOOR == "agent":
                 record_case("agent JSON install", install_ok,
-                            "agent install stream omitted progress or terminal success", cases=["S-039.1", "S-203.10"])
+                            "agent install stream omitted progress or terminal success", cases=["S-203.10"])
         if VARIANT.endswith("secured"):
             env.setdefault("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
             env.setdefault("KB_JOURNEY_ADMIN_PASSWORD", "")
@@ -1285,6 +1287,14 @@ def main():
                 mode=mode, launcher=launcher, stable_index=stable_index, canary_index=canary_index,
                 platform_root=PLATFORM, secret_value=installer_secret, run_command=installer_command,
             )
+            installer_case_journey.steps.extend(run_apply_scenario_step(
+                mode=mode, launcher=launcher, stable_index=stable_index,
+                platform_root=PLATFORM, run_command=installer_command,
+            ).steps)
+            installer_case_journey.steps.extend(run_invalid_request_step(
+                mode=mode, launcher=launcher, stable_index=stable_index,
+                platform_root=PLATFORM, run_command=installer_command,
+            ).steps)
         finally:
             assert_default_service_ports_free(PLATFORM, installer_command)
             started, _ = run([launcher, "start", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=180)

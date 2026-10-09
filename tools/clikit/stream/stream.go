@@ -14,6 +14,7 @@ import (
 type Writer struct {
 	output   io.Writer
 	finished bool
+	result   bool
 	exitCode int
 }
 
@@ -28,13 +29,39 @@ func (w *Writer) Event(data any) error {
 	if w.finished {
 		return fmt.Errorf("cannot write an event after the stream terminal record")
 	}
+	if w.result {
+		return fmt.Errorf("cannot write an event after the stream result record")
+	}
 	return json.NewEncoder(w.output).Encode(map[string]any{"ok": true, "data": data})
+}
+
+// Result writes the successful command result as a stream record.
+func (w *Writer) Result(data any) error {
+	if w.finished {
+		return fmt.Errorf("cannot write a result after the stream terminal record")
+	}
+	if w.result {
+		return fmt.Errorf("stream already has a result record")
+	}
+	record := map[string]any{
+		"ok":   true,
+		"data": data,
+		"meta": map[string]any{"stream": map[string]any{"result": true}},
+	}
+	if err := json.NewEncoder(w.output).Encode(record); err != nil {
+		return err
+	}
+	w.result = true
+	return nil
 }
 
 // Fail writes one typed error record.
 func (w *Writer) Fail(d *diag.Diag) error {
 	if w.finished {
 		return fmt.Errorf("cannot write an error after the stream terminal record")
+	}
+	if w.result {
+		return fmt.Errorf("cannot write an error after the stream result record")
 	}
 	d = diag.FromError(d)
 	if code := diag.ExitCode(d); code > w.exitCode {

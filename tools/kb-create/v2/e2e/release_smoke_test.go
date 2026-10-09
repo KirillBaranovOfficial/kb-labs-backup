@@ -117,7 +117,7 @@ func TestPublishedV2JourneyInstallsUpdatesAndRunsTheHost(t *testing.T) {
 		channel = "canary"
 	}
 
-	args := []string{"apply", "--index", index, "--request-platform-root", platform, "--project-root", project, "--platform-channel", channel, "--policy", "strict"}
+	args := []string{"apply", "--index", index, "--platform-root", platform, "--project-root", project, "--platform-channel", channel, "--policy", "strict"}
 	if registry := os.Getenv("KB_REGISTRY_URL"); registry != "" {
 		args = append(args, "--registry", registry)
 	}
@@ -132,7 +132,7 @@ func TestPublishedV2JourneyInstallsUpdatesAndRunsTheHost(t *testing.T) {
 	if output, code := run(t, launcher, "status", "--platform-root", platform); code != 0 {
 		t.Fatalf("V2 status exited %d:\n%s", code, output)
 	}
-	updateOutput, updateCode := run(t, launcher, "update", "--index", index, "--request-platform-root", platform, "--project-root", project, "--platform-channel", channel, "--policy", "strict")
+	updateOutput, updateCode := run(t, launcher, "update", "--index", index, "--platform-root", platform, "--project-root", project, "--platform-channel", channel, "--policy", "strict")
 	if updateCode != 0 {
 		t.Fatalf("V2 update exited %d: %s", updateCode, updateOutput)
 	}

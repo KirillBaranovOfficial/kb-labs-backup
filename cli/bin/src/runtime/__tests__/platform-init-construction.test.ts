@@ -25,7 +25,7 @@ import { initializePlatform } from "../platform-init.js";
 describe("CLI adapter construction", () => {
   afterEach(() => vi.clearAllMocks());
 
-  function projectConfig(projectRoot: string): LoadPlatformConfigResult {
+  function projectConfig(projectRoot: string, projectScope: 'required' | 'platform' = 'required'): LoadPlatformConfigResult {
     return {
       platformConfig: { adapters: { storage: "@kb-labs/adapters-fs" } },
       rawConfig: {},
@@ -33,6 +33,7 @@ describe("CLI adapter construction", () => {
       effectiveConfig: {},
       platformRoot: "/installed/platform",
       projectRoot,
+      projectScope,
       sameLocation: false,
       sources: { roots: { platform: "env", project: "registry", projectStartDir: projectRoot }, fields: {} },
     };
@@ -64,5 +65,22 @@ describe("CLI adapter construction", () => {
 
     expect(mocks.initPlatform).not.toHaveBeenCalled();
     expect(result.platform).toBe(mocks.platform);
+  });
+
+  it("keeps platform-scoped adapters at the platform root while preserving project identity", async () => {
+    const projectRoot = "/workspace/app";
+    const config = projectConfig(projectRoot, 'platform');
+    mocks.initPlatform.mockResolvedValue(mocks.platform);
+
+    const result = await initializePlatform(config);
+
+    expect(mocks.initPlatform).toHaveBeenCalledWith(
+      config.platformConfig,
+      "/installed/platform",
+      expect.any(Function),
+      undefined,
+      expect.objectContaining({ workspaceDevelopment: false }),
+    );
+    expect(result.projectRoot).toBe(projectRoot);
   });
 });

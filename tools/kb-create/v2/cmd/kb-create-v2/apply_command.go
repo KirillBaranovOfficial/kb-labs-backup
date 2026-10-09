@@ -58,10 +58,8 @@ func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps 
 		if err := writer.Fail(failure); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 		}
-	} else if result.FirstAdmin != nil {
-		if err := writer.Event(map[string]any{"firstAdmin": result.FirstAdmin}); err != nil {
-			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Apply result could not be written.")
-		}
+	} else if err := writer.Result(result); err != nil {
+		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Apply result could not be written.")
 	}
 	exitCode := diag.ExitOK
 	if failure != nil {

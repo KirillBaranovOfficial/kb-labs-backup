@@ -123,7 +123,7 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := []string{"plan", "--json", "--index", indexPath,
-		"--request-platform-root", filepath.Join(t.TempDir(), "platform"), "--gateway-url", gatewayURL}
+		"--platform-root", filepath.Join(t.TempDir(), "platform"), "--gateway-url", gatewayURL}
 	var busyOutput, busyError bytes.Buffer
 	busyCode := clikitcommand.Execute(newRootCommand(), args, &busyOutput, &busyError)
 	var busyPayload map[string]any
@@ -194,7 +194,7 @@ func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath,
-		"--request-platform-root", rootB}, &stdout, &stderr)
+		"--platform-root", rootB}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("automatic Gateway plan exit=%d: %s", code, stdout.String()+stderr.String())
 	}
@@ -687,6 +687,101 @@ func TestJSONScenarioInstallRegistersCanonicalProject(t *testing.T) {
 	})
 	if code != 0 || registry[canonical] != "prj_json" {
 		t.Fatalf("JSON scenario install exit=%d registry=%v failure=%v output=%s", code, registry, failure, raw)
+	}
+}
+
+// case: S-039.1
+func TestApplyCommandForwardsScenarioAnswersBeforeMutation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	index := writeJSONInstallFixture(t, home)
+	root := filepath.Join(home, "platform")
+	_, failure, code, output := executeForTest(t, operationTestSetup{
+		Operation: "apply", JSON: true, Index: index, PlatformRoot: root,
+		ScenarioID: "commit", ScenarioAnswers: "{invalid",
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
+		NodePreflight: func() error { return nil },
+	})
+	if code == 0 || (failure != nil && failure.Code != contracts.CodeScenarioInvalid) ||
+		!strings.Contains(output, contracts.CodeScenarioInvalid) || !strings.Contains(output, "decode scenario answers") {
+		t.Fatalf("apply scenario validation exit=%d failure=%v output=%s", code, failure, output)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("invalid scenario answers mutated platform root %q: stat error=%v", root, err)
+	}
+}
+
+// case: S-039.1
+func TestApplyJSONStreamReturnsItsAppliedReceipt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	index := writeJSONInstallFixture(t, home)
+	root := filepath.Join(home, "platform")
+	_, failure, code, output := executeForTest(t, operationTestSetup{
+		Operation: "apply", JSON: true, Index: index, PlatformRoot: root,
+		ScenarioID: "custom", ScenarioAnswers: `{"access.mode":"local"}`,
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: root}, Host: installHost{}},
+		NodePreflight: func() error { return nil },
+	})
+	if code != 0 || failure != nil {
+		t.Fatalf("apply JSON exit=%d failure=%v output=%s", code, failure, output)
+	}
+	var applyResult map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		var envelope struct {
+			OK   bool           `json:"ok"`
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+			t.Fatalf("invalid apply JSONL record %q: %v", line, err)
+		}
+		if envelope.OK && envelope.Data["operation"] == "apply" {
+			applyResult = envelope.Data
+		}
+	}
+	if applyResult == nil || applyResult["receipt"] == nil || applyResult["logPath"] == "" {
+		t.Fatalf("apply JSON stream omitted the completed receipt result: %s", output)
+	}
+}
+
+// case: S-039.4
+func TestApplyRequestValidationHintUsesActualRetryArguments(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	index := writeJSONInstallFixture(t, home)
+	requestPath := filepath.Join(home, "invalid request.json")
+	if err := os.WriteFile(requestPath, []byte(`{"schema":"kb.create/v2","platformRoot":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, failure, code, output := executeForTest(t, operationTestSetup{
+		Operation: "apply", Index: index, Input: requestPath,
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installArtifacts{root: filepath.Join(home, "platform")}, Host: installHost{}},
+		NodePreflight: func() error { return nil },
+	})
+	if failure == nil || code == 0 || failure.Code != contracts.CodeInputRequired {
+		t.Fatalf("invalid request exit=%d failure=%v output=%s", code, failure, output)
+	}
+	want := "Correct platformRoot in request file '" + requestPath + "', then retry: kb-create apply --index '" + index + "' --input '" + requestPath + "' --json"
+	if failure.Hint != want {
+		t.Fatalf("validation hint = %q, want exact retry instruction %q", failure.Hint, want)
+	}
+}
+
+func TestApplyRequestValidationHintDoesNotEchoCredentialValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	index := writeJSONInstallFixture(t, home)
+	_, failure, code, output := executeForTest(t, operationTestSetup{
+		Operation: "apply", Index: index, PlatformRoot: filepath.Join(home, "platform"),
+		ScenarioID: "explore", ScenarioAnswers: `{"admin.password":"scenario-secret"}`,
+		Direct:        directRequest{GatewayURL: "http://operator:gateway-secret@127.0.0.1:4100"},
+		NodePreflight: func() error { return nil },
+	})
+	if failure == nil || code == 0 {
+		t.Fatalf("invalid request exit=%d failure=%v output=%s", code, failure, output)
+	}
+	if strings.Contains(failure.Hint, "gateway-secret") || strings.Contains(failure.Hint, "scenario-secret") {
+		t.Fatalf("retry hint exposed credential values: %q", failure.Hint)
 	}
 }
 

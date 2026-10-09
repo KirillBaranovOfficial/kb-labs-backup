@@ -24,7 +24,7 @@ export interface ServiceContext {
   netOffset: number;
   runtime: PlatformRuntime;
   platformRoot: string;
-  projectRoot: string;
+  projectRoot?: string;
 }
 
 type ServiceSetup = (

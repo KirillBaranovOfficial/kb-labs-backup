@@ -61,7 +61,7 @@ function makePlugin(
     : [id];
   return {
     manifest: {
-      schema: 'kb.adapter/1', manifestVersion: '1.0',
+      manifestVersion: '1.0',
       segments,
       id,
       group,

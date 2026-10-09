@@ -39,7 +39,7 @@ new plan. Raw package-manager transcript is private under `.kb/logs/`; failed
 operations add a redacted dossier under `.kb/diagnostics/`.
 
 CI and agents may pass the request file unchanged, or use direct flags such
-as `--request-platform-root`, `--platform-version`/`--platform-channel`,
+as `--platform-root`, `--platform-version`/`--platform-channel`,
 `--sdk-version`, `--plugins id@version,...`, `--adapters id@version,...`,
 `--service-profile`, `--policy`, and `--offline`. Both forms normalize into
 the same `InstallRequest` before resolution; flags never build a separate
@@ -279,7 +279,7 @@ KB_INSTALL_CONFIG_REQUIRED
 Owner: @kb-labs/plugin-x@4.1.0
 Requirement: adapters.llm.apiKey (secret)
 Current state: missing
-Hint: set OPENAI_API_KEY, then run `kb-create apply --index release-index.json --request-platform-root /path/to/platform --secret-env adapters.llm.apiKey=OPENAI_API_KEY --json`
+Hint: set OPENAI_API_KEY, then run `kb-create apply --index release-index.json --platform-root /path/to/platform --secret-env adapters.llm.apiKey=OPENAI_API_KEY --json`
 ```
 
 `doctor --fix` must not invent a secret or silently choose between competing

@@ -26,6 +26,7 @@ import type { PlatformAssemblyHook } from "@kb-labs/core-runtime";
 import {
   isLoopbackHost,
   loadGatewayConfig,
+  resolveGatewayConfigRoot,
   startGateway,
   type HostRoutes,
 } from "@kb-labs/gateway-app";
@@ -68,6 +69,7 @@ import {
 } from "./transport.js";
 
 export const HOST_APP_ID = "kb-host";
+const GATEWAY_CONFIG_SCOPE = "platform" as const;
 
 type Teardown = () => Promise<void>;
 
@@ -275,12 +277,13 @@ export async function createHostConfig(
             "KB_SOCKET_PATH is set: the host runs several modules in one process and cannot share one socket path between them. Unset it.",
           );
         }
-        const effective = await loadEffectiveConfig(ctx.projectRoot, {
+        const gatewayConfigRoot = resolveGatewayConfigRoot(ctx, GATEWAY_CONFIG_SCOPE);
+        const effective = await loadEffectiveConfig(gatewayConfigRoot, {
           platformRoot: ctx.platformRoot,
         });
         const platformConfig = (effective?.data as { platform?: unknown } | undefined)?.platform;
         if (platformConfig && typeof platformConfig === "object" && !Array.isArray(platformConfig)) {
-          const issues = await validatePlatformAdapterOptions(ctx.platformRoot, platformConfig as Record<string, unknown>);
+          const issues = await validatePlatformAdapterOptions(gatewayConfigRoot, platformConfig as Record<string, unknown>);
           const issue = issues[0];
           if (issue) {
             throw new AdapterConfigError(issue.path, issue.message, issue.hint ?? "Correct the adapter option and run `kb-create start` again.");
@@ -292,7 +295,7 @@ export async function createHostConfig(
         const upstreams = generatedUpstreams(settings);
         let gatewayAddress: string | undefined;
         if (isSelected(settings, "gateway")) {
-          const gatewayConfig = await loadGatewayConfig(ctx.projectRoot, ctx.platformRoot);
+          const gatewayConfig = await loadGatewayConfig(gatewayConfigRoot, ctx.platformRoot);
           // Dry run: refuse an unsafe exposure before any module binds a port.
           applyHostGatewayPolicy(
             gatewayConfig,
@@ -456,6 +459,7 @@ export async function createHostConfig(
       const stopGateway = await startGateway(
         { ...ctx, logger: ctx.logger.forComponent("gateway") },
         {
+          configScope: GATEWAY_CONFIG_SCOPE,
           configure: (config) =>
             applyHostGatewayPolicy(
               { ...config, studio: config.studio ?? { enabled: true } },

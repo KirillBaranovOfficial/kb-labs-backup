@@ -69,9 +69,9 @@ async function main(): Promise<number> {
   });
   await initPlatform(
     loaded.platformConfig,
-    loaded.projectRoot,
+    loaded.platformRoot,
     undefined,
-    loaded.platformRoot !== loaded.projectRoot ? loaded.platformRoot : undefined,
+    undefined,
     { assemblyHook: makeAssemblyHook() },
   );
   try {

@@ -426,7 +426,29 @@ describe('loadPlatformConfig', () => {
 
     expect((result.effectiveConfig?.plugins as Record<string, unknown> | undefined)?.commit).toBeUndefined()
     expect(result.sources.overlays).toBeUndefined()
-    expect(result.projectRoot).toBe(result.platformRoot)
+    expect(result.projectRoot).toBeUndefined()
+    expect(result.projectScope).toBe('platform')
+  })
+
+  it('keeps platform config scope at the platform root while reporting a registered project separately', async () => {
+    const platformRoot = path.join(tmpDir, 'platform-scope-registered-platform')
+    const projectRoot = path.join(tmpDir, 'platform-scope-registered-project')
+    const home = path.join(tmpDir, 'platform-scope-registered-home')
+    makePlatformDir(platformRoot, { platform: { adapters: { cache: '@kb-labs/platform-cache' } } })
+    makeProjectDir(projectRoot, { platform: { adapters: { cache: '@kb-labs/project-cache' } } })
+    const registered = await createProjectRegistry({ env: { KB_HOME: home } }).add(realpathSync(projectRoot))
+
+    const result = await loadPlatformConfig({
+      startDir: projectRoot,
+      projectScope: 'platform',
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot), KB_HOME: home },
+      loadEnvFile: false,
+    })
+
+    expect(result.platformRoot).toBe(realpathSync(platformRoot))
+    expect(result.projectRoot).toBe(registered.project.path)
+    expect(result.projectScope).toBe('platform')
+    expect(result.platformConfig.adapters).toEqual({ cache: '@kb-labs/platform-cache' })
   })
 
   // case: S-124.12

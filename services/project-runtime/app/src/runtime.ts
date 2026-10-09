@@ -11,7 +11,7 @@
 import { realpath } from "node:fs/promises";
 import { HttpServiceTransport } from "@kb-labs/adapters-service-transport-http";
 import type { IServiceTransport } from "@kb-labs/core-platform";
-import type { PlatformAssemblyHook } from "@kb-labs/core-runtime";
+import { requireProjectContext, type PlatformAssemblyHook } from "@kb-labs/core-runtime";
 import {
   installPlatformResolveHook,
   makeAssemblyHook,
@@ -91,7 +91,7 @@ async function assertProjectRoot(
   ctx: ServiceContext,
   expected: string,
 ): Promise<void> {
-  const actual = await realpath(ctx.projectRoot);
+  const actual = await realpath(requireProjectContext(ctx.projectRoot, expected));
   if (actual !== (await realpath(expected))) {
     throw new Error(
       `The platform resolved project root "${actual}" but this runtime serves "${expected}".`,

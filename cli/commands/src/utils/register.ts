@@ -17,6 +17,7 @@ import { hello } from "../commands/system/hello";
 import { createCompletionCommand, autoUpdateCompletion } from "../commands/system/completion";
 import { diag } from "../commands/system/diag";
 import { registerManifests, preflightManifests } from "../registry/register";
+import { setRegisteredDiscovery } from '../registry/discovery-state.js';
 import type { DiagnosticEvent } from '@kb-labs/core-discovery';
 import { getContextCwd } from "@kb-labs/shared-cli-ui";
 import type { ILogger } from "@kb-labs/core-platform";
@@ -64,6 +65,7 @@ export async function registerBuiltinCommands(
   registry.setLogger(log);
   registry.markPartial(true);
   registeredCommands.length = 0;
+  setRegisteredDiscovery(undefined);
 
   try {
     const cwd = getContextCwd({ cwd: input.cwd });
@@ -74,6 +76,7 @@ export async function registerBuiltinCommands(
     });
     const discovered = discovery.results;
     discoveryDiagnostics = discovery.diagnostics;
+    setRegisteredDiscovery(discovery);
 
     if (discovered.length > 0) {
       log.info(`Discovered ${discovered.length} packages with CLI manifests`);
@@ -116,6 +119,7 @@ export async function registerBuiltinCommands(
     }
   } catch (err: unknown) {
     log.warn(`Discovery failed: ${err instanceof Error ? err.message : String(err)}`);
+    setRegisteredDiscovery(undefined);
     registry.markPartial(true);
     _registered = false;
     return;

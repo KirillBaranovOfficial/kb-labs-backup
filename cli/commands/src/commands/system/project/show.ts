@@ -4,10 +4,10 @@ import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
 import type { ProjectSummary } from '@kb-labs/core-contracts';
+import { requireProjectContext } from '@kb-labs/core-runtime';
 import {
   findProjectContainingPath,
   projectErrorEnvelope,
-  ProjectRegistryError,
   showProject,
 } from '@kb-labs/core-project-registry';
 import { failWithEnvelope, openRegistry, projectRef } from './project-support';
@@ -47,11 +47,7 @@ export const projectShow = defineSystemCommand<ShowFlags, ProjectShowResult>({
       if (ref === undefined) {
         const match = await findProjectContainingPath(registry, cwd);
         if (!match) {
-          throw new ProjectRegistryError(
-            'KB_PROJECT_UNKNOWN',
-            `No registered project contains "${cwd}".`,
-            { path: cwd },
-          );
+          requireProjectContext(undefined, cwd);
         }
         ref = match.project.id;
       }

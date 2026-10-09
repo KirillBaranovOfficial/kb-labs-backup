@@ -13,6 +13,7 @@ import {
   initPlatform,
   loadPlatformConfig as readPlatformConfig,
   platform,
+  requireProjectContext,
   type PlatformContainer,
   type PlatformLifecycleContext,
   type PlatformLifecycleHooks,
@@ -94,10 +95,10 @@ function createCLIUIProvider(): (hostType: string) => UIFacade {
   };
 }
 
-export interface PlatformInitResult extends LoadPlatformConfigResult {
+export type PlatformInitResult = LoadPlatformConfigResult & {
   /** The initialized platform singleton. */
   platform: PlatformContainer;
-}
+};
 
 /**
  * Read platform or project configuration without constructing adapters.
@@ -145,15 +146,18 @@ export async function initializePlatform(
     projectRoot,
     sources,
   } = loadResult;
+  const adapterProjectRoot = loadResult.projectScope === 'platform'
+    ? platformRoot
+    : requireProjectContext(projectRoot);
   if (options.skipAdapterInitialization) {
     return { ...loadResult, platform };
   }
   ensureLifecycleHooksRegistered();
   const platformInstance = await initPlatform(
-    platformConfig,
-    projectRoot,
-    createCLIUIProvider(),
-    platformRoot !== projectRoot ? platformRoot : undefined,
+      platformConfig,
+      adapterProjectRoot,
+      createCLIUIProvider(),
+      platformRoot !== adapterProjectRoot ? platformRoot : undefined,
     {
       assemblyHook: makeAssemblyHook(() =>
         process.env.KB_DEBUG === "true" ? platform.logger : undefined,
