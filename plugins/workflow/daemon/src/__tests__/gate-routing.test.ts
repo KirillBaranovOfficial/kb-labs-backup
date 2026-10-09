@@ -10,12 +10,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockLogger } from '@kb-labs/shared-testing';
 
 const mockRunnerExecute = vi.fn();
-vi.mock('@kb-labs/workflow-runtime', () => ({
-  SandboxRunner: class {
-    execute = mockRunnerExecute;
-  },
-}));
+vi.mock('@kb-labs/workflow-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@kb-labs/workflow-runtime')>();
+  return {
+    ...actual,
+    SandboxRunner: class {
+      execute = mockRunnerExecute;
+    },
+  };
+});
 
+import { EnvSecretProvider } from '@kb-labs/workflow-engine';
 import { createWorkflowWorker } from '../worker.js';
 
 function createDeferred<T = void>() {
@@ -145,6 +150,7 @@ function buildEngine(runId: string, jobId: string, steps: ReturnType<typeof make
 async function startWorker(engine: any) {
   return createWorkflowWorker({
     engine,
+    secretProvider: new EnvSecretProvider(),
     cliApi: {} as any,
     logger: mockLogger(),
     workspaceRoot: '/tmp/gate-test',

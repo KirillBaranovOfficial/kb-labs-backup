@@ -1,17 +1,32 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockLogger } from '@kb-labs/shared-testing';
+import type { IEntityRegistry } from '@kb-labs/core-registry';
+import type { IExecutionBackend } from '@kb-labs/core-contracts';
+import type { StateStore, WorkflowEngine } from '@kb-labs/workflow-engine';
+import type { JobRun, StepRun, StepSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
+import { EnvSecretProvider } from '@kb-labs/workflow-engine';
 
 // Mock SandboxRunner — worker tests verify orchestration, not plugin resolution.
 // SandboxRunner is tested separately in workflow-runtime.
 const mockRunnerExecute = vi.fn();
 
-vi.mock('@kb-labs/workflow-runtime', () => ({
-  SandboxRunner: class {
-    execute = mockRunnerExecute;
-  },
-}));
+vi.mock('@kb-labs/workflow-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@kb-labs/workflow-runtime')>();
+  return {
+    ...actual,
+    SandboxRunner: class {
+      execute = mockRunnerExecute;
+    },
+  };
+});
 
 import { buildWorkflowStepEnvironment, createWorkflowWorker } from '../worker.js';
+
+type WorkerRunTestDouble = Omit<Partial<WorkflowRun>, 'jobs'> & {
+  jobs: Array<Omit<Partial<JobRun>, 'steps'> & {
+    steps: Array<Partial<StepRun> & { spec: StepSpec }>
+  }>
+}
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -27,6 +42,10 @@ describe('workflow worker lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRunnerExecute.mockResolvedValue({ status: 'success', outputs: { ok: true } });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   // case: S-198.6
@@ -49,7 +68,7 @@ describe('workflow worker lifecycle', () => {
   it('processes a job with steps and delegates execution to runner', async () => {
     const runId = `run-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
-    const run: any = {
+    const run = {
       id: runId,
       tenantId: 'default',
       env: {},
@@ -57,33 +76,42 @@ describe('workflow worker lifecycle', () => {
       jobs: [{
         id: jobId,
         jobName: 'test-job',
-        status: 'queued',
+        status: 'queued' as JobRun['status'],
         attempt: 0,
         steps: [{
           id: 'step-1',
-          status: 'queued',
-          spec: { uses: 'plugin:test/handler', with: { key: 'value' } },
+          name: 'step-1',
+          status: 'queued' as StepRun['status'],
+          spec: { name: 'step-1', uses: 'plugin:test/handler', with: { key: 'value' } },
         }],
       }],
-    };
+    } satisfies WorkerRunTestDouble;
 
     const completion = createDeferred<void>();
 
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) {return null;}
         queueDrained = true;
-        return { runId, jobId };
+        return {
+          id: `${runId}:queue`,
+          runId,
+          jobId,
+          priority: 'normal',
+          enqueuedAt: new Date().toISOString(),
+          availableAt: Date.now(),
+          jobName: 'test-job',
+        };
       },
-      async getRun(requestedRunId: string) {
-        return requestedRunId === runId ? run : null;
+      async getRun(requestedRunId: string): Promise<WorkflowRun | null> {
+        return requestedRunId === runId ? run as unknown as WorkflowRun : null;
       },
       async markJobStarted() {
-        run.jobs[0].status = 'running';
+        run.jobs[0]!.status = 'running';
       },
       async markJobCompleted() {
-        run.jobs[0].status = 'success';
+        run.jobs[0]!.status = 'success';
         completion.resolve();
       },
       async markJobFailed(_r: string, _j: string, error: Error) {
@@ -95,18 +123,21 @@ describe('workflow worker lifecycle', () => {
       async markJobInterrupted() {},
       getStateStore: vi.fn(() => ({
         updateStep: vi.fn(async () => {}),
-      })),
-    };
+      }) as unknown as StateStore),
+    } satisfies Partial<WorkflowEngine>;
 
     const logger = mockLogger();
 
+    const cliApi = {} satisfies Partial<IEntityRegistry>;
+    const executionBackend = { execute: vi.fn() } satisfies Partial<IExecutionBackend>;
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: cliApi as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: executionBackend as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -121,19 +152,142 @@ describe('workflow worker lifecycle', () => {
     await worker.stop();
     await startPromise;
 
-    expect(run.jobs[0].status).toBe('success');
+    expect(run.jobs[0]!.status).toBe('success');
     expect(mockRunnerExecute).toHaveBeenCalledOnce();
     // Verify runner received the step spec and context
     const call = mockRunnerExecute.mock.calls[0]?.[0];
-    expect(call.spec).toEqual({ uses: 'plugin:test/handler', with: { key: 'value' } });
+    expect(call.spec).toMatchObject({
+      uses: 'plugin:test/handler',
+      with: { key: 'value', env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    });
     expect(call.workspace).toBe('/tmp/test-workspace');
+  });
+
+  // case: S-028.4, S-028.5
+  it('projects parent values, preserves production logs, and redacts declared secret values', async () => {
+    const sentinel = 'w01-worker-secret-should-not-escape';
+    const hookSentinel = 'w01-hook-only-secret-should-not-escape';
+    vi.stubEnv('KB_W01_PARENT_SENTINEL', 'undeclared-parent-value');
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('KB_SECRET_W01_WORKER', sentinel);
+    vi.stubEnv('KB_SECRET_W01_HOOK', hookSentinel);
+    const runId = `run-env-safety-${Date.now().toString(36)}`;
+    const jobId = `${runId}:job`;
+    const run = {
+      id: runId,
+      tenantId: 'default',
+      name: 'env-safety',
+      version: '1',
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      queuedAt: new Date().toISOString(),
+      trigger: { type: 'manual' },
+      env: { NODE_ENV: 'production' },
+      secrets: ['W01_WORKER'],
+      jobs: [{
+        id: jobId,
+        runId,
+        jobName: 'env-safety',
+        status: 'queued',
+        runsOn: 'sandbox',
+        queuedAt: new Date().toISOString(),
+        attempt: 0,
+        hooks: { pre: [{ name: 'hook-secret', secrets: ['W01_HOOK'] }] },
+        steps: [{
+          id: 'step-1',
+          runId,
+          jobId,
+          name: 'step-1',
+          index: 0,
+          status: 'queued',
+          attempt: 0,
+          queuedAt: new Date().toISOString(),
+          spec: { name: 'step-1', uses: 'plugin:test/handler', with: { env: { NODE_ENV: 'step-value', W01_WORKER: sentinel } } },
+        }],
+      }],
+    } satisfies WorkflowRun;
+    const completion = createDeferred<void>();
+    let queueDrained = false;
+    const stateStore = { updateStep: vi.fn(async () => null) } satisfies Partial<StateStore>;
+    const engine = {
+      async nextJob() {
+        if (queueDrained) return null;
+        queueDrained = true;
+        return {
+          id: `${runId}:queue`,
+          runId,
+          jobId,
+          priority: 'normal',
+          enqueuedAt: new Date().toISOString(),
+          availableAt: Date.now(),
+          jobName: 'env-safety',
+        };
+      },
+      async getRun(id: string) { return id === runId ? run : null; },
+      async markJobStarted() {},
+      async markJobCompleted() { completion.resolve(); },
+      async markJobFailed(_runId: string, _jobId: string, error: Error) { completion.reject(error); },
+      async markStepStarted() {},
+      async markStepCompleted() {},
+      async markStepFailed() {},
+      async markJobInterrupted() {},
+      getStateStore: vi.fn(() => stateStore as unknown as StateStore),
+    } satisfies Partial<WorkflowEngine>;
+    const logger = mockLogger();
+    mockRunnerExecute.mockImplementationOnce(async (request: { spec: { with?: Record<string, unknown> }; context: { env: Record<string, string>; secrets: Record<string, string>; logger: { info(message: string, meta?: Record<string, unknown>): void } } }) => {
+      expect(request.context.env).not.toHaveProperty('KB_W01_PARENT_SENTINEL');
+      expect(request.context.env.PATH).toBe(process.env.PATH);
+      expect(request.context.env.HOME).toBe(process.env.HOME);
+      expect(request.context.env.KB_PLATFORM_ROOT).toBe('/opt/kb-platform');
+      expect(request.context.env.KB_WORKSPACE_ROOT).toBe('/tmp/test-workspace');
+      expect(request.context.secrets.W01_WORKER).toBe(sentinel);
+      expect((request.spec.with?.env as Record<string, string>).NODE_ENV).toBe('production');
+      expect((request.spec.with?.env as Record<string, string>).W01_WORKER).toBe(sentinel);
+      request.context.logger.info('Step diagnostic while running in production', {
+        envKeys: Object.keys(request.context.env),
+        hookValue: hookSentinel,
+      });
+      return { status: 'success', outputs: {} };
+    });
+    const cliApi = {} satisfies Partial<IEntityRegistry>;
+    const executionBackend = { execute: vi.fn() } satisfies Partial<IExecutionBackend>;
+    const worker = await createWorkflowWorker({
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: cliApi as IEntityRegistry,
+      logger,
+      workspaceRoot: '/tmp/test-workspace',
+      platformRoot: '/opt/kb-platform',
+      platform: {
+        executionBackend: executionBackend as unknown as IExecutionBackend,
+        hasExecutionBackend: true,
+        getAdapter: vi.fn().mockReturnValue(undefined),
+      },
+      concurrency: 1,
+    });
+
+    const startPromise = worker.start();
+    await Promise.race([
+      completion.promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('worker completion timeout')), 10_000)),
+    ]);
+    await worker.stop();
+    await startPromise;
+
+    const logOutput = JSON.stringify(logger.messages);
+    expect(logOutput).not.toContain(sentinel);
+    expect(logOutput).not.toContain(hookSentinel);
+    expect(logOutput).toContain('production');
+    expect(logOutput).toContain('declaredSecretKeys');
+    expect(logOutput).toContain('W01_WORKER');
+    expect(logOutput).not.toContain('"NODE_ENV":"production"');
   });
 
   it('persists workflow identity when a worker starts a child workflow', async () => {
     const runId = 'parent-run';
     const childRunId = 'child-run';
     const finished = createDeferred<void>();
-    const parentRun: any = {
+    const parentRun = {
       id: runId,
       name: 'parent-name-is-not-identity',
       tenantId: 'default',
@@ -154,7 +308,7 @@ describe('workflow worker lifecycle', () => {
     };
     const runFromSpec = vi.fn(async (_spec: unknown, _input: unknown) => ({ id: childRunId, status: 'queued' }));
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       maxWorkflowDepth: 4,
       async nextJob() {
         if (queueDrained) {return null;}
@@ -171,15 +325,16 @@ describe('workflow worker lifecycle', () => {
       getStateStore: vi.fn(() => ({ updateStep: vi.fn(async () => {}) })),
     };
     const worker = await createWorkflowWorker({
-      engine,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
       workflowService: { get: vi.fn(async () => ({ input: {
         name: 'child-workflow', version: '1.0.0', on: { manual: true }, jobs: { main: { runsOn: 'local', steps: [] } },
-      } })) } as any,
-      cliApi: {} as any,
+      } })) } as unknown as import('@kb-labs/workflow-engine').WorkflowService,
+      cliApi: {} as unknown as IEntityRegistry,
       logger: mockLogger(),
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -199,7 +354,7 @@ describe('workflow worker lifecycle', () => {
   it('passes target hint from workflow spec to runner', async () => {
     const runId = `run-target-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
-    const run: any = {
+    const run = {
       id: runId,
       tenantId: 'default',
       env: {},
@@ -223,16 +378,16 @@ describe('workflow worker lifecycle', () => {
     const completion = createDeferred<void>();
 
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) {return null;}
         queueDrained = true;
         return { runId, jobId };
       },
       async getRun(id: string) { return id === runId ? run : null; },
-      async markJobStarted() { run.jobs[0].status = 'running'; },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
       async markJobCompleted() {
-        run.jobs[0].status = 'success';
+        run.jobs[0]!.status = 'success';
         completion.resolve();
       },
       async markJobFailed(_r: string, _j: string, error: Error) { completion.reject(error); },
@@ -245,12 +400,13 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -265,7 +421,7 @@ describe('workflow worker lifecycle', () => {
     await worker.stop();
     await startPromise;
 
-    expect(run.jobs[0].status).toBe('success');
+    expect(run.jobs[0]!.status).toBe('success');
     // Worker should pass target from run.metadata to runner.execute()
     const call = mockRunnerExecute.mock.calls[0]?.[0];
     expect(call.target).toEqual({ namespace: 'custom-ns', environmentId: 'pre-provisioned-env' });
@@ -274,7 +430,7 @@ describe('workflow worker lifecycle', () => {
   it('worker does not call any adapters directly', async () => {
     const runId = `run-no-adapters-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
-    const run: any = {
+    const run = {
       id: runId,
       env: {},
       metadata: {},
@@ -290,15 +446,15 @@ describe('workflow worker lifecycle', () => {
     const completion = createDeferred<void>();
 
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) {return null;}
         queueDrained = true;
         return { runId, jobId };
       },
       async getRun(id: string) { return id === runId ? run : null; },
-      async markJobStarted() { run.jobs[0].status = 'running'; },
-      async markJobCompleted() { run.jobs[0].status = 'success'; completion.resolve(); },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
+      async markJobCompleted() { run.jobs[0]!.status = 'success'; completion.resolve(); },
       async markJobFailed(_r: string, _j: string, error: Error) { completion.reject(error); },
       async markStepStarted() {},
       async markStepCompleted() {},
@@ -310,14 +466,15 @@ describe('workflow worker lifecycle', () => {
 
     // Platform has getAdapter returning undefined — worker should handle it gracefully
     const platformObj = {
-      executionBackend: { execute: vi.fn() } as any,
+      executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
       hasExecutionBackend: true,
       getAdapter: vi.fn().mockReturnValue(undefined),
     };
 
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test',
       platform: platformObj,
@@ -332,7 +489,7 @@ describe('workflow worker lifecycle', () => {
     await worker.stop();
     await startPromise;
 
-    expect(run.jobs[0].status).toBe('success');
+    expect(run.jobs[0]!.status).toBe('success');
     // getAdapter is called to check for a workspace provider, but since it returns
     // undefined no materialization happens — execution backend is NOT bypassed.
     expect(platformObj.executionBackend.execute).not.toHaveBeenCalled(); // no steps to execute
@@ -341,7 +498,7 @@ describe('workflow worker lifecycle', () => {
   it('emits structured diagnostic log when workspace provisioning fails', async () => {
     const runId = `run-ws-fail-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
-    const run: any = {
+    const run = {
       id: runId,
       env: {},
       metadata: {},
@@ -360,16 +517,16 @@ describe('workflow worker lifecycle', () => {
 
     const completion = createDeferred<void>();
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) {return null;}
         queueDrained = true;
         return { runId, jobId };
       },
       async getRun(id: string) { return id === runId ? run : null; },
-      async markJobStarted() { run.jobs[0].status = 'running'; },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
       async markJobCompleted() { completion.resolve(); },
-      async markJobFailed() { run.jobs[0].status = 'failed'; completion.resolve(); },
+      async markJobFailed() { run.jobs[0]!.status = 'failed'; completion.resolve(); },
       async markStepStarted() {},
       async markStepCompleted() {},
       async markStepFailed() {},
@@ -384,12 +541,13 @@ describe('workflow worker lifecycle', () => {
     };
 
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(failingWsProvider),
       },
@@ -422,7 +580,7 @@ describe('workflow worker lifecycle', () => {
     const runId = `run-shell-safe-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
     const dangerousTitle = 'Add `kb cancel` command $(whoami)';
-    const run: any = {
+    const run = {
       id: runId,
       tenantId: 'default',
       env: {},
@@ -447,15 +605,15 @@ describe('workflow worker lifecycle', () => {
 
     const completion = createDeferred<void>();
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) { return null; }
         queueDrained = true;
         return { runId, jobId };
       },
       async getRun(id: string) { return id === runId ? run : null; },
-      async markJobStarted() { run.jobs[0].status = 'running'; },
-      async markJobCompleted() { run.jobs[0].status = 'success'; completion.resolve(); },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
+      async markJobCompleted() { run.jobs[0]!.status = 'success'; completion.resolve(); },
       async markJobFailed(_r: string, _j: string, error: Error) { completion.reject(error); },
       async markStepStarted() {},
       async markStepCompleted() {},
@@ -467,12 +625,13 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -487,7 +646,7 @@ describe('workflow worker lifecycle', () => {
     await worker.stop();
     await startPromise;
 
-    expect(run.jobs[0].status).toBe('success');
+    expect(run.jobs[0]!.status).toBe('success');
     const call = mockRunnerExecute.mock.calls[0]?.[0];
 
     // Command must use ${_WF_...} reference, NOT the raw dangerous value.
@@ -510,7 +669,7 @@ describe('workflow worker lifecycle', () => {
     const runId = `run-env-coerce-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
     const invoicePayload = { vendor: 'Acme Corp', amount: 15000, currency: 'USD' };
-    const run: any = {
+    const run = {
       id: runId,
       tenantId: 'default',
       env: {},
@@ -538,15 +697,15 @@ describe('workflow worker lifecycle', () => {
 
     const completion = createDeferred<void>();
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) { return null; }
         queueDrained = true;
         return { runId, jobId };
       },
       async getRun(id: string) { return id === runId ? run : null; },
-      async markJobStarted() { run.jobs[0].status = 'running'; },
-      async markJobCompleted() { run.jobs[0].status = 'success'; completion.resolve(); },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
+      async markJobCompleted() { run.jobs[0]!.status = 'success'; completion.resolve(); },
       async markJobFailed(_r: string, _j: string, error: Error) { completion.reject(error); },
       async markStepStarted() {},
       async markStepCompleted() {},
@@ -557,12 +716,13 @@ describe('workflow worker lifecycle', () => {
 
     const logger = mockLogger();
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -577,7 +737,7 @@ describe('workflow worker lifecycle', () => {
     await worker.stop();
     await startPromise;
 
-    expect(run.jobs[0].status).toBe('success');
+    expect(run.jobs[0]!.status).toBe('success');
     const call = mockRunnerExecute.mock.calls[0]?.[0];
     const envVars = call.spec.with.env as Record<string, string>;
 
@@ -591,7 +751,7 @@ describe('workflow worker lifecycle', () => {
   it('debugMode emits verbose [debug] logs for expr context and interpolation', async () => {
     const runId = `run-debug-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
-    const run: any = {
+    const run = {
       id: runId,
       tenantId: 'default',
       env: { MY_VAR: 'hello' },
@@ -613,15 +773,15 @@ describe('workflow worker lifecycle', () => {
 
     const completion = createDeferred<void>();
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) { return null; }
         queueDrained = true;
         return { runId, jobId };
       },
       async getRun(id: string) { return id === runId ? run : null; },
-      async markJobStarted() { run.jobs[0].status = 'running'; },
-      async markJobCompleted() { run.jobs[0].status = 'success'; completion.resolve(); },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
+      async markJobCompleted() { run.jobs[0]!.status = 'success'; completion.resolve(); },
       async markJobFailed(_r: string, _j: string, error: Error) { completion.reject(error); },
       async markStepStarted() {},
       async markStepCompleted() {},
@@ -633,12 +793,13 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test-workspace',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -683,18 +844,18 @@ describe('workflow worker lifecycle', () => {
     const runId = `run-cancel-approval-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
 
-    const approvalStep: any = {
+    const approvalStep = {
       id: 'step-approval',
       status: 'queued',
       spec: { id: 'approval', uses: 'builtin:approval', with: { message: 'Approve?' } },
     };
-    const actionStep: any = {
+    const actionStep = {
       id: 'step-action',
       status: 'queued',
       spec: { uses: 'plugin:test/handler', with: {} },
     };
 
-    const run: any = {
+    const run = {
       id: runId,
       tenantId: 'default',
       status: 'running',
@@ -715,7 +876,7 @@ describe('workflow worker lifecycle', () => {
     const completion = createDeferred<void>();
 
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) { return null; }
         queueDrained = true;
@@ -731,14 +892,14 @@ describe('workflow worker lifecycle', () => {
           return {
             ...run,
             status: 'cancelled',
-            jobs: [{ ...run.jobs[0], steps: [{ ...approvalStep, status: 'success' }, actionStep] }],
+            jobs: [{ ...run.jobs[0]!, steps: [{ ...approvalStep, status: 'success' }, actionStep] }],
           };
         }
         return run;
       },
-      async markJobStarted() { run.jobs[0].status = 'running'; },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
       async markJobCompleted() {
-        run.jobs[0].status = 'success';
+        run.jobs[0]!.status = 'success';
         completion.resolve();
       },
       async markJobFailed(_r: string, _j: string, err: Error) {
@@ -760,12 +921,13 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test-approval-cancel',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -786,7 +948,7 @@ describe('workflow worker lifecycle', () => {
     expect(mockRunnerExecute).not.toHaveBeenCalled();
 
     // Job must not have completed successfully (was interrupted, not approved)
-    expect(run.jobs[0].status).not.toBe('success');
+    expect(run.jobs[0]!.status).not.toBe('success');
   });
 
   it('regression: aborts in-process execution when the job is marked terminal by ' +
@@ -799,7 +961,7 @@ describe('workflow worker lifecycle', () => {
     'terminal job — this is the "job failed but still executing" bug.', async () => {
     const runId = `run-terminal-mid-loop-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
-    const run: any = {
+    const run = {
       id: runId,
       tenantId: 'default',
       status: 'running',
@@ -824,7 +986,7 @@ describe('workflow worker lifecycle', () => {
         // Simulate a concurrent writer marking this job failed while step-1
         // is executing — e.g. another daemon instance's cleanupStaleRuns, or
         // a racing markJobFailed call for an unrelated reason.
-        run.jobs[0].status = 'failed';
+        run.jobs[0]!.status = 'failed';
       }
       return { status: 'success', outputs: {} };
     });
@@ -832,7 +994,7 @@ describe('workflow worker lifecycle', () => {
     let queueDrained = false;
     let markJobCompletedCalled = false;
     let markJobFailedCalled = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) { return null; }
         queueDrained = true;
@@ -841,13 +1003,13 @@ describe('workflow worker lifecycle', () => {
       async getRun(id: string) {
         return id === runId ? run : null;
       },
-      async markJobStarted() { run.jobs[0].status = 'running'; },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
       async markStepStarted(_r: string, _j: string, stepId: string) {
-        const s = run.jobs[0].steps.find((x: any) => x.id === stepId);
+        const s = run.jobs[0]!.steps.find((x) => x.id === stepId);
         if (s) { s.status = 'running'; }
       },
       async markStepCompleted(_r: string, _j: string, stepId: string) {
-        const s = run.jobs[0].steps.find((x: any) => x.id === stepId);
+        const s = run.jobs[0]!.steps.find((x) => x.id === stepId);
         if (s) { s.status = 'success'; }
       },
       async markStepFailed() {},
@@ -862,12 +1024,13 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test-terminal-mid-loop',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },
@@ -884,7 +1047,7 @@ describe('workflow worker lifecycle', () => {
     // Neither terminal-marking method fires again on a job already terminal.
     expect(markJobCompletedCalled).toBe(false);
     expect(markJobFailedCalled).toBe(false);
-    expect(run.jobs[0].status).toBe('failed');
+    expect(run.jobs[0]!.status).toBe('failed');
   });
 
   it('WF-003: cancel during step execution calls markJobInterrupted, not markJobCompleted', async () => {
@@ -898,7 +1061,7 @@ describe('workflow worker lifecycle', () => {
     const runId = `run-cancel-wf003-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
 
-    const run: any = {
+    const run = {
       id: runId,
       tenantId: 'default',
       status: 'running',
@@ -940,7 +1103,7 @@ describe('workflow worker lifecycle', () => {
     const completion = createDeferred<void>();
 
     let queueDrained = false;
-    const engine: any = {
+    const engine = {
       async nextJob() {
         if (queueDrained) { return null; }
         queueDrained = true;
@@ -949,10 +1112,10 @@ describe('workflow worker lifecycle', () => {
       async getRun(id: string) {
         return id === runId ? run : null;
       },
-      async markJobStarted() { run.jobs[0].status = 'running'; },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
       async markJobCompleted() {
         markJobCompletedSpy();
-        run.jobs[0].status = 'success';
+        run.jobs[0]!.status = 'success';
         completion.resolve();
       },
       async markJobFailed(_r: string, _j: string, err: Error) {
@@ -973,12 +1136,13 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
-      engine,
-      cliApi: {} as any,
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as unknown as IEntityRegistry,
       logger,
       workspaceRoot: '/tmp/test-wf003',
       platform: {
-        executionBackend: { execute: vi.fn() } as any,
+        executionBackend: { execute: vi.fn() } as unknown as IExecutionBackend,
         hasExecutionBackend: true,
         getAdapter: vi.fn().mockReturnValue(undefined),
       },

@@ -94,6 +94,47 @@ describe("createContextLogger", () => {
     expect(isAgentDiagnosticsEnabled({ KB_DIAGNOSTICS: "agent" })).toBe(true);
   });
 
+  // case: S-028.5
+  it('redacts registered secret values from log messages, nested fields, and errors', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const logger = createContextLogger(captureLogger(records), {
+      applicationId: 'workflow',
+      serviceId: 'workflow',
+      instanceId: 'test',
+      layer: 'service',
+    }).withSensitiveValues(['sentinel-token']);
+
+    logger.info('Step input contained sentinel-token', {
+      inputs: { env: { ACCESS_TOKEN: 'sentinel-token' } },
+      'sentinel-token': 'dynamic field name',
+    });
+    const error = new Error('request used sentinel-token', { cause: { token: 'sentinel-token' } });
+    logger.error('Step failed', error, {
+      detail: ['sentinel-token'],
+    });
+
+    expect(JSON.stringify(records)).not.toContain('sentinel-token');
+    expect(JSON.stringify(records)).toContain('[REDACTED]');
+    const emittedError = records[1]?.error as Error;
+    expect(emittedError.message).not.toContain('sentinel-token');
+    expect(emittedError.stack).not.toContain('sentinel-token');
+    expect((emittedError.cause as { token: string }).token).toBe('[REDACTED]');
+  });
+
+  it('keeps ordinary environment values readable while redacting explicitly declared secrets', () => {
+    const records: Array<Record<string, unknown>> = [];
+    const logger = createContextLogger(captureLogger(records), {
+      applicationId: 'workflow',
+      serviceId: 'workflow',
+      instanceId: 'test',
+      layer: 'service',
+    }).withSensitiveValues(['declared-secret-value']);
+
+    logger.info('Running in production with declared-secret-value');
+
+    expect(records[0]?.message).toBe('Running in production with [REDACTED]');
+  });
+
   it("preserves Pino-compatible fields-first calls from Fastify and plugins", () => {
     const records: Array<Record<string, unknown>> = [];
     const logger = createContextLogger(captureLogger(records), {
