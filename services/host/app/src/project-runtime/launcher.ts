@@ -145,15 +145,42 @@ class ChildRuntime implements RuntimeProcess {
   }
 
   private async terminate(): Promise<void> {
-    if (this.done) {
-      return;
+    if (!this.done) {
+      this.signalTree("SIGTERM");
+      const timer = setTimeout(() => this.signalTree("SIGKILL"), this.stopTimeoutMs);
+      try {
+        await this.exited;
+      } finally {
+        clearTimeout(timer);
+      }
     }
-    this.signalTree("SIGTERM");
-    const timer = setTimeout(() => this.signalTree("SIGKILL"), this.stopTimeoutMs);
+
+    const pid = this.child.pid;
+    if (pid === undefined || isWindows()) {return;}
+    this.reapGroup();
+    const deadline = Date.now() + this.stopTimeoutMs;
+    while (this.isGroupAlive(pid)) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Project runtime process group ${pid} did not stop within ${this.stopTimeoutMs} ms`,
+        );
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  private isGroupAlive(pid: number): boolean {
     try {
-      await this.exited;
-    } finally {
-      clearTimeout(timer);
+      process.kill(-pid, 0);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+        return false;
+      }
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        return true;
+      }
+      throw error;
     }
   }
 

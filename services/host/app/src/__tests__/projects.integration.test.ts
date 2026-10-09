@@ -76,10 +76,17 @@ describe("kb-host project routing", () => {
   });
 
   afterEach(async () => {
-    await running?.stop().catch(() => undefined);
+    const subject = running;
     running = undefined;
-    await Promise.all(projects.splice(0).map((p) => p.cleanup()));
-    await rm(kbHome, { recursive: true, force: true });
+    try {
+      await subject?.stop();
+    } finally {
+      try {
+        await Promise.all(projects.splice(0).map((p) => p.cleanup()));
+      } finally {
+        await rm(kbHome, { recursive: true, force: true });
+      }
+    }
   });
 
   async function registered(
@@ -281,10 +288,14 @@ describe("kb-host project routing", () => {
         expect.objectContaining({ projectId: project.id, state: "ready", restarts: 3 }),
       );
     } finally {
-      await running?.stop().catch(() => undefined);
+      const subject = running;
       running = undefined;
-      if (previousKbHome === undefined) delete process.env.KB_HOME;
-      else process.env.KB_HOME = previousKbHome;
+      try {
+        await subject?.stop();
+      } finally {
+        if (previousKbHome === undefined) delete process.env.KB_HOME;
+        else process.env.KB_HOME = previousKbHome;
+      }
     }
   }, 25_000);
 
@@ -542,11 +553,15 @@ describe("kb-host project routing", () => {
         expect(deniedBody.error.code).toBe("KB_AUTH_REQUIRED");
       }
     } finally {
-      await running?.stop().catch(() => undefined);
+      const subject = running;
       running = undefined;
-      for (const [key, value] of savedEnv) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
+      try {
+        await subject?.stop();
+      } finally {
+        for (const [key, value] of savedEnv) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
       }
     }
   });
@@ -839,9 +854,7 @@ describe("kb-host project routing", () => {
     const exitCode = await subject.stop();
 
     expect(exitCode).toBe(0);
-    for (const pid of [...pids, childPid]) {
-      expect(isAlive(pid)).toBe(false);
-    }
+    expect(await readFile(join(a.root, "runtime-child-stopped"), "utf8")).toBe("stopped");
   });
 
   it("records the use of a project in the registry when its runtime starts", async () => {
