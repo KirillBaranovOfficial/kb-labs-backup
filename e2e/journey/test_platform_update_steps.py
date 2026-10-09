@@ -61,7 +61,11 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         stdout = ""
         code = 0
         if args[1] == "plan":
-            stdout = json.dumps({"ok": True, "plan": self._plan("3.0.1")})
+            stdout = json.dumps({"ok": True, "plan": self._plan("3.0.1"), "updateSummary": {
+                "components": [{"id": "platform", "package": "@kb/platform", "fromVersion": "3.0.0", "toVersion": "3.0.1"}],
+                "addedPackages": ["@kb/new"], "removedPackages": ["@kb/old"], "downloadBytes": 1234,
+                "releaseNotes": [{"version": "3.0.1", "notes": "Patch notes."}],
+            }})
         elif args[1] == "update":
             update_count = sum(command[1] == "update" for command in self.commands)
             if json.loads(self.receipt.read_text())["plan"]["serviceGraph"]["platformVersion"] == "3.0.1":
@@ -82,7 +86,12 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                 stdout = json.dumps({"ok": True, "receipt": {"plan": self._plan("3.0.1")},
                                      "snapshot": {"id": f"snapshot-{update_count}"},
                                      "pendingRestart": self.pending_restart,
-                                     "hostRestarted": False, "logPath": "/logs/update.log"})
+                                     "hostRestarted": False, "logPath": "/logs/update.log",
+                                     "updateSummary": {
+                                         "components": [{"id": "platform", "package": "@kb/platform",
+                                                         "fromVersion": "3.0.0", "toVersion": "3.0.1"}],
+                                         "releaseNotes": [{"version": "3.0.1", "notes": "Patch notes."}],
+                                     }})
         elif args[1] == "rollback":
             if "missing-journey-snapshot" in args:
                 stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_NO_SNAPSHOT", "message": "Snapshot is unknown.", "hint": "restore a named snapshot", "correlationId": "c-missing"}})
@@ -122,6 +131,43 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                 decoded = {"ok": True, "data": {key: value for key, value in decoded.items() if key != "ok"}}
                 stdout = json.dumps(decoded)
         return subprocess.CompletedProcess(args, code, stdout, "")
+
+    def test_s023_3_requires_update_summary(self):
+        def omit_summary(args: list[str]) -> subprocess.CompletedProcess:
+            result = self.fake_kb(args)
+            if args[1] == "update" and "--json" in args:
+                payload = json.loads(result.stdout)
+                result_payload = payload.get("data", payload)
+                result_payload.pop("updateSummary", None)
+                return subprocess.CompletedProcess(args, result.returncode, json.dumps(payload), result.stderr)
+            return result
+
+        result = run_platform_update_steps(
+            mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            update_index=self.update_index, request_file=self.root / "request.json",
+            base_version="3.0.0", updated_version="3.0.1", run_command=omit_summary,
+        )
+        step = next(step for step in result.result().steps if "S-023.3" in step["cases"])
+        self.assertEqual(step["status"], "FAIL")
+        self.assertIn("omitted its component and release-note summary", step["message"])
+
+    def test_s023_6_requires_receipt_bytes_unchanged(self):
+        def rewrite_repeat_receipt(args: list[str]) -> subprocess.CompletedProcess:
+            result = self.fake_kb(args)
+            if args[1] == "update" and "--json" in args:
+                update_calls = sum(command[1] == "update" and "--json" in command for command in self.commands)
+                if update_calls == 2:
+                    self.receipt.write_text(json.dumps(json.loads(self.receipt.read_text()), indent=2))
+            return result
+
+        result = run_platform_update_steps(
+            mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
+            update_index=self.update_index, request_file=self.root / "request.json",
+            base_version="3.0.0", updated_version="3.0.1", run_command=rewrite_repeat_receipt,
+        )
+        step = next(step for step in result.result().steps if "S-023.6" in step["cases"])
+        self.assertEqual(step["status"], "FAIL")
+        self.assertIn("changed the installed receipt bytes", step["message"])
 
     def test_update_rollback_preserves_the_saved_user_session(self):
         def verify_user():

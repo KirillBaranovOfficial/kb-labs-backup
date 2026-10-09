@@ -1,6 +1,9 @@
 package artifacts
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -17,7 +20,9 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
@@ -43,6 +48,193 @@ func TestPnpmUsesVerifiedTarballInsteadOfRegistrySpec(t *testing.T) {
 	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, []string{"add", "--dir", root, "--reporter=append-only", want}) {
 		t.Fatalf("calls = %#v", runner.calls)
 	}
+}
+
+func TestPnpmMinimumReleaseAgeExemptsOnlySealedExactVersions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COREPACK_HOME", filepath.Join(home, "corepack"))
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skipf("pnpm 11.4.0 integration requires Node.js; node is unavailable: %v", err)
+	}
+	if _, err := exec.LookPath("corepack"); err != nil {
+		t.Skipf("pnpm 11.4.0 integration requires Corepack; corepack is unavailable: %v", err)
+	}
+	versionCheck := exec.Command("corepack", "pnpm@11.4.0", "--version")
+	versionCheck.Env = os.Environ()
+	if output, err := versionCheck.CombinedOutput(); err != nil {
+		t.Skipf("pnpm 11.4.0 cannot run with the available Node.js/Corepack toolchain: %v: %s", err, strings.TrimSpace(string(output)))
+	} else if strings.TrimSpace(string(output)) != "11.4.0" {
+		t.Fatalf("Corepack selected unexpected pnpm version: %q", strings.TrimSpace(string(output)))
+	}
+
+	sealedV1 := packageTarball(t, "@kb-labs/sealed", "1.0.0", nil)
+	sealedV2 := packageTarball(t, "@kb-labs/sealed", "1.0.1", nil)
+	sealedWithFreshDependency := packageTarball(t, "@kb-labs/sealed-fresh-dependency", "1.0.1", map[string]string{"@unrelated/fresh": "1.0.0"})
+	freshDependency := packageTarball(t, "@unrelated/fresh", "1.0.0", nil)
+	var requestLog []string
+	var requestLogMu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestLogMu.Lock()
+		requestLog = append(requestLog, r.URL.Path)
+		requestLogMu.Unlock()
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/fresh/sealed-fresh-dependency-1.0.1.tgz"):
+			_, _ = w.Write(sealedWithFreshDependency)
+		case strings.HasSuffix(r.URL.Path, "/fresh/fresh-1.0.0.tgz"):
+			_, _ = w.Write(freshDependency)
+		case strings.HasSuffix(r.URL.Path, "/sealed-1.0.0.tgz"):
+			_, _ = w.Write(sealedV1)
+		case strings.HasSuffix(r.URL.Path, "/sealed-1.0.1.tgz"):
+			_, _ = w.Write(sealedV2)
+		case strings.HasSuffix(r.URL.Path, "/fresh-1.0.0.tgz"):
+			_, _ = w.Write(freshDependency)
+		case strings.Contains(strings.ToLower(r.URL.Path), "kb-labs") && strings.Contains(strings.ToLower(r.URL.Path), "sealed"):
+			prefix := ""
+			name := "@kb-labs/sealed"
+			tarballs := map[string]string{
+				"1.0.0": serverURL(r) + "/sealed-1.0.0.tgz",
+				"1.0.1": serverURL(r) + "/sealed-1.0.1.tgz",
+			}
+			if strings.HasPrefix(r.URL.Path, "/fresh/") {
+				prefix = "/fresh"
+				name = "@kb-labs/sealed-fresh-dependency"
+				tarballs = map[string]string{"1.0.1": serverURL(r) + prefix + "/sealed-fresh-dependency-1.0.1.tgz"}
+			}
+			dependencies := map[string]string(nil)
+			if name == "@kb-labs/sealed-fresh-dependency" {
+				dependencies = map[string]string{"@unrelated/fresh": "1.0.0"}
+			}
+			writeRegistryPackument(w, name, tarballs, dependencies)
+		case strings.Contains(strings.ToLower(r.URL.Path), "unrelated"):
+			prefix := ""
+			if strings.HasPrefix(r.URL.Path, "/fresh/") {
+				prefix = "/fresh"
+			}
+			writeRegistryPackument(w, "@unrelated/fresh", map[string]string{
+				"1.0.0": serverURL(r) + prefix + "/fresh-1.0.0.tgz",
+			}, nil)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	itemV1 := sealedArtifact("1.0.0")
+	itemV2 := sealedArtifact("1.0.1")
+	root := t.TempDir()
+	writeMinimumReleaseAgeWorkspace(t, root)
+	pm := Pnpm{Root: root, Registry: server.URL}
+	if err := pm.Install([]contracts.Artifact{itemV1}); err != nil {
+		t.Fatalf("install first sealed exact version: %v", err)
+	}
+	if err := pm.Install([]contracts.Artifact{itemV2}); err != nil {
+		t.Fatalf("install second sealed exact version from the coalesced exclusion: %v", err)
+	}
+	workspace, err := os.ReadFile(filepath.Join(root, "pnpm-workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(workspace), "@kb-labs/sealed@1.0.0 || 1.0.1") {
+		t.Fatalf("workspace config did not retain both sealed exact versions: %s", workspace)
+	}
+
+	freshRoot := t.TempDir()
+	writeMinimumReleaseAgeWorkspace(t, freshRoot)
+	freshItem := contracts.Artifact{ID: "sealed-fresh-dependency", Package: "@kb-labs/sealed-fresh-dependency", Version: "1.0.1"}
+	var transcript strings.Builder
+	err = (Pnpm{Root: freshRoot, Registry: server.URL + "/fresh", Log: &transcript}).Install([]contracts.Artifact{freshItem})
+	if err == nil {
+		requestLogMu.Lock()
+		requests := append([]string(nil), requestLog...)
+		requestLogMu.Unlock()
+		t.Fatalf("expected the unrelated freshly published dependency to be refused; transcript=%s requests=%v", transcript.String(), requests)
+	}
+	if !strings.Contains(transcript.String(), "ERR_PNPM_NO_MATURE_MATCHING_VERSION") || !strings.Contains(transcript.String(), "minimumReleaseAge cutoff") {
+		t.Fatalf("pnpm error did not identify the release-age refusal: err=%v transcript=%s", err, transcript.String())
+	}
+	foundFreshMetadata := false
+	requestLogMu.Lock()
+	requests := append([]string(nil), requestLog...)
+	requestLogMu.Unlock()
+	for _, path := range requests {
+		if strings.Contains(strings.ToLower(path), "unrelated") {
+			foundFreshMetadata = true
+		}
+	}
+	if !foundFreshMetadata {
+		t.Fatalf("pnpm did not resolve the unrelated dependency from the local registry: requests=%v", requests)
+	}
+}
+
+func writeMinimumReleaseAgeWorkspace(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	config := "minimumReleaseAge: 1440\n"
+	if err := os.WriteFile(filepath.Join(root, "pnpm-workspace.yaml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sealedArtifact(version string) contracts.Artifact {
+	return contracts.Artifact{ID: "sealed", Package: "@kb-labs/sealed", Version: version}
+}
+
+func writeRegistryPackument(w http.ResponseWriter, name string, tarballs map[string]string, dependencies map[string]string) {
+	versions := make(map[string]any, len(tarballs))
+	times := make(map[string]string, len(tarballs))
+	now := time.Now().UTC().Format(time.RFC3339)
+	var latest string
+	for version, tarball := range tarballs {
+		metadata := map[string]any{
+			"name": name, "version": version,
+			"dist": map[string]string{"tarball": tarball},
+		}
+		if dependencies != nil {
+			metadata["dependencies"] = dependencies
+		}
+		versions[version] = metadata
+		times[version] = now
+		latest = version
+	}
+	w.Header().Set("Content-Type", "application/vnd.npm.install-v1+json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"name": name, "dist-tags": map[string]string{"latest": latest}, "versions": versions, "time": times,
+	})
+}
+
+func packageTarball(t *testing.T, name, version string, dependencies map[string]string) []byte {
+	t.Helper()
+	manifestValue := map[string]any{"name": name, "version": version}
+	if dependencies != nil {
+		manifestValue["dependencies"] = dependencies
+	}
+	manifest, err := json.Marshal(manifestValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	compressed := gzip.NewWriter(&output)
+	archive := tar.NewWriter(compressed)
+	if err := archive.WriteHeader(&tar.Header{Name: "package/package.json", Mode: 0o600, Size: int64(len(manifest))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := archive.Write(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return output.Bytes()
+}
+
+func serverURL(request *http.Request) string {
+	return "http://" + request.Host
 }
 
 func TestPnpmReportsExpectedAndReceivedTarballChecksums(t *testing.T) {
@@ -418,9 +610,25 @@ func TestPnpmMergesExactPlanVersionIntoExistingWorkspaceYAML(t *testing.T) {
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(config.MinimumReleaseAgeExclude, []string{"@kb/a@0.9.0", "@kb/a@1.0.0"}) {
-		t.Fatalf("minimumReleaseAgeExclude = %#v, want existing and exact plan entries; yaml: %s", config.MinimumReleaseAgeExclude, data)
+	if !reflect.DeepEqual(config.MinimumReleaseAgeExclude, []string{"@kb/a@0.9.0 || 1.0.0"}) {
+		t.Fatalf("minimumReleaseAgeExclude = %#v, want one disjunction for the exact versions; yaml: %s", config.MinimumReleaseAgeExclude, data)
 	}
+}
+
+func TestPnpmCoalescesEveryExactVersionForTheSamePackage(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "pnpm-workspace.yaml")
+	if err := os.WriteFile(workspace, []byte("minimumReleaseAgeExclude:\n  - '@kb/runtime@1.0.0'\n  - '@kb/runtime@1.0.1'\n  - '@user/tool@4.2.0'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	plan := []contracts.Artifact{{ID: "runtime", Package: "@kb/runtime", Version: "1.0.2"}}
+	if err := (Pnpm{Root: root, Runner: runner}).Install(plan); err != nil {
+		t.Fatal(err)
+	}
+	assertReleaseAgeExclusions(t, workspace, []string{
+		"@kb/runtime@1.0.0 || 1.0.1 || 1.0.2", "@user/tool@4.2.0",
+	})
 }
 
 // case: S-023.7

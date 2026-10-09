@@ -103,4 +103,7 @@ func TestOperationHumanRenderersMatchGoldenOutput(t *testing.T) {
 			t.Errorf("%s human output = %q, want %q", descriptor.Name, got, golden.want)
 		}
 	}
+	if got := renderUpdate(updateCommandResult{AlreadyUpToDate: true}); got != "Platform is already up to date." {
+		t.Fatalf("up-to-date update output = %q", got)
+	}
 }

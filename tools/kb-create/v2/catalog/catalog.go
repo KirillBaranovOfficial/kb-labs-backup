@@ -379,12 +379,14 @@ func findPlatform(values []PlatformBundle, version string) (PlatformBundle, bool
 // PlatformBundle is released atomically: core, official services, defaults and
 // compatible binaries are one platform decision, not independently guessed.
 type PlatformBundle struct {
-	ID       string `json:"id"`
-	Version  string `json:"version"`
-	Package  string `json:"package"`
-	SHA256   string `json:"sha256"`
-	Tarball  string `json:"tarball"`
-	SDKRange string `json:"sdkRange,omitempty"`
+	ID           string `json:"id"`
+	Version      string `json:"version"`
+	ReleaseNotes string `json:"releaseNotes,omitempty"`
+	Package      string `json:"package"`
+	SHA256       string `json:"sha256"`
+	Tarball      string `json:"tarball"`
+	SizeBytes    int64  `json:"sizeBytes,omitempty"`
+	SDKRange     string `json:"sdkRange,omitempty"`
 	// MinLauncherVersion is the oldest kb-create launcher allowed to install
 	// this platform. Empty means no constraint.
 	MinLauncherVersion string                            `json:"minLauncherVersion,omitempty"`
@@ -401,12 +403,13 @@ type PlatformBundle struct {
 // Binary is release-owned tooling required by a platform bundle. URLs and
 // hashes are immutable release assets, never guessed from a "latest" tag.
 type Binary struct {
-	ID       string `json:"id"`
-	OS       string `json:"os"`
-	Arch     string `json:"arch"`
-	URL      string `json:"url"`
-	SHA256   string `json:"sha256"`
-	Filename string `json:"filename"`
+	ID        string `json:"id"`
+	OS        string `json:"os"`
+	Arch      string `json:"arch"`
+	URL       string `json:"url"`
+	SHA256    string `json:"sha256"`
+	Filename  string `json:"filename"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
 }
 
 type Component struct {
@@ -415,6 +418,7 @@ type Component struct {
 	Package       string              `json:"package"`
 	SHA256        string              `json:"sha256"`
 	Tarball       string              `json:"tarball"`
+	SizeBytes     int64               `json:"sizeBytes,omitempty"`
 	PlatformRange string              `json:"platformRange,omitempty"`
 	SDKRange      string              `json:"sdkRange,omitempty"`
 	Requires      []Requirement       `json:"requires,omitempty"`

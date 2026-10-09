@@ -22,8 +22,10 @@ func main() {
 	input := flag.String("input", "", "normalized V2 release-index export JSON")
 	output := flag.String("output", "", "sealed immutable release-index JSON")
 	manifestRoot := flag.String("manifest-root", "", "staging root containing exact V2 package manifests")
+	var historyIndexes stringList
+	flag.Var(&historyIndexes, "history-index", "previously sealed release index to carry into this candidate")
 	flag.Parse()
-	if err := run(*input, *output, *manifestRoot); err != nil {
+	if err := run(*input, *output, *manifestRoot, historyIndexes...); err != nil {
 		failure, envelopeErr := sealingFailureEnvelope(err)
 		if envelopeErr != nil {
 			fmt.Fprintf(os.Stderr, "kb-create-release-index: failed to format diagnostic: %v\n", envelopeErr)
@@ -57,7 +59,15 @@ func sealingFailureEnvelope(err error) (diag.Envelope, error) {
 	return diag.ToEnvelope(diagnostic)
 }
 
-func run(input, output, manifestRoot string) error {
+type stringList []string
+
+func (values *stringList) String() string { return fmt.Sprint([]string(*values)) }
+func (values *stringList) Set(value string) error {
+	*values = append(*values, value)
+	return nil
+}
+
+func run(input, output, manifestRoot string, historyIndexes ...string) error {
 	if input == "" || output == "" || manifestRoot == "" {
 		return fmt.Errorf("--input, --output and --manifest-root are required")
 	}
@@ -85,6 +95,16 @@ func run(input, output, manifestRoot string) error {
 	if err := scenario.ValidateCatalog(source); err != nil {
 		return fmt.Errorf("built-in scenario validation: %w", err)
 	}
+	for _, historyPath := range historyIndexes {
+		history, err := catalog.LoadFile(historyPath)
+		if err != nil {
+			return fmt.Errorf("load sealed history index %s: %w", historyPath, err)
+		}
+		source, err = mergeReleaseHistory(source, history)
+		if err != nil {
+			return err
+		}
+	}
 	// Exports intentionally omit release-controlled fields. Schema and digest
 	// are assigned here, after all manifest data has been collected.
 	source.Schema, source.Digest = "", ""
@@ -104,4 +124,46 @@ func run(input, output, manifestRoot string) error {
 		return err
 	}
 	return os.Rename(temporary, output)
+}
+
+func mergeReleaseHistory(target, history catalog.Catalog) (catalog.Catalog, error) {
+	platforms := make(map[string]struct{}, len(target.Platforms))
+	for _, platform := range target.Platforms {
+		platforms[platform.ID+"@"+platform.Version] = struct{}{}
+	}
+	for _, platform := range history.Platforms {
+		key := platform.ID + "@" + platform.Version
+		if _, exists := platforms[key]; !exists {
+			target.Platforms = append(target.Platforms, platform)
+			platforms[key] = struct{}{}
+		}
+	}
+
+	sdks := make(map[string]struct{}, len(target.SDKs))
+	for _, sdk := range target.SDKs {
+		sdks[sdk.ID+"@"+sdk.Version] = struct{}{}
+	}
+	for _, sdk := range history.SDKs {
+		key := sdk.ID + "@" + sdk.Version
+		if _, exists := sdks[key]; !exists {
+			target.SDKs = append(target.SDKs, sdk)
+			sdks[key] = struct{}{}
+		}
+	}
+	if history.Compatibility != nil {
+		if target.Compatibility == nil {
+			target.Compatibility = &catalog.CompatibilityMatrix{Schema: history.Compatibility.Schema}
+		}
+		labels := make(map[string]struct{}, len(target.Compatibility.Labels))
+		for _, label := range target.Compatibility.Labels {
+			labels[label.ID] = struct{}{}
+		}
+		for _, label := range history.Compatibility.Labels {
+			if _, exists := labels[label.ID]; !exists {
+				target.Compatibility.Labels = append(target.Compatibility.Labels, label)
+				labels[label.ID] = struct{}{}
+			}
+		}
+	}
+	return target, nil
 }

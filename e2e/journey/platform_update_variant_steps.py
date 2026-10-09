@@ -96,7 +96,7 @@ def _error(result: subprocess.CompletedProcess, label: str) -> dict:
 def run_platform_update_variant_steps(
     *, mode: str, launcher: str, kb_binary: str, platform_root: Path,
     project_a: Path, project_b: Path, request_file: Path,
-    patch_index: Path, minor_index: Path, jump_index: Path,
+    base_index: Path, update_index: Path, patch_index: Path, minor_index: Path, jump_index: Path,
     next_index: Path, bad_checksum_index: Path, config_failure_index: Path,
     doctor_failure_index: Path, failed_host_index: Path,
     run: Run, run_interactive: InteractiveRun, mcp_token: str | None = None,
@@ -170,9 +170,11 @@ def run_platform_update_variant_steps(
             raise RuntimeError("multi-release sealed index omitted target platform release notes")
         plan = _payload(cli([launcher, "plan", "--json", "--index", str(jump_index),
                              "--input", str(request)]), "plan N+2 release notes")
-        notes = plan.get("releaseNotes")
-        if not isinstance(notes, list) or not any(item.get("version") == target for item in notes):
-            raise RuntimeError("N+2 plan did not list release notes from the sealed index")
+        notes = plan.get("updateSummary", {}).get("releaseNotes")
+        expected_versions = [_target(index) for index in (base_index, update_index, jump_index)]
+        if not isinstance(notes, list) or [item.get("version") for item in notes] != expected_versions or any(
+                not isinstance(item.get("notes"), str) or not item["notes"] for item in notes):
+            raise RuntimeError("N+2 plan did not list every intervening release note from the sealed index")
 
     claim_step("plan N+2 and show its sealed release notes", "platform.update",
                  plan_multi_release_notes, cases=["S-023.2", "S-214.10"],

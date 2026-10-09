@@ -1815,7 +1815,9 @@ def main():
         try:
             candidate_base = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/"
             variant_indexes = {}
-            for key, filename in (("patch", "release-index-update.json"),
+            for key, filename in (("base", "release-index.json"),
+                                  ("update", "release-index-update.json"),
+                                  ("patch", "release-index-update.json"),
                                   ("minor", "release-index-update-minor.json"),
                                   ("jump", "release-index-update-jump.json"),
                                   ("next", "release-index-update.json"),
@@ -1854,6 +1856,7 @@ def main():
             variant_journey = run_platform_update_variant_steps(
                 mode=mode, launcher=launcher, kb_binary=str(BIN / "kb"), platform_root=PLATFORM,
                 project_a=PROJECT, project_b=project_b_path, request_file=variant_request,
+                base_index=variant_indexes["base"], update_index=variant_indexes["update"],
                 patch_index=variant_indexes["patch"], minor_index=variant_indexes["minor"],
                 jump_index=variant_indexes["jump"], next_index=variant_indexes["next"],
                 bad_checksum_index=variant_indexes["bad_checksum"],
