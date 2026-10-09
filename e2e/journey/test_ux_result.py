@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from invocations import decode_ux_error_result, decode_ux_success_result, describe_cli_failure, read_ux_cli_result
+from invocations import (decode_ux_error_result, decode_ux_success_result, describe_cli_failure,
+                         read_ux_cli_result, read_ux_cli_stream)
 
 
 class UxResultDecodeTests(unittest.TestCase):
@@ -36,6 +37,19 @@ class UxResultDecodeTests(unittest.TestCase):
     def test_cli_exit_code_must_match_error_envelope(self):
         with self.assertRaisesRegex(ValueError, "exit code does not match"):
             read_ux_cli_result('{"ok":false,"error":{"code":"KB_TEST","message":"failed"}}', 0)
+
+    def test_cli_stream_validates_terminal_exit_and_preserves_result_events(self):
+        stream = ('{"ok":true,"data":{"phase":"Apply","state":"completed"}}\n'
+                  '{"ok":true,"data":{"operation":"apply","receipt":{}},"meta":{"stream":{"result":true}}}\n'
+                  '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":0}}}\n')
+        records = read_ux_cli_stream(stream, 0)
+        self.assertEqual(records[-2]["data"]["operation"], "apply")
+
+    def test_cli_stream_rejects_terminal_exit_code_mismatch(self):
+        stream = ('{"ok":false,"error":{"code":"KB_TEST","message":"failed"}}\n'
+                  '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":1}}}\n')
+        with self.assertRaisesRegex(ValueError, "terminal record does not match"):
+            read_ux_cli_stream(stream, 0)
 
     def test_setup_failure_description_preserves_typed_error_and_hint(self):
         output = '{"error":{"code":"KB_DOCTOR_INVALID","message":"Manifest scan failed.","hint":"Run `kb-create doctor --fix` and retry."}}'

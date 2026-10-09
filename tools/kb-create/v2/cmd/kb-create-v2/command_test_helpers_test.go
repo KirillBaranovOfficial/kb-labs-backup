@@ -83,8 +83,11 @@ func setTestFlagValues(t *testing.T, setup operationTestSetup, reader *commandFl
 		value := reader.values[name]
 		var source reflect.Value
 		switch name {
-		case "request-platform-root":
-			source = directValue.FieldByName("PlatformRoot")
+		case "platform-root":
+			source = setupValue.FieldByName("PlatformRoot")
+			if directValue.FieldByName("PlatformRoot").String() != "" {
+				source = directValue.FieldByName("PlatformRoot")
+			}
 		case "project-root":
 			source = directValue.FieldByName("ProjectRoot")
 		case "platform-version":
@@ -107,6 +110,8 @@ func setTestFlagValues(t *testing.T, setup operationTestSetup, reader *commandFl
 			source = directValue.FieldByName("Policy")
 		case "offline":
 			source = directValue.FieldByName("Offline")
+		case "scenario":
+			source = setupValue.FieldByName("ScenarioID")
 		case "fix":
 			source = setupValue.FieldByName("Fix")
 		case "recover":

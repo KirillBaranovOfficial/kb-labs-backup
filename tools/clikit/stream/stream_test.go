@@ -47,13 +47,13 @@ func TestStreamWritesEnvelopeEventsAndTerminalRecord(t *testing.T) {
 	if records[0]["data"] == nil || records[0]["ok"] == nil {
 		t.Fatalf("event record = %v", records[0])
 	}
+	lines := bytes.Split(bytes.TrimSpace(encoded), []byte("\n"))
 	var failure struct {
 		Error struct {
 			Code          string `json:"code"`
 			CorrelationID string `json:"correlationId"`
 		} `json:"error"`
 	}
-	lines := bytes.Split(bytes.TrimSpace(encoded), []byte("\n"))
 	if err := json.Unmarshal(lines[1], &failure); err != nil {
 		t.Fatal(err)
 	}
@@ -73,5 +73,49 @@ func TestStreamWritesEnvelopeEventsAndTerminalRecord(t *testing.T) {
 	}
 	if !terminal.Meta.Stream.Terminal || terminal.Meta.Stream.ExitCode != diag.ExitError {
 		t.Fatalf("terminal record = %+v", terminal)
+	}
+}
+
+func TestStreamResultEventHasResultMetadataAndTerminalRecord(t *testing.T) {
+	var output bytes.Buffer
+	writer := New(&output)
+	if err := writer.Event(map[string]any{"phase": "Apply"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Result(map[string]any{"operation": "apply"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Finish(diag.ExitOK); err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n"))
+	if len(lines) != 3 {
+		t.Fatalf("got %d records, want event, result, and terminal", len(lines))
+	}
+	var resultRecord struct {
+		Data struct {
+			Operation string `json:"operation"`
+		} `json:"data"`
+		Meta struct {
+			Stream struct {
+				Result bool `json:"result"`
+			} `json:"stream"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(lines[1], &resultRecord); err != nil {
+		t.Fatal(err)
+	}
+	if resultRecord.Data.Operation != "apply" || !resultRecord.Meta.Stream.Result {
+		t.Fatalf("result record = %+v", resultRecord)
+	}
+}
+
+func TestResultRecordMayBeWrittenOnlyOnce(t *testing.T) {
+	writer := New(&bytes.Buffer{})
+	if err := writer.Result(map[string]string{"operation": "apply"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Result(map[string]string{"operation": "apply"}); err == nil {
+		t.Fatal("second result record succeeded")
 	}
 }

@@ -1,9 +1,23 @@
 package contracts
 
 import (
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// case: S-039.4
+func TestInstallRequestNormalizeReportsFieldAndCorrection(t *testing.T) {
+	_, err := (InstallRequest{PlatformRoot: ""}).Normalize()
+	var validation *RequestValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("Normalize() error = %T %v, want RequestValidationError", err, err)
+	}
+	if validation.Field != "platformRoot" || validation.Hint == "" || !strings.Contains(validation.Error(), "platformRoot") {
+		t.Fatalf("validation error omitted field or correction: %#v", validation)
+	}
+}
 
 func TestNormalizeMakesRelativeRootsAbsolute(t *testing.T) {
 	request, err := (InstallRequest{PlatformRoot: "./kb-platform", ProjectRoot: "./project"}).Normalize()
