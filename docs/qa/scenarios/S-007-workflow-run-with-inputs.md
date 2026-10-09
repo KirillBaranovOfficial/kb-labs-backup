@@ -23,7 +23,7 @@ A project user starts a workflow with a JSON input and verifies the job received
 
 | # | Action | Expected |
 |---|---|---|
-| S-007.1 | Run `kb workflow run --workflow-id=<project>/hello --input='{"message":"hello"}'` | CLI returns the created run ID. |
+| S-007.1 | Run `kb workflow run --workflow-id=journey-hello --input='{"message":"hello"}'` | CLI returns the created run ID for the installed `journey-hello` workflow fixture. |
 | S-007.2 | Run `kb workflow runs view <runId>` | Run reaches a terminal status and reports the submitted input. |
 | S-007.3 | Run `kb workflow runs logs <runId>` | Step output contains `hello`, confirming the job received the input. |
 | S-007.4 | In secured mode, with no CLI session, run `kb workflow defs list --json` | CLI exits non-zero with JSON error code `KB_AUTH_REQUIRED` and hint `Run "kb auth login --gateway-url <gateway-url> --email <email>".`; the configured gateway URL is rendered when available and login prompts for the password. |
