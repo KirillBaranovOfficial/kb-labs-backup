@@ -25,6 +25,7 @@ export interface ServiceContext {
   runtime: PlatformRuntime;
   platformRoot: string;
   projectRoot?: string;
+  projectId?: string;
 }
 
 type ServiceSetup = (
@@ -58,6 +59,8 @@ export interface ServiceConfig extends NetworkServiceConfig {
   startDir?: string;
   /** Project identity scope owned by this process entry point. */
   projectScope: "required" | "platform";
+  /** Registry identity required when projectScope is `required`. */
+  projectId?: string;
   /** Entrypoint import.meta.url for installed-mode platform discovery. */
   moduleUrl?: string;
   platform: PlatformLaunchOptions;
@@ -212,6 +215,7 @@ export async function runHost(config: HostConfig): Promise<void> {
         netOffset,
         projectRoot: runtime.roots.projectRoot,
         platformRoot: runtime.roots.platformRoot,
+        projectId: config.projectId,
       });
       started.push({ id: module.id, teardown });
     } catch (error) {
@@ -290,12 +294,13 @@ export async function runHost(config: HostConfig): Promise<void> {
  * one-module case of {@link runHost}.
  */
 export async function runService(config: ServiceConfig): Promise<void> {
-  const { appId, startDir, moduleUrl, projectScope, platform, setup, ...network } = config;
+  const { appId, startDir, moduleUrl, projectScope, projectId, platform, setup, ...network } = config;
   await runHost({
     appId,
     serviceId: network.serviceId ?? appId,
     startDir,
     projectScope,
+    projectId,
     moduleUrl,
     platform,
     modules: [{ ...network, id: appId, setup }],

@@ -32,6 +32,7 @@ export async function bootstrap(_cwd: string = process.cwd()): Promise<void> {
   await runService({
     appId: "workflow-daemon",
     projectScope: "required",
+    projectId: process.env["KB_PROJECT_ID"],
     startDir: _cwd,
     // serviceId in the transport map / devservices is 'workflow' (≠ appId).
     serviceId: "workflow",
@@ -56,10 +57,11 @@ export async function setup({
   port,
   host,
   projectRoot,
+  projectId: contextProjectId,
   platformRoot,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
-  const projectId = requireWorkflowProjectId(process.env["KB_PROJECT_ID"]);
+  const projectId = requireWorkflowProjectId(contextProjectId);
   // KB_PROJECT_ROOT is injected by kb-dev when invoked from a project dir with separate platform.
   const workspaceRoot = requireProjectContext(process.env["KB_PROJECT_ROOT"] ?? projectRoot);
 

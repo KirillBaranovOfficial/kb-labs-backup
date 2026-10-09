@@ -234,12 +234,13 @@ src/__tests__/
 
 ### Persistence contract
 
-Pass the registered project's `projectId`, `cache`, `storage`, and `eventBus` adapters when creating an engine. The project ID comes from the project registry and scopes every workflow cache key, including queues, leases, indexes, snapshots, and locks. Do not derive it from a path. The cache coordinates live work; `IStorage` is the source of truth for workflow run records. Each record is JSON at `workflows/<runId>.json` and contains the run, jobs, steps, status, trigger, metadata, artifacts, and step outputs. The default storage binding in the built-in adapter pack uses the filesystem; the logical key stays the same for other storage adapters.
+Pass the registered project's `projectId`, `cache`, `storage`, and `eventBus` adapters when creating an engine. Inside a composed service, read the project ID from its `ServiceContext.projectId`. A standalone launcher maps its project input into `ServiceConfig.projectId` before calling `runService`; service setup does not reread the environment. The project ID comes from the project registry and scopes every workflow cache key, including queues, leases, indexes, snapshots, and locks. Do not derive it from a path. The cache coordinates live work; `IStorage` is the source of truth for workflow run records. Each record is JSON at `workflows/<runId>.json` and contains the run, jobs, steps, status, trigger, metadata, artifacts, and step outputs. The default storage binding in the built-in adapter pack uses the filesystem; the logical key stays the same for other storage adapters.
 
 ```ts
 import { WorkflowEngine, createDefaultSecretProvider, requireWorkflowProjectId } from '@kb-labs/workflow-engine';
 
-const projectId = requireWorkflowProjectId(process.env.KB_PROJECT_ID);
+// context is the ServiceContext passed to the composed service setup function.
+const projectId = requireWorkflowProjectId(context.projectId);
 const engine = new WorkflowEngine({
   projectId,
   cache: platform.cache,
@@ -266,7 +267,7 @@ The engine constructor requires the registered `projectId`; callers must pass th
 import { WorkflowEngine, createDefaultSecretProvider, requireWorkflowProjectId } from '@kb-labs/workflow-engine';
 import type { WorkflowSpec } from '@kb-labs/workflow-contracts';
 
-const projectId = requireWorkflowProjectId(process.env.KB_PROJECT_ID);
+const projectId = requireWorkflowProjectId(context.projectId);
 const engine = new WorkflowEngine({
   projectId,
   cache: platform.cache,
@@ -301,7 +302,7 @@ await worker.start();
 ```typescript
 import { WorkflowEngine, requireWorkflowProjectId } from '@kb-labs/workflow-engine';
 
-const projectId = requireWorkflowProjectId(process.env.KB_PROJECT_ID);
+const projectId = requireWorkflowProjectId(context.projectId);
 const engine = new WorkflowEngine({
   projectId,
   cache: platform.cache,
