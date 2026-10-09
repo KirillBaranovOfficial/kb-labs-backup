@@ -335,19 +335,22 @@ func TestInstalledPackagesCarryManifestsForDoctor(t *testing.T) {
 	t.Fatal("doctor did not load the installed gateway manifest")
 }
 
-func TestSecuredInstallWithoutAnAdminPasswordStillSecuresSessions(t *testing.T) {
-	// email and password skipped; the signing secret is still generated.
-	result := install(t, "\n\nsecured\n\n\n\n\n")
+func TestSecuredInstallWithoutAnAdminPasswordGeneratesTheFirstAdmin(t *testing.T) {
+	// The email is supplied; blank password and signing-secret answers generate both secrets.
+	result := install(t, "\n\nsecured\nadmin@example.com\n\n\n\n")
 
 	if result.environment["GATEWAY_JWT_SECRET"] == "" {
 		t.Fatalf("the signing secret must still reach the host: %v", keysOf(result.environment))
 	}
-	if _, wired := result.environment["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"]; wired {
-		t.Fatalf("no admin password was given, none may be wired: %v", keysOf(result.environment))
+	if result.environment["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"] == "" {
+		t.Fatalf("a generated bootstrap password must reach the host: %v", keysOf(result.environment))
 	}
-	// Nothing answered, nothing defaulted: the gateway config carries no auth block at all.
-	if auth, present := gatewaySection(t, result)["auth"]; present {
-		t.Fatalf("a secured install with no admin identity must not write gateway.auth: %v", auth)
+	if hits := everywhereExcept(t, result.root, result.environment["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"]); len(hits) != 0 {
+		t.Fatalf("generated password leaked outside the private secret store: %v", hits)
+	}
+	auth, present := gatewaySection(t, result)["auth"].(map[string]any)
+	if !present || auth["bootstrap"].(map[string]any)["adminEmail"] != "admin@example.com" {
+		t.Fatalf("secured install must configure the generated first admin: %v", gatewaySection(t, result)["auth"])
 	}
 }
 
@@ -517,7 +520,7 @@ func TestFreshFixtureInstallRendersInternalSecretForEveryConsumer(t *testing.T) 
 	}
 	probe := &captureHostEnvironment{store: store}
 	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{
-		Artifacts: &offlineArtifacts{root: root}, Host: probe, Secrets: &store,
+		Artifacts: &offlineArtifacts{root: root}, Probe: probe, Secrets: &store,
 	}); err != nil {
 		t.Fatalf("apply fresh install: %v", err)
 	}

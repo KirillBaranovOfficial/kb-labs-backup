@@ -23,7 +23,7 @@ apply a supported install from the sealed release index.
 
 | # | Action | Expected |
 |---|---|---|
-| S-040.1 | In a terminal, run `kb-create install --index release-index.json --platform-root "$PLATFORM_ROOT"` | The command prints `Set up KB Labs` and presents scenario questions in the terminal; it does not expose a separate `wizard` operation or emit a request file. |
+| S-040.1 | In a terminal, run `kb-create install --index release-index.json --platform-root "$PLATFORM_ROOT"` (for a secondary root, include `--gateway-url http://127.0.0.1:4700`) | The command prints `Set up KB Labs` and presents scenario questions in the terminal; it does not expose a separate `wizard` operation or emit a request file. A supplied `--gateway-url` appears in the resolved plan and is the Gateway address applied for this installation. |
 | S-040.2 | Answer the scenario prompts and continue the install | The displayed plan names the selected platform version and artifact count, then the command applies that plan and prints a success/next-step message. |
 | S-040.3 | Run `kb-create status --platform-root "$PLATFORM_ROOT" --json` after install | Exits 0; JSON has `ok: true`, `installed: true`, `running: true`, and `reachable: true`. |
 | S-040.4 | Run `kb-create doctor --platform-root "$PLATFORM_ROOT" --json` | Exits 0; JSON has `ok: true`, `installed: true`, and `platform.ok: true`. |

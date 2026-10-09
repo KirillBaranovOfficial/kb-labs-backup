@@ -392,7 +392,9 @@ func (installArtifacts) Restore([]contracts.Artifact) error { return nil }
 
 type installHost struct{}
 
-func (installHost) Probe(context.Context, contracts.HostSpec) error { return nil }
+func (installHost) Start(context.Context, contracts.HostSpec) (func() error, error) {
+	return func() error { return nil }, nil
+}
 
 func installOutput(t *testing.T) (*bytes.Buffer, string) {
 	t.Helper()

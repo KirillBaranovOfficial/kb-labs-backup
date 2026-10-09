@@ -61,6 +61,7 @@ func (c hostCommand) setup() (*host.ProcessRunner, host.State, *diag.Diag) {
 	if err != nil {
 		return nil, host.State{}, asDiag(err)
 	}
+	state = runner.State
 	return runner, state, nil
 }
 
@@ -289,7 +290,7 @@ func (h lifecycleHost) Halt(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	result, err := halt(ctx, runner, h.state)
+	result, err := halt(ctx, runner, runner.State)
 	return result.WasRunning, err
 }
 
@@ -298,7 +299,7 @@ func (h lifecycleHost) Resume(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = h.command.spawnSupervisor(ctx, runner, h.state)
+	_, err = h.command.spawnSupervisor(ctx, runner, runner.State)
 	return err
 }
 

@@ -76,7 +76,7 @@ func TestOperationHumanRenderersMatchGoldenOutput(t *testing.T) {
 		value any
 		want  string
 	}{
-		"install":   {nil, ""},
+		"install":   {nil, "Platform installation completed."},
 		"plan":      {planResult{}, "Install plan resolved."},
 		"apply":     {applyCommandResult{}, "Platform installation completed."},
 		"status":    {status, "Installed: true\nPlatform channel: stable\nPlatform version: 1.2.3\nRunning: false\nReachable: false"},

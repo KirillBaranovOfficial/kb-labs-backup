@@ -75,9 +75,14 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	if inputReader == nil {
 		inputReader = os.Stdin
 	}
-	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, wizard.IO{In: inputReader, Out: out})
+	generatedSecrets := map[string]string{}
+	request, err := wizard.RequestScenario(source, root, "explore", input.Direct.ProjectRoot, wizard.IO{In: inputReader, Out: out, Generated: generatedSecrets})
 	if err != nil {
 		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the answers and rerun `kb-create install`.", err)
+	}
+	request, err = mergeDirectRequest(request, input.Direct)
+	if err != nil {
+		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the direct install fields and rerun `kb-create install`.", err)
 	}
 	started := time.Now()
 	resolved, failure := resolvePlan(planInput{Index: index, Request: &request, Executable: input.Executable, KnownGateways: knownGatewayRoots(input.Executable)})
@@ -109,7 +114,8 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	}
 	deps.Runtime.Progress = &humanProgress{out: out, started: map[string]time.Time{}}
 	result, failure := executeApply(ctx, applyCommandInput{Resolved: &resolved, Registry: input.Registry, SecretEnv: input.SecretEnv,
-		Executable: input.Executable, Progress: deps.Runtime.Progress, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent}, deps)
+		Executable: input.Executable, Progress: deps.Runtime.Progress, TelemetryEndpoint: input.TelemetryEndpoint, TelemetryConsent: input.TelemetryConsent,
+		AdminPasswordGenerated: generatedSecrets["gateway.bootstrap.password"] != ""}, deps)
 	if failure != nil {
 		return applyCommandResult{}, failure
 	}
@@ -132,6 +138,54 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		return applyCommandResult{}, progressWriteFailure(err, "install")
 	}
 	return result, nil
+}
+
+func mergeDirectRequest(request contracts.InstallRequest, direct directRequest) (contracts.InstallRequest, error) {
+	normalized := direct
+	if normalized.PlatformRoot == "" {
+		normalized.PlatformRoot = request.PlatformRoot
+	}
+	if normalized.ProjectRoot == "" {
+		normalized.ProjectRoot = request.ProjectRoot
+	}
+	fields, err := normalized.normalize()
+	if err != nil {
+		return contracts.InstallRequest{}, err
+	}
+	if direct.PlatformRoot != "" {
+		request.PlatformRoot = fields.PlatformRoot
+	}
+	if direct.ProjectRoot != "" {
+		request.ProjectRoot = fields.ProjectRoot
+	}
+	if direct.PlatformVersion != "" || direct.PlatformChannel != "" {
+		request.Platform = fields.Platform
+	}
+	if direct.SDKVersion != "" {
+		request.SDK = fields.SDK
+	}
+	if direct.ServiceProfile != "" {
+		request.ServiceProfile = fields.ServiceProfile
+	}
+	if direct.GatewayURL != "" {
+		request.GatewayURL = fields.GatewayURL
+	}
+	if direct.Plugins != "" {
+		request.Plugins = fields.Plugins
+	}
+	if direct.Adapters != "" {
+		request.Adapters = fields.Adapters
+	}
+	if direct.Providers != "" {
+		request.ProviderPreferences = fields.ProviderPreferences
+	}
+	if direct.Policy != "" {
+		request.Policy = fields.Policy
+	}
+	if direct.Offline {
+		request.Source = contracts.SourceOffline
+	}
+	return request.Normalize()
 }
 
 func installJSON(ctx context.Context, input installCommandInput, deps commandDependencies) (streamCompletion, *diag.Diag) {
@@ -173,6 +227,11 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 			return streamCompletion{ExitCode: writer.ExitCode()}, nil
 		}
 	}
+	if result.FirstAdmin != nil {
+		if err := writer.Event(map[string]any{"firstAdmin": result.FirstAdmin}); err != nil {
+			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install result could not be written.")
+		}
+	}
 	if err := writer.Finish(diag.ExitOK); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")
 	}
@@ -209,4 +268,4 @@ func registerInstalledProject(platformRoot, projectRoot string, registrar func(s
 	return registerProject(platformRoot, filepath.Clean(canonical), registrar)
 }
 
-func renderInstall(any) string { return "" }
+func renderInstall(value any) string { return renderApply(value) }

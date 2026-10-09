@@ -26,6 +26,9 @@ import (
 type IO struct {
 	In  io.Reader
 	Out io.Writer
+	// Generated contains generated secrets for the current install invocation.
+	// Callers may disclose selected values only after the installation succeeds.
+	Generated map[string]string
 	// ReadSecret reads one line of secret input without echoing it. When nil, a
 	// real terminal is read with echo disabled and any other input (a pipe, a
 	// test) is read as a plain line.
@@ -154,6 +157,8 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 	// written to the private secret store; they never reach the answers, the
 	// request, the terminal output or the resume state.
 	pending := map[string]string{}
+	generatedValues := map[string]bool{}
+	store := secrets.Store{PlatformRoot: platformRoot}
 	for !session.State.Done {
 		requests := session.Inspect()
 		for _, request := range requests {
@@ -166,12 +171,30 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 				fmt.Fprintf(terminal.Out, "%s: %s\n", label, field.Description)
 			}
 			if field.Secret {
-				value, skipped, secretErr := askSecret(reader, terminal, &session, field, label)
+				if value, present, readErr := store.Get(field.Requirement); readErr != nil {
+					return contracts.InstallRequest{}, fmt.Errorf("read stored secret %s: %w", field.Requirement, readErr)
+				} else if present {
+					raw, marshalErr := json.Marshal(value)
+					if marshalErr != nil {
+						return contracts.InstallRequest{}, marshalErr
+					}
+					if err := session.Apply(field.ID, raw, flow.SourceDefault); err != nil {
+						return contracts.InstallRequest{}, err
+					}
+					continue
+				}
+				value, skipped, generated, secretErr := askSecret(reader, terminal, &session, field, label)
 				if secretErr != nil {
 					return contracts.InstallRequest{}, secretErr
 				}
 				if !skipped {
 					pending[field.Requirement] = value
+					if generated {
+						generatedValues[field.Requirement] = true
+					}
+					if generated && terminal.Generated != nil {
+						terminal.Generated[field.Requirement] = value
+					}
 				}
 				continue
 			}
@@ -215,7 +238,6 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 	if err != nil {
 		return contracts.InstallRequest{}, err
 	}
-	store := secrets.Store{PlatformRoot: platformRoot}
 	for _, id := range request.SecretInputs {
 		value, ok := pending[id]
 		if !ok {
@@ -223,6 +245,11 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 		}
 		if err := store.Put(id, value); err != nil {
 			return contracts.InstallRequest{}, fmt.Errorf("store secret %s: %w", id, err)
+		}
+		if id == "gateway.bootstrap.password" && generatedValues[id] {
+			if err := store.Put(secrets.BootstrapGenerated, "true"); err != nil {
+				return contracts.InstallRequest{}, fmt.Errorf("record generated bootstrap secret: %w", err)
+			}
 		}
 	}
 	return request, nil
@@ -233,32 +260,34 @@ func RequestScenario(source catalog.Catalog, platformRoot, scenarioID, projectRo
 // fields, and otherwise skips the field (nothing is recorded for it). A value a
 // human chose (not generated) is asked twice, since hidden input cannot be
 // proofread. Format errors and mismatches re-ask instead of aborting the journey.
-func askSecret(reader *bufio.Reader, terminal IO, session *flow.Session, field scenario.Field, label string) (string, bool, error) {
+func askSecret(reader *bufio.Reader, terminal IO, session *flow.Session, field scenario.Field, label string) (string, bool, bool, error) {
 	for attempt := 1; ; attempt++ {
 		fmt.Fprintf(terminal.Out, "%s: ", label)
 		value, err := readSecret(reader, terminal)
 		if err != nil {
-			return "", false, err
+			return "", false, false, err
 		}
 		problem := ""
+		generated := false
 		switch {
 		case value == "" && field.Generate:
-			generated, genErr := generateSecret()
+			secretValue, genErr := generateSecret()
 			if genErr != nil {
-				return "", false, genErr
+				return "", false, false, genErr
 			}
-			value = generated
+			value = secretValue
+			generated = true
 			fmt.Fprintf(terminal.Out, "%s: generated a random value (stored, not shown)\n", label)
 		case value == "" && field.Required:
 			problem = "a value is required"
 		case value == "":
 			fmt.Fprintf(terminal.Out, "%s: skipped\n", label)
-			return "", true, nil
+			return "", true, false, nil
 		default:
 			fmt.Fprintf(terminal.Out, "Confirm %s: ", strings.ToLower(label))
 			again, confirmErr := readSecret(reader, terminal)
 			if confirmErr != nil {
-				return "", false, confirmErr
+				return "", false, false, confirmErr
 			}
 			if again != value {
 				problem = "the two entries do not match"
@@ -267,17 +296,17 @@ func askSecret(reader *bufio.Reader, terminal IO, session *flow.Session, field s
 		if problem == "" {
 			raw, marshalErr := json.Marshal(value)
 			if marshalErr != nil {
-				return "", false, marshalErr
+				return "", false, false, marshalErr
 			}
 			if applyErr := session.Apply(field.ID, raw, flow.SourceHuman); applyErr != nil {
 				// The message names the field and the rule, never the value.
 				problem = strings.TrimPrefix(applyErr.Error(), fmt.Sprintf("field %q: ", field.ID))
 			} else {
-				return value, false, nil
+				return value, false, generated, nil
 			}
 		}
 		if attempt >= secretAttempts {
-			return "", false, fmt.Errorf("%s: %s", label, problem)
+			return "", false, false, fmt.Errorf("%s: %s", label, problem)
 		}
 		fmt.Fprintf(terminal.Out, "%s: %s; try again\n", label, problem)
 	}

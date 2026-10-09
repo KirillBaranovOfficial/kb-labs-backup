@@ -637,6 +637,12 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                       "PC-001 apply")
         if result.get("operation") != "apply" or not result.get("receipt") or not result.get("logPath"):
             raise RuntimeError("apply result omitted operation, receipt, or logPath")
+        status = _data(run_command([launcher, "status", "--json", "--platform-root", str(apply_root)]),
+                       "PC-001 apply status")
+        host = status.get("host", {})
+        if (status.get("installed") is not True or status.get("running") is not True
+                or status.get("reachable") is not True or host.get("state") != "running"):
+            raise RuntimeError(f"successful apply did not leave a running, reachable host: {status}")
 
     journey.step("apply the resolved default service profile", "platform.install", apply_and_check,
                  cases=["PC-001.4"])

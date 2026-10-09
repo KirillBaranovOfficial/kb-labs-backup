@@ -131,7 +131,11 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	}
 	pid := started["host"].(map[string]any)["pid"].(float64)
 
-	info, err := os.Stat(filepath.Join(inst.state, "control.json"))
+	rootState, err := host.StateForRoot(host.State{Dir: inst.state}, inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(rootState.Dir, "control.json"))
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("control.json: %v %v", info, err)
 	}
@@ -143,7 +147,7 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 
 	status, code, raw := inst.run("status", "--json")
 	host := status["host"].(map[string]any)
-	if code != 0 || host["state"] != "running" || host["pid"].(float64) != pid || status["supervisor"] == nil {
+	if code != 0 || host["state"] != "running" || host["pid"].(float64) != pid {
 		t.Fatalf("status: %d %s", code, raw)
 	}
 
@@ -157,7 +161,7 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	if code != 0 || result["wasRunning"] != true || result["graceful"] != true || result["forced"] == true {
 		t.Fatalf("stop: %d %s", code, raw)
 	}
-	if _, err := os.Stat(filepath.Join(inst.state, "control.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(rootState.Dir, "control.json")); !os.IsNotExist(err) {
 		t.Fatal("control.json must be gone after stop")
 	}
 	status, code, _ = inst.run("status", "--json")
@@ -170,12 +174,13 @@ func TestHostLifecycleThroughTheLauncher(t *testing.T) {
 	}
 }
 
-// case: S-025.7, S-025.8
-func TestOtherPlatformRootCannotObserveOrControlPerUserHost(t *testing.T) {
+// case: S-025.7, S-025.8, PC-001.10, PC-001.12
+func TestIndependentPlatformRootsOwnTheirHostLifecycle(t *testing.T) {
 	inst := newInstallation(t)
 	if _, code, output := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start A: %d %s", code, output)
 	}
+	t.Cleanup(func() { _, _, _ = inst.run("stop", "--json") })
 	receiptAPath := filepath.Join(inst.root, ".kb", "v2", "receipt.json")
 	receiptABefore, err := os.ReadFile(receiptAPath)
 	if err != nil {
@@ -187,6 +192,10 @@ func TestOtherPlatformRootCannotObserveOrControlPerUserHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	active.Plan.Request.PlatformRoot = rootB
+	portB := freeLoopbackPort(t)
+	active.Plan.Host.Args = append([]string(nil), active.Plan.Host.Args...)
+	active.Plan.Host.Args[1] = fmt.Sprint(portB)
+	active.Plan.Host.HealthURL = fmt.Sprintf("http://127.0.0.1:%d/health", portB)
 	if err := receipt.Write(rootB, active); err != nil {
 		t.Fatal(err)
 	}
@@ -211,13 +220,17 @@ func TestOtherPlatformRootCannotObserveOrControlPerUserHost(t *testing.T) {
 	}
 
 	startB := runForRoot(t, inst, rootB, "start")
-	if startB["code"] != float64(1) || startB["error"].(map[string]any)["code"] != "KB_HOST_ALREADY_RUNNING" {
-		t.Fatalf("start B was not refused with a typed error: %#v", startB)
+	if startB["ok"] != true || startB["operation"] != "start" {
+		t.Fatalf("independent root B did not start beside A: %#v", startB)
 	}
-	failure := startB["error"].(map[string]any)
-	if !strings.Contains(failure["message"].(string), inst.root) ||
-		!strings.Contains(failure["hint"].(string), "kb-create stop --platform-root "+inst.root) {
-		t.Fatalf("cross-root refusal omitted active root and stop command: %#v", failure)
+	t.Cleanup(func() { _ = runForRoot(t, inst, rootB, "stop") })
+	statusBRunning := runForRoot(t, inst, rootB, "status")
+	if statusBRunning["host"].(map[string]any)["state"] != "running" {
+		t.Fatalf("B did not report its own host as running: %#v", statusBRunning)
+	}
+	stopB := runForRoot(t, inst, rootB, "stop")
+	if stopB["ok"] != true {
+		t.Fatalf("B stop failed: %#v", stopB)
 	}
 	statusA, code, output := inst.run("status", "--json")
 	if code != 0 || statusA["host"].(map[string]any)["state"] != "running" {
@@ -329,6 +342,18 @@ func TestForegroundStartRunsTheHostDirectly(t *testing.T) {
 	}
 	waited := make(chan error, 1)
 	go func() { waited <- command.Wait() }()
+	finished := false
+	t.Cleanup(func() {
+		if finished {
+			return
+		}
+		_ = command.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-waited:
+		case <-time.After(15 * time.Second):
+			_ = command.Process.Kill()
+		}
+	})
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		if status, _, _ := inst.run("status", "--json"); status["host"] != nil && status["host"].(map[string]any)["state"] == "running" {
@@ -346,6 +371,7 @@ func TestForegroundStartRunsTheHostDirectly(t *testing.T) {
 	_ = command.Process.Signal(syscall.SIGTERM)
 	select {
 	case <-waited:
+		finished = true
 	case <-time.After(15 * time.Second):
 		_ = command.Process.Kill()
 		t.Fatal("launcher did not exit after SIGTERM")

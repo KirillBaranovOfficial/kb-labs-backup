@@ -553,7 +553,9 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 	state, stateErr := StateHome()
 	var active ActiveHostRecord
 	if stateErr == nil {
-		active, _ = ActiveHost(state)
+		if rootState, rootErr := StateForRoot(state, plan.Request.PlatformRoot); rootErr == nil {
+			active, _ = ActiveHost(rootState)
+		}
 	}
 	for port, purpose := range ports {
 		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))

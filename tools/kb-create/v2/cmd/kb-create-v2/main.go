@@ -32,13 +32,20 @@ var buildCommit = "none"
 type repeatedValue []string
 
 type applyCommandResult struct {
-	OK        bool                     `json:"ok"`
-	Operation string                   `json:"operation"`
-	Receipt   contracts.InstallReceipt `json:"receipt"`
-	LogPath   string                   `json:"logPath"`
-	Profile   string                   `json:"profile"`
-	Services  []contracts.Service      `json:"services"`
-	Shim      *shim.EnsureResult       `json:"shim,omitempty"`
+	OK         bool                     `json:"ok"`
+	Operation  string                   `json:"operation"`
+	Receipt    contracts.InstallReceipt `json:"receipt"`
+	LogPath    string                   `json:"logPath"`
+	Profile    string                   `json:"profile"`
+	Services   []contracts.Service      `json:"services"`
+	Shim       *shim.EnsureResult       `json:"shim,omitempty"`
+	FirstAdmin *firstAdminCredential    `json:"firstAdmin,omitempty"`
+}
+
+type firstAdminCredential struct {
+	Email     string `json:"email"`
+	Password  string `json:"password"`
+	ShownOnce bool   `json:"shownOnce"`
 }
 
 func (values *repeatedValue) String() string { return strings.Join(*values, ",") }
@@ -308,6 +315,17 @@ func (value directRequest) normalize() (contracts.InstallRequest, error) {
 		return contracts.InstallRequest{}, err
 	}
 	return request.Normalize()
+}
+
+func configuredFirstAdmin(request contracts.InstallRequest) (string, bool) {
+	if request.Values["gateway.access.mode"] != `"secured"` {
+		return "", false
+	}
+	var email string
+	if err := json.Unmarshal([]byte(request.Values["gateway.bootstrap.adminEmail"]), &email); err != nil || email == "" {
+		return "", false
+	}
+	return email, true
 }
 
 func parseProviders(value string) (map[string]string, error) {

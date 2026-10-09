@@ -55,6 +55,15 @@ type fixture struct {
 	port   int
 }
 
+func startProcessForTest(t *testing.T, runner *ProcessRunner, ctx context.Context) (Info, error) {
+	t.Helper()
+	info, err := runner.Start(ctx)
+	if err == nil {
+		t.Cleanup(func() { _, _ = runner.Stop(context.Background()) })
+	}
+	return info, err
+}
+
 func newRunner(t *testing.T, ready, grace int, hostArgs ...string) fixture {
 	t.Helper()
 	port := freePort(t)
@@ -85,7 +94,7 @@ func launcherCode(t *testing.T, err error) string {
 func TestStartStatusStopGraceful(t *testing.T) {
 	f := newRunner(t, 10, 5)
 	ctx := context.Background()
-	info, err := f.runner.Start(ctx)
+	info, err := startProcessForTest(t, f.runner, ctx)
 	if err != nil || info.PID == 0 {
 		t.Fatalf("start: %+v %v", info, err)
 	}
@@ -114,7 +123,7 @@ func TestStartStatusStopGraceful(t *testing.T) {
 
 func TestPidAndLogFilesArePrivate(t *testing.T) {
 	f := newRunner(t, 10, 5)
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{f.runner.State.HostPID(), f.runner.State.HostLog()} {
@@ -127,10 +136,10 @@ func TestPidAndLogFilesArePrivate(t *testing.T) {
 
 func TestStartWhileRunningIsAlreadyRunning(t *testing.T) {
 	f := newRunner(t, 10, 5)
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	_, err := f.runner.Start(context.Background())
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_ALREADY_RUNNING" {
 		t.Fatalf("code %s", code)
 	}
@@ -140,7 +149,7 @@ func TestRunnerDoesNotObserveOrStopAHostForAnotherRoot(t *testing.T) {
 	f := newRunner(t, 10, 5)
 	rootA, rootB := filepath.Join(t.TempDir(), "platform-a"), filepath.Join(t.TempDir(), "platform-b")
 	f.runner.PlatformRoot = rootA
-	info, err := f.runner.Start(context.Background())
+	info, err := startProcessForTest(t, f.runner, context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +165,7 @@ func TestRunnerDoesNotObserveOrStopAHostForAnotherRoot(t *testing.T) {
 	if !processAlive(info.PID) {
 		t.Fatal("other-root stop signaled the original host")
 	}
-	_, err = other.Start(context.Background())
+	_, err = startProcessForTest(t, other, context.Background())
 	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_HOST_ALREADY_RUNNING" ||
 		typed.Meta["platformRoot"] != rootA || typed.Meta["pid"] != strconv.Itoa(info.PID) ||
@@ -203,7 +212,7 @@ func TestPortInUse(t *testing.T) {
 		!strings.Contains(planDiagnostic.Hint, "--gateway-url") || !strings.Contains(planDiagnostic.Hint, "kb-create plan") {
 		t.Fatalf("plan port diagnostic does not suggest a Gateway address: %#v", planFailure)
 	}
-	_, err = f.runner.Start(context.Background())
+	_, err = startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_INSTALL_PORT_IN_USE" {
 		t.Fatalf("code %s", code)
 	}
@@ -230,7 +239,7 @@ func TestStalePidFileIsRecovered(t *testing.T) {
 	}
 	// Recreate the stale file: Start must clean it and succeed.
 	_ = writeJSONFile(f.runner.State.HostPID(), pidRecord{PID: dead.Process.Pid, StartedAt: time.Now()})
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatalf("start over stale pid: %v", err)
 	}
 }
@@ -239,14 +248,14 @@ func TestCorruptPidFileIsStale(t *testing.T) {
 	f := newRunner(t, 10, 5)
 	_ = f.runner.State.Ensure()
 	_ = os.WriteFile(f.runner.State.HostPID(), []byte("not json"), 0o600)
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatalf("start over corrupt pid: %v", err)
 	}
 }
 
 func TestForcedStopWhenTermIgnored(t *testing.T) {
 	f := newRunner(t, 10, 1, "-ignore-term")
-	info, err := f.runner.Start(context.Background())
+	info, err := startProcessForTest(t, f.runner, context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +284,7 @@ func TestStartFailureWhenHostExits(t *testing.T) {
 	f := newRunner(t, 10, 5, "-exit", "7")
 	f.runner.Operation = "apply"
 	f.runner.PlatformRoot = "/tmp/platform"
-	_, err := f.runner.Start(context.Background())
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
 		t.Fatalf("code %s", code)
 	}
@@ -303,7 +312,7 @@ func TestStartFailureWhenHostExits(t *testing.T) {
 
 func TestReadyTimeoutKillsHost(t *testing.T) {
 	f := newRunner(t, 1, 5, "-unhealthy")
-	_, err := f.runner.Start(context.Background())
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_START_FAILED" {
 		t.Fatalf("code %s", code)
 	}
@@ -323,7 +332,7 @@ func TestTypedStartupEnvelopeIsTheHostFailureCause(t *testing.T) {
 	f.runner.SecretEnv = func() (map[string]string, error) {
 		return map[string]string{"API_TOKEN": "fake-secret-token"}, nil
 	}
-	_, err := f.runner.Start(context.Background())
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	var typed *diag.Diag
 	if !errors.As(err, &typed) || typed.Code != "KB_CONFIG_INVALID" ||
 		typed.Meta["hostStartupCode"] != "KB_CONFIG_INVALID" ||
@@ -350,7 +359,7 @@ func TestStderrTailIsLimitedToFortyLines(t *testing.T) {
 
 func TestStatusReportsUnhealthy(t *testing.T) {
 	f := newRunner(t, 10, 5)
-	if _, err := f.runner.Start(context.Background()); err != nil {
+	if _, err := startProcessForTest(t, f.runner, context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	// Point the health probe at a dead path on the same server by stopping
@@ -367,7 +376,7 @@ func TestStateDirUnwritable(t *testing.T) {
 	blocker := filepath.Join(t.TempDir(), "file")
 	_ = os.WriteFile(blocker, nil, 0o600)
 	f.runner.State = State{Dir: filepath.Join(blocker, "state")}
-	_, err := f.runner.Start(context.Background())
+	_, err := startProcessForTest(t, f.runner, context.Background())
 	if code := launcherCode(t, err); code != "KB_HOST_STATE_DIR_UNWRITABLE" {
 		t.Fatalf("code %s", code)
 	}
@@ -429,7 +438,8 @@ func TestNewRunnerRunsTheHostTheReceiptDeclares(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runner.Spec.Command != filepath.Join(root, "bin/host") || runner.State != state || runner.SecretEnv == nil || runner.InstallationID != "stable-installation" {
+	rootState, stateErr := StateForRoot(state, root)
+	if runner.Spec.Command != filepath.Join(root, "bin/host") || stateErr != nil || runner.State != rootState || runner.SecretEnv == nil || runner.InstallationID != "stable-installation" {
 		t.Fatalf("runner: %#v", runner)
 	}
 }

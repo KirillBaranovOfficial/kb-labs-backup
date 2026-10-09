@@ -31,15 +31,16 @@ import (
 )
 
 type applyCommandInput struct {
-	Plan              planInput
-	Resolved          *resolvedPlan
-	Registry          string
-	SecretEnv         string
-	Executable        string
-	Progress          runtime.ProgressSink
-	JSON              bool
-	TelemetryEndpoint string
-	TelemetryConsent  bool
+	Plan                   planInput
+	Resolved               *resolvedPlan
+	Registry               string
+	SecretEnv              string
+	Executable             string
+	Progress               runtime.ProgressSink
+	JSON                   bool
+	TelemetryEndpoint      string
+	TelemetryConsent       bool
+	AdminPasswordGenerated bool
 }
 
 func executeApply(ctx context.Context, applyInput applyCommandInput, deps commandDependencies) (applyCommandResult, *diag.Diag) {
@@ -49,13 +50,17 @@ func executeApply(ctx context.Context, applyInput applyCommandInput, deps comman
 func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps commandDependencies) (streamCompletion, *diag.Diag) {
 	writer := stream.New(clikitcommand.StreamWriter(deps.Command))
 	deps.Runtime.Progress = streamProgress{writer: writer}
-	_, failure := executeApply(ctx, applyInput, deps)
+	result, failure := executeApply(ctx, applyInput, deps)
 	if failure != nil {
 		if failure.ProcessExitCode == diag.ExitOK {
 			failure.ProcessExitCode = diag.ExitError
 		}
 		if err := writer.Fail(failure); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
+		}
+	} else if result.FirstAdmin != nil {
+		if err := writer.Event(map[string]any{"firstAdmin": result.FirstAdmin}); err != nil {
+			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Apply result could not be written.")
 		}
 	}
 	exitCode := diag.ExitOK
@@ -143,10 +148,38 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if err := populateSecrets(store, input.SecretEnv); err != nil {
 		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SECRET_INPUT_INVALID", "secret input could not be stored", "use --secret-env requirement=ENV_VAR and set the environment variable", err)
 	}
+	adminEmail, securedAdmin := configuredFirstAdmin(planned.Request)
+	bootstrapCompleted := false
+	adminPasswordPresent := false
+	if securedAdmin {
+		var existsErr error
+		bootstrapCompleted, existsErr = store.Exists(secrets.BootstrapCompleted)
+		if existsErr == nil {
+			adminPasswordPresent, existsErr = store.Exists("gateway.bootstrap.password")
+		}
+		if existsErr != nil {
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator password could not be read from the secret store", "check that the platform root is writable, then rerun `kb-create install`", existsErr)
+		}
+		if bootstrapCompleted && !adminPasswordPresent {
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
+				"the secured Gateway was bootstrapped, but its stored first administrator password is missing",
+				fmt.Sprintf("Recover the account with `kb-create doctor --recover --platform-root %q`.", root), nil)
+		}
+	}
 	if err := secrets.EnsureGenerated(&planned, store); err != nil {
 		return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed,
 			"the session signing secret could not be generated or stored.",
 			"check that the platform root is writable, then rerun `kb-create install`", err)
+	}
+	if securedAdmin && !bootstrapCompleted && !adminPasswordPresent && input.AdminPasswordGenerated == false {
+		if err := store.Put(secrets.BootstrapGenerated, "true"); err != nil {
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the generated bootstrap credential state could not be stored", "check that the platform root is writable, then rerun `kb-create install`", err)
+		}
+	}
+	if securedAdmin && input.AdminPasswordGenerated {
+		if err := store.Put(secrets.BootstrapGenerated, "true"); err != nil {
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the generated bootstrap credential state could not be stored", "check that the platform root is writable, then rerun `kb-create install`", err)
+		}
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -177,9 +210,31 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	if runtimeDeps.Host == nil && planned.Host != nil {
 		runtimeDeps.Host = prober
 	}
+	if securedAdmin && !bootstrapCompleted && runtimeDeps.Host != nil {
+		runtimeDeps.Host = bootstrapOutcomeHost{starter: runtimeDeps.Host, store: store}
+	}
 	applied, applyErr := runtime.Apply(applyCtx, planned, runtimeDeps)
 	if applyErr != nil {
 		return applyCommandResult{}, applyDossier(root, correlationID, transcript.Path(), planned, applyErr)
+	}
+	var firstAdmin *firstAdminCredential
+	if securedAdmin {
+		bootstrapState, present, readErr := store.Get(secrets.BootstrapCompleted)
+		generated, generatedErr := store.Exists(secrets.BootstrapGenerated)
+		disclosed, disclosedErr := store.Exists(secrets.BootstrapDisclosed)
+		if readErr != nil || generatedErr != nil || disclosedErr != nil {
+			return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator bootstrap state could not be read", "check that the platform root is writable, then rerun `kb-create install`", errors.Join(readErr, generatedErr, disclosedErr))
+		}
+		if present && bootstrapState == "provisioned" && generated && !disclosed {
+			password, passwordPresent, passwordErr := store.Get("gateway.bootstrap.password")
+			if passwordErr != nil || !passwordPresent {
+				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the generated first administrator password could not be read", "check that the platform root is writable, then rerun `kb-create install`", passwordErr)
+			}
+			if err := store.Put(secrets.BootstrapDisclosed, "true"); err != nil {
+				return applyCommandResult{}, contracts.NewDiag(contracts.CodeApplyFailed, "the first administrator credential disclosure could not be recorded", "check that the platform root is writable, then rerun `kb-create install`", err)
+			}
+			firstAdmin = &firstAdminCredential{Email: adminEmail, Password: password, ShownOnce: true}
+		}
 	}
 	if planned.Host != nil {
 		roots := make([]gateway.Root, 0, 2)
@@ -223,7 +278,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	outcome, errorCode = "success", ""
 	return applyCommandResult{OK: true, Operation: "apply", Receipt: applied, LogPath: transcript.Path(),
 		Profile: applied.Plan.ServiceGraph.Profile, Services: applied.Plan.ServiceGraph.Services,
-		Shim: optionalShim(input.Executable, shimResult)}, nil
+		Shim: optionalShim(input.Executable, shimResult), FirstAdmin: firstAdmin}, nil
 }
 
 func optionalShim(executable string, result shim.EnsureResult) *shim.EnsureResult {

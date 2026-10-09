@@ -464,6 +464,10 @@ func Compile(value Scenario, state State, base contracts.InstallRequest) (contra
 		if !exists {
 			raw = field.Default
 		}
+		if field.Secret && field.Generate && len(raw) == 0 {
+			base.SecretInputs = append(base.SecretInputs, field.Requirement)
+			continue
+		}
 		if field.Required && len(raw) == 0 {
 			return contracts.InstallRequest{}, fmt.Errorf("required scenario field %q is missing", field.ID)
 		}

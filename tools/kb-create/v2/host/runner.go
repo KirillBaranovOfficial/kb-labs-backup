@@ -83,34 +83,56 @@ func NewRunner(platformRoot string, state State) (*ProcessRunner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ProcessRunner{Spec: spec, State: state, PlatformRoot: filepath.Clean(root),
+	root = filepath.Clean(root)
+	state, err = StateForRoot(state, root)
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessRunner{Spec: spec, State: state, PlatformRoot: root,
 		InstallationID: active.InstallationID, SecretEnv: store.Environment}, nil
 }
 
-// Prober is the trial run used to validate a plan's host before its receipt is
-// committed: the host starts under a scratch state directory (so it never
-// touches the pid file of a real, supervised host), must become healthy, and is
-// stopped again. A host that is already running on the same port fails the
-// probe with KB_INSTALL_PORT_IN_USE, which is the right answer.
+// Prober starts the plan's host under its installation-owned state directory.
+// Runtime stops it if verification fails and keeps it running after commit.
 type Prober struct {
 	PlatformRoot string
 	State        State
 	Operation    string
 }
 
-// Probe starts and stops the declared host once.
-func (p Prober) Probe(ctx context.Context, declared contracts.HostSpec) error {
+// Start launches the declared host and returns its cleanup operation.
+func (p Prober) Start(ctx context.Context, declared contracts.HostSpec) (func() error, error) {
 	spec, err := NewSpec(p.PlatformRoot, declared)
 	if err != nil {
-		return specInvalid(err)
+		return nil, specInvalid(err)
+	}
+	root, err := filepath.Abs(p.PlatformRoot)
+	if err != nil {
+		return nil, err
+	}
+	state, err := StateForRoot(p.State, root)
+	if err != nil {
+		return nil, err
 	}
 	store := secrets.Store{PlatformRoot: p.PlatformRoot}
-	runner := &ProcessRunner{Spec: spec, State: State{Dir: filepath.Join(p.State.Dir, "probe")}, PlatformRoot: p.PlatformRoot, SecretEnv: store.Environment, Operation: p.Operation}
+	runner := &ProcessRunner{Spec: spec, State: state, PlatformRoot: filepath.Clean(root), SecretEnv: store.Environment, Operation: p.Operation}
 	if _, err := runner.Start(ctx); err != nil {
+		return nil, err
+	}
+	return func() error {
+		_, err := runner.Stop(context.Background())
+		return err
+	}, nil
+}
+
+// Probe starts and stops the declared host for update staging without changing
+// the prior running state.
+func (p Prober) Probe(ctx context.Context, declared contracts.HostSpec) error {
+	stop, err := p.Start(ctx, declared)
+	if err != nil {
 		return err
 	}
-	_, err = runner.Stop(context.Background())
-	return err
+	return stop()
 }
 
 func specInvalid(cause error) *diag.Diag {
