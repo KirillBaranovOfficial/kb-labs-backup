@@ -184,6 +184,143 @@ func TestMergeReleaseHistoryCarriesPlatformSDKAndCompatibilityEvidence(t *testin
 	}
 }
 
+func TestRunSealsThreeReleaseHistoryIndexesWithoutRebindingHistoricalSDKs(t *testing.T) {
+	input, _, manifestRoot := validReleaseSealerFixture(t)
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.json")
+	update := filepath.Join(dir, "update.json")
+	jump := filepath.Join(dir, "jump.json")
+	for index, version := range []string{"2.120.1", "2.120.2", "2.120.3"} {
+		writeSealerCandidate(t, input, manifestRoot, version, true)
+		output := []string{first, update, jump}[index]
+		var err error
+		switch index {
+		case 0:
+			err = run(input, output, manifestRoot)
+		case 1:
+			err = run(input, output, manifestRoot, first)
+		case 2:
+			err = run(input, output, manifestRoot, first, update)
+		}
+		if err != nil {
+			t.Fatalf("seal candidate %s in three-index history chain: %v", version, err)
+		}
+	}
+	sealed, err := catalog.LoadFile(jump)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sealed.Platforms) != 3 || len(sealed.SDKs) != 3 {
+		t.Fatalf("jump index lost carried release history: platforms=%d SDKs=%d", len(sealed.Platforms), len(sealed.SDKs))
+	}
+	var sharedBinary catalog.CompatibilityLabel
+	for _, label := range sealed.Compatibility.Labels {
+		if label.ID == "binary:kb-create@2.120.1:darwin/arm64" {
+			sharedBinary = label
+			break
+		}
+	}
+	for _, version := range []string{"2.120.1", "2.120.2", "2.120.3"} {
+		if !compatibilityRelationExists(sharedBinary.Requires, "platform@"+version) || !compatibilityRelationExists(sharedBinary.Requires, "sdk@"+version) {
+			t.Fatalf("shared binary label did not retain platform/SDK relation for %s: %#v", version, sharedBinary.Requires)
+		}
+	}
+}
+
+func compatibilityRelationExists(relations []catalog.CompatibilityRelation, wanted string) bool {
+	for _, relation := range relations {
+		if relation.Label == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunRejectsUnrelatedTargetSDKForShippedBinary(t *testing.T) {
+	input, output, manifestRoot := validReleaseSealerFixture(t)
+	writeSealerCandidate(t, input, manifestRoot, "2.120.3", false)
+	if err := run(input, output, manifestRoot); err == nil {
+		t.Fatal("sealer accepted a target SDK unrelated to the shipped binary")
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("invalid target index was written: %v", err)
+	}
+}
+
+func writeSealerCandidate(t *testing.T, inputPath, manifestRoot, version string, relateBinarySDK bool) {
+	t.Helper()
+	data, err := os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source catalog.Catalog
+	if err := json.Unmarshal(data, &source); err != nil {
+		t.Fatal(err)
+	}
+	source.Channels[contracts.ChannelStable] = version
+	source.Platforms[0].Version = version
+	source.Platforms[0].SDKRange = ">=2.120.0 <3.0.0"
+	source.Platforms[0].Binaries = []catalog.Binary{{ID: "kb-create", OS: "darwin", Arch: "arm64", URL: "https://example.test/kb-create", SHA256: "binary-" + version, Filename: "kb-create"}}
+	for i := range source.Platforms[0].Members {
+		source.Platforms[0].Members[i].Version = version
+	}
+	for i := range source.SDKs {
+		source.SDKs[i].Version = version
+	}
+	for i := range source.Plugins {
+		source.Plugins[i].Version = version
+	}
+	for i := range source.Adapters {
+		source.Adapters[i].Version = version
+	}
+	for i := range source.Adapters {
+		source.Adapters[i].Component.Version = version
+	}
+	sdkID, platformID := "sdk@"+version, "platform@"+version
+	labels := []catalog.CompatibilityLabel{
+		{ID: platformID, Kind: "platform", ArtifactID: "platform", Version: version, Requires: []catalog.CompatibilityRelation{{Label: sdkID}}, Status: "prepared", ValidatedBy: []string{"stage"}},
+		{ID: sdkID, Kind: "sdk", ArtifactID: "sdk", Version: version, Status: "prepared", ValidatedBy: []string{"stage"}},
+	}
+	binaryRequires := []catalog.CompatibilityRelation{{Label: platformID}}
+	if relateBinarySDK {
+		binaryRequires = append(binaryRequires, catalog.CompatibilityRelation{Label: sdkID})
+	}
+	labels = append(labels, catalog.CompatibilityLabel{ID: "binary:kb-create@2.120.1:darwin/arm64", Kind: "binary", ArtifactID: "kb-create", Version: "2.120.1", Requires: binaryRequires, Status: "prepared", ValidatedBy: []string{"stage"}})
+	source.Compatibility = &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: labels}
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inputPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = filepath.WalkDir(manifestRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || entry.Name() != "kb-create.manifest.json" {
+			return nil
+		}
+		manifestBytes, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var manifest map[string]any
+		if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+			return err
+		}
+		manifest["version"] = version
+		updated, err := json.Marshal(manifest)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(path, updated, 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSealingFailureEnvelopePreservesValidationReason(t *testing.T) {
 	reason := "secret manifest requirement gateway.jwt must declare env and services"
 	envelope, err := sealingFailureEnvelope(&sealingFailure{
