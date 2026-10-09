@@ -22,10 +22,14 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.config = self.root / ".kb/kb.config.jsonc"
         self.secrets = self.root / ".kb/v2/secrets.env"
         self.receipt = self.root / ".kb/v2/receipt.json"
+        self.update_index = self.root / "update-index.json"
+        self.update_index.write_text(json.dumps({"platforms": [{"version": "3.0.1", "releaseNotes": "Patch notes."}]}))
         self._write_receipt("3.0.0")
         self.commands: list[list[str]] = []
         self.user_checks = 0
         self.project_user_checks: list[int] = []
+        self.running_version = "3.0.0"
+        self.pending_restart = None
 
     def tearDown(self):
         self.temp.cleanup()
@@ -60,14 +64,25 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             stdout = json.dumps({"ok": True, "plan": self._plan("3.0.1")})
         elif args[1] == "update":
             update_count = sum(command[1] == "update" for command in self.commands)
-            self.config.write_text('{"stable":true,"platform":"3.0.1"}\n')
-            self._write_receipt("3.0.1")
-            if "--json" not in args:
-                stdout = "Platform update completed.\n"
-                return subprocess.CompletedProcess(args, 0, stdout, "")
-            stdout = json.dumps({"ok": True, "receipt": {"plan": self._plan("3.0.1")},
-                                 "snapshot": {"id": f"snapshot-{update_count}"},
-                                 "hostRestarted": True, "logPath": "/logs/update.log"})
+            if json.loads(self.receipt.read_text())["plan"]["serviceGraph"]["platformVersion"] == "3.0.1":
+                if "--json" not in args:
+                    stdout = "Platform is already up to date.\n"
+                    return subprocess.CompletedProcess(args, 0, stdout, "")
+                stdout = json.dumps({"ok": True, "alreadyUpToDate": True,
+                                     "receipt": {"plan": self._plan("3.0.1")},
+                                     "hostRestarted": False})
+            else:
+                self._write_receipt("3.0.1")
+                self.pending_restart = {"services": [{"id": "gateway", "runningVersion": "3.0.0"}],
+                                        "installedVersion": "3.0.1",
+                                        "command": "kb-create restart --platform-root ROOT"}
+                if "--json" not in args:
+                    stdout = "Platform update completed.\n"
+                    return subprocess.CompletedProcess(args, 0, stdout, "")
+                stdout = json.dumps({"ok": True, "receipt": {"plan": self._plan("3.0.1")},
+                                     "snapshot": {"id": f"snapshot-{update_count}"},
+                                     "pendingRestart": self.pending_restart,
+                                     "hostRestarted": False, "logPath": "/logs/update.log"})
         elif args[1] == "rollback":
             if "missing-journey-snapshot" in args:
                 stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_NO_SNAPSHOT", "message": "Snapshot is unknown.", "hint": "restore a named snapshot", "correlationId": "c-missing"}})
@@ -75,16 +90,24 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             else:
                 self.config.write_text('{"stable":true}\n')
                 self._write_receipt("3.0.0")
+                self.running_version = "3.0.0"
                 if "--json" not in args:
                     return subprocess.CompletedProcess(args, 0, "Platform rollback completed.\n", "")
                 stdout = json.dumps({"ok": True, "snapshot": {"id": "snapshot-1"},
                                      "hostRestarted": True, "logPath": "/logs/rollback.log"})
         elif args[1] == "status":
-            stdout = json.dumps({"ok": True, "running": True, "reachable": True})
+            installed = json.loads(self.receipt.read_text())["plan"]["serviceGraph"]["platformVersion"]
+            stdout = json.dumps({"ok": True, "running": True, "reachable": True,
+                                 "runningVersion": self.running_version, "installedVersion": installed,
+                                 "pendingRestart": self.pending_restart if self.running_version != installed else None})
         elif args[1] == "restart":
-            stdout = json.dumps({"ok": True, "operation": "restart", "host": {"pid": 1234}})
+            self.running_version = json.loads(self.receipt.read_text())["plan"]["serviceGraph"]["platformVersion"]
+            self.pending_restart = None
+            stdout = json.dumps({"ok": True, "operation": "restart", "host": {"pid": 1234},
+                                 "runningVersion": self.running_version})
         elif args[1] == "doctor":
-            stdout = json.dumps({"ok": True, "platform": {"ok": True}})
+            pending = self.pending_restart if self.running_version != json.loads(self.receipt.read_text())["plan"]["serviceGraph"]["platformVersion"] else None
+            stdout = json.dumps({"ok": True, "platform": {"ok": True}, "pendingRestart": pending})
         elif args[1] == "adapter":
             stdout = json.dumps({"ok": True, "adapters": []})
         elif args[1] == "project":
@@ -107,7 +130,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
-            update_index=self.root / "update-index.json",
+            update_index=self.update_index,
             request_file=self.root / "request.json", base_version="3.0.0", updated_version="3.0.1",
             run_command=self.fake_kb, verify_user=verify_user,
         )
@@ -126,23 +149,26 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         )
         self.assertEqual(
             set(steps["verify restored receipt, config, host, and project command"]["details"]["configSha256"]),
-            {"beforeUpdate", "afterUpdateHostRestart", "afterRollbackHostRestart", "afterMissingSnapshotRecovery"},
+            {"beforeUpdate", "afterUpdateBeforeRestart", "afterUpdateRestart", "afterRollbackHostRestart", "afterMissingSnapshotRecovery"},
         )
         checkpoints = steps["verify restored receipt, config, host, and project command"]["details"]["configSha256"]
-        self.assertNotEqual(checkpoints["beforeUpdate"], checkpoints["afterUpdateHostRestart"])
+        self.assertEqual(checkpoints["beforeUpdate"], checkpoints["afterUpdateBeforeRestart"])
+        self.assertEqual(checkpoints["beforeUpdate"], checkpoints["afterUpdateRestart"])
         self.assertEqual(checkpoints["beforeUpdate"], checkpoints["afterRollbackHostRestart"])
         self.assertEqual(checkpoints["afterRollbackHostRestart"], checkpoints["afterMissingSnapshotRecovery"])
         secret_checkpoints = steps["verify restored receipt, config, host, and project command"][
             "details"]["installationSecretsSha256"]
-        self.assertEqual(secret_checkpoints["beforeUpdate"], secret_checkpoints["afterUpdateHostRestart"])
+        self.assertEqual(secret_checkpoints["beforeUpdate"], secret_checkpoints["afterUpdateBeforeRestart"])
+        self.assertEqual(secret_checkpoints["beforeUpdate"], secret_checkpoints["afterUpdateRestart"])
         self.assertEqual(secret_checkpoints["beforeUpdate"], secret_checkpoints["afterRollbackHostRestart"])
         self.assertEqual(secret_checkpoints["afterRollbackHostRestart"], secret_checkpoints["afterMissingSnapshotRecovery"])
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
-        self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 8)} |
+        self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 9)} |
+                         {"S-214.10"} |
                          {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.10", "S-203.11",
                          "PC-001.13", "PC-001.14", "PC-001.15"})
         self.assertEqual([command[1] for command in self.commands], [
-            "status", "project", "plan", "update", "update", "status", "adapter", "project", "plan", "update",
+            "status", "project", "plan", "update", "update", "status", "doctor", "adapter", "project", "plan", "update", "restart", "status",
             "rollback", "rollback", "rollback", "status", "project", "adapter", "doctor", "restart", "adapter",
         ])
         for command in (command for command in self.commands if command[1] in ("update", "rollback", "restart")):
@@ -158,7 +184,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertIn("--json", next(command for command in self.commands if command[1] == "rollback" and "--json" in command))
         self.assertEqual(self.user_checks, 3)
         self.assertEqual(self.project_user_checks, [1, 1, 2])
-        self.assertNotIn("S-041.4", steps["verify updated receipt, config, and host status"]["cases"])
+        self.assertNotIn("S-041.4", steps["verify installed version and pending restart while old host serves"]["cases"])
         self.assertIn("S-041.4", steps["verify restored receipt, config, host, and project command"]["cases"])
 
     def test_failed_initial_login_does_not_claim_saved_session_survives_update(self):
@@ -173,7 +199,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
-            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=self.fake_kb, verify_user=failed_login,
         )
         steps = {step["name"]: step for step in result.result().steps}
@@ -199,7 +225,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
-            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=missing_initial_status,
         )
         steps = {step["name"]: step for step in result.result().steps}
@@ -217,7 +243,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
-            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_after_rollback,
         )
         verification = next(step for step in result.result().steps if "S-024.3" in step["cases"])
@@ -235,7 +261,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
-            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_recovery,
         )
         verification = next(step for step in result.result().steps if "S-024.3" in step["cases"])
@@ -254,7 +280,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
-            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_update,
         )
         failure = result.result().first_failure
@@ -270,7 +296,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="local", launcher="kb-create", kb_binary="kb", platform_root=self.root,
-            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_during_rollback,
         )
         failure = result.result().first_failure
@@ -287,14 +313,14 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
-            update_index=self.root / "update-index.json",
+            update_index=self.update_index,
             request_file=self.root / "request.json", base_version="3.0.0", updated_version="3.0.1",
             run_command=broken,
         )
         report = result.result()
         self.assertEqual(report.status, "FAIL")
         self.assertEqual(report.first_failure["name"], "plan the newer sealed release")
-        self.assertEqual(report.first_failure["cases"], ["S-023.2"])
+        self.assertEqual(report.first_failure["cases"], ["S-023.2", "S-214.10"])
         self.assertIn("KB_TEST_PLAN_REJECTED", report.first_failure["message"])
 
     def test_repeat_plan_drift_names_changed_plan_fields_before_mutation(self):
@@ -309,7 +335,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
 
         result = run_platform_update_steps(
             mode="secured", launcher="kb-create", kb_binary="kb", platform_root=self.root,
-            update_index=self.root / "update-index.json", request_file=self.root / "request.json",
+            update_index=self.update_index, request_file=self.root / "request.json",
             base_version="3.0.0", updated_version="3.0.1", run_command=drifting,
         )
         failure = result.result().first_failure

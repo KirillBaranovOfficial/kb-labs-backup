@@ -1,4 +1,5 @@
 export const manifest = {
+  schema: 'kb.adapter/1',
   manifestVersion: '1.0.0',
   id: 'e2e-llm-deterministic',
   name: 'E2E Deterministic LLM',
@@ -6,7 +7,6 @@ export const manifest = {
   description: 'Fixed conventional commit plans for installed-platform journeys',
   type: 'core',
   implements: 'ILLM',
-  defaultFor: ['llm'],
   capabilities: { streaming: false },
   configSchema: {},
 }
