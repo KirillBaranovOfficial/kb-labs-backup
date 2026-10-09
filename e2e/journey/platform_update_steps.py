@@ -92,6 +92,8 @@ def run_platform_update_steps(
     snapshot_id = ""
     updated_plan_hash = ""
     updated_plan: dict = {}
+    pending_restart_services: list[dict] = []
+    pending_restart_object: dict = {}
     config_checkpoints: dict[str, str | None] = {}
     secret_checkpoints: dict[str, str | None] = {}
     saved_user_session_established = False
@@ -155,16 +157,24 @@ def run_platform_update_steps(
                  cases=["S-023.1"], details=checkpoint_details)
 
     def plan_new_release() -> None:
+        index = json.loads(update_index.read_text())
+        releases = [release for release in index.get("platforms", [])
+                    if release.get("version") == updated_version]
+        if not releases or not isinstance(releases[0].get("releaseNotes"), str):
+            raise RuntimeError("sealed platform release omitted markdown releaseNotes")
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(update_index),
                                           "--input", str(request_file)], "plan update")
         graph = plan.get("plan", {}).get("serviceGraph", {})
         if graph.get("platformVersion") != updated_version:
             raise RuntimeError(f"update plan did not resolve platform {updated_version}: {graph.get('platformVersion')!r}")
 
-    journey.step("plan the newer sealed release", "platform.update", plan_new_release, cases=["S-023.2"])
+    journey.step("plan the newer sealed release", "platform.update", plan_new_release,
+                 cases=["S-023.2", "S-214.10"],
+                 requires=("candidate provenance", "launcher version", "start platform host", "start host",
+                           "verify installed project registration"))
 
     def update() -> None:
-        nonlocal snapshot_id, updated_plan_hash, updated_plan
+        nonlocal snapshot_id, updated_plan_hash, updated_plan, pending_restart_services, pending_restart_object
         result = _json_command(run_command, [launcher, "update", "--platform-root", root, "--json", "--index", str(update_index),
                                             "--input", str(request_file)], "update platform")
         snapshot = result.get("snapshot")
@@ -177,18 +187,32 @@ def run_platform_update_steps(
         if not updated_plan_hash:
             raise RuntimeError("update receipt did not include its resolved plan hash")
         updated_plan = receipt["plan"]
-        if result.get("hostRestarted") is not True:
-            raise RuntimeError("update did not report that the running host restarted")
+        if result.get("hostRestarted") is not False:
+            raise RuntimeError("update stopped or restarted a running host")
+        pending = result.get("pendingRestart")
+        if not isinstance(pending, dict) or not isinstance(pending.get("services"), list) or not pending["services"]:
+            raise RuntimeError("update omitted pendingRestart.services")
+        if set(pending) != {"services", "installedVersion", "command"}:
+            raise RuntimeError("update pendingRestart does not match the exact contract shape")
+        if any(not isinstance(item, dict) or set(item) != {"id", "runningVersion"}
+               for item in pending["services"]):
+            raise RuntimeError("update pendingRestart service entries do not match the exact contract shape")
+        if pending.get("installedVersion") != updated_version or not pending.get("command"):
+            raise RuntimeError("update pendingRestart omitted installedVersion or command")
+        pending_restart_services = pending["services"]
+        pending_restart_object = pending
+        if any(not item.get("id") or item.get("runningVersion") != base_version for item in pending_restart_services):
+            raise RuntimeError("update pendingRestart did not identify each old running service version")
         if not result.get("logPath"):
             raise RuntimeError("update result did not include its operation log path")
         snapshot_id = str(snapshot["id"])
-        record_config_checkpoint("afterUpdateHostRestart")
-        record_secret_checkpoint("afterUpdateHostRestart")
+        record_config_checkpoint("afterUpdateBeforeRestart")
+        record_secret_checkpoint("afterUpdateBeforeRestart")
         human = run_command([launcher, "update", "--platform-root", root, "--index", str(update_index), "--input", str(request_file)])
-        if human.returncode != 0 or "Platform update completed." not in human.stdout:
-            raise RuntimeError("human update did not show its completion summary")
+        if human.returncode != 0 or "already up to date" not in human.stdout.lower():
+            raise RuntimeError("human repeated update did not show its already-current summary")
 
-    journey.step("update the running host and save its recovery snapshot", "platform.update", update,
+    journey.step("stage update and leave the running host on its current version", "platform.update", update,
                  cases=["S-023.3", "S-023.7", "S-024.1", "S-203.10"], details=checkpoint_details)
 
     def verify_updated_install() -> None:
@@ -203,23 +227,34 @@ def run_platform_update_steps(
             raise RuntimeError(f"active receipt is {version!r}, expected {updated_version}")
         status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"], "updated status")
         if status.get("running") is not True or status.get("reachable") is not True:
-            raise RuntimeError("kb-create status did not confirm the updated host is healthy")
+            raise RuntimeError("kb-create status did not confirm the old host is still healthy")
+        if status.get("runningVersion") != base_version or status.get("installedVersion") != updated_version:
+            raise RuntimeError("kb-create status did not distinguish running and installed versions")
+        pending = status.get("pendingRestart")
+        if not isinstance(pending, dict) or pending.get("installedVersion") != updated_version:
+            raise RuntimeError("kb-create status did not report the pending restart object")
+        if pending != pending_restart_object:
+            raise RuntimeError("kb-create status pendingRestart differs from the update result")
+        doctor_status = _json_command(run_command, [launcher, "doctor", "--platform-root", root, "--json"],
+                                      "doctor before restart")
+        if doctor_status.get("pendingRestart") != pending_restart_object:
+            raise RuntimeError("kb-create doctor pendingRestart differs from the update result")
         config_hash = _hash(config_paths[0])
         verified_hash = receipt.get("verification", {}).get("configSha256")
-        if not config_hash or config_hash != verified_hash:
-            raise RuntimeError("generated config is missing or does not match the updated receipt verification hash")
+        if config_hash != config_checkpoints.get("beforeUpdate"):
+            raise RuntimeError("generated config changed before the host restart")
         before_secret = secret_checkpoints.get("beforeUpdate")
-        after_secret = secret_checkpoints.get("afterUpdateHostRestart")
+        after_secret = secret_checkpoints.get("afterUpdateBeforeRestart")
         if before_secret is None or after_secret is None:
             raise RuntimeError("installation-secret fingerprint is unavailable before or after update")
         if before_secret != after_secret:
             raise RuntimeError(
                 "installation-secret fingerprint changed during update: "
-                f"beforeUpdate={before_secret}, afterUpdateHostRestart={after_secret}"
+                f"beforeUpdate={before_secret}, afterUpdateBeforeRestart={after_secret}"
             )
         _json_command(run_command, [kb_binary, "adapter", "list", "--json"], "adapter list after update")
 
-    journey.step("verify updated receipt, config, and host status", "platform.update", verify_updated_install,
+    journey.step("verify installed version and pending restart while old host serves", "platform.update", verify_updated_install,
                  cases=["S-023.4", "PC-001.13"])
 
     def project_command() -> None:
@@ -264,8 +299,8 @@ def run_platform_update_steps(
                                             "--input", str(request_file)], "repeat update")
         receipt = result.get("receipt")
         snapshot = result.get("snapshot")
-        if not isinstance(receipt, dict) or not isinstance(snapshot, dict):
-            raise RuntimeError("repeat update did not return a verified receipt and snapshot")
+        if not isinstance(receipt, dict):
+            raise RuntimeError("repeat update did not return its current receipt")
         plan = receipt.get("plan", {})
         if plan.get("serviceGraph", {}).get("platformVersion") != updated_version:
             raise RuntimeError("repeat update changed the resolved platform version")
@@ -276,13 +311,28 @@ def run_platform_update_steps(
                 f"repeat update changed the resolved plan hash: first={updated_plan_hash!r}, "
                 f"repeat={repeated_plan_hash!r}, changed fields={changed_fields}"
             )
-        if result.get("hostRestarted") is not True:
-            raise RuntimeError("repeat update did not report that the running host restarted")
-        if not snapshot.get("id"):
-            raise RuntimeError("repeat update did not return its own snapshot ID")
+        if result.get("alreadyUpToDate") is not True:
+            raise RuntimeError("repeat update did not report that the platform is already up to date")
+        if result.get("hostRestarted") is not False:
+            raise RuntimeError("already-current update restarted services")
 
     journey.step("repeat the update without version drift", "platform.update", repeat_update,
                  cases=["S-023.6"])
+
+    def restart_updated_host() -> None:
+        result = _json_command(run_command, [launcher, "restart", "--platform-root", root, "--json"],
+                               "restart after update")
+        if result.get("operation") != "restart" or result.get("runningVersion") != updated_version:
+            raise RuntimeError("explicit restart did not bring up the installed version")
+        status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
+                               "status after update restart")
+        if status.get("runningVersion") != updated_version or status.get("pendingRestart") is not None:
+            raise RuntimeError("status did not clear the pending restart after restart")
+        record_config_checkpoint("afterUpdateRestart")
+        record_secret_checkpoint("afterUpdateRestart")
+
+    journey.step("explicitly restart services onto the installed version", "platform.restart",
+                 restart_updated_host, cases=["S-023.8"])
 
     def rollback() -> None:
         if not snapshot_id:
@@ -358,7 +408,7 @@ def run_platform_update_steps(
                 f"afterRollbackHostRestart={after_rollback}, afterMissingSnapshotRecovery={after_recovery}"
             )
         before_secret = secret_checkpoints.get("beforeUpdate")
-        after_update_secret = secret_checkpoints.get("afterUpdateHostRestart")
+        after_update_secret = secret_checkpoints.get("afterUpdateBeforeRestart")
         after_rollback_secret = secret_checkpoints.get("afterRollbackHostRestart")
         after_recovery_secret = secret_checkpoints.get("afterMissingSnapshotRecovery")
         if before_secret is None:
@@ -368,7 +418,7 @@ def run_platform_update_steps(
         if before_secret != after_update_secret:
             raise RuntimeError(
                 "installation-secret fingerprint changed during update: "
-                f"beforeUpdate={before_secret}, afterUpdateHostRestart={after_update_secret}"
+                f"beforeUpdate={before_secret}, afterUpdateBeforeRestart={after_update_secret}"
             )
         if before_secret != after_rollback_secret:
             raise RuntimeError(

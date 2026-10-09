@@ -823,8 +823,9 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
     scratch = platform_root.parent / "installer-case-fixtures"
     scratch.mkdir(parents=True, exist_ok=True)
 
-    def exact_step(step_id: str, action: Callable[[], None], name: str, capability: str = "platform.install") -> None:
-        journey.step(name, capability, action, cases=[step_id])
+    def exact_step(name: str, action: Callable[[], None], *, capability: str = "platform.install",
+                   cases: list[str], requires: tuple[str, ...] = ()) -> None:
+        journey.step(name, capability, action, cases=cases, requires=requires)
 
     def strict_matrix_and_range() -> None:
         strict = run_command([launcher, "plan", "--json", "--index", str(matrix),
@@ -848,7 +849,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         if compatible.get("plan", {}).get("serviceGraph", {}).get("platformVersion") != "3.2.0":
             raise RuntimeError("compatible policy did not resolve the indexed SDK in the declared range")
 
-    exact_step("S-053.2", strict_matrix_and_range, "compare strict and compatible SDK matrix selection")
+    exact_step("compare strict and compatible SDK matrix selection", strict_matrix_and_range, capability="platform.install", cases=["S-053.2"])
 
     def incompatible_adapter() -> None:
         result = run_command([launcher, "plan", "--json", "--index", str(matrix),
@@ -865,7 +866,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         if error.get("hint") != "Choose compatible versions or pass an explicit supported provider.":
             raise RuntimeError("adapter range refusal omitted its correction hint")
 
-    exact_step("S-053.4", incompatible_adapter, "refuse an adapter outside its platform range")
+    exact_step("refuse an adapter outside its platform range", incompatible_adapter, capability="platform.install", cases=["S-053.4"])
 
     def installed_component_update(kind: str, component: str, claim: str) -> None:
         root = scratch / f"{claim.replace('.', '-')}-root"
@@ -891,8 +892,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 or before_directories != after_directories):
             raise RuntimeError(f"incompatible {kind} update mutated the active receipt or install root")
 
-    exact_step("S-053.3", lambda: installed_component_update("plugin", "fixture-compat", "S-053.3"),
-               "refuse update beyond an installed plugin range", "platform.update")
+    exact_step("refuse update beyond an installed plugin range", lambda: installed_component_update("plugin", "fixture-compat", "S-053.3"), capability="platform.update", cases=["S-053.3"])
 
     def sdk_and_binary_ranges() -> None:
         sdk_result = run_command([launcher, "plan", "--json", "--index", str(matrix),
@@ -916,10 +916,9 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         if binary_meta.get("kind") != "binary" or binary_meta.get("id") != "kb-create" or not binary_error.get("hint"):
             raise RuntimeError(f"missing binary error omitted its binary identity or hint: {binary_error}")
 
-    exact_step("S-053.5", sdk_and_binary_ranges, "refuse an SDK outside range and a release missing the host binary")
+    exact_step("refuse an SDK outside range and a release missing the host binary", sdk_and_binary_ranges, capability="platform.install", cases=["S-053.5"])
 
-    exact_step("S-053.6", lambda: installed_component_update("adapter", "fixture-adapter", "S-053.6"),
-               "refuse update beyond an installed adapter range", "platform.update")
+    exact_step("refuse update beyond an installed adapter range", lambda: installed_component_update("adapter", "fixture-adapter", "S-053.6"), capability="platform.update", cases=["S-053.6"])
 
     def missing_host_binary_before_mutation() -> None:
         target = scratch / "missing-host-root"
@@ -937,7 +936,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         if meta.get("kind") != "binary" or meta.get("id") != "kb-create" or before != after or before_exists != after_exists:
             raise RuntimeError("missing binary refusal omitted its kind/id or changed the isolated install root")
 
-    exact_step("S-053.7", missing_host_binary_before_mutation, "refuse planning without the runner binary")
+    exact_step("refuse planning without the runner binary", missing_host_binary_before_mutation, capability="platform.install", cases=["S-053.7"])
 
     def incompatible_plugin_request() -> None:
         result = run_command([launcher, "plan", "--json", "--index", str(matrix),
@@ -950,7 +949,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         if not error.get("hint"):
             raise RuntimeError("strict incompatible plugin request omitted its correction hint")
 
-    exact_step("S-181.5", incompatible_plugin_request, "refuse a strict incompatible plugin request before mutation")
+    exact_step("refuse a strict incompatible plugin request before mutation", incompatible_plugin_request, capability="platform.install", cases=["S-181.5"])
 
     def doctor_finding(*, secret: bool = False) -> None:
         root = scratch / ("s025-secret" if secret else "s025-required")
@@ -975,8 +974,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 raise RuntimeError("doctor output or isolated files serialized secret material or its value assignment")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("S-025.1", lambda: doctor_finding(), "diagnose a missing required non-secret config value")
-    exact_step("S-025.2", lambda: doctor_finding(secret=True), "diagnose missing secret input without exposing a value")
+    exact_step("diagnose a missing required non-secret config value", lambda: doctor_finding(), capability="platform.install", cases=["S-025.1"])
+    exact_step("diagnose missing secret input without exposing a value", lambda: doctor_finding(secret=True), capability="platform.install", cases=["S-025.2"])
 
     def doctor_hostspec_invalid() -> None:
         root = scratch / "s025-hostspec-invalid"
@@ -998,7 +997,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("doctor did not report the invalid receipt host specification as an unhealthy diagnosis")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("S-025.3", doctor_hostspec_invalid, "diagnose an invalid host specification from the active receipt")
+    exact_step("diagnose an invalid host specification from the active receipt", doctor_hostspec_invalid, capability="platform.install", cases=["S-025.3"])
 
     def doctor_safe_default() -> None:
         root = scratch / "s025-safe-default"
@@ -1014,7 +1013,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("doctor --fix did not write the manifest-declared safe default")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("S-025.4", doctor_safe_default, "apply only a manifest-declared safe default")
+    exact_step("apply only a manifest-declared safe default", doctor_safe_default, capability="platform.install", cases=["S-025.4"])
 
     def doctor_required_input_after_projection_repair() -> None:
         root = scratch / "s025-required-after-fix"
@@ -1033,7 +1032,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("doctor --fix serialized a secret value")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("S-025.5", doctor_required_input_after_projection_repair, "preserve unresolved user input in doctor-fix JSON")
+    exact_step("preserve unresolved user input in doctor-fix JSON", doctor_required_input_after_projection_repair, capability="platform.install", cases=["S-025.5"])
 
     def doctor_failure_dossier() -> None:
         root = scratch / "s025-failure"
@@ -1053,7 +1052,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("diagnostic dossier serialized a secret value")
         shutil.rmtree(root, ignore_errors=True)
 
-    exact_step("S-025.6", doctor_failure_dossier, "inspect structured recovery failure diagnostics", "platform.recovery")
+    exact_step("inspect structured recovery failure diagnostics", doctor_failure_dossier, capability="platform.recovery", cases=["S-025.6"])
 
     def install_with_project() -> None:
         root, project = scratch / "s187-with-project", scratch / "s187-project"
@@ -1071,7 +1070,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         finally:
             cleanup_installer_fixture_root(root, launcher, run_command)
 
-    exact_step("S-187.4", install_with_project, "install non-interactively and register a project", "platform.install")
+    exact_step("install non-interactively and register a project", install_with_project, capability="platform.install", cases=["S-187.4"])
 
     def install_without_project() -> None:
         root = scratch / "s187-no-project"
@@ -1085,7 +1084,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         finally:
             cleanup_installer_fixture_root(root, launcher, run_command)
 
-    exact_step("S-187.5", install_without_project, "install without a project and print its registration command", "platform.install")
+    exact_step("install without a project and print its registration command", install_without_project, capability="platform.install", cases=["S-187.5"])
 
     json_install_journey = run_json_install_project_step(
         mode=mode, launcher=launcher, stable_index=stable_index,

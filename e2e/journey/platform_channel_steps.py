@@ -157,7 +157,7 @@ def run_platform_channel_steps(
             raise RuntimeError("canary update receipt did not identify its channel and exact version")
 
     journey.step("update the installed host from stable to canary", "platform.update", switch_to_canary,
-                 cases=["S-052.3", "S-203.10"])
+                 cases=["S-052.3", "S-052.6", "S-203.10"])
 
     def verify_channel_fields() -> None:
         blocked = blocked_by_canary_preflight()

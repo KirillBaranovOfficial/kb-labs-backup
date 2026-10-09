@@ -1,11 +1,8 @@
 import { defineConfig } from 'tsup'
 import { readTsupExternalSync } from './external-sync.mjs'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { emitManifestJson as emitManifestArtifact } from './emit-manifest-json.mjs'
+import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-
-const execFileAsync = promisify(execFile)
 
 /**
  * Derive tsup entry points from package.json.
@@ -65,22 +62,10 @@ async function emitManifestJson() {
       failManifestEmission(`declared manifest module ${packageJSON.kb.manifest} was not built`)
       return
     }
-    const url = new URL(`file://${distPath}`).href
-    const script = `import(${JSON.stringify(url)}).then(m => process.stdout.write(JSON.stringify(m.default ?? m.manifest)))`
-    const { stdout } = await execFileAsync(process.execPath, ['-e', script], {
-      cwd: process.cwd(),
-      timeout: 30_000,
+    await emitManifestArtifact({
+      manifestModule: distPath,
+      outputPath: join(dirname(distPath), 'manifest.json'),
     })
-    const manifest = JSON.parse(stdout)
-    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
-      failManifestEmission(`manifest at ${packageJSON.kb.manifest} must export an object`)
-      return
-    }
-    if (manifest.schema !== 'kb.service/1' && manifest.schema !== 'kb.adapter/1' && manifest.schema !== 'kb.plugin/3') {
-      failManifestEmission(`manifest at ${packageJSON.kb.manifest} must declare schema kb.service/1, kb.adapter/1, or kb.plugin/3`)
-      return
-    }
-    writeFileSync(join(dirname(distPath), 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
   } catch (error) {
     const manifestPath = packageJSON?.kb?.manifest ?? 'package.json'
     failManifestEmission(`could not emit declarative manifest for ${manifestPath}: ${error.message}`)

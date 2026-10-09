@@ -36,6 +36,19 @@ PACKED=0
 SKIPPED=0
 FAILED=0
 
+pack_fixture_manifest() (
+  local archive="$1" module="$2"
+  local workspace rebuilt
+  workspace="$(mktemp -d "$OUT_DIR/.manifest-pack.XXXXXX")"
+  rebuilt="$workspace/rebuilt.tgz"
+  trap 'rm -rf "$workspace"' EXIT
+  tar -xzf "$archive" -C "$workspace"
+  node "$REPO_ROOT/infra/devkit/tsup/emit-manifest-json.mjs" \
+    --module "$module" --output "$workspace/package/dist/manifest.json"
+  tar -czf "$rebuilt" -C "$workspace" package
+  mv "$rebuilt" "$archive"
+)
+
 # Iterate every package.json in the repo (excluding node_modules and .kb)
 while IFS= read -r pkg_json; do
   pkg_dir="$(dirname "$pkg_json")"
@@ -87,6 +100,7 @@ else
   echo "ERROR: could not pack @kb-labs/e2e-llm-deterministic"
   exit 1
 fi
+pack_fixture_manifest "$OUT_DIR/kb-labs-e2e-llm-deterministic-1.0.0.tgz" "$FIXTURE_DIR/manifest.js"
 
 ANALYTICS_FIXTURE_DIR="$REPO_ROOT/e2e/journey/fixtures/analytics-emitter"
 if (cd "$ANALYTICS_FIXTURE_DIR" && pnpm pack --pack-destination "$OUT_DIR" --silent); then
@@ -95,6 +109,7 @@ else
   echo "ERROR: could not pack @kb-labs/e2e-analytics-emitter"
   exit 1
 fi
+pack_fixture_manifest "$OUT_DIR/kb-labs-e2e-analytics-emitter-1.0.0.tgz" "$ANALYTICS_FIXTURE_DIR/manifest.js"
 
 echo ""
 echo "==> Done: $PACKED packed, $SKIPPED skipped (private/not-built), $FAILED failed"
