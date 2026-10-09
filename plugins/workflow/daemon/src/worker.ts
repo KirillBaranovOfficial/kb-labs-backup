@@ -9,10 +9,12 @@
 
 import type { WorkflowEngine } from "@kb-labs/workflow-engine";
 import type { WorkflowService } from "@kb-labs/workflow-engine";
+import { createMissingSecretError } from "@kb-labs/workflow-engine";
+import type { SecretProvider } from "@kb-labs/workflow-engine";
 import type { IEntityRegistry } from "@kb-labs/core-registry";
 import { logDiagnosticEvent } from "@kb-labs/core-platform";
 import { isTerminal } from "@kb-labs/workflow-constants";
-import { requireWorkflowId } from "@kb-labs/workflow-contracts";
+import { getJobSecretNames, getStepSecretNames, requireWorkflowId } from "@kb-labs/workflow-contracts";
 import type {
   ILogger,
   IAnalytics,
@@ -38,9 +40,14 @@ import {
 } from "@kb-labs/workflow-contracts";
 import type { GateInput } from "@kb-labs/workflow-steps";
 import { GateHandler, type GateDecision } from "@kb-labs/workflow-steps";
-import { SandboxRunner } from "@kb-labs/workflow-runtime";
+import {
+  projectStepEnvironment,
+  SandboxRunner,
+  summarizeWorkflowInput,
+} from "@kb-labs/workflow-runtime";
 
 interface StepSpecRaw {
+  name: string;
   run?: string;
   uses?: string;
   summary?: string;
@@ -56,6 +63,7 @@ interface Platform {
 
 export interface CreateWorkflowWorkerOptions {
   engine: WorkflowEngine;
+  secretProvider: SecretProvider;
   /** Resolves workspace child workflows for `uses: workflow:workspace:<id>`. */
   workflowService?: WorkflowService;
   cliApi: IEntityRegistry;
@@ -161,6 +169,7 @@ export async function createWorkflowWorker(
   // ExecutionBackend from platform — unified across all hosts (CLI, REST API, workflow)
   // In container mode this is a RoutingBackend; in standard mode — in-process/worker-pool.
   const executionBackend = platform.executionBackend;
+  const secretProvider = options.secretProvider;
 
   // Create SandboxRunner with ExecutionBackend
   const runner = new SandboxRunner({
@@ -293,6 +302,11 @@ export async function createWorkflowWorker(
     });
 
     const jobStartTime = Date.now();
+    const declaredJobSecretNames = new Set([
+      ...(run.secrets ?? []),
+      ...getJobSecretNames(job),
+    ]);
+    const jobSecrets = await secretProvider.resolve([...declaredJobSecretNames]);
     const jobLogger = createContextLogger(logger, {
       applicationId: "workflow-daemon",
       serviceId: "workflow",
@@ -309,7 +323,8 @@ export async function createWorkflowWorker(
         "workflow.run_id": run.id,
         "workflow.job_id": job.id,
         "workflow.job_name": job.jobName,
-      });
+      })
+      .withSensitiveValues(Object.values(jobSecrets));
 
     jobLogger.info("Processing job", {
       runId: run.id,
@@ -534,9 +549,9 @@ export async function createWorkflowWorker(
                 stepIndex: step.index,
                 condition: rawExpr,
                 evaluatedContext: {
-                  inputs: exprCtx.inputs,
-                  steps: exprCtx.steps,
-                  env: exprCtx.env,
+                  inputKeys: Object.keys(exprCtx.inputs ?? {}),
+                  stepKeys: Object.keys(exprCtx.steps),
+                  envKeys: Object.keys(exprCtx.env),
                 },
               });
               await engine.markStepCompleted(run.id, job.id, step.id, {
@@ -544,21 +559,6 @@ export async function createWorkflowWorker(
               });
               continue;
             }
-          }
-
-          // Debug: dump expression context (available to all ${{ }} expressions in this step)
-          if (debugMode) {
-            jobLogger.info("[debug] Expression context for step", {
-              runId: run.id,
-              jobId: job.id,
-              stepId: step.id,
-              stepUses: step.spec.uses,
-              exprCtx: {
-                inputs: exprCtx.inputs,
-                steps: exprCtx.steps,
-                env: exprCtx.env,
-              },
-            });
           }
 
           // --- Interpolate spec.with (data flow between steps) ---
@@ -597,7 +597,7 @@ export async function createWorkflowWorker(
 
           // --- Interpolate spec.env and forward to shell handler ---
           // step.spec.env values may contain ${{ }} expressions. Interpolate them
-          // and pass as with.env so builtin:shell merges them into process.env.
+          // and pass as with.env so builtin:shell receives them in its environment.
           // coerceToString ensures object/array inputs become valid JSON strings
           // rather than "[object Object]" when assigned to env vars.
           const interpolatedEnvRaw = step.spec.env
@@ -616,19 +616,8 @@ export async function createWorkflowWorker(
                 )
               : undefined;
 
-          // Debug: show raw spec.with vs resolved interpolatedWith
-          if (debugMode && step.spec.with) {
-            jobLogger.info("[debug] Step input interpolation", {
-              runId: run.id,
-              jobId: job.id,
-              stepId: step.id,
-              rawWith: step.spec.with,
-              resolvedWith: interpolatedWith,
-            });
-          }
-
           const stepExecutionId = `wf-${run.id}-${job.id}-${step.id}-${Date.now()}`;
-          const stepLogger = jobLogger.child({
+          const stepLogger = jobLogger.with({
             operation: "workflow.step",
             stepId: step.id,
             stepName: step.name,
@@ -638,6 +627,58 @@ export async function createWorkflowWorker(
             spanId: stepExecutionId,
             invocationId: stepExecutionId,
           });
+          const declaredStepSecretNames = new Set([
+            ...(freshRun?.secrets ?? []),
+            ...(freshJob?.secrets ?? []),
+            ...getStepSecretNames(step.spec),
+          ]);
+          const stepSecretNames = [...declaredStepSecretNames];
+          const stepSecrets = await secretProvider.resolve(stepSecretNames);
+          const unresolvedSecretName = stepSecretNames.find((name) => stepSecrets[name] === undefined);
+          if (unresolvedSecretName !== undefined) {
+            throw createMissingSecretError(secretProvider, unresolvedSecretName);
+          }
+          const stepEnvironment = projectStepEnvironment(buildWorkflowStepEnvironment({
+            platformRoot,
+            projectRoot,
+            projectId,
+            workspaceRoot: runWorkspace,
+            runEnv: { ...(freshRun?.env ?? {}), ...(interpolatedEnv ?? {}) },
+          }));
+          const executionInputForLogs = {
+            ...(interpolatedWith ?? {}),
+            env: {
+              ...((interpolatedWith?.env as Record<string, unknown> | undefined) ?? {}),
+              ...stepEnvironment,
+              ...stepSecrets,
+            },
+          };
+          const safeStepLogger = stepLogger.withSensitiveValues(Object.values(stepSecrets));
+
+          // Debug input and expression records use the same secret-aware logger as
+          // execution records so declared environment values cannot escape here.
+          if (debugMode) {
+            safeStepLogger.info("[debug] Expression context for step", {
+              runId: run.id,
+              jobId: job.id,
+              stepId: step.id,
+              stepUses: step.spec.uses,
+              exprCtx: {
+                inputKeys: Object.keys(exprCtx.inputs ?? {}),
+                stepKeys: Object.keys(exprCtx.steps),
+                envKeys: Object.keys(exprCtx.env),
+              },
+            });
+          }
+          if (debugMode && step.spec.with) {
+            safeStepLogger.info("[debug] Step input interpolation", {
+              runId: run.id,
+              jobId: job.id,
+              stepId: step.id,
+              rawInput: summarizeWorkflowInput(step.spec.with ?? {}, stepSecretNames),
+              resolvedInput: summarizeWorkflowInput(executionInputForLogs, stepSecretNames),
+            });
+          }
 
           // Persist resolved inputs into step.resolvedInputs — a separate field that
           // does NOT mutate spec.with. This preserves the original ${{ }} templates so
@@ -649,15 +690,13 @@ export async function createWorkflowWorker(
             });
           }
 
-          stepLogger.info("Executing step", {
+          safeStepLogger.info("Executing step", {
             runId: run.id,
             jobId: job.id,
             stepId: step.id,
             uses: step.spec.uses,
-            // Log resolved inputs so failures are debuggable without a debug flag.
-            // Sensitive values (tokens, secrets) will appear here — acceptable for
-            // server-side structured logs; do not surface in public UI.
-            inputs: interpolatedWith,
+            // Keep input shape and env names while omitting ordinary and secret values.
+            inputs: summarizeWorkflowInput(executionInputForLogs, stepSecretNames),
           });
 
           // --- Handle builtin:approval ---
@@ -673,7 +712,7 @@ export async function createWorkflowWorker(
           if (step.spec.uses === "builtin:approval") {
             if (step.status === "failed") {
               // Already rejected (daemon restarted after resolution) — let gate route.
-              stepLogger.info("Approval already rejected — skipping to gate", {
+              safeStepLogger.info("Approval already rejected — skipping to gate", {
                 runId: run.id,
                 stepId: step.id,
               });
@@ -682,7 +721,7 @@ export async function createWorkflowWorker(
             if (step.status !== "waiting_approval") {
               await engine.markStepWaitingApproval(run.id, job.id, step.id);
             }
-            stepLogger.info("[approval] Step parked awaiting human decision — releasing worker slot", {
+            safeStepLogger.info("[approval] Step parked awaiting human decision — releasing worker slot", {
               runId: run.id,
               jobId: job.id,
               stepId: step.id,
@@ -734,7 +773,7 @@ export async function createWorkflowWorker(
               currentIteration,
               validRestartTargets,
             );
-            stepLogger.info("[gate] Evaluating gate decision", {
+            safeStepLogger.info("[gate] Evaluating gate decision", {
               runId: run.id,
               stepId: step.id,
               stepName: step.name,
@@ -753,7 +792,7 @@ export async function createWorkflowWorker(
               continue;
             }
             if (decision.action === "fail") {
-              stepLogger.error(
+              safeStepLogger.error(
                 "[gate] Gate condition failed, aborting job",
                 decision.error,
                 {
@@ -842,26 +881,20 @@ export async function createWorkflowWorker(
                 },
               }
             : baseSpec;
-          const interpolatedSpec = interpolatedWith
-            ? {
-                ...specWithEnv,
-                with: {
-                  ...(specWithEnv.with ?? {}),
-                  ...interpolatedWith,
-                  // spec.env (interpolatedEnv) must survive the spread of interpolatedWith.env
-                  ...(interpolatedEnv
-                    ? {
-                        env: {
-                          ...((interpolatedWith["env"] as
-                            | Record<string, string>
-                            | undefined) ?? {}),
-                          ...interpolatedEnv,
-                        },
-                      }
-                    : {}),
-                },
-              }
-            : specWithEnv;
+          const interpolatedSpec = {
+            ...specWithEnv,
+            with: {
+              ...(specWithEnv.with ?? {}),
+              ...(interpolatedWith ?? {}),
+              // Runtime/workflow env wins over with.env; secret references win over both.
+              env: {
+                ...((specWithEnv.with?.env as Record<string, string> | undefined) ?? {}),
+                ...((interpolatedWith?.env as Record<string, string> | undefined) ?? {}),
+                ...stepEnvironment,
+                ...stepSecrets,
+              },
+            },
+          };
 
           // Delegate execution to the execution plane.
           // The platform handles provisioning (workspace, environment, cleanup) transparently.
@@ -872,53 +905,30 @@ export async function createWorkflowWorker(
               jobId: job.id,
               stepId: step.id,
               attempt: 1,
-              env: {
-                // KB_PLATFORM_ROOT: where platform code (dist/, node_modules) lives.
-                // Shell steps can use this to reference platform commands when the
-                // worktree doesn't have compiled dist/ directories.
-                ...buildWorkflowStepEnvironment({
-                  platformRoot,
-                  projectRoot,
-                  projectId,
-                  workspaceRoot: runWorkspace,
-                  runEnv: freshRun?.env,
-                }),
-              },
-              // Secrets resolution not yet implemented: run.secrets contains names only.
-              // When a platform secrets store is available, resolve names → values here.
-              secrets: ((): Record<string, string> => {
-                const names = freshRun?.secrets ?? [];
-                if (names.length > 0) {
-                  stepLogger.warn(
-                    "Step declares secrets but secret resolution is not implemented",
-                    { secrets: names },
-                  );
-                }
-                return {};
-              })(),
+              env: stepEnvironment,
+              secrets: stepSecrets,
               logger: {
                 debug: (message: string, meta?: Record<string, unknown>) =>
-                  stepLogger.debug(message, meta),
+                  safeStepLogger.debug(message, meta),
                 info: (message: string, meta?: Record<string, unknown>) =>
-                  stepLogger.info(message, meta),
+                  safeStepLogger.info(message, meta),
                 warn: (message: string, meta?: Record<string, unknown>) =>
-                  stepLogger.warn(message, meta),
+                  safeStepLogger.warn(message, meta),
                 error: (message: string, meta?: Record<string, unknown>) =>
-                  stepLogger.error(message, undefined, meta),
+                  safeStepLogger.error(message, undefined, meta),
               },
               trace: {
                 traceId: run.id,
                 spanId: stepExecutionId,
                 parentSpanId: job.id,
               },
-              // stepLogger as loggerOverride: ctx.logger.* in the plugin will use stepLogger
-              // as its base, writing to SQLite with runId/jobId/stepId context.
+              // The redacting step logger is the plugin logger base, with runId/jobId/stepId context.
               // See: plugins/workflow/docs/adr/0019-log-stream-separation.md
-              loggerOverride: stepLogger,
+              loggerOverride: safeStepLogger,
               // ui/shell log entries: persist to SQLite with workflow context + publish for SSE.
               // See: plugins/workflow/docs/adr/0019-log-stream-separation.md
               onLog: (entry) => {
-                stepLogger.info(entry.message, {
+                safeStepLogger.info(entry.message, {
                   stream: entry.stream,
                   lineNo: entry.lineNo,
                   logSource: entry.stream === "stderr" ? "stderr" : "stdout",
@@ -962,7 +972,7 @@ export async function createWorkflowWorker(
             failedStepFailure = result.failure;
             failedStepRetry = step.spec.retry;
 
-            stepLogger.error("Step failed", error, {
+            safeStepLogger.error("Step failed", error, {
               runId: run.id,
               jobId: job.id,
               stepId: step.id,
@@ -974,7 +984,7 @@ export async function createWorkflowWorker(
             });
 
             if (step.continueOnError) {
-              stepLogger.warn(
+              safeStepLogger.warn(
                 "[step] continueOnError=true — continuing despite failure",
                 {
                   runId: run.id,
@@ -993,7 +1003,7 @@ export async function createWorkflowWorker(
           // Mark step as completed (sets finishedAt timestamp + outputs)
           await engine.markStepCompleted(run.id, job.id, step.id, stepOutputs);
 
-          stepLogger.info("Step completed", {
+          safeStepLogger.info("Step completed", {
             runId: run.id,
             jobId: job.id,
             stepId: step.id,
@@ -1001,7 +1011,7 @@ export async function createWorkflowWorker(
 
           // Debug: show what outputs are now available to downstream steps
           if (debugMode && stepOutputs) {
-            stepLogger.info("[debug] Step outputs", {
+            safeStepLogger.info("[debug] Step outputs", {
               runId: run.id,
               jobId: job.id,
               stepId: step.id,

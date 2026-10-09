@@ -33,6 +33,7 @@
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import type { StepSpec } from '@kb-labs/workflow-contracts'
+import { summarizeWorkflowInput } from '../input-log'
 import type {
   ExecutionBackend,
   ExecutionRequest,
@@ -156,9 +157,11 @@ export class SandboxRunner implements Runner {
       pluginId: resolution.value.pluginId,
       handler: resolution.value.handler,
       executionId: executionRequest.executionId,
-      // Log handler input for debuggability — shows exactly what the plugin receives.
-      // Tokens/secrets will appear here in server logs; same policy as worker.ts inputs log.
-      handlerInput: resolution.value.input,
+      // Keep environment keys and secret markers, but omit all environment values.
+      handlerInput: summarizeWorkflowInput(
+        resolution.value.input as Record<string, unknown>,
+        Object.keys(context.secrets),
+      ),
     })
 
     // Track plugin execution started
@@ -197,8 +200,11 @@ export class SandboxRunner implements Runner {
         durationMs: duration,
         errorCode: result.error?.code,
         errorMessage: result.error?.message,
-        // Include the handler input again at error time — critical for debugging
-        handlerInput: resolution.value.input,
+        // Keep handler diagnostics on the same secret-free input projection.
+        handlerInput: summarizeWorkflowInput(
+          resolution.value.input as Record<string, unknown>,
+          Object.keys(context.secrets),
+        ),
       })
       this.analytics?.track('workflow.sandbox.execution.failed', {
         stepId: context.stepId,

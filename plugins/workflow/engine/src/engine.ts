@@ -31,6 +31,7 @@ import {
 } from './scheduler'
 import { EventBusBridge, type WorkflowEvent } from './event-bus'
 import { WorkflowLoader } from './workflow-loader'
+import type { SecretProvider } from './secrets'
 import type { CreateRunInput, EngineLogger, RunContext } from './types'
 import { RunSnapshotStorage, type RunSnapshot } from './run-snapshot'
 
@@ -47,6 +48,8 @@ export interface WorkflowEngineOptions {
   events: IEventBus
   /** Platform logger (REQUIRED) */
   logger: ILogger
+  /** Secret source used to validate workflows and resolve declared values. */
+  secretProvider: SecretProvider
   /** Platform analytics adapter (OPTIONAL) */
   analytics?: IAnalytics
   /** Platform snapshot manager (OPTIONAL - for infra snapshot restore in replay) */
@@ -68,6 +71,7 @@ export class WorkflowEngine {
   readonly maxWorkflowDepth: number
   /** See `WorkflowEngineOptions.instanceId`. */
   readonly instanceId: string
+  readonly secretProvider: SecretProvider
 
   private readonly logger: EngineLogger
   private readonly analytics?: IAnalytics
@@ -82,6 +86,7 @@ export class WorkflowEngine {
     this.logger = options.logger
     this.analytics = options.analytics
     this.instanceId = options.instanceId ?? randomUUID()
+    this.secretProvider = options.secretProvider
 
     this.stateStore = new StateStore(options.cache, options.storage, this.logger)
     this.concurrency = new ConcurrencyManager(
@@ -99,7 +104,7 @@ export class WorkflowEngine {
 
     this.scheduler = new Scheduler(options.cache, this.logger, options.scheduler)
     this.events = new EventBusBridge(options.events, this.logger)
-    this.loader = new WorkflowLoader(this.logger)
+    this.loader = new WorkflowLoader(this.logger, this.secretProvider)
     this.maxWorkflowDepth = options.maxWorkflowDepth ?? 2
     this.snapshotStorage = new RunSnapshotStorage(options.cache, this.logger)
   }

@@ -67,6 +67,8 @@ export interface IContextLogger extends ILogger {
     correlation?: LogCorrelationContext,
   ): IContextLogger;
   forPlugin(context: PluginLogContext): IContextLogger;
+  /** Return a logger scope that redacts these exact values from every record. */
+  withSensitiveValues(values: readonly string[]): IContextLogger;
   event(level: LogLevel, event: LogEvent): void;
 }
 
@@ -149,6 +151,7 @@ class ContextLogger implements IContextLogger {
   public constructor(
     private readonly base: ILogger,
     context: LogContext,
+    private readonly sensitiveValues: readonly string[] = [],
   ) {
     this.context = Object.freeze({ ...context });
   }
@@ -156,7 +159,11 @@ class ContextLogger implements IContextLogger {
   public with(
     context: Partial<LogContext> & Record<string, unknown>,
   ): IContextLogger {
-    return new ContextLogger(this.base, mergeContext(this.context, context));
+    return new ContextLogger(
+      this.base,
+      mergeContext(this.context, context),
+      this.sensitiveValues,
+    );
   }
 
   public forComponent(component: string): IContextLogger {
@@ -174,6 +181,14 @@ class ContextLogger implements IContextLogger {
     return this.with({ ...context });
   }
 
+  public withSensitiveValues(values: readonly string[]): IContextLogger {
+    return new ContextLogger(
+      this.base,
+      this.context,
+      [...new Set([...this.sensitiveValues, ...values.filter(Boolean)])],
+    );
+  }
+
   public event(level: LogLevel, event: LogEvent): void {
     const fields = {
       event: event.event,
@@ -189,29 +204,29 @@ class ContextLogger implements IContextLogger {
   public trace(message: string, meta?: Record<string, unknown>): void {
     const normalized = this.normalizeMessage(message, meta);
     this.base.trace(
-      normalized.message,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public debug(message: string, meta?: Record<string, unknown>): void {
     const normalized = this.normalizeMessage(message, meta);
     this.base.debug(
-      normalized.message,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public info(message: string, meta?: Record<string, unknown>): void {
     const normalized = this.normalizeMessage(message, meta);
     this.base.info(
-      normalized.message,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public warn(message: string, meta?: Record<string, unknown>): void {
     const normalized = this.normalizeMessage(message, meta);
     this.base.warn(
-      normalized.message,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public error(
@@ -221,9 +236,9 @@ class ContextLogger implements IContextLogger {
   ): void {
     const normalized = this.normalizeError(message, error, meta);
     this.base.error(
-      normalized.message,
-      normalized.error,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactError(normalized.error),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
   public fatal(
@@ -233,9 +248,9 @@ class ContextLogger implements IContextLogger {
   ): void {
     const normalized = this.normalizeError(message, error, meta);
     this.base.fatal(
-      normalized.message,
-      normalized.error,
-      mergeRecord(this.context, normalized.meta),
+      this.redactString(normalized.message),
+      this.redactError(normalized.error),
+      this.redactRecord(mergeRecord(this.context, normalized.meta)),
     );
   }
 
@@ -317,6 +332,42 @@ class ContextLogger implements IContextLogger {
       case "fatal":
         return this.fatal(message, error, fields);
     }
+  }
+
+  private redactString(value: string): string {
+    return [...this.sensitiveValues]
+      .sort((left, right) => right.length - left.length)
+      .reduce((redacted, sensitive) => redacted.split(sensitive).join('[REDACTED]'), value);
+  }
+
+  private redactError(error?: Error): Error | undefined {
+    if (!error || this.sensitiveValues.length === 0) return error;
+    const redacted = new Error(this.redactString(error.message), {
+      cause: this.redactValue(error.cause),
+    });
+    redacted.name = this.redactString(error.name);
+    if (error.stack) redacted.stack = this.redactString(error.stack);
+    return redacted;
+  }
+
+  private redactRecord(record: Record<string, unknown>): Record<string, unknown> {
+    if (this.sensitiveValues.length === 0) return record;
+    return this.redactValue(record) as Record<string, unknown>;
+  }
+
+  private redactValue(value: unknown): unknown {
+    if (typeof value === 'string') return this.redactString(value);
+    if (Array.isArray(value)) return value.map((nested) => this.redactValue(nested));
+    if (value instanceof Error) return this.redactError(value);
+    if (isRecord(value)) {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => [
+          this.redactString(key),
+          this.redactValue(nested),
+        ]),
+      );
+    }
+    return value;
   }
 }
 

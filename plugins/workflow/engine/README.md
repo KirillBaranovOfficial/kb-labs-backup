@@ -106,13 +106,18 @@ Workflow Engine
 
 ```typescript
 interface WorkflowEngineOptions {
-  redis?: CreateRedisClientOptions;
+  cache: ICache;
+  storage: IStorage;
+  events: IEventBus;
+  logger: ILogger;
+  secretProvider: SecretProvider;
   scheduler?: SchedulerOptions;
   concurrency?: AcquireOptions;
   runCoordinator?: RunCoordinatorOptions;
-  logger?: EngineLogger;
 }
 ```
+
+The daemon constructs one secret provider and passes it to both the engine and worker. The engine's loader validates every declared workflow, job, step, and hook secret through that provider.
 
 #### `WorkflowWorkerOptions`
 
@@ -231,11 +236,14 @@ src/__tests__/
 Pass the project's `cache`, `storage`, and `eventBus` adapters when creating an engine. The cache coordinates live work; `IStorage` is the source of truth for workflow run records. Each record is JSON at `workflows/<runId>.json` and contains the run, jobs, steps, status, trigger, metadata, artifacts, and step outputs. The default storage binding in the built-in adapter pack uses the filesystem; the logical key stays the same for other storage adapters.
 
 ```ts
+import { WorkflowEngine, createDefaultSecretProvider } from '@kb-labs/workflow-engine';
+
 const engine = new WorkflowEngine({
   cache: platform.cache,
   storage: platform.storage,
   events: platform.eventBus,
   logger: platform.logger,
+  secretProvider: createDefaultSecretProvider(),
 });
 ```
 
@@ -252,7 +260,7 @@ This engine constructor now requires `storage`; callers must bind the project's 
 ### Example 1: Create Engine and Run Workflow
 
 ```typescript
-import { WorkflowEngine } from '@kb-labs/workflow-engine';
+import { WorkflowEngine, createDefaultSecretProvider } from '@kb-labs/workflow-engine';
 import type { WorkflowSpec } from '@kb-labs/workflow-contracts';
 
 const engine = new WorkflowEngine({
@@ -260,6 +268,7 @@ const engine = new WorkflowEngine({
   storage: platform.storage,
   events: platform.eventBus,
   logger: platform.logger,
+  secretProvider: createDefaultSecretProvider(),
 });
 
 const run = await engine.run(spec, {

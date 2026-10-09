@@ -306,6 +306,7 @@ export const JobRunSchema = z.object({
   error: StepRunErrorSchema.optional(),
   env: z.record(z.string(), z.string()).optional(),
   secrets: z.array(z.string().min(1)).optional(),
+  hooks: JobHooksSchema,
   needs: z.array(z.string().min(1)).optional(),
   pendingDependencies: z.array(z.string().min(1)).optional(),
   blocked: z.boolean().optional(),

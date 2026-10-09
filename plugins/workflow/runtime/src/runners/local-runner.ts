@@ -55,8 +55,10 @@ export class LocalRunner implements Runner {
     }
 
     const cwd = request.workspace ?? process.cwd()
+    const withBlock = (spec.with ?? {}) as Record<string, unknown>
+    const stepEnv = (withBlock.env ?? {}) as Record<string, string>
     const env = {
-      ...process.env,
+      ...stepEnv,
       ...context.env,
       ...context.secrets,
     }
@@ -76,6 +78,7 @@ export class LocalRunner implements Runner {
         cwd,
         shell: this.shell,
         env,
+        extendEnv: false,
         stdio: 'pipe',
         signal: request.signal,
       })
@@ -155,6 +158,3 @@ function signalReason(signal: AbortSignal): string | undefined {
   }
   return undefined
 }
-
-
-

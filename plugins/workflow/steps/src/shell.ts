@@ -336,7 +336,6 @@ async function shellHandler(
 
   // Merge environment variables
   const mergedEnv = {
-    ...process.env,
     ...env,
   };
 
@@ -354,6 +353,7 @@ async function shellHandler(
     const proc = execaCommand(command, {
       cwd,
       env: mergedEnv,
+      extendEnv: false,
       shell: true,
       stdio: 'pipe',
       reject: false, // We handle exit codes ourselves

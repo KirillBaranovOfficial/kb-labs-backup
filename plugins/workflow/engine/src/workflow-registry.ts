@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import type { WorkflowSpec } from '@kb-labs/workflow-contracts'
 import type { ILogger } from '@kb-labs/core-platform'
 import { WorkflowLoader } from './workflow-loader'
+import type { SecretProvider } from './secrets'
 
 export interface WorkflowRegistryEntry {
   id: string
@@ -18,6 +19,7 @@ export interface WorkflowRegistryOptions {
   scanDirs: string[]
   cwd?: string
   logger: ILogger
+  secretProvider: SecretProvider
 }
 
 /**
@@ -31,7 +33,7 @@ export class WorkflowRegistry {
   private loader: WorkflowLoader
 
   constructor(private readonly options: WorkflowRegistryOptions) {
-    this.loader = new WorkflowLoader(options.logger)
+    this.loader = new WorkflowLoader(options.logger, options.secretProvider)
   }
 
   /**
