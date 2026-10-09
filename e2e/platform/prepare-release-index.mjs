@@ -81,6 +81,8 @@ const platformRequires = releaseConfig.platformRequires.join(',');
 // platform members, as release.flows.platform.platformMembers does for the
 // real release. Every other plugin comes from the marketplace.
 const platformMembers = releaseConfig.platformMembers.join(',');
+const journeyReleaseNotes = 'Prepared candidate platform release for update verification.';
+const releaseNotesArgs = ['--release-notes', journeyReleaseNotes];
 const adapterOverrides = JSON.stringify({
   '@kb-labs/adapters-service-transport-http': {
     schema: 'kb.adapter/1',
@@ -110,6 +112,7 @@ const result = spawnSync(process.execPath, [
   '--adapter-overrides', adapterOverrides,
   '--registry', 'http://verdaccio:4873',
   '--output', output,
+  ...releaseNotesArgs,
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (result.status !== 0) process.exit(result.status ?? 1);
@@ -142,6 +145,7 @@ const update = spawnSync(process.execPath, [
   '--adapter-overrides', adapterOverrides,
   '--registry', 'http://verdaccio:4873',
   '--output', updateOutput,
+  ...releaseNotesArgs,
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (update.status !== 0) process.exit(update.status ?? 1);
@@ -151,6 +155,7 @@ if (update.status !== 0) process.exit(update.status ?? 1);
 const jumpPackagesDir = join(resolve(output, '..'), 'jump-packages');
 prepareJourneyUpdatePackages(stage, jumpPackagesDir, jumpVersion, { publishDir: packagesDir });
 const jumpOutput = join(resolve(output, '..'), 'release-index-update-jump.json');
+const jumpHistoryArgs = ['--history-index', output, '--history-index', updateOutput];
 const jump = spawnSync(process.execPath, [
   prepareScript,
   '--flow', 'platform',
@@ -165,6 +170,8 @@ const jump = spawnSync(process.execPath, [
   '--adapter-overrides', adapterOverrides,
   '--registry', 'http://verdaccio:4873',
   '--output', jumpOutput,
+  ...releaseNotesArgs,
+  ...jumpHistoryArgs,
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (jump.status !== 0) process.exit(jump.status ?? 1);
@@ -178,7 +185,7 @@ const minor = spawnSync(process.execPath, [
   '--platform-version', minorVersion, '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig, '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers, '--adapter-overrides', adapterOverrides,
-  '--registry', 'http://verdaccio:4873', '--output', minorOutput, '--sealer-bin', sealer,
+  '--registry', 'http://verdaccio:4873', '--output', minorOutput, ...releaseNotesArgs, '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (minor.status !== 0) process.exit(minor.status ?? 1);
 
@@ -205,6 +212,7 @@ const failedHost = spawnSync(process.execPath, [
   '--adapter-overrides', adapterOverrides,
   '--registry', 'http://verdaccio:4873',
   '--output', failedHostOutput,
+  ...releaseNotesArgs,
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (failedHost.status !== 0) process.exit(failedHost.status ?? 1);
@@ -236,6 +244,7 @@ const badChecksum = spawnSync(process.execPath, [
   '--adapter-overrides', adapterOverrides,
   '--registry', 'http://verdaccio:4873',
   '--output', badChecksumOutput,
+  ...releaseNotesArgs,
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (badChecksum.status !== 0) process.exit(badChecksum.status ?? 1);
@@ -285,7 +294,7 @@ for (const candidate of stagedFailureCandidates) {
     '--platform-requires', platformRequires, '--platform-adapter-config', adapterConfig,
     '--platform-adapter-options', adapterOptions, '--platform-member-packages', platformMembers,
     '--adapter-overrides', adapterOverrides, '--registry', 'http://verdaccio:4873',
-    '--output', candidateOutput, '--sealer-bin', sealer,
+    '--output', candidateOutput, ...releaseNotesArgs, '--sealer-bin', sealer,
   ], { stdio: 'inherit' });
   if (sealed.status !== 0) process.exit(sealed.status ?? 1);
 }
@@ -311,6 +320,7 @@ const canary = spawnSync(process.execPath, [
   '--adapter-overrides', adapterOverrides,
   '--registry', 'http://verdaccio:4873',
   '--output', canaryOutput,
+  ...releaseNotesArgs,
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (canary.status !== 0) process.exit(canary.status ?? 1);

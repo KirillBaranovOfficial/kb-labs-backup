@@ -194,7 +194,12 @@ func renderVersion(any) string {
 func executeVersion(_ context.Context, _ versionCommandInput) (map[string]any, *diag.Diag) {
 	return map[string]any{"version": buildVersion, "commit": buildCommit}, nil
 }
-func renderUpdate(any) string    { return "Platform update completed." }
+func renderUpdate(value any) string {
+	if result, ok := value.(updateCommandResult); ok && result.AlreadyUpToDate {
+		return "Platform is already up to date."
+	}
+	return "Platform update completed."
+}
 func renderRollback(any) string  { return "Platform rollback completed." }
 func renderUninstall(any) string { return "Platform uninstalled." }
 func renderStart(any) string     { return "KB Labs host started." }

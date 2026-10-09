@@ -3,7 +3,8 @@
 // Converts the exact GoReleaser checksum output into the binary part of the
 // unified release-index input. It never resolves a channel or a "latest"
 // release; the tag and asset bytes are explicit inputs.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -60,6 +61,7 @@ for (const line of entries) {
     arch,
     filename,
     sha256: sha256.toLowerCase(),
+    sizeBytes: statSync(join(dirname(checksumsPath), filename)).size,
     url: assetBaseURL
       ? `${assetBaseURL.replace(/\/$/, '')}/${filename}`
       : `https://github.com/${repository}/releases/download/${releaseTag}/${filename}`,
