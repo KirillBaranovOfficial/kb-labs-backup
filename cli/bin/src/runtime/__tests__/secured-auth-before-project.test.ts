@@ -46,6 +46,7 @@ describe('secured CLI auth ordering', () => {
   const originalGatewayUrl = process.env.KB_GATEWAY_URL;
   const originalLogStream = process.env.KB_LOG_STREAM;
   const originalOutputMode = process.env.KB_OUTPUT_MODE;
+  const originalCliVersion = process.env.CLI_VERSION;
 
   afterEach(async () => {
     if (isolatedHome) await rm(isolatedHome, { recursive: true, force: true });
@@ -58,10 +59,12 @@ describe('secured CLI auth ordering', () => {
     process.env.KB_GATEWAY_URL = originalGatewayUrl;
     process.env.KB_LOG_STREAM = originalLogStream;
     process.env.KB_OUTPUT_MODE = originalOutputMode;
+    process.env.CLI_VERSION = originalCliVersion;
     vi.clearAllMocks();
   });
 
   beforeEach(() => {
+    process.env.CLI_VERSION = '2.120.1';
     mocks.resolveActiveGateway.mockImplementation(({ platformRoot, env }) => resolveCliGatewayTarget(platformRoot, {
       gatewayUrl: env.KB_GATEWAY_URL,
       gatewayPort: env.GATEWAY_PORT,

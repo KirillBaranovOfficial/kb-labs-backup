@@ -1,6 +1,7 @@
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { resolvePolicy } from "@kb-labs/core-policy";
 import { noopUI } from "@kb-labs/plugin-contracts";
+import { requireProjectContext } from "@kb-labs/core-runtime";
 import { runService } from "@kb-labs/shared-daemon";
 import { callOutput } from "./mcp/output-capture.js";
 import { createBufferedUI } from "./mcp/ui.js";
@@ -20,7 +21,7 @@ export async function setupProjectMcp(ctx: ServiceContext): Promise<() => Promis
     cache: ctx.platform.cache,
     platform: ctx.platform,
     resolvePlatform: () => ctx.platform,
-    projectRoot: ctx.projectRoot,
+    projectRoot: requireProjectContext(ctx.projectRoot),
     platformRoot: ctx.platformRoot,
     policy,
     endpointPath: "/",
@@ -78,7 +79,7 @@ export async function bootstrap(): Promise<void> {
         cache: platform.cache,
         platform,
         resolvePlatform: () => platform,
-        projectRoot,
+        projectRoot: requireProjectContext(projectRoot),
         platformRoot,
         policy,
       });

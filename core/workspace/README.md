@@ -69,15 +69,17 @@ project directory with `kb project add <path>`. Resolution results include
 both the registered project root and the directory used for lookup, which may
 be the worktree path.
 
-Platform processes that do not act in a current project can resolve only the
-platform root:
+Platform-scoped processes can resolve the platform root without requiring a
+registered project. When the current directory belongs to a registered
+project, `projectRoot` still identifies that project; otherwise it is absent.
+Platform configuration and adapters continue to use `platformRoot`:
 
 ```typescript
 const roots = await resolveRoots({ startDir: process.cwd(), projectScope: 'platform' })
 ```
 
-In this mode, `projectRoot` aliases `platformRoot`; no project registry lookup
-is performed.
+This mode does not require project registration. It looks up project identity
+when available, but never substitutes `platformRoot` for `projectRoot`.
 
 #### `resolveWorkspaceRoot(options)` — deprecated alias
 

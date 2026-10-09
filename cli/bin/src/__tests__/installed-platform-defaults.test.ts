@@ -93,11 +93,11 @@ describe('installed platform adapter defaults', () => {
         return;
       }
       if (request.url === '/health/adapters') {
-        response.end(JSON.stringify([
+        response.end(JSON.stringify({ ok: true, data: [
           { slot: 'storage', mode: 'real', implementation: '@kb-labs/adapters-fs' },
           { slot: 'kvStore', mode: 'real', implementation: '@kb-labs/adapters-sqlite/kv' },
           { slot: 'llm', mode: 'real', implementation: '@kb-labs/adapters-openai' },
-        ]));
+        ] }));
         return;
       }
       response.statusCode = 404;

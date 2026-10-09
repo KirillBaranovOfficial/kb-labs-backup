@@ -50,7 +50,7 @@ export function getProjectRoot(): string | undefined {
 }
 
 function launchPlatformRoots():
-  | { platformRoot: string; projectRoot: string }
+  | { platformRoot: string; projectRoot?: string }
   | undefined {
   return getPlatformRuntime()?.roots;
 }

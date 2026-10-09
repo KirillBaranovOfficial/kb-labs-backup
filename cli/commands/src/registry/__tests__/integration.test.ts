@@ -39,7 +39,7 @@ describe("Registry Integration", () => {
 
   it("registers a workspace manifest and executes successfully", async () => {
     const manifest: CommandManifest = {
-      schema: 'kb.adapter/1', manifestVersion: "1.0",
+      manifestVersion: "1.0",
       segments: ['test', 'command'],
       id: "test:command",
       group: "test",
@@ -104,7 +104,7 @@ describe("Registry Integration", () => {
 
   it("propagates unavailable command metadata", async () => {
     const manifest: CommandManifest = {
-      schema: 'kb.adapter/1', manifestVersion: "1.0",
+      manifestVersion: "1.0",
       segments: ['test', 'command'],
       id: "test:command",
       group: "test",
@@ -153,7 +153,7 @@ describe("Registry Integration", () => {
 
   it("prefers workspace manifests over node_modules", async () => {
     const nodeManifest: CommandManifest = {
-      schema: 'kb.adapter/1', manifestVersion: "1.0",
+      manifestVersion: "1.0",
       segments: ['test', 'command'],
       id: "test:command",
       group: "test",
@@ -163,7 +163,7 @@ describe("Registry Integration", () => {
     };
 
     const workspaceManifest: CommandManifest = {
-      schema: 'kb.adapter/1', manifestVersion: "1.0",
+      manifestVersion: "1.0",
       segments: ['test', 'command'],
       id: "test:command",
       group: "test",

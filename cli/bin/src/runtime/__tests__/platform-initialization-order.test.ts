@@ -45,10 +45,11 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     delete process.env.KB_PROJECT_ID;
     delete process.env.KB_NET_OFFSET;
     process.env.KB_LOG_LEVEL = "silent";
+    process.env.CLI_VERSION = "2.120.1";
     return isolatedHome;
   }
 
-  function mockConfig(projectRoot: string, rawConfig = { gateway: { access: { mode: "local" } } }) {
+  function mockConfig(projectRoot: string, projectScope: 'required' | 'platform' = 'platform', rawConfig = { gateway: { access: { mode: "local" } } }) {
     return {
       platformConfig: { adapters: { storage: "@kb-labs/adapters-fs" } },
       rawConfig,
@@ -56,6 +57,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
       effectiveConfig: {},
       platformRoot: isolatedHome,
       projectRoot,
+      projectScope,
       sameLocation: false,
       sources: { platform: "env", project: "registry", fields: {} },
     };
@@ -69,7 +71,7 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     const cwd = await isolateEnvironment();
     const projectRoot = path.join(cwd, "registered-project");
     const platformConfig = mockConfig(cwd);
-    const projectConfig = mockConfig(projectRoot);
+    const projectConfig = mockConfig(projectRoot, 'required');
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
     mocks.resolveProjectConfig.mockResolvedValue(projectConfig);
     mockInitialization();
@@ -93,19 +95,40 @@ describe("CLI platform configuration, auth, and adapter ordering", () => {
     expect(mocks.initializePlatform.mock.calls[0]![0].projectRoot).toBe(projectRoot);
   });
 
-  it("initializes platform-scoped adapters once without resolving a project", async () => {
+  it("uses the root-resolution project for plugin discovery while initializing adapters from platform config", async () => {
     const cwd = await isolateEnvironment();
-    const platformConfig = mockConfig(cwd);
+    const projectRoot = path.join(cwd, "registered-project");
+    const platformConfig = mockConfig(projectRoot);
+    const registerBuiltinCommands = vi.fn();
     mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
     mockInitialization();
 
     await executeCli(["hello", "--help"], {
       cwd,
-      registerBuiltinCommands: () => {},
+      registerBuiltinCommands,
     });
 
     expect(mocks.initializePlatform).toHaveBeenCalledExactlyOnceWith(platformConfig, { skipAdapterInitialization: false });
     expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
+    expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({ projectRoot }));
+  });
+
+  // case: S-043.6
+  it("uses a registered project root for command discovery before an unknown plugin path is dispatched", async () => {
+    const cwd = await isolateEnvironment();
+    const projectRoot = path.join(cwd, "registered-project");
+    const platformConfig = mockConfig(projectRoot);
+    const registerBuiltinCommands = vi.fn();
+    mocks.loadPlatformConfiguration.mockResolvedValue(platformConfig);
+    mockInitialization();
+
+    await executeCli(["commit", "open"], { cwd, registerBuiltinCommands });
+
+    expect(mocks.resolveProjectConfig).not.toHaveBeenCalled();
+    expect(registerBuiltinCommands).toHaveBeenCalledWith(expect.objectContaining({
+      platformRoot: cwd,
+      projectRoot,
+    }));
   });
 
   it("skips adapter construction for global help and version without creating .kb state", async () => {

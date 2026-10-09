@@ -146,6 +146,7 @@ const originalEnvironment = {
   KB_NET_OFFSET: process.env.KB_NET_OFFSET,
   KB_LOG_LEVEL: process.env.KB_LOG_LEVEL,
   KB_LOG_STREAM: process.env.KB_LOG_STREAM,
+  CLI_VERSION: process.env.CLI_VERSION,
 };
 const originalFetch = globalThis.fetch;
 const logger = {
@@ -253,6 +254,7 @@ describe('JSON envelope coverage for the live CLI registry', () => {
     delete process.env.KB_NET_OFFSET;
     process.env.KB_LOG_LEVEL = 'silent';
     process.env.KB_LOG_STREAM = 'stderr';
+    process.env.CLI_VERSION = '2.120.1';
     globalThis.fetch = vi.fn((input: string | URL | Request) => {
       if (rejectUnauthenticatedWebhookRequests && String(input).includes('/api/v1/webhooks')) {
         const error = createErrorEnvelope('KB_AUTH_REQUIRED', { details: { gatewayUrl: 'https://gateway.test' } });

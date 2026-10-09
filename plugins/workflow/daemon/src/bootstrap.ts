@@ -19,6 +19,7 @@ import { CronDiscovery } from "./cron-discovery.js";
 import { WorkflowFileWatcher } from "./file-watcher.js";
 import { createServer } from "./server.js";
 import { createRegistry } from "@kb-labs/core-registry";
+import { requireProjectContext } from "@kb-labs/core-runtime";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
@@ -57,10 +58,8 @@ export async function setup({
   platformRoot,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
-  // KB_PROJECT_ROOT injected by kb-dev when invoked from a project dir with separate platform.
-  // Fall back to the resolved repoRoot (not raw cwd) so plugin/cron/workflow discovery is
-  // correct even when the daemon is launched from a subdirectory.
-  const workspaceRoot = process.env["KB_PROJECT_ROOT"] ?? projectRoot;
+  // KB_PROJECT_ROOT is injected by kb-dev when invoked from a project dir with separate platform.
+  const workspaceRoot = requireProjectContext(process.env["KB_PROJECT_ROOT"] ?? projectRoot);
 
   const startupRequestId = `workflow-startup-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const startupTraceId = randomUUID();

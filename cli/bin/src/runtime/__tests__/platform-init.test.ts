@@ -13,7 +13,7 @@ import {
 } from '../platform-init';
 import { platform } from '@kb-labs/core-runtime';
 import { mkdir, mkdtemp, realpath, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createProjectRegistry } from '@kb-labs/core-project-registry';
 
@@ -168,7 +168,7 @@ describe('Platform Initialization (Real)', () => {
   });
 
   describe('Platform Initialization', () => {
-    it('loads platform-only configuration without resolving a project', async () => {
+    it('loads platform-only configuration while preserving registered project identity', async () => {
       const unregistered = join(testDir, 'unregistered-cwd');
       await mkdir(join(unregistered, '.kb'), { recursive: true });
       await writeFile(join(unregistered, '.kb', 'kb.config.json'), JSON.stringify({ platform: { adapters: {} } }));
@@ -179,7 +179,8 @@ describe('Platform Initialization (Real)', () => {
           skipAdapterInitialization: true,
           projectScope: 'platform',
         });
-        expect(result.projectRoot).toBe(unregistered);
+        expect(result.projectRoot).toBe(await realpath(testDir));
+        expect(result.platformRoot).toBe(resolve(unregistered));
         expect(result.rawConfig).toBeDefined();
       } finally {
         if (originalPlatformRoot === undefined) delete process.env.KB_PLATFORM_ROOT;
