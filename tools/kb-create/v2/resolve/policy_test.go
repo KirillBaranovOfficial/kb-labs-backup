@@ -102,12 +102,12 @@ func TestUpdateValidationRefusesDowngradeAndNamesInstalledPluginRange(t *testing
 		Artifacts:    []contracts.Artifact{{ID: "fixture-compat", Kind: "plugin", Version: "1.0.0", PlatformRange: "=3.2.0"}},
 	}}
 	target := contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{PlatformVersion: "3.1.0"}}
-	err := ValidateUpdate(active, target, policyCatalog())
+	_, err := ValidateUpdate(active, target, policyCatalog())
 	if launcherErr, ok := err.(*diag.Diag); !ok || launcherErr.Code != "KB_UPDATE_DOWNGRADE_REFUSED" || launcherErr.Hint != "use `kb-create rollback`" {
 		t.Fatalf("downgrade error = %#v", err)
 	}
 	target.ServiceGraph.PlatformVersion = "3.3.0"
-	err = ValidateUpdate(active, target, policyCatalog())
+	_, err = ValidateUpdate(active, target, policyCatalog())
 	launcherErr, ok := err.(*diag.Diag)
 	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents || launcherErr.Meta["kind"] != "plugin" || launcherErr.Meta["id"] != "fixture-compat" || launcherErr.Meta["requiredRange"] != "=3.2.0" || launcherErr.Meta["selectedVersion"] != "3.3.0" {
 		t.Fatalf("component compatibility error = %#v", err)

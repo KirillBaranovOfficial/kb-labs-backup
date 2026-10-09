@@ -8,12 +8,25 @@ import (
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
+	"github.com/kb-labs/create/v2/contracts"
 )
 
 func TestRunSealsNormalizedReleaseExport(t *testing.T) {
+	input, output, manifestRoot := validReleaseSealerFixture(t)
+	if err := run(input, output, manifestRoot); err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := catalog.LoadFile(output)
+	if err != nil || sealed.Digest == "" {
+		t.Fatalf("sealed/error = %#v / %v", sealed, err)
+	}
+}
+
+func validReleaseSealerFixture(t *testing.T) (input, output, manifestRoot string) {
+	t.Helper()
 	dir := t.TempDir()
-	input, output := filepath.Join(dir, "export.json"), filepath.Join(dir, "release", "index.json")
-	manifestRoot := filepath.Join(dir, "staging")
+	input, output = filepath.Join(dir, "export.json"), filepath.Join(dir, "release", "index.json")
+	manifestRoot = filepath.Join(dir, "staging")
 	var source catalog.Catalog
 	if err := json.Unmarshal([]byte(`{"channels":{"stable":"2.0.0"},"compatibility":{"schema":"kb.release-compatibility/2","labels":[{"id":"platform@2.0.0","kind":"platform","artifactId":"platform","version":"2.0.0","status":"prepared","validatedBy":["stage"]}]},"platforms":[{"id":"platform","version":"2.0.0","package":"@kb/platform","tarball":"https://example.test/platform.tgz","sha256":"artifact","host":{"command":"node_modules/.bin/kb-host","healthUrl":"http://127.0.0.1:4000/health"},"profiles":{"default":{}}}]}`), &source); err != nil {
 		t.Fatal(err)
@@ -64,18 +77,110 @@ func TestRunSealsNormalizedReleaseExport(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := run(input, output, manifestRoot); err != nil {
-		t.Fatal(err)
-	}
-	sealed, err := catalog.LoadFile(output)
-	if err != nil || sealed.Digest == "" {
-		t.Fatalf("sealed/error = %#v / %v", sealed, err)
-	}
+	return input, output, manifestRoot
 }
 
 func TestRunRejectsMissingPublishPaths(t *testing.T) {
 	if err := run("", "", ""); err == nil {
 		t.Fatal("expected missing paths")
+	}
+}
+
+func TestRunRejectsInvalidHistoryIndexesWithCataloguedSealFailure(t *testing.T) {
+	input, _, manifestRoot := validReleaseSealerFixture(t)
+	validHistory, err := catalog.Seal(catalog.Catalog{Platforms: []catalog.PlatformBundle{{
+		ID: "platform", Version: "1.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz",
+		SHA256: "platform-sha", SDKRange: "*", Host: &contracts.HostSpec{Command: "node_modules/.bin/kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+		Profiles: map[string]contracts.ServiceGraph{"default": {}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedBytes, err := json.Marshal(validHistory)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, testCase := range []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{name: "tampered", mutate: func(data []byte) []byte {
+			var history catalog.Catalog
+			if err := json.Unmarshal(data, &history); err != nil {
+				t.Fatal(err)
+			}
+			history.Platforms[0].Version = "1.0.1"
+			tampered, err := json.Marshal(history)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return tampered
+		}},
+		{name: "unsealed", mutate: func(data []byte) []byte {
+			var history catalog.Catalog
+			if err := json.Unmarshal(data, &history); err != nil {
+				t.Fatal(err)
+			}
+			history.Digest = ""
+			unsealed, err := json.Marshal(history)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return unsealed
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			dir := t.TempDir()
+			historyPath := filepath.Join(dir, "history.json")
+			output := filepath.Join(dir, "release", "index.json")
+			if err := os.WriteFile(historyPath, testCase.mutate(sealedBytes), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := run(input, output, manifestRoot, historyPath)
+			if err == nil {
+				t.Fatal("expected history seal validation failure")
+			}
+			envelope, err := sealingFailureEnvelope(err)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if envelope.Code != "KB_RELEASE_INDEX_SEAL_FAILED" {
+				t.Fatalf("diagnostic code = %q", envelope.Code)
+			}
+			if _, err := os.Stat(output); !os.IsNotExist(err) {
+				t.Fatalf("output index exists or could not be checked: %v", err)
+			}
+		})
+	}
+}
+
+func TestMergeReleaseHistoryCarriesPlatformSDKAndCompatibilityEvidence(t *testing.T) {
+	target := catalog.Catalog{
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "3.0.2"}},
+		SDKs:      []catalog.Component{{ID: "sdk", Version: "3.0.2"}},
+		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema,
+			Labels: []catalog.CompatibilityLabel{{ID: "platform@3.0.2"}}},
+	}
+	history := catalog.Catalog{
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "3.0.0"}, {ID: "platform", Version: "3.0.1"}},
+		SDKs:      []catalog.Component{{ID: "sdk", Version: "3.0.0"}, {ID: "sdk", Version: "3.0.1"}},
+		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema,
+			Labels: []catalog.CompatibilityLabel{{ID: "platform@3.0.0"}, {ID: "sdk@3.0.0"}, {ID: "platform@3.0.1"}}},
+	}
+	merged, err := mergeReleaseHistory(target, history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged.Platforms) != 3 || len(merged.SDKs) != 3 || len(merged.Compatibility.Labels) != 4 {
+		t.Fatalf("merged history platform/sdk/label counts = %d/%d/%d", len(merged.Platforms), len(merged.SDKs), len(merged.Compatibility.Labels))
+	}
+	merged, err = mergeReleaseHistory(merged, history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged.Platforms) != 3 || len(merged.SDKs) != 3 || len(merged.Compatibility.Labels) != 4 {
+		t.Fatalf("repeated history merge duplicated entries: platforms=%d sdks=%d labels=%d", len(merged.Platforms), len(merged.SDKs), len(merged.Compatibility.Labels))
 	}
 }
 
