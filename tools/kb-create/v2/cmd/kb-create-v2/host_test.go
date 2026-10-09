@@ -68,6 +68,7 @@ func TestMain(m *testing.M) {
 type installation struct {
 	launcher, root, kbHome, state string
 	port                          int
+	t                             *testing.T
 }
 
 func newInstallation(t *testing.T, hostArgs ...string) installation {
@@ -91,7 +92,7 @@ func newInstallation(t *testing.T, hostArgs ...string) installation {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port}
+	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
 	t.Cleanup(func() { _, _, _ = inst.run("stop", "--json") })
 	return inst
 }
@@ -105,6 +106,9 @@ func (i installation) run(args ...string) (map[string]any, int, string) {
 	code := 0
 	if exit, ok := err.(*exec.ExitError); ok {
 		code = exit.ExitCode()
+	}
+	if code == 0 && len(args) > 0 && (args[0] == "start" || args[0] == "restart") {
+		i.t.Cleanup(func() { _, _, _ = i.run("stop", "--json") })
 	}
 	var parsed map[string]any
 	_ = json.Unmarshal(stdout.Bytes(), &parsed)
@@ -180,7 +184,6 @@ func TestIndependentPlatformRootsOwnTheirHostLifecycle(t *testing.T) {
 	if _, code, output := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start A: %d %s", code, output)
 	}
-	t.Cleanup(func() { _, _, _ = inst.run("stop", "--json") })
 	receiptAPath := filepath.Join(inst.root, ".kb", "v2", "receipt.json")
 	receiptABefore, err := os.ReadFile(receiptAPath)
 	if err != nil {
@@ -223,7 +226,6 @@ func TestIndependentPlatformRootsOwnTheirHostLifecycle(t *testing.T) {
 	if startB["ok"] != true || startB["operation"] != "start" {
 		t.Fatalf("independent root B did not start beside A: %#v", startB)
 	}
-	t.Cleanup(func() { _ = runForRoot(t, inst, rootB, "stop") })
 	statusBRunning := runForRoot(t, inst, rootB, "status")
 	if statusBRunning["host"].(map[string]any)["state"] != "running" {
 		t.Fatalf("B did not report its own host as running: %#v", statusBRunning)
@@ -261,6 +263,9 @@ func runForRoot(t *testing.T, inst installation, root, operation string) map[str
 		t.Fatalf("%s result is not JSON (exit %d): %v %s", operation, code, err, output)
 	}
 	if data, ok := envelope["data"].(map[string]any); ok {
+		if code == 0 && operation == "start" {
+			t.Cleanup(func() { _ = runForRoot(t, inst, root, "stop") })
+		}
 		return data
 	}
 	envelope["code"] = float64(code)

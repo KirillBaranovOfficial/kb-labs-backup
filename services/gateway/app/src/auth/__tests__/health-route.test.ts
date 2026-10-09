@@ -57,6 +57,19 @@ describe('GET /health/auth — served', () => {
     expect(r.json()).toEqual(READINESS);
   });
 
+  it('returns only the declared auth health wire fields', async () => {
+    const r = await get();
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toEqual({
+      ok: false,
+      authEnabled: true,
+      tenantId: 'kblabs-cloud',
+      activeAdmins: 0,
+      bootstrap: 'not-configured',
+      issues: READINESS.issues,
+    });
+  });
+
   it.each(['127.0.0.1', '127.5.5.5', '::1', '::ffff:127.0.0.1'])('accepts loopback peer %s', async (addr) => {
     expect((await get({ remoteAddress: addr })).statusCode).toBe(200);
   });
