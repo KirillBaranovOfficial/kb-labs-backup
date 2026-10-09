@@ -36,6 +36,7 @@ changes the active platform.
 | S-214.7 | Run the same sealer command with a secret manifest requirement that declares `env` and `services` but also declares a default | The sealer prints `KB_RELEASE_INDEX_SEAL_FAILED` with the exact manifest rule in `cause` and `details.rule`, `retryable: false`, and a hint to remove the secret default; it does not suggest adding `env` or `services`. |
 | S-214.8 | Run the sealer command with a staged service or adapter package declaring `kb.manifest` but lacking `dist/manifest.json` | Preparation fails with the package name and the exact build artifact requirement; the package is not omitted from service or adapter classification. |
 | S-214.9 | Run `kb-create plan --index INDEX_WITH_EXPLICIT_RELATIONS --request-platform-root ROOT --json` for an index relating platform Y, SDK X, and binary Z, then repeat with one relation removed | The first plan succeeds when all exact labels are related in the sealed compatibility matrix, even though the versions differ. The second fails with `KB_INSTALL_RELEASE_INDEX_INVALID` and identifies the missing compatibility relation. |
+| S-214.10 | Prepare and seal a platform release through the release tooling, then inspect the sealed release entry | The release entry contains a `releaseNotes` markdown string. Its notes are covered by the sealed index digest and are available to an offline plan for each intervening release. |
 
 ## Pass criteria
 
