@@ -131,6 +131,7 @@ describe('workflow worker lifecycle', () => {
     const cliApi = {} satisfies Partial<IEntityRegistry>;
     const executionBackend = { execute: vi.fn() } satisfies Partial<IExecutionBackend>;
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: cliApi as unknown as IEntityRegistry,
@@ -252,6 +253,7 @@ describe('workflow worker lifecycle', () => {
     const cliApi = {} satisfies Partial<IEntityRegistry>;
     const executionBackend = { execute: vi.fn() } satisfies Partial<IExecutionBackend>;
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: cliApi as IEntityRegistry,
@@ -325,6 +327,7 @@ describe('workflow worker lifecycle', () => {
       getStateStore: vi.fn(() => ({ updateStep: vi.fn(async () => {}) })),
     };
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       workflowService: { get: vi.fn(async () => ({ input: {
@@ -400,6 +403,7 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: {} as unknown as IEntityRegistry,
@@ -472,6 +476,7 @@ describe('workflow worker lifecycle', () => {
     };
 
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: {} as unknown as IEntityRegistry,
@@ -541,6 +546,7 @@ describe('workflow worker lifecycle', () => {
     };
 
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: {} as unknown as IEntityRegistry,
@@ -625,6 +631,7 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: {} as unknown as IEntityRegistry,
@@ -716,6 +723,7 @@ describe('workflow worker lifecycle', () => {
 
     const logger = mockLogger();
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: {} as unknown as IEntityRegistry,
@@ -793,6 +801,7 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: {} as unknown as IEntityRegistry,
@@ -921,6 +930,7 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: {} as unknown as IEntityRegistry,
@@ -1024,6 +1034,7 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: {} as unknown as IEntityRegistry,
@@ -1136,6 +1147,7 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
       secretProvider: new EnvSecretProvider(),
       cliApi: {} as unknown as IEntityRegistry,

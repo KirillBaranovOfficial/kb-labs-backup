@@ -22,7 +22,7 @@ export function createCronEnabledCommand(enabled: boolean) {
           return { id, ...result };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (message.startsWith('CRON_PLUGIN_READ_ONLY:')) {
+          if (message.startsWith('KB_RUNTIME_CRON_PLUGIN_READ_ONLY:')) {
             return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'Plugin cron schedules are read-only.', 'List available schedules with: kb workflow crons list', message);
           }
           if (!outputJson) { ctx.ui?.warn?.(`Run: kb workflow crons ${action} ${id}`); }

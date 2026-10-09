@@ -55,8 +55,11 @@ class WorkflowJourneyTests(unittest.TestCase):
                         "jobs": [{"steps": [{"id": "hello", "status": "success",
                                                "output": "hello-workflow", "outputs": {}}]}]}}))
                 if args[:3] == ["workflow", "runs", "view"]:
-                    return CompletedProcess(args, 1,
-                                            "Workflow run was not found. Run kb workflow runs list to see available runs.")
+                    return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
+                        "code": "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND",
+                        "message": "Workflow run journey-run-does-not-exist was not found.",
+                        "hint": 'Run "kb workflow runs list" to inspect available runs.',
+                    }}))
                 if args[:3] == ["workflow", "runs", "list"]:
                     # Valid runs-list shape from the command's WorkflowRunSummary contract, but it omits
                     # S-002.5's required workflowId field instead of silently substituting another key.
@@ -247,7 +250,11 @@ class WorkflowJourneyTests(unittest.TestCase):
                 elif args[:3] == ["workflow", "runs", "view"]:
                     run_id = args[3]
                     if run_id == "journey-run-does-not-exist":
-                        return CompletedProcess(args, 1, "Workflow run not found. Run kb workflow runs list to see available runs.")
+                        return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
+                            "code": "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND",
+                            "message": f"Workflow run {run_id} was not found.",
+                            "hint": 'Run "kb workflow runs list" to inspect available runs.',
+                        }}))
                     status = ("cancelled" if run_id == "cancel-run" and cancelled[0] else
                               "failed" if run_id in {"failed-run", "source-run", "rerun-one", "rerun-failed"} else "success")
                     if run_id == "cancel-run" and not cancelled[0]:
@@ -297,7 +304,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                 elif args[:3] == ["workflow", "runs", "rerun"]:
                     if args[3] == "run-does-not-exist":
                         return CompletedProcess(args, 1, json.dumps({"ok": False, "error": {
-                            "code": "KB_WORKFLOW_RUN_NOT_FOUND", "message": "Run run-does-not-exist not found",
+                            "code": "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND", "message": "Run run-does-not-exist not found",
                             "hint": "Run kb workflow runs list to see available runs"}}))
                     run_id = "rerun-failed" if "--failed-only" in args else "rerun-one"
                     output = {"ok": True, "data": {"runId": run_id, "status": "queued"}}

@@ -10,6 +10,7 @@ describe('workflow history after daemon restart', () => {
   it('serves history, detail, and logs from project storage with a fresh daemon cache', async () => {
     const storage = new InMemoryStorage();
     const firstEngine = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(),
       cache: new InMemoryCache(), storage, events: new InMemoryEventBus(), logger: mockLogger(),
     });
@@ -31,6 +32,7 @@ describe('workflow history after daemon restart', () => {
     });
 
     const restartedEngine = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(),
       cache: new InMemoryCache(), storage, events: new InMemoryEventBus(), logger: mockLogger(),
     });

@@ -30,7 +30,11 @@ function createWorkflowServer() {
   };
 
   const jobBroker = {};
-  const workflowService = { listAll: vi.fn(), get: vi.fn() };
+  const workflowService = {
+    listAll: vi.fn(async () => []),
+    get: vi.fn(),
+    refreshManifests: vi.fn(async () => undefined),
+  };
   const cronScheduler = {};
   return createServer({
     engine: engine as any,

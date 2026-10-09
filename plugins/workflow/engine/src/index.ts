@@ -1,6 +1,7 @@
 export * from './types'
 export * from './workflow-loader'
 export * from './state-store'
+export { requireWorkflowProjectId } from './project-scoped-cache'
 export * from './run-coordinator'
 export * from './concurrency-manager'
 export * from './scheduler'
@@ -15,6 +16,3 @@ export * from './manifest-converter'
 export * from './workflow-repository'
 export * from './workflow-service'
 export * from './workflow-registry'
-export * from './job-manager'
-
-

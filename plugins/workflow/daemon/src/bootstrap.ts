@@ -9,6 +9,7 @@ import {
   WorkflowService,
   DAEMON_LEASE_HEARTBEAT_INTERVAL_MS,
   createDefaultSecretProvider,
+  requireWorkflowProjectId,
 } from "@kb-labs/workflow-engine";
 import { getListenOptions } from "@kb-labs/shared-http";
 import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
@@ -58,6 +59,7 @@ export async function setup({
   platformRoot,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
+  const projectId = requireWorkflowProjectId(process.env["KB_PROJECT_ID"]);
   // KB_PROJECT_ROOT is injected by kb-dev when invoked from a project dir with separate platform.
   const workspaceRoot = requireProjectContext(process.env["KB_PROJECT_ROOT"] ?? projectRoot);
 
@@ -137,6 +139,7 @@ export async function setup({
     secretProvider,
     snapshotManager: platform.snapshotManager,
     workspaceRoot,
+    projectId,
   });
 
   bootstrapLogger.info(
@@ -249,7 +252,7 @@ export async function setup({
     workspaceRoot,
     platformRoot,
     projectRoot,
-    projectId: process.env.KB_PROJECT_ID,
+    projectId,
     concurrency: parseInt(process.env.WORKFLOW_CONCURRENCY ?? "5", 10),
     debugMode,
   });
