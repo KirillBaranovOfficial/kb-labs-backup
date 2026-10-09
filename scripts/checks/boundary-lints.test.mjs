@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { applyExceptions, loadExceptions } from './lib/boundary-common.mjs';
+import { applyExceptions, findPluginEntryPackages, loadExceptions } from './lib/boundary-common.mjs';
 import { collect as collectImports, findCoreImports } from './check-plugin-imports.mjs';
 import { collect as collectSpawns, findPlatformBinarySpawns } from './check-platform-spawn.mjs';
 import { collect as collectPeer, findPlatformRuntimeDeps, isPlatformPackage } from './check-plugin-peer-deps.mjs';
@@ -253,9 +253,40 @@ describe('manifest-command-naming (0.5)', () => {
         { path: 'foo list' },
         { path: 'foo bar-baz show' },
         { path: 'foo item delete', operationType: 'mutate', flags: [{ name: 'json', type: 'boolean' }] },
+        { path: 'foo run', examples: ['kb foo run --yes — run the command'] },
       ]),
     );
     assert.deepEqual(v, []);
+  });
+
+  test('failing fixture: every example command path must be declared in the manifest', () => {
+    const v = validateManifest(manifest([
+      { path: 'commit', examples: ['kb unknown open --dry-run'] },
+    ]));
+    assert.deepEqual(v.map((item) => item.rule), ['manifest-example-command-path']);
+    assert.match(v[0].message, /kb unknown open --dry-run/);
+
+    const root = fixtureRepo({
+      'plugins/commit/entry/package.json': { name: '@kb-labs/commit-entry', kb: { manifest: './dist/manifest.js' } },
+      'plugins/commit/entry/dist/manifest.json': manifest([
+        { path: 'commit', examples: ['kb unknown open --dry-run'] },
+      ]),
+      'plugins/nested/entry/package.json': { name: '@kb-labs/nested-entry', kb: { manifest: './dist/manifest.js' } },
+      'plugins/nested/entry/dist/manifest.json': manifest([
+        { path: 'nested run', examples: ['kb other run'] },
+      ]),
+    });
+    const expectedPackages = findPluginEntryPackages(root).map((pkg) => pkg.relDir).sort();
+    const violations = collectManifests(root).filter((item) => item.rule === 'manifest-example-command-path');
+    assert.deepEqual(violations.map((item) => item.package).sort(), expectedPackages);
+
+    const withComment = validateManifest(manifest([
+      { path: 'commit commit', examples: ['kb commit commit --dry-run # Preview without applying'] },
+    ]));
+    assert.deepEqual(withComment, []);
+    assert.deepEqual(validateManifest(manifest([
+      { path: 'impact run', examples: ['impact run # Full impact analysis'] },
+    ])), []);
   });
 
   test('failing fixture: verb outside the vocabulary', () => {
@@ -308,13 +339,19 @@ describe('manifest-command-naming (0.5)', () => {
     const root = fixtureRepo({
       'plugins/p/entry/package.json': { name: '@kb-labs/p-entry', kb: { manifest: './dist/manifest.js' } },
       'plugins/p/entry/dist/manifest.json': manifest([{ path: 'p frobnicate' }]),
+      'plugins/v3/core/package.json': { name: '@kb-labs/v3-core', kb: { manifest: './dist/manifest.v3.js' } },
+      'plugins/v3/core/dist/manifest.json': manifest([{ path: 'v3 frobnicate' }]),
       ...pluginEntry('plugins/q/entry', '@kb-labs/q-entry'),
       'plugins/r/core/package.json': { name: '@kb-labs/r-core' }, // no kb.manifest: ignored
     });
     const v = collectManifests(root);
     assert.deepEqual(
       v.map((x) => `${x.package} ${x.rule}`).sort(),
-      ['(workspace) manifest-not-built', 'plugins/p/entry command-verb-vocabulary'],
+      [
+        '(workspace) manifest-not-built',
+        'plugins/p/entry command-verb-vocabulary',
+        'plugins/v3/core command-verb-vocabulary',
+      ],
     );
     const notBuilt = v.find((x) => x.rule === 'manifest-not-built');
     assert.equal(notBuilt.severity, 'warning');

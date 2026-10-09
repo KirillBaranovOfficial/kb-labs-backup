@@ -34,6 +34,30 @@ describe('impact workspace root', () => {
     await createProjectRegistry({ root: home }).add(registered);
 
     expect(findWorkspaceRoot(nested)).toBe(realpathSync(registered));
-    expect(() => findWorkspaceRoot(unregistered)).toThrow('kb project add');
+    expect(() => findWorkspaceRoot(unregistered)).toThrow();
+  });
+
+  it('throws the catalogued project-context error outside the registry', () => {
+    sandbox = mkdtempSync(join(tmpdir(), 'kb-impact-workspace-'));
+    const home = join(sandbox, 'home');
+    const unregistered = join(sandbox, 'unregistered');
+    mkdirSync(unregistered, { recursive: true });
+    process.env.KB_HOME = home;
+
+    let caught: unknown;
+    try {
+      findWorkspaceRoot(unregistered);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({
+      name: 'ErrorEnvelopeError',
+      envelope: {
+        code: 'KB_PROJECT_UNKNOWN',
+        message: `The project ${unregistered} is not in the registry (the folder may have moved).`,
+        hint: `Register it with "kb project add ${unregistered}".`,
+      },
+    });
   });
 });

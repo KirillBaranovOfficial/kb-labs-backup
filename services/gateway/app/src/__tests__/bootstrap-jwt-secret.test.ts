@@ -31,6 +31,10 @@ vi.mock("@kb-labs/core-platform", async (importOriginal) => ({
 }));
 
 vi.mock("@kb-labs/core-runtime", () => ({
+  requireProjectContext: (projectRoot: string | undefined) => {
+    if (!projectRoot) throw new Error('Project root required by test fixture');
+    return projectRoot;
+  },
   platform: {
     logger: {
       info: vi.fn(),

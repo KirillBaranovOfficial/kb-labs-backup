@@ -40,7 +40,14 @@ describe('resolveProjectRoot', () => {
     await expect(resolveProjectRoot({
       startDir: unregistered,
       env: { KB_HOME: registryHome },
-    })).rejects.toMatchObject({ code: 'KB_PROJECT_UNKNOWN' })
+    })).rejects.toMatchObject({
+      name: 'ErrorEnvelopeError',
+      envelope: {
+        code: 'KB_PROJECT_UNKNOWN',
+        message: `The project ${path.resolve(unregistered)} is not in the registry (the folder may have moved).`,
+        hint: `Register it with "kb project add ${path.resolve(unregistered)}".`,
+      },
+    })
   })
 
   it('resolves the registered project containing cwd without reading repository config', async () => {
@@ -144,7 +151,7 @@ describe('resolveProjectRoot', () => {
     await expect(findRegisteredProjectRoot(worktree, { KB_HOME: home }, injectedExec)).resolves.toBeUndefined()
     expect(calls).toHaveLength(1)
     await expect(resolveProjectRoot({ startDir: worktree, env: { KB_HOME: home } }))
-      .rejects.toMatchObject({ code: 'KB_PROJECT_UNKNOWN' })
+      .rejects.toMatchObject({ envelope: { code: 'KB_PROJECT_UNKNOWN' } })
   })
 
   it('does not resolve bare repositories or repositories with a nonstandard common directory', async () => {
@@ -184,7 +191,7 @@ describe('resolveProjectRoot', () => {
     writeFileSync(path.join(project, 'package.json'), '{"name":"unregistered"}')
 
     await expect(resolveProjectRoot({ startDir: project, env: { KB_HOME: path.join(tmpDir, 'empty-home') } }))
-      .rejects.toMatchObject({ code: 'KB_PROJECT_UNKNOWN' })
+      .rejects.toMatchObject({ envelope: { code: 'KB_PROJECT_UNKNOWN' } })
   })
 })
 
@@ -474,11 +481,31 @@ describe('resolveRoots', () => {
 
     expect(result).toEqual({
       platformRoot: path.resolve(platformRoot),
-      projectRoot: path.resolve(platformRoot),
-      sameLocation: true,
+      projectRoot: undefined,
+      sameLocation: false,
       projectStartDir: path.resolve(cwd),
-      sources: { platform: 'env', project: 'platform', projectStartDir: path.resolve(cwd) },
+      sources: { platform: 'env', projectStartDir: path.resolve(cwd) },
     })
+  })
+
+  it('resolves the registered project while keeping platform scope rooted at the platform', async () => {
+    const platformRoot = path.join(tmpDir, 'platform-with-project')
+    const projectRoot = path.join(tmpDir, 'registered-project')
+    const home = path.join(tmpDir, 'platform-scope-home')
+    mkdirSync(projectRoot, { recursive: true })
+    mkdirSync(path.join(platformRoot, 'node_modules', '@kb-labs', 'core-runtime'), { recursive: true })
+    await createProjectRegistry({ root: home }).add(projectRoot)
+
+    const result = await resolveRoots({
+      startDir: projectRoot,
+      env: { KB_PLATFORM_ROOT: platformRoot, KB_HOME: home },
+      projectScope: 'platform',
+    })
+
+    expect(result.platformRoot).toBe(path.resolve(platformRoot))
+    expect(result.projectRoot).toBe(realpathSync(projectRoot))
+    expect(result.sameLocation).toBe(false)
+    expect(result.sources.project).toBe('registry')
   })
 
   it('returns sameLocation: true in dev-mode workspace (both resolve to same root)', async () => {
