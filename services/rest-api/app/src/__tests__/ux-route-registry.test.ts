@@ -4,6 +4,7 @@ import { restApiConfigSchema } from '@kb-labs/rest-api-core';
 import { platform, resetPlatform } from '@kb-labs/core-runtime';
 import { createServer } from '../server';
 import type { RouteOptions } from 'fastify';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 
 const snapshot: RegistrySnapshot = {
   schema: 'kb.registry/1',
@@ -143,7 +144,6 @@ describe('REST production route declarations', () => {
 
   // case: S-203.1, S-203.2, S-203.3, S-203.6
   it('discovers production registrations and requires closed request and response schemas or an explicit raw declaration', async () => {
-    let injectFailure = false;
     process.env.KB_TENANT_DEFAULT_TIER = 'enterprise';
     const routes: RouteOptions[] = [];
     const cache = new Map<string, unknown>();
@@ -158,7 +158,24 @@ describe('REST production route declarations', () => {
     const app = await createServer(restApiConfigSchema.parse({ port: 5050 }), process.cwd(), registry, (route) => {
       const original = route.handler;
       route.handler = async function (...args) {
-        if (injectFailure) throw new Error('fixture unexpected failure');
+        const [request, reply] = args as [
+          { headers: Record<string, string | string[] | undefined> },
+          { code: (status: number) => { send: (payload: unknown) => unknown } },
+        ];
+        const failure = request.headers['x-ux-fixture-failure'];
+        if (failure === 'typed') {
+          throw createErrorEnvelope('KB_PROJECT_DECLARATION_INVALID', {
+            details: { projectId: 'project-1' }, message: 'Project declaration failed.', hint: 'Repair the project declaration.',
+          });
+        }
+        if (failure === 'plain') {
+          const error = new Error('fixture plain failure') as Error & { statusCode: number; code: string };
+          error.statusCode = 409;
+          error.code = 'KB_PROJECT_ALREADY_REGISTERED';
+          throw error;
+        }
+        if (failure === 'raw-reply') return reply.code(400).send({ error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
+        if (failure === 'unexpected') throw new Error('fixture unexpected failure');
         return original.apply(this, args);
       };
       routes.push(route);
@@ -212,9 +229,27 @@ describe('REST production route declarations', () => {
       expect((route.schema as { response?: Record<number, unknown> }).response?.[invalid.statusCode], `${method} ${route.url} missing response schema for 400`).toBeDefined();
       assertUxResult(invalid, true);
 
-      injectFailure = true;
-      const failed = await app.inject(requestForRoute(route, method));
-      injectFailure = false;
+      const withFailure = (failure: 'typed' | 'plain' | 'raw-reply' | 'unexpected') => {
+        const request = requestForRoute(route, method);
+        return app.inject({ ...request, headers: { ...request.headers, 'x-ux-fixture-failure': failure } });
+      };
+      const typed = await withFailure('typed');
+      expect(typed.statusCode).toBe(422);
+      expect(typed.json()).toMatchObject({ ok: false, error: {
+        code: 'KB_PROJECT_DECLARATION_INVALID', message: 'Project declaration failed.',
+        hint: 'Repair the project declaration.', details: { projectId: 'project-1' },
+        correlationId: expect.any(String),
+      } });
+
+      const plain = await withFailure('plain');
+      expect(plain.statusCode).toBe(409);
+      expect(plain.json()).toMatchObject({ ok: false, error: { code: 'KB_PROJECT_ALREADY_REGISTERED' } });
+
+      const rawReply = await withFailure('raw-reply');
+      expect(rawReply.statusCode).toBe(400);
+      assertUxResult(rawReply, true);
+
+      const failed = await withFailure('unexpected');
       expect(failed.statusCode, `${method} ${route.url} failure injection did not reach the handler`).toBe(500);
       expect((route.schema as { response?: Record<number, unknown> }).response?.[failed.statusCode], `${method} ${route.url} missing response schema for 500`).toBeDefined();
       const failureBody = failed.json() as { ok: boolean; error: { code: string; correlationId?: string; hint?: string } };

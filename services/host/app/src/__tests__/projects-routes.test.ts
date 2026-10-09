@@ -107,7 +107,12 @@ describe("createProjectsRoutes", () => {
     const res = await instance.inject({ method: "GET", url: "/api/v1/projects/prj_missing" });
 
     expect(res.statusCode).toBe(404);
-    expect((res.json() as ErrorBody).error.code).toBe("KB_PROJECT_UNKNOWN");
+    expect(res.json()).toMatchObject({ ok: false, error: {
+      code: "KB_PROJECT_UNKNOWN",
+      message: expect.any(String),
+      hint: expect.any(String),
+      correlationId: expect.any(String),
+    } });
   });
 
   it("POST registers a folder that already has .kb/", async () => {
