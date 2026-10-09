@@ -274,22 +274,38 @@ func validateCompatibility(matrix CompatibilityMatrix, source Catalog) error {
 			}
 		}
 	}
+	sdkByVersion := make(map[string]Component, len(source.SDKs))
+	for _, sdk := range source.SDKs {
+		sdkByVersion[sdk.Version] = sdk
+	}
 	for _, platform := range source.Platforms {
+		platformID := "platform@" + platform.Version
+		platformLabel, ok := compatibilityLabel(matrix.Labels, platformID, "platform")
+		if !ok {
+			return fmt.Errorf("compatibility matrix has no platform label %q", platformID)
+		}
+		var sdks []Component
+		for _, relation := range platformLabel.Requires {
+			if !strings.HasPrefix(relation.Label, "sdk@") {
+				continue
+			}
+			version := strings.TrimPrefix(relation.Label, "sdk@")
+			sdk, exists := sdkByVersion[version]
+			if !exists {
+				return fmt.Errorf("platform %s compatibility label %q relates absent SDK version %q", platform.Version, platformID, version)
+			}
+			sdks = append(sdks, sdk)
+		}
+		if len(sdks) == 0 {
+			return fmt.Errorf("platform %s compatibility label %q has no SDK relation", platform.Version, platformID)
+		}
 		for _, shipped := range platform.Binaries {
-			binary, ok := compatibilityBinaryLabel(matrix.Labels, shipped, "platform@"+platform.Version)
+			binary, ok := compatibilityBinaryLabel(matrix.Labels, shipped, platformID)
 			if !ok {
 				return fmt.Errorf("compatibility matrix does not relate shipped binary %s to platform %s", shipped.ID, platform.Version)
 			}
-			rangeValue, err := semrange.ParseRange(platform.SDKRange)
-			if err != nil {
-				return fmt.Errorf("platform %s has an invalid SDK range: %w", platform.Version, err)
-			}
-			for _, sdk := range source.SDKs {
-				candidate, err := semrange.ParseVersion(sdk.Version)
-				if err != nil {
-					return fmt.Errorf("SDK %s has an invalid version: %w", sdk.ID, err)
-				}
-				if rangeValue.Satisfies(candidate) && !requiresLabel(binary, "sdk@"+sdk.Version) {
+			for _, sdk := range sdks {
+				if !requiresLabel(binary, "sdk@"+sdk.Version) {
 					return fmt.Errorf("compatibility matrix does not relate shipped binary %s to SDK %s for platform %s", shipped.ID, sdk.Version, platform.Version)
 				}
 			}

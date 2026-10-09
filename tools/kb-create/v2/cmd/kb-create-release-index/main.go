@@ -154,16 +154,33 @@ func mergeReleaseHistory(target, history catalog.Catalog) (catalog.Catalog, erro
 		if target.Compatibility == nil {
 			target.Compatibility = &catalog.CompatibilityMatrix{Schema: history.Compatibility.Schema}
 		}
-		labels := make(map[string]struct{}, len(target.Compatibility.Labels))
-		for _, label := range target.Compatibility.Labels {
-			labels[label.ID] = struct{}{}
+		labels := make(map[string]int, len(target.Compatibility.Labels))
+		for index, label := range target.Compatibility.Labels {
+			labels[label.ID] = index
 		}
 		for _, label := range history.Compatibility.Labels {
-			if _, exists := labels[label.ID]; !exists {
+			if index, exists := labels[label.ID]; exists {
+				target.Compatibility.Labels[index].Requires = mergeCompatibilityRelations(target.Compatibility.Labels[index].Requires, label.Requires)
+			} else {
 				target.Compatibility.Labels = append(target.Compatibility.Labels, label)
-				labels[label.ID] = struct{}{}
+				labels[label.ID] = len(target.Compatibility.Labels) - 1
 			}
 		}
 	}
 	return target, nil
+}
+
+func mergeCompatibilityRelations(target, history []catalog.CompatibilityRelation) []catalog.CompatibilityRelation {
+	seen := make(map[catalog.CompatibilityRelation]struct{}, len(target))
+	for _, relation := range target {
+		seen[relation] = struct{}{}
+	}
+	for _, relation := range history {
+		if _, exists := seen[relation]; exists {
+			continue
+		}
+		target = append(target, relation)
+		seen[relation] = struct{}{}
+	}
+	return target
 }
