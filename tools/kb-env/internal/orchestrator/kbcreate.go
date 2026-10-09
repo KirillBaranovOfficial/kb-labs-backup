@@ -30,7 +30,7 @@ func Install(kbcreateBin string, l env.Layout, profile config.Profile, registry 
 		return diag.New("KB_RUNTIME_UNEXPECTED", "The launcher release index path could not be determined.")
 	}
 	index := filepath.Join(home, ".local", "share", "kb-create", "release-index.json")
-	args := []string{"install", "--json", "--index", index, "--request-platform-root", l.Platform, "--project-root", l.Project,
+	args := []string{"install", "--json", "--index", index, "--platform-root", l.Platform, "--project-root", l.Project,
 		"--service-profile", "default", "--plugins", strings.Join(profile.Plugins, ","), "--registry", registry}
 	cmd := exec.Command(kbcreateBin, args...)
 	cmd.Dir = l.Home

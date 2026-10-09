@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kb-labs/clikit/diag"
@@ -22,6 +23,7 @@ import (
 )
 
 type planInput struct {
+	Operation     string
 	Index         string
 	RequestFile   string
 	Request       *contracts.InstallRequest
@@ -61,7 +63,7 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 			string(plan.Request.Platform.Channel), string(plan.Request.Source), len(plan.Artifacts), time.Since(started)))
 	}()
 	resolved, failure := resolvePlan(planInput{Index: request.Index, RequestFile: request.RequestFile, Direct: request.Direct,
-		ScenarioID: request.ScenarioID, Answers: request.Answers, Resume: request.Resume,
+		Operation: "plan", ScenarioID: request.ScenarioID, Answers: request.Answers, Resume: request.Resume,
 		Executable: request.Executable, KnownGateways: request.KnownGateways})
 	if failure != nil {
 		return planResult{}, inputFailure(failure)
@@ -118,7 +120,7 @@ func knownGatewayRoots(executable string) []gateway.Root {
 // validation and mutation after resolution.
 func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 	if input.Index == "" || (input.RequestFile == "" && input.Request == nil && input.Direct.PlatformRoot == "") {
-		return resolvedPlan{}, failure(contracts.CodeInputRequired, "--index and either --input or --request-platform-root are required", "pass immutable release index plus V2 request JSON or direct CI flags", nil)
+		return resolvedPlan{}, failure(contracts.CodeInputRequired, "--index and either --input or --platform-root are required", "pass immutable release index plus V2 request JSON or direct CI flags", nil)
 	}
 	source, err := catalog.LoadFile(input.Index)
 	if err != nil {
@@ -140,7 +142,12 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 	} else {
 		request, requestErr := input.Direct.normalize()
 		if requestErr != nil {
-			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr)
+			diagnostic := failure("KB_INSTALL_INPUT_REQUIRED", "direct request is invalid", "correct direct CI flags or provide --input", requestErr)
+			var validation *contracts.RequestValidationError
+			if errors.As(requestErr, &validation) {
+				setRequestRetryHint(diagnostic, input, validation.Field)
+			}
+			return resolvedPlan{}, diagnostic
 		}
 		if input.ScenarioID != "" {
 			request, requestErr = compileScenario(input.ScenarioID, input.Answers, input.Resume, request)
@@ -155,6 +162,11 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
 	}
 	if !response.OK {
+		if response.Error != nil {
+			if field, ok := response.Error.Meta["field"].(string); ok {
+				setRequestRetryHint(response.Error, input, field)
+			}
+		}
 		return resolvedPlan{}, response.Error
 	}
 	state, err := host.StateHome()
@@ -211,11 +223,65 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			}
 			response = transport.PlanWith(data, source, resolve.Options{LauncherVersion: buildVersion})
 			if !response.OK {
+				if response.Error != nil {
+					if field, ok := response.Error.Meta["field"].(string); ok {
+						setRequestRetryHint(response.Error, input, field)
+					}
+				}
 				return resolvedPlan{}, response.Error
 			}
 		}
 	}
 	return resolvedPlan{Catalog: source, Plan: *response.Plan, State: state}, nil
+}
+
+func setRequestRetryHint(diagnostic *diag.Diag, input planInput, field string) {
+	operation := input.Operation
+	args := []string{"kb-create", operation}
+	appendFlag := func(name, value string) {
+		if value != "" {
+			args = append(args, "--"+name, shellQuote(value))
+		}
+	}
+	appendFlag("index", input.Index)
+	if input.RequestFile != "" {
+		appendFlag("input", input.RequestFile)
+	} else {
+		appendFlag("platform-root", input.Direct.PlatformRoot)
+		appendFlag("project-root", input.Direct.ProjectRoot)
+		appendFlag("platform-version", input.Direct.PlatformVersion)
+		appendFlag("platform-channel", input.Direct.PlatformChannel)
+		// Gateway URLs can contain credentials; scenario answer JSON can contain secrets.
+		appendFlag("sdk-version", input.Direct.SDKVersion)
+		appendFlag("service-profile", input.Direct.ServiceProfile)
+		appendFlag("plugins", input.Direct.Plugins)
+		appendFlag("adapters", input.Direct.Adapters)
+		appendFlag("provider", input.Direct.Providers)
+		appendFlag("policy", input.Direct.Policy)
+		if input.Direct.Offline {
+			args = append(args, "--offline")
+		}
+		appendFlag("scenario", input.ScenarioID)
+	}
+	args = append(args, "--json")
+	command := strings.Join(args, " ")
+	if input.RequestFile != "" {
+		diagnostic.Hint = fmt.Sprintf("Correct %s in request file %s, then retry: %s", field, shellQuote(input.RequestFile), command)
+	} else {
+		diagnostic.Hint = fmt.Sprintf("Correct %s using the corresponding request flag, then retry: %s", field, command)
+		if input.ScenarioID != "" {
+			// Scenario answers can contain secret values, so keep them out of diagnostics.
+			diagnostic.Hint += " Reuse the scenario answers from your original command if needed."
+		}
+	}
+	if diagnostic.Meta == nil {
+		diagnostic.Meta = map[string]any{}
+	}
+	diagnostic.Meta["field"] = field
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func readRequest(path string) ([]byte, error) {

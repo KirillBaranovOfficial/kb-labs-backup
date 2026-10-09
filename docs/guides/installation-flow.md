@@ -30,7 +30,7 @@ to inspect the exact versions and artifacts:
 ```bash
 kb-create plan \
   --index release-index.json \
-  --request-platform-root /srv/kb-platform \
+  --platform-root /srv/kb-platform \
   --service-profile default \
   --scenario commit \
   --json
@@ -41,7 +41,7 @@ Apply the same request when its plan is ready:
 ```bash
 kb-create apply \
   --index release-index.json \
-  --request-platform-root /srv/kb-platform \
+  --platform-root /srv/kb-platform \
   --service-profile default \
   --scenario commit \
   --json

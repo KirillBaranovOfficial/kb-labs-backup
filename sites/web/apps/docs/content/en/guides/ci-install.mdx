@@ -1,7 +1,7 @@
 ---
 title: "V2 Installs in CI"
 description: "Apply a sealed KB Labs release index non-interactively with kb-create."
-updatedAt: "2026-10-01"
+updatedAt: "2026-10-09"
 order: 8
 ---
 
@@ -16,7 +16,7 @@ installation root:
 
 ```bash
 kb-create apply --json --index ./release-index.json \
-  --request-platform-root ./ci-platform --service-profile default \
+  --platform-root ./ci-platform --service-profile default \
   --scenario commit
 ```
 
@@ -54,7 +54,7 @@ disk. It manages pnpm itself. If an install fails with one of these codes:
 | --- | --- |
 | `KB_INSTALL_NODE_VERSION` | Install Node 24, then rerun apply; with nvm: `nvm install 24 && nvm use 24`. |
 | `KB_INSTALL_MEMORY_INSUFFICIENT` | Free memory or use a runner with more memory, then rerun apply. |
-| `KB_INSTALL_NO_DISK_SPACE` | Free disk space or move `--request-platform-root` to a filesystem with at least 2 GiB free. |
+| `KB_INSTALL_NO_DISK_SPACE` | Free disk space or move `--platform-root` to a filesystem with at least 2 GiB free. |
 | `KB_INSTALL_PACKAGE_MANAGER_KILLED` | Free memory or use a larger runner, then rerun apply. |
 | `KB_INSTALL_PORT_IN_USE` | Release the port identified in the error and rerun apply. |
 
