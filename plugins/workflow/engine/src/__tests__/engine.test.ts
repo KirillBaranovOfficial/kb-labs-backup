@@ -129,6 +129,7 @@ describe('WorkflowEngine', () => {
     logger = mockLogger();
 
     engine = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(),
       cache,
       storage,
@@ -147,6 +148,7 @@ describe('WorkflowEngine', () => {
 
     it('should use default maxWorkflowDepth if not provided', () => {
       const engine2 = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(), cache, events, logger, storage });
       expect(engine2.maxWorkflowDepth).toBe(2);
     });
@@ -197,6 +199,7 @@ describe('WorkflowEngine', () => {
       });
 
       const restarted = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(),
         cache: new MockCache(), storage, events: new MockEventBus(), logger: mockLogger(),
       });
@@ -379,6 +382,7 @@ describe('WorkflowEngine', () => {
       }));
 
       const restarted = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(), cache, events, logger, storage, maxWorkflowDepth: 2 });
       await expect(restarted.reconcileChildInvocations()).resolves.toBe(4);
 
@@ -1042,6 +1046,7 @@ describe('WorkflowEngine', () => {
       'against the same store — modeling a stray/duplicate daemon launch) ' +
       'happens to run its own startup sweep.', async () => {
       const liveDaemon = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(),
         cache,
         storage,
@@ -1062,6 +1067,7 @@ describe('WorkflowEngine', () => {
       // (e.g. a stray/duplicate launch) and runs its own one-time cleanup.
       const strayLogger = mockLogger();
       const strayDaemon = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(),
         cache,
         storage,
@@ -1088,6 +1094,7 @@ describe('WorkflowEngine', () => {
       'lease is actually gone — a real restart succeeding a truly-dead daemon ' +
       'must keep cleaning up orphaned runs exactly as before.', async () => {
       const crashedDaemon = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(),
         cache,
         storage,
@@ -1105,9 +1112,10 @@ describe('WorkflowEngine', () => {
       // renewal — nothing is heartbeating it any more). Simulate that by
       // removing the lease key directly from the shared cache, the same
       // outcome the real TTL produces once the owning process is truly gone.
-      await cache.delete('kb:daemon:lease');
+      await cache.delete('workflow:project:prj_0000000000000001:kb:daemon:lease');
 
       const restartedDaemon = new WorkflowEngine({
+      projectId: 'prj_0000000000000001',
       secretProvider: new EnvSecretProvider(),
         cache,
         storage,
