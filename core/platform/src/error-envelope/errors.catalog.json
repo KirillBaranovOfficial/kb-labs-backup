@@ -486,7 +486,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Authentication is required.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
+      "httpStatus": 401
     },
     {
       "code": "KB_AUTH_INVALID_CREDENTIALS",
@@ -495,7 +496,8 @@
       "severity": "error",
       "retryable": true,
       "message": "The credentials are invalid.",
-      "hint": "Retry, or reset your credentials."
+      "hint": "Retry, or reset your credentials.",
+      "httpStatus": 401
     },
     {
       "code": "KB_AUTH_INVALID_CURRENT_PASSWORD",
@@ -504,7 +506,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Current password is incorrect",
-      "hint": "Check the current password and retry the password change."
+      "hint": "Check the current password and retry the password change.",
+      "httpStatus": 400
     },
     {
       "code": "KB_AUTH_INVALID_INVITE",
@@ -513,7 +516,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The invitation is invalid, expired, or already used.",
-      "hint": "Ask the administrator who invited you to send a new invitation."
+      "hint": "Ask the administrator who invited you to send a new invitation.",
+      "httpStatus": 422
     },
     {
       "code": "KB_AUTH_INVALID_PASSWORD_RESET",
@@ -522,7 +526,8 @@
       "severity": "error",
       "retryable": false,
       "message": "This reset link is invalid, expired, or already used.",
-      "hint": "Ask an administrator to issue a new password reset link."
+      "hint": "Ask an administrator to issue a new password reset link.",
+      "httpStatus": 400
     },
     {
       "code": "KB_AUTH_LAST_ADMIN",
@@ -531,7 +536,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The last active administrator cannot be demoted or disabled.",
-      "hint": "Add another active tenant administrator before changing this account."
+      "hint": "Add another active tenant administrator before changing this account.",
+      "httpStatus": 409
     },
     {
       "code": "KB_AUTH_TOKEN_EXPIRED",
@@ -540,7 +546,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Your session token has expired and could not be refreshed.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
+      "httpStatus": 401
     },
     {
       "code": "KB_AUTH_SESSION_REVOKED",
@@ -549,7 +556,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The saved Gateway session was revoked.",
-      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
+      "hint": "Run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
+      "httpStatus": 401
     },
     {
       "code": "KB_AUTH_USER_INACTIVE",
@@ -558,7 +566,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The user account for this Gateway session is inactive.",
-      "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin."
+      "hint": "Ask an administrator to reactivate the account, then run \"kb auth login --gateway-url {gatewayUrl} --email <email>\" and enter your password at the prompt, or provide it with --password-stdin.",
+      "httpStatus": 401
     },
     {
       "code": "KB_AUTH_FORBIDDEN",
@@ -567,7 +576,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Permission denied: {permission}",
-      "hint": "Ask your administrator for the permission needed to perform this operation."
+      "hint": "Ask your administrator for the permission needed to perform this operation.",
+      "httpStatus": 403
     },
     {
       "code": "KB_AUTH_LOCKED_OUT",
@@ -612,7 +622,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The project path {path} does not exist.",
-      "hint": "Check the path and run \"kb project add <path>\" again."
+      "hint": "Check the path and run \"kb project add <path>\" again.",
+      "httpStatus": 404
     },
     {
       "code": "KB_PROJECT_NOT_A_DIRECTORY",
@@ -621,7 +632,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The project path {path} is not a directory.",
-      "hint": "Pass the project folder, not a file."
+      "hint": "Pass the project folder, not a file.",
+      "httpStatus": 400
     },
     {
       "code": "KB_PROJECT_NO_ACCESS",
@@ -630,7 +642,8 @@
       "severity": "error",
       "retryable": false,
       "message": "No permission to read the project path {path}.",
-      "hint": "Fix the folder permissions or pick another folder."
+      "hint": "Fix the folder permissions or pick another folder.",
+      "httpStatus": 403
     },
     {
       "code": "KB_PROJECT_ALREADY_REGISTERED",
@@ -639,7 +652,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The project {path} is already registered.",
-      "hint": "Use \"kb project show\" to inspect it."
+      "hint": "Use \"kb project show\" to inspect it.",
+      "httpStatus": 409
     },
     {
       "code": "KB_PROJECT_UNKNOWN",
@@ -648,7 +662,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The project {path} is not in the registry (the folder may have moved).",
-      "hint": "Register it with \"kb project add {path}\"."
+      "hint": "Register it with \"kb project add {path}\".",
+      "httpStatus": 404
     },
     {
       "code": "KB_PROJECT_DECLARATION_INVALID",
@@ -657,7 +672,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The .kb configuration of the project is invalid at {field}: {expected}.",
-      "hint": "Fix {field} in the project .kb configuration."
+      "hint": "Fix {field} in the project .kb configuration.",
+      "httpStatus": 422
     },
     {
       "code": "KB_PROJECT_RUNTIME_START_FAILED",
@@ -666,7 +682,8 @@
       "severity": "error",
       "retryable": true,
       "message": "The runtime of project {project} did not start.",
-      "hint": "Read the reason in the log and include the correlationId if you report it."
+      "hint": "Read the reason in the log and include the correlationId if you report it.",
+      "httpStatus": 502
     },
     {
       "code": "KB_PROJECT_RUNTIME_RELOAD_FAILED",
@@ -675,7 +692,8 @@
       "severity": "error",
       "retryable": true,
       "message": "The runtime of project {projectId} could not reload after its plugin set changed.",
-      "hint": "Inspect project runtime logs with `kb logs query` or under the project's `.kb/logs`, then run `kb marketplace plugins doctor --scope project`."
+      "hint": "Inspect project runtime logs with `kb logs query` or under the project's `.kb/logs`, then run `kb marketplace plugins doctor --scope project`.",
+      "httpStatus": 502
     },
     {
       "code": "KB_PROJECT_RUNTIME_IDENTITY_MISMATCH",
@@ -684,7 +702,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The project runtime identity {projectId} does not match the registered project path.",
-      "hint": "Run `kb project list` to verify the registered path, then restart the host."
+      "hint": "Run `kb project list` to verify the registered path, then restart the host.",
+      "httpStatus": 502
     },
     {
       "code": "KB_PROJECT_RUNTIME_LIMIT",
@@ -693,7 +712,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The limit of {limit} active project runtimes is reached.",
-      "hint": "Close an inactive project and try again."
+      "hint": "Close an inactive project and try again.",
+      "httpStatus": 503
     },
     {
       "code": "KB_PROJECT_NAME_TAKEN",
@@ -702,7 +722,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The project name {name} is already used by another registered project.",
-      "hint": "Pick another name with --name, or run \"kb project list\" to see the registered names."
+      "hint": "Pick another name with --name, or run \"kb project list\" to see the registered names.",
+      "httpStatus": 409
     },
     {
       "code": "KB_PROJECT_REGISTRY_CORRUPT",
@@ -711,7 +732,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The project registry {file} is unreadable: {reason}.",
-      "hint": "Inspect or move {file} aside, then register your projects again with \"kb project add <path>\"; the file is never overwritten automatically."
+      "hint": "Inspect or move {file} aside, then register your projects again with \"kb project add <path>\"; the file is never overwritten automatically.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PROJECT_REGISTRY_SCHEMA_UNSUPPORTED",
@@ -720,7 +742,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The project registry {file} uses schema version {found}, but this KB Labs build supports version {supported}.",
-      "hint": "Update KB Labs to a build that supports the registry schema; the file is left untouched."
+      "hint": "Update KB Labs to a build that supports the registry schema; the file is left untouched.",
+      "httpStatus": 500
     },
     {
       "code": "KB_PROJECT_REGISTRY_LOCKED",
@@ -729,7 +752,8 @@
       "severity": "error",
       "retryable": true,
       "message": "The project registry is locked by another KB Labs process (waited {timeoutMs} ms).",
-      "hint": "Retry in a moment; if no other kb command is running, remove the stale projects.json.lock file next to the registry."
+      "hint": "Retry in a moment; if no other kb command is running, remove the stale projects.json.lock file next to the registry.",
+      "httpStatus": 503
     },
     {
       "code": "KB_CONFIG_UNKNOWN_KEY",
@@ -738,7 +762,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Unknown configuration key {path}.",
-      "hint": "{suggestion} Run \"kb config show\" to list the keys that are set."
+      "hint": "{suggestion} Run \"kb config show\" to list the keys that are set.",
+      "httpStatus": 400
     },
     {
       "code": "KB_CONFIG_SECRET_MISSING",
@@ -747,7 +772,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The configuration references {variable}, which has no value.",
-      "hint": "Set the environment variable or store the secret, then retry."
+      "hint": "Set the environment variable or store the secret, then retry.",
+      "httpStatus": 400
     },
     {
       "code": "KB_CONFIG_SECRET_PLAINTEXT",
@@ -756,7 +782,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Refusing to store a plain secret at {path}.",
-      "hint": "Put the secret in an environment variable and store a reference: {example}. Use --allow-plain-secret only for throwaway local values."
+      "hint": "Put the secret in an environment variable and store a reference: {example}. Use --allow-plain-secret only for throwaway local values.",
+      "httpStatus": 400
     },
     {
       "code": "KB_CONFIG_CONFLICT",
@@ -765,7 +792,8 @@
       "severity": "error",
       "retryable": true,
       "message": "The configuration file {path} was changed by another writer.",
-      "hint": "Reload the file and repeat the change."
+      "hint": "Reload the file and repeat the change.",
+      "httpStatus": 409
     },
     {
       "code": "KB_CONFIG_LLM_KEY_INVALID",
@@ -1053,7 +1081,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Configuration value {path} is invalid.",
-      "hint": "Provide a valid value for {path} (see the cause) and retry; \"kb config get {path}\" shows the current one."
+      "hint": "Provide a valid value for {path} (see the cause) and retry; \"kb config get {path}\" shows the current one.",
+      "httpStatus": 400
     },
     {
       "code": "KB_PLUGIN_SETTINGS_INVALID",
@@ -1080,7 +1109,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Plugin {plugin} was not found in the registry.",
-      "hint": "kb marketplace search"
+      "hint": "kb marketplace search",
+      "httpStatus": 404
     },
     {
       "code": "KB_PLUGIN_NOT_INSTALLED",
@@ -1089,7 +1119,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Plugin is not installed in this project.",
-      "hint": "Run `kb marketplace install {package}` in this project."
+      "hint": "Run `kb marketplace install {package}` in this project.",
+      "httpStatus": 404
     },
     {
       "code": "KB_ADAPTER_NOT_CONFIGURED",
@@ -1098,7 +1129,8 @@
       "severity": "error",
       "retryable": false,
       "message": "Service {service} is not configured.",
-      "hint": "Run `{command}` to bind an installed adapter for this capability."
+      "hint": "Run `{command}` to bind an installed adapter for this capability.",
+      "httpStatus": 404
     },
     {
       "code": "KB_ADAPTER_NOT_INSTALLED",
@@ -1152,7 +1184,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The provided input is invalid.",
-      "hint": "Correct the reported fields and retry; run the command with --help for the expected input."
+      "hint": "Correct the reported fields and retry; run the command with --help for the expected input.",
+      "httpStatus": 400
     },
     {
       "code": "KB_RUNTIME_COMMAND_FAILED",
@@ -1170,7 +1203,8 @@
       "severity": "error",
       "retryable": false,
       "message": "The requested resource was not found.",
-      "hint": "Check the resource ID or name, then rerun the command."
+      "hint": "Check the resource ID or name, then rerun the command.",
+      "httpStatus": 404
     },
     {
       "code": "KB_RUNTIME_CONFIRMATION_REQUIRED",
@@ -1188,7 +1222,8 @@
       "severity": "error",
       "retryable": true,
       "message": "The host {service} address was not passed to this runtime.",
-      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime."
+      "hint": "Start the host with kb-create start so it can pass live host service addresses to this runtime.",
+      "httpStatus": 503
     },
     {
       "code": "KB_HOST_SERVICE_ADDRESS_INVALID",
@@ -1206,7 +1241,8 @@
       "severity": "error",
       "retryable": false,
       "message": "An unexpected error occurred.",
-      "hint": "Re-run with --debug and include the correlationId in a report."
+      "hint": "Re-run with --debug and include the correlationId in a report.",
+      "httpStatus": 500
     },
     {
       "code": "KB_CONFIG_LOAD_FAILED",

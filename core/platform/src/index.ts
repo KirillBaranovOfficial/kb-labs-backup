@@ -35,6 +35,7 @@ export type {
   ServiceNetworkSettings,
 } from "./service-listen-address.js";
 export * from "./error-envelope/index.js";
+export * from "./http-failure/index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ADAPTER DEFAULTS — per-slot fallback policy (consulted by the loader)
