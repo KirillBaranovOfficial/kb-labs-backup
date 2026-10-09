@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { InMemoryCache, InMemoryEventBus, InMemoryStorage } from '@kb-labs/core-platform/inmemory';
 import type { PlatformContainer } from '@kb-labs/core-runtime';
 import { mockLogger } from '@kb-labs/shared-testing';
-import { WorkflowEngine } from '@kb-labs/workflow-engine';
+import { EnvSecretProvider, WorkflowEngine } from '@kb-labs/workflow-engine';
 import { JobBroker } from '../job-broker.js';
 import { WorkflowHostService } from '../host/workflow-host-service.js';
 
@@ -10,6 +10,7 @@ describe('workflow history after daemon restart', () => {
   it('serves history, detail, and logs from project storage with a fresh daemon cache', async () => {
     const storage = new InMemoryStorage();
     const firstEngine = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(),
       cache: new InMemoryCache(), storage, events: new InMemoryEventBus(), logger: mockLogger(),
     });
     const run = await firstEngine.createRun({
@@ -30,6 +31,7 @@ describe('workflow history after daemon restart', () => {
     });
 
     const restartedEngine = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(),
       cache: new InMemoryCache(), storage, events: new InMemoryEventBus(), logger: mockLogger(),
     });
     const logger = mockLogger();

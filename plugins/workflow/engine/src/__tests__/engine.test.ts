@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { WorkflowEngine } from '../engine.js';
+import { EnvSecretProvider } from '../secrets.js';
 import type { WorkflowSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
 import type { ICache, IEventBus } from '@kb-labs/core-platform';
 import { InMemoryStorage } from '@kb-labs/core-platform/inmemory';
@@ -128,6 +129,7 @@ describe('WorkflowEngine', () => {
     logger = mockLogger();
 
     engine = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(),
       cache,
       storage,
       events,
@@ -144,7 +146,8 @@ describe('WorkflowEngine', () => {
     });
 
     it('should use default maxWorkflowDepth if not provided', () => {
-      const engine2 = new WorkflowEngine({ cache, events, logger, storage });
+      const engine2 = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(), cache, events, logger, storage });
       expect(engine2.maxWorkflowDepth).toBe(2);
     });
   });
@@ -194,6 +197,7 @@ describe('WorkflowEngine', () => {
       });
 
       const restarted = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(),
         cache: new MockCache(), storage, events: new MockEventBus(), logger: mockLogger(),
       });
       await expect(restarted.getRun(run.id)).resolves.toMatchObject({
@@ -374,7 +378,8 @@ describe('WorkflowEngine', () => {
         return { parent, parentJob };
       }));
 
-      const restarted = new WorkflowEngine({ cache, events, logger, storage, maxWorkflowDepth: 2 });
+      const restarted = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(), cache, events, logger, storage, maxWorkflowDepth: 2 });
       await expect(restarted.reconcileChildInvocations()).resolves.toBe(4);
 
       await Promise.all(pairs.map(async ({ parent, parentJob }) => {
@@ -1037,6 +1042,7 @@ describe('WorkflowEngine', () => {
       'against the same store — modeling a stray/duplicate daemon launch) ' +
       'happens to run its own startup sweep.', async () => {
       const liveDaemon = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(),
         cache,
         storage,
         events,
@@ -1056,6 +1062,7 @@ describe('WorkflowEngine', () => {
       // (e.g. a stray/duplicate launch) and runs its own one-time cleanup.
       const strayLogger = mockLogger();
       const strayDaemon = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(),
         cache,
         storage,
         events,
@@ -1081,6 +1088,7 @@ describe('WorkflowEngine', () => {
       'lease is actually gone — a real restart succeeding a truly-dead daemon ' +
       'must keep cleaning up orphaned runs exactly as before.', async () => {
       const crashedDaemon = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(),
         cache,
         storage,
         events,
@@ -1100,6 +1108,7 @@ describe('WorkflowEngine', () => {
       await cache.delete('kb:daemon:lease');
 
       const restartedDaemon = new WorkflowEngine({
+      secretProvider: new EnvSecretProvider(),
         cache,
         storage,
         events,

@@ -8,6 +8,7 @@ import {
   WorkflowEngine,
   WorkflowService,
   DAEMON_LEASE_HEARTBEAT_INTERVAL_MS,
+  createDefaultSecretProvider,
 } from "@kb-labs/workflow-engine";
 import { getListenOptions } from "@kb-labs/shared-http";
 import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
@@ -128,11 +129,13 @@ export async function setup({
   });
 
   bootstrapLogger.info("Creating WorkflowEngine");
+  const secretProvider = createDefaultSecretProvider();
   const engine = new WorkflowEngine({
     cache: platform.cache,
     storage: platform.storage,
     events: platform.eventBus,
     logger: createWorkflowLogger("engine", "workflow.engine"),
+    secretProvider,
     snapshotManager: platform.snapshotManager,
     workspaceRoot,
   });
@@ -238,6 +241,7 @@ export async function setup({
   bootstrapLogger.info("Creating WorkflowWorker");
   const worker = await createWorkflowWorker({
     engine,
+    secretProvider,
     workflowService,
     cliApi,
     logger: createWorkflowLogger("worker", "workflow.worker"),

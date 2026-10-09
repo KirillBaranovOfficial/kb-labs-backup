@@ -493,6 +493,31 @@ describe('shellHandler — timeout regression (BUG: timedOut + reject:false = si
   })
 })
 
+describe('shellHandler environment isolation', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  // case: S-028.4, S-028.5
+  it('does not inherit an undeclared parent variable and keeps its value out of captured logs', async () => {
+    const sentinel = 'w01-parent-secret-should-not-escape'
+    vi.stubEnv('KB_W01_PARENT_SENTINEL', sentinel)
+    const { ctx, cleanup, logger } = makeShellTestContext()
+    try {
+      const result = await shellModule.execute(ctx, {
+        command: `node -e "process.stdout.write(process.env.KB_W01_PARENT_SENTINEL ? 'present' : 'absent')"`,
+        env: { DECLARED_VALUE: 'declared' },
+      })
+
+      expect(result.stdout).toBe('absent')
+      expect(JSON.stringify(logger.messages)).not.toContain(sentinel)
+      expect(ctx.api.events.emit).toHaveBeenCalledWith('log.line', expect.objectContaining({ line: 'absent' }))
+    } finally {
+      cleanup()
+    }
+  })
+})
+
 describe('tail', () => {
   it('returns the text unchanged when under the limit', () => {
     expect(tail('short', 100)).toBe('short')

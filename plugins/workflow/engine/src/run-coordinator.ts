@@ -142,6 +142,7 @@ export class RunCoordinator {
         artifacts: jobSpec.artifacts,
         env: jobSpec.env,
         secrets: jobSpec.secrets,
+        hooks: jobSpec.hooks,
         needs,
         pendingDependencies: [...needs],
         blocked: needs.length > 0,

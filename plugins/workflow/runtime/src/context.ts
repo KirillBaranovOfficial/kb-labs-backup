@@ -19,6 +19,18 @@ export interface CreateStepContextInput {
   trace?: RuntimeTrace
 }
 
+/** Project the shell runtime baseline together with explicitly owned step env. */
+export function projectStepEnvironment(
+  env: Record<string, string> = {},
+  hostEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  return {
+    ...(hostEnv.PATH ? { PATH: hostEnv.PATH } : {}),
+    ...(hostEnv.HOME ? { HOME: hostEnv.HOME } : {}),
+    ...env,
+  }
+}
+
 export function createStepContext(
   input: CreateStepContextInput,
 ): StepContext {
@@ -27,7 +39,7 @@ export function createStepContext(
     jobId: input.jobId,
     stepId: input.stepId,
     attempt: input.attempt ?? 0,
-    env: { ...process.env, ...(input.env ?? {}) } as Record<string, string>,
+    env: projectStepEnvironment(input.env),
     secrets: input.secrets ?? {},
     artifacts: input.artifacts,
     events: input.events,
@@ -35,8 +47,6 @@ export function createStepContext(
     trace: input.trace,
   }
 }
-
-
 
 
 

@@ -45,7 +45,7 @@ describe('SandboxRunner — builtin:shell KB_WORKSPACE_ROOT routing', () => {
       spec: {
         name: 'shell-step',
         uses: 'builtin:shell',
-        with: { command: 'echo test' },
+        with: { command: 'echo test', env: { DECLARED_VALUE: 'step' } },
       },
       context: {
         runId: 'run-1',
@@ -55,6 +55,7 @@ describe('SandboxRunner — builtin:shell KB_WORKSPACE_ROOT routing', () => {
         env: {
           KB_PLATFORM_ROOT: '/main/workspace',
           KB_WORKSPACE_ROOT: '/private/tmp/kb-worktrees/wt_abc123',
+          DECLARED_VALUE: 'workflow',
         },
         secrets: {},
         logger: mockLogger,
@@ -82,6 +83,7 @@ describe('SandboxRunner — builtin:shell KB_WORKSPACE_ROOT routing', () => {
     expect(env?.['KB_WORKSPACE_ROOT']).toBe('/private/tmp/kb-worktrees/wt_abc123')
     // Platform root is separate — always the main workspace
     expect(env?.['KB_PLATFORM_ROOT']).toBe('/opt/kb-platform')
+    expect(env?.['DECLARED_VALUE']).toBe('workflow')
   })
 
   it('falls back to request.workspace when context.env has no KB_WORKSPACE_ROOT', async () => {

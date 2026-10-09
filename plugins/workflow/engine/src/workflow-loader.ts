@@ -3,9 +3,11 @@ import { resolve } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import type { ZodIssue } from 'zod'
 import {
+  getWorkflowSecretNames,
   type WorkflowSpec,
   WorkflowSpecSchema,
 } from '@kb-labs/workflow-contracts'
+import type { SecretProvider } from './secrets'
 import type { EngineLogger, WorkflowLoaderResult } from './types'
 
 export interface WorkflowLoaderOptions {
@@ -13,7 +15,10 @@ export interface WorkflowLoaderOptions {
 }
 
 export class WorkflowLoader {
-  constructor(private readonly logger: EngineLogger) {}
+  constructor(
+    private readonly logger: EngineLogger,
+    private readonly secretProvider: SecretProvider,
+  ) {}
 
   async fromFile(
     filePath: string,
@@ -87,8 +92,7 @@ export class WorkflowLoader {
     }
 
     const spec = parsed.data as WorkflowSpec
+    this.secretProvider.validate(getWorkflowSecretNames(spec))
     return { spec, source }
   }
 }
-
-
