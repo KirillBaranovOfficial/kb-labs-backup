@@ -53,6 +53,28 @@ test('secured anonymous browser receives 401 and login form @S-020.2', async ({ 
   await expect(page.getByLabel('Password')).toBeVisible()
 })
 
+test('secured login has no human signup and registration stays machine-authenticated @S-104.6', async ({ page, request }) => {
+  test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
+  await page.goto(`${GATEWAY}/login`)
+  await expect(page.getByLabel('Email')).toBeVisible()
+  await expect(page.getByLabel('Password')).toBeVisible()
+  await expect(page.getByRole('link', { name: /sign up|create account|register/i })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /sign up|create account|register/i })).toHaveCount(0)
+
+  const response = await request.post(`${GATEWAY}/auth/register`, {
+    data: { name: 'new-member', email: 'new-member@example.test', password: 'HumanPass123!' },
+  })
+  expect(response.status()).toBe(401)
+  expect(await response.json()).toMatchObject({
+    ok: false,
+    error: {
+      code: 'KB_AUTH_REQUIRED',
+      message: 'Authentication is required.',
+      hint: `Run "kb auth login --gateway-url ${GATEWAY} --email <email>".`,
+    },
+  })
+})
+
 test('secured admin login opens Dashboard @S-020.3 @S-125.3', async ({ page }) => {
   test.skip(!enabled || mode !== 'secured', 'Enabled in the secured fresh-host journey')
   await signIn(page, process.env.KB_STUDIO_ADMIN_EMAIL!, process.env.KB_STUDIO_ADMIN_PASSWORD!)
