@@ -4,13 +4,33 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/secrets"
 )
+
+//go:generate go run ../gen-gateway-bootstrap ../../../../../services/gateway/contracts/src/auth-health-response.schema.json gateway_bootstrap_gen.go
+
+type gatewayAuthHealthIssue struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	Hint     string `json:"hint"`
+}
+
+type gatewayAuthHealthResponse struct {
+	OK           *bool                     `json:"ok"`
+	AuthEnabled  *bool                     `json:"authEnabled"`
+	TenantID     *string                   `json:"tenantId"`
+	ActiveAdmins *int                      `json:"activeAdmins"`
+	Bootstrap    GatewayBootstrapStatus    `json:"bootstrap"`
+	Issues       *[]gatewayAuthHealthIssue `json:"issues"`
+}
 
 type bootstrapOutcomeHost struct {
 	starter interface {
@@ -49,18 +69,32 @@ func readBootstrapOutcome(ctx context.Context, healthURL string, store secrets.S
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("Gateway did not report first-admin bootstrap status")
 	}
-	var readiness struct {
-		Bootstrap string `json:"bootstrap"`
+	var readiness gatewayAuthHealthResponse
+	decoder := json.NewDecoder(response.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&readiness); err != nil {
+		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", err)
 	}
-	if err := json.NewDecoder(response.Body).Decode(&readiness); err != nil {
-		return fmt.Errorf("Gateway first-admin bootstrap status was invalid")
+	if readiness.OK == nil || readiness.AuthEnabled == nil || readiness.TenantID == nil || readiness.ActiveAdmins == nil || readiness.Issues == nil {
+		return bootstrapContractFailure("Gateway returned an incomplete first-administrator health response.", nil)
+	}
+	if *readiness.ActiveAdmins < 0 {
+		return bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", nil)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return bootstrapContractFailure("Gateway returned more than one first-administrator health response.", err)
 	}
 	switch readiness.Bootstrap {
-	case "provisioned", "exists-active", "exists-non-active":
-		return store.Put(secrets.BootstrapCompleted, readiness.Bootstrap)
+	case GatewayBootstrapStatusProvisioned, GatewayBootstrapStatusExistsActive, GatewayBootstrapStatusExistsNonActive:
+		return store.Put(secrets.BootstrapCompleted, string(readiness.Bootstrap))
 	default:
-		return fmt.Errorf("Gateway first-admin bootstrap did not complete")
+		return bootstrapContractFailure("Gateway reported that first-administrator bootstrap did not complete.", nil)
 	}
+}
+
+func bootstrapContractFailure(message string, cause error) *diag.Diag {
+	return contracts.NewDiag(contracts.CodeApplyFailed, message,
+		"Update the Gateway to a version with the supported auth health contract, then rerun `kb-create install`.", cause)
 }
 
 func errorsJoinStop(cause error, stop func() error) error {

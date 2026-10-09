@@ -874,11 +874,14 @@ def main():
                 records = []
             terminal = records[-1] if records else {}
             stream_meta = terminal.get("meta", {}).get("stream", {}) if isinstance(terminal, dict) else {}
+            result_records = [record for record in records if isinstance(record, dict)
+                              and record.get("meta", {}).get("stream", {}).get("result") is True]
             install_ok = (result.returncode == 0 and bool(records)
                           and terminal.get("ok") is True and terminal.get("data", "not-null") is None
                           and stream_meta.get("terminal") is True and stream_meta.get("exitCode") == 0
-                          and any(record.get("ok") is True and isinstance(record.get("data"), dict)
-                                  for record in records[:-1] if isinstance(record, dict)))
+                          and len(result_records) == 1
+                          and result_records[0].get("ok") is True
+                          and isinstance(result_records[0].get("data"), dict))
             record_case("JSON install progress", install_ok,
                        "install stream omitted progress or its terminal success record",
                        cases=["S-203.10", "S-203.13"])
@@ -887,8 +890,8 @@ def main():
             if VARIANT.endswith("secured"):
                 credentials = [
                     record.get("data", {}).get("firstAdmin")
-                    for record in records if isinstance(record, dict)
-                    and isinstance(record.get("data"), dict)
+                    for record in result_records
+                    if isinstance(record.get("data"), dict)
                     and isinstance(record["data"].get("firstAdmin"), dict)
                 ]
                 if len(credentials) == 1:

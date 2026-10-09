@@ -227,10 +227,8 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 			return streamCompletion{ExitCode: writer.ExitCode()}, nil
 		}
 	}
-	if result.FirstAdmin != nil {
-		if err := writer.Event(map[string]any{"firstAdmin": result.FirstAdmin}); err != nil {
-			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install result could not be written.")
-		}
+	if err := writer.Result(result); err != nil {
+		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install result could not be written.")
 	}
 	if err := writer.Finish(diag.ExitOK); err != nil {
 		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be completed.")

@@ -185,7 +185,7 @@ func applyPlan(ctx context.Context, input applyCommandInput, deps commandDepende
 	applyCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	offline := planned.Request.Source == contracts.SourceOffline
-	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: root, Registry: input.Registry, Offline: offline, Log: transcript}, Binaries: artifacts.Binaries{Root: root, Offline: offline}}
+	artifactExecutor := artifacts.Composite{Packages: artifacts.Pnpm{Root: root, Registry: input.Registry, Offline: offline, Log: transcript, Runner: deps.ArtifactRunner}, Binaries: artifacts.Binaries{Root: root, Offline: offline}}
 	prober := host.Prober{PlatformRoot: root, State: state, Operation: "apply"}
 	runtimeDeps := runtime.Dependencies{Artifacts: artifactExecutor, CorrelationID: correlationID, Secrets: &store, Progress: input.Progress}
 	if deps.Runtime != nil {

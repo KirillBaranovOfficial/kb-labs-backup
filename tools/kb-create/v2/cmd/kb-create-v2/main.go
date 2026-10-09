@@ -16,6 +16,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/preflight"
@@ -81,6 +82,7 @@ type directRequest struct {
 
 type commandDependencies struct {
 	Runtime          *runtime.Dependencies
+	ArtifactRunner   artifacts.Runner
 	NodeCheck        func() error
 	InstallInput     io.Reader
 	InstallOutput    io.Writer
