@@ -34,6 +34,7 @@ import {
   type LoadPlatformConfigResult,
 } from "./config-loader.js";
 import { initPlatform, resetPlatform } from "./loader.js";
+import { requireProjectContext } from "./project-context.js";
 
 export type PlatformApplicationKind = "service" | "cli" | "worker" | "test";
 export type PlatformFailurePolicy = "strict" | "degraded";
@@ -76,7 +77,7 @@ export interface PlatformLaunchOptions {
 
 export interface PlatformRoots {
   platformRoot: string;
-  projectRoot: string;
+  projectRoot?: string;
   sameLocation: boolean;
 }
 
@@ -232,6 +233,9 @@ async function launch(
     sameLocation,
     sources,
   } = loadResult;
+  const adapterProjectRoot = loadResult.projectScope === 'platform'
+    ? platformRoot
+    : requireProjectContext(projectRoot, options.startDir);
 
   let effectivePlatformConfig = platformConfig;
   let status: PlatformStartupReport["status"] = "ready";
@@ -240,9 +244,9 @@ async function launch(
   try {
     await initPlatform(
       platformConfig,
-      projectRoot,
+      adapterProjectRoot,
       uiProvider,
-      sameLocation ? undefined : platformRoot,
+      adapterProjectRoot === platformRoot ? undefined : platformRoot,
       { assemblyHook, hostServiceEnvironment },
     );
   } catch (error) {
@@ -255,7 +259,7 @@ async function launch(
     effectivePlatformConfig = { adapters: {} };
     await initPlatform(
       effectivePlatformConfig,
-      projectRoot,
+      adapterProjectRoot,
       uiProvider,
       undefined,
       { assemblyHook, hostServiceEnvironment },

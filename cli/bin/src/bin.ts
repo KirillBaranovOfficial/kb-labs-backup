@@ -46,27 +46,14 @@ if (process.argv.includes('--json')) {
 }
 
 
-import { createRequire } from "module";
-
 // Captured at module load so that `resolvePlatformRoot` can walk up from the
 // physical location of this bin.js file — the most reliable way to locate
 // `node_modules/@kb-labs/*` in installed mode (independent of process.cwd()).
 const BIN_MODULE_URL = import.meta.url;
 
-// Inject CLI_VERSION from package.json so system commands (version, health, diag)
-// can report the correct version at runtime without hardcoding it at build time.
-// package.json sits one level above dist/bin.js in both dev and installed mode.
-if (!process.env.CLI_VERSION) {
-  try {
-    const _req = createRequire(import.meta.url);
-    const pkg = _req('../package.json') as { version?: string };
-    if (pkg.version) {
-      process.env.CLI_VERSION = pkg.version;
-    }
-  } catch {
-    // Non-fatal: version command will fall back to '0.0.0'
-  }
-}
+// Inject the package version compiled into this binary by tsup.config.ts.
+declare const __KB_CLI_VERSION__: string;
+process.env.CLI_VERSION = __KB_CLI_VERSION__;
 
 (async () => {
   // Import the platform only after the logging environment is bootstrapped.

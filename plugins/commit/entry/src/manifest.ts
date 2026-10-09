@@ -159,7 +159,7 @@ export const manifest = {
     commands: [
       // Main command: commit (default flow)
       {
-        path: 'commit',
+        path: 'commit commit',
         category: 'Pipeline',
         describe: 'Generate and apply commits (default flow).',
         operationType: 'execute' as const,

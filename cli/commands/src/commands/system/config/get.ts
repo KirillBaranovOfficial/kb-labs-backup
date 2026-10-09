@@ -152,7 +152,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
       }
 
       if (!roots.projectId) {
-        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.projectRoot}" and retry "kb config get".`, { path: roots.projectRoot });
+        throwSystemCataloguedFailure('KB_PROJECT_UNKNOWN', 'Effective config requires a registered project.', `Run "kb project add ${roots.configRoot}" and retry "kb config get".`, { path: roots.configRoot });
       }
 
       const runtimeConfig = await loadPlatformConfig({
@@ -161,7 +161,7 @@ export const configGet = defineSystemCommand<Flags, ConfigGetResult>({
         loadEnvFile: false,
         projectId: roots.projectId,
       });
-      const platform = await loadEffectiveConfig(roots.projectRoot, {
+      const platform = await loadEffectiveConfig(roots.configRoot, {
         platformRoot: roots.platformRoot,
         projectId: roots.projectId,
         pluginDefaults: manifestSettingsLayers(runtimeConfig),

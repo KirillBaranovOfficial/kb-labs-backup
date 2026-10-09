@@ -52,8 +52,8 @@ export const manifest = {
         flags: defineCommandFlags(registerFlags),
 
         examples: [
-          'kb workspace:register --gateway http://localhost:4000',
-          'kb workspace:register --gateway https://gateway.kblabs.dev --name my-laptop --workspace ~/projects/my-app',
+          'kb workspace register --gateway http://localhost:4000',
+          'kb workspace register --gateway https://gateway.kblabs.dev --name my-laptop --workspace ~/projects/my-app',
         ],
       },
 
@@ -70,8 +70,8 @@ export const manifest = {
         flags: defineCommandFlags(statusFlags),
 
         examples: [
-          'kb workspace:status',
-          'kb workspace:status --json',
+          'kb workspace status',
+          'kb workspace status --json',
         ],
       },
 
@@ -87,9 +87,9 @@ export const manifest = {
         flags: defineCommandFlags(listFlags),
 
         examples: [
-          'kb workspace:list',
-          'kb workspace:list --json',
-          'kb workspace:list --gateway https://gateway.kblabs.dev',
+          'kb workspace list',
+          'kb workspace list --json',
+          'kb workspace list --gateway https://gateway.kblabs.dev',
         ],
       },
 

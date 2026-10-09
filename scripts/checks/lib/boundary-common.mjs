@@ -69,7 +69,7 @@ export function findPluginEntryPackages(root) {
     const candidates = [
       join(pkg.dir, 'src', 'manifest.ts'),
       join(pkg.dir, 'src', 'manifest.v3.ts'),
-      join(pkg.dir, manifestRel.replace(/\.[cm]?js$/, '.json')),
+      join(pkg.dir, 'dist', 'manifest.json'),
     ];
     if (candidates.some((f) => /kb\.plugin\/3/.test(readText(f)))) out.push(pkg);
   }

@@ -6,6 +6,7 @@ import {
   readInstalledPlatformIdentity,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
+import { requireProjectContext } from "@kb-labs/core-runtime";
 import {
   createInMemoryDocumentDatabase,
   createInMemoryKVStore,
@@ -89,6 +90,8 @@ export async function setup(
  * the resolved gateway config in memory without writing config files.
  */
 export interface GatewayEmbedOptions {
+  /** Selects whether the gateway's config and plugin discovery use platform or project roots. */
+  configScope?: 'platform' | 'project';
   /**
    * Called with the validated gateway config before anything is derived from
    * it (bind host, access mode, upstreams). May throw to refuse startup.
@@ -107,6 +110,16 @@ export interface GatewayEmbedOptions {
   hostRoutes?: HostRoutes;
 }
 
+/** Select the config root using the same scope contract for preflight and startup. */
+export function resolveGatewayConfigRoot(
+  roots: Pick<ServiceContext, 'projectRoot' | 'platformRoot'>,
+  configScope: GatewayEmbedOptions['configScope'] = 'project',
+): string {
+  return configScope === 'platform'
+    ? roots.platformRoot
+    : requireProjectContext(roots.projectRoot);
+}
+
 /** Gateway service body with embedding hooks; {@link setup} is the no-hook case. */
 export async function startGateway(
   {
@@ -118,18 +131,17 @@ export async function startGateway(
   }: ServiceContext,
   options: GatewayEmbedOptions,
 ): Promise<() => Promise<void>> {
+  const configRoot = resolveGatewayConfigRoot({ projectRoot, platformRoot }, options.configScope);
   const logger = serviceLogger
     .forComponent("gateway-bootstrap")
     .forOperation("gateway.bootstrap");
   logger.info("Platform initialized", { projectRoot, platformRoot });
 
-  // 2. Load gateway config — reads platform baseline + project layer +
-  // `.kb/overlays/*.jsonc`. Use the resolved roots from core-runtime
-  // (which honour KB_PROJECT_ROOT and the platform.dir override) rather
-  // than process.cwd() — in installed mode the gateway process is
-  // spawned with cwd at the platform root, and we MUST not conflate
-  // that with the project root.
-  const loadedConfig = await loadGatewayConfig(projectRoot, platformRoot);
+  // 2. Load gateway config from the selected service scope. The embedded
+  // machine Gateway uses platformRoot; standalone Gateway uses projectRoot.
+  // Keep the platform root separate so installed-mode defaults resolve from
+  // the platform even when the selected project lives elsewhere.
+  const loadedConfig = await loadGatewayConfig(configRoot, platformRoot);
   const config = options.configure
     ? options.configure(loadedConfig)
     : loadedConfig;
@@ -137,7 +149,7 @@ export async function startGateway(
   logger.info("Gateway config loaded", {
     port: listenPort,
     upstreams: Object.keys(config.upstreams),
-    projectRoot,
+    configRoot,
     platformRoot,
     configProviderIds: config.auth?.providers
       ? Object.keys(config.auth.providers)
@@ -376,8 +388,8 @@ export async function startGateway(
   let webhookManifests: WebhookManifestEntry[] = [];
   try {
     const pluginRegistry = await createRegistry({
-      root: projectRoot,
-      platformRoot: platformRoot !== projectRoot ? platformRoot : undefined,
+      root: configRoot,
+      platformRoot: platformRoot !== configRoot ? platformRoot : undefined,
       cache: { ttlMs: 600_000, adapter: cache },
     });
     const snapshot = pluginRegistry.snapshot();

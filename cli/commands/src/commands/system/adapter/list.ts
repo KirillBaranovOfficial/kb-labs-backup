@@ -6,7 +6,7 @@ import { ADAPTER_CONFIG_KEYS, discoverAdapters, loadPlatformConfig, resolveInsta
 import { defineSystemCommand, throwSystemCataloguedError, type CommandResult } from '@kb-labs/shared-command-kit';
 import { getContextCwd } from '@kb-labs/shared-cli-ui';
 import { generateExamples } from '../../../utils/generate-examples';
-import { resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
+import { readGatewaySuccessData, resolveActiveGateway } from '@kb-labs/cli-runtime/gateway';
 import { projectNetworkRequirement } from './list-projection.js';
 
 type AdapterRow = {
@@ -84,7 +84,11 @@ export const adapterList = defineSystemCommand<{ json: { type: 'boolean'; descri
       if (!response.ok) {
         runtimeReason = `Host returned HTTP ${response.status} for adapter health.`;
       } else {
-        hostStatuses = new Map((await response.json() as HostAdapterStatus[]).map((status) => [status.slot, status]));
+        const statuses = await readGatewaySuccessData<HostAdapterStatus[]>(response, {
+          operation: 'List adapter health',
+          gatewayUrl: gateway.gatewayUrl,
+        });
+        hostStatuses = new Map(statuses.map((status) => [status.slot, status]));
         runtimeStatus = 'known';
         runtimeReason = '';
       }

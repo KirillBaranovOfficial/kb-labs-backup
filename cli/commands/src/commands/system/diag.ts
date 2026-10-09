@@ -10,7 +10,7 @@
 import { defineSystemCommand, type CommandResult } from '@kb-labs/shared-command-kit';
 import { generateExamples } from '../../utils/generate-examples';
 import { registry } from '../../registry/service';
-import { discoverManifests, discoverManifestsDetailed } from '../../registry/discover';
+import { getRegisteredDiscovery } from '../../registry/discovery-state.js';
 import { preflightManifests } from '../../registry/register';
 import { validateManifests } from '../../registry/schema';
 import { readMarketplaceLock, DiagnosticCollector } from '@kb-labs/core-discovery';
@@ -71,6 +71,7 @@ type TraceCtx = {
   platformRoot?: string;
   projectRoot?: string;
   registryOk?: boolean;        // set by runRegistryStage when command is confirmed available
+  registryNotFound?: boolean;  // set only when the requested path has no registry entry
   discoveryResult?: DiscoveryResult;
   lockEntry?: [string, MarketplaceEntry];
 };
@@ -275,6 +276,7 @@ async function runRegistryStage(
   return {
     stage: 'registry', status: 'info', code: 'REGISTRY_NOT_FOUND',
     message: 'Command not in registry',
+    enrich: { registryNotFound: true },
   };
 }
 
@@ -282,8 +284,15 @@ async function runRegistryStage(
 async function runDiscoveryStage(
   ctx: TraceCtx,
 ): Promise<TraceStage & { enrich?: Partial<TraceCtx> }> {
-  const opts = { platformRoot: ctx.platformRoot, projectRoot: ctx.projectRoot };
-  const { results: discovered, diagnostics } = await discoverManifestsDetailed(ctx.cwd, opts);
+  const registration = await getRegisteredDiscovery();
+  if (!registration) {
+    return {
+      stage: 'discovery', status: 'error', code: 'DISCOVERY_RESULT_UNAVAILABLE',
+      message: 'CLI command discovery did not produce a result for this invocation.',
+      remediation: 'Run `kb --help` to retry command discovery.',
+    };
+  }
+  const { results: discovered, diagnostics } = registration;
 
   const [topSegment] = ctx.segments;
   const result = discovered.find(r => matchesTopSegment(r, topSegment ?? ''));
@@ -365,6 +374,16 @@ async function runDiscoveryStage(
       message: `Package found but command path "${commandPath}" is not defined in manifest`,
       remediation: `Check command path in manifest.ts. Available (${availablePaths.length}): ${availablePaths.slice(0, 5).join(', ')}${availablePaths.length > 5 ? ` … and ${availablePaths.length - 5} more` : ''}`,
       details: { availablePaths, packageName: result.packageName },
+    };
+  }
+
+  if (ctx.registryNotFound) {
+    return {
+      stage: 'discovery', status: 'error', code: 'COMMAND_REGISTRATION_MISSING',
+      message: `Discovery found "${commandPath}" in ${result.packageName}, but the command was not registered for dispatch.`,
+      remediation: 'Run `kb --help` to retry command discovery.',
+      details: { packageName: result.packageName, scope: result.scope },
+      enrich: { discoveryResult: result },
     };
   }
 
@@ -552,43 +571,54 @@ export const diag = defineSystemCommand<DiagFlags, DiagResult | CommandTraceResu
     // 2. Plugin discovery
     let discovered: DiscoveryResult[] = [];
     try {
-      discovered = await discoverManifests(cwd, { platformRoot, projectRoot });
-      const allCommands = registry.listCommands();
-      const enabled = allCommands.filter(m => m.available && !m.shadowed).length;
-      const disabled = allCommands.filter(m => !m.available && !m.shadowed).length;
-      const shadowed = allCommands.filter(m => m.shadowed).length;
-
-      diagnostics.push({
-        category: 'marketplace',
-        status: disabled > 0 ? 'warning' : 'ok',
-        message: `Found ${discovered.length} packages, ${enabled} enabled, ${disabled} unavailable, ${shadowed} shadowed`,
-        details: { packages: discovered.length, enabled, disabled, shadowed, totalCommands: allCommands.length },
-      });
-
-      // Per-command unavailability breakdown
-      for (const cmd of allCommands.filter(m => !m.available && !m.shadowed)) {
+      const registration = await getRegisteredDiscovery();
+      if (!registration) {
+        const error = 'CLI command discovery did not produce a result for this invocation.';
         diagnostics.push({
-          category: 'unavailable-command',
-          status: 'warning',
-          message: `${cmd.manifest.segments.join(' ')}: ${cmd.unavailableReason ?? 'unavailable'}`,
-          code: 'REQUIRES_MISSING',
-          remediation: cmd.hint,
-          details: { source: cmd.source, package: cmd.packageName ?? null },
+          category: 'marketplace',
+          status: 'error',
+          message: `Discovery failed: ${error}`,
+          details: { error },
         });
-      }
+      } else {
+        discovered = registration.results;
+        const allCommands = registry.listCommands();
+        const enabled = allCommands.filter(m => m.available && !m.shadowed).length;
+        const disabled = allCommands.filter(m => !m.available && !m.shadowed).length;
+        const shadowed = allCommands.filter(m => m.shadowed).length;
 
-      // Synthetic manifest failures
-      for (const result of discovered) {
-        for (const manifest of result.manifests) {
-          if (manifest._synthetic) {
-            diagnostics.push({
-              category: 'manifest-load-failure',
-              status: 'error',
-              message: `${result.packageName}: manifest failed to load`,
-              code: 'MANIFEST_LOAD_FAILED',
-              remediation: `pnpm --filter ${result.packageName} build`,
-              details: { source: result.source, manifestPath: result.manifestPath },
-            });
+        diagnostics.push({
+          category: 'marketplace',
+          status: disabled > 0 ? 'warning' : 'ok',
+          message: `Found ${discovered.length} packages, ${enabled} enabled, ${disabled} unavailable, ${shadowed} shadowed`,
+          details: { packages: discovered.length, enabled, disabled, shadowed, totalCommands: allCommands.length },
+        });
+
+        // Per-command unavailability breakdown
+        for (const cmd of allCommands.filter(m => !m.available && !m.shadowed)) {
+          diagnostics.push({
+            category: 'unavailable-command',
+            status: 'warning',
+            message: `${cmd.manifest.segments.join(' ')}: ${cmd.unavailableReason ?? 'unavailable'}`,
+            code: 'REQUIRES_MISSING',
+            remediation: cmd.hint,
+            details: { source: cmd.source, package: cmd.packageName ?? null },
+          });
+        }
+
+        // Synthetic manifest failures
+        for (const result of discovered) {
+          for (const manifest of result.manifests) {
+            if (manifest._synthetic) {
+              diagnostics.push({
+                category: 'manifest-load-failure',
+                status: 'error',
+                message: `${result.packageName}: manifest failed to load`,
+                code: 'MANIFEST_LOAD_FAILED',
+                remediation: `pnpm --filter ${result.packageName} build`,
+                details: { source: result.source, manifestPath: result.manifestPath },
+              });
+            }
           }
         }
       }

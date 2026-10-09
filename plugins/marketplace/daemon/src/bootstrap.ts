@@ -23,10 +23,9 @@ export async function setup({
   logger,
   port,
   host,
-  projectRoot,
   platformRoot,
 }: ServiceContext): Promise<() => Promise<void>> {
-  const repoRoot = projectRoot;
+  const repoRoot = platformRoot;
 
   // Read marketplace.registry config to wire up RegistryPackageSource for kb: specs.
   const kbConfig = await readKbConfig(repoRoot);
