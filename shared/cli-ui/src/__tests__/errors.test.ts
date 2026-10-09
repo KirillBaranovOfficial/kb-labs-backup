@@ -33,7 +33,7 @@ describe('handleError', () => {
     };
     const error = Object.assign(new Error(envelope.message), { envelope });
 
-    expect(handleError({ ui: {} }, error, true)).toMatchObject({
+    expect(handleError(error)).toMatchObject({
       ok: false,
       error: {
         code: 'KB_AUTH_REQUIRED',
@@ -45,7 +45,7 @@ describe('handleError', () => {
   });
 
   it('maps unexpected errors to a command failure for the shared renderer', () => {
-    expect(handleError({ ui: {} }, new Error('request failed'), true)).toMatchObject({
+    expect(handleError(new Error('request failed'))).toMatchObject({
       ok: false,
       error: expect.objectContaining({
         code: 'KB_RUNTIME_UNEXPECTED',
@@ -57,7 +57,7 @@ describe('handleError', () => {
 
   it('preserves a permission carried by an authorization envelope in details', () => {
     const envelope = { code: 'KB_AUTH_FORBIDDEN', message: 'No permission.', hint: 'Ask an administrator.', details: { permission: 'auth:users:write' } };
-    expect(handleError({ ui: {} }, Object.assign(new Error(envelope.message), { envelope }))).toMatchObject({
+    expect(handleError(Object.assign(new Error(envelope.message), { envelope }))).toMatchObject({
       ok: false,
       error: {
         code: 'KB_AUTH_FORBIDDEN',

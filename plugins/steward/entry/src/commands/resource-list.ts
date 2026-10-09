@@ -12,7 +12,7 @@ export default defineCommand({
       const [projectId] = input.argv;
       const { json } = input.flags;
       if (!projectId) {
-        return validationError(ctx, 'projectId is required', 'Usage: kb steward resource list <projectId>', json);
+        return validationError('projectId is required', 'Usage: kb steward resource list <projectId>');
       }
 
       try {
@@ -23,7 +23,7 @@ export default defineCommand({
         return resources;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:resource.list failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

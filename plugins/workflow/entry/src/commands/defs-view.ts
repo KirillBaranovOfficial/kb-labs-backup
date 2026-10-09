@@ -17,7 +17,7 @@ export default defineCommand<unknown, CLIInput<DefsViewFlags>, unknown>({
       const id = flags?.id ?? argv[0];
 
       if (!id) {
-        return validationError(ctx, 'Missing workflow ID', 'Usage: kb workflow defs view <id> [--id=<id>]', outputJson);
+        return validationError('Missing workflow ID', 'Usage: kb workflow defs view <id> [--id=<id>]');
       }
 
       try {
@@ -63,7 +63,7 @@ export default defineCommand<unknown, CLIInput<DefsViewFlags>, unknown>({
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

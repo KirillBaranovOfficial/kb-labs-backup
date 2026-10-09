@@ -48,7 +48,7 @@ export default defineCommand({
       try {
         await clearPlan(cwd, scope);
       } catch (err) {
-        return handleError(ctx, err);
+        return handleError(err);
       }
 
       ctx.ui?.success?.('Plan Cleared', {

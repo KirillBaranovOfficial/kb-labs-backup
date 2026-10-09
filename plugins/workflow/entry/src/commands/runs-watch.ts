@@ -126,7 +126,7 @@ export default defineCommand<unknown, CLIInput<RunsWatchFlags>, unknown>({
 
         return { events };
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

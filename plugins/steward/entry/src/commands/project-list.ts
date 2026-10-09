@@ -24,7 +24,7 @@ export default defineCommand({
         return projects;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:project.list failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

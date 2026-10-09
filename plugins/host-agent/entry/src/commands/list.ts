@@ -57,13 +57,13 @@ export default defineCommand({
           const body = await res.json() as { hosts: HostEntry[] };
           hosts = body.hosts;
         } else {
-          return handleError(ctx, new Error(`Failed to list hosts: HTTP ${res.status}`), input.json);
+          return handleError(new Error(`Failed to list hosts: HTTP ${res.status}`));
         }
       } catch (err) {
         if (err instanceof GatewayApiError) {
-          return handleError(ctx, err, input.json);
+          return handleError(err);
         }
-        return handleError(ctx, new Error(`Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`), input.json);
+        return handleError(new Error(`Cannot reach Gateway at ${gatewayUrl}: ${err instanceof Error ? err.message : String(err)}`));
       }
 
       if (input.json) {

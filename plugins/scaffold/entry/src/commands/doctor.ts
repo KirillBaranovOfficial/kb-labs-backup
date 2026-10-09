@@ -24,7 +24,7 @@ export default defineCommand({
       try {
         scan = await scanRoot(root, { workspaceRoot });
       } catch (err) {
-        return handleError(ctx, err, input.json);
+        return handleError(err);
       }
 
       const { errorCount, warnCount } = scan.findings.reduce(

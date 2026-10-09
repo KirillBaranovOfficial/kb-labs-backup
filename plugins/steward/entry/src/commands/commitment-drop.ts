@@ -12,7 +12,7 @@ export default defineCommand({
       const [id] = input.argv;
       const { reason, json } = input.flags;
       if (!id || !reason?.trim()) {
-        return validationError(ctx, 'id and --reason are required', 'Usage: kb steward commitment drop <id> --reason=...', json);
+        return validationError('id and --reason are required', 'Usage: kb steward commitment drop <id> --reason=...');
       }
 
       try {
@@ -25,7 +25,7 @@ export default defineCommand({
         return commitment;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.drop failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

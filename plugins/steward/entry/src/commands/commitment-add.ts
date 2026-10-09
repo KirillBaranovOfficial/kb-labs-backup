@@ -21,7 +21,7 @@ export default defineCommand({
       const remindAtRaw = input.flags['remind-at'];
       const staleAfterDays = input.flags['stale-after-days'];
       if (!text?.trim()) {
-        return validationError(ctx, '--text is required', undefined, json);
+        return validationError('--text is required');
       }
 
       try {
@@ -37,7 +37,7 @@ export default defineCommand({
         return commitment;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.add failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

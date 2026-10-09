@@ -20,7 +20,7 @@ export default defineCommand<unknown, CLIInput<ReindexFlags>, IndexResponse>({
       );
       return res;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

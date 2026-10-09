@@ -29,11 +29,9 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
 
       if (!handler) {
         return workflowCommandError(
-          ctx,
           'KB_RUNTIME_INPUT_INVALID',
           'Missing required flag: --handler.',
           'Run `kb workflow job run --help` to see the required flags.',
-          outputJson,
         );
       }
 
@@ -44,11 +42,9 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
           parsedInput = JSON.parse(inputStr);
         } catch {
           return workflowCommandError(
-            ctx,
             'KB_RUNTIME_INPUT_INVALID',
             'The --input value is not valid JSON.',
             'Pass valid JSON with `--input`, then retry `kb workflow job run`.',
-            outputJson,
           );
         }
       }
@@ -86,11 +82,9 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
             } else if (['failed', 'cancelled', 'skipped', 'dlq'].includes(status.status)) {
               waitLoader.fail('Job failed');
               return workflowCommandError(
-                ctx,
                 'KB_RUNTIME_COMMAND_FAILED',
                 `Job ${result.id} ended with status ${status.status}.`,
                 `Inspect the result with: kb workflow job status ${result.id}`,
-                outputJson,
                 status.error,
               );
             }
@@ -101,11 +95,9 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
           if (maxAttempts === 0) {
             waitLoader.fail('Timeout waiting for job completion');
             return workflowCommandError(
-              ctx,
               'KB_RUNTIME_COMMAND_FAILED',
               `Timed out waiting for job ${result.id} to finish.`,
               `Inspect the job with: kb workflow job status ${result.id}`,
-              outputJson,
             );
           }
         }
@@ -132,7 +124,7 @@ export default defineCommand<unknown, CLIInput<RunFlagsInput>, unknown>({
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

@@ -53,14 +53,9 @@ function getHint(code: InboxErrorCode, message: string): string | undefined {
 }
 
 /**
- * Output a structured error for CLI commands.
- *
- * JSON mode  → { ok: false, error: { code, message, hint? } }  — agent-parseable
- * Human mode → ctx.ui.error() with hint and cause fields
- *
- * Return the failure result directly from the command handler.
+ * Build a structured failure for the shared CLI result renderer.
  */
-export function handleError(_ctx: unknown, err: unknown, _isJson?: boolean): CommandFailure {
+export function handleError(err: unknown): CommandFailure {
   if (err instanceof InboxError) {
     const hint = getHint(err.code, err.message);
     const code = err.code === 'ENV_MISSING' || err.code === 'ACCOUNT_NOT_FOUND' || err.code === 'VALIDATION_ERROR'

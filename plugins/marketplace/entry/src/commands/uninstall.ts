@@ -37,7 +37,7 @@ export default defineCommand<unknown, UninstallInput, { removed: string[]; scope
       const flags = (input.flags ?? input) as UninstallFlags;
 
       if (argv.length === 0) {
-        return validationError(ctx, 'Please specify at least one package to uninstall', 'Usage: kb marketplace uninstall <package>', flags.json);
+        return validationError('Please specify at least one package to uninstall', 'Usage: kb marketplace uninstall <package>');
       }
 
       let scopeCtx;
@@ -45,9 +45,9 @@ export default defineCommand<unknown, UninstallInput, { removed: string[]; scope
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          return validationError(ctx, err.message, undefined, flags.json);
+          return validationError(err.message);
         } else {
-          return handleError(ctx, err, flags.json);
+          return handleError(err);
         }
       }
 
@@ -66,7 +66,7 @@ export default defineCommand<unknown, UninstallInput, { removed: string[]; scope
         }
         return { removed: argv, scope: scopeCtx.scope };
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
     },
   },

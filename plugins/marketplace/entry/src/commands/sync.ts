@@ -52,9 +52,9 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
         scopeCtx = await resolveCliScope(cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          return validationError(ctx, err.message, undefined, flags.json);
+          return validationError(err.message);
         } else {
-          return handleError(ctx, err, flags.json);
+          return handleError(err);
         }
       }
 
@@ -68,12 +68,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
       const syncConfig = await loadSyncConfig(configRoot);
 
       if (!syncConfig.include?.length) {
-        return validationError(
-          ctx,
-          `No marketplace.sync.include configured.\n\nAdd to ${configRoot}/.kb/kb.config.json:\n\n  "marketplace": {\n    "sync": {\n      "include": ["plugins/*/entry", "plugins/*/core", "adapters/*"]\n    }\n  }`,
-          undefined,
-          flags.json,
-        );
+        return validationError(`No marketplace.sync.include configured.\n\nAdd to ${configRoot}/.kb/kb.config.json:\n\n  "marketplace": {\n    "sync": {\n      "include": ["plugins/*/entry", "plugins/*/core", "adapters/*"]\n    }\n  }`);
       }
 
       try {
@@ -100,7 +95,7 @@ export default defineCommand<unknown, SyncInput, SyncResultData>({
 
         return result;
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
     },
   },

@@ -20,11 +20,11 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<TaskDeleteFlags>) {
       const [taskId] = input.argv;
       if (!taskId) {
-        return validationError(ctx, 'Task ID is required', 'Usage: kb clickup task delete <taskId> --yes', input.flags.json);
+        return validationError('Task ID is required', 'Usage: kb clickup task delete <taskId> --yes');
       }
 
       if (!input.flags.yes) {
-        return validationError(ctx, `--yes is required to delete task ${taskId}`, 'Add --yes to confirm deletion', input.flags.json);
+        return validationError(`--yes is required to delete task ${taskId}`, 'Add --yes to confirm deletion');
       }
 
       try {
@@ -38,7 +38,7 @@ export default defineCommand({
 
         return { deleted: true, taskId };
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

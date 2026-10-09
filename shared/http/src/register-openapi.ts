@@ -23,6 +23,7 @@
 
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { ZodSchema } from 'zod';
+import type { FastifyContextConfig } from 'fastify';
 
 /** Minimal structural interface to accept any Fastify instance regardless of version. */
 interface FastifyLike {
@@ -62,6 +63,8 @@ export interface OpenAPIOptions {
   docsPath?: string;
   /** Route for the raw OpenAPI JSON spec. Default: '/openapi.json' */
   specPath?: string;
+  /** Metadata applied to the standard OpenAPI routes. */
+  routeConfig?: FastifyContextConfig;
   servers?: Array<{ url: string; description?: string }>;
   /**
    * Set to false to skip Swagger UI registration (e.g. in production).
@@ -100,7 +103,7 @@ export async function registerOpenAPI(server: FastifyLike, options: OpenAPIOptio
   const docsRoot = docsPath.replace(/\/$/, '');
   server.addHook('onRoute', (route) => {
     if (route.url === docsRoot || route.url.startsWith(`${docsRoot}/`)) {
-      route.config = { ...route.config, ux: 'raw' };
+      route.config = { ...options.routeConfig, ...route.config, ux: 'raw' };
     }
   });
 
@@ -119,7 +122,7 @@ export async function registerOpenAPI(server: FastifyLike, options: OpenAPIOptio
   // /openapi.json — canonical spec endpoint.
   // x-openapi-spec: true header signals to response middlewares (e.g. envelope wrappers)
   // that this is a raw spec response and must not be wrapped.
-  server.get(specPath, { config: { ux: 'raw' }, schema: { hide: true } }, (_req: unknown, reply: unknown) => {
+  server.get(specPath, { config: { ...options.routeConfig, ux: 'raw' }, schema: { hide: true } }, (_req: unknown, reply: unknown) => {
     const s = server as { swagger?: () => Record<string, unknown> | undefined };
     const spec = s.swagger?.();
     const r = reply as {

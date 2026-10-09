@@ -21,12 +21,12 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<MarkFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        return validationError(ctx, 'uid is required', 'Usage: kb inbox mark <uid> --read|--unread|--spam|--flagged|--unflagged', input.flags.json);
+        return validationError('uid is required', 'Usage: kb inbox mark <uid> --read|--unread|--spam|--flagged|--unflagged');
       }
 
       const uid = parseInt(rawUid, 10);
       if (isNaN(uid)) {
-        return validationError(ctx, `Invalid uid: "${rawUid}" — must be a number`, undefined, input.flags.json);
+        return validationError(`Invalid uid: "${rawUid}" — must be a number`);
       }
 
       const action: MarkAction | undefined =
@@ -38,7 +38,7 @@ export default defineCommand({
         undefined;
 
       if (!action) {
-        return validationError(ctx, 'One of --read, --unread, --spam, --flagged, --unflagged is required', undefined, input.flags.json);
+        return validationError('One of --read, --unread, --spam, --flagged, --unflagged is required');
       }
 
       try {
@@ -52,7 +52,7 @@ export default defineCommand({
         ctx.ui?.success?.(`Marked uid=${uid} as ${action}`);
         return null;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

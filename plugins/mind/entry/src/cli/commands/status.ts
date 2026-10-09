@@ -40,7 +40,7 @@ export default defineCommand<unknown, CLIInput<StatusFlags>, StatusResponse>({
         });
         return res;
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
     },
   },

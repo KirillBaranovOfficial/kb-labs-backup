@@ -21,7 +21,7 @@ export default defineCommand<unknown, CLIInput<SyncListFlags>, unknown>({
       );
       return {  };
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

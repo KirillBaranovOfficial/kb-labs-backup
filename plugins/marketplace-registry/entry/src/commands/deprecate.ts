@@ -17,11 +17,11 @@ export default defineCommand<unknown, CLIInput<DeprecateFlags>, unknown>({
       const t0 = Date.now();
 
       if (!pkg) {
-        return validationError(ctx, 'Package spec is required', 'Usage: kb hub deprecate kb:handle/name [--message "reason"]', flags.json);
+        return validationError('Package spec is required', 'Usage: kb hub deprecate kb:handle/name [--message "reason"]');
       }
 
       if (!pkg.startsWith('kb:')) {
-        return validationError(ctx, 'Package must be a kb: spec', 'Example: kb:kirill/my-plugin', flags.json);
+        return validationError('Package must be a kb: spec', 'Example: kb:kirill/my-plugin');
       }
 
       const sliced = pkg.slice(3);
@@ -29,7 +29,7 @@ export default defineCommand<unknown, CLIInput<DeprecateFlags>, unknown>({
       const handle = slashIdx > 0 ? sliced.slice(0, slashIdx) : '';
       const name = slashIdx > 0 ? sliced.slice(slashIdx + 1) : '';
       if (!handle || !name) {
-        return validationError(ctx, 'Invalid kb: spec — expected kb:handle/name', undefined, flags.json);
+        return validationError('Invalid kb: spec — expected kb:handle/name');
       }
 
       try {
@@ -56,7 +56,7 @@ export default defineCommand<unknown, CLIInput<DeprecateFlags>, unknown>({
 
         return;
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
     },
   },

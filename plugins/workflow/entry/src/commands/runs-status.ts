@@ -36,7 +36,7 @@ export default defineCommand<unknown, CLIInput<RunsStatusFlags>, unknown>({
       const runId = flags?.['run-id'] ?? argv[0];
 
       if (!runId) {
-        return validationError(ctx, 'Missing run ID', 'Usage: kb workflow runs status <runId>', outputJson);
+        return validationError('Missing run ID', 'Usage: kb workflow runs status <runId>');
       }
 
       try {
@@ -95,7 +95,7 @@ export default defineCommand<unknown, CLIInput<RunsStatusFlags>, unknown>({
         ctx.ui?.success?.('Run Status', { title: run.name, sections });
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

@@ -16,10 +16,10 @@ export default defineCommand({
       const { text, kind, json } = input.flags;
 
       if (!subjectType || !SUBJECT_TYPES.includes(subjectType as (typeof SUBJECT_TYPES)[number])) {
-        return validationError(ctx, `--subject-type must be one of: ${SUBJECT_TYPES.join(', ')}`, undefined, json);
+        return validationError(`--subject-type must be one of: ${SUBJECT_TYPES.join(', ')}`);
       }
       if (!subjectId) {
-        return validationError(ctx, '--subject-id is required', undefined, json);
+        return validationError('--subject-id is required');
       }
 
       try {
@@ -34,7 +34,7 @@ export default defineCommand({
         return event;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:event.add failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

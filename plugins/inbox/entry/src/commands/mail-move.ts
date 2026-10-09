@@ -17,15 +17,15 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<MoveFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        return validationError(ctx, 'uid is required', 'Usage: kb inbox move <uid> --folder Work', input.flags.json);
+        return validationError('uid is required', 'Usage: kb inbox move <uid> --folder Work');
       }
       if (!input.flags.folder) {
-        return validationError(ctx, '--folder is required', undefined, input.flags.json);
+        return validationError('--folder is required');
       }
 
       const uid = parseInt(rawUid, 10);
       if (isNaN(uid)) {
-        return validationError(ctx, `Invalid uid: "${rawUid}" — must be a number`, undefined, input.flags.json);
+        return validationError(`Invalid uid: "${rawUid}" — must be a number`);
       }
 
       try {
@@ -39,7 +39,7 @@ export default defineCommand({
         ctx.ui?.success?.(`Moved uid=${uid} → ${input.flags.folder}`);
         return null;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

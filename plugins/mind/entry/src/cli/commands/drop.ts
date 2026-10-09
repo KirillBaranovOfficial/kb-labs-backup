@@ -16,9 +16,8 @@ export default defineCommand<unknown, CLIInput<DropFlags>, DropResponse>({
       try {
         // Destructive: blocks in EVERY mode until --yes (agents get a structured
         // confirmationRequired signal with severity/recovery, not a silent drop).
-        const blocked = confirmDestructive(ctx, {
+        const blocked = confirmDestructive({
           confirmed: flags.yes,
-          isJson: json,
           action: {
             action: 'mind drop',
             resource: `index "${flags.index}"`,
@@ -44,7 +43,7 @@ export default defineCommand<unknown, CLIInput<DropFlags>, DropResponse>({
         );
         return res;
       } catch (err) {
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

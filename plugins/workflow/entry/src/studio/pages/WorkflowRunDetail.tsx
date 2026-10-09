@@ -819,7 +819,6 @@ export default function WorkflowRunDetail() {
       <ApprovalModal
         open={approvalStep !== null}
         step={approvalStep}
-        runId={runId ?? ''}
         onClose={() => setApprovalStep(null)}
         onResolve={handleApprovalResolve}
         isLoading={resolveApproval.isLoading}

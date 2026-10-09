@@ -15,9 +15,8 @@ function apiHint(err: ClickUpApiError): string {
 
 /**
  * Build a typed command failure for the shared CLI result renderer.
- * In CLI mode uses ctx.ui.error() with hint and cause.
  */
-export function handleError(_ctx: unknown, err: unknown, _isJson?: boolean): CommandFailure {
+export function handleError(err: unknown): CommandFailure {
   if (err instanceof ClickUpApiError) {
     const hint = apiHint(err);
     const code = err.status === 401 ? 'KB_AUTH_REQUIRED' : err.status === 403 ? 'KB_PERMISSION_DENIED' : 'KB_RUNTIME_COMMAND_FAILED';

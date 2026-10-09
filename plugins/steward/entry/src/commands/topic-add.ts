@@ -12,7 +12,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const { name, aliases, json } = input.flags;
       if (!name?.trim()) {
-        return validationError(ctx, '--name is required', undefined, json);
+        return validationError('--name is required');
       }
 
       try {
@@ -22,7 +22,7 @@ export default defineCommand({
         return topic;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:topic.add failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

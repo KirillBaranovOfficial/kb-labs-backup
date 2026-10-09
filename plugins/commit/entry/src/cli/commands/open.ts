@@ -33,7 +33,7 @@ export default defineCommand({
       try {
         plan = await loadPlan(cwd, scope);
       } catch (err) {
-        return handleError(ctx, err, input.json);
+        return handleError(err);
       }
       const planPath = getCurrentPlanPath(cwd, scope);
 

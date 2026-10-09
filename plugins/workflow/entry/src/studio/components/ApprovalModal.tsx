@@ -17,7 +17,6 @@ const TextArea = UIInputTextArea
 
 interface ApprovalModalProps {
   step: StepRun | null
-  runId: string
   open: boolean
   onClose: () => void
   onResolve: (action: 'approve' | 'reject', comment?: string) => Promise<void>
@@ -27,7 +26,6 @@ interface ApprovalModalProps {
 
 export function ApprovalModal({
   step,
-  runId: _runId,
   open,
   onClose,
   onResolve,

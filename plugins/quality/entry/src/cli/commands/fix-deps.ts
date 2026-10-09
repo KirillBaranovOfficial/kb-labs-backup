@@ -92,7 +92,7 @@ export default defineCommand({
       }
 
       if (!removeUnused && !addMissing && !alignVersions) {
-        return validationError(ctx, 'No fix options specified', 'Run `kb quality fix-deps --help` to choose --remove-unused, --add-missing, --align-versions, or --all.', flags.json);
+        return validationError('No fix options specified', 'Run `kb quality fix-deps --help` to choose --remove-unused, --add-missing, --align-versions, or --all.');
       }
 
       const loader = useLoader('Scanning packages...');

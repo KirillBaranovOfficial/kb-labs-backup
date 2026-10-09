@@ -13,7 +13,7 @@ export default defineCommand({
       const [id] = input.argv;
       const { name, topics, company, json } = input.flags;
       if (!id) {
-        return validationError(ctx, 'id is required', 'Usage: kb steward person update <id> [--name] [--topics] [--company]', json);
+        return validationError('id is required', 'Usage: kb steward person update <id> [--name] [--topics] [--company]');
       }
 
       try {
@@ -27,7 +27,7 @@ export default defineCommand({
         return person;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:person.update failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

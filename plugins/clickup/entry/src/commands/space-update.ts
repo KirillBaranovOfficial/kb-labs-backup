@@ -30,7 +30,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<SpaceUpdateFlags>) {
       const spaceId = input.argv[0] as string | undefined;
       if (!spaceId) {
-        return validationError(ctx, 'spaceId is required', 'Usage: kb clickup space update <spaceId> --name "new name"', input.flags.json);
+        return validationError('spaceId is required', 'Usage: kb clickup space update <spaceId> --name "new name"');
       }
 
       const { name, color, json, full } = input.flags;
@@ -48,7 +48,7 @@ export default defineCommand({
 
         return space;
       } catch (err) {
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

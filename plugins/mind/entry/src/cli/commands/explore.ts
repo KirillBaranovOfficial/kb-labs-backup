@@ -48,7 +48,7 @@ export default defineCommand<unknown, CLIInput<ExploreFlags>, ExploreResponse>({
         }
         return res;
       } catch (err) {
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

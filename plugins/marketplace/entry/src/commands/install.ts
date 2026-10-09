@@ -51,7 +51,7 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
       const flags = (input.flags ?? input) as InstallFlags;
 
       if (argv.length === 0) {
-        return validationError(ctx, 'Please specify at least one package to install', 'Usage: kb marketplace install <package>', flags.json);
+        return validationError('Please specify at least one package to install', 'Usage: kb marketplace install <package>');
       }
 
       let scopeCtx;
@@ -59,9 +59,9 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          return validationError(ctx, err.message, undefined, flags.json);
+          return validationError(err.message);
         } else {
-          return handleError(ctx, err, flags.json);
+          return handleError(err);
         }
               }
 
@@ -91,7 +91,7 @@ export default defineCommand<unknown, InstallInput, InstallResultData>({
 
         return result;
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
     },
   },

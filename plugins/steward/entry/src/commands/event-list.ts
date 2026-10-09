@@ -24,7 +24,7 @@ export default defineCommand({
         return events;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:event.list failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

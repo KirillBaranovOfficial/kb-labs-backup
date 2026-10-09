@@ -346,7 +346,7 @@ export default defineCommand<unknown, CLIInput<RunFlags>, ReviewResult | AgentRe
           const hint = scope === 'staged'
             ? 'No staged files found. Stage files with `git add` first, or use `--scope=changed`.'
             : 'No changed files found. Use `--scope=all` to review all files, or `--files` to specify files explicitly.';
-          return validationError(ctx, hint, undefined, flags.json);
+          return validationError(hint);
         }
 
         // Run review
@@ -532,7 +532,7 @@ export default defineCommand<unknown, CLIInput<RunFlags>, ReviewResult | AgentRe
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         loader.fail(`Review failed: ${message}`);
-        return handleError(ctx, error, flags.json);
+        return handleError(error);
       }
     },
   },

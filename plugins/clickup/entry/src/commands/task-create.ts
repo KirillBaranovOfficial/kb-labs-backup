@@ -41,10 +41,10 @@ export default defineCommand({
       const { list, name, desc, status, priority, assignee, due, parent, json, full } = input.flags;
 
       if (!list) {
-        return validationError(ctx, '--list is required', 'Use `kb clickup list tasks <listId>` to find the list ID', json);
+        return validationError('--list is required', 'Use `kb clickup list tasks <listId>` to find the list ID');
       }
       if (!name) {
-        return validationError(ctx, '--name is required', undefined, json);
+        return validationError('--name is required');
       }
 
       try {
@@ -75,7 +75,7 @@ export default defineCommand({
 
         return task;
       } catch (err) {
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

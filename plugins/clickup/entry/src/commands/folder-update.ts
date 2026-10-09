@@ -25,10 +25,10 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<FolderUpdateFlags>) {
       const folderId = input.argv[0] as string | undefined;
       if (!folderId) {
-        return validationError(ctx, 'folderId is required', 'Usage: kb clickup folder update <folderId> --name "new name"', input.flags.json);
+        return validationError('folderId is required', 'Usage: kb clickup folder update <folderId> --name "new name"');
       }
       if (!input.flags.name) {
-        return validationError(ctx, '--name is required', undefined, input.flags.json);
+        return validationError('--name is required');
       }
 
       try {
@@ -44,7 +44,7 @@ export default defineCommand({
 
         return folder;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

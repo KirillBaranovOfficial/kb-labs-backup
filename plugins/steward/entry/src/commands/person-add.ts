@@ -12,7 +12,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const { name, topics, company, json } = input.flags;
       if (!name?.trim()) {
-        return validationError(ctx, '--name is required', undefined, json);
+        return validationError('--name is required');
       }
 
       try {
@@ -34,7 +34,7 @@ export default defineCommand({
         return { person, possibleDuplicates };
       } catch (err) {
         ctx.platform.logger?.error?.('steward:person.add failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

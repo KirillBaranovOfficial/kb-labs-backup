@@ -63,9 +63,8 @@ export const projectRemove = defineSystemCommand<RemoveFlags, ProjectRemoveResul
         return {  dryRun: true, project };
       }
 
-      const blocked = confirmDestructive(ctx, {
+      const blocked = confirmDestructive({
         confirmed: Boolean(flags.yes),
-        isJson: json,
         action: {
           action: 'project remove',
           resource: `project "${project.name}" (${project.path})`,

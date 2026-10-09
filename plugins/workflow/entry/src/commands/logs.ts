@@ -37,7 +37,7 @@ export default defineCommand<unknown, LogsInput, unknown>({
       const jobId = input.argv?.[0];
 
       if (!jobId) {
-        return validationError(ctx, 'Missing job ID', 'Usage: kb workflow job logs <jobId>', outputJson);
+        return validationError('Missing job ID', 'Usage: kb workflow job logs <jobId>');
       }
 
       try {
@@ -48,7 +48,7 @@ export default defineCommand<unknown, LogsInput, unknown>({
 
         return { logs };
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

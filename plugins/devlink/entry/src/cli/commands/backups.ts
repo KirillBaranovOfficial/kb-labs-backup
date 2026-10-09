@@ -43,7 +43,7 @@ export default defineCommand<unknown, BackupsInput, BackupsResult>({
           ({ restored, errors } = restoreBackup(rootDir, restoreId));
         } catch (err) {
           loader.fail('Restore failed');
-          return handleError(ctx, err, outputJson);
+          return handleError(err);
         }
         loader.succeed(`Restored ${restored} file(s)`);
         tracker.checkpoint('restore');

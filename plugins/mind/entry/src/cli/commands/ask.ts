@@ -44,7 +44,7 @@ export default defineCommand<unknown, CLIInput<AskFlags>, AgentResponse>({
         });
         return res;
       } catch (err) {
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

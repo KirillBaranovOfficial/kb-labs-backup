@@ -67,7 +67,7 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
       const workflowId = input.flags['workflow-id'];
 
       if (!workflowId) {
-        return handleError(ctx, inputError('Missing required flag: --workflow-id.', 'Run `kb workflow run --help` to see the required flags.'), outputJson);
+        return handleError(inputError('Missing required flag: --workflow-id.', 'Run `kb workflow run --help` to see the required flags.'));
       }
 
       try {
@@ -131,7 +131,7 @@ export default defineCommand<unknown, CLIInput<WorkflowRunFlagsInput>, unknown>(
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

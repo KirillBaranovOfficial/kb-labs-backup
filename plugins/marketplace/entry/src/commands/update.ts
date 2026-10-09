@@ -53,9 +53,9 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          return validationError(ctx, err.message, undefined, flags.json);
+          return validationError(err.message);
         } else {
-          return handleError(ctx, err, flags.json);
+          return handleError(err);
         }
       }
 
@@ -87,7 +87,7 @@ export default defineCommand<unknown, UpdateInput, UpdateResultData>({
 
         return result;
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
     },
   },

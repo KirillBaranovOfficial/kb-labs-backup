@@ -3,6 +3,7 @@ import tseslint from 'typescript-eslint'
 import importPlugin from 'eslint-plugin-import'
 import unusedImports from 'eslint-plugin-unused-imports'
 import sonarjs from 'eslint-plugin-sonarjs'
+import noUnusedExportedParameters from './rules/no-unused-exported-parameters.js'
 
 export default [
   // ---- ignore common build artifacts and generated files
@@ -33,6 +34,11 @@ export default [
       import: importPlugin,
       'unused-imports': unusedImports,
       sonarjs: sonarjs,
+      'kb-labs': {
+        rules: {
+          'no-unused-exported-parameters': noUnusedExportedParameters,
+        },
+      },
     },
     settings: {
       // Let eslint-plugin-import resolve TS paths and packages without extensions
@@ -73,6 +79,7 @@ export default [
       // TS ergonomics - disable base rule, use unused-imports instead
       '@typescript-eslint/no-unused-vars': 'off',
       'unused-imports/no-unused-imports': 'error',
+      'kb-labs/no-unused-exported-parameters': 'error',
       'unused-imports/no-unused-vars': ['warn', {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',

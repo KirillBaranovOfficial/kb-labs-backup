@@ -30,10 +30,10 @@ export default defineCommand<unknown, CLIInput<TaskCommentAddFlags>, ClickUpComm
     async execute(ctx: PluginCommandContextV3, input: CLIInput<TaskCommentAddFlags>) {
       const [taskId] = input.argv;
       if (!taskId) {
-        return validationError(ctx, 'Task ID is required', 'Usage: kb clickup task comment add <taskId> --text "message"', input.flags.json);
+        return validationError('Task ID is required', 'Usage: kb clickup task comment add <taskId> --text "message"');
       }
       if (!input.flags.text) {
-        return validationError(ctx, '--text is required', undefined, input.flags.json);
+        return validationError('--text is required');
       }
 
       try {
@@ -59,7 +59,7 @@ export default defineCommand<unknown, CLIInput<TaskCommentAddFlags>, ClickUpComm
 
         return comment;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

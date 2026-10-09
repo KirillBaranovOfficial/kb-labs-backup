@@ -12,15 +12,10 @@ export default defineCommand({
       const [projectId] = input.argv;
       const { type, label, url, content, json } = input.flags;
       if (!projectId || !type?.trim() || !label?.trim()) {
-        return validationError(
-          ctx,
-          'projectId, --type, and --label are required',
-          'Usage: kb steward resource add <projectId> --type=... --label=... [--url=] [--content=]',
-          json,
-        );
+        return validationError('projectId, --type, and --label are required', 'Usage: kb steward resource add <projectId> --type=... --label=... [--url=] [--content=]');
       }
       if (!url && !content) {
-        return validationError(ctx, 'at least one of --url/--content must be set', undefined, json);
+        return validationError('at least one of --url/--content must be set');
       }
 
       try {
@@ -30,7 +25,7 @@ export default defineCommand({
         return resource;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:resource.add failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

@@ -48,7 +48,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<TaskUpdateFlags>) {
       const [taskId] = input.argv;
       if (!taskId) {
-        return validationError(ctx, 'Task ID is required', 'Usage: kb clickup task update <taskId> [--name ...] [--status ...]', input.flags.json);
+        return validationError('Task ID is required', 'Usage: kb clickup task update <taskId> [--name ...] [--status ...]');
       }
 
       const { name, desc, status, priority, due, json, full } = input.flags;
@@ -88,7 +88,7 @@ export default defineCommand({
 
         return task;
       } catch (err) {
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

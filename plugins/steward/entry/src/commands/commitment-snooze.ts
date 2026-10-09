@@ -13,7 +13,7 @@ export default defineCommand({
       const [id] = input.argv;
       const { until, reason, json } = input.flags;
       if (!id || !until?.trim()) {
-        return validationError(ctx, 'id and --until are required', 'Usage: kb steward commitment snooze <id> --until=...', json);
+        return validationError('id and --until are required', 'Usage: kb steward commitment snooze <id> --until=...');
       }
 
       try {
@@ -26,7 +26,7 @@ export default defineCommand({
         return commitment;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.snooze failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

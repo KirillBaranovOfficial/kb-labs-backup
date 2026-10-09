@@ -87,7 +87,7 @@ export default defineCommand<unknown, CLIInput<SwitchFlags>, SwitchResult>({
         packageMap = await buildPackageMapFiltered(monorepos, rootDir, ttlMs, mode);
       } catch (err) {
         discoverLoader.fail('Discovery failed');
-        return handleError(ctx, err, outputJson);
+        return handleError(err);
       }
       discoverLoader.succeed(`Found ${monorepos.length} monorepos, ${Object.keys(packageMap).length} packages`);
       tracker.checkpoint('discovery');

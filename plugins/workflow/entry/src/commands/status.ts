@@ -19,7 +19,7 @@ export default defineCommand<unknown, StatusInput, unknown>({
       const jobId = input.argv?.[0];
 
       if (!jobId) {
-        return validationError(ctx, 'Missing job ID', 'Usage: kb workflow job status <jobId>', outputJson);
+        return validationError('Missing job ID', 'Usage: kb workflow job status <jobId>');
       }
 
       try {
@@ -100,7 +100,7 @@ export default defineCommand<unknown, StatusInput, unknown>({
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

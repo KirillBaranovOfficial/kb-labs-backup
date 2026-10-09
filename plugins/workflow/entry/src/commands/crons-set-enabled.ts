@@ -14,7 +14,7 @@ export function createCronEnabledCommand(enabled: boolean) {
         const id = input.argv?.[0];
         const outputJson = input.flags?.json ?? false;
         if (!id) {
-          return workflowCommandError(ctx, 'KB_RUNTIME_INPUT_INVALID', 'Missing cron ID.', `Run kb workflow crons ${action} --help to see the required arguments.`, outputJson);
+          return workflowCommandError('KB_RUNTIME_INPUT_INVALID', 'Missing cron ID.', `Run kb workflow crons ${action} --help to see the required arguments.`);
         }
         try {
           const result = await new WorkflowDaemonClient().setCronEnabled(id, enabled);
@@ -23,10 +23,10 @@ export function createCronEnabledCommand(enabled: boolean) {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (message.startsWith('CRON_PLUGIN_READ_ONLY:')) {
-            return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'Plugin cron schedules are read-only.', 'List available schedules with: kb workflow crons list', outputJson, message);
+            return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'Plugin cron schedules are read-only.', 'List available schedules with: kb workflow crons list', message);
           }
           if (!outputJson) { ctx.ui?.warn?.(`Run: kb workflow crons ${action} ${id}`); }
-          return handleError(ctx, error, outputJson);
+          return handleError(error);
         }
       },
     },

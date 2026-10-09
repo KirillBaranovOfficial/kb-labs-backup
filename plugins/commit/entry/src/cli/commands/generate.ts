@@ -115,9 +115,9 @@ export default defineCommand({
       } catch (err) {
         if (!flags.json) { analyzeLoader.fail('Failed to generate commit plan'); }
         if ((err instanceof AdapterUnavailableError && err.reason === 'not-configured') || err instanceof AdapterCredentialsMissingError) {
-          return handleError(ctx, err, Boolean(flags.json));
+          return handleError(err);
         }
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
 
       // Save plan
@@ -127,7 +127,7 @@ export default defineCommand({
         await savePlan(cwd, plan, effectiveScope);
       } catch (err) {
         if (!flags.json) { saveLoader.fail('Failed to save plan'); }
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
       const planPath = getCurrentPlanPath(cwd, effectiveScope);
       if (!flags.json) { saveLoader.succeed('Plan saved'); }

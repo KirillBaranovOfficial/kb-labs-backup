@@ -12,7 +12,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const { person, project, role, topics, priority, json } = input.flags;
       if (!person || !project || !role?.trim()) {
-        return validationError(ctx, '--person, --project, and --role are required', undefined, json);
+        return validationError('--person, --project, and --role are required');
       }
 
       try {
@@ -28,7 +28,7 @@ export default defineCommand({
         return member;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:member.add failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

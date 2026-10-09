@@ -34,17 +34,12 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
       const comment = flags?.comment;
 
       if (!runId) {
-        return validationError(
-          ctx,
-          'Missing run ID',
-          'Usage: kb workflow runs approve <runId> [--action=approve|reject] [--comment=<text>]\n' +
-            '       kb workflow runs approve <runId> --job-id=<jobId> --step-id=<stepId>',
-          outputJson,
-        );
+        return validationError('Missing run ID', 'Usage: kb workflow runs approve <runId> [--action=approve|reject] [--comment=<text>]\n' +
+            '       kb workflow runs approve <runId> --job-id=<jobId> --step-id=<stepId>');
       }
 
       if (action !== 'approve' && action !== 'reject') {
-        return validationError(ctx, `Invalid action "${action}" — must be "approve" or "reject"`, 'Use `--action=approve` or `--action=reject`, then rerun `kb workflow runs approve`.', outputJson);
+        return validationError(`Invalid action "${action}" — must be "approve" or "reject"`, 'Use `--action=approve` or `--action=reject`, then rerun `kb workflow runs approve`.');
       }
 
       try {
@@ -60,34 +55,23 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
           const { pending } = await client.listPendingApprovals(runId);
 
           if (pending.length === 0) {
-            if (outputJson) {
-              return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'No pending approvals are available for this run.', `Inspect the run with: kb workflow runs view ${runId}`, true);
-            } else {
-
-            }
-            return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'No pending approvals are available for this run.', `Inspect the run with: kb workflow runs view ${runId}`, outputJson);
+            return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'No pending approvals are available for this run.', `Inspect the run with: kb workflow runs view ${runId}`);
           }
 
           const first = pending[0];
           if (!first) {
             // Guard — cannot happen after the length===0 check above, but satisfies TS.
-
-            return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'No pending approval step was returned for this run.', `Inspect the run with: kb workflow runs view ${runId}`, outputJson);
+            return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'No pending approval step was returned for this run.', `Inspect the run with: kb workflow runs view ${runId}`);
           }
 
           if (pending.length > 1) {
-            // Multiple pending — require explicit targeting.
-            if (outputJson) {
-              return workflowCommandError(ctx, 'KB_RUNTIME_INPUT_INVALID', 'Multiple approval steps are waiting.', 'Specify both `--job-id` and `--step-id` to choose one approval.', true);
-            } else {
-              const items = pending.map(
-                (p, i) =>
-                  `${i + 1}. [job:${p.jobId}] step "${p.stepName}" (${p.stepId})` +
-                  (p.waitingSince ? ` — waiting since ${new Date(p.waitingSince).toLocaleString()}` : ''),
-              );
-
-            }
-            return workflowCommandError(ctx, 'KB_RUNTIME_INPUT_INVALID', 'Multiple approval steps are waiting.', 'Specify both `--job-id` and `--step-id` to choose one approval.', outputJson);
+            // Multiple pending — require explicit targeting; list the candidates in the failure.
+            const items = pending.map(
+              (p, i) =>
+                `${i + 1}. [job:${p.jobId}] step "${p.stepName}" (${p.stepId})` +
+                (p.waitingSince ? ` — waiting since ${new Date(p.waitingSince).toLocaleString()}` : ''),
+            );
+            return workflowCommandError('KB_RUNTIME_INPUT_INVALID', 'Multiple approval steps are waiting.', 'Specify both `--job-id` and `--step-id` to choose one approval.', items.join('\n'));
           }
 
           // Single pending — resolve it.
@@ -125,7 +109,7 @@ export default defineCommand<unknown, CLIInput<RunsApproveFlags>, unknown>({
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

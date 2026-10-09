@@ -1,6 +1,18 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest, type RouteOptions } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRegistryAuthMiddleware } from '../auth-middleware.js';
+import { registerPackageRoutes } from '../routes/packages.js';
+import type { RegistryService } from '@kb-labs/marketplace-registry-core';
+
+const headers = { 'x-internal-secret': 'registry-internal-secret' };
+const userHeaders = {
+  ...headers,
+  'x-kb-auth-type': 'user',
+  'x-kb-auth-user-id': 'author-1',
+  'x-kb-auth-namespace-id': 'tenant-1',
+  'x-kb-auth-tier': 'free',
+  'x-kb-auth-permissions': '["packages:read"]',
+};
 
 describe('registry gateway identity', () => {
   let app: Awaited<ReturnType<typeof Fastify>> | undefined;
@@ -10,7 +22,7 @@ describe('registry gateway identity', () => {
     app = Fastify();
     app.addHook('onRequest', createRegistryAuthMiddleware('registry-internal-secret'));
     const handler = vi.fn(async (request: { authContext?: unknown }) => ({ auth: request.authContext ?? null }));
-    app.get('/api/v1/my/packages', handler);
+    app.get('/api/v1/my/packages', { config: { registryAccess: 'user' } }, handler);
     await app.ready();
 
     for (const headers of [{}, { 'x-internal-secret': 'wrong' }]) {
@@ -24,7 +36,7 @@ describe('registry gateway identity', () => {
   it('accepts only gateway-authenticated identity and does not require a user bearer token', async () => {
     app = Fastify();
     app.addHook('onRequest', createRegistryAuthMiddleware('registry-internal-secret'));
-    app.get('/api/v1/my/packages', async (request: { authContext?: unknown }) => ({ auth: request.authContext }));
+    app.get('/api/v1/my/packages', { config: { registryAccess: 'user' } }, async (request: { authContext?: unknown }) => ({ auth: request.authContext }));
     await app.ready();
 
     const response = await app.inject({
@@ -50,8 +62,8 @@ describe('registry gateway identity', () => {
     app.addHook('onRequest', createRegistryAuthMiddleware('registry-internal-secret'));
     const catalog = vi.fn(async (request: { authContext?: unknown }) => ({ auth: request.authContext ?? null }));
     const protectedHandler = vi.fn(async () => ({ ok: true }));
-    app.get('/api/v1/packages', catalog);
-    app.get('/api/v1/my/packages', protectedHandler);
+    app.get('/api/v1/packages', { config: { registryAccess: 'public' } }, catalog);
+    app.get('/api/v1/my/packages', { config: { registryAccess: 'user' } }, protectedHandler);
     await app.ready();
 
     const headers = { 'x-internal-secret': 'registry-internal-secret' };
@@ -63,5 +75,69 @@ describe('registry gateway identity', () => {
     expect(protectedRead.statusCode).toBe(401);
     expect(protectedRead.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
     expect(protectedHandler).not.toHaveBeenCalled();
+  });
+
+  it('declares an access class for every registered marketplace route', async () => {
+    app = Fastify();
+    const routes: Array<{ method: string | undefined; url: string | undefined; access: unknown }> = [];
+    app.addHook('onRoute', (route: RouteOptions) => {
+      routes.push({
+        method: Array.isArray(route.method) ? route.method.join(',') : route.method,
+        url: route.url,
+        access: route.config?.registryAccess,
+      });
+    });
+    registerPackageRoutes(app, {} as RegistryService);
+    await app.ready();
+
+    expect(routes).toHaveLength(17);
+    expect(routes.every((route) => ['public', 'service', 'user', 'admin'].includes(String(route.access)))).toBe(true);
+    expect(routes.filter(({ method }) => method !== 'HEAD').map(({ method, url, access }) => [method, url, access])).toEqual([
+      ['GET', '/api/v1/packages', 'public'],
+      ['GET', '/api/v1/packages/:handle/:name', 'public'],
+      ['GET', '/api/v1/packages/:handle/:name/stats', 'public'],
+      ['GET', '/api/v1/my/packages', 'user'],
+      ['POST', '/api/v1/packages/publish', 'user'],
+      ['PATCH', '/api/v1/packages/:handle/:name/meta', 'user'],
+      ['POST', '/api/v1/packages/:handle/:name/:version/yank', 'user'],
+      ['POST', '/api/v1/packages/:handle/:name/deprecate', 'user'],
+      ['POST', '/api/v1/packages/:handle/:name/share/allowlist', 'user'],
+      ['POST', '/api/v1/packages/:handle/:name/share/token', 'user'],
+      ['GET', '/api/v1/packages/:handle/:name/:version/tarball', 'user'],
+      ['POST', '/api/v1/admin/packages/:handle/:name/feature', 'admin'],
+    ]);
+  });
+
+  it('requires an authenticated identity for user routes and admin permission for admin routes', async () => {
+    app = Fastify();
+    app.addHook('onRequest', createRegistryAuthMiddleware('registry-internal-secret'));
+    app.get('/user', { config: { registryAccess: 'user' } }, async (request: FastifyRequest) => ({ auth: request.authContext }));
+    app.get('/admin', { config: { registryAccess: 'admin' } }, async () => ({ ok: true }));
+    await app.ready();
+
+    const serviceUser = await app.inject({ method: 'GET', url: '/user', headers });
+    expect(serviceUser.statusCode).toBe(401);
+    expect(serviceUser.json()).toMatchObject({ error: { code: 'KB_AUTH_REQUIRED' } });
+
+    const identity = await app.inject({ method: 'GET', url: '/user', headers: userHeaders });
+    expect(identity.statusCode).toBe(200);
+    expect(identity.json()).toMatchObject({ auth: { namespaceId: 'tenant-1' } });
+
+    const nonAdmin = await app.inject({ method: 'GET', url: '/admin', headers: userHeaders });
+    expect(nonAdmin.statusCode).toBe(403);
+    expect(nonAdmin.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_FORBIDDEN', details: { permission: 'admin' } } });
+  });
+
+  it('allows only service identity on service routes', async () => {
+    app = Fastify();
+    app.addHook('onRequest', createRegistryAuthMiddleware('registry-internal-secret'));
+    app.get('/service', { config: { registryAccess: 'service' } }, async () => ({ ok: true }));
+    await app.ready();
+
+    const service = await app.inject({ method: 'GET', url: '/service', headers });
+    expect(service.statusCode).toBe(200);
+
+    const user = await app.inject({ method: 'GET', url: '/service', headers: userHeaders });
+    expect(user.statusCode).toBe(401);
   });
 });

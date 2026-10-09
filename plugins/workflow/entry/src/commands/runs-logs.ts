@@ -37,7 +37,7 @@ export default defineCommand<unknown, CLIInput<RunsLogsFlags>, unknown>({
       const runId = flags?.['run-id'] ?? argv[0];
 
       if (!runId) {
-        return validationError(ctx, 'Missing run ID', 'Usage: kb workflow runs logs <runId>', outputJson);
+        return validationError('Missing run ID', 'Usage: kb workflow runs logs <runId>');
       }
 
       try {
@@ -49,7 +49,7 @@ export default defineCommand<unknown, CLIInput<RunsLogsFlags>, unknown>({
         renderLogs(ctx, logs as LogEntry[], outputJson);
         return { logs };
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

@@ -12,7 +12,7 @@ export default defineCommand({
       const [id] = input.argv;
       const { status, description, json } = input.flags;
       if (!id) {
-        return validationError(ctx, 'id is required', 'Usage: kb steward project update <id> [--status] [--description]', json);
+        return validationError('id is required', 'Usage: kb steward project update <id> [--status] [--description]');
       }
 
       try {
@@ -30,7 +30,7 @@ export default defineCommand({
         return project;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:project.update failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

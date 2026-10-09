@@ -13,17 +13,13 @@ export function renderErrorEnvelope(envelope: CommandError): string {
   ].join('\n');
 }
 
-type ErrorContext = unknown;
-
 /**
- * Structured validation error — emits { ok: false, error: { code: 'INVALID_ARGS', ... } } in JSON mode.
- * Call before try/catch, right before `return { exitCode: 1 }`.
+ * Return a typed validation failure for the shared command renderer.
+ * Call before try/catch, right before returning the command result.
  */
 export function validationError(
-  _ctx: ErrorContext,
   message: string,
   hint?: string,
-  _isJson?: boolean,
 ): CommandFailure {
   return {
     ok: false,
@@ -36,10 +32,10 @@ export function validationError(
 }
 
 /**
- * Structured runtime/API error — emits { ok: false, error: { code: 'INTERNAL_ERROR', ... } } in JSON mode.
- * Call in catch blocks, right before `return { exitCode: 1 }`.
+ * Return a typed runtime/API failure for the shared command renderer.
+ * Call in catch blocks, right before returning the command result.
  */
-export function handleError(_ctx: ErrorContext, err: unknown, _isJson?: boolean): CommandFailure {
+export function handleError(err: unknown): CommandFailure {
   const envelope = err !== null && typeof err === 'object' && 'envelope' in err
     ? err.envelope
     : null;

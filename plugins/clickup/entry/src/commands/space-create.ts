@@ -27,7 +27,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<SpaceCreateFlags>) {
       const { name, color, json, full } = input.flags;
       if (!name) {
-        return validationError(ctx, '--name is required', undefined, json);
+        return validationError('--name is required');
       }
 
       try {
@@ -47,7 +47,7 @@ export default defineCommand({
 
         return space;
       } catch (err) {
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

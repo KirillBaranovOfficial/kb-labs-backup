@@ -43,7 +43,7 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
       const pluginPath = flags.link ?? input.argv?.[0];
 
       if (!pluginPath) {
-        return validationError(ctx, 'Specify a project-relative package path to link', 'Usage: kb marketplace link --link <relative-path>', flags.json);
+        return validationError('Specify a project-relative package path to link', 'Usage: kb marketplace link --link <relative-path>');
       }
 
       let scopeCtx;
@@ -51,21 +51,16 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          return validationError(ctx, err.message, undefined, flags.json);
+          return validationError(err.message);
         } else {
-          return handleError(ctx, err, flags.json);
+          return handleError(err);
         }
               }
 
       // Path validation uses the shared validation presenter, so the human
       // message remains actionable without treating bad input as a runtime error.
       if (pluginPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(pluginPath)) {
-        return validationError(
-          ctx,
-          'The --link path must be relative to the selected scope directory.',
-          'Provide a path relative to the selected scope directory, for example `.kb/plugins/demo/packages/demo-entry`.',
-          flags.json,
-        );
+        return validationError('The --link path must be relative to the selected scope directory.', 'Provide a path relative to the selected scope directory, for example `.kb/plugins/demo/packages/demo-entry`.');
       }
 
       try {
@@ -80,7 +75,7 @@ export default defineCommand<unknown, LinkInput, { id: string; scope: string }>(
         }
         return { id: result.id, scope: result.scope };
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
     },
   },

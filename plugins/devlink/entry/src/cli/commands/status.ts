@@ -53,7 +53,7 @@ export default defineCommand<unknown, StatusInput, StatusResult>({
         diagnostics = diagnose(monorepos, packageMap, rootDir);
       } catch (err) {
         loader.fail('Analysis failed');
-        return handleError(ctx, err, outputJson);
+        return handleError(err);
       }
 
       loader.succeed('Analysis complete');

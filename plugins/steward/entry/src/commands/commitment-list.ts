@@ -23,7 +23,7 @@ export default defineCommand({
         return commitments;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.list failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

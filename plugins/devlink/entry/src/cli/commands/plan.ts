@@ -46,7 +46,7 @@ export default defineCommand<unknown, PlanInput, DevlinkPlan>({
         plan = buildPlan(targetMode, packageMap, monorepos, rootDir, { scopedRepos });
       } catch (err) {
         loader.fail('Failed to build plan');
-        return handleError(ctx, err, outputJson);
+        return handleError(err);
       }
       loader.succeed(`Plan ready: ${plan.items.length} change(s)`);
       tracker.checkpoint('plan');

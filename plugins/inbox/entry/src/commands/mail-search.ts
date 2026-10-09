@@ -56,7 +56,7 @@ export default defineCommand({
 
         return messages;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },
