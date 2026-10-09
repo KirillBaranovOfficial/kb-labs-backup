@@ -1,0 +1,10 @@
+[
+  {
+    "directory": "e2e/fixtures/adapters/llm-deterministic",
+    "manifest": "manifest.js"
+  },
+  {
+    "directory": "e2e/journey/fixtures/analytics-emitter",
+    "manifest": "manifest.js"
+  }
+]

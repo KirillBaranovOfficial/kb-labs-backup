@@ -24,7 +24,6 @@ export const RELEASE_CASE_CLAIM_BASELINE = [
   'S-104.3',
   'S-104.4',
   'S-104.5',
-  'S-104.6',
   'S-120.3',
   'S-121.6',
   'S-124.1',
