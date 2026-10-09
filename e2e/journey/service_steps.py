@@ -47,15 +47,39 @@ class Journey:
         self.started = time.monotonic()
         self.steps: list[StepResult] = []
         self.selected_steps = set(filter(None, os.getenv("KB_JOURNEY_SELECTED_STEPS", "").split(",")))
+        self.selected_claims = set(self.selected_steps)
+        self.prerequisite_steps = set(filter(None, os.getenv("KB_JOURNEY_PREREQUISITE_STEPS", "").split(",")))
         self.selection = list(filter(None, os.getenv("KB_JOURNEY_CASES", "").split(",")))
 
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
-             details: Callable[[], dict[str, Any]] | None = None, *, force: bool = False) -> StepResult:
+             details: Callable[[], dict[str, Any]] | None = None, *,
+             requires: Iterable[str] = (), role: str = "step") -> StepResult:
+        if role not in {"step", "lifecycle"}:
+            raise ValueError(f"unsupported journey step role: {role}")
         case_ids = list(cases)
-        if self.selected_steps and not force and (not case_ids or not self.selected_steps.intersection(case_ids)):
+        required = set(requires)
+        selected = bool(self.selected_steps.intersection(case_ids))
+        prerequisite = name in self.prerequisite_steps
+        lifecycle = role == "lifecycle"
+        if self.selected_claims and not selected and not prerequisite and not lifecycle:
             result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, "not selected", case_ids)
             self.steps.append(result)
             return result
+        if (selected or prerequisite) and required:
+            prior_steps = {step.name: step for step in self.steps}
+            failures = []
+            for required_name in sorted(required):
+                prior = prior_steps.get(required_name)
+                if prior is None:
+                    failures.append(f"{required_name} did not run before {name}")
+                elif prior.status != "PASS":
+                    failures.append(f"{required_name} ended {prior.status}: {prior.message}")
+            if failures:
+                message = "selected step prerequisites failed: " + "; ".join(failures)
+                result = StepResult(name, capability, self.mode, "FAIL", 0.0, message, case_ids,
+                                    {"selectionRole": "selected", "prerequisiteFailures": failures})
+                self.steps.append(result)
+                return result
         started = time.monotonic()
         try:
             with invocation_context(step_id=",".join(case_ids) or name):
@@ -69,6 +93,9 @@ class Journey:
             status = "FAIL"
             message = str(error) or error.__class__.__name__
         step_details = details() if details is not None else None
+        if prerequisite or lifecycle:
+            step_details = dict(step_details or {})
+            step_details["selectionRole"] = "prerequisite" if prerequisite else "lifecycle"
         if status == "FAIL":
             reference = invocation_link(",".join(case_ids) or name)
             if reference:
@@ -87,7 +114,7 @@ class Journey:
 
     def blocked(self, name: str, capability: str, reason: str, cases: Iterable[str] = ()) -> StepResult:
         case_ids = list(cases)
-        if self.selected_steps and (not case_ids or not self.selected_steps.intersection(case_ids)):
+        if self.selected_claims and (not case_ids or not self.selected_claims.intersection(case_ids)):
             return self.skipped(name, capability)
         result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, reason, case_ids)
         self.steps.append(result)
@@ -97,6 +124,21 @@ class Journey:
         first = next((_step_dict(step) for step in self.steps if step.status == "FAIL"), None)
         failed = any(step.status == "FAIL" for step in self.steps)
         blocked = any(step.status == "BLOCKED" for step in self.steps)
+        executed_selected = {case_id for step in self.steps if step.status in {"PASS", "FAIL"}
+                             for case_id in step.cases if case_id in self.selected_steps}
+        unexecuted_selected = sorted(self.selected_steps - executed_selected)
+        if unexecuted_selected:
+            failed = True
+            first = first or {
+                "name": "selected journey claims",
+                "capability": "journey.selection",
+                "mode": self.mode,
+                "status": "FAIL",
+                "duration_seconds": 0.0,
+                "message": ("selected claim steps did not execute: " + ", ".join(unexecuted_selected)
+                            + "; the selected runner did not call their registered step functions"),
+                "cases": unexecuted_selected,
+            }
         status = "FAIL" if failed else "BLOCKED" if blocked else "PASS"
         claims = {}
         for step in self.steps:
@@ -132,36 +174,12 @@ class FlowGraph:
     def __init__(self, journey: Journey, dependencies: dict[str, tuple[str, ...]],
                  diagnostics_path: str | Path | None = None,
                  states: dict[str, dict[str, object]] | None = None,
-                 selected_groups: Iterable[str] = (), state_producers: dict[str, str] | None = None):
+                 state_producers: dict[str, str] | None = None):
         self.journey = journey
         self.dependencies = dependencies
         self.diagnostics_path = Path(diagnostics_path) if diagnostics_path else None
         self.states = dict(states or {})
-        self.selected_groups = set(selected_groups)
         self.state_producers = dict(state_producers or {})
-
-    def dependency_closure(self) -> set[str]:
-        """Return selected groups plus the groups that produce their required states."""
-        groups = set(self.selected_groups)
-        pending = list(groups)
-        states: set[str] = set()
-        while pending:
-            group = pending.pop()
-            for state in self.dependencies.get(group, ()):
-                if state in states:
-                    continue
-                states.add(state)
-                producer = self.state_producers.get(state)
-                if producer and producer not in groups:
-                    groups.add(producer)
-                    pending.append(producer)
-        return groups
-
-    def _state_required(self, state: str, group: str) -> bool:
-        if not self.journey.selected_steps:
-            return True
-        groups = self.dependency_closure()
-        return group in groups or any(state in self.dependencies.get(name, ()) for name in groups)
 
     def _blocker(self, group: str) -> tuple[str, dict[str, object]] | None:
         for state in self.dependencies.get(group, ()):
@@ -175,8 +193,6 @@ class FlowGraph:
 
     def probe_state(self, state: str, group: str, step: str, check: Callable[[], str | None]) -> StepResult:
         """Run and record an explicit state precondition probe."""
-        if not self._state_required(state, group):
-            return self.journey.skipped(f"state probe: {state}", "journey.state")
         def checked() -> str | None:
             try:
                 return check()
@@ -184,7 +200,8 @@ class FlowGraph:
                 self._write_traceback(group, f"state probe: {state}")
                 raise
 
-        result = self.journey.step(f"state probe: {state}", "journey.state", checked, force=True)
+        probe_name = f"state probe: {state}"
+        result = self.journey.step(probe_name, "journey.state", checked, role="lifecycle")
         self.states[state] = {
             "passed": result.status == "PASS",
             "evidence": "probe passed" if result.status == "PASS" else result.message,
@@ -204,7 +221,7 @@ class FlowGraph:
     def step(self, name: str, group: str, capability: str, check: Callable[[], str | None],
              cases: Iterable[str] = ()) -> StepResult:
         case_ids = list(cases)
-        if self.journey.selected_steps and (not case_ids or not self.journey.selected_steps.intersection(case_ids)):
+        if self.journey.selected_claims and (not case_ids or not self.journey.selected_claims.intersection(case_ids)):
             return self.journey.step(name, capability, lambda: None, cases=case_ids)
         blocker = self._blocker(group)
         if blocker:
@@ -228,16 +245,17 @@ class FlowGraph:
         return result
 
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object],
-             cases: Iterable[str] = (), *, always_run: bool = False,
+             cases: Iterable[str] = (), *, role: str = "step",
              record_empty_success: bool = True) -> str:
         """Run an outer flow; return PASS, FAIL, or BLOCKED for dependency wiring."""
         case_ids = list(cases)
-        if self.journey.selected_steps and case_ids and not self.journey.selected_steps.intersection(case_ids):
+        prerequisite = name in self.journey.prerequisite_steps
+        lifecycle = role == "lifecycle"
+        if (self.journey.selected_claims and case_ids
+                and not self.journey.selected_claims.intersection(case_ids) and not prerequisite and not lifecycle):
             self.journey.skipped(name, capability)
             return "SKIPPED"
-        if self.journey.selected_steps:
-            self.selected_groups.add(group)
-        blocker = None if always_run else self._blocker(group)
+        blocker = None if lifecycle else self._blocker(group)
         if blocker:
             state, evidence = blocker
             self.journey.blocked(name, capability,
@@ -251,13 +269,13 @@ class FlowGraph:
             outcome = action()
         except Exception as error:
             self._write_traceback(group, name)
-            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__, force=True)
+            self.journey.step(name, capability, lambda: str(error) or error.__class__.__name__, role=role)
             outcome = None
         emitted = self.journey.steps[start:]
         if isinstance(outcome, str):
-            self.journey.step(name, capability, lambda: outcome, cases=case_ids)
+            self.journey.step(name, capability, lambda: outcome, cases=case_ids, role=role)
         elif not emitted and record_empty_success:
-            self.journey.step(name, capability, lambda: None, cases=case_ids)
+            self.journey.step(name, capability, lambda: None, cases=case_ids, role=role)
 
         group_steps = self.journey.steps[start:]
         failed = next((step for step in group_steps if step.status == "FAIL"), None)
@@ -296,7 +314,8 @@ def record_runner_failure(path: str | Path, mode: str, failure: str) -> JourneyR
     name, separator, message = failure.partition(": ")
     journey = Journey(mode, f"runner-{mode}")
     journey.step(name if separator else "journey runner", "journey.install",
-                 lambda: message if separator else failure or "journey failed before capability checks", force=True)
+                 lambda: message if separator else failure or "journey failed before capability checks",
+                 role="lifecycle")
     return journey.write_json(path)
 
 
@@ -327,4 +346,18 @@ def record_candidate_provenance(journey: Journey, checkout_commit: str,
         failure = None
 
     return journey.step("candidate provenance", "journey.orchestration",
-                        lambda: failure, details=lambda: details)
+                        lambda: failure, details=lambda: details, role="lifecycle")
+
+
+def source_selected(module_file: str) -> bool:
+    """Whether a module contributes a selected claim or prerequisite."""
+    if not os.getenv("KB_JOURNEY_SELECTED_STEPS"):
+        return True
+    path = Path(module_file).resolve()
+    root = Path(__file__).resolve().parents[2]
+    try:
+        source = path.relative_to(root).as_posix()
+    except ValueError:
+        return False
+    selected_sources = set(filter(None, os.getenv("KB_JOURNEY_SELECTED_SOURCES", "").split(",")))
+    return source in selected_sources

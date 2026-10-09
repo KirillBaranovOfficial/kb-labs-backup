@@ -88,7 +88,7 @@ class PlatformChannelStepsTest(unittest.TestCase):
         ).result()
         self.assertEqual(result.status, "PASS")
         self.assertEqual({claim["claimId"] for claim in result.case_run["claims"]},
-                         {f"S-052.{step}" for step in range(1, 6)} | {"S-053.1", "S-203.10"})
+                         {f"S-052.{step}" for step in range(1, 7)} | {"S-053.1", "S-203.10"})
         self.assertEqual([command[1] for command in self.commands], [
             "plan", "stop", "apply", "status", "doctor", "status", "doctor", "uninstall", "start",
             "update", "update", "status", "doctor", "status", "doctor", "update", "rollback", "rollback",

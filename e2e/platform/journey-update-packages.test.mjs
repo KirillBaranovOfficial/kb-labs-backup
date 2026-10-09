@@ -57,3 +57,80 @@ test('release-index Docker stage copies the package preparation helper', () => {
   const dockerfile = readFileSync(join(platformDirectory, 'Dockerfile'), 'utf8');
   assert.match(dockerfile, /COPY e2e\/platform\/journey-update-packages\.mjs \/src\/journey-update-packages\.mjs/);
 });
+
+test('builds a versioned failing service artifact for restart health recovery', () => {
+  const root = mkdtempSync(join(tmpdir(), 'journey-failing-host-'));
+  try {
+    const packages = join(root, 'packages');
+    const update = join(root, 'update');
+    mkdirSync(packages);
+    for (const [name, version, entry] of [
+      ['@kb-labs/core-runtime', '3.0.0', ''],
+      ['@kb-labs/sdk', '3.0.0', ''],
+      ['@kb-labs/gateway-app', '3.0.0', 'dist/bin.js'],
+    ]) {
+      const packageRoot = join(root, `${name.split('/').at(-1)}-source`, 'package');
+      mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+      writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name, version }));
+      if (entry) writeFileSync(join(packageRoot, entry), '#!/usr/bin/env node\nconsole.log("healthy");\n');
+      execFileSync('tar', ['-czf', join(packages, `${name.split('/').at(-1)}-${version}.tgz`), '-C', join(packageRoot, '..'), 'package']);
+    }
+
+    prepareJourneyUpdatePackages(packages, update, '3.0.3', {
+      publishDir: packages,
+      failingServicePackage: '@kb-labs/gateway-app',
+    });
+
+    const manifest = JSON.parse(readFileSync(join(update, 'manifest.json'), 'utf8'));
+    const failing = manifest.find(entry => entry.name === '@kb-labs/gateway-app');
+    assert.equal(failing.version, '3.0.3');
+    assert.match(execFileSync('tar', ['-xOzf', join(update, failing.tarball), 'package/dist/bin.js'], { encoding: 'utf8' }),
+      /process\.exit\(1\)/);
+    assert.equal(readFileSync(join(packages, failing.tarball)).length > 0, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('seals gateway packages with staged config and doctor failure requirements', () => {
+  const root = mkdtempSync(join(tmpdir(), 'journey-staged-failure-'));
+  try {
+    const packages = join(root, 'packages');
+    const update = join(root, 'update');
+    mkdirSync(packages);
+    for (const [name, version] of [
+      ['@kb-labs/core-runtime', '3.0.0'],
+      ['@kb-labs/sdk', '3.0.0'],
+      ['@kb-labs/gateway-app', '3.0.0'],
+    ]) {
+      const packageRoot = join(root, `${name.split('/').at(-1)}-source`, 'package');
+      mkdirSync(packageRoot, { recursive: true });
+      writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name, version }));
+      if (name === '@kb-labs/gateway-app') {
+        writeFileSync(join(packageRoot, 'kb-create.requirements.json'), JSON.stringify({
+          schema: 'kb.create.requirements/v1', requirements: [],
+        }));
+      }
+      execFileSync('tar', ['-czf', join(packages, `${name.split('/').at(-1)}-${version}.tgz`), '-C', join(packageRoot, '..'), 'package']);
+    }
+    const requirement = {
+      id: 'journey.update.requiredConfig', path: '/platform/journey/updateRequired',
+      required: true, hint: 'configure staged fixture',
+    };
+    prepareJourneyUpdatePackages(packages, update, '3.0.2', {
+      publishDir: packages,
+      requiredConfigPackage: '@kb-labs/gateway-app',
+      requiredConfig: requirement,
+    });
+    const manifest = JSON.parse(readFileSync(join(update, 'manifest.json'), 'utf8'));
+    const gateway = manifest.find(entry => entry.name === '@kb-labs/gateway-app');
+    assert.equal(gateway.version, '3.0.2');
+    const requirements = JSON.parse(execFileSync('tar', [
+      '-xOzf', join(update, gateway.tarball), 'package/kb-create.requirements.json',
+    ], { encoding: 'utf8' }));
+    assert.deepEqual(requirements.requirements, [requirement]);
+    assert.equal(readFileSync(join(packages, gateway.tarball)).length > 0, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

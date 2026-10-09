@@ -1,17 +1,20 @@
 import { defineConfig } from 'tsup'
 import { readTsupExternalSync } from './external-sync.mjs'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { execFile } from 'node:child_process'
+import { readFileSync, existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
+// Run the shared emitter in a fresh process so watch rebuilds never read a cached manifest module.
+const MANIFEST_EMITTER = fileURLToPath(new URL('./emit-manifest-json.mjs', import.meta.url))
 
 /**
  * Derive tsup entry points from package.json.
  * Reads two sources of published dist artifacts:
  *   1. `exports` — public module surface ("./dist/foo.js" → "src/foo.ts")
- *   2. `kb.manifest` — plugin/service/adapter manifest loaded at runtime by the
+ *   2. `kb.manifest` — plugin/adapter manifest loaded at runtime by the
  *      kb-labs platform; it's referenced as a dist path but not exported,
  *      so it would otherwise be silently omitted from the build.
  * Falls back to ['src/index.ts'] if nothing resolves.
@@ -65,22 +68,11 @@ async function emitManifestJson() {
       failManifestEmission(`declared manifest module ${packageJSON.kb.manifest} was not built`)
       return
     }
-    const url = new URL(`file://${distPath}`).href
-    const script = `import(${JSON.stringify(url)}).then(m => { if (m.manifest === undefined) throw new Error('declared manifest module must export a named "manifest"'); process.stdout.write(JSON.stringify(m.manifest)) })`
-    const { stdout } = await execFileAsync(process.execPath, ['-e', script], {
-      cwd: process.cwd(),
-      timeout: 30_000,
-    })
-    const manifest = JSON.parse(stdout)
-    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
-      failManifestEmission(`manifest at ${packageJSON.kb.manifest} must export an object`)
-      return
-    }
-    if (manifest.schema !== 'kb.service/1' && manifest.schema !== 'kb.adapter/1' && manifest.schema !== 'kb.plugin/3') {
-      failManifestEmission(`manifest at ${packageJSON.kb.manifest} must declare schema kb.service/1, kb.adapter/1, or kb.plugin/3`)
-      return
-    }
-    writeFileSync(join(dirname(distPath), 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
+    await execFileAsync(process.execPath, [
+      MANIFEST_EMITTER,
+      '--module', distPath,
+      '--output', join(dirname(distPath), 'manifest.json'),
+    ], { cwd: process.cwd(), timeout: 30_000 })
   } catch (error) {
     const manifestPath = packageJSON?.kb?.manifest ?? 'package.json'
     failManifestEmission(`could not emit declarative manifest for ${manifestPath}: ${error.message}`)

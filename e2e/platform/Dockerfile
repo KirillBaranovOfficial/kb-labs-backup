@@ -45,16 +45,29 @@ COPY e2e/platform/registry-manifest.json /src/registry-manifest.json
 COPY e2e/platform/prepare-release-index.mjs /src/prepare-release-index.mjs
 COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
 COPY e2e/platform/release-index-version.mjs /src/release-index-version.mjs
-COPY e2e/platform/binary-manifest.mjs /src/binary-manifest.mjs
+COPY tools/kb-create/scripts/prepare-binary-manifest.mjs /src/kb-create/scripts/prepare-binary-manifest.mjs
 COPY tools/kb-create/scripts/prepare-release-index.mjs /src/kb-create/scripts/prepare-release-index.mjs
 COPY --from=go-builder /out/kb-create-linux-amd64 /out/binaries/kb-create-linux-amd64
 COPY --from=go-builder /out/kb-create-linux-arm64 /out/binaries/kb-create-linux-arm64
 COPY --from=go-builder /out/kb-create-release-index /usr/local/bin/kb-create-release-index
-RUN node /src/prepare-release-index.mjs \
+RUN sha256sum /out/binaries/kb-create-linux-amd64 /out/binaries/kb-create-linux-arm64 > /out/binary-checksums.txt && \
+    BINARY_VERSION="$(node -e 'const fs=require("node:fs"); const {execFileSync}=require("node:child_process"); const file=fs.readdirSync("/src/packages").find(name=>name.startsWith("kb-labs-core-runtime-") && name.endsWith(".tgz")); if (!file) throw new Error("@kb-labs/core-runtime tarball is missing"); process.stdout.write(JSON.parse(execFileSync("tar", ["-xOzf", `/src/packages/${file}`, "package/package.json"], {encoding:"utf8"})).version)')" && \
+    node /src/kb-create/scripts/prepare-binary-manifest.mjs \
+      --checksums /out/binary-checksums.txt \
+      --repository kb-labs-team/kb-labs \
+      --release-tag journey-candidate \
+      --version "$BINARY_VERSION" \
+      --asset-base-url http://origin:8080/journey-candidate \
+      --output /out/binary-manifest.json && \
+    node /src/prepare-release-index.mjs \
       --packages-dir /src/packages \
       --registry-manifest /src/registry-manifest.json \
       --sealer /usr/local/bin/kb-create-release-index \
       --binary-dir /out/binaries \
+      --binary-manifest /out/binary-manifest.json \
+      --binary-manifest-tool /src/kb-create/scripts/prepare-binary-manifest.mjs \
+      --binary-checksums /out/binary-checksums.txt \
+      --binary-version "$BINARY_VERSION" \
       --output /out/release-index.json
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────

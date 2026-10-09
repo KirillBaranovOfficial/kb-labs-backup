@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import select_from_cases
 from select_from_cases import read_coverage_result, selection_from_coverage, selectors_from_coverage
-from service_steps import FlowGraph, Journey
+from service_steps import Journey
 
 
 def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "active", release: bool = True):
@@ -24,7 +24,7 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
             "id": "S-042",
             "status": status,
             "release": release,
-            "steps": [{"stepId": "S-042.1", "claims": [{"source": source, "kind": kind}]}],
+            "steps": [{"stepId": "S-042.1", "claims": [{"source": source, "kind": kind, "line": 393}]}],
         }],
     }
 
@@ -54,7 +54,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                     "ok": True, "data": {"mode": mode, "cases": [{
                         "id": "S-042", "status": "active", "release": True,
                         "steps": [{"stepId": "S-042.1", "claims": [{
-                            "kind": "journey", "source": "e2e/journey/service_runner.py",
+                            "kind": "journey", "source": "e2e/journey/service_runner.py", "line": 393,
                         }]}],
                     }]},
                 }), "")
@@ -78,6 +78,8 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 self.assertNotIn("KB_NET_OFFSET", child_env)
             self.assertEqual(json.loads(output.getvalue()), {
                 "selection": ["S-042"], "steps": ["S-042.1"],
+                "runners": ["service-local:explore", "service-secured:explore"],
+                "prerequisiteSteps": [], "stepSources": ["e2e/journey/service_runner.py"],
             })
 
     def test_selector_failure_includes_decoded_cli_error_envelope(self):
@@ -122,7 +124,11 @@ class CaseJourneySelectionTests(unittest.TestCase):
             coverage("local", source="e2e/journey/service_runner.py"),
             coverage("secured", source="e2e/journey/service_runner.py"),
         ], "S-042,S-042.1")
-        self.assertEqual(result, {"selection": ["S-042", "S-042.1"], "steps": ["S-042.1"]})
+        self.assertEqual(result, {
+            "selection": ["S-042", "S-042.1"], "steps": ["S-042.1"],
+            "runners": ["service-local:explore", "service-secured:explore"],
+            "prerequisiteSteps": [], "stepSources": ["e2e/journey/service_runner.py"],
+        })
 
     def test_rejects_unknown_case_or_step_id_by_name(self):
         with self.assertRaisesRegex(ValueError, "S-999"):
@@ -133,7 +139,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
         case = result["cases"][0]
         case["steps"] = [
             {"stepId": f"S-042.{number}", "claims": [{
-                "kind": "journey", "source": "e2e/journey/service_runner.py"}]} for number in (1, 2, 3)
+                "kind": "journey", "source": "e2e/journey/service_runner.py", "line": 393}]} for number in (1, 2, 3)
         ]
         for step in case["steps"]:
             step_id = step["stepId"]
@@ -150,21 +156,6 @@ class CaseJourneySelectionTests(unittest.TestCase):
             self.assertEqual(unclaimed.status, "SKIPPED")
             self.assertEqual(journey.result().case_run["claims"], [])
             self.assertTrue(journey.result().case_run["partial"])
-
-    def test_dependency_closure_includes_producers_of_required_states(self):
-        with patch.dict("os.environ", {"KB_JOURNEY_SELECTED_STEPS": "S-042.1"}):
-            graph = FlowGraph(Journey("local"), {
-                "analytics": ("host-running", "fixtures-installed"),
-                "marketplace-fixtures": ("host-running", "marketplace-available"),
-                "marketplace": ("host-running", "project-registered"),
-            }, selected_groups={"analytics"}, state_producers={
-                "fixtures-installed": "marketplace-fixtures",
-                "marketplace-available": "marketplace",
-            })
-            self.assertEqual(graph.dependency_closure(), {"analytics", "marketplace-fixtures", "marketplace"})
-            self.assertTrue(graph._state_required("fixtures-installed", "marketplace-fixtures"))
-            self.assertTrue(graph._state_required("marketplace-available", "marketplace"))
-
 
 if __name__ == "__main__":
     unittest.main()

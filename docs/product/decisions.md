@@ -139,10 +139,17 @@ Cases: S-045, S-140, S-141, S-142.
   - `strict`: the exact release matrix;
   - `compatible`: semver ranges, the installer default.
 - Update checks every installed plugin and adapter from the receipt and refuses, naming the one that would break.
-- A downgrade through `update` is refused with a hint to use `rollback`.
+- Updates move forward only. N+1 patch, N+1 minor, and matrix-admitted jumps across releases are supported; downgrades are refused with `KB_UPDATE_DOWNGRADE_REFUSED`. Rollback is recovery to a saved snapshot, not an update path.
+- Update stages a side-by-side installation and verifies artifact checksums, materialized manifests, rendered config, and doctor checks before an atomic active-version switch. Before the switch, failure leaves the active installation byte-for-byte unchanged and removes the staged tree.
+- Update never stops or restarts services. The old installed version remains intact until services restart and is retained as the rollback target. The result gives the exact restart command; status and doctor show running and installed versions plus pending services. A stopped host starts the new installed version.
+- A failed health check after restart automatically restores the previous snapshot and starts the previous version. Manual rollback to a named saved snapshot remains supported.
+- Plans and results list each component from -> to, release notes for each intervening release from the sealed index, download size, added/removed packages, phase progress, and durations. Each platform release entry carries markdown `releaseNotes`, keeping notes self-contained and available offline; release flow population belongs to r05 (see planned S-214.10).
+- Update never interrupts work. Before restart, the platform-owned in-flight-work query returns workflow runs, service jobs, and long-command registrations as `{ kind, id, owningService }`, based on platform state rather than process inspection. Non-interactive restart refuses with `KB_RESTART_WORK_IN_FLIGHT` and a hint to wait or rerun with `--interrupt`; interactive mode asks whether to wait or proceed.
+- Retain the active version, previous version, and at most two recovery snapshots. Prune older versions and snapshots only after the new version restarts healthy. Doctor reports disk use of retained versions and snapshots; there is no byte cap.
+- The update result and status/doctor JSON share `pendingRestart: { services: [{ id, runningVersion }], installedVersion, command }`; it is absent when nothing is pending. Human output lists affected services and the command.
 - `status` and `doctor` show the channel and the exact version.
 - Installing and updating from the canary channel is supported.
-Cases: S-023, S-024, S-053.
+Cases: S-023, S-024, S-052, S-053, S-194.
 
 ### Recovery hints on installed platforms
 

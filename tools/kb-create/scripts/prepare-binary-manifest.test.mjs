@@ -36,3 +36,19 @@ test('passes the staged version through for the Go catalog validator to own', ()
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('uses an explicit HTTP(S) asset base URL for locally hosted release candidates', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kb-binary-manifest-base-url-'));
+  const checksums = join(root, 'checksums.txt');
+  const output = join(root, 'binary-manifest.json');
+  try {
+    writeFileSync(checksums, `${'a'.repeat(64)}  kb-create-linux-amd64\n`);
+    execFileSync(process.execPath, [script.pathname, '--checksums', checksums,
+      '--repository', 'kb-labs-team/kb-labs', '--release-tag', 'candidate', '--version', '2.3.4',
+      '--asset-base-url', 'http://origin:8080/journey-candidate/', '--output', output]);
+    assert.equal(JSON.parse(readFileSync(output, 'utf8')).binaries[0].url,
+      'http://origin:8080/journey-candidate/kb-create-linux-amd64');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -131,6 +131,9 @@ class ServiceJourneyTests(unittest.TestCase):
                             "selected analytics check",
                             "state probe: fixtures-installed",
                             "state probe: marketplace-available",
+                            "state probe: session",
+                            "state probe: agent-plugin-installed",
+                            "archive runtime service logs",
                         }
                         self.assertTrue(all(
                             status == ("PASS" if name in allowed_passes else "SKIPPED")
@@ -197,6 +200,65 @@ class ServiceJourneyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             saved = journey.write_json(Path(directory) / "journey.json")
             self.assertEqual(saved.schema, "kb.service-journey/v1")
+
+    def test_selected_step_runs_declared_prerequisite_chain_and_labels_it(self):
+        def selection_environment(*, cases):
+            return {
+                "KB_JOURNEY_SELECTED_STEPS": cases[0],
+                "KB_JOURNEY_PREREQUISITE_STEPS": "candidate provenance,launcher version,start host",
+            }
+
+        env = selection_environment(cases=["S-023.9"])
+        with patch.dict(os.environ, env, clear=False):
+            journey = Journey("local", "selected-update-chain")
+            journey.step("candidate provenance", "journey.orchestration", lambda: None)
+            journey.step("launcher version", "platform.install", lambda: None, cases=["PC-001.1"])
+            journey.step("start host", "platform.host", lambda: None, cases=["PC-002.1"])
+            journey.step("update stopped host", "platform.update", lambda: None,
+                         cases=["S-023.9"], requires=("candidate provenance", "launcher version", "start host"))
+
+        self.assertEqual([step.status for step in journey.steps], ["PASS"] * 4)
+        self.assertEqual(journey.steps[0].details["selectionRole"], "prerequisite")
+        self.assertEqual(journey.steps[1].details["selectionRole"], "prerequisite")
+        self.assertEqual(journey.steps[2].details["selectionRole"], "prerequisite")
+        self.assertEqual(journey.result().case_run["claims"][-1]["claimId"], journey.steps[-1].cases[0])
+
+    def test_selected_claim_that_never_runs_fails_with_its_step_id(self):
+        def selection_environment(*, cases):
+            return {"KB_JOURNEY_SELECTED_STEPS": cases[0]}
+
+        with patch.dict(os.environ, selection_environment(cases=["S-042.1"]), clear=False):
+            journey = Journey("local", "missing-selected-claim")
+            journey.step("unrelated check", "auth", lambda: None, cases=["S-042.2"])
+
+        result = journey.result()
+        self.assertEqual(result.status, "FAIL")
+        self.assertIn("S-042.1", result.first_failure["message"])
+        self.assertIn("registered step functions", result.first_failure["message"])
+
+    def test_lifecycle_step_runs_outside_the_selected_claim_set(self):
+        with patch.dict(os.environ, {"KB_JOURNEY_SELECTED_STEPS": "S-042.1"}, clear=False):
+            journey = Journey("local", "lifecycle-step")
+            result = journey.step("state probe: host", "journey.state", lambda: None, role="lifecycle")
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(result.details["selectionRole"], "lifecycle")
+
+    def test_failed_prerequisite_fails_the_selected_step(self):
+        def selection_environment(*, cases):
+            return {
+                "KB_JOURNEY_SELECTED_STEPS": cases[0],
+                "KB_JOURNEY_PREREQUISITE_STEPS": "project registration",
+            }
+
+        with patch.dict(os.environ, selection_environment(cases=["S-042.1"]), clear=False):
+            journey = Journey("local", "failed-selected-prerequisite")
+            journey.step("project registration", "platform.project", lambda: "registration failed",
+                         requires=("project registration",))
+            target = journey.step("update", "platform.update", lambda: None, cases=["S-042.1"],
+                                  requires=("project registration",))
+
+        self.assertEqual(target.status, "FAIL")
+        self.assertIn("project registration ended FAIL", target.message)
 
     def test_service_step_exception_is_saved_and_later_steps_continue(self):
         journey = Journey("local", "raised-step")
@@ -351,7 +413,7 @@ class ServiceJourneyTests(unittest.TestCase):
             graph.flow("workflow depending on adapter", "adapter-dependent", "workflow",
                        lambda: calls.append("dependent"), cases=["S-054.3"])
             graph.flow("uninstall platform", "uninstall", "platform.uninstall",
-                       lambda: calls.append("uninstall"), cases=["S-050.6"], always_run=True)
+                       lambda: calls.append("uninstall"), cases=["S-050.6"], role="lifecycle")
 
             diagnostic = (Path(directory) / "journey-diagnostics.log").read_text()
 

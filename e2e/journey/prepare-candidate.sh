@@ -19,6 +19,29 @@ if [[ -f "$TARGET/canary-packages/generated-packages.txt" ]]; then
     [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
   done < "$TARGET/canary-packages/generated-packages.txt"
 fi
+if [[ -f "$TARGET/jump-packages/generated-packages.txt" ]]; then
+  while IFS= read -r filename; do
+    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
+  done < "$TARGET/jump-packages/generated-packages.txt"
+fi
+if [[ -f "$TARGET/minor-packages/generated-packages.txt" ]]; then
+  while IFS= read -r filename; do
+    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
+  done < "$TARGET/minor-packages/generated-packages.txt"
+fi
+if [[ -f "$TARGET/failed-host-packages/generated-packages.txt" ]]; then
+  while IFS= read -r filename; do
+    [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
+  done < "$TARGET/failed-host-packages/generated-packages.txt"
+fi
+for candidate in config doctor; do
+  package_list="$TARGET/staged-$candidate-packages/generated-packages.txt"
+  if [[ -f "$package_list" ]]; then
+    while IFS= read -r filename; do
+      [[ -z "$filename" ]] || rm -f "$PACKAGES/$filename"
+    done < "$package_list"
+  fi
+done
 rm -rf "$TARGET"
 mkdir -p "$TARGET"
 if [[ "${KB_JOURNEY_PACKAGES_READY:-0}" != "1" ]]; then
@@ -40,20 +63,38 @@ node "$ROOT/e2e/scripts/validate-package-outputs.mjs" "$PACKAGES"
     -o "$OUT/kb-create-release-index" ./v2/cmd/kb-create-release-index
 )
 
+if command -v sha256sum >/dev/null 2>&1; then
+  (cd "$TARGET" && sha256sum kb-create-linux-amd64 kb-create-linux-arm64 > binary-checksums.txt)
+else
+  (cd "$TARGET" && shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 > binary-checksums.txt)
+fi
+BINARY_VERSION="$(node -p "require('$ROOT/core/runtime/package.json').version")"
+node "$ROOT/tools/kb-create/scripts/prepare-binary-manifest.mjs" \
+  --checksums "$TARGET/binary-checksums.txt" \
+  --repository kb-labs-team/kb-labs \
+  --release-tag "$TAG" \
+  --version "$BINARY_VERSION" \
+  --asset-base-url http://origin:8080/journey-candidate \
+  --output "$TARGET/binary-manifest.json"
+
 node "$ROOT/e2e/platform/prepare-release-index.mjs" \
   --packages-dir "$PACKAGES" \
   --registry-manifest "$ROOT/e2e/platform/registry-manifest.json" \
   --sealer "$OUT/kb-create-release-index" \
   --binary-dir "$TARGET" \
+  --binary-manifest "$TARGET/binary-manifest.json" \
+  --binary-manifest-tool "$ROOT/tools/kb-create/scripts/prepare-binary-manifest.mjs" \
+  --binary-checksums "$TARGET/binary-checksums.txt" \
+  --binary-version "$BINARY_VERSION" \
   --prepare-script "$ROOT/tools/kb-create/scripts/prepare-release-index.mjs" \
   --output "$TARGET/release-index.json"
 
 (
   cd "$TARGET"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-canary.json > checksums.txt
+    sha256sum kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-update-jump.json release-index-update-minor.json release-index-update-failed-host.json release-index-update-bad-checksum.json release-index-update-config-failure.json release-index-update-doctor-failure.json release-index-canary.json > checksums.txt
   else
-    shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-canary.json > checksums.txt
+    shasum -a 256 kb-create-linux-amd64 kb-create-linux-arm64 release-index.json release-index-update.json release-index-update-jump.json release-index-update-minor.json release-index-update-failed-host.json release-index-update-bad-checksum.json release-index-update-config-failure.json release-index-update-doctor-failure.json release-index-canary.json > checksums.txt
   fi
 )
 echo "Prepared $TARGET"

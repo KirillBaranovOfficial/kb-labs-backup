@@ -933,12 +933,6 @@ def main() -> int:
     )
     try:
         declared_steps = list(checks(args.mode))
-        selected_step_ids = set(journey.selected_steps)
-        graph.selected_groups.update(
-            group for name, capability, check, case_ids in declared_steps
-            if selected_step_ids.intersection(case_ids)
-            for group, spec in SERVICE_GROUPS.items() if capability in spec["capabilities"]
-        )
         configure_installed_cli_path()
         if args.mode == "secured":
             graph.probe_state("session", "auth", "fresh secured CLI login",
@@ -1021,7 +1015,8 @@ def main() -> int:
         with diagnostics.open("a", encoding="utf-8") as stream:
             stream.write("\n== unexpected exception in service runner ==\n")
             stream.write(traceback.format_exc())
-        journey.step("service runner", "journey.runner", lambda: str(error) or error.__class__.__name__, force=True)
+        journey.step("service runner", "journey.runner", lambda: str(error) or error.__class__.__name__,
+                      role="lifecycle")
     finally:
         kb_home = Path(os.getenv("KB_HOME", str(Path.home() / ".kb")))
         def archive_logs() -> None:
@@ -1035,6 +1030,7 @@ def main() -> int:
             "archive runtime service logs",
             "journey.diagnostics",
             archive_logs,
+            role="lifecycle",
         )
         result = journey.write_json(args.output)
         output_payload = {**result.__dict__, "states": graph.states}

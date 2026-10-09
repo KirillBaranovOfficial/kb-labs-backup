@@ -19,12 +19,14 @@ from studio_steps import (create_studio_access_tokens, create_studio_environment
                           create_studio_member, run_studio_browser_step)
 from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
+from platform_update_variant_steps import run_platform_update_variant_steps
 from platform_channel_steps import run_platform_channel_steps
 from installer_case_steps import (assert_default_service_ports_free, run_doctor_root_isolation_step,
                                   run_installer_case_steps, run_uninstall_decline_step)
 from journey_resources import case_catalog_root, journey_module
 from release_index import channel_platform_version, stable_platform_version
-from service_steps import FlowGraph, Journey, record_candidate_provenance, record_runner_failure
+from service_steps import (FlowGraph, Journey, record_candidate_provenance, record_runner_failure,
+                           source_selected)
 from workflow_steps import merge_workflow_result, prepare_workflow_fixtures, run_workflow_journey
 from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, run_cli_auth_status,
                         run_cli_corrupt_session_file, run_local_auth_steps, run_secured_auth_steps)
@@ -130,10 +132,12 @@ def probe_platform_state(graph: FlowGraph, env: dict[str, str], launcher: str,
                           host_probe)
 
 
-def record_case(name: str, passed: bool, message: str, *, cases: list[str]) -> None:
+def record_case(name: str, passed: bool, message: str, *, cases: list[str],
+                requires: tuple[str, ...] = ()) -> None:
     if CASE_JOURNEY is None:
         return
-    CASE_JOURNEY.step(name, "platform.install", lambda: None if passed else message, cases=cases)
+    CASE_JOURNEY.step(name, "platform.install", lambda: None if passed else message, cases=cases,
+                      requires=requires)
 
 
 def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
@@ -677,7 +681,7 @@ def _run_final_uninstall(graph: FlowGraph, env: dict[str, str], launcher: str) -
     status = graph.flow(
         "uninstall platform", "uninstall", "platform.uninstall",
         lambda: run_uninstall_group(env, launcher),
-        cases=["S-050.1", "S-050.4", "S-050.6", "S-050.7"], always_run=True,
+        cases=["S-050.1", "S-050.4", "S-050.6", "S-050.7"], role="lifecycle",
     )
     if status != "PASS":
         fail("uninstall platform group failed; inspect its FAIL/BLOCKED journey rows and journey-diagnostics.log")
@@ -904,7 +908,8 @@ def main():
                        and plan_payload.get("request", {}).get("platformRoot") == str(PLATFORM)
                        and bool(plan_payload.get("artifacts")) and bool(plan_payload.get("serviceGraph")))
             record_case("agent plan", plan_ok,
-                       "plan omitted the isolated root, resolved artifacts, or service graph", cases=["PC-001.3"])
+                       "plan omitted the isolated root, resolved artifacts, or service graph", cases=["PC-001.3"],
+                       requires=("launcher version",))
         elif operation == "install":
             if FRONT_DOOR == "agent":
                 record_case("agent JSON install", install_ok,
@@ -999,9 +1004,15 @@ def main():
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":
+        prior_failure = FIRST_FAILURE
         verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local")
+        registration_failure = FIRST_FAILURE if FIRST_FAILURE != prior_failure else None
+        CASE_JOURNEY.step("verify installed project registration", "platform.project",
+                          lambda: registration_failure)
 
-    update_journey = (SCENARIO == "commit" and VARIANT in {"default", "input"}) or VARIANT.endswith("secured")
+    update_journey = (((SCENARIO == "commit" and VARIANT in {"default", "input"})
+                       or VARIANT.endswith("secured"))
+                      and source_selected(run_platform_update_steps.__code__.co_filename))
     if update_journey:
         try:
             receipt_path = PLATFORM / ".kb" / "v2" / "receipt.json"
@@ -1716,6 +1727,66 @@ def main():
                          run_studio_browser_group, cases=studio_claims.split(","))
         capture_case_failure()
 
+    if source_selected(run_platform_update_variant_steps.__code__.co_filename):
+        try:
+            candidate_base = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"].rstrip("/") + "/journey-candidate/"
+            variant_indexes = {}
+            for key, filename in (("patch", "release-index-update.json"),
+                                  ("minor", "release-index-update-minor.json"),
+                                  ("jump", "release-index-update-jump.json"),
+                                  ("next", "release-index-update.json"),
+                                  ("bad_checksum", "release-index-update-bad-checksum.json"),
+                                  ("config_failure", "release-index-update-config-failure.json"),
+                                  ("doctor_failure", "release-index-update-doctor-failure.json"),
+                                  ("failed_host", "release-index-update-failed-host.json")):
+                status, body, _ = open_http(urllib.request.urlopen,
+                    urllib.request.Request(candidate_base + filename), timeout=30, env=env)
+                if status != 200:
+                    raise RuntimeError(f"GET {candidate_base + filename} returned HTTP {status}")
+                path = HOME / filename
+                path.write_bytes(body)
+                variant_indexes[key] = path
+            variant_request = HOME / "platform-update-variant-request.json"
+            active_receipt = json.loads((PLATFORM / ".kb/v2/receipt.json").read_text())
+            variant_request.write_text(json.dumps(active_receipt["plan"]["request"]) + "\n")
+            project_b_path = Path(service_env["KB_JOURNEY_PROJECT_B_ROOT"])
+            def variant_run(args, cwd):
+                result, _ = run(args, env=service_env, cwd=cwd, timeout=1200)
+                return result
+            def variant_run_interactive(args, cwd):
+                answered = False
+                def choose_proceed(transcript):
+                    nonlocal answered
+                    lowered = transcript.lower()
+                    if not answered and any(word in lowered for word in ("wait or", "proceed?", "wait?")):
+                        answered = True
+                        return "n\n"
+                    return None
+                result, _ = run_pty_command(args, env=service_env, cwd=cwd, timeout=120,
+                                            on_output=choose_proceed)
+                return result
+            variant_report = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
+                f"platform-update-variants-{mode}.json")
+            variant_journey = run_platform_update_variant_steps(
+                mode=mode, launcher=launcher, kb_binary=str(BIN / "kb"), platform_root=PLATFORM,
+                project_a=PROJECT, project_b=project_b_path, request_file=variant_request,
+                patch_index=variant_indexes["patch"], minor_index=variant_indexes["minor"],
+                jump_index=variant_indexes["jump"], next_index=variant_indexes["next"],
+                bad_checksum_index=variant_indexes["bad_checksum"],
+                config_failure_index=variant_indexes["config_failure"],
+                doctor_failure_index=variant_indexes["doctor_failure"],
+                failed_host_index=variant_indexes["failed_host"],
+                run=variant_run, run_interactive=variant_run_interactive,
+                mcp_token=service_env.get("KB_MCP_TOKEN"),
+                case_journey=CASE_JOURNEY,
+            )
+            variant_result = variant_journey.write_json(variant_report)
+            if variant_result.status != "PASS":
+                first = variant_result.first_failure or {}
+                fail(f"platform update variant journey: {first.get('name', 'step')}: {first.get('message', '')}")
+        except Exception as error:
+            log_group_exception("platform update variants")
+            fail(f"platform update variants: {error}")
     passed = _run_final_uninstall(outer_graph, env, launcher)
     append_summary(passed)
     return 0 if passed else failure_exit()

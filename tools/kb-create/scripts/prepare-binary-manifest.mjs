@@ -21,6 +21,18 @@ const repository = required('--repository');
 const releaseTag = required('--release-tag');
 const version = required('--version');
 const output = required('--output');
+const assetBaseURL = value('--asset-base-url');
+if (assetBaseURL) {
+  let parsed;
+  try {
+    parsed = new URL(assetBaseURL);
+  } catch {
+    throw new Error('--asset-base-url must be an absolute HTTP(S) URL');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.search || parsed.hash) {
+    throw new Error('--asset-base-url must be an absolute HTTP(S) URL without query or fragment');
+  }
+}
 // Author and ops tools are not part of a user installation (ADR-0045): the
 // index lists only what the launcher may install. kb-dev in particular is how
 // platform authors run services from the monorepo, never how a user runs one.
@@ -48,7 +60,9 @@ for (const line of entries) {
     arch,
     filename,
     sha256: sha256.toLowerCase(),
-    url: `https://github.com/${repository}/releases/download/${releaseTag}/${filename}`,
+    url: assetBaseURL
+      ? `${assetBaseURL.replace(/\/$/, '')}/${filename}`
+      : `https://github.com/${repository}/releases/download/${releaseTag}/${filename}`,
   });
 }
 
