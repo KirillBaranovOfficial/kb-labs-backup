@@ -115,10 +115,12 @@ describe("runHost", () => {
 
   // case: S-124.11
   it("launches with the scope and explicit project identity declared by the process", async () => {
+    const projectId = "prj_1234567890123456";
+    const projectModule = module("a", 9001);
     const config: HostConfig = {
-      ...makeConfig([module("a", 9001)]),
+      ...makeConfig([projectModule]),
       projectScope: "required",
-      projectId: "prj_1234567890123456",
+      projectId,
     };
 
     await runHost(config);
@@ -126,8 +128,11 @@ describe("runHost", () => {
     expect(mocks.launchPlatform).toHaveBeenCalledWith(
       expect.objectContaining({
         projectScope: "required",
-        projectId: "prj_1234567890123456",
+        projectId,
       }),
+    );
+    expect(projectModule.setup).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId }),
     );
   });
 
