@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Fastify from 'fastify';
+import { Readable } from 'node:stream';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
@@ -230,6 +231,31 @@ describe('registerEnvelopeMiddleware', () => {
       expect(response.statusCode).toBe(401);
       expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED', correlationId: expect.any(String) } });
     });
+
+    it('normalizes direct reply failures through the shared boundary', async () => {
+      app.get('/reply-failure', async (_request: FastifyRequest, reply: FastifyReply) =>
+        reply.code(409).send({ error: { code: 'KB_PROJECT_ALREADY_REGISTERED' } }));
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/reply-failure' });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ ok: false, error: {
+        code: 'KB_PROJECT_ALREADY_REGISTERED', correlationId: expect.any(String),
+      } });
+    });
+
+    it('normalizes non-JSON HTTP failures and redacts their bodies', async () => {
+      app.get('/text-failure', async (_request: FastifyRequest, reply: FastifyReply) =>
+        reply.code(502).type('text/plain').send('private upstream detail'));
+      await app.ready();
+
+      const response = await app.inject({ method: 'GET', url: '/text-failure' });
+      expect(response.statusCode).toBe(502);
+      expect(response.json()).toMatchObject({ ok: false, error: {
+        code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String),
+      } });
+      expect(response.body).not.toContain('private upstream detail');
+    });
   });
 
   describe('onSend object payload guard', () => {
@@ -251,9 +277,9 @@ describe('registerEnvelopeMiddleware', () => {
 
   describe('streaming responses', () => {
     it('should skip envelope for SSE responses', async () => {
-      app.get('/events', async (request: FastifyRequest, reply: FastifyReply) => {
+      app.get('/events', { config: { ux: 'raw' } }, async (_request: FastifyRequest, reply: FastifyReply) => {
         reply.header('content-type', 'text/event-stream');
-        return 'data: test\n\n';
+        return Readable.from(['data: test\n\n']);
       });
       await app.ready();
 

@@ -120,8 +120,10 @@ export async function callRuntime(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (!headers.has(RUNTIME_TOKEN_HEADER)) headers.set(RUNTIME_TOKEN_HEADER, lease.token);
   return fetch(`http://${lease.address.host}:${lease.address.port}${path}`, {
     ...init,
-    headers: { [RUNTIME_TOKEN_HEADER]: lease.token, ...init.headers },
+    headers,
   });
 }

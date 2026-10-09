@@ -23,13 +23,14 @@ func TestKBCodeLiteralsExistInPlatformCatalog(t *testing.T) {
 	}
 	var catalog struct {
 		Codes []struct {
-			Code      string `json:"code"`
-			Area      string `json:"area"`
-			Stage     string `json:"stage"`
-			Severity  string `json:"severity"`
-			Retryable bool   `json:"retryable"`
-			Message   string `json:"message"`
-			Hint      string `json:"hint"`
+			Code       string `json:"code"`
+			HTTPStatus int    `json:"httpStatus,omitempty"`
+			Area       string `json:"area"`
+			Stage      string `json:"stage"`
+			Severity   string `json:"severity"`
+			Retryable  bool   `json:"retryable"`
+			Message    string `json:"message"`
+			Hint       string `json:"hint"`
 		} `json:"codes"`
 	}
 	if err := json.Unmarshal(content, &catalog); err != nil {

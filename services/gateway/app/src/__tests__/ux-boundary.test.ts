@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { Readable } from 'node:stream';
 import { createErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
 import { createUxFailureResult, isUxResult } from '@kb-labs/core-platform/ux-result';
 import successFixture from '../../../../../contracts/ux-result/fixtures/valid/success.json';
@@ -37,7 +38,7 @@ describe('Gateway UX boundary', () => {
 
     const response = await app.inject({ method: 'GET', url: '/not-a-gateway-route' });
 
-    expect(response.statusCode).toBe(404);
+    expect(response.statusCode, response.body).toBe(404);
     expect(response.json()).toMatchObject({
       ok: false,
       error: {
@@ -48,20 +49,51 @@ describe('Gateway UX boundary', () => {
     });
   });
 
+  it('normalizes a plain text HTTP failure without exposing its body', async () => {
+    const app = Fastify({ logger: false });
+    apps.push(app);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as unknown as ILogger;
+    registerGatewayUxBoundary(app, logger);
+    app.get('/plain-text-failure', async (_request, reply) => reply.code(502).type('text/plain').send('private upstream detail'));
+    await app.ready();
+
+    const response = await app.inject({ method: 'GET', url: '/plain-text-failure' });
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_RUNTIME_UNEXPECTED', correlationId: expect.any(String),
+    } });
+    expect(response.body).not.toContain('private upstream detail');
+  });
+
   // case: S-203.1, S-203.2, S-203.3, S-203.6
   it('covers each route discovered from the live Fastify registry', async () => {
     const app = Fastify({ logger: false });
     apps.push(app);
     const errorLog = vi.fn();
     const logger = { info: vi.fn(), warn: vi.fn(), error: errorLog, debug: vi.fn(), child: vi.fn() } as unknown as ILogger;
-    const routes: Array<{ method: string | string[]; url: string }> = [];
-    app.addHook('onRoute', route => { routes.push({ method: route.method, url: route.url }); });
+    const routes: Array<{ method: string | string[]; url: string; config?: { ux?: string } }> = [];
+    app.addHook('onRoute', route => { routes.push({ method: route.method, url: route.url, config: route.config }); });
     registerGatewayUxBoundary(app, logger);
-    app.get('/contract-probe', async (request, reply) => {
+    app.get('/contract-probe', { schema: { querystring: {
+      type: 'object', properties: { mode: { type: 'string', enum: ['success', 'typed', 'plain', 'unexpected'] } },
+      additionalProperties: false,
+    } } }, async (request, reply) => {
       const mode = (request.query as { mode?: string }).mode;
-      if (mode === 'typed') return reply.code(422).send(createUxFailureResult(createErrorEnvelope('KB_RUNTIME_INPUT_INVALID')));
+      if (mode === 'typed') return reply.code(422).send(createUxFailureResult(createErrorEnvelope('KB_PROJECT_DECLARATION_INVALID', {
+        details: { projectId: 'project-1' }, message: 'Project declaration failed.', hint: 'Repair the project declaration.',
+      })));
+      if (mode === 'plain') {
+        const error = new Error('fixture plain failure') as Error & { statusCode: number; code: string };
+        error.statusCode = 409;
+        error.code = 'KB_PROJECT_ALREADY_REGISTERED';
+        throw error;
+      }
       if (mode === 'unexpected') throw new Error('private stack detail');
       return { accepted: true };
+    });
+    app.get('/stream-probe', { config: { ux: 'raw' } }, async (_request, reply) => {
+      reply.type('text/plain');
+      return Readable.from(['stream', ' response']);
     });
     await app.ready();
 
@@ -69,6 +101,7 @@ describe('Gateway UX boundary', () => {
     expect(isUxResult(failureFixture)).toBe(true);
     expect(routes.length).toBeGreaterThan(0);
     for (const route of routes) {
+      if (route.config?.ux === 'raw') continue;
       const registeredMethod = Array.isArray(route.method) ? route.method[0] : route.method;
       expect(['GET', 'HEAD']).toContain(registeredMethod);
       const success = await app.inject({ method: 'GET', url: `${route.url}?mode=success` });
@@ -77,9 +110,23 @@ describe('Gateway UX boundary', () => {
       expect(success.json()).toMatchObject({ ok: true, data: { accepted: true } });
 
       const typed = await app.inject({ method: 'GET', url: `${route.url}?mode=typed` });
-      expect(typed.statusCode).toBe(422);
+      expect(typed.statusCode, typed.body).toBe(422);
       expect(isUxResult(typed.json())).toBe(true);
-      expect(typed.json().error.code).toBe('KB_RUNTIME_INPUT_INVALID');
+      expect(typed.json().error).toMatchObject({
+        code: 'KB_PROJECT_DECLARATION_INVALID',
+        message: 'Project declaration failed.',
+        hint: 'Repair the project declaration.',
+        details: { projectId: 'project-1' },
+        correlationId: expect.any(String),
+      });
+
+      const plain = await app.inject({ method: 'GET', url: `${route.url}?mode=plain` });
+      expect(plain.statusCode, plain.body).toBe(409);
+      expect(plain.json()).toMatchObject({ ok: false, error: { code: 'KB_PROJECT_ALREADY_REGISTERED' } });
+
+      const validation = await app.inject({ method: 'GET', url: `${route.url}?mode=not-valid` });
+      expect(validation.statusCode).toBe(400);
+      expect(validation.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
 
       const unexpected = await app.inject({ method: 'GET', url: `${route.url}?mode=unexpected` });
       expect(unexpected.statusCode).toBe(500);
@@ -88,5 +135,9 @@ describe('Gateway UX boundary', () => {
       expect(unexpected.body).not.toContain('private stack detail');
       expect(errorLog).toHaveBeenCalledWith('HTTP route failed', expect.any(Error), expect.objectContaining({ correlationId: unexpected.json().error.correlationId }));
     }
+    const stream = await app.inject({ method: 'GET', url: '/stream-probe' });
+    expect(stream.statusCode).toBe(200);
+    expect(stream.body).toBe('stream response');
+    expect(stream.headers['content-type']).toContain('text/plain');
   });
 });
