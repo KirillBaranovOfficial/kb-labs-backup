@@ -106,6 +106,7 @@ Workflow Engine
 
 ```typescript
 interface WorkflowEngineOptions {
+  projectId: string;
   cache: ICache;
   storage: IStorage;
   events: IEventBus;
@@ -233,12 +234,14 @@ src/__tests__/
 
 ### Persistence contract
 
-Pass the project's `cache`, `storage`, and `eventBus` adapters when creating an engine. The cache coordinates live work; `IStorage` is the source of truth for workflow run records. Each record is JSON at `workflows/<runId>.json` and contains the run, jobs, steps, status, trigger, metadata, artifacts, and step outputs. The default storage binding in the built-in adapter pack uses the filesystem; the logical key stays the same for other storage adapters.
+Pass the registered project's `projectId`, `cache`, `storage`, and `eventBus` adapters when creating an engine. The project ID comes from the project registry and scopes every workflow cache key, including queues, leases, indexes, snapshots, and locks. Do not derive it from a path. The cache coordinates live work; `IStorage` is the source of truth for workflow run records. Each record is JSON at `workflows/<runId>.json` and contains the run, jobs, steps, status, trigger, metadata, artifacts, and step outputs. The default storage binding in the built-in adapter pack uses the filesystem; the logical key stays the same for other storage adapters.
 
 ```ts
-import { WorkflowEngine, createDefaultSecretProvider } from '@kb-labs/workflow-engine';
+import { WorkflowEngine, createDefaultSecretProvider, requireWorkflowProjectId } from '@kb-labs/workflow-engine';
 
+const projectId = requireWorkflowProjectId(process.env.KB_PROJECT_ID);
 const engine = new WorkflowEngine({
+  projectId,
   cache: platform.cache,
   storage: platform.storage,
   events: platform.eventBus,
@@ -249,7 +252,7 @@ const engine = new WorkflowEngine({
 
 Shell stdout and stderr are included in step outputs. The daemon uses those persisted outputs with the structured platform log reader so run logs remain available after the host restarts.
 
-This engine constructor now requires `storage`; callers must bind the project's storage adapter. No run migration is performed.
+The engine constructor requires the registered `projectId`; callers must pass the ID resolved by the project runtime. It also requires the project's storage adapter. No run migration is performed.
 
 ### Breaking Changes in Future Versions
 
@@ -260,10 +263,12 @@ This engine constructor now requires `storage`; callers must bind the project's 
 ### Example 1: Create Engine and Run Workflow
 
 ```typescript
-import { WorkflowEngine, createDefaultSecretProvider } from '@kb-labs/workflow-engine';
+import { WorkflowEngine, createDefaultSecretProvider, requireWorkflowProjectId } from '@kb-labs/workflow-engine';
 import type { WorkflowSpec } from '@kb-labs/workflow-contracts';
 
+const projectId = requireWorkflowProjectId(process.env.KB_PROJECT_ID);
 const engine = new WorkflowEngine({
+  projectId,
   cache: platform.cache,
   storage: platform.storage,
   events: platform.eventBus,
@@ -294,9 +299,11 @@ await worker.start();
 ### Example 3: Handle Events
 
 ```typescript
-import { WorkflowEngine } from '@kb-labs/workflow-engine';
+import { WorkflowEngine, requireWorkflowProjectId } from '@kb-labs/workflow-engine';
 
+const projectId = requireWorkflowProjectId(process.env.KB_PROJECT_ID);
 const engine = new WorkflowEngine({
+  projectId,
   cache: platform.cache,
   storage: platform.storage,
   events: platform.eventBus,

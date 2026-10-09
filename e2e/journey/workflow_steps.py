@@ -277,12 +277,20 @@ def _solo_workflow_case(journey: Journey, *, env: dict[str, str], project: Path,
     journey.step("find solo project workflow in history", "workflow", listed, cases=["S-002.5"])
 
     def unknown() -> None:
-        result = _case_cli("S-002.6", ["workflow", "runs", "view", "journey-run-does-not-exist"],
+        result = _case_cli("S-002.6", ["workflow", "runs", "view", "journey-run-does-not-exist", "--json"],
                            env=env, cwd=project)
-        message = result.stdout.lower()
-        if (result.returncode == 0 or "not found" not in message or "stack trace" in message
-                or "workflow runs list" not in message):
-            raise AssertionError(f"unknown workflow run did not return a helpful not-found error: {result.stdout!r}")
+        try:
+            response = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise AssertionError(f"unknown workflow run did not return JSON error output: {result.stdout!r}") from error
+        error = response.get("error") if isinstance(response, dict) else None
+        message = error.get("message", "") if isinstance(error, dict) else ""
+        hint = error.get("hint", "") if isinstance(error, dict) else ""
+        if (result.returncode == 0 or not isinstance(error, dict)
+                or error.get("code") != "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND"
+                or "journey-run-does-not-exist" not in message
+                or hint != 'Run "kb workflow runs list" to inspect available runs.'):
+            raise AssertionError(f"unknown workflow run did not return the typed not-found contract: {result.stdout!r}")
 
     journey.step("report unknown workflow run", "workflow", unknown, cases=["S-002.6"])
 

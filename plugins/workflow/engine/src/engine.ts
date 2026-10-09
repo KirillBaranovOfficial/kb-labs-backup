@@ -34,8 +34,11 @@ import { WorkflowLoader } from './workflow-loader'
 import type { SecretProvider } from './secrets'
 import type { CreateRunInput, EngineLogger, RunContext } from './types'
 import { RunSnapshotStorage, type RunSnapshot } from './run-snapshot'
+import { ProjectScopedCache } from './project-scoped-cache'
 
 export interface WorkflowEngineOptions {
+  /** Registered project identity supplied by the project runtime. */
+  projectId: string
   scheduler?: SchedulerOptions
   concurrency?: AcquireOptions
   runCoordinator?: RunCoordinatorOptions
@@ -81,32 +84,35 @@ export class WorkflowEngine {
   private readonly scheduler: Scheduler
   private readonly events: EventBusBridge
   private readonly snapshotStorage: RunSnapshotStorage
+  private readonly options: WorkflowEngineOptions
 
-  constructor(private readonly options: WorkflowEngineOptions) {
+  constructor(options: WorkflowEngineOptions) {
+    const projectCache = new ProjectScopedCache(options.cache, options.projectId)
+    this.options = { ...options, cache: projectCache }
     this.logger = options.logger
     this.analytics = options.analytics
     this.instanceId = options.instanceId ?? randomUUID()
     this.secretProvider = options.secretProvider
 
-    this.stateStore = new StateStore(options.cache, options.storage, this.logger)
+    this.stateStore = new StateStore(projectCache, options.storage, this.logger)
     this.concurrency = new ConcurrencyManager(
-      options.cache,
+      projectCache,
       this.logger,
       options.concurrency,
     )
     this.runCoordinator = new RunCoordinator(
-      options.cache,
+      projectCache,
       this.stateStore,
       this.concurrency,
       this.logger,
       options.runCoordinator,
     )
 
-    this.scheduler = new Scheduler(options.cache, this.logger, options.scheduler)
+    this.scheduler = new Scheduler(projectCache, this.logger, options.scheduler)
     this.events = new EventBusBridge(options.events, this.logger)
     this.loader = new WorkflowLoader(this.logger, this.secretProvider)
     this.maxWorkflowDepth = options.maxWorkflowDepth ?? 2
-    this.snapshotStorage = new RunSnapshotStorage(options.cache, this.logger)
+    this.snapshotStorage = new RunSnapshotStorage(projectCache, this.logger)
   }
 
   async dispose(): Promise<void> {
@@ -1216,7 +1222,7 @@ export class WorkflowEngine {
     const run = await this.stateStore.getRun(runId)
     const job = run?.jobs.find((j) => j.id === jobId)
 
-    await this.options.cache!.set(
+    await this.options.cache.set(
       dlqKey,
       JSON.stringify({
         runId,
