@@ -46,6 +46,12 @@ func EnsureGenerated(plan *contracts.ResolvedInstallPlan, store Store) error {
 
 type Store struct{ PlatformRoot string }
 
+const (
+	BootstrapCompleted = "gateway.bootstrap.completed"
+	BootstrapGenerated = "gateway.bootstrap.generated"
+	BootstrapDisclosed = "gateway.bootstrap.disclosed"
+)
+
 func (store Store) Put(name, value string) error {
 	if err := validate(name); err != nil {
 		return err

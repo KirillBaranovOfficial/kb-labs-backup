@@ -174,6 +174,10 @@ export async function createProjectRuntimeConfig(
   // (modules are torn down in reverse start order, so this runs last) — a fresh
   // runtime in the same process (as in tests) can then install its own.
   let resolveHook: PlatformResolveHook | undefined;
+  const releaseResolveHook = (): void => {
+    resolveHook?.deregister();
+    resolveHook = undefined;
+  };
   const installResolveHook = (ctx: ServiceContext): void => {
     resolveHook = installPlatformResolveHook({
       platformRoot: ctx.platformRoot,
@@ -191,22 +195,29 @@ export async function createProjectRuntimeConfig(
       // Project services never bind beyond loopback and take no env override.
       defaultHost: LOOPBACK_HOST,
       setup: async (ctx) => {
-        if (index === 0) {
-          installResolveHook(ctx);
+        try {
+          if (index === 0) {
+            installResolveHook(ctx);
+          }
+          await assertProjectRoot(ctx, options.projectRoot);
+          assertModuleAddress(ctx, projectServiceId(spec));
+          const teardown = await spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.manifest.id) });
+          if (index === 0) {
+            return async () => {
+              try {
+                await teardown();
+              } finally {
+                releaseResolveHook();
+              }
+            };
+          }
+          return teardown;
+        } catch (error) {
+          if (index === 0) {
+            releaseResolveHook();
+          }
+          throw error;
         }
-        await assertProjectRoot(ctx, options.projectRoot);
-        assertModuleAddress(ctx, projectServiceId(spec));
-        const teardown = await spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.manifest.id) });
-        if (index === 0) {
-          return async () => {
-            try {
-              await teardown();
-            } finally {
-              resolveHook?.deregister();
-            }
-          };
-        }
-        return teardown;
       },
     }),
   );

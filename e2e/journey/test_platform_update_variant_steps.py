@@ -24,7 +24,7 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             for project in (project_a, project_b):
                 project.mkdir()
             indexes = {name: root / f"{name}.json" for name in
-                       ("patch", "minor", "jump", "next", "bad", "config", "doctor", "failed")}
+                       ("base", "update", "patch", "minor", "jump", "next", "bad", "config", "doctor", "failed")}
             registered = []
 
             def capture_step(journey, name, capability, check, cases=(), details=None, *, requires=()):
@@ -52,7 +52,8 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
                 run_platform_update_variant_steps(
                     mode="local", launcher="kb-create", kb_binary="kb",
                     platform_root=platform, project_a=project_a, project_b=project_b,
-                    request_file=request_file, patch_index=indexes["patch"],
+                    request_file=request_file, base_index=indexes["base"], update_index=indexes["update"],
+                    patch_index=indexes["patch"],
                     minor_index=indexes["minor"], jump_index=indexes["jump"],
                     next_index=indexes["next"], bad_checksum_index=indexes["bad"],
                     config_failure_index=indexes["config"], doctor_failure_index=indexes["doctor"],
@@ -65,6 +66,55 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
             checksum_step = next(check for name, _, check in registered
                                  if name == "reject corrupted sealed binary without changing N")
             checksum_step()
+
+    def test_n_plus_two_plan_requires_every_intervening_sealed_note(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            platform = root / "platform"
+            receipt = platform / ".kb/v2/receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({"plan": {"serviceGraph": {"platformVersion": "3.0.0"}}}))
+            project_a, project_b = root / "project-a", root / "project-b"
+            project_a.mkdir()
+            project_b.mkdir()
+            indexes = {name: root / f"{name}.json" for name in
+                       ("base", "update", "patch", "minor", "jump", "next", "bad", "config", "doctor", "failed")}
+            versions = {"base": "3.0.0", "update": "3.0.1", "patch": "3.0.1", "minor": "3.1.0", "jump": "3.0.2",
+                        "next": "3.0.1", "bad": "3.0.2", "config": "3.1.1", "doctor": "3.1.2", "failed": "3.2.0"}
+            for name, index in indexes.items():
+                version = versions[name]
+                index.write_text(json.dumps({"channels": {"stable": version}, "platforms": [
+                    {"version": version, "releaseNotes": f"Release {version} notes."}]}))
+            request_file = root / "request.json"
+            request_file.write_text("{}\n")
+            registered = []
+
+            def capture_step(journey, name, capability, check, cases=(), details=None, *, requires=()):
+                registered.append((name, list(cases), check))
+
+            def fake_runner(args, cwd):
+                if args[1] == "plan":
+                    response = {"ok": True, "data": {"updateSummary": {"releaseNotes": [
+                        {"version": "3.0.0", "notes": "Release 3.0.0 notes."},
+                        {"version": "3.0.1", "notes": "Release 3.0.1 notes."},
+                        {"version": "3.0.2", "notes": "Release 3.0.2 notes."},
+                    ]}}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(response), "")
+                raise AssertionError(f"unexpected fake product command: {args[1]}")
+
+            with patch.object(Journey, "step", capture_step), patch.dict(
+                    os.environ, {"KB_JOURNEY_SELECTED_STEPS": "S-023.2"}):
+                run_platform_update_variant_steps(
+                    mode="local", launcher="kb-create", kb_binary="kb",
+                    platform_root=platform, project_a=project_a, project_b=project_b,
+                    request_file=request_file, base_index=indexes["base"], update_index=indexes["update"],
+                    patch_index=indexes["patch"], minor_index=indexes["minor"], jump_index=indexes["jump"],
+                    next_index=indexes["next"], bad_checksum_index=indexes["bad"],
+                    config_failure_index=indexes["config"], doctor_failure_index=indexes["doctor"],
+                    failed_host_index=indexes["failed"], run=fake_runner, run_interactive=fake_runner,
+                )
+            plan_step = next(check for name, cases, check in registered if "S-023.2" in cases)
+            plan_step()
 
 
 if __name__ == "__main__":

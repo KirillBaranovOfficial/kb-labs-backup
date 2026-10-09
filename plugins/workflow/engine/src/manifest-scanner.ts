@@ -232,44 +232,6 @@ export class ManifestScanner {
   }
 
   /**
-   * Scan all installed plugins for job handlers only.
-   *
-   * Returns information needed to register handlers in JobManager.
-   */
-  async scanJobHandlers(): Promise<Array<{
-    pluginId: string;
-    pluginVersion: string;
-    pluginRoot: string;
-    handler: JobHandlerDecl;
-  }>> {
-    const snapshot = this.cliApi.snapshot();
-    const jobHandlers: Array<{
-      pluginId: string;
-      pluginVersion: string;
-      pluginRoot: string;
-      handler: JobHandlerDecl;
-    }> = [];
-
-    for (const entry of snapshot.manifests ?? []) {
-      const handlers = entry.manifest.jobs?.handlers ?? [];
-      for (const handler of handlers) {
-        jobHandlers.push({
-          pluginId: entry.pluginId,
-          pluginVersion: entry.manifest.version,
-          pluginRoot: entry.pluginRoot,
-          handler,
-        });
-      }
-    }
-
-    this.platform.logger?.debug('ManifestScanner: Discovered job handlers', {
-      count: jobHandlers.length,
-    });
-
-    return jobHandlers;
-  }
-
-  /**
    * Clear cache (useful for testing or force refresh).
    */
   async clearCache(): Promise<void> {

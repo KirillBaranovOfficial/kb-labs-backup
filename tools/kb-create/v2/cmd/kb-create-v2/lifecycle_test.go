@@ -693,7 +693,8 @@ func TestDoctorRecoverPropagatesTheToolsExitStatus(t *testing.T) {
 	}
 }
 
-func TestFreshApplyIsRefusedWhileASupervisedHostRuns(t *testing.T) {
+// case: PC-001.10, PC-001.12, PC-001.16
+func TestApplyRefusesOnlyTheRunningInstallationRoot(t *testing.T) {
 	inst := newInstallation(t)
 	state := host.State{Dir: inst.state}
 	if failure := refuseRunningHost(state, inst.root); failure != nil {
@@ -709,6 +710,10 @@ func TestFreshApplyIsRefusedWhileASupervisedHostRuns(t *testing.T) {
 	if failure.Hint == "" {
 		t.Fatalf("the refusal must have a hint: %#v", failure)
 	}
+	secondary := filepath.Join(t.TempDir(), "secondary")
+	if failure := refuseRunningHost(state, secondary); failure != nil {
+		t.Fatalf("a different installation root was refused: %v", failure)
+	}
 }
 
 // case: S-005.7
@@ -723,7 +728,7 @@ func TestClientApplyIsAllowedBesideASupervisedHost(t *testing.T) {
 		t.Fatalf("client apply refused beside host: %v", failure)
 	}
 	hostPlan := contracts.ResolvedInstallPlan{Host: &contracts.HostSpec{}}
-	if failure := refuseApplyBesideRunningHost(state, hostPlan, filepath.Join(t.TempDir(), "other")); failure == nil || failure.Code != "KB_HOST_ALREADY_RUNNING" {
-		t.Fatalf("host apply beside host failure = %#v", failure)
+	if failure := refuseApplyBesideRunningHost(state, hostPlan, filepath.Join(t.TempDir(), "other")); failure != nil {
+		t.Fatalf("independent host apply refused beside another root: %#v", failure)
 	}
 }

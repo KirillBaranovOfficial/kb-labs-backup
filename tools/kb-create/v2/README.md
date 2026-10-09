@@ -319,10 +319,13 @@ index; the sealed shape is unchanged (`id`, `path`, `default`, `secret`, `env`,
   scenario (`when` + a field bound to the requirement); the index carries no
   conditional-requirement syntax.
 
-The gateway declares `gateway.access.mode` (`local` | `secured`), the optional
-first-admin identity (`gateway.bootstrap.adminEmail`, `gateway.bootstrap.tenantId`) and the
-secrets `gateway.bootstrap.password` and `gateway.jwtSecret`. Non-interactive
-secured install:
+The gateway declares `gateway.access.mode` (`local` | `secured`), the first-admin
+identity (`gateway.bootstrap.adminEmail`, `gateway.bootstrap.tenantId`) and the
+secrets `gateway.bootstrap.password` and `gateway.jwtSecret`. A secured install
+requires an admin email. If no bootstrap password is supplied, kb-create
+generates one, seeds the administrator, and shows the email and password once
+after install succeeds. Non-interactive secured install with a caller-supplied
+password:
 
 ```bash
 export ADMIN_PASSWORD=... JWT_SECRET="$(openssl rand -hex 64)"
@@ -334,14 +337,12 @@ kb-create apply --index release-index.json --input request.json \
 
 The interactive install collects the same values. Secret input is read with echo
 disabled on a real terminal, a human-chosen value is asked twice, and format
-errors or a mismatch re-ask (three tries) instead of aborting. Blank means:
-generate it (fields with `generate`, e.g. the session signing secret), fail
-(required fields), or skip. After the request compiled, only the secrets the
-request names are written to the private store (`.kb/v2/secrets.env`, 0600); a
-secret never reaches the answers, the request, the terminal output or the resume
-state. Skipping the admin password leaves a secured install without an admin
-until `kb-create doctor --recover` is run; `kb-create doctor` reports exactly that
-(`auth:no_active_admin` in its `platform` section).
+errors or a mismatch re-ask (three tries) instead of aborting. Pressing Enter at
+the admin password prompt generates a password; the successful install shows it
+once with the admin email. The password is stored in `.kb/v2/secrets.env`
+(0600), passed to the Gateway at startup, and excluded from scenario answers,
+plans, receipts, progress events and logs. `kb-create doctor --recover` remains
+the recovery path for an administrator who later loses access.
 
 ## Engine, receipt and snapshots
 

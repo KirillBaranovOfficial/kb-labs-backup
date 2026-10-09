@@ -17,7 +17,11 @@ import {
   deriveProjectId,
 } from "@kb-labs/core-project-registry";
 import { reserveLoopbackPorts, runHost } from "@kb-labs/shared-daemon";
-import { createProjectRuntimeConfig, type ProjectRuntimeModule } from "../runtime.js";
+import {
+  createProjectRuntimeConfig,
+  DEFAULT_PROJECT_MODULES,
+  type ProjectRuntimeModule,
+} from "../runtime.js";
 import {
   RUNTIME_HEALTH_PATH,
   RUNTIME_TOKEN_HEADER,
@@ -76,6 +80,7 @@ const cleanups: Array<() => Promise<void>> = [];
 async function startRuntime(options: {
   /** Environment the platform sees, on top of the isolated one. */
   env?: Record<string, string>;
+  modules?: readonly ProjectRuntimeModule[];
 } = {}): Promise<Running> {
   const dir = await mkdtemp(join(tmpdir(), "kb-runtime-config-"));
   await mkdir(join(dir, ".kb"), { recursive: true });
@@ -105,7 +110,7 @@ async function startRuntime(options: {
   setEnv("HOME", dir);
   setEnv("USERPROFILE", dir);
   setEnv("KB_HOME", kbHome);
-  for (const key of ["KB_NET_OFFSET", "KB_SOCKET_PATH", "KB_SOCKET_HASH", "KB_PLATFORM_ROOT"]) {
+  for (const key of ["KB_NET_OFFSET", "KB_SOCKET_PATH", "KB_SOCKET_HASH", "KB_PLATFORM_ROOT", "KB_PROJECT_ID"]) {
     setEnv(key, undefined);
   }
   setEnv("KB_PROJECT_ROOT", root);
@@ -146,7 +151,7 @@ async function startRuntime(options: {
         projectId: deriveProjectId(root),
         listen: { host: "127.0.0.1", port: guardPort! },
         token: TOKEN,
-        modules: [echoModule("rest"), echoModule("workflow")],
+        modules: options.modules ?? [echoModule("rest"), echoModule("workflow")],
       }),
     );
   } catch (error) {
@@ -229,6 +234,36 @@ describe("project runtime composition (real runHost, minimal modules)", () => {
       projectId: running.projectId,
       modules: { rest: "up", workflow: "up" },
     });
+  });
+
+  it("starts the real workflow module with the registered project identity", async () => {
+    const running = await startRuntime({ modules: DEFAULT_PROJECT_MODULES });
+    const response = await fetch(`${running.base}${RUNTIME_HEALTH_PATH}`, {
+      headers: { [RUNTIME_TOKEN_HEADER]: TOKEN },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: "ok",
+      projectId: running.projectId,
+      modules: { rest: "up", workflow: "up", mcp: "up" },
+    });
+  });
+
+  it("releases the resolve hook after a first-module startup failure", async () => {
+    const failingModule: ProjectRuntimeModule = {
+      id: "rest",
+      serviceId: "rest",
+      setup: async () => {
+        throw new Error("injected project module startup failure");
+      },
+    };
+
+    await expect(startRuntime({ modules: [failingModule] })).rejects.toThrow(
+      "injected project module startup failure",
+    );
+    const running = await startRuntime();
+    await running.stop();
   });
 
   it("refuses requests without the secret", async () => {

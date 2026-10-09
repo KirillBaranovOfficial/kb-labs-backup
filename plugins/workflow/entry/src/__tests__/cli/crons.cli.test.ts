@@ -39,7 +39,7 @@ describe('workflow crons CLI', () => {
 
   it('gives a typed next action when a plugin cron cannot be enabled', async () => {
     MockedClient.mockImplementation(function MockedClientImplementation() {
-      return makeClient({ setCronEnabled: async () => { throw new Error('CRON_PLUGIN_READ_ONLY: Plugin cron plugin:qa:cleanup is read-only'); } });
+      return makeClient({ setCronEnabled: async () => { throw new Error('KB_RUNTIME_CRON_PLUGIN_READ_ONLY: Plugin cron plugin:qa:cleanup is read-only'); } });
     });
     const { ui, captured } = createCapturedUI();
     const result = await enableCommand.execute(createMockContext({ ui }), mockCLIInput({ argv: ['plugin:qa:cleanup'], flags: { json: true } }));

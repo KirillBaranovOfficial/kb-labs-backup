@@ -149,6 +149,7 @@ function buildEngine(runId: string, jobId: string, steps: ReturnType<typeof make
 
 async function startWorker(engine: any) {
   return createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
     engine,
     secretProvider: new EnvSecretProvider(),
     cliApi: {} as any,

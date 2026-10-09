@@ -27,7 +27,11 @@ func installedVersion(platformRoot string) string {
 // supervised host: it would fail on the host's port with a misleading message.
 // An installed platform is changed with update, which stops and restarts the host.
 func refuseRunningHost(state host.State, platformRoot string) *diag.Diag {
-	record, alive := activeLauncher(state)
+	rootState, err := host.StateForRoot(state, platformRoot)
+	if err != nil {
+		return contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass the platform root used by this installation, then rerun the command.", err)
+	}
+	record, alive := activeLauncher(rootState)
 	if !alive {
 		return nil
 	}
@@ -48,7 +52,11 @@ func refuseApplyBesideRunningHost(state host.State, plan contracts.ResolvedInsta
 }
 
 func refuseForeignHost(state host.State, platformRoot string) *diag.Diag {
-	record, alive := activeLauncher(state)
+	rootState, err := host.StateForRoot(state, platformRoot)
+	if err != nil {
+		return contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass the platform root used by this installation, then rerun the command.", err)
+	}
+	record, alive := activeLauncher(rootState)
 	if !alive {
 		return nil
 	}

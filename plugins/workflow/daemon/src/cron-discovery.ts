@@ -28,7 +28,7 @@ export interface CronDiscoveryOptions {
 }
 
 export class CronMutationRefusedError extends Error {
-  readonly code = 'CRON_PLUGIN_READ_ONLY';
+  readonly code = 'KB_RUNTIME_CRON_PLUGIN_READ_ONLY';
   constructor(id: string) {
     super(`Plugin cron ${id} is read-only`);
     this.name = 'CronMutationRefusedError';

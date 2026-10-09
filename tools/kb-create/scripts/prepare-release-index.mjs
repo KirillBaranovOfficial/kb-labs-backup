@@ -6,7 +6,7 @@
 // release stage instead of rebuilding or resolving npm tags.
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { builtinModules } from 'node:module';
@@ -16,6 +16,7 @@ const value = name => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
 };
+const values = name => args.flatMap((argument, index) => argument === name ? [args[index + 1]] : []);
 const required = name => {
   const result = value(name);
   if (!result) throw new Error(`${name} is required`);
@@ -33,7 +34,9 @@ const sdkPackage = value('--sdk-package') ?? '@kb-labs/sdk';
 const binaryManifestPath = value('--binary-manifest') ? resolve(value('--binary-manifest')) : undefined;
 if (flow === 'platform' && !binaryManifestPath) throw new Error('--binary-manifest is required for the unified platform release-index');
 const minLauncherVersion = value('--min-launcher-version');
+const releaseNotes = value('--release-notes');
 const sealerBin = value('--sealer-bin') ? resolve(value('--sealer-bin')) : undefined;
+const historyIndexes = values('--history-index').map(path => resolve(path));
 const platformRequires = (value('--platform-requires') ?? '')
   .split(',')
   .map(item => item.trim())
@@ -67,6 +70,7 @@ if (new Set(stage.map(item => item.name)).size !== stage.length) throw new Error
 
 const byName = new Map(stage.map(item => [item.name, item]));
 const sourceDirByName = new Map(stagedEntries.map(({ item, directory }) => [item.name, directory]));
+const sizeBytesFor = item => statSync(resolve(sourceDirByName.get(item.name) ?? artifactsDir, item.tarball)).size;
 const platform = byName.get(platformPackage);
 if (!platform) throw new Error(`platform package ${platformPackage} is absent from stage manifest`);
 const resolvedPlatformVersion = platform.version;
@@ -196,6 +200,7 @@ const component = (item, manifest, id = item.name.split('/').pop().replace(/-ent
   package: item.name,
   tarball: tarballURL(item),
   sha256: item.sha256,
+  sizeBytes: sizeBytesFor(item),
   ...(manifest?.compatibility?.platformRange ? { platformRange: manifest.compatibility.platformRange } : {}),
   ...(manifest?.compatibility?.sdkRange ? { sdkRange: manifest.compatibility.sdkRange } : {}),
   config: manifest?.requirements ?? [],
@@ -472,9 +477,11 @@ const exportValue = {
   platforms: [{
     id: 'platform',
     version: resolvedPlatformVersion,
+    ...(releaseNotes !== undefined ? { releaseNotes } : {}),
     package: platform.name,
     tarball: tarballURL(platform),
     sha256: platform.sha256,
+    sizeBytes: sizeBytesFor(platform),
     ...(minLauncherVersion ? { minLauncherVersion } : {}),
     requires: platformRequires,
     config: [
@@ -517,8 +524,10 @@ const exportPath = join(artifactsDir, 'manifest-export.json');
 writeFileSync(exportPath, `${JSON.stringify(exportValue, null, 2)}\n`);
 
 const sealer = sealerBin
-  ? spawnSync(sealerBin, ['--input', exportPath, '--manifest-root', staging, '--output', output], { stdio: 'inherit' })
-  : spawnSync('go', ['run', './v2/cmd/kb-create-release-index', '--input', exportPath, '--manifest-root', staging, '--output', output], {
+  ? spawnSync(sealerBin, ['--input', exportPath, '--manifest-root', staging, '--output', output,
+    ...historyIndexes.flatMap(index => ['--history-index', index])], { stdio: 'inherit' })
+  : spawnSync('go', ['run', './v2/cmd/kb-create-release-index', '--input', exportPath, '--manifest-root', staging, '--output', output,
+    ...historyIndexes.flatMap(index => ['--history-index', index])], {
       cwd: resolve(new URL('../', import.meta.url).pathname),
       stdio: 'inherit',
     });

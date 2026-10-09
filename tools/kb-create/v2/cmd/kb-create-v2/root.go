@@ -194,7 +194,12 @@ func renderVersion(any) string {
 func executeVersion(_ context.Context, _ versionCommandInput) (map[string]any, *diag.Diag) {
 	return map[string]any{"version": buildVersion, "commit": buildCommit}, nil
 }
-func renderUpdate(any) string    { return "Platform update completed." }
+func renderUpdate(value any) string {
+	if result, ok := value.(updateCommandResult); ok && result.AlreadyUpToDate {
+		return "Platform is already up to date."
+	}
+	return "Platform update completed."
+}
 func renderRollback(any) string  { return "Platform rollback completed." }
 func renderUninstall(any) string { return "Platform uninstalled." }
 func renderStart(any) string     { return "KB Labs host started." }
@@ -207,10 +212,18 @@ func renderApply(value any) string {
 	if !ok {
 		return "Platform installation completed."
 	}
+	message := "Platform installation completed."
 	if payload.Shim != nil && !payload.Shim.Linked {
-		return fmt.Sprintf("Platform installation completed.\nThe kb command is owned by %s; run %s to use this platform.", payload.Shim.Owner, shim.Target(payload.Receipt.Plan.Request.PlatformRoot))
+		message += fmt.Sprintf("\nThe kb command is owned by %s; run %s to use this platform.", payload.Shim.Owner, shim.Target(payload.Receipt.Plan.Request.PlatformRoot))
 	}
-	return "Platform installation completed."
+	return withFirstAdmin(message, payload.FirstAdmin)
+}
+
+func withFirstAdmin(message string, credential *firstAdminCredential) string {
+	if credential == nil {
+		return message
+	}
+	return fmt.Sprintf("%s\nFirst administrator credentials (shown once):\n  Email: %s\n  Password: %s", message, credential.Email, credential.Password)
 }
 
 func renderStatus(value any) string {

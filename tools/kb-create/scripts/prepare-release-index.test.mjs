@@ -168,7 +168,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   const binaryManifest = join(root, 'binary-manifest.json');
   writeFileSync(binaryManifest, JSON.stringify({ binaries: [{ id: 'kb-create', version: '2.0.0', os: 'linux', arch: 'amd64', url: 'https://example.test/kb-create', filename: 'kb-create-linux-amd64', sha256: 'binary-sha' }] }));
   const output = join(root, 'release-index.json');
-  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/release-manager-cli', '--output', output], { stdio: 'pipe' });
+  execFileSync(process.execPath, [script.pathname, '--flow', 'platform', '--channel', 'canary', '--artifacts-dir', stage, '--binary-manifest', binaryManifest, '--platform-requires', 'serviceTransport', '--platform-adapter-config', '{"serviceTransport":"@kb-labs/adapters-service-transport-http","kvStore":"@kb-labs/adapters-sqlite/kv","llm":"@kb-labs/adapters-openai"}', '--platform-adapter-options', '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}},"llm":{"apiKey":"${OPENAI_API_KEY}"}}', '--platform-member-packages', '@kb-labs/core-contracts,@kb-labs/release-manager-cli', '--release-notes', 'Candidate release notes from the journey fixture.', '--output', output], { stdio: 'pipe' });
   const index = JSON.parse(readFileSync(output, 'utf8'));
   assert.equal(index.schema, 'kb.create.release-index/v2');
   assert.equal(index.compatibility.schema, 'kb.release-compatibility/2');
@@ -179,6 +179,8 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   ]);
   assert.deepEqual(index.compatibility.labels[0].requires, [{ label: 'sdk@2.0.0', constraint: '>=2.0.0 <3.0.0' }]);
   assert.equal(index.channels.canary, '2.0.0');
+  assert.equal(index.platforms[0].releaseNotes, 'Candidate release notes from the journey fixture.');
+  assert.ok(index.platforms[0].sizeBytes > 0, 'platform bundle must carry its sealed tarball size');
   assert.equal(index.plugins[0].id, '@kb-labs/commit');
   assert.equal(index.plugins.find(p => p.package === '@kb-labs/release-manager-cli')?.id, '@kb-labs/release');
   // The launcher runs the platform as one host process; the index must say how.
@@ -212,6 +214,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
   // manifest file, so installed.Load()'s id equality check failed at publish
   // time with a misleading "does not match resolved artifact" error.
   assert.equal(index.platforms[0].members.find(m => m.package === '@kb-labs/release-manager-cli')?.id, '@kb-labs/release');
+  assert.ok(index.platforms[0].members.every(member => member.sizeBytes > 0), 'members must carry their sealed tarball sizes');
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.provides, ['logger']);
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'pino-logger')?.defaultFor, ['logger']);
   assert.deepEqual(index.adapters.find(adapter => adapter.id === 'state-broker')?.defaultFor, ['cache']);

@@ -9,7 +9,78 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/runtime"
 )
+
+// case: S-023.6
+func TestEqualVersionUpdateReturnsBeforeSnapshotWritesOrLifecycle(t *testing.T) {
+	inst := newInstallation(t)
+	active, err := receipt.Read(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Schema, active.ID, active.InstallationID = contracts.ReceiptSchema, "active", "same-install"
+	active.Plan.Schema, active.Plan.PlatformChannel = contracts.ResolvedPlanSchema, "stable"
+	active.Plan.Request = contracts.InstallRequest{PlatformRoot: inst.root}
+	active.Plan.ServiceGraph = contracts.ServiceGraph{PlatformVersion: "3.2.0"}
+	active.Plan.Artifacts = []contracts.Artifact{{ID: "platform", Kind: "platform", Package: "@kb/platform", Version: "3.2.0"}}
+	if err := receipt.Write(inst.root, active); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := receipt.Path(inst.root)
+	before, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	index, err := catalog.Seal(catalog.Catalog{
+		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "3.2.0"},
+		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{{ID: "platform@3.2.0", Kind: "platform", ArtifactID: "platform", Version: "3.2.0", Status: "prepared", ValidatedBy: []string{"test"}}}},
+		Platforms:     []catalog.PlatformBundle{{ID: "platform", Version: "3.2.0", Package: "@kb/platform", Tarball: "platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(t.TempDir(), "release-index.json")
+	encoded, err := json.Marshal(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installer := &recordingInstaller{}
+	result, failure, code, raw := executeForTest(t, operationTestSetup{
+		Operation: "update", Index: indexPath, PlatformRoot: inst.root,
+		Direct:        directRequest{PlatformVersion: "3.2.0", Policy: "compatible"},
+		RuntimeDeps:   &runtime.Dependencies{Artifacts: installer},
+		NodePreflight: func() error { return nil },
+	})
+	if failure != nil || code != 0 {
+		t.Fatalf("update = code %d, error %v, result %s", code, failure, raw)
+	}
+	output, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(output, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["alreadyUpToDate"] != true || payload["hostRestarted"] != false {
+		t.Fatalf("up-to-date result = %s", output)
+	}
+	if len(installer.installed) != 0 || installer.restores != 0 {
+		t.Fatalf("equal update invoked artifact lifecycle: %#v", installer)
+	}
+	after, err := os.ReadFile(receiptPath)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("equal update changed receipt: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(inst.root, ".kb", "v2", "snapshots")); !os.IsNotExist(err) {
+		t.Fatalf("equal update created snapshots: %v", err)
+	}
+}
 
 func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 	for _, test := range []struct {

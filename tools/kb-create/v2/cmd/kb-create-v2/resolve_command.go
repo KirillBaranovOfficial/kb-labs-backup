@@ -42,7 +42,8 @@ type resolvedPlan struct {
 }
 
 type planResult struct {
-	Plan contracts.ResolvedInstallPlan `json:"plan"`
+	Plan          contracts.ResolvedInstallPlan `json:"plan"`
+	UpdateSummary *contracts.UpdateSummary      `json:"updateSummary,omitempty"`
 }
 
 type planCommandInput struct {
@@ -74,8 +75,26 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 			return planResult{}, inputFailure(asDiag(err))
 		}
 	}
+	var updateSummary *contracts.UpdateSummary
+	receiptPath := receipt.Path(plan.Request.PlatformRoot)
+	if _, err := os.Stat(receiptPath); err == nil {
+		active, readErr := receipt.Read(plan.Request.PlatformRoot)
+		if readErr != nil {
+			failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be read for update comparison", "restore a named V2 snapshot, then rerun `kb-create plan`", readErr)
+			return planResult{}, inputFailure(failure)
+		}
+		summary, summaryErr := resolve.SummarizeUpdate(active, plan, resolved.Catalog)
+		if summaryErr != nil {
+			failure := contracts.NewDiag(contracts.CodeOperationFailed, "the installed platform could not be compared with the resolved plan", "verify the active receipt and sealed release index, then rerun `kb-create plan`", summaryErr)
+			return planResult{}, inputFailure(failure)
+		}
+		updateSummary = &summary
+	} else if !os.IsNotExist(err) {
+		failure := contracts.NewDiag(contracts.CodeReceiptUnavailable, "the installed receipt could not be checked for update comparison", "check platform-root permissions, then rerun `kb-create plan`", err)
+		return planResult{}, inputFailure(failure)
+	}
 	outcome, errorCode = "success", ""
-	return planResult{Plan: plan}, nil
+	return planResult{Plan: plan, UpdateSummary: updateSummary}, nil
 }
 
 func inputFailure(failure *diag.Diag) *diag.Diag {

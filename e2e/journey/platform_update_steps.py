@@ -167,6 +167,16 @@ def run_platform_update_steps(
         graph = plan.get("plan", {}).get("serviceGraph", {})
         if graph.get("platformVersion") != updated_version:
             raise RuntimeError(f"update plan did not resolve platform {updated_version}: {graph.get('platformVersion')!r}")
+        summary = plan.get("updateSummary")
+        if not isinstance(summary, dict):
+            raise RuntimeError("update plan omitted its comparison with the installed receipt")
+        if not summary.get("components") or not isinstance(summary.get("downloadBytes"), int):
+            raise RuntimeError("update plan omitted component versions or its download byte estimate")
+        if not isinstance(summary.get("addedPackages"), list) or not isinstance(summary.get("removedPackages"), list):
+            raise RuntimeError("update plan omitted added and removed package names")
+        notes = summary.get("releaseNotes")
+        if not isinstance(notes, list) or not notes or any(not item.get("notes") for item in notes):
+            raise RuntimeError("update plan omitted notes for an intervening release")
 
     journey.step("plan the newer sealed release", "platform.update", plan_new_release,
                  cases=["S-023.2", "S-214.10"],
@@ -183,6 +193,19 @@ def run_platform_update_steps(
             raise RuntimeError("update did not return ok=true and a recovery snapshot ID")
         if not isinstance(receipt, dict) or receipt.get("plan", {}).get("serviceGraph", {}).get("platformVersion") != updated_version:
             raise RuntimeError(f"update receipt does not identify platform {updated_version}")
+        summary = result.get("updateSummary")
+        if not isinstance(summary, dict):
+            raise RuntimeError("update result omitted its component and release-note summary")
+        components = summary.get("components")
+        if not isinstance(components, list) or not components:
+            raise RuntimeError("update result omitted component versions")
+        if any(not isinstance(item, dict) or not isinstance(item.get("fromVersion"), str)
+               or not isinstance(item.get("toVersion"), str) for item in components):
+            raise RuntimeError("update result component summary omitted from/to versions")
+        release_notes = summary.get("releaseNotes")
+        if not isinstance(release_notes, list) or not release_notes or any(
+                not isinstance(item, dict) or not item.get("notes") for item in release_notes):
+            raise RuntimeError("update result omitted notes for an intervening release")
         updated_plan_hash = str(receipt.get("plan", {}).get("planHash") or "")
         if not updated_plan_hash:
             raise RuntimeError("update receipt did not include its resolved plan hash")
@@ -285,6 +308,7 @@ def run_platform_update_steps(
                      cases=["S-023.4"])
 
     def repeat_update() -> None:
+        receipt_before = receipt_path.read_bytes()
         preview = _json_command(run_command, [launcher, "plan", "--json", "--index", str(update_index),
                                               "--input", str(request_file)], "repeat update plan")
         preview_plan = preview.get("plan", {})
@@ -315,6 +339,9 @@ def run_platform_update_steps(
             raise RuntimeError("repeat update did not report that the platform is already up to date")
         if result.get("hostRestarted") is not False:
             raise RuntimeError("already-current update restarted services")
+        receipt_after = receipt_path.read_bytes()
+        if receipt_after != receipt_before:
+            raise RuntimeError("already-current update changed the installed receipt bytes")
 
     journey.step("repeat the update without version drift", "platform.update", repeat_update,
                  cases=["S-023.6"])

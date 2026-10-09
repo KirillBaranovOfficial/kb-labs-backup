@@ -68,11 +68,20 @@ const server = createServer((req, res) => {
       process.exit(1);
     }
     if (url.pathname === "/rest/__spawn-child") {
-      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-        stdio: "ignore",
+      const stoppedMarker = join(projectRoot, "runtime-child-stopped");
+      const child = spawn(process.execPath, ["-e", [
+        "const { writeFileSync } = require('node:fs');",
+        "const marker = process.argv[1];",
+        "process.on('SIGTERM', () => { writeFileSync(marker, 'stopped'); process.exit(0); });",
+        "process.stdout.write('ready');",
+        "setInterval(() => {}, 1000);",
+      ].join(" "), stoppedMarker], {
+        stdio: ["ignore", "pipe", "ignore"],
       });
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ childPid: child.pid }));
+      child.stdout.once("data", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ childPid: child.pid }));
+      });
       return;
     }
     const delayMs = Number(url.searchParams.get("delay") ?? 0);

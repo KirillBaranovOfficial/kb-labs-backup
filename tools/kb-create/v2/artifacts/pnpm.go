@@ -20,6 +20,7 @@ import (
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/semrange"
 	"gopkg.in/yaml.v3"
 )
 
@@ -287,14 +288,19 @@ func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
 	} else if exclusions.Kind != yaml.SequenceNode {
 		return fmt.Errorf("pnpm workspace minimumReleaseAgeExclude must be a list")
 	}
-	seen := make(map[string]struct{}, len(exclusions.Content)+len(items))
+	versionsByPackage := make(map[string]map[string]struct{}, len(exclusions.Content)+len(items))
+	retained := make([]string, 0, len(exclusions.Content))
 	for _, entry := range exclusions.Content {
 		if entry.Kind != yaml.ScalarNode || entry.Tag != "!!str" {
 			return fmt.Errorf("pnpm workspace minimumReleaseAgeExclude entries must be strings")
 		}
-		seen[entry.Value] = struct{}{}
+		packageName, versions, ok := exactReleaseAgeExclusion(entry.Value)
+		if !ok {
+			retained = append(retained, entry.Value)
+			continue
+		}
+		addExactReleaseAgeVersions(versionsByPackage, packageName, versions...)
 	}
-	versions := make([]string, 0, len(items))
 	for _, item := range items {
 		if item.IsBinary() {
 			continue
@@ -302,15 +308,24 @@ func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
 		if item.Package == "" || item.Version == "" {
 			return fmt.Errorf("artifact %q must declare package and exact version", item.ID)
 		}
-		versions = append(versions, item.Package+"@"+item.Version)
+		addExactReleaseAgeVersions(versionsByPackage, item.Package, item.Version)
 	}
-	sort.Strings(versions)
-	for _, version := range versions {
-		if _, exists := seen[version]; exists {
-			continue
+	packages := make([]string, 0, len(versionsByPackage))
+	for packageName := range versionsByPackage {
+		packages = append(packages, packageName)
+	}
+	sort.Strings(packages)
+	for _, packageName := range packages {
+		versions := make([]string, 0, len(versionsByPackage[packageName]))
+		for version := range versionsByPackage[packageName] {
+			versions = append(versions, version)
 		}
-		seen[version] = struct{}{}
-		exclusions.Content = append(exclusions.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: version})
+		sort.Strings(versions)
+		retained = append(retained, packageName+"@"+strings.Join(versions, " || "))
+	}
+	exclusions.Content = exclusions.Content[:0]
+	for _, entry := range retained {
+		exclusions.Content = append(exclusions.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: entry})
 	}
 	merged, err := yaml.Marshal(&document)
 	if err != nil {
@@ -320,6 +335,32 @@ func (p Pnpm) mergeMinimumReleaseAgeExclude(items []contracts.Artifact) error {
 		return fmt.Errorf("write pnpm workspace configuration: %w", err)
 	}
 	return nil
+}
+
+func exactReleaseAgeExclusion(value string) (string, []string, bool) {
+	separator := strings.LastIndex(value, "@")
+	if separator < 1 {
+		return "", nil, false
+	}
+	packageName := value[:separator]
+	versions := strings.Split(value[separator+1:], "||")
+	for index, version := range versions {
+		version = strings.TrimSpace(version)
+		if _, err := semrange.ParseVersion(version); err != nil {
+			return "", nil, false
+		}
+		versions[index] = version
+	}
+	return packageName, versions, true
+}
+
+func addExactReleaseAgeVersions(target map[string]map[string]struct{}, packageName string, versions ...string) {
+	if target[packageName] == nil {
+		target[packageName] = make(map[string]struct{}, len(versions))
+	}
+	for _, version := range versions {
+		target[packageName][version] = struct{}{}
+	}
 }
 
 // mergeSealedArtifactOverrides makes kb-create the owner of pnpm's single-copy

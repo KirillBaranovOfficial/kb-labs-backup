@@ -1,4 +1,8 @@
 import * as marketplaceApp from "@kb-labs/marketplace-app";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { installPlatformResolveHook } from "@kb-labs/plugin-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canBind,
@@ -27,38 +31,51 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
 
   afterEach(async () => {
     // stop() is idempotent, so a test that already stopped the host is fine.
-    await running?.stop().catch(() => undefined);
+    const subject = running;
     running = undefined;
+    await subject?.stop();
   });
 
   // case: PC-002.1
   it("serves the gateway on the configured port and proxies marketplace and state", async () => {
-    running = await startTestHost();
+    const studioDir = await mkdtemp(join(tmpdir(), "kb-studio-fixture-"));
+    await writeFile(join(studioDir, "index.html"), "<!doctype html><html><head></head><body>fixture</body></html>");
+    try {
+      running = await startTestHost({ gateway: { studio: { enabled: true, dir: studioDir } } });
 
-    const studio = await running.fetchGateway("/");
-    expect(studio.status).toBe(200);
-    expect(await studio.text()).toContain("__KB_STUDIO_CONFIG__");
+      const studio = await running.fetchGateway("/");
+      expect(studio.status).toBe(200);
+      expect(await studio.text()).toContain("__KB_STUDIO_CONFIG__");
 
-    const health = await running.fetchGateway("/health");
-    expect(health.status).toBe(200);
-    const body = await readUxSuccessResult<HealthBody>(health);
-    expect(body.upstreams.marketplace?.status).toBe("up");
-    expect(body.upstreams.state?.status).toBe("up");
+      const health = await running.fetchGateway("/health");
+      expect(health.status).toBe(200);
+      const body = await readUxSuccessResult<HealthBody>(health);
+      expect(body.upstreams.marketplace?.status).toBe("up");
+      expect(body.upstreams.state?.status).toBe("up");
 
-    const marketplace = await running.fetchGateway(
-      "/api/v1/marketplace/packages",
-    );
-    expect(marketplace.status).toBe(200);
+      const marketplace = await running.fetchGateway(
+        "/api/v1/marketplace/packages",
+      );
+      expect(marketplace.status).toBe(200);
 
-    const put = await running.fetchGateway("/api/v1/state/state/greeting", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ value: "hello" }),
-    });
-    expect(put.status).toBe(204);
-    const get = await running.fetchGateway("/api/v1/state/state/greeting");
-    expect(get.status).toBe(200);
-    expect(JSON.parse(await get.text())).toBe("hello");
+      const put = await running.fetchGateway("/api/v1/state/state/greeting", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ value: "hello" }),
+      });
+      expect(put.status).toBe(204);
+      const get = await running.fetchGateway("/api/v1/state/state/greeting");
+      expect(get.status).toBe(200);
+      expect(JSON.parse(await get.text())).toBe("hello");
+    } finally {
+      const subject = running;
+      running = undefined;
+      try {
+        await subject?.stop();
+      } finally {
+        await rm(studioDir, { recursive: true, force: true });
+      }
+    }
   });
 
   it("keeps marketplace and state on distinct internal loopback ports", async () => {
@@ -110,6 +127,60 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
 
     running = await startTestHost();
     expect(running.projectRoot).not.toBe(firstRoot);
+    expect((await running.fetchGateway("/health")).status).toBe(200);
+  });
+
+  it("releases the resolve hook before a module teardown can hang", async () => {
+    let unblockTeardown!: () => void;
+    let markTeardownStarted!: () => void;
+    const teardownStarted = new Promise<void>((resolve) => {
+      markTeardownStarted = resolve;
+    });
+    const blockedTeardown = new Promise<void>((resolve) => {
+      unblockTeardown = resolve;
+    });
+    const setup = vi.mocked(marketplaceApp.setup).mockImplementationOnce(
+      async () => async () => {
+        markTeardownStarted();
+        await blockedTeardown;
+      },
+    );
+
+    let firstStop: Promise<number> | undefined;
+    try {
+      const first = await startTestHost();
+      firstStop = first.stop();
+      await teardownStarted;
+      const nextRootHook = installPlatformResolveHook({ platformRoot: process.cwd() });
+      nextRootHook.deregister();
+    } finally {
+      unblockTeardown();
+      await firstStop;
+      setup.mockRestore();
+    }
+
+    running = await startTestHost();
+    expect((await running.fetchGateway("/health")).status).toBe(200);
+  });
+
+  it("releases the resolve hook when a module teardown throws", async () => {
+    const failingTeardown = vi.fn(async () => {
+      throw new Error("injected marketplace teardown failure");
+    });
+    const setup = vi.mocked(marketplaceApp.setup).mockImplementationOnce(
+      async () => failingTeardown,
+    );
+
+    const first = await startTestHost();
+    running = undefined;
+    try {
+      await first.stop();
+      expect(failingTeardown).toHaveBeenCalledOnce();
+    } finally {
+      setup.mockRestore();
+    }
+
+    running = await startTestHost();
     expect((await running.fetchGateway("/health")).status).toBe(200);
   });
 

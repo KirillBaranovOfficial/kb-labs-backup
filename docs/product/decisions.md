@@ -4,6 +4,17 @@ This log records the product decisions behind the case catalog (`docs/qa/scenari
 
 Each entry names the decision, the reason, and the cases that encode it. When a decision changes, add a new dated entry that supersedes the old one; don't rewrite history.
 
+## 2026-10-09
+
+### Secured install creates and discloses the first administrator credential once
+
+A secured install with a first-admin email and no supplied password generates a
+password, seeds the administrator, and displays the email and password once in
+human output or once in the JSON install result. The password lives in the
+platform secret store and is absent from the plan, receipt, logs, and later
+commands. `kb-create doctor --recover` remains for account recovery after
+installation. Cases: PC-001, S-040, S-100.
+
 ## 2026-10-07
 
 ### Credentials are kept per Gateway origin; the marketplace is a KB Labs Gateway
@@ -578,3 +589,13 @@ its exact relations, and the catalog accepts a candidate only when those
 relations are present. Independent versions later are a release-flow data
 change; the installer, catalog, and index preparer do not add a second equality
 rule. Cases: S-214.8–S-214.9.
+
+## 2026-10-09
+
+### Per-root host lifecycle starts cleanly
+
+V2 host process state belongs to its platform root. Existing host processes
+tracked only by the former shared `~/.kb/launcher/host.pid` location are not
+migrated into per-root state; users must stop and start those hosts with the
+current launcher. No compatibility reader or migration shim is maintained.
+Cases: PC-001.10, PC-001.12, PC-001.16.

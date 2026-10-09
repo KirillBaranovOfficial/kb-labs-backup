@@ -20,6 +20,7 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { GatewayAuthHealthResponseSchema } from '@kb-labs/gateway-contracts';
 import type { AuthReadiness } from '@kb-labs/gateway-auth';
 import { sendGatewayNotFound } from '../ux-boundary.js';
 
@@ -64,7 +65,15 @@ export const registerAuthHealthRoute = (
       if (!isLocalOperatorRequest(request)) {
         return sendGatewayNotFound(reply, String(request.id));
       }
-      return getReadiness();
+      const readiness = await getReadiness();
+      return GatewayAuthHealthResponseSchema.parse({
+        ok: readiness.ok,
+        authEnabled: readiness.authEnabled,
+        tenantId: readiness.tenantId,
+        activeAdmins: readiness.activeAdmins,
+        bootstrap: readiness.bootstrap,
+        issues: readiness.issues,
+      });
     },
   );
 };

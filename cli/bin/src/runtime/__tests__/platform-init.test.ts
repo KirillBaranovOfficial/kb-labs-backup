@@ -194,7 +194,7 @@ describe('Platform Initialization (Real)', () => {
         await expect(initializePlatform(unregistered, undefined, {
           skipAdapterInitialization: true,
           projectScope: 'required',
-        })).rejects.toMatchObject({ code: 'KB_PROJECT_UNKNOWN' });
+        })).rejects.toMatchObject({ envelope: { code: 'KB_PROJECT_UNKNOWN' } });
       } finally {
         await rm(unregistered, { recursive: true, force: true });
       }

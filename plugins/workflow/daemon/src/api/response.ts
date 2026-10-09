@@ -1,28 +1,35 @@
 import type { FastifyReply } from 'fastify';
+import {
+  createErrorEnvelope,
+  getCatalogEntry,
+} from '@kb-labs/core-platform';
+import {
+  createUxFailureResult,
+  createUxSuccessResult,
+  type UxFailureResult,
+  type UxSuccessResult,
+} from '@kb-labs/core-platform/ux-result';
 
-export interface ApiSuccessResponse<T> {
-  ok: true;
-  data: T;
-}
-
-export interface ApiErrorResponse {
-  ok: false;
-  error: string;
-  code?: string;
-}
-
+export type ApiSuccessResponse<T> = UxSuccessResult<T>;
+export type ApiErrorResponse = UxFailureResult;
 export type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
 
 export function ok<T>(data: T): ApiSuccessResponse<T> {
-  return { ok: true, data };
+  return createUxSuccessResult(data);
 }
 
 export function fail(
   reply: FastifyReply,
-  statusCode: number,
+  code: string,
   message: string,
-  code?: string,
+  hint?: string,
+  details?: Record<string, string>,
 ): ApiErrorResponse {
-  reply.code(statusCode);
-  return { ok: false, error: message, ...(code ? { code } : {}) };
+  const catalogEntry = getCatalogEntry(code);
+  if (!catalogEntry?.httpStatus) {
+    throw new Error(`Workflow API error code "${code}" has no catalogued HTTP status.`);
+  }
+  const envelope = createErrorEnvelope(code, { message, hint, details });
+  reply.code(catalogEntry.httpStatus);
+  return createUxFailureResult(envelope);
 }

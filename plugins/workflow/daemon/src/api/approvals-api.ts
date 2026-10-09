@@ -41,7 +41,7 @@ export function registerApprovalsAPI(options: ApprovalsAPIOptions): void {
       const run = await observability.observeOperation('workflow.approval.list', () => hostService.getRun(rawId));
 
       if (!run) {
-        return fail(reply, 404, 'Run not found');
+        return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${rawId} was not found.`, undefined, { runId: rawId });
       }
 
       const pending: Array<{
@@ -71,7 +71,7 @@ export function registerApprovalsAPI(options: ApprovalsAPIOptions): void {
       return ok({ runId: run.id, pending });
     } catch (error) {
       logger.error('[approvals-api] Error listing pending approvals', error instanceof Error ? error : undefined);
-      return fail(reply, 500, error instanceof Error ? error.message : 'Failed to list pending approvals');
+      return fail(reply, 'KB_RUNTIME_APPROVAL_LIST_FAILED', error instanceof Error ? error.message : 'Failed to list pending approvals');
     }
   });
 
@@ -91,30 +91,30 @@ export function registerApprovalsAPI(options: ApprovalsAPIOptions): void {
       const { jobId, stepId, action, comment, data } = request.body;
 
       if (!jobId || !stepId || !action) {
-        return fail(reply, 400, 'Missing required fields: jobId, stepId, action');
+        return fail(reply, 'KB_RUNTIME_APPROVAL_INPUT_INVALID', 'Missing required fields: jobId, stepId, action');
       }
 
       if (action !== 'approve' && action !== 'reject') {
-        return fail(reply, 400, 'action must be "approve" or "reject"');
+        return fail(reply, 'KB_RUNTIME_APPROVAL_INPUT_INVALID', 'action must be "approve" or "reject"');
       }
 
       const run = await observability.observeOperation('workflow.approval.get', () => hostService.getRun(rawId));
       if (!run) {
-        return fail(reply, 404, 'Run not found');
+        return fail(reply, 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', `Workflow run ${rawId} was not found.`, undefined, { runId: rawId });
       }
 
       const job = run.jobs.find(j => j.id === jobId);
       if (!job) {
-        return fail(reply, 404, 'Job not found');
+        return fail(reply, 'KB_RUNTIME_JOB_NOT_FOUND', 'Job not found');
       }
 
       const step = job.steps.find(s => s.id === stepId);
       if (!step) {
-        return fail(reply, 404, 'Step not found');
+        return fail(reply, 'KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND', 'Step not found');
       }
 
       if ((step.status as string) !== 'waiting_approval') {
-        return fail(reply, 409, `Step is not waiting for approval (current status: ${step.status})`);
+        return fail(reply, 'KB_RUNTIME_APPROVAL_NOT_PENDING', `Step is not waiting for approval (current status: ${step.status})`);
       }
 
       await observability.observeOperation('workflow.approval.resolve', () =>
@@ -138,7 +138,7 @@ export function registerApprovalsAPI(options: ApprovalsAPIOptions): void {
       });
     } catch (error) {
       logger.error('[approvals-api] Error resolving approval', error instanceof Error ? error : undefined);
-      return fail(reply, 500, error instanceof Error ? error.message : 'Failed to resolve approval');
+      return fail(reply, 'KB_RUNTIME_APPROVAL_RESOLVE_FAILED', error instanceof Error ? error.message : 'Failed to resolve approval');
     }
   });
 }

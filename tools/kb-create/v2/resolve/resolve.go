@@ -101,7 +101,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 	}
 	graph.PlatformVersion, graph.Profile = platform.Version, profileName(request.ServiceProfile)
-	artifacts := []contracts.Artifact{{ID: platform.ID, Kind: "platform", Package: platform.Package, Version: platform.Version, SHA256: platform.SHA256, Tarball: platform.Tarball, Config: platform.Config}}
+	artifacts := []contracts.Artifact{{ID: platform.ID, Kind: "platform", Package: platform.Package, Version: platform.Version, SHA256: platform.SHA256, Tarball: platform.Tarball, SizeBytes: platform.SizeBytes, Config: platform.Config}}
 	for _, member := range platform.Members {
 		item := artifact(member, "platform-member")
 		item.Registry = registryKind(source, member.Package)
@@ -116,7 +116,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 					return contracts.ResolvedInstallPlan{}, incompatible("binary", binary.ID, err.Error())
 				}
 			}
-			artifacts = append(artifacts, contracts.Artifact{ID: binary.ID, Kind: "binary", Version: platform.Version, SHA256: binary.SHA256, URL: binary.URL, Target: binary.ID})
+			artifacts = append(artifacts, contracts.Artifact{ID: binary.ID, Kind: "binary", Version: platform.Version, SHA256: binary.SHA256, SizeBytes: binary.SizeBytes, URL: binary.URL, Target: binary.ID})
 		}
 	}
 	if len(platform.Binaries) > 0 && !binaryForTarget {
@@ -415,7 +415,7 @@ func registryKind(source catalog.Catalog, pkg string) string {
 }
 
 func artifact(c catalog.Component, kind string) contracts.Artifact {
-	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, Tarball: c.Tarball, Config: c.Config, PlatformRange: c.PlatformRange, SDKRange: c.SDKRange}
+	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, SizeBytes: c.SizeBytes, Tarball: c.Tarball, Config: c.Config, PlatformRange: c.PlatformRange, SDKRange: c.SDKRange}
 }
 func findPlatform(items []catalog.PlatformBundle, version string) (catalog.PlatformBundle, bool) {
 	for _, v := range items {

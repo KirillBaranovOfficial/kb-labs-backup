@@ -249,10 +249,9 @@ export async function createHostConfig(
   };
 
   // One platform per process: plugins loaded from outside the platform root get
-  // the host's copy of the platform packages (ADR-0048 D5). Removed by the first
-  // internal module's teardown (modules are torn down in reverse start order, so
-  // this runs last) — a fresh host in the same process (as in tests) can then
-  // install its own.
+  // the host's copy of the platform packages (ADR-0048 D5). Released at the
+  // start of host teardown, before awaiting any module cleanup, so even a
+  // stalled module cannot leave it installed for the next host in this process.
   let resolveHook: PlatformResolveHook | undefined;
   const releaseResolveHook = (): void => {
     resolveHook?.deregister();
@@ -326,9 +325,13 @@ export async function createHostConfig(
     return preparing;
   };
 
-  const skipped = async (): Promise<Teardown> => async () => {};
+  const releaseHookBeforeTeardown = (teardown: Teardown): Teardown => async () => {
+    releaseResolveHook();
+    await teardown();
+  };
+  const skipped = async (): Promise<Teardown> => releaseHookBeforeTeardown(async () => {});
 
-  const internal = INTERNAL_MODULES.map((spec, index) =>
+  const internal = INTERNAL_MODULES.map((spec) =>
     defineHostModule({
       id: spec.id,
       serviceId: spec.serviceId,
@@ -347,20 +350,9 @@ export async function createHostConfig(
             assertInternalAddress(ctx, spec.serviceId);
             return spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
           })();
-          if (index !== 0) {
-            return teardown;
-          }
-          return async () => {
-            try {
-              await teardown();
-            } finally {
-              releaseResolveHook();
-            }
-          };
+          return releaseHookBeforeTeardown(teardown);
         } catch (error) {
-          if (index === 0) {
-            releaseResolveHook();
-          }
+          releaseResolveHook();
           throw error;
         }
       },
@@ -477,7 +469,7 @@ export async function createHostConfig(
           ),
         },
       );
-      return async () => {
+      return releaseHookBeforeTeardown(async () => {
         clearInterval(scheduleRefreshTimer);
         // Stop taking requests first, then stop the runtimes they were for.
         try {
@@ -485,7 +477,7 @@ export async function createHostConfig(
         } finally {
           await manager.stopAll();
         }
-      };
+      });
     },
   });
 

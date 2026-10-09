@@ -34,10 +34,14 @@ type ArtifactUninstaller interface {
 	Uninstall([]contracts.Artifact) error
 }
 
-// HostProbe proves that the host a plan declares really starts: it runs the
-// host once, waits until it is healthy and stops it again. It is optional
-// because a caller that restarts the real host right after the operation (the
-// update flow of a running installation) proves the same thing with that start.
+// HostStarter starts the resolved host and returns the stop operation used to
+// clean up if the remaining apply verification fails.
+type HostStarter interface {
+	Start(ctx context.Context, host contracts.HostSpec) (func() error, error)
+}
+
+// HostProbe performs a temporary start/health/stop check for an update whose
+// previous running state must remain unchanged until its swap succeeds.
 type HostProbe interface {
 	Probe(ctx context.Context, host contracts.HostSpec) error
 }
@@ -59,7 +63,8 @@ func (systemClock) Now() time.Time { return time.Now().UTC() }
 
 type Dependencies struct {
 	Artifacts ArtifactInstaller
-	Host      HostProbe
+	Host      HostStarter
+	Probe     HostProbe
 	Clock     Clock
 	// CorrelationID is supplied by a frontend; it is persisted verbatim in the
 	// receipt and must be safe to disclose in a diagnostic bundle.
@@ -96,6 +101,10 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	if err := verifySecrets(plan, deps.Secrets); err != nil {
 		return contracts.InstallReceipt{}, err
 	}
+	previousProjections, err := captureProjections(plan.Request.PlatformRoot)
+	if err != nil {
+		return contracts.InstallReceipt{}, fmt.Errorf("preserve previous install projections: %w", err)
+	}
 	if deps.Secrets != nil {
 		if err := deps.Secrets.BindEnvironments(plan.ConfigPatches); err != nil {
 			return contracts.InstallReceipt{}, fmt.Errorf("bind secrets to service environment: %w", err)
@@ -120,52 +129,58 @@ func Apply(ctx context.Context, plan contracts.ResolvedInstallPlan, deps Depende
 	// resolved plan — without this, every installed plugin/adapter is on
 	// disk but invisible to the running platform (empty registry at /ready).
 	if err := marketplace.WriteLock(plan.Request.PlatformRoot, plan.Artifacts, now(deps.Clock)); err != nil {
-		_ = removeProjections(plan.Request.PlatformRoot)
+		_ = previousProjections.Restore()
 		return contracts.InstallReceipt{}, fmt.Errorf("write marketplace lock: %w", err)
 	}
 	if plan.Host != nil {
 		if err := emit("Render config", true); err != nil {
-			return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+			return contracts.InstallReceipt{}, errors.Join(fmt.Errorf("report apply progress: %w", err), previousProjections.Restore())
 		}
 		if _, err := render.Write(plan); err != nil {
 			progressErr := emit("Render config", false)
+			_ = previousProjections.Restore()
 			return contracts.InstallReceipt{}, fmt.Errorf("render resolved projections: %w", errors.Join(err, progressErr))
 		}
 		if err := emit("Render config", false); err != nil {
-			return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+			return contracts.InstallReceipt{}, errors.Join(fmt.Errorf("report apply progress: %w", err), previousProjections.Restore())
 		}
 	}
 	now := now(deps.Clock)
-	if deps.Host != nil && plan.Host != nil {
+	var stopHost func() error
+	if (deps.Host != nil || deps.Probe != nil) && plan.Host != nil {
 		if err := emit("Start host", true); err != nil {
-			return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+			return contracts.InstallReceipt{}, errors.Join(fmt.Errorf("report apply progress: %w", err), previousProjections.Restore())
 		}
-		if err := deps.Host.Probe(ctx, *plan.Host); err != nil {
+		var stop func() error
+		var startErr error
+		if deps.Host != nil {
+			stop, startErr = deps.Host.Start(ctx, *plan.Host)
+		} else if deps.Probe != nil {
+			startErr = deps.Probe.Probe(ctx, *plan.Host)
+		}
+		if startErr != nil {
 			progressErr := emit("Start host", false)
-			_ = removeProjections(plan.Request.PlatformRoot)
-			return contracts.InstallReceipt{}, fmt.Errorf("start the resolved host: %w", errors.Join(err, progressErr))
+			return contracts.InstallReceipt{}, errors.Join(fmt.Errorf("start the resolved host: %w", errors.Join(startErr, progressErr)), previousProjections.Restore())
 		}
+		stopHost = stop
 		if err := emit("Start host", false); err != nil {
-			return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+			return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("report apply progress: %w", err), previousProjections.Restore()))
 		}
 	}
 	if err := emit("Verify installation", true); err != nil {
-		return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+		return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("report apply progress: %w", err), previousProjections.Restore()))
 	}
 	check, err := verify.Run(plan, now)
 	if err != nil {
 		progressErr := emit("Verify installation", false)
-		// A fresh run has no prior receipt to restore. Remove only V2-owned
-		// projections so an incomplete installation cannot masquerade as installed.
-		_ = removeProjections(plan.Request.PlatformRoot)
-		return contracts.InstallReceipt{}, fmt.Errorf("verify installation: %w", errors.Join(err, progressErr))
+		return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("verify installation: %w", errors.Join(err, progressErr)), previousProjections.Restore()))
 	}
 	if err := emit("Verify installation", false); err != nil {
-		return contracts.InstallReceipt{}, fmt.Errorf("report apply progress: %w", err)
+		return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("report apply progress: %w", err), previousProjections.Restore()))
 	}
 	result := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: receiptID(plan.PlanHash, now), InstallationID: installationID, CreatedAt: now, CorrelationID: deps.CorrelationID, Plan: plan, Verification: check}
 	if err := receipt.Write(plan.Request.PlatformRoot, result); err != nil {
-		return contracts.InstallReceipt{}, fmt.Errorf("commit verified receipt: %w", err)
+		return contracts.InstallReceipt{}, stopFailedHost(stopHost, errors.Join(fmt.Errorf("commit verified receipt: %w", err), previousProjections.Restore()))
 	}
 	return result, nil
 }
@@ -354,6 +369,63 @@ func removeProjections(platformRoot string) error {
 		}
 	}
 	return nil
+}
+
+type projectionFile struct {
+	path    string
+	content []byte
+	mode    os.FileMode
+	present bool
+}
+
+type projectionState []projectionFile
+
+func captureProjections(platformRoot string) (projectionState, error) {
+	paths := []string{filepath.Join(platformRoot, ".kb", "kb.config.jsonc"), filepath.Join(platformRoot, ".kb", "marketplace.lock")}
+	state := make(projectionState, 0, len(paths))
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			state = append(state, projectionFile{path: path})
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		state = append(state, projectionFile{path: path, content: content, mode: info.Mode().Perm(), present: true})
+	}
+	return state, nil
+}
+
+func (state projectionState) Restore() error {
+	var failures []error
+	for _, file := range state {
+		if !file.present {
+			if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+				failures = append(failures, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(file.path), 0o750); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if err := os.WriteFile(file.path, file.content, file.mode); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func stopFailedHost(stop func() error, cause error) error {
+	if stop == nil {
+		return cause
+	}
+	return errors.Join(cause, stop())
 }
 
 func now(clock Clock) time.Time {

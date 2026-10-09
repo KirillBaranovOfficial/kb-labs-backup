@@ -1208,6 +1208,396 @@
       "httpStatus": 404
     },
     {
+      "code": "KB_RUNTIME_WORKFLOW_API_FAILURE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow API could not complete the request.",
+      "hint": "Run \"kb status\" to inspect service health, then retry after correcting the reported issue.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_CONFLICT",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow operation conflicts with the current run state.",
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the current state before retrying.",
+      "httpStatus": 409
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_PROJECT_ID_REQUIRED",
+      "area": "runtime",
+      "stage": "start",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow daemon did not receive its registered project identity.",
+      "hint": "Run \"kb-dev start --help\", then start the workflow daemon through the project runtime launcher.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Workflow run {runId} was not found.",
+      "hint": "Run \"kb workflow runs list\" to inspect available runs.",
+      "httpStatus": 404
+    },
+    {
+      "code": "KB_RUNTIME_CRON_NOT_FOUND",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The requested cron was not found.",
+      "hint": "Run \"kb workflow crons list\" to inspect available crons.",
+      "httpStatus": 404
+    },
+    {
+      "code": "KB_RUNTIME_CRON_PLUGIN_READ_ONLY",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Plugin crons cannot be changed through the project API.",
+      "hint": "Edit the owning plugin manifest to change this cron, then run \"kb workflow crons list\".",
+      "httpStatus": 409
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_REFRESH_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Workflow definitions could not be refreshed.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_LIST_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Workflow definitions could not be listed.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_NOT_FOUND",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The requested workflow was not found.",
+      "hint": "Run \"kb workflow workflows list\" to inspect available workflow IDs.",
+      "httpStatus": 404
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_GET_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow definition could not be loaded.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUNS_LIST_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Runs for the workflow could not be listed.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_INPUT_INVALID",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow run inputs are invalid.",
+      "hint": "Provide every required workflow input, then retry the run.",
+      "httpStatus": 400
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_START_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow run could not be started.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_CANCEL_CONFLICT",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow run cannot be cancelled in its current state.",
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect its current state.",
+      "httpStatus": 409
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_CANCEL_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow run could not be cancelled.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RERUN_NOT_APPLICABLE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow run has no failed jobs to rerun.",
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the run before retrying.",
+      "httpStatus": 400
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_RERUN_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow run could not be rerun.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_SNAPSHOT_NOT_FOUND",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow run snapshot was not found.",
+      "hint": "Run \"kb workflow runs list\" to select a run with an available snapshot.",
+      "httpStatus": 404
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_RESTART_CONFLICT",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The active workflow run cannot be restarted.",
+      "hint": "Wait for the workflow run to finish, then retry the restart.",
+      "httpStatus": 409
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_RESTART_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow run could not be restarted.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_LIST_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Workflow runs could not be listed.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_GET_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow run could not be loaded.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_RUN_LOGS_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Logs for the workflow run could not be loaded.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_APPROVAL_LIST_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Pending approvals could not be listed.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_APPROVAL_INPUT_INVALID",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The approval request is invalid.",
+      "hint": "Provide jobId, stepId, and an action of approve or reject, then retry.",
+      "httpStatus": 400
+    },
+    {
+      "code": "KB_RUNTIME_JOB_NOT_FOUND",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The requested job was not found.",
+      "hint": "Run \"kb workflow jobs list\" to inspect available jobs.",
+      "httpStatus": 404
+    },
+    {
+      "code": "KB_RUNTIME_WORKFLOW_STEP_NOT_FOUND",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Workflow step {stepId} was not found.",
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the workflow steps.",
+      "httpStatus": 404
+    },
+    {
+      "code": "KB_RUNTIME_APPROVAL_NOT_PENDING",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow step is not waiting for approval.",
+      "hint": "Run \"kb workflow runs view <run-id>\" to inspect the step state.",
+      "httpStatus": 409
+    },
+    {
+      "code": "KB_RUNTIME_APPROVAL_RESOLVE_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The workflow approval could not be resolved.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_JOB_INPUT_INVALID",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The job submission request is invalid.",
+      "hint": "Correct the job submission fields, then retry.",
+      "httpStatus": 400
+    },
+    {
+      "code": "KB_RUNTIME_JOB_SUBMIT_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The job could not be submitted.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_JOB_GET_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The job could not be loaded.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_JOB_CANCEL_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The job could not be cancelled.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_JOB_LIST_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Jobs could not be listed.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_JOB_STEPS_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The job steps could not be loaded.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_JOB_LOGS_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The job logs could not be loaded.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_CRON_SCHEDULER_UNAVAILABLE",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The cron scheduler is unavailable.",
+      "hint": "Run \"kb status\" to inspect service health, then retry after the workflow service is ready.",
+      "httpStatus": 503
+    },
+    {
+      "code": "KB_RUNTIME_CRON_LIST_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "Cron schedules could not be listed.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
+      "code": "KB_RUNTIME_CRON_MUTATION_FAILED",
+      "area": "runtime",
+      "stage": "run",
+      "severity": "error",
+      "retryable": false,
+      "message": "The cron schedule could not be changed.",
+      "hint": "Run \"kb logs query\" to inspect the workflow service, correct the reported cause, then retry.",
+      "httpStatus": 500
+    },
+    {
       "code": "KB_RUNTIME_CONFIRMATION_REQUIRED",
       "area": "runtime",
       "stage": "run",
@@ -1396,7 +1786,8 @@
       "severity": "error",
       "retryable": true,
       "message": "A monitored service reported a failure.",
-      "hint": "Run `kb-dev status` to inspect the service and its health checks."
+      "hint": "Run `kb-dev status` to inspect the service and its health checks.",
+      "httpStatus": 503
     }
   ]
 }

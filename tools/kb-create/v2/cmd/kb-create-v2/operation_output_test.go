@@ -76,7 +76,7 @@ func TestOperationHumanRenderersMatchGoldenOutput(t *testing.T) {
 		value any
 		want  string
 	}{
-		"install":   {nil, ""},
+		"install":   {nil, "Platform installation completed."},
 		"plan":      {planResult{}, "Install plan resolved."},
 		"apply":     {applyCommandResult{}, "Platform installation completed."},
 		"status":    {status, "Installed: true\nPlatform channel: stable\nPlatform version: 1.2.3\nRunning: false\nReachable: false"},
@@ -102,5 +102,8 @@ func TestOperationHumanRenderersMatchGoldenOutput(t *testing.T) {
 		if got := descriptor.Human(golden.value); got != golden.want {
 			t.Errorf("%s human output = %q, want %q", descriptor.Name, got, golden.want)
 		}
+	}
+	if got := renderUpdate(updateCommandResult{AlreadyUpToDate: true}); got != "Platform is already up to date." {
+		t.Fatalf("up-to-date update output = %q", got)
 	}
 }

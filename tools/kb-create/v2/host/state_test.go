@@ -41,6 +41,28 @@ func TestStateHomeDefaultsToTheUserHome(t *testing.T) {
 	}
 }
 
+// case: PC-001.10, PC-001.12, PC-001.16
+func TestStateForRootSeparatesConcurrentInstallations(t *testing.T) {
+	base := State{Dir: filepath.Join(t.TempDir(), "launcher")}
+	rootA := filepath.Join(t.TempDir(), "platform-a")
+	rootB := filepath.Join(t.TempDir(), "platform-b")
+	stateA, err := StateForRoot(base, rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateB, err := StateForRoot(base, rootB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateA.Dir == stateB.Dir || stateA.HostPID() == stateB.HostPID() {
+		t.Fatalf("installation lifecycle state collides: A=%q B=%q", stateA.Dir, stateB.Dir)
+	}
+	stateAAgain, err := StateForRoot(base, rootA)
+	if err != nil || stateAAgain.Dir != stateA.Dir {
+		t.Fatalf("root state is not stable: %q / %q / %v", stateA.Dir, stateAAgain.Dir, err)
+	}
+}
+
 func operationCode(err error) string {
 	var typed *diag.Diag
 	if errors.As(err, &typed) {

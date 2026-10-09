@@ -27,12 +27,14 @@ import (
 )
 
 type updateCommandResult struct {
-	OK            bool                     `json:"ok"`
-	Operation     string                   `json:"operation"`
-	Receipt       contracts.InstallReceipt `json:"receipt"`
-	Snapshot      map[string]any           `json:"snapshot"`
-	HostRestarted bool                     `json:"hostRestarted"`
-	LogPath       string                   `json:"logPath"`
+	OK              bool                     `json:"ok"`
+	Operation       string                   `json:"operation"`
+	Receipt         contracts.InstallReceipt `json:"receipt"`
+	Snapshot        map[string]any           `json:"snapshot"`
+	HostRestarted   bool                     `json:"hostRestarted"`
+	AlreadyUpToDate bool                     `json:"alreadyUpToDate,omitempty"`
+	UpdateSummary   *contracts.UpdateSummary `json:"updateSummary,omitempty"`
+	LogPath         string                   `json:"logPath"`
 }
 
 type updateCommandInput struct {
@@ -63,8 +65,12 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		failure.ProcessExitCode = diag.ExitInput
 		return updateCommandResult{}, failure
 	}
-	if err := resolve.ValidateUpdate(active, plan, resolved.Catalog); err != nil {
+	disposition, err := resolve.ValidateUpdate(active, plan, resolved.Catalog)
+	if err != nil {
 		return updateCommandResult{}, inputFailure(updateCompatibilityDiag(asDiag(err)))
+	}
+	if disposition == resolve.UpdateAlreadyUpToDate {
+		return updateCommandResult{OK: true, Operation: "update", Receipt: active, HostRestarted: false, AlreadyUpToDate: true}, nil
 	}
 	request, changed, err := requestWithGeneratedSecrets(plan.Request, plan.Artifacts)
 	if err != nil {
@@ -81,6 +87,11 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 		}
 		plan = *response.Plan
 	}
+	updateSummary, err := resolve.SummarizeUpdate(active, plan, resolved.Catalog)
+	if err != nil {
+		failure := contracts.NewDiag(contracts.CodeOperationFailed, "the installed platform could not be compared with the resolved update", "verify the active receipt and sealed release index, then rerun `kb-create update`", err)
+		return updateCommandResult{}, inputFailure(failure)
+	}
 	if running := refuseForeignHost(resolved.State, plan.Request.PlatformRoot); running != nil {
 		return updateCommandResult{}, running
 	}
@@ -88,6 +99,7 @@ func executeUpdate(ctx context.Context, input updateCommandInput, commandDeps co
 	if failure != nil {
 		return updateCommandResult{}, failure
 	}
+	result.UpdateSummary = &updateSummary
 	return result, nil
 }
 
@@ -182,7 +194,7 @@ func swapUpdate(ctx context.Context, command hostCommand, state host.State, plan
 		Change: func(ctx context.Context, running bool) (string, error) {
 			changeDeps := deps
 			if !running {
-				changeDeps.Host = prober
+				changeDeps.Probe = prober
 			}
 			var updateErr error
 			*updated, *snapshot, updateErr = runtime.Update(ctx, plan, changeDeps)

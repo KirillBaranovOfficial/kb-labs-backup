@@ -43,7 +43,25 @@ func (f *fakeInstaller) Uninstall(items []contracts.Artifact) error {
 	return nil
 }
 
-// fakeProbe records the specs it was asked to run.
+// fakeHostStart records the host lifecycle used by apply.
+type fakeHostStart struct {
+	specs   []contracts.HostSpec
+	err     error
+	stops   int
+	onStart func()
+}
+
+func (p *fakeHostStart) Start(_ context.Context, spec contracts.HostSpec) (func() error, error) {
+	p.specs = append(p.specs, spec)
+	if p.onStart != nil {
+		p.onStart()
+	}
+	if p.err != nil {
+		return nil, p.err
+	}
+	return func() error { p.stops++; return nil }, nil
+}
+
 type fakeProbe struct {
 	specs []contracts.HostSpec
 	err   error
@@ -79,20 +97,71 @@ func TestApplyCommitsReceiptOnlyAfterVerification(t *testing.T) {
 	}
 }
 
-func TestApplyProbesTheResolvedHostBeforeCommitting(t *testing.T) {
+// case: PC-001.4, S-039.2
+func TestApplyStartsAndRetainsTheResolvedHost(t *testing.T) {
 	root := t.TempDir()
-	probe := &fakeProbe{}
-	if _, err := Apply(context.Background(), planIn(root, "plan"), Dependencies{Artifacts: &fakeInstaller{}, Host: probe}); err != nil {
+	host := &fakeHostStart{}
+	if _, err := Apply(context.Background(), planIn(root, "plan"), Dependencies{Artifacts: &fakeInstaller{}, Host: host}); err != nil {
 		t.Fatal(err)
 	}
-	if len(probe.specs) != 1 || probe.specs[0].Command != "kb-host" {
-		t.Fatalf("probed = %#v", probe.specs)
+	if len(host.specs) != 1 || host.specs[0].Command != "kb-host" || host.stops != 0 {
+		t.Fatalf("host starts/stops = %#v / %d", host.specs, host.stops)
+	}
+}
+
+// case: PC-001.6
+func TestApplyStopsHostAndPreservesPreviousStateWhenVerificationFails(t *testing.T) {
+	root := t.TempDir()
+	previous := contracts.InstallReceipt{ID: "previous", InstallationID: "stable"}
+	if err := receipt.Write(root, previous); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, ".kb", "kb.config.jsonc")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("previous config\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marketplacePath := filepath.Join(root, ".kb", "marketplace.lock")
+	previousMarketplace := `{"schema":"kb.marketplace/3","plugins":{"previous":{"version":"1","integrity":"sha256-old","resolvedPath":"node_modules/previous","package":"@test/previous","source":"platform","enabled":true}}}` + "\n"
+	if err := os.WriteFile(marketplacePath, []byte(previousMarketplace), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	packagePath := filepath.Join(root, "node_modules", "@test", "next")
+	if err := os.MkdirAll(packagePath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packagePath, "package.json"), []byte(`{"name":"@test/next","version":"2"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := planIn(root, "new-plan")
+	plan.Artifacts = []contracts.Artifact{{ID: "next", Kind: "plugin", Package: "@test/next", Version: "2"}}
+	host := &fakeHostStart{onStart: func() { _ = os.Remove(configPath) }}
+	_, err := Apply(context.Background(), plan, Dependencies{Artifacts: &fakeInstaller{}, Host: host})
+	if err == nil {
+		t.Fatal("verification must fail when the running host removes the generated config")
+	}
+	if host.stops != 1 {
+		t.Fatalf("failed verification left the host running: stops = %d", host.stops)
+	}
+	got, readErr := receipt.Read(root)
+	if readErr != nil || got.ID != previous.ID || got.InstallationID != previous.InstallationID {
+		t.Fatalf("previous receipt = %#v, %v", got, readErr)
+	}
+	config, readErr := os.ReadFile(configPath)
+	if readErr != nil || string(config) != "previous config\n" {
+		t.Fatalf("previous config = %q, %v", config, readErr)
+	}
+	marketplace, readErr := os.ReadFile(marketplacePath)
+	if readErr != nil || string(marketplace) != previousMarketplace {
+		t.Fatalf("previous marketplace lock = %q, %v", marketplace, readErr)
 	}
 }
 
 func TestApplyRemovesGeneratedProjectionWhenTheHostDoesNotStart(t *testing.T) {
 	root := t.TempDir()
-	_, err := Apply(context.Background(), planIn(root, "plan"), Dependencies{Artifacts: &fakeInstaller{}, Host: &fakeProbe{err: errors.New("port in use")}})
+	_, err := Apply(context.Background(), planIn(root, "plan"), Dependencies{Artifacts: &fakeInstaller{}, Host: &fakeHostStart{err: errors.New("port in use")}})
 	if err == nil || !strings.Contains(err.Error(), "port in use") {
 		t.Fatalf("expected the host failure, got %v", err)
 	}
@@ -107,7 +176,7 @@ func TestApplyRemovesGeneratedProjectionWhenTheHostDoesNotStart(t *testing.T) {
 // case: S-005.1
 func TestApplyClientProfileInstallsWithoutRuntimeConfigOrHostProbe(t *testing.T) {
 	root := t.TempDir()
-	probe := &fakeProbe{}
+	probe := &fakeHostStart{}
 	plan := contracts.ResolvedInstallPlan{
 		Schema:       contracts.ResolvedPlanSchema,
 		Request:      contracts.InstallRequest{PlatformRoot: root},
@@ -117,7 +186,7 @@ func TestApplyClientProfileInstallsWithoutRuntimeConfigOrHostProbe(t *testing.T)
 		t.Fatal(err)
 	}
 	if len(probe.specs) != 0 {
-		t.Fatalf("client host probes = %#v", probe.specs)
+		t.Fatalf("client host starts = %#v", probe.specs)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
 		t.Fatalf("client runtime config stat error = %v", err)
@@ -195,7 +264,7 @@ func TestUpdateRestoresPreviousReceiptWhenTheNewHostDoesNotStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	installer := &fakeInstaller{}
-	_, snapshot, err := Update(context.Background(), planIn(root, "new-plan"), Dependencies{Artifacts: installer, Host: &fakeProbe{err: errors.New("crash on boot")}, Clock: fixedClock{time.Unix(6, 0)}})
+	_, snapshot, err := Update(context.Background(), planIn(root, "new-plan"), Dependencies{Artifacts: installer, Probe: &fakeProbe{err: errors.New("crash on boot")}, Clock: fixedClock{time.Unix(6, 0)}})
 	if err == nil || snapshot.ID == "" || installer.restores != 1 {
 		t.Fatalf("err/snapshot/restores = %v / %#v / %d", err, snapshot, installer.restores)
 	}
@@ -212,7 +281,7 @@ func TestUpdateRestoresPreviousReceiptWhenTheNewHostDoesNotStart(t *testing.T) {
 func TestFreshApplyGeneratesStableInstallationIdentityForHostAndReceipt(t *testing.T) {
 	root := t.TempDir()
 	store := &secrets.Store{PlatformRoot: root}
-	probe := &fakeProbe{}
+	probe := &fakeHostStart{}
 	result, err := Apply(context.Background(), planIn(root, "first-plan"), Dependencies{Artifacts: &fakeInstaller{}, Host: probe, Secrets: store})
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +308,7 @@ func TestGatewayAddressPersistsAcrossUpdateAndRollback(t *testing.T) {
 	plan := planIn(root, "gateway-before")
 	plan.Request.GatewayURL = "http://127.0.0.1:4100"
 	plan.Host.HealthURL = plan.Request.GatewayURL + "/health"
-	installed, err := Apply(context.Background(), plan, Dependencies{Artifacts: &fakeInstaller{}, Host: &fakeProbe{}, Secrets: store})
+	installed, err := Apply(context.Background(), plan, Dependencies{Artifacts: &fakeInstaller{}, Host: &fakeHostStart{}, Secrets: store})
 	if err != nil {
 		t.Fatal(err)
 	}

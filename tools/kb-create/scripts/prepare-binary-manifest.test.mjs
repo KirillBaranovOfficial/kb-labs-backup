@@ -13,10 +13,12 @@ test('creates Linux and macOS binary entries without unsupported Windows artifac
   const output = join(root, 'binary-manifest.json');
   try {
     writeFileSync(checksums, `${'a'.repeat(64)}  kb-create-linux-amd64\n${'b'.repeat(64)}  kb-create-darwin-arm64\n${'c'.repeat(64)}  kb-dev-windows-amd64.exe\n${'d'.repeat(64)}  kb-create-windows-amd64.exe\n${'e'.repeat(64)}  kb-devkit-linux-amd64\nnot-an-asset\n`);
+    writeFileSync(join(root, 'kb-create-linux-amd64'), 'linux-binary');
+    writeFileSync(join(root, 'kb-create-darwin-arm64'), 'mac-binary');
     execFileSync(process.execPath, [script.pathname, '--checksums', checksums, '--repository', 'kb-labs-team/kb-labs', '--release-tag', 'v2.3.4-binaries', '--version', '2.3.4', '--output', output]);
     assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')), { binaries: [
-      { id: 'kb-create', version: '2.3.4', os: 'darwin', arch: 'arm64', filename: 'kb-create-darwin-arm64', sha256: 'b'.repeat(64), url: 'https://github.com/kb-labs-team/kb-labs/releases/download/v2.3.4-binaries/kb-create-darwin-arm64' },
-      { id: 'kb-create', version: '2.3.4', os: 'linux', arch: 'amd64', filename: 'kb-create-linux-amd64', sha256: 'a'.repeat(64), url: 'https://github.com/kb-labs-team/kb-labs/releases/download/v2.3.4-binaries/kb-create-linux-amd64' },
+      { id: 'kb-create', version: '2.3.4', os: 'darwin', arch: 'arm64', filename: 'kb-create-darwin-arm64', sha256: 'b'.repeat(64), sizeBytes: 10, url: 'https://github.com/kb-labs-team/kb-labs/releases/download/v2.3.4-binaries/kb-create-darwin-arm64' },
+      { id: 'kb-create', version: '2.3.4', os: 'linux', arch: 'amd64', filename: 'kb-create-linux-amd64', sha256: 'a'.repeat(64), sizeBytes: 12, url: 'https://github.com/kb-labs-team/kb-labs/releases/download/v2.3.4-binaries/kb-create-linux-amd64' },
     ] });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -29,6 +31,7 @@ test('passes the staged version through for the Go catalog validator to own', ()
   const output = join(root, 'binary-manifest.json');
   try {
     writeFileSync(checksums, `${'a'.repeat(64)}  kb-create-linux-amd64\n`);
+    writeFileSync(join(root, 'kb-create-linux-amd64'), 'binary');
     execFileSync(process.execPath, [script.pathname, '--checksums', checksums, '--repository', 'kb-labs-team/kb-labs', '--release-tag', 'candidate', '--version', 'invalid-version', '--output', output]);
     const manifest = JSON.parse(readFileSync(output, 'utf8'));
     assert.equal(manifest.binaries[0].version, 'invalid-version');
@@ -43,6 +46,7 @@ test('uses an explicit HTTP(S) asset base URL for locally hosted release candida
   const output = join(root, 'binary-manifest.json');
   try {
     writeFileSync(checksums, `${'a'.repeat(64)}  kb-create-linux-amd64\n`);
+    writeFileSync(join(root, 'kb-create-linux-amd64'), 'binary');
     execFileSync(process.execPath, [script.pathname, '--checksums', checksums,
       '--repository', 'kb-labs-team/kb-labs', '--release-tag', 'candidate', '--version', '2.3.4',
       '--asset-base-url', 'http://origin:8080/journey-candidate/', '--output', output]);
