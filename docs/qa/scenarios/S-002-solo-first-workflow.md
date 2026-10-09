@@ -29,4 +29,4 @@ A developer creates the documented local workflow example in a registered projec
 | S-002.3 | Run `kb workflow run --workflow-id=hello` | Within 30 seconds, CLI returns a non-empty run ID for workflow `hello`. |
 | S-002.4 | Run `kb workflow runs view <run-id>`, replacing the placeholder with the returned ID | Within 60 seconds, detail reports status `success`; the `hello` step output contains `hello-workflow`. |
 | S-002.5 | Run `kb workflow runs list --workflow=hello --json` | JSON includes the same run ID, workflow ID `hello`, and status `success`. |
-| S-002.6 | Run `kb workflow runs view <run-id>` with an unknown ID | CLI reports that the run was not found and gives a next action; it does not print a stack trace. |
+| S-002.6 | Run `kb workflow runs view <unknown-run-id> --json` | CLI exits non-zero with error code `KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND`, identifies the missing run ID, and gives the exact next action `Run "kb workflow runs list" to inspect available runs.` |
