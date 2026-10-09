@@ -293,6 +293,28 @@ describe('Gateway /health endpoint', () => {
     expect(typeof body.upstreams['rest-api'].latencyMs).toBe('number');
   });
 
+  it('reports readiness only for the configured upstream graph when project routing is enabled', async () => {
+    mockAdapters = { llm: { complete: vi.fn() } };
+    const transport = makeTransport({ ok: true, statusCode: 200, payload: { ok: true } });
+    const projectRouting = {
+      acquire: async () => ({ host: '127.0.0.1', port: 1234, headers: {}, release: () => undefined }),
+      status: () => ({ limit: 4, active: 0, runtimes: [] }),
+    };
+    app = await buildHealthApp({
+      upstreams: { marketplace: { serviceId: 'marketplace', prefix: '/api/v1/marketplace' } },
+    }, transport, undefined, projectRouting);
+
+    const response = await app.inject({ method: 'GET', url: '/ready' });
+    const body = response.json().data;
+
+    expect(response.statusCode).toBe(200);
+    expect(body.ready).toBe(true);
+    expect(body.components['upstream:marketplace']).toEqual({ ready: true, status: 'up' });
+    expect(body.components).not.toHaveProperty('restUpstream');
+    expect(body.components).not.toHaveProperty('workflowUpstream');
+    expect(body.components.projectRuntimes).toEqual({ ready: true, status: '0/4 active' });
+  });
+
   it('logs structured diagnostics when upstream health probe fails', async () => {
     mockAdapters = { llm: { complete: vi.fn() } };
     const transport: IServiceTransport = {

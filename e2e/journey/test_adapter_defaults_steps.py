@@ -11,11 +11,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from adapter_defaults_steps import run_adapter_default_steps
+from adapter_defaults_steps import _assert_required_upstreams_ready, run_adapter_default_steps
 from service_steps import Journey
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
+    def test_workflow_readiness_claim_fails_when_required_upstream_is_down(self):
+        with self.assertRaisesRegex(RuntimeError, "required upstreams not ready: marketplace"):
+            _assert_required_upstreams_ready({
+                "ready": True,
+                "components": {
+                    "upstream:marketplace": {"ready": False, "status": "down"},
+                    "projectRuntimes": {"ready": True, "status": "1/4 active"},
+                },
+            })
+
     def test_default_pack_and_platform_adapter_scope_are_observable(self):
         with tempfile.TemporaryDirectory(prefix="kb-adapter-defaults-") as directory:
             home = Path(directory)
@@ -308,8 +318,24 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 return [{**row, "implementation": provider} if row["slot"] == "analytics" else row
                         for row in runtime_adapters]
 
-            with patch("adapter_defaults_steps.urllib.request.urlopen",
-                       side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps({"ok": True, "data": health_adapters()}).encode())):
+            def fake_urlopen(request, *args, **kwargs):
+                url = request.full_url if hasattr(request, "full_url") else str(request)
+                if url.endswith("/ready"):
+                    return io.BytesIO(json.dumps({"ok": True, "data": {
+                        "ready": True,
+                        "components": {
+                            "upstream:marketplace": {"ready": True, "status": "up"},
+                        },
+                    }}).encode())
+                if url.endswith("/health"):
+                    return io.BytesIO(json.dumps({"ok": True, "data": {
+                        "status": "healthy",
+                        "upstreams": {"marketplace": {"status": "up"}},
+                        "projectRuntimes": {"limit": 4, "active": 1, "runtimes": [
+                            {"projectId": project_id, "state": "ready"}]}}}).encode())
+                return io.BytesIO(json.dumps({"ok": True, "data": health_adapters()}).encode())
+
+            with patch("adapter_defaults_steps.urllib.request.urlopen", side_effect=fake_urlopen):
                 run_adapter_default_steps(journey, project_a, env, fake_run)
 
             expected = {f"S-054.{number}" for number in range(1, 9)} | {f"S-054.{number}" for number in range(10, 17)} | {f"S-048.{number}" for number in range(1, 7)}
