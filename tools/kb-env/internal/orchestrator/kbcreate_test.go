@@ -47,7 +47,7 @@ func TestInstallUsesV2RequestAndParsesTypedStreamFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"install", "--json", "--index", filepath.Join(home, ".local", "share", "kb-create", "release-index.json"), "--request-platform-root", l.Platform, "--project-root", l.Project, "--service-profile", "default", "--plugins", "mind,marketplace", "--registry", "http://registry.example.test"}
+	want := []string{"install", "--json", "--index", filepath.Join(home, ".local", "share", "kb-create", "release-index.json"), "--platform-root", l.Platform, "--project-root", l.Project, "--service-profile", "default", "--plugins", "mind,marketplace", "--registry", "http://registry.example.test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("kb-create args = %q, want %q", got, want)
 	}

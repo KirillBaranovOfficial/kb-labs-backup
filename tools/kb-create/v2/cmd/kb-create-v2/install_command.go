@@ -59,7 +59,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
-		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `kb-create install --request-platform-root PATH`.", err)
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `kb-create install --platform-root PATH`.", err)
 	}
 	if err := preflight.CheckInstallResources(root); err != nil {
 		return applyCommandResult{}, asDiag(err)
@@ -80,7 +80,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		return applyCommandResult{}, contracts.NewDiag("KB_INSTALL_SCENARIO_INVALID", "The install answers could not be compiled.", "Correct the answers and rerun `kb-create install`.", err)
 	}
 	started := time.Now()
-	resolved, failure := resolvePlan(planInput{Index: index, Request: &request, Executable: input.Executable, KnownGateways: knownGatewayRoots(input.Executable)})
+	resolved, failure := resolvePlan(planInput{Operation: "install", Index: index, Request: &request, Executable: input.Executable, KnownGateways: knownGatewayRoots(input.Executable)})
 	if failure != nil {
 		return applyCommandResult{}, failure
 	}
@@ -137,11 +137,11 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 func installJSON(ctx context.Context, input installCommandInput, deps commandDependencies) (streamCompletion, *diag.Diag) {
 	writer := stream.New(clikitcommand.StreamWriter(deps.Command))
 	if input.Index == "" || (input.RequestFile == "" && input.Direct.PlatformRoot == "") {
-		failure := contracts.NewDiag(contracts.CodeInputRequired, "install needs a release index and an install request", "pass --index and either --input REQUEST.json or --request-platform-root PATH, then rerun `kb-create install --json`", nil)
+		failure := contracts.NewDiag(contracts.CodeInputRequired, "install needs a release index and an install request", "Supply `--index` and either a readable request file with `--input` or a target directory with `--platform-root`, then rerun `kb-create install --json`.", nil)
 		failure.ProcessExitCode = diag.ExitInput
 		return finishInstallStreamFailure(writer, failure)
 	}
-	resolved, failure := resolvePlan(planInput{Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
+	resolved, failure := resolvePlan(planInput{Operation: "install", Index: input.Index, RequestFile: input.RequestFile, Direct: input.Direct,
 		ScenarioID: input.ScenarioID, Answers: input.Answers, Resume: input.Resume, Executable: input.Executable,
 		KnownGateways: knownGatewayRoots(input.Executable)})
 	if failure != nil {

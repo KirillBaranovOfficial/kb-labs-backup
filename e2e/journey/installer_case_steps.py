@@ -12,7 +12,8 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from platform_update_steps import _json_command
-from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result)
+from invocations import (decode_ux_error_result, decode_ux_success_result, read_ux_cli_result,
+                         read_ux_cli_stream)
 from journey_resources import (installer_case_fixture_root, installer_scenario_resources,
                                workspace_resource)
 from service_port_assertions import (assert_root_offset, service_ports,
@@ -23,11 +24,7 @@ CommandRunner = Callable[[list[str]], subprocess.CompletedProcess]
 
 
 def _data(result: subprocess.CompletedProcess, label: str) -> dict:
-    try:
-        envelope = read_ux_cli_result(result.stdout, result.returncode)
-        payload = decode_ux_success_result(envelope) if result.returncode == 0 else decode_ux_error_result(envelope)
-    except ValueError as error:
-        raise RuntimeError(f"{label}: expected an ADR-0049 JSON result: {error}") from error
+    _, payload = _payload(result, label)
     if result.returncode == 0 and isinstance(payload, dict):
         return payload
     raise RuntimeError(f"{label}: exit {result.returncode}; {' '.join(result.stdout.split())[-500:]}")
@@ -39,7 +36,21 @@ def _payload(result: subprocess.CompletedProcess, label: str) -> tuple[dict, dic
         data = (decode_ux_success_result(envelope) if result.returncode == 0
                 else decode_ux_error_result(envelope))
     except ValueError as error:
-        raise RuntimeError(f"{label}: expected an ADR-0049 JSON result: {error}") from error
+        try:
+            records = read_ux_cli_stream(result.stdout, result.returncode)
+        except ValueError:
+            raise RuntimeError(f"{label}: expected an ADR-0049 JSON result or stream: {error}") from error
+        if result.returncode == 0:
+            envelope = next((record for record in reversed(records[:-1])
+                             if record.get("meta", {}).get("stream", {}).get("result") is True), None)
+            if envelope is None:
+                raise RuntimeError(f"{label}: successful CLI stream omitted its result record")
+            data = decode_ux_success_result(envelope)
+        else:
+            envelope = next((record for record in records[:-1] if record.get("ok") is False), None)
+            if envelope is None:
+                raise RuntimeError(f"{label}: failed CLI stream omitted its error result")
+            data = decode_ux_error_result(envelope)
     return envelope, data if isinstance(data, dict) else {}
 
 
@@ -293,11 +304,11 @@ def run_offline_plan_step(*, mode: str, launcher: str, stable_index: Path,
                           "stop primary host for offline cache priming")
         try:
             _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                               "--platform-channel", "stable", "--request-platform-root", str(root)]),
+                               "--platform-channel", "stable", "--platform-root", str(root)]),
                   "online cache priming apply")
             plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
                                                "--platform-channel", "stable", "--offline",
-                                               "--request-platform-root", str(root)], "offline plan").get("plan", {})
+                                               "--platform-root", str(root)], "offline plan").get("plan", {})
             artifacts = plan.get("artifacts", [])
             if (plan.get("request", {}).get("source") != "offline" or not artifacts
                     or any(item.get("resolvedFrom") != "cache" or item.get("resolvedUrl") for item in artifacts)):
@@ -404,7 +415,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
         explicit_installed = False
         try:
             result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                                  "--platform-channel", "stable", "--request-platform-root", str(explicit_root),
+                                  "--platform-channel", "stable", "--platform-root", str(explicit_root),
                                   "--gateway-url", "http://127.0.0.1:4200"])
             explicit_installed = (explicit_root / ".kb/v2/receipt.json").is_file()
             data = _data(result, "explicit Gateway apply")
@@ -414,7 +425,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
                 raise RuntimeError(f"explicit Gateway override was not recorded in the receipt: {explicit_url}")
 
             next_plan = _data(run_command([launcher, "plan", "--json", "--index", str(stable_index),
-                                           "--platform-channel", "stable", "--request-platform-root",
+                                           "--platform-channel", "stable", "--platform-root",
                                            str(explicit_root.parent / "root-d")]), "plan after stopped root allocation").get("plan", {})
             next_url = next_plan.get("request", {}).get("gatewayUrl", "")
             if urlsplit(next_url).port != automatic_port + 200:
@@ -423,7 +434,7 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
                                "next planned root")
 
             planned = _data(run_command([launcher, "plan", "--json", "--index", str(stable_index),
-                                         "--platform-channel", "stable", "--request-platform-root",
+                                         "--platform-channel", "stable", "--platform-root",
                                          str(automatic_root)]), "repeat automatic Gateway plan").get("plan", {})
             if (planned.get("request", {}).get("gatewayUrl") != automatic_url.removesuffix("/health")
                     or planned.get("host", {}).get("healthUrl") != automatic_url
@@ -449,7 +460,7 @@ def run_json_install_project_step(*, mode: str, launcher: str, stable_index: Pat
         project_root.mkdir(parents=True, exist_ok=True)
         try:
             result = run_command([launcher, "install", "--json", "--index", str(stable_index),
-                                  "--request-platform-root", str(platform_root), "--service-profile", "default",
+                                  "--platform-root", str(platform_root), "--service-profile", "default",
                                   "--scenario", "custom", "--scenario-answers", '{"access.mode":"local"}',
                                   "--project-root", str(project_root)])
             _data(result, "JSON custom-scenario install with project")
@@ -485,7 +496,7 @@ def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Pat
         try:
             before = _snapshot_installation_owned_tree(platform_root)
             args = [launcher, "plan", "--json", "--index", str(stable_index),
-                    "--request-platform-root", root, "--service-profile", "default",
+                    "--platform-root", root, "--service-profile", "default",
                     "--scenario", "commit"]
             first = _json_command(run_command, args, "first clean-install plan").get("plan", {})
             second = _json_command(run_command, args, "repeat clean-install plan").get("plan", {})
@@ -573,6 +584,73 @@ def _format_snapshot_changes(changes: dict[str, list[str]]) -> str:
             + f"; {total} path(s) total, showing {shown} of {total}")
 
 
+def run_invalid_request_step(*, mode: str, launcher: str, stable_index: Path,
+                             platform_root: Path, run_command: CommandRunner) -> Journey:
+    """Prove invalid request validation is actionable and does not mutate an install."""
+    journey = Journey(mode, f"invalid-request-{mode}")
+
+    def invalid_request_actionable() -> None:
+        request_file = platform_root.parent / f"s039-invalid-request-{mode}.json"
+        request_file.write_text(json.dumps({"schema": "kb.create/v2", "platformRoot": ""}) + "\n")
+        before = _snapshot_installation_owned_tree(platform_root)
+        try:
+            result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                  "--input", str(request_file)])
+            envelope, error = _diagnostic(result, "invalid install request")
+            after = _snapshot_installation_owned_tree(platform_root)
+            hint = error.get("hint", "")
+            retry = (f"kb-create apply --index '{stable_index}' --input '{request_file}' --json")
+            if (result.returncode == 0 or envelope.get("ok") is not False
+                    or error.get("code") != "KB_INSTALL_INPUT_REQUIRED"
+                    or "platformRoot" not in hint or str(request_file) not in hint
+                    or retry not in hint
+                    or before != after):
+                raise RuntimeError(f"invalid request omitted field repair guidance or exact retry command, or changed installed state: {error}")
+        finally:
+            request_file.unlink(missing_ok=True)
+
+    journey.step("report the invalid request field and preserve installed state", "platform.install",
+                 invalid_request_actionable, cases=["S-039.4"])
+    return journey
+
+
+def run_apply_scenario_step(*, mode: str, launcher: str, stable_index: Path,
+                            platform_root: Path, run_command: CommandRunner) -> Journey:
+    """Prove direct JSON apply resolves scenario answers into its receipt."""
+    journey = Journey(mode, f"apply-scenario-{mode}")
+    apply_root = platform_root.parent / f"s039-apply-scenario-{mode}"
+
+    def apply_scenario_and_check_receipt() -> None:
+        answers = json.dumps({"cache": "state-broker"}, separators=(",", ":"))
+        result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                              "--platform-root", str(apply_root), "--service-profile", "default",
+                              "--scenario", "commit", "--scenario-answers", answers])
+        try:
+            records = [read_ux_cli_result(line, result.returncode)
+                       for line in result.stdout.splitlines() if line.strip()]
+            terminal = records[-1] if records else {}
+            stream = terminal.get("meta", {}).get("stream", {})
+            apply_results = [decode_ux_success_result(record) for record in records[:-1]
+                             if record.get("ok") is True
+                             and record.get("meta", {}).get("stream", {}).get("result") is True]
+            if (result.returncode != 0 or not stream.get("terminal") or stream.get("exitCode") != 0
+                    or terminal.get("ok") is not True or terminal.get("data", "not-null") is not None
+                    or len(apply_results) != 1):
+                raise RuntimeError("apply JSON stream omitted its successful apply result or terminal record")
+            apply_result = apply_results[0]
+            request = apply_result.get("receipt", {}).get("plan", {}).get("request", {})
+            if (apply_result.get("operation") != "apply" or request.get("platformRoot") != str(apply_root)
+                    or request.get("providerPreferences", {}).get("cache") != "state-broker"
+                    or not apply_result.get("logPath")):
+                raise RuntimeError("apply result receipt omitted the isolated root or selected cache provider")
+        finally:
+            cleanup_installer_fixture_root(apply_root, launcher, run_command)
+
+    journey.step("apply scenario answers and verify the selected provider in the receipt",
+                 "platform.install", apply_scenario_and_check_receipt, cases=["S-039.1"])
+    return journey
+
+
 def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                              canary_index: Path, platform_root: Path,
                              secret_value: str, run_command: CommandRunner) -> Journey:
@@ -593,6 +671,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
         journey.step("preflight installer case fixtures", "journey.orchestration",
                      lambda: "missing installer journey resource(s): " + ", ".join(missing_resources))
         return journey
+
     fixture_dir = installer_case_fixture_root()
     root = str(platform_root)
     port_conflict_root = platform_root.parent / "pc001-port-conflict-root"
@@ -603,7 +682,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             owner.bind(("127.0.0.1", 4000))
             owner.listen(1)
             result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                                  "--request-platform-root", str(port_conflict_root),
+                                  "--platform-root", str(port_conflict_root),
                                   "--service-profile", "default", "--scenario", "commit"])
         envelope, error = _diagnostic(result, "PC-001 port conflict")
         details = error.get("details", error.get("meta", {}))
@@ -628,11 +707,11 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     def apply_and_check() -> None:
         selected_plan["serviceGraph"] = _json_command(
             run_command, [launcher, "plan", "--json", "--index", str(stable_index),
-                          "--request-platform-root", str(apply_root),
+                          "--platform-root", str(apply_root),
                           "--service-profile", "default", "--scenario", "commit"],
             "PC-001 selected profile plan").get("plan", {}).get("serviceGraph", {})
         result = _data(run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                                   "--request-platform-root", str(apply_root),
+                                   "--platform-root", str(apply_root),
                                    "--service-profile", "default", "--scenario", "commit"]),
                       "PC-001 apply")
         if result.get("operation") != "apply" or not result.get("receipt") or not result.get("logPath"):
@@ -674,7 +753,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     def channel_plan(channel: str, index: Path, root_name: str) -> None:
         plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(index),
                                            "--platform-channel", channel, "--policy", "compatible",
-                                           "--request-platform-root", str(platform_root.parent / root_name)],
+                                           "--platform-root", str(platform_root.parent / root_name)],
                              f"{channel} plan").get("plan", {})
         artifacts = plan.get("artifacts", [])
         if (plan.get("platformChannel") != channel or not plan.get("serviceGraph", {}).get("platformVersion")
@@ -682,7 +761,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             raise RuntimeError(f"{channel} plan did not resolve an exact version and immutable hashes")
         applied = _data(run_command([launcher, "apply", "--json", "--index", str(index),
                                      "--platform-channel", channel, "--policy", "compatible",
-                                     "--request-platform-root", str(platform_root.parent / root_name)]),
+                                     "--platform-root", str(platform_root.parent / root_name)]),
                         f"{channel} apply")
         if applied.get("shim") != {"linked": False, "owner": str(platform_root)}:
             raise RuntimeError(f"{channel} apply changed the live command owner: {applied.get('shim')}")
@@ -712,7 +791,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
             _json_command(run_command, [launcher, "start", "--platform-root", root, "--json"],
                           "start primary before secondary install")
         apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                                    "--platform-channel", "stable", "--request-platform-root", str(secret_root),
+                                    "--platform-channel", "stable", "--platform-root", str(secret_root),
                                     "--scenario", "custom", "--scenario-answers",
                                     json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
                                                 "admin.tenant": "journey"}),
@@ -830,7 +909,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
     def strict_matrix_and_range() -> None:
         strict = run_command([launcher, "plan", "--json", "--index", str(matrix),
                               "--platform-version", "3.2.0", "--sdk-version", "3.2.0",
-                              "--policy", "strict", "--request-platform-root", str(scratch / "strict-sdk")])
+                              "--policy", "strict", "--platform-root", str(scratch / "strict-sdk")])
         _, error = _diagnostic(strict, "strict SDK matrix plan")
         meta = error.get("details", {})
         if strict.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
@@ -844,7 +923,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError("strict SDK refusal omitted its exact correction hint")
         compatible = _data(run_command([launcher, "plan", "--json", "--index", str(matrix),
                                         "--platform-version", "3.2.0", "--sdk-version", "3.2.0",
-                                        "--policy", "compatible", "--request-platform-root", str(scratch / "compatible-sdk")]),
+                                        "--policy", "compatible", "--platform-root", str(scratch / "compatible-sdk")]),
                            "compatible SDK matrix plan")
         if compatible.get("plan", {}).get("serviceGraph", {}).get("platformVersion") != "3.2.0":
             raise RuntimeError("compatible policy did not resolve the indexed SDK in the declared range")
@@ -855,7 +934,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         result = run_command([launcher, "plan", "--json", "--index", str(matrix),
                               "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
                               "--adapters", "fixture-adapter@1.0.0", "--policy", "compatible",
-                              "--request-platform-root", str(scratch / "adapter-range")])
+                              "--platform-root", str(scratch / "adapter-range")])
         _, error = _diagnostic(result, "adapter range plan")
         meta = error.get("details", {})
         if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
@@ -876,7 +955,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         before_directories = {str(path.relative_to(root)) for path in root.rglob("*") if path.is_dir()}
         result = run_command([launcher, "update", "--json", "--index", str(matrix),
                               "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
-                              "--policy", "compatible", "--request-platform-root", str(root)])
+                              "--policy", "compatible", "--platform-root", str(root)])
         _, error = _diagnostic(result, "installed component update")
         meta = error.get("details", {})
         expected_code = "KB_UPDATE_INCOMPATIBLE"
@@ -897,7 +976,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
     def sdk_and_binary_ranges() -> None:
         sdk_result = run_command([launcher, "plan", "--json", "--index", str(matrix),
                                   "--platform-version", "3.2.0", "--sdk-version", "4.0.0",
-                                  "--policy", "compatible", "--request-platform-root", str(scratch / "sdk-outside-range")])
+                                  "--policy", "compatible", "--platform-root", str(scratch / "sdk-outside-range")])
         _, sdk_error = _diagnostic(sdk_result, "out-of-range SDK plan")
         sdk_meta = sdk_error.get("details", {})
         if sdk_result.returncode == 0 or sdk_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(sdk_meta, dict):
@@ -908,7 +987,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError(f"out-of-range SDK refusal omitted component, version, or range: {sdk_meta}")
         binary_result = run_command([launcher, "plan", "--json", "--index", str(missing_binary),
                                      "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
-                                     "--policy", "compatible", "--request-platform-root", str(scratch / "missing-binary")])
+                                     "--policy", "compatible", "--platform-root", str(scratch / "missing-binary")])
         _, binary_error = _diagnostic(binary_result, "missing binary plan")
         binary_meta = binary_error.get("details", {})
         if binary_result.returncode == 0 or binary_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(binary_meta, dict):
@@ -926,7 +1005,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         before = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()} if target.exists() else {}
         result = run_command([launcher, "plan", "--json", "--index", str(missing_binary),
                               "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
-                              "--policy", "compatible", "--request-platform-root", str(target)])
+                              "--policy", "compatible", "--platform-root", str(target)])
         _, error = _diagnostic(result, "missing host binary plan")
         meta = error.get("details", {})
         after = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()} if target.exists() else {}
@@ -942,7 +1021,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         result = run_command([launcher, "plan", "--json", "--index", str(matrix),
                               "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
                               "--plugins", "fixture-plugin@1.0.0", "--policy", "strict",
-                              "--request-platform-root", str(scratch / "plugin-request")])
+                              "--platform-root", str(scratch / "plugin-request")])
         _, error = _diagnostic(result, "incompatible plugin request")
         if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or "fixture-plugin" not in str(error):
             raise RuntimeError(f"strict incompatible plugin request was not refused: {error}")
@@ -993,7 +1072,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 or payload.get("operation") != "doctor" or payload.get("status") != "unhealthy"
                 or not failed or failed[0].get("code") != "KB_HOST_SPEC_INVALID"
                 or "command is required" not in str(failed[0].get("detail", ""))
-                or "kb-create apply --request-platform-root" not in str(failed[0].get("hint", ""))):
+                or "kb-create apply --platform-root" not in str(failed[0].get("hint", ""))):
             raise RuntimeError("doctor did not report the invalid receipt host specification as an unhealthy diagnosis")
         shutil.rmtree(root, ignore_errors=True)
 

@@ -5,8 +5,8 @@ package transport
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
@@ -44,11 +44,14 @@ func Plan(data []byte, source catalog.Catalog) PlanResponse {
 func PlanWith(data []byte, source catalog.Catalog, options resolve.Options) PlanResponse {
 	request, err := DecodeRequest(data)
 	if err != nil {
-		code := contracts.CodeIncompatibleComponents
-		if strings.Contains(err.Error(), "platform root is required") {
-			code = contracts.CodeInputRequired
+		var validation *contracts.RequestValidationError
+		if errors.As(err, &validation) {
+			response := failure(validation.Code, err)
+			response.Error.Hint = validation.Hint
+			response.Error.Meta = map[string]any{"field": validation.Field}
+			return response
 		}
-		return failure(code, err)
+		return failure(contracts.CodeIncompatibleComponents, err)
 	}
 	resolved, err := resolve.PlanWith(request, source, options)
 	if err != nil {

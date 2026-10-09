@@ -49,7 +49,7 @@ func executeApply(ctx context.Context, applyInput applyCommandInput, deps comman
 func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps commandDependencies) (streamCompletion, *diag.Diag) {
 	writer := stream.New(clikitcommand.StreamWriter(deps.Command))
 	deps.Runtime.Progress = streamProgress{writer: writer}
-	_, failure := executeApply(ctx, applyInput, deps)
+	result, failure := executeApply(ctx, applyInput, deps)
 	if failure != nil {
 		if failure.ProcessExitCode == diag.ExitOK {
 			failure.ProcessExitCode = diag.ExitError
@@ -57,6 +57,8 @@ func executeApplyStream(ctx context.Context, applyInput applyCommandInput, deps 
 		if err := writer.Fail(failure); err != nil {
 			return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Install progress could not be written.")
 		}
+	} else if err := writer.Result(result); err != nil {
+		return streamCompletion{}, diag.Wrap(err, "KB_RUNTIME_UNEXPECTED", "Apply result could not be written.")
 	}
 	exitCode := diag.ExitOK
 	if failure != nil {

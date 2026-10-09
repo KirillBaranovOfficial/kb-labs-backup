@@ -40,7 +40,7 @@ func TestDescriptorFlagsMatchFlagsReadByInputConstructors(t *testing.T) {
 				}
 			}
 			if identifier, ok := call.Fun.(*ast.Ident); ok && identifier.Name == "readDirectRequest" {
-				collectFlagReads(reader, readFlags, "request-platform-root")
+				collectFlagReads(reader, readFlags, "platform-root")
 			}
 			if identifier, ok := call.Fun.(*ast.Ident); ok && identifier.Name == "readUpdateRequest" {
 				collectFlagReads(reader, readFlags, "platform-root")
@@ -55,6 +55,44 @@ func TestDescriptorFlagsMatchFlagsReadByInputConstructors(t *testing.T) {
 			t.Errorf("command %q constructor reads flags %v; descriptor declares %v", descriptor.Name, sortedKeys(readFlags), sortedKeys(declared))
 		}
 	}
+}
+
+// case: S-039.1
+func TestApplyDescriptorAcceptsAndReadsScenarioRequestFlags(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "root.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	literal := descriptorLiterals(t, file)["apply"]
+	if literal == nil {
+		t.Fatal("apply command has no descriptor literal")
+	}
+	declared := make(map[string]struct{})
+	for _, flag := range stringSlice(t, literalField(literal, "Flags")) {
+		declared[flag] = struct{}{}
+	}
+	for _, flag := range []string{"scenario", "scenario-answers"} {
+		if _, ok := declared[flag]; !ok {
+			t.Errorf("apply descriptor does not declare --%s", flag)
+		}
+	}
+}
+
+func stringSlice(t *testing.T, expression ast.Expr) []string {
+	t.Helper()
+	literal, ok := expression.(*ast.CompositeLit)
+	if !ok {
+		t.Fatal("Flags is not a composite literal")
+	}
+	values := make([]string, 0, len(literal.Elts))
+	for _, element := range literal.Elts {
+		value, ok := element.(*ast.BasicLit)
+		if !ok {
+			t.Fatal("flag is not a string literal")
+		}
+		values = append(values, unquoteFlag(value.Value))
+	}
+	return values
 }
 
 func descriptorLiterals(t *testing.T, file *ast.File) map[string]*ast.CompositeLit {

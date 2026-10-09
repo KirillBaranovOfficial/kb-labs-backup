@@ -40,7 +40,7 @@ new plan. Raw package-manager transcript is private under `.kb/logs/`; failed
 operations add a redacted dossier under `.kb/diagnostics/`.
 
 CI and agents may pass the request file unchanged, or use direct flags such
-as `--request-platform-root`, `--platform-version`/`--platform-channel`,
+as `--platform-root`, `--platform-version`/`--platform-channel`,
 `--sdk-version`, `--plugins id@version,...`, `--adapters id@version,...`,
 `--service-profile`, `--policy`, and `--offline`. Both forms normalize into
 the same `InstallRequest` before resolution; flags never build a separate

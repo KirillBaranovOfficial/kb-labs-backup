@@ -60,7 +60,7 @@ def run_platform_channel_steps(
             args = [launcher, "apply", "--json", "--index", str(canary_index),
                     "--platform-channel", "canary", "--policy", "compatible",
                     "--sdk-version", canary_version,
-                    "--request-platform-root", str(fresh_root),
+                    "--platform-root", str(fresh_root),
                     "--project-root", str(project_root)]
             command = run_command(args)
             try:

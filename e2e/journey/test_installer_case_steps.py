@@ -8,10 +8,12 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from installer_case_steps import (_seed_doctor_fixture, assert_default_service_ports_free,
+from installer_case_steps import (_data, _seed_doctor_fixture, assert_default_service_ports_free,
                                   cleanup_installer_fixture_root,
                                   run_doctor_root_isolation_step,
                                   run_analytics_invalid_retention_step, run_installer_case_steps,
+                                  run_apply_scenario_step,
+                                  run_invalid_request_step,
                                   run_offline_plan_step, run_repeat_plan_readonly_step,
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
                                   run_gateway_allocation_step,
@@ -24,6 +26,108 @@ from service_port_assertions import assert_service_ports_preserved
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    # case: S-039.1
+    def test_apply_scenario_claim_checks_command_stream_and_receipt_preference(self):
+        with tempfile.TemporaryDirectory(prefix="journey-apply-scenario-") as temp:
+            root = Path(temp)
+            platform = root / "platform"
+            index = root / "release-index.json"
+            index.write_text("{}")
+            calls = []
+
+            def run_command(args):
+                calls.append(args)
+                receipt = {"plan": {"request": {
+                    "platformRoot": args[args.index("--platform-root") + 1],
+                    "providerPreferences": {"cache": "state-broker"},
+                }}}
+                apply_result = {"operation": "apply", "receipt": receipt, "logPath": "/tmp/apply.log"}
+                records = [
+                    {"ok": True, "data": {"phase": "Install packages", "state": "completed"}},
+                    {"ok": True, "data": apply_result, "meta": {"stream": {"result": True}}},
+                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 0}}},
+                ]
+                return subprocess.CompletedProcess(args, 0,
+                    "\n".join(json.dumps(record) for record in records) + "\n", "")
+
+            journey = run_apply_scenario_step(mode="local", launcher="kb-create", stable_index=index,
+                                              platform_root=platform, run_command=run_command)
+            claim = next(step for step in journey.steps if step.cases == ["S-039.1"])
+            self.assertEqual(claim.status, "PASS", claim.message)
+            self.assertEqual(calls[0], [
+                "kb-create", "apply", "--json", "--index", str(index),
+                "--platform-root", str(root / "s039-apply-scenario-local"),
+                "--service-profile", "default", "--scenario", "commit",
+                "--scenario-answers", '{"cache":"state-broker"}',
+            ])
+
+    # case: S-039.1
+    def test_apply_scenario_claim_rejects_receipt_with_wrong_provider(self):
+        with tempfile.TemporaryDirectory(prefix="journey-apply-scenario-wrong-") as temp:
+            root = Path(temp)
+            platform = root / "platform"
+            apply_root = root / "s039-apply-scenario-local"
+            index = root / "release-index.json"
+            index.write_text("{}")
+
+            def run_command(args):
+                apply_result = {"operation": "apply", "receipt": {"plan": {"request": {
+                    "platformRoot": str(apply_root), "providerPreferences": {"cache": "other"},
+                }}}, "logPath": "/tmp/apply.log"}
+                records = [
+                    {"ok": True, "data": apply_result, "meta": {"stream": {"result": True}}},
+                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 0}}},
+                ]
+                return subprocess.CompletedProcess(args, 0,
+                    "\n".join(json.dumps(record) for record in records) + "\n", "")
+
+            journey = run_apply_scenario_step(mode="local", launcher="kb-create", stable_index=index,
+                                              platform_root=platform, run_command=run_command)
+            claim = next(step for step in journey.steps if step.cases == ["S-039.1"])
+            self.assertEqual(claim.status, "FAIL")
+            self.assertIn("selected cache provider", claim.message)
+
+    # case: S-039.4
+    def test_invalid_request_claim_checks_field_repair_hint_and_preserves_state(self):
+        with tempfile.TemporaryDirectory(prefix="journey-invalid-request-") as temp:
+            root = Path(temp)
+            platform = root / "platform"
+            platform.mkdir()
+            (platform / "receipt.json").write_text("unchanged\n")
+            index = root / "index.json"
+            index.write_text("{}")
+            calls = []
+            requests = []
+
+            def run_command(args):
+                calls.append(args)
+                index_path = args[args.index("--index") + 1]
+                request_path = args[args.index("--input") + 1]
+                requests.append(json.loads(Path(request_path).read_text()))
+                error = {"code": "KB_INSTALL_INPUT_REQUIRED", "message": "request is invalid",
+                         "hint": (f"Correct platformRoot in request file '{request_path}', then retry: "
+                                  f"kb-create apply --index '{index_path}' --input '{request_path}' --json")}
+                records = [
+                    {"ok": False, "error": error},
+                    {"ok": True, "data": None, "meta": {"stream": {"terminal": True, "exitCode": 2}}},
+                ]
+                return subprocess.CompletedProcess(args, 2,
+                    "\n".join(json.dumps(record) for record in records) + "\n", "")
+
+            journey = run_invalid_request_step(mode="local", launcher="kb-create", stable_index=index,
+                                               platform_root=platform, run_command=run_command)
+
+            claim = next(step for step in journey.steps if step.cases == ["S-039.4"])
+            self.assertEqual(claim.status, "PASS", claim.message)
+            self.assertEqual(calls[0][1:3], ["apply", "--json"])
+            self.assertEqual(requests[0]["platformRoot"], "")
+
+    def test_apply_result_helper_decodes_stream_result_event(self):
+        result = subprocess.CompletedProcess(["kb-create", "apply", "--json"], 0,
+            '{"ok":true,"data":{"operation":"apply","receipt":{},"logPath":"/tmp/apply.log"},"meta":{"stream":{"result":true}}}\n'
+            '{"ok":true,"data":null,"meta":{"stream":{"terminal":true,"exitCode":0}}}\n', "")
+        self.assertEqual(_data(result, "apply")['operation'], "apply")
+
     def test_root_offset_assertion_checks_services_and_transport_urls(self):
         plan = {"serviceGraph": {"services": [{"id": "gateway", "port": 4100},
                                                {"id": "marketplace", "port": 5170}]},
@@ -168,8 +272,8 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertNotIn("--offline", calls[1])
         self.assertIn("--offline", calls[2])
         cache_root = root.parent / "s181-offline-root"
-        self.assertEqual(calls[1][calls[1].index("--request-platform-root") + 1], str(cache_root))
-        self.assertEqual(calls[2][calls[2].index("--request-platform-root") + 1], str(cache_root))
+        self.assertEqual(calls[1][calls[1].index("--platform-root") + 1], str(cache_root))
+        self.assertEqual(calls[2][calls[2].index("--platform-root") + 1], str(cache_root))
 
     def test_platform_cli_resolves_the_requested_roots_executable(self):
         with tempfile.TemporaryDirectory(prefix="journey-platform-cli-") as temp:
@@ -271,7 +375,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 if command == "uninstall":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}), "")
                 if command == "plan":
-                    root = Path(args[args.index("--request-platform-root") + 1])
+                    root = Path(args[args.index("--platform-root") + 1])
                     port = 4300 if root.name == "root-d" else 4100
                     payload = {"plan": {"request": {"gatewayUrl": f"http://127.0.0.1:{port}"},
                                         "host": {"healthUrl": f"http://127.0.0.1:{port}/health"},
@@ -286,7 +390,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                                         })}]}}
                     return subprocess.CompletedProcess(args, 0,
                         json.dumps({"ok": True, "data": payload}), "")
-                root = Path(args[args.index("--request-platform-root") + 1])
+                root = Path(args[args.index("--platform-root") + 1])
                 gateway = args[args.index("--gateway-url") + 1]
                 port = gateway.rsplit(":", 1)[1]
                 (root / ".kb/v2").mkdir(parents=True)
@@ -313,7 +417,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
         self.assertEqual([call[1] for call in calls], ["stop", "apply", "plan", "plan", "status", "stop"])
         self.assertEqual(calls[1][calls[1].index("--gateway-url") + 1], "http://127.0.0.1:4200")
-        self.assertEqual(calls[2][calls[2].index("--request-platform-root") + 1], str(explicit.parent / "root-d"))
+        self.assertEqual(calls[2][calls[2].index("--platform-root") + 1], str(explicit.parent / "root-d"))
 
     def test_repeat_plan_compares_install_owned_files_while_host_stays_running(self):
         with tempfile.TemporaryDirectory(prefix="journey-repeat-plan-") as temp:

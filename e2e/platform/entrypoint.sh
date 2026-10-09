@@ -69,7 +69,7 @@ fi
 # on demand; there is no kb-dev, no --net-offset and no devservices.yaml here.
 kb-create apply \
   --index /release-index.json \
-  --request-platform-root "$PLATFORM_ROOT" \
+  --platform-root "$PLATFORM_ROOT" \
   --project-root "$PLATFORM_ROOT" \
   --platform-channel stable \
   --service-profile default \

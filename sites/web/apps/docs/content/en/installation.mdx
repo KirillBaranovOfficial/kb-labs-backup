@@ -1,7 +1,7 @@
 ---
 title: "Installation"
 description: "Install KB Labs locally or apply a release index from CI."
-updatedAt: "2026-10-01"
+updatedAt: "2026-10-09"
 order: 2
 ---
 
@@ -73,7 +73,7 @@ root. This path is non-interactive and produces machine-readable output:
 
 ```bash
 kb-create apply --json --index ./release-index.json \
-  --request-platform-root ./ci-platform --service-profile default \
+  --platform-root ./ci-platform --service-profile default \
   --scenario commit
 ```
 

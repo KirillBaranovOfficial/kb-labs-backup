@@ -242,7 +242,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         root = home / ".kb/s005-client"
         index = home / ".local/share/kb-create/release-index.json"
         result = run_command([env.get("KB_JOURNEY_KB_CREATE_PATH", str(home / ".local/bin/kb-create")),
-                              "apply", "--index", str(index), "--request-platform-root", str(root),
+                              "apply", "--index", str(index), "--platform-root", str(root),
                               "--service-profile", "client", "--json"],
                              env=env, cwd=home, timeout=600)
         value = _json(result, "kb-create apply")
