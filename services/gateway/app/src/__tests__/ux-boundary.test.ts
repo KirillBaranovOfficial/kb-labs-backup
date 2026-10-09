@@ -1,11 +1,13 @@
 import Fastify from 'fastify';
 import { Readable } from 'node:stream';
-import { createErrorEnvelope, type ILogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, type ICache, type ILogger } from '@kb-labs/core-platform';
 import { createUxFailureResult, isUxResult } from '@kb-labs/core-platform/ux-result';
 import successFixture from '../../../../../contracts/ux-result/fixtures/valid/success.json';
 import failureFixture from '../../../../../contracts/ux-result/fixtures/valid/failure.json';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { registerGatewayUxBoundary } from '../ux-boundary.js';
+import { registerAuthHealthRoute } from '../auth/health-route.js';
+import { createAuthMiddleware } from '../auth/middleware.js';
 
 describe('Gateway UX boundary', () => {
   const apps: ReturnType<typeof Fastify>[] = [];
@@ -43,10 +45,40 @@ describe('Gateway UX boundary', () => {
       ok: false,
       error: {
         code: 'KB_RUNTIME_RESOURCE_NOT_FOUND',
-        details: { route: 'GET /not-a-gateway-route' },
         correlationId: expect.any(String),
       },
     });
+  });
+
+  // case: S-041.15, S-203.2
+  it('hides denied auth readiness with the exact unknown-route response contract', async () => {
+    const app = Fastify({ logger: false, trustProxy: true });
+    apps.push(app);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() } as unknown as ILogger;
+    registerGatewayUxBoundary(app, logger);
+    const cache = { get: async () => null, set: async () => undefined, delete: async () => undefined, clear: async () => undefined } as unknown as ICache;
+    app.addHook('onRequest', createAuthMiddleware(cache, { secret: 'test-secret' }, { authEnabled: true }));
+    const getReadiness = vi.fn(async () => { throw new Error('readiness must not be computed'); });
+    registerAuthHealthRoute(app, getReadiness);
+    await app.ready();
+
+    const denied = await app.inject({
+      method: 'GET', url: '/health/auth', headers: { 'x-forwarded-for': '127.0.0.1' },
+    });
+    const unknown = await app.inject({ method: 'GET', url: '/not-a-gateway-route' });
+    const deniedBody = denied.json();
+    const unknownBody = unknown.json();
+
+    expect(denied.statusCode).toBe(404);
+    expect(deniedBody.ok).toBe(false);
+    expect(deniedBody.error.code).toBe('KB_RUNTIME_RESOURCE_NOT_FOUND');
+    expect(deniedBody.error.correlationId).toEqual(expect.any(String));
+    expect(deniedBody.error).not.toHaveProperty('details');
+    expect(deniedBody.error).not.toHaveProperty('readinessSecret');
+    expect(getReadiness).not.toHaveBeenCalled();
+    expect(deniedBody.error.correlationId).not.toBe(unknownBody.error.correlationId);
+    expect({ ...deniedBody, error: { ...deniedBody.error, correlationId: '<correlation>' } })
+      .toEqual({ ...unknownBody, error: { ...unknownBody.error, correlationId: '<correlation>' } });
   });
 
   it('normalizes a plain text HTTP failure without exposing its body', async () => {
