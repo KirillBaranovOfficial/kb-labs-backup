@@ -212,6 +212,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             marketplace_install_calls = []
             cancelled = [False]
             progress_finished = [False]
+            successful_workflow_commands = []
 
             def fake_sleep(seconds):
                 clock[0] += seconds
@@ -232,6 +233,8 @@ class WorkflowJourneyTests(unittest.TestCase):
                     return CompletedProcess(args, 0, f".kb/workflows/{target} is valid\n")
                 elif args[:2] == ["workflow", "run"]:
                     workflow_arg = next((arg.split("=", 1)[1] for arg in args if arg.startswith("--workflow-id=")), "")
+                    if workflow_arg == "journey-hello":
+                        successful_workflow_commands.append(workflow_arg)
                     run_id = {"hello": "ok-run", "journey-hello": "ok-run", "journey-fails": "failed-run",
                               "journey-cancel": "cancel-run", "journey-progress": "progress-run",
                               "real-work": "real-run", "journey-rerun": "source-run"}.get(workflow_arg, "failed-run")
@@ -392,6 +395,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                 workflow_steps.run_pty_command = old_run_pty_command
 
         self.assertEqual(journey_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID"), "failed-run")
+        self.assertEqual(successful_workflow_commands, ["journey-hello"])
 
         result = journey.result()
         self.assertEqual(result.status, "PASS", result.first_failure)

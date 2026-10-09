@@ -366,8 +366,9 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         project_entry = project_lock.get("plugins", {}).get(commit_package)
         if (project_lock.get("schema") != "kb.marketplace/3" or not isinstance(project_entry, dict)
                 or project_entry.get("version") != commit_version
-                or not str(project_entry.get("resolvedPath", "")).startswith("store:")):
-            raise RuntimeError("project marketplace install did not pin the exact plugin from the shared extension store")
+                or project_entry.get("package") != commit_install_package
+                or not project_entry.get("integrity")):
+            raise RuntimeError("project marketplace install did not record the portable exact plugin identity")
         platform_lock_file = platform_root / ".kb" / "marketplace.lock"
         try:
             platform_lock = json.loads(platform_lock_file.read_text())
@@ -376,9 +377,10 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         platform_entry = platform_lock.get("plugins", {}).get(commit_package)
         if (platform_lock.get("schema") != "kb.marketplace/3" or not isinstance(platform_entry, dict)
                 or platform_entry.get("version") != commit_version
-                or platform_entry.get("source") != "marketplace"
-                or not str(platform_entry.get("resolvedPath", "")).startswith("store:")):
-            raise RuntimeError("platform marketplace install did not pin the exact plugin from the shared extension store")
+                or platform_entry.get("package") != commit_install_package
+                or not platform_entry.get("integrity")
+                or platform_entry.get("source") != "marketplace"):
+            raise RuntimeError("platform marketplace install did not record the portable exact plugin identity")
         if _platform_snapshot(platform_root) != sealed_platform_before:
             raise RuntimeError("marketplace install changed the platform receipt or installed package versions")
     journey.step(

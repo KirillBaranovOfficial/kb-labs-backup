@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 export function buildCommand(packageName) {
@@ -73,17 +74,152 @@ export function validatePackageContents(manifest, packedPaths) {
   return failures;
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableJson(value[key])]));
+  }
+  return value;
+}
+
+export function validatePackedSource(sourcePackage, packedPackage, {
+  sourcePackedPackage,
+  workspacePackageNames,
+  candidateNames,
+  sourceManifest,
+  packedManifest,
+} = {}) {
+  const failures = [];
+  if (sourcePackage.name !== packedPackage.name) {
+    failures.push(`package name is ${packedPackage.name}; workspace source is ${sourcePackage.name}`);
+  }
+  if (sourcePackage.version !== packedPackage.version) {
+    failures.push(`package version is ${packedPackage.version}; workspace source is ${sourcePackage.version}`);
+  }
+
+  if (sourcePackedPackage
+      && JSON.stringify(stableJson(sourcePackedPackage)) !== JSON.stringify(stableJson(packedPackage))) {
+    failures.push('package.json differs from the package freshly packed from workspace source');
+  }
+
+  for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+    for (const dependency of Object.keys(packedPackage[field] ?? {})) {
+      if (workspacePackageNames.has(dependency) && !candidateNames.has(dependency)) {
+        failures.push(`${field}.${dependency} is required from the workspace but missing from the candidate package set`);
+      }
+    }
+  }
+
+  if (sourceManifest !== undefined
+      && (packedManifest === undefined
+          || JSON.stringify(stableJson(sourceManifest)) !== JSON.stringify(stableJson(packedManifest)))) {
+    failures.push('dist/manifest.json differs from the workspace build output');
+  }
+  return failures;
+}
+
 export function validateTarball(tarball) {
   const packageJson = execFileSync('tar', ['-xOzf', tarball, 'package/package.json'], { encoding: 'utf8' });
   const manifest = JSON.parse(packageJson);
   const packedPaths = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean);
-  return { manifest, failures: validatePackageContents(manifest, packedPaths) };
+  return { manifest, packedPaths, failures: validatePackageContents(manifest, packedPaths) };
+}
+
+function workspacePackages(workspaceRoot) {
+  const output = execFileSync('pnpm', ['-r', 'list', '--depth', '-1', '--json'], {
+    cwd: workspaceRoot,
+    encoding: 'utf8',
+  });
+  const packages = new Map();
+  for (const workspacePackage of JSON.parse(output)) {
+    if (typeof workspacePackage.name !== 'string' || typeof workspacePackage.path !== 'string') continue;
+    const manifest = JSON.parse(readFileSync(join(workspacePackage.path, 'package.json'), 'utf8'));
+    if (manifest.name !== workspacePackage.name) {
+      throw new Error(`workspace package identity changed while validating ${workspacePackage.path}`);
+    }
+    if (packages.has(manifest.name)) throw new Error(`duplicate workspace package name ${manifest.name}`);
+    packages.set(manifest.name, { directory: workspacePackage.path, manifest });
+  }
+  const extras = JSON.parse(readFileSync(join(workspaceRoot, 'e2e/scripts/pack-extras.json'), 'utf8'));
+  for (const extra of extras) {
+    const directory = join(workspaceRoot, extra.directory);
+    const manifest = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'));
+    if (packages.has(manifest.name)) throw new Error(`duplicate candidate package name ${manifest.name}`);
+    packages.set(manifest.name, { directory, manifest });
+  }
+  return packages;
+}
+
+function packWorkspaceSource(directory) {
+  const temporaryDirectory = mkdtempSync(join(tmpdir(), 'kb-candidate-source-'));
+  try {
+    execFileSync('pnpm', ['pack', '--pack-destination', temporaryDirectory, '--silent'], {
+      cwd: directory,
+      stdio: 'ignore',
+    });
+    const archives = readdirSync(temporaryDirectory).filter((filename) => filename.endsWith('.tgz'));
+    if (archives.length !== 1) throw new Error(`pnpm pack produced ${archives.length} source tarballs for ${directory}`);
+    const sourceArchive = join(temporaryDirectory, archives[0]);
+    const sourceManifest = JSON.parse(execFileSync('tar', [
+      '-xOzf', sourceArchive, 'package/package.json',
+    ], { encoding: 'utf8' }));
+    return sourceManifest;
+  } finally {
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+}
+
+function validateTarballAgainstWorkspace(tarball, packages, workspacePackageNames, candidateNames) {
+  const { manifest, packedPaths, failures } = validateTarball(tarball);
+  const source = packages.get(manifest.name);
+  if (!source) {
+    failures.push(`package ${manifest.name} is not registered in the workspace; run "KB_JOURNEY_PACKAGES_READY=0 e2e/journey/prepare-candidate.sh" to repack workspace packages`);
+    return { manifest, failures };
+  }
+
+  const readPacked = (relativePath) => {
+    const archivePath = `package/${relativePath.replace(/^\.\//, '')}`;
+    if (!packedPaths.includes(archivePath)) return undefined;
+    return execFileSync('tar', ['-xOzf', tarball, archivePath], { encoding: 'utf8' });
+  };
+  const sourcePackedManifest = packWorkspaceSource(source.directory);
+  const sourceManifestPath = source.manifest.kb?.manifest;
+  if (typeof sourceManifestPath === 'string') {
+    const relativePath = sourceManifestPath.replace(/^\.\//, '');
+    const sourcePath = join(source.directory, relativePath);
+    const packedText = readPacked(relativePath);
+    const sourceExists = existsSync(sourcePath);
+    const packedExists = packedText !== undefined;
+    if (sourceExists && packedExists && packedText !== readFileSync(sourcePath, 'utf8')) {
+      failures.push(`${relativePath} differs from the workspace build output`);
+    } else if (sourceExists !== packedExists) {
+      failures.push(`declared manifest output ${relativePath} is present in only the source or tarball`);
+    }
+  }
+
+  const sourceManifestJsonPath = join(source.directory, 'dist', 'manifest.json');
+  let sourceManifestJson;
+  let packedManifestJson;
+  if (existsSync(sourceManifestJsonPath)) {
+    sourceManifestJson = JSON.parse(readFileSync(sourceManifestJsonPath, 'utf8'));
+    const packedJson = readPacked('dist/manifest.json');
+    if (packedJson !== undefined) packedManifestJson = JSON.parse(packedJson);
+  }
+  failures.push(...validatePackedSource(source.manifest, manifest, {
+    sourcePackedPackage: sourcePackedManifest,
+    workspacePackageNames,
+    candidateNames,
+    sourceManifest: sourceManifestJson,
+    packedManifest: packedManifestJson,
+  }));
+  return { manifest, failures };
 }
 
 function main() {
   const directory = process.argv[2];
-  if (!directory) {
-    process.stderr.write('Usage: validate-package-outputs.mjs <package-directory>\n');
+  const workspaceRoot = process.argv[3];
+  if (!directory || !workspaceRoot) {
+    process.stderr.write('Usage: validate-package-outputs.mjs <package-directory> <workspace-root>\n');
     return 2;
   }
   const tarballs = readdirSync(directory).filter((filename) => filename.endsWith('.tgz'))
@@ -92,16 +228,25 @@ function main() {
     process.stderr.write(`ERROR: no package tarballs found in ${directory}\n`);
     return 1;
   }
+  const packages = workspacePackages(workspaceRoot);
+  const workspacePackageNames = new Set(packages.keys());
+  const candidateNames = new Set(tarballs.map((tarball) => validateTarball(tarball).manifest.name));
   let invalid = 0;
   for (const tarball of tarballs) {
-    const { manifest, failures } = validateTarball(tarball);
+    const { manifest, failures } = validateTarballAgainstWorkspace(
+      tarball, packages, workspacePackageNames, candidateNames,
+    );
     for (const failure of failures) {
       invalid += 1;
-      process.stderr.write(`${failureMessage(manifest, tarball, failure)}\n`);
+      const detail = typeof failure === 'string' ? failure : failureMessage(manifest, tarball, failure);
+      process.stderr.write(
+        `ERROR: ${manifest.name} (${basename(tarball)}) ${detail}. ` +
+        'Repack from this workspace with: KB_JOURNEY_PACKAGES_READY=0 e2e/journey/prepare-candidate.sh\n',
+      );
     }
   }
   if (invalid > 0) return 1;
-  process.stdout.write(`Validated declared package outputs in ${tarballs.length} package tarballs\n`);
+  process.stdout.write(`Validated declared outputs and source fidelity in ${tarballs.length} package tarballs\n`);
   return 0;
 }
 

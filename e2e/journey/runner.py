@@ -1358,7 +1358,7 @@ def main():
                 cases=["S-041.18"],
             )
             auth_journey.step("admin invite, reset, and restart persistence", auth_capability, run_auth_flow,
-                              cases=["S-041.2", "S-041.3"])
+                              cases=["S-041.2", "S-041.3", "S-104.6"])
             auth_journey.step(
                 "bootstrap administrator CLI status", "auth.accounts",
                 lambda: run_cli_auth_status(str(BIN / "kb"), service_env, authenticated=True,

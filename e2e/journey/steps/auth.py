@@ -41,6 +41,22 @@ def _login(base_url: str, email: str, password: str) -> tuple[str, str]:
     return result["accessToken"], result["refreshToken"]
 
 
+def assert_machine_registration_requires_auth(base_url: str) -> None:
+    """Require human signup attempts to retain the canonical anonymous-auth denial."""
+    payload = _request(
+        base_url,
+        "/auth/register",
+        method="POST",
+        body={"name": "new-member", "email": "new-member@example.test", "password": "HumanPass123!"},
+        expected=401,
+    )
+    expected_hint = f'Run "kb auth login --gateway-url {base_url.rstrip("/")} --email <email>".'
+    if (payload.get("code") != "KB_AUTH_REQUIRED"
+            or payload.get("message") != "Authentication is required."
+            or payload.get("hint") != expected_hint):
+        raise AssertionError(f"anonymous /auth/register returned an unexpected auth envelope: {payload!r}")
+
+
 def run_local_auth_steps(base_url: str) -> None:
     """Prove that loopback/local mode needs no login and identifies local-admin."""
     profile = _request(base_url, "/auth/me")
@@ -259,6 +275,7 @@ def run_bootstrap_recovery_steps(launcher: str, platform_root: str, email: str,
 def run_secured_auth_steps(base_url: str, admin_email: str, admin_password: str,
                            member_email: str, restart_host: Callable[[], str]) -> None:
     """Prove install, role, invite, reset, persistence, and logout behavior."""
+    assert_machine_registration_requires_auth(base_url)
     _request(base_url, "/auth/me", expected=401)
     admin_access, admin_refresh = _login(base_url, admin_email, admin_password)
     me = _request(base_url, "/auth/me", token=admin_access)

@@ -18,12 +18,33 @@ sys.path.insert(0, str(Path(__file__).parent))
 import steps.auth as auth_steps
 from steps.accounts import run_cli_logout_steps
 from steps.auth import (assert_platform_auth_required, run_bootstrap_recovery_steps, run_cli_auth_forbidden,
-                        run_cli_auth_status, assert_cli_session_absent, run_cli_corrupt_session_file)
+                        run_cli_auth_status, assert_cli_session_absent, run_cli_corrupt_session_file,
+                        assert_machine_registration_requires_auth)
 
 REAL_PROCESS_TIMEOUT_SECONDS = 60
 
 
 class CliAuthJourneyTests(unittest.TestCase):
+    # case: S-104.6
+    def test_human_signup_attempt_keeps_401_and_returns_canonical_auth_envelope(self):
+        result = subprocess.CompletedProcess(
+            ["POST", "/auth/register"], 0,
+            json.dumps({"ok": False, "error": {
+                "code": "KB_AUTH_REQUIRED",
+                "message": "Authentication is required.",
+                "hint": 'Run "kb auth login --gateway-url http://gateway.test --email <email>".',
+            }}), "",
+        )
+        with patch("steps.auth.open_http", return_value=(401, result.stdout.encode(), {})) as request:
+            assert_machine_registration_requires_auth("http://gateway.test")
+
+        sent_request = request.call_args.args[1]
+        self.assertEqual(sent_request.full_url, "http://gateway.test/auth/register")
+        self.assertEqual(sent_request.get_method(), "POST")
+        self.assertEqual(json.loads(sent_request.data), {
+            "name": "new-member", "email": "new-member@example.test", "password": "HumanPass123!",
+        })
+
     # case: S-041.6, S-100.1
     def test_real_tty_password_prompt_never_echoes_password(self):
         class GatewayHandler(BaseHTTPRequestHandler):

@@ -434,7 +434,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     plugin_id = "@kb-labs/commit" if package_id == "@kb-labs/commit-entry" else package_id
                     collection[plugin_id] = {
                         "version": version, "integrity": "sha512-fixture", "source": "marketplace",
-                        "enabled": True, "resolvedPath": f"store:{package_id}@{version}", "package": package_id,
+                        "enabled": True, "package": package_id,
                     }
                     save_lock(lock_root, value)
                     stdout = json.dumps({
@@ -471,7 +471,6 @@ class MarketplaceStepTests(unittest.TestCase):
                     entry = value["plugins"]["@kb-labs/commit"]
                     entry["version"] = "2.120.2"
                     entry["integrity"] = "sha512-updated-fixture"
-                    entry["resolvedPath"] = "store:@kb-labs/commit-entry@2.120.2"
                     save_lock(cwd_path, value)
                     stdout = json.dumps({"scope": "project", "warnings": [],
                         "installed": [{"id": "@kb-labs/commit", "version": "2.120.2", "primaryKind": "plugin"}]})

@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -49,6 +50,19 @@ class FakeGitHub:
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_journey_registry_is_shared_with_npm_resolution(self):
+        compose = (Path(__file__).parent / "docker-compose.yml").read_text()
+        registry = re.search(r"^\s+KB_JOURNEY_REGISTRY:\s*(.+)$", compose, re.MULTILINE)
+        npm_registry = re.search(r"^\s+NPM_CONFIG_REGISTRY:\s*(.+)$", compose, re.MULTILINE)
+
+        self.assertIsNotNone(registry)
+        self.assertIsNotNone(npm_registry)
+        anchor = re.fullmatch(r"&(?P<name>[A-Za-z0-9_-]+)\s+(?P<value>\S+)", registry.group(1))
+        alias = re.fullmatch(r"\*(?P<name>[A-Za-z0-9_-]+)", npm_registry.group(1))
+        self.assertIsNotNone(anchor)
+        self.assertIsNotNone(alias)
+        self.assertEqual(alias.group("name"), anchor.group("name"))
+
     def test_failed_setup_producer_reports_typed_reason_and_blocks_dependents(self):
         journey = Journey("secured", "setup-producer-failure")
         calls = []
@@ -697,6 +711,13 @@ class ServiceJourneyTests(unittest.TestCase):
 
         def fake_request(_base, path, *, method="GET", token=None, body=None, expected=200):
             calls.append((method, path, token, body, expected))
+            if path == "/auth/register":
+                self.assertEqual(expected, 401)
+                return {
+                    "code": "KB_AUTH_REQUIRED",
+                    "message": "Authentication is required.",
+                    "hint": 'Run "kb auth login --gateway-url http://gateway.test --email <email>".',
+                }
             if path == "/auth/permissions":
                 return {"permissions": ["users:read"]}
             if path == "/auth/users" and expected == 200:

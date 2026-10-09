@@ -44,7 +44,8 @@ services:
         condition: service_healthy
     environment:
       KB_CREATE_DOWNLOAD_BASE_URL: http://origin:8080
-      KB_JOURNEY_REGISTRY: http://verdaccio:4873
+      KB_JOURNEY_REGISTRY: &journey-registry http://verdaccio:4873
+      NPM_CONFIG_REGISTRY: *journey-registry
       KB_JOURNEY_SCENARIO: ${KB_JOURNEY_SCENARIO:-commit}
       KB_JOURNEY_FRONT_DOOR: ${KB_JOURNEY_FRONT_DOOR:-agent}
       KB_JOURNEY_VARIANT: ${KB_JOURNEY_VARIANT:-default}

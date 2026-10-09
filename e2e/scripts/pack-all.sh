@@ -91,25 +91,23 @@ done < <(cd "$REPO_ROOT" && find . \
   -name "package.json" \
   | sort)
 
-# The deterministic LLM is an E2E-only registry package. Keep the broad e2e/
-# exclusion above, then add this single fixture to the candidate tarballs.
-FIXTURE_DIR="$REPO_ROOT/e2e/fixtures/adapters/llm-deterministic"
-if (cd "$FIXTURE_DIR" && pnpm pack --pack-destination "$OUT_DIR" --silent); then
-  PACKED=$((PACKED+1))
-else
-  echo "ERROR: could not pack @kb-labs/e2e-llm-deterministic"
-  exit 1
-fi
-pack_fixture_manifest "$OUT_DIR/kb-labs-e2e-llm-deterministic-1.0.0.tgz" "$FIXTURE_DIR/manifest.js"
-
-ANALYTICS_FIXTURE_DIR="$REPO_ROOT/e2e/journey/fixtures/analytics-emitter"
-if (cd "$ANALYTICS_FIXTURE_DIR" && pnpm pack --pack-destination "$OUT_DIR" --silent); then
-  PACKED=$((PACKED+1))
-else
-  echo "ERROR: could not pack @kb-labs/e2e-analytics-emitter"
-  exit 1
-fi
-pack_fixture_manifest "$OUT_DIR/kb-labs-e2e-analytics-emitter-1.0.0.tgz" "$ANALYTICS_FIXTURE_DIR/manifest.js"
+# These E2E-only registry packages are declared once and consumed by both the
+# publisher and candidate source-fidelity validator.
+while IFS= read -r extra; do
+  fixture_dir="$REPO_ROOT/$(jq -r '.directory' <<< "$extra")"
+  manifest_module="$fixture_dir/$(jq -r '.manifest' <<< "$extra")"
+  fixture_name="$(jq -r '.name' "$fixture_dir/package.json")"
+  fixture_version="$(jq -r '.version' "$fixture_dir/package.json")"
+  archive_name="${fixture_name#@}"
+  archive_name="${archive_name//\//-}-$fixture_version.tgz"
+  if (cd "$fixture_dir" && pnpm pack --pack-destination "$OUT_DIR" --silent); then
+    PACKED=$((PACKED+1))
+  else
+    echo "ERROR: could not pack $fixture_name"
+    exit 1
+  fi
+  pack_fixture_manifest "$OUT_DIR/$archive_name" "$manifest_module"
+done < <(jq -c '.[]' "$REPO_ROOT/e2e/scripts/pack-extras.json")
 
 echo ""
 echo "==> Done: $PACKED packed, $SKIPPED skipped (private/not-built), $FAILED failed"
