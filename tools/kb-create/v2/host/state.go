@@ -1,6 +1,8 @@
 package host
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
@@ -20,6 +22,22 @@ const KBHomeEnv = "KB_HOME"
 // State names the per-user launcher files. The platform root served by a live
 // host is recorded in its pid and supervisor records.
 type State struct{ Dir string }
+
+// StateForRoot returns the lifecycle files owned by one installation. Shared
+// launcher registries remain under the base state; process and operation state
+// lives below the installation's stable identity directory.
+func StateForRoot(base State, platformRoot string) (State, error) {
+	root, err := filepath.Abs(platformRoot)
+	if err != nil {
+		return State{}, fmt.Errorf("resolve platform root for lifecycle state: %w", err)
+	}
+	root = filepath.Clean(root)
+	if resolved, resolveErr := filepath.EvalSymlinks(root); resolveErr == nil {
+		root = resolved
+	}
+	identity := sha256.Sum256([]byte(root))
+	return State{Dir: filepath.Join(base.Dir, "roots", hex.EncodeToString(identity[:]))}, nil
+}
 
 // KBHome resolves the machine-level KB Labs home: $KB_HOME when set, else ~/.kb.
 func KBHome() (string, error) {

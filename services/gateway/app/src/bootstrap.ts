@@ -112,7 +112,7 @@ export interface GatewayEmbedOptions {
 
 /** Select the config root using the same scope contract for preflight and startup. */
 export function resolveGatewayConfigRoot(
-  roots: Pick<ServiceContext, 'projectRoot' | 'platformRoot'>,
+  roots: Pick<ServiceContext, 'platformRoot'> & { projectRoot?: string },
   configScope: GatewayEmbedOptions['configScope'] = 'project',
 ): string {
   return configScope === 'platform'

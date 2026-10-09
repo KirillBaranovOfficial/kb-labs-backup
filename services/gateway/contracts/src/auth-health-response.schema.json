@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GatewayAuthHealthResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "authEnabled", "tenantId", "activeAdmins", "bootstrap", "issues"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "authEnabled": { "type": "boolean" },
+    "tenantId": { "type": "string" },
+    "activeAdmins": { "type": "integer", "minimum": 0 },
+    "bootstrap": {
+      "type": "string",
+      "enum": ["not-configured", "provisioned", "exists-active", "exists-non-active", "failed"]
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "severity", "message", "hint"],
+        "properties": {
+          "code": { "type": "string" },
+          "severity": { "enum": ["error", "warning"] },
+          "message": { "type": "string" },
+          "hint": { "type": "string" }
+        }
+      }
+    }
+  }
+}

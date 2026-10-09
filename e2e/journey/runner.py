@@ -707,8 +707,6 @@ def main():
     (HOME / ".bash_profile").write_text("if [ -f ~/.profile ]; then . ~/.profile; fi\n")
     (HOME / ".npmrc").write_text(f"registry={REGISTRY}\n")
     env["KB_CREATE_DOWNLOAD_BASE_URL"] = BASE_ENV["KB_CREATE_DOWNLOAD_BASE_URL"]
-    if VARIANT.endswith("secured"):
-        env["KB_JOURNEY_ADMIN_PASSWORD"] = "JourneyPassw0rd!"
     mode = "secured" if VARIANT.endswith("secured") else "local"
     CASE_JOURNEY = Journey(mode, f"installer-{mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}")
     diagnostics = Path(os.getenv("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
@@ -802,6 +800,7 @@ def main():
             fail(f"port conflict: expected KB_INSTALL_PORT_IN_USE for port 4000; {' '.join(result.stdout.split())[-500:]}")
         append_summary(passed)
         return 0 if passed else failure_exit()
+    first_admin_shown_once = False
     if FRONT == "human" and not VARIANT.endswith("secured"):
         PROJECT.mkdir(parents=True, exist_ok=True)
         choice = "commit" if VARIANT == "human-nondefault" else ""
@@ -846,12 +845,8 @@ def main():
                 "access.mode": "secured",
                 "admin.email": "journey-admin@example.test",
                 "admin.tenant": "journey",
-                # Declares the secret input in the plan; the real value comes
-                # from the isolated runner environment via --secret-env.
-                "admin.password": "journey-secret-placeholder",
             })
-            args.extend(["--scenario-answers", answers,
-                         "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
+            args.extend(["--scenario-answers", answers])
         if VARIANT == "relative-path":
             args[args.index(str(PLATFORM))] = os.path.relpath(PLATFORM, Path.cwd())
         result, elapsed = run(args, env=env, timeout=1200)
@@ -879,16 +874,40 @@ def main():
                 records = []
             terminal = records[-1] if records else {}
             stream_meta = terminal.get("meta", {}).get("stream", {}) if isinstance(terminal, dict) else {}
+            result_records = [record for record in records if isinstance(record, dict)
+                              and record.get("meta", {}).get("stream", {}).get("result") is True]
             install_ok = (result.returncode == 0 and bool(records)
                           and terminal.get("ok") is True and terminal.get("data", "not-null") is None
                           and stream_meta.get("terminal") is True and stream_meta.get("exitCode") == 0
-                          and any(record.get("ok") is True and isinstance(record.get("data"), dict)
-                                  for record in records[:-1] if isinstance(record, dict)))
+                          and len(result_records) == 1
+                          and result_records[0].get("ok") is True
+                          and isinstance(result_records[0].get("data"), dict))
             record_case("JSON install progress", install_ok,
                        "install stream omitted progress or its terminal success record",
                        cases=["S-203.10", "S-203.13"])
             if not install_ok:
                 fail("kb-create install --json: stream did not finish successfully")
+            if VARIANT.endswith("secured"):
+                credentials = [
+                    record.get("data", {}).get("firstAdmin")
+                    for record in result_records
+                    if isinstance(record.get("data"), dict)
+                    and isinstance(record["data"].get("firstAdmin"), dict)
+                ]
+                if len(credentials) == 1:
+                    credential = credentials[0]
+                    password = credential.get("password", "")
+                    first_admin_shown_once = (
+                        credential.get("email") == "journey-admin@example.test"
+                        and credential.get("shownOnce") is True
+                        and bool(password)
+                        and result.stdout.count(password) == 1
+                    )
+                    if first_admin_shown_once:
+                        env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
+                        env["KB_JOURNEY_ADMIN_PASSWORD"] = password
+                if not first_admin_shown_once:
+                    fail("secured install did not return exactly one firstAdmin credential with shownOnce=true")
             payload = {}
         else:
             try:
@@ -917,7 +936,8 @@ def main():
                 record_case("agent JSON install", install_ok,
                             "agent install stream omitted progress or terminal success", cases=["S-203.10"])
         if VARIANT.endswith("secured"):
-            env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
+            env.setdefault("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
+            env.setdefault("KB_JOURNEY_ADMIN_PASSWORD", "")
         if VARIANT == "input":
             request = extract_request(payload)
             if request is None:
@@ -949,9 +969,43 @@ def main():
         append_summary(False)
         return failure_exit()
 
+    installed_status, _ = run([launcher, "status", "--platform-root", str(PLATFORM), "--json"],
+                              env=env, timeout=120)
+    try:
+        installed_payload = decode_ux_success_result(read_ux_cli_result(installed_status.stdout, installed_status.returncode))
+        installed_state = installed_payload.get("host", {})
+        install_running = (installed_status.returncode == 0 and installed_payload.get("installed") is True
+                           and installed_payload.get("running") is True and installed_payload.get("reachable") is True
+                           and installed_state.get("state") == "running")
+    except (json.JSONDecodeError, AttributeError):
+        install_running = False
+    install_cases = ["S-039.2"] if FRONT_DOOR == "agent" else ["S-040.3"]
+    record_case("post-install running status", install_running,
+                "successful install did not leave a running, reachable host", cases=install_cases)
+    if FRONT_DOOR == "human" or mode == "secured":
+        install_step_passed = install_running and (mode != "secured" or first_admin_shown_once)
+        record_case("clean install leaves a running host and returns secured credentials once",
+                    install_step_passed,
+                    "install did not leave the host running or return the secured credential exactly once",
+                    cases=["PC-001.2"])
+    installed_doctor, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"],
+                              env=env, timeout=120)
+    try:
+        installed_health = decode_ux_success_result(read_ux_cli_result(installed_doctor.stdout, installed_doctor.returncode))
+        install_healthy = (installed_doctor.returncode == 0 and installed_health.get("installed") is True
+                           and installed_health.get("running") is True and installed_health.get("reachable") is True
+                           and installed_health.get("platform", {}).get("ok") is True)
+    except (json.JSONDecodeError, AttributeError):
+        install_healthy = False
+    record_case("post-install healthy doctor", install_healthy,
+                "successful install did not pass the healthy doctor check", cases=["PC-001.6"])
+
     probe_platform_state(outer_graph, env, launcher, include_host=False)
 
     def start_host_group() -> None:
+        stopped, _ = run([launcher, "stop", "--platform-root", str(PLATFORM), "--json"], env=env, timeout=120)
+        if not require(stopped, step="kb-create stop before start lifecycle check"):
+            return
         result, elapsed = run([launcher, "start", "--platform-root", str(PLATFORM)], env=env, timeout=300)
         TIMES["start"] = elapsed
         started = require(result, step="kb-create start")
@@ -1049,7 +1103,7 @@ def main():
             expire_admin_session = None
             if access_mode == "secured":
                 admin_email = env.get("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
-                admin_password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "JourneyPassw0rd!")
+                admin_password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
 
                 def verify_admin():
                     result, _ = run([str(BIN / "kb"), "auth", "login", "--gateway-url",
@@ -1267,7 +1321,7 @@ def main():
         service_env["KB_JOURNEY_PROJECT_ROOT"] = str(PROJECT)
         if mode == "secured":
             service_env["KB_JOURNEY_ADMIN_EMAIL"] = "journey-admin@example.test"
-            service_env["KB_JOURNEY_ADMIN_PASSWORD"] = "JourneyPassw0rd!"
+            service_env["KB_JOURNEY_ADMIN_PASSWORD"] = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
             oauth_claims = release_claims_for_case(
                 "S-109", case_catalog_root())
             configured = login_and_configure_secured_admin(
@@ -1369,22 +1423,42 @@ def main():
             )
             auth_journey.step("admin invite, reset, and restart persistence", auth_capability, run_auth_flow,
                               cases=["S-041.2", "S-041.3", "S-104.6"])
+
+            def bootstrap_admin_status():
+                if not first_admin_shown_once:
+                    raise AssertionError("secured install did not disclose a first administrator credential exactly once")
+                run_cli_auth_status(str(BIN / "kb"), service_env, authenticated=True,
+                                    email=service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                                    password=service_env["KB_JOURNEY_ADMIN_PASSWORD"],
+                                    base_url="http://127.0.0.1:4000")
+
             auth_journey.step(
                 "bootstrap administrator CLI status", "auth.accounts",
-                lambda: run_cli_auth_status(str(BIN / "kb"), service_env, authenticated=True,
-                                            email=service_env["KB_JOURNEY_ADMIN_EMAIL"],
-                                            password=service_env["KB_JOURNEY_ADMIN_PASSWORD"],
-                                            base_url="http://127.0.0.1:4000"),
+                bootstrap_admin_status,
                 cases=["S-100.1"],
             )
             recovered_password = "JourneyRecovered123!"
+
+            def bootstrap_admin_recovery():
+                removed, _ = run([str(BIN / "kb"), "project", "remove", str(PROJECT), "--yes", "--json"],
+                                 env=env, cwd=PROJECT, timeout=90)
+                if removed.returncode != 0:
+                    raise RuntimeError(f"could not prepare the no-project recovery case: {' '.join(removed.stdout.split())[-400:]}")
+                try:
+                    run_bootstrap_recovery_steps(
+                        launcher, str(PLATFORM), service_env["KB_JOURNEY_ADMIN_EMAIL"],
+                        service_env["KB_JOURNEY_ADMIN_PASSWORD"], recovered_password, env, run,
+                        on_valid_password=lambda password: service_env.__setitem__("KB_JOURNEY_ADMIN_PASSWORD", password),
+                    )
+                finally:
+                    added, _ = run([str(BIN / "kb"), "project", "add", "--json"],
+                                   env=env, cwd=PROJECT, timeout=90)
+                    if added.returncode != 0:
+                        raise RuntimeError(f"could not restore the journey project after recovery: {' '.join(added.stdout.split())[-400:]}")
+
             auth_journey.step(
                 "bootstrap administrator recovery", "auth.accounts",
-                lambda: run_bootstrap_recovery_steps(
-                    launcher, str(PLATFORM), service_env["KB_JOURNEY_ADMIN_EMAIL"],
-                    service_env["KB_JOURNEY_ADMIN_PASSWORD"], recovered_password, env, run,
-                    on_valid_password=lambda password: service_env.__setitem__("KB_JOURNEY_ADMIN_PASSWORD", password),
-                ),
+                bootstrap_admin_recovery,
                 cases=["S-100.2", "S-100.3", "S-100.4"],
             )
             auth_journey.step(

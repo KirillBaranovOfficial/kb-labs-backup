@@ -207,10 +207,18 @@ func renderApply(value any) string {
 	if !ok {
 		return "Platform installation completed."
 	}
+	message := "Platform installation completed."
 	if payload.Shim != nil && !payload.Shim.Linked {
-		return fmt.Sprintf("Platform installation completed.\nThe kb command is owned by %s; run %s to use this platform.", payload.Shim.Owner, shim.Target(payload.Receipt.Plan.Request.PlatformRoot))
+		message += fmt.Sprintf("\nThe kb command is owned by %s; run %s to use this platform.", payload.Shim.Owner, shim.Target(payload.Receipt.Plan.Request.PlatformRoot))
 	}
-	return "Platform installation completed."
+	return withFirstAdmin(message, payload.FirstAdmin)
+}
+
+func withFirstAdmin(message string, credential *firstAdminCredential) string {
+	if credential == nil {
+		return message
+	}
+	return fmt.Sprintf("%s\nFirst administrator credentials (shown once):\n  Email: %s\n  Password: %s", message, credential.Email, credential.Password)
 }
 
 func renderStatus(value any) string {

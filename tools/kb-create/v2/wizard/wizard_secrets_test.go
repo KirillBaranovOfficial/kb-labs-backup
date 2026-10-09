@@ -97,24 +97,24 @@ func TestSecuredJourneyStoresTypedAndGeneratedSecretsAndNeverEchoesThem(t *testi
 	}
 }
 
-func TestSecuredJourneyWithBlankPasswordSkipsItButStillSecuresSessions(t *testing.T) {
+func TestSecuredJourneyWithBlankPasswordGeneratesFirstAdminCredential(t *testing.T) {
 	root := t.TempDir()
-	request, output, err := runCustom(t, root, "\n\nsecured\n\n\n\n\n")
+	request, output, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\n\n\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(request.SecretInputs, ","); got != "gateway.jwtSecret" {
-		t.Fatalf("only the generated signing secret is expected, got %v", request.SecretInputs)
+	if got := strings.Join(request.SecretInputs, ","); got != "gateway.bootstrap.password,gateway.jwtSecret" {
+		t.Fatalf("secret inputs = %v", got)
 	}
-	if _, present := request.Values["gateway.bootstrap.adminEmail"]; present {
-		t.Fatalf("a skipped email must not be emitted: %#v", request.Values)
+	if request.Values["gateway.bootstrap.adminEmail"] != `"admin@example.com"` {
+		t.Fatalf("admin email = %#v", request.Values)
 	}
 	stored := storedSecrets(t, root)
-	if _, present := stored["gateway.bootstrap.password"]; present {
-		t.Fatalf("a skipped password must not be stored: %v", stored)
+	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(stored["gateway.bootstrap.password"]) {
+		t.Fatalf("blank admin password was not generated and stored: %v", stored)
 	}
-	if !strings.Contains(output, "skipped") {
-		t.Fatalf("the user is told it was skipped:\n%s", output)
+	if strings.Contains(output, stored["gateway.bootstrap.password"]) {
+		t.Fatal("wizard disclosed the generated password before installation succeeded")
 	}
 }
 
@@ -137,7 +137,7 @@ func TestLocalJourneyAsksForNoAdminAndStoresNothing(t *testing.T) {
 
 func TestSecuredChoiceOnTheSamePageOpensTheAdminQuestions(t *testing.T) {
 	// custom defaults to local; choosing secured must reveal the admin page.
-	_, output, err := runCustom(t, t.TempDir(), "\n\nsecured\n\n\n\n\n")
+	_, output, err := runCustom(t, t.TempDir(), "\n\nsecured\nadmin@example.com\n\n\n\n\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestSecuredChoiceOnTheSamePageOpensTheAdminQuestions(t *testing.T) {
 func TestSecretsWithJSONSpecialCharactersRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	const password = `pa"ss\wörd-🔑-1234`
-	if _, _, err := runCustom(t, root, "\n\nsecured\n\n\n"+password+"\n"+password+"\n\n"); err != nil {
+	if _, _, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\n"+password+"\n"+password+"\n\n"); err != nil {
 		t.Fatal(err)
 	}
 	if got := storedSecrets(t, root)["gateway.bootstrap.password"]; got != password {
@@ -162,7 +162,7 @@ func TestSecretsWithJSONSpecialCharactersRoundTrip(t *testing.T) {
 func TestMismatchedConfirmationAndShortPasswordsAreReAskedNotFatal(t *testing.T) {
 	root := t.TempDir()
 	// 1st: entries differ; 2nd: too short (confirmation matches); 3rd: valid.
-	input := "\n\nsecured\n\n\n" + "Aaaaaaaa1\nBbbbbbbb2\n" + "short\nshort\n" + "Valid-pass-1\nValid-pass-1\n" + "\n"
+	input := "\n\nsecured\nadmin@example.com\n\n" + "Aaaaaaaa1\nBbbbbbbb2\n" + "short\nshort\n" + "Valid-pass-1\nValid-pass-1\n" + "\n"
 	request, output, err := runCustom(t, root, input)
 	if err != nil {
 		t.Fatalf("recoverable mistakes must not abort the journey: %v", err)
@@ -240,8 +240,8 @@ func TestAnAnsweredSecretIsRecordedInTheCallersSession(t *testing.T) {
 	session := newSession(t, field)
 	var output bytes.Buffer
 	reader := bufio.NewReader(bytes.NewBufferString("value-1\nvalue-1\n"))
-	value, skipped, err := askSecret(reader, IO{Out: &output}, session, field, "Secret")
-	if err != nil || skipped || value != "value-1" {
+	value, skipped, generated, err := askSecret(reader, IO{Out: &output}, session, field, "Secret")
+	if err != nil || skipped || generated || value != "value-1" {
 		t.Fatalf("value/skipped/err = %q / %v / %v", value, skipped, err)
 	}
 	if _, answered := session.State.Answers["s"]; !answered {
@@ -252,7 +252,7 @@ func TestAnAnsweredSecretIsRecordedInTheCallersSession(t *testing.T) {
 func TestRequiredSecretCannotBeLeftBlank(t *testing.T) {
 	field := secretField(false, true)
 	reader := bufio.NewReader(bytes.NewBufferString("\n\n\n"))
-	if _, _, err := askSecret(reader, IO{Out: &bytes.Buffer{}}, newSession(t, field), field, "Secret"); err == nil {
+	if _, _, _, err := askSecret(reader, IO{Out: &bytes.Buffer{}}, newSession(t, field), field, "Secret"); err == nil {
 		t.Fatal("a required secret left blank three times must fail")
 	}
 }
@@ -273,7 +273,7 @@ func TestGeneratedSecretsAreRandomAndLongEnough(t *testing.T) {
 
 func TestSecretsAreStoredUnderRequirementIDsThatTheLauncherVerifies(t *testing.T) {
 	root := t.TempDir()
-	if _, _, err := runCustom(t, root, "\n\nsecured\n\n\nPassw0rd-ok\nPassw0rd-ok\n\n"); err != nil {
+	if _, _, err := runCustom(t, root, "\n\nsecured\nadmin@example.com\n\nPassw0rd-ok\nPassw0rd-ok\n\n"); err != nil {
 		t.Fatal(err)
 	}
 	store := secrets.Store{PlatformRoot: root}

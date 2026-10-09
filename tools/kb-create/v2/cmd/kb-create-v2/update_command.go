@@ -182,7 +182,7 @@ func swapUpdate(ctx context.Context, command hostCommand, state host.State, plan
 		Change: func(ctx context.Context, running bool) (string, error) {
 			changeDeps := deps
 			if !running {
-				changeDeps.Host = prober
+				changeDeps.Probe = prober
 			}
 			var updateErr error
 			*updated, *snapshot, updateErr = runtime.Update(ctx, plan, changeDeps)
