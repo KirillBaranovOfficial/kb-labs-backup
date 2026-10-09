@@ -31,6 +31,7 @@ import {
 } from 'react';
 import type { Permission } from '@kb-labs/core-contracts';
 import { authUrl } from './api-base.js';
+import { readGatewaySuccess } from './gateway-client.js';
 
 // ── Public user type (no role field — CD-3) ───────────────────────────────────
 
@@ -129,7 +130,7 @@ export function AuthProvider({ children, _fetch, _getCookie }: AuthProviderProps
     try {
       const res = await fetchFn(authUrl('/auth/permissions'), { credentials: 'include' });
       if (!res.ok) return new Set();
-      const data = (await res.json()) as { permissions?: string[] };
+      const data = await readGatewaySuccess<{ permissions?: string[] }>(res);
       return new Set((data.permissions ?? []) as Permission[]);
     } catch {
       return new Set();
@@ -171,7 +172,7 @@ export function AuthProvider({ children, _fetch, _getCookie }: AuthProviderProps
           return;
         }
 
-        const userData = (await res.json()) as PublicUser;
+        const userData = await readGatewaySuccess<PublicUser>(res);
         if (cancelled) return;
 
         const perms = await loadPermissions();
@@ -222,7 +223,7 @@ export function AuthProvider({ children, _fetch, _getCookie }: AuthProviderProps
         );
       }
 
-      const userData = (await res.json()) as PublicUser;
+      const userData = await readGatewaySuccess<PublicUser>(res);
       const perms = await loadPermissions();
 
       setUser(userData);

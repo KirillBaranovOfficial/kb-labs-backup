@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { codeForHttpFailure, createErrorEnvelope, isErrorEnvelope, normalizeHttpFailure, statusForHttpFailure, type ILogger } from '@kb-labs/core-platform';
 import { createUxSuccessResult, isUxResult } from '@kb-labs/core-platform/ux-result';
 import { registerGatewayRouteSchemas } from './route-schema.js';
+
+/** Send the Gateway's canonical hidden/not-found response. */
+export function sendGatewayNotFound(reply: FastifyReply, correlationId: string): FastifyReply {
+  const error = createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', { correlationId });
+  return reply.code(404).send({ error });
+}
 
 /** Install the shared error result at the final send boundary. */
 export function registerGatewayUxErrorResponses(app: FastifyInstance, logger?: ILogger): void {
@@ -52,14 +58,7 @@ export function registerGatewayUxErrorResponses(app: FastifyInstance, logger?: I
 export function registerGatewayUxBoundary(app: FastifyInstance, logger: ILogger): void {
   registerGatewayUxErrorResponses(app, logger);
   app.setNotFoundHandler((request, reply) => {
-    const route = `${request.method} ${request.url.split('?', 1)[0] ?? request.url}`;
-    const error = createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', {
-      details: { route },
-      message: `Gateway route ${route} was not found.`,
-      correlationId: String(request.id || randomUUID()),
-      hint: 'Check the Gateway route and method, then use a registered route.',
-    });
-    return reply.code(404).send({ error });
+    return sendGatewayNotFound(reply, String(request.id || randomUUID()));
   });
   app.addHook('onSend', async (request, reply, payload) => {
     if (request.routeOptions.config?.ux === 'raw') return payload;
