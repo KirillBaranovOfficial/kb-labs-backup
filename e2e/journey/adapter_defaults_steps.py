@@ -41,6 +41,24 @@ def _json(result: subprocess.CompletedProcess[str], command: list[str]) -> dict:
     return {"ok": False, "error": decode_ux_error_result(value)}
 
 
+def _assert_required_upstreams_ready(readiness: object) -> None:
+    if not isinstance(readiness, dict) or readiness.get("ready") is not True:
+        raise RuntimeError("Gateway /ready did not report ready")
+    components = readiness.get("components")
+    if not isinstance(components, dict):
+        raise RuntimeError("Gateway /ready did not report component readiness")
+    upstreams = [(name, value) for name, value in components.items()
+                 if isinstance(name, str) and name.startswith("upstream:")]
+    if not upstreams:
+        raise RuntimeError("Gateway /ready did not report required upstreams")
+    unavailable = [name.removeprefix("upstream:") for name, value in upstreams
+                   if not isinstance(value, dict) or value.get("ready") is not True]
+    if unavailable:
+        raise RuntimeError(
+            "Gateway /ready reports required upstreams not ready: " + ", ".join(unavailable)
+        )
+
+
 def config(root: Path) -> dict:
     config_path = root / ".kb" / "kb.config.jsonc"
     if not config_path.exists():
@@ -150,6 +168,38 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError(f"workflow run record is invalid JSON: {record}") from error
         if record_value.get("runId") != run_id or str(record_value.get("status", "")).lower() != "success":
             raise RuntimeError(f"workflow run record does not match successful run {run_id}: {record_value!r}")
+        status_command = ["kb-create", "status", "--platform-root", str(platform_root), "--json"]
+        host_status = _json(_run(runner, status_command, cwd, base_env), status_command)
+        health_url = host_status.get("host", {}).get("healthUrl")
+        if not isinstance(health_url, str) or not health_url:
+            raise RuntimeError("`kb-create status --json` returned no host health URL after the workflow run")
+        readiness_request = urllib.request.Request(health_url.rsplit("/", 1)[0] + "/ready")
+        readiness_status, readiness_body, _ = open_http(
+            urllib.request.urlopen, readiness_request, timeout=10, env=base_env)
+        if readiness_status != 200:
+            raise RuntimeError(f"GET {readiness_request.full_url} returned HTTP {readiness_status} after the workflow run")
+        try:
+            readiness_envelope = read_ux_http_result(readiness_body, readiness_status)
+            readiness = decode_ux_success_result(readiness_envelope)
+        except ValueError as error:
+            raise RuntimeError(f"GET /ready returned an invalid UX result envelope: {error}") from error
+        _assert_required_upstreams_ready(readiness)
+
+        health_request = urllib.request.Request(health_url.rsplit("/", 1)[0] + "/health")
+        health_status, health_body, _ = open_http(
+            urllib.request.urlopen, health_request, timeout=10, env=base_env)
+        if health_status != 200:
+            raise RuntimeError(f"GET {health_request.full_url} returned HTTP {health_status} after the workflow run")
+        try:
+            health_envelope = read_ux_http_result(health_body, health_status)
+            health = decode_ux_success_result(health_envelope)
+        except ValueError as error:
+            raise RuntimeError(f"GET /health returned an invalid UX result envelope: {error}") from error
+        runtimes = health.get("projectRuntimes", {}).get("runtimes", []) if isinstance(health, dict) else []
+        project_id = project_state.name
+        if not any(isinstance(runtime, dict) and runtime.get("projectId") == project_id
+                   and runtime.get("state") == "ready" for runtime in runtimes):
+            raise RuntimeError(f"host health did not list project runtime {project_id} as ready after its first workflow request")
         return run_id, record, record_value
 
     def assert_default_list() -> None:
