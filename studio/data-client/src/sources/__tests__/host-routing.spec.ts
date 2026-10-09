@@ -33,7 +33,7 @@ describe('host API routing', () => {
 
     await new HttpObservabilitySource(client, 'local/project').queryLogs({});
 
-    expect(fetch).toHaveBeenCalledWith('/projects/local%2Fproject/logs');
+    expect(fetch).toHaveBeenCalledWith('/api/v1/projects/local%2Fproject/rest/logs', { baseURL: '' });
   });
 
   it('routes analytics and adapter usage through the selected project runtime', async () => {
@@ -43,8 +43,8 @@ describe('host API routing', () => {
     await new HttpAnalyticsSource(client, 'project-01').getStats();
     await new HttpAdaptersSource(client, 'project-01').getLLMUsage();
 
-    expect(fetch).toHaveBeenNthCalledWith(1, '/projects/project-01/analytics/stats');
-    expect(fetch).toHaveBeenNthCalledWith(2, '/projects/project-01/adapters/llm/usage');
+    expect(fetch).toHaveBeenNthCalledWith(1, '/api/v1/projects/project-01/rest/analytics/stats', { baseURL: '' });
+    expect(fetch).toHaveBeenNthCalledWith(2, '/api/v1/projects/project-01/rest/adapters/llm/usage', { baseURL: '' });
   });
 
   it('does not send project observability requests without a selected project', async () => {

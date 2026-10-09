@@ -137,7 +137,11 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
       case 'VALIDATION_ERROR':
         return createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', { ...base, details: pluginDetails });
       case 'CONFIG_ERROR':
-        return createErrorEnvelope('KB_CONFIG_INVALID', { ...base, details: { path: 'configuration', ...pluginDetails } });
+        return createErrorEnvelope('KB_CONFIG_INVALID', {
+          ...base,
+          details: { path: 'configuration', ...pluginDetails },
+          ...(typeof source?.hint === 'string' ? { hint: source.hint } : {}),
+        });
       case 'TIMEOUT':
         return createErrorEnvelope('KB_RUNTIME_TIMEOUT', { ...base, details: pluginDetails });
       case 'PERMISSION_DENIED':

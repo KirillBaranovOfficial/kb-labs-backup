@@ -2,6 +2,7 @@ import { Pool } from 'undici';
 import type {
   IServiceTransport,
   ServiceConnectionInfo,
+  ProjectServiceConnectionInfo,
   ServiceListenAddress,
   ServiceTransportRequest,
   ServiceTransportResponse,
@@ -15,6 +16,11 @@ export interface HttpServiceTransportConfig {
     socketPath?: string;
     timeoutMs?: number;
   }>;
+  /** Cloud addresses keyed by project id and project service id. */
+  projectServices?: Record<string, Record<string, {
+    url: string;
+    socketPath?: string;
+  }>>;
   /**
    * Per-environment TCP port shift, added to every service url's port. Sockets
    * are unaffected (they isolate via KB_SOCKET_HASH path, not port). This is a
@@ -76,6 +82,24 @@ export class HttpServiceTransport implements IServiceTransport {
     if (svc.socketPath) assertResolvedSocketPath(svc.socketPath, serviceId);
     const baseUrl = svc.socketPath ? svc.url : applyPortOffset(svc.url, this.offset);
     return { baseUrl, socketPath: svc.socketPath };
+  }
+
+  async resolveProjectService(
+    projectId: string,
+    serviceId: string,
+  ): Promise<ProjectServiceConnectionInfo | undefined> {
+    const service = this.config.projectServices?.[projectId]?.[serviceId];
+    if (!service) {
+      return undefined;
+    }
+    if (service.socketPath) {
+      assertResolvedSocketPath(service.socketPath, serviceId);
+    }
+    return {
+      baseUrl: service.socketPath ? service.url : applyPortOffset(service.url, this.offset),
+      socketPath: service.socketPath,
+      pathPrefix: "",
+    };
   }
 
   listenAddress(serviceId: string): ServiceListenAddress | undefined {

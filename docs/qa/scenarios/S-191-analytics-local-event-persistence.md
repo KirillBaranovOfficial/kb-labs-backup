@@ -25,8 +25,8 @@ the default local SQLite adapter retains it across a platform restart.
 | # | Action | Expected |
 |---|---|---|
 | S-191.1 | Have the fixture plugin call `platform.analytics.track("case.analytics.persist", { source: "case-fixture" })` | The event is accepted by the configured analytics adapter and stored with the generated event type, timestamp, and analytics context. |
-| S-191.2 | GET `/api/v1/analytics/events?type=case.analytics.persist&source=case-fixture&from=<before-event>&to=<after-event>` | The response includes the emitted event and excludes fixture events outside the requested type, source, or date range. |
-| S-191.3 | Restart the platform with `kb-create restart --platform-root "$PLATFORM_ROOT"`, then repeat the same analytics query | The same event remains queryable after restart from the default local SQLite adapter. |
+| S-191.2 | GET `/api/v1/projects/<PROJECT_ID>/rest/analytics/events?type=case.analytics.persist&source=case-fixture&from=<before-event>&to=<after-event>` | The response includes the emitted event and excludes fixture events outside the requested type, source, or date range. |
+| S-191.3 | Restart the platform with `kb-create restart --platform-root "$PLATFORM_ROOT"`, then repeat the same project REST analytics query | The same event remains queryable after restart from the default local SQLite adapter. |
 | S-191.7 | In an isolated installed platform, set `platform.adapterOptions.analytics.retentionDays` to `0`, then start the host | Startup fails with catalogued `KB_CONFIG_INVALID`, identifies `platform.adapterOptions.analytics.retentionDays` as a positive integer requirement, and gives the exact correction command `kb config set --scope platform platform.adapterOptions.analytics.retentionDays 90`; it does not surface `KB_RUNTIME_UNEXPECTED`. |
 
 Periodic prune failure logging previously recorded as S-191.8 is covered by

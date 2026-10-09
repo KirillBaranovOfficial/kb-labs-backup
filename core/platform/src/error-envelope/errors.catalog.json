@@ -1009,7 +1009,8 @@
       "severity": "error",
       "retryable": true,
       "message": "The operation did not finish in time.",
-      "hint": "Retry or increase the timeout."
+      "hint": "Retry or increase the timeout.",
+      "httpStatus": 504
     },
     {
       "code": "KB_RUNTIME_DISK_FULL",

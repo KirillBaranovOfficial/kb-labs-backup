@@ -1,3 +1,4 @@
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
 import type { HttpClient } from '../client/http-client'
 import { KBError } from '../errors/kb-error'
 import type {
@@ -41,17 +42,32 @@ function buildQuery(params?: WorkflowRunsFilters): string {
 // No longer needed with axios (handles JSON automatically)
 
 export class HttpWorkflowSource implements WorkflowDataSource {
-  constructor(private readonly client: HttpClient) {}
+  constructor(private readonly client: HttpClient, private readonly projectId?: string) {}
+
+  private projectRoute(serviceId: 'rest' | 'workflow', path: string): string {
+    if (!this.projectId) {
+      throw new Error('Select a project to view project workflow data.')
+    }
+    return projectServicePath(this.projectId, serviceId, path)
+  }
+
+  private fetchWorkflow<T>(path: string, options: Parameters<HttpClient['fetch']>[1] = {}): Promise<T> {
+    return this.client.fetch<T>(this.projectRoute('workflow', path), { ...options, baseURL: '' })
+  }
+
+  private fetchRest<T>(path: string, options: Parameters<HttpClient['fetch']>[1] = {}): Promise<T> {
+    return this.client.fetch<T>(this.projectRoute('rest', path), { ...options, baseURL: '' })
+  }
 
   async listRuns(filters?: WorkflowRunsFilters): Promise<WorkflowRunsListResponse> {
     const query = buildQuery(filters)
-    return this.client.fetch<WorkflowRunsListResponse>(`/plugins/workflow/runs${query}`)
+    return this.fetchWorkflow<WorkflowRunsListResponse>(`runs${query}`)
   }
 
   async getRun(runId: string): Promise<WorkflowRun | null> {
     try {
-      const response = await this.client.fetch<{ run: WorkflowRun }>(
-        `/plugins/workflow/runs/${encodeURIComponent(runId)}`,
+      const response = await this.fetchWorkflow<{ run: WorkflowRun }>(
+        `runs/${encodeURIComponent(runId)}`,
       )
       return response.run
     } catch (error) {
@@ -63,8 +79,8 @@ export class HttpWorkflowSource implements WorkflowDataSource {
   }
 
   async cancelRun(runId: string): Promise<WorkflowRun> {
-    await this.client.fetch<{ cancelled: boolean; runId: string }>(
-      `/plugins/workflow/workflows/runs/${encodeURIComponent(runId)}/cancel`,
+    await this.fetchWorkflow<{ cancelled: boolean; runId: string }>(
+      `runs/${encodeURIComponent(runId)}/cancel`,
       { method: 'POST' },
     )
     // Fetch the updated run after cancel
@@ -76,8 +92,8 @@ export class HttpWorkflowSource implements WorkflowDataSource {
   }
 
   async runWorkflow(params: WorkflowRunParams): Promise<WorkflowRun> {
-    const response = await this.client.fetch<{ run: WorkflowRun }>(
-      `/plugins/workflow/workflows/${encodeURIComponent(params.spec.name)}/run`,
+    const response = await this.fetchWorkflow<{ run: WorkflowRun }>(
+      `workflows/${encodeURIComponent(params.spec.name)}/run`,
       {
         method: 'POST',
         data: {
@@ -100,15 +116,15 @@ export class HttpWorkflowSource implements WorkflowDataSource {
       params.set('limit', String(options.limit))
     }
     const query = params.toString()
-    return this.client.fetch<{ events: WorkflowPresenterEvent[]; cursor: string | null }>(
-      `/workflows/runs/${runId}/events${query ? `?${query}` : ''}`,
+    return this.fetchRest<{ events: WorkflowPresenterEvent[]; cursor: string | null }>(
+      `workflows/runs/${encodeURIComponent(runId)}/events${query ? `?${query}` : ''}`,
     )
   }
 
   // 🆕 NEW methods for UI
 
   async getStats(): Promise<DashboardStatsResponse> {
-    return this.client.fetch<DashboardStatsResponse>('/plugins/workflow/stats')
+    return this.fetchWorkflow<DashboardStatsResponse>('stats')
   }
 
   async listWorkflows(filters?: { limit?: number }): Promise<WorkflowListResponse> {
@@ -117,15 +133,15 @@ export class HttpWorkflowSource implements WorkflowDataSource {
       params.set('limit', String(filters.limit))
     }
     const query = params.toString()
-    return this.client.fetch<WorkflowListResponse>(
-      `/plugins/workflow/workflows${query ? `?${query}` : ''}`,
+    return this.fetchWorkflow<WorkflowListResponse>(
+      `workflows${query ? `?${query}` : ''}`,
     )
   }
 
   async getWorkflow(workflowId: string): Promise<WorkflowInfo | null> {
     try {
-      return await this.client.fetch<WorkflowInfo>(
-        `/plugins/workflow/workflows/${encodeURIComponent(workflowId)}`,
+      return await this.fetchWorkflow<WorkflowInfo>(
+        `workflows/${encodeURIComponent(workflowId)}`,
       )
     } catch (error) {
       if (error instanceof KBError && error.status === 404) {
@@ -139,8 +155,8 @@ export class HttpWorkflowSource implements WorkflowDataSource {
     workflowId: string,
     input?: Record<string, unknown>,
   ): Promise<{ runId: string; status: string }> {
-    return this.client.fetch<{ runId: string; status: string }>(
-      `/plugins/workflow/workflows/${encodeURIComponent(workflowId)}/run`,
+    return this.fetchWorkflow<{ runId: string; status: string }>(
+      `workflows/${encodeURIComponent(workflowId)}/run`,
       {
         method: 'POST',
         data: { input },
@@ -163,15 +179,15 @@ export class HttpWorkflowSource implements WorkflowDataSource {
       params.set('offset', String(filters.offset))
     }
     const query = params.toString()
-    return this.client.fetch<JobListResponse>(
-      `/plugins/workflow/jobs${query ? `?${query}` : ''}`,
+    return this.fetchWorkflow<JobListResponse>(
+      `jobs${query ? `?${query}` : ''}`,
     )
   }
 
   async getJob(jobId: string): Promise<JobStatusInfo | null> {
     try {
-      return await this.client.fetch<JobStatusInfo>(
-        `/plugins/workflow/jobs/${encodeURIComponent(jobId)}`,
+      return await this.fetchWorkflow<JobStatusInfo>(
+        `jobs/${encodeURIComponent(jobId)}`,
       )
     } catch (error) {
       if (error instanceof KBError && error.status === 404) {
@@ -182,8 +198,8 @@ export class HttpWorkflowSource implements WorkflowDataSource {
   }
 
   async getJobSteps(jobId: string): Promise<JobStepsResponse> {
-    return this.client.fetch<JobStepsResponse>(
-      `/plugins/workflow/jobs/${encodeURIComponent(jobId)}/steps`,
+    return this.fetchWorkflow<JobStepsResponse>(
+      `jobs/${encodeURIComponent(jobId)}/steps`,
     )
   }
 
@@ -202,25 +218,25 @@ export class HttpWorkflowSource implements WorkflowDataSource {
       params.set('level', filters.level)
     }
     const query = params.toString()
-    return this.client.fetch<JobLogsResponse>(
-      `/plugins/workflow/jobs/${encodeURIComponent(jobId)}/logs${query ? `?${query}` : ''}`,
+    return this.fetchWorkflow<JobLogsResponse>(
+      `jobs/${encodeURIComponent(jobId)}/logs${query ? `?${query}` : ''}`,
     )
   }
 
   async listCronJobs(): Promise<CronListResponse> {
-    return this.client.fetch<CronListResponse>('/plugins/workflow/cron')
+    return this.fetchWorkflow<CronListResponse>('crons')
   }
 
   async getPendingApprovals(runId: string): Promise<PendingApprovalsResponse> {
-    return this.client.fetch<PendingApprovalsResponse>(
-      `/plugins/workflow/runs/${encodeURIComponent(runId)}/pending-approvals`,
+    return this.fetchWorkflow<PendingApprovalsResponse>(
+      `runs/${encodeURIComponent(runId)}/approvals`,
     )
   }
 
   async resolveApproval(params: ResolveApprovalParams): Promise<{ resolved: boolean }> {
     const { runId, ...body } = params
-    return this.client.fetch<{ resolved: boolean }>(
-      `/plugins/workflow/runs/${encodeURIComponent(runId)}/approve`,
+    return this.fetchWorkflow<{ resolved: boolean }>(
+      `runs/${encodeURIComponent(runId)}/approvals/resolve`,
       {
         method: 'POST',
         data: body,
@@ -229,8 +245,8 @@ export class HttpWorkflowSource implements WorkflowDataSource {
   }
 
   async cancelWorkflowRun(runId: string): Promise<{ cancelled: boolean; runId: string }> {
-    return this.client.fetch<{ cancelled: boolean; runId: string }>(
-      `/plugins/workflow/workflows/runs/${encodeURIComponent(runId)}/cancel`,
+    return this.fetchWorkflow<{ cancelled: boolean; runId: string }>(
+      `runs/${encodeURIComponent(runId)}/cancel`,
       { method: 'POST' },
     )
   }
@@ -250,8 +266,8 @@ export class HttpWorkflowSource implements WorkflowDataSource {
       params.set('status', filters.status)
     }
     const query = params.toString()
-    return this.client.fetch<WorkflowRunHistoryResponse>(
-      `/plugins/workflow/workflows/${encodeURIComponent(workflowId)}/runs${query ? `?${query}` : ''}`,
+    return this.fetchWorkflow<WorkflowRunHistoryResponse>(
+      `workflows/${encodeURIComponent(workflowId)}/runs${query ? `?${query}` : ''}`,
     )
   }
 }

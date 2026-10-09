@@ -3,6 +3,16 @@
   "description": "Workflow daemon for KB Labs - standalone service for background job execution",
   "version": "2.120.1",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "import": "./dist/manifest.js"
+    }
+  },
   "main": "./dist/index.js",
   "bin": {
     "kb-workflow": "./dist/bin.js"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from project_service_path import project_service_path
+
 import json
 import os
 import subprocess
@@ -237,7 +239,7 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                     payload = _cli_success(result)
                 except ValueError as error:
                     return f"mcp config codex returned an invalid UX result in {project.name}: {error}"
-                expected_url = f"/api/v1/projects/{ids[project]}/mcp"
+                expected_url = project_service_path(ids[project], "mcp")
                 if (payload.get("projectId") != ids[project]
                         or not isinstance(payload.get("url"), str)
                         or expected_url not in payload["url"]):

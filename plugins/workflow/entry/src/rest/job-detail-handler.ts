@@ -29,7 +29,7 @@ export default defineHandler({
       throw new Error('Missing jobId parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/jobs/${jobId}`;
+    const url = `${daemonUrl}/jobs/${jobId}`;
     ctx.platform.logger.info(`[job-detail-handler] Fetching job ${jobId} from ${url}`);
 
     try {

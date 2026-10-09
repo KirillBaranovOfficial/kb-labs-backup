@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
 import { qk } from '../query-keys'
 import type { WorkflowDataSource, WorkflowRunsFilters, WorkflowRunParams, ResolveApprovalParams } from '../sources/workflow-source'
 import type { WorkflowLogEvent, WorkflowPresenterEvent } from '../contracts/workflows'
@@ -151,24 +152,25 @@ export function useWorkflowLogs(
 }
 
 export interface UseWorkflowEventsOptions {
+  projectId: string
   follow?: boolean
   pollIntervalMs?: number
   cursor?: string | null
   enabled?: boolean
-  baseUrl?: string
+  gatewayBaseUrl?: string
 }
 
 export function useWorkflowEvents(
   runId: string | null,
-  options: UseWorkflowEventsOptions = {},
+  options: UseWorkflowEventsOptions,
 ) {
-  const { follow = true, pollIntervalMs, cursor, enabled = true, baseUrl = '' } = options
+  const { projectId, follow = true, pollIntervalMs, cursor, enabled = true, gatewayBaseUrl = '' } = options
   const [events, setEvents] = useState<WorkflowPresenterEvent[]>([])
   const [error, setError] = useState<Error | null>(null)
   const [isConnected, setIsConnected] = useState(false)
 
   useEffect(() => {
-    if (!runId || !enabled) {
+    if (!runId || !projectId || !enabled) {
       return
     }
 
@@ -186,7 +188,8 @@ export function useWorkflowEvents(
       params.set('cursor', cursor)
     }
 
-    const url = `${baseUrl}/workflows/runs/${runId}/events${params.toString() ? `?${params}` : ''}`
+    const path = projectServicePath(projectId, 'rest', `workflows/runs/${encodeURIComponent(runId)}/events${params.toString() ? `?${params}` : ''}`)
+    const url = `${gatewayBaseUrl}${path}`
     const eventSource = new EventSource(url)
 
     const handleMessage = (event: MessageEvent) => {
@@ -213,7 +216,7 @@ export function useWorkflowEvents(
       eventSource.removeEventListener('workflow.event', handleMessage)
       eventSource.close()
     }
-  }, [runId, follow, pollIntervalMs, cursor, enabled])
+  }, [projectId, runId, follow, pollIntervalMs, cursor, enabled, gatewayBaseUrl])
 
   return {
     events,

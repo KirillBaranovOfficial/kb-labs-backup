@@ -6,6 +6,7 @@ export const manifest: ServiceManifest = {
   name: 'MCP Daemon',
   version: '1.0.0',
   description: 'MCP server — exposes plugin commands as tools for external agents',
+  projectApi: { serviceId: 'mcp', rewritePrefix: '/' },
   runtime: {
     entry: 'dist/index.js',
     port: 7779,

@@ -23,10 +23,10 @@ const sources = createDataSources({
 await sources.observability.queryLogs({ limit: 50 });
 ```
 
-The request is routed through `/api/v1/projects/project-01/logs`; the gateway
+The request is routed through `/api/v1/projects/project-01/rest/logs`; the gateway
 starts the project runtime on demand. Project plugin sources list pins and
 support install, enable/disable, and uninstall through host routes. Adapter
-sources expose platform adapter usage and analytics; adapter settings are
+sources expose project adapter usage and analytics; adapter settings are
 managed through platform config and CLI commands.
 
 ## Development

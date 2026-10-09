@@ -2402,6 +2402,9 @@ importers:
       '@kb-labs/gateway-app':
         specifier: workspace:*
         version: link:../../services/gateway/app
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../core/plugin-contracts
       '@kb-labs/rest-api-app':
         specifier: workspace:*
         version: link:../../services/rest-api/app
@@ -5483,6 +5486,9 @@ importers:
 
   plugins/workflow/contracts:
     dependencies:
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
       '@kb-labs/sdk':
         specifier: workspace:*
         version: link:../../../sdk/sdk
@@ -6418,6 +6424,9 @@ importers:
       '@kb-labs/mcp-app':
         specifier: workspace:*
         version: link:../../mcp/app
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../../core/plugin-runtime

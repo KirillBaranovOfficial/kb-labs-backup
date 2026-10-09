@@ -178,6 +178,8 @@ export const StudioHostingConfigSchema = z.object({
 
 export const GatewayConfigSchema = z.object({
   port: z.number().default(4000),
+  /** Maximum time a project API exchange may remain without upstream progress. */
+  projectRequestTimeoutMs: z.number().int().positive().optional(),
   /**
    * Bind host. Defaults to '0.0.0.0' (deployed platform) when omitted — the
    * fallback is applied in code. Solo/local installs set '127.0.0.1' so a

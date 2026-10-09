@@ -11,6 +11,10 @@
 import { realpath } from "node:fs/promises";
 import { HttpServiceTransport } from "@kb-labs/adapters-service-transport-http";
 import type { IServiceTransport } from "@kb-labs/core-platform";
+import {
+  collectProjectServiceDeclarations,
+  type ServiceManifest,
+} from "@kb-labs/plugin-contracts";
 import { requireProjectContext, type PlatformAssemblyHook } from "@kb-labs/core-runtime";
 import {
   installPlatformResolveHook,
@@ -28,6 +32,9 @@ import {
 } from "@kb-labs/shared-daemon";
 import { setup as setupWorkflow } from "@kb-labs/workflow-daemon";
 import { setupProjectMcp } from "@kb-labs/mcp-app/project-module";
+import { manifest as restManifest } from "@kb-labs/rest-api-app/manifest";
+import { manifest as workflowManifest } from "@kb-labs/workflow-daemon/manifest";
+import { manifest as mcpManifest } from "@kb-labs/mcp-app/manifest";
 import type { RuntimeArgs } from "./args.js";
 import { createRuntimeGuard } from "./guard.js";
 import { RuntimeServiceTransport } from "./transport.js";
@@ -41,19 +48,28 @@ type Teardown = () => Promise<void>;
 
 /** One project-scoped service the runtime runs. */
 export interface ProjectRuntimeModule {
-  /** Path segment the guard routes on, e.g. `rest` for `/rest/...`. */
-  id: string;
-  /** Key in the service transport map; what other modules route to. */
-  serviceId: string;
+  manifest: ServiceManifest;
   setup: (ctx: ServiceContext) => Promise<Teardown>;
 }
 
 /** The project-scoped services composed into every project runtime. */
 export const DEFAULT_PROJECT_MODULES: readonly ProjectRuntimeModule[] = [
-  { id: "rest", serviceId: "rest", setup: setupRest },
-  { id: "workflow", serviceId: "workflow", setup: setupWorkflow },
-  { id: "mcp", serviceId: "mcp", setup: setupProjectMcp },
+  { manifest: restManifest, setup: setupRest },
+  { manifest: workflowManifest, setup: setupWorkflow },
+  { manifest: mcpManifest, setup: setupProjectMcp },
 ];
+
+export const PROJECT_SERVICE_DECLARATIONS = collectProjectServiceDeclarations(
+  DEFAULT_PROJECT_MODULES.map((module) => module.manifest),
+);
+
+function projectServiceId(module: ProjectRuntimeModule): string {
+  const declaration = module.manifest.projectApi;
+  if (!declaration) {
+    throw new Error(`Service manifest "${module.manifest.id}" is missing projectApi configuration.`);
+  }
+  return declaration.serviceId;
+}
 
 export interface ProjectRuntimeOptions
   extends Pick<
@@ -116,10 +132,16 @@ export async function createProjectRuntimeConfig(
   }
 
   const modules = options.modules ?? DEFAULT_PROJECT_MODULES;
+  const serviceDeclarations = collectProjectServiceDeclarations(
+    modules.map((module) => module.manifest),
+  );
+  if (serviceDeclarations.length !== modules.length) {
+    throw new Error("Every project runtime module must declare its project API in the service manifest.");
+  }
   const ports = await reserveLoopbackPorts(modules.length);
   const moduleAddresses = Object.fromEntries(
     modules.map((spec, index) => [
-      spec.id,
+      projectServiceId(spec),
       { host: LOOPBACK_HOST, port: ports[index]! },
     ]),
   );
@@ -130,7 +152,7 @@ export async function createProjectRuntimeConfig(
     },
   };
   modules.forEach((spec, index) => {
-    services[spec.serviceId] = { url: loopbackUrl(ports[index]!) };
+    services[projectServiceId(spec)] = { url: loopbackUrl(ports[index]!) };
   });
   // offset 0: these are exact ports, not well-known ones to shift.
   const generated = new HttpServiceTransport({ services, offset: 0 });
@@ -162,8 +184,8 @@ export async function createProjectRuntimeConfig(
 
   const serviceModules = modules.map((spec, index) =>
     defineHostModule({
-      id: spec.id,
-      serviceId: spec.serviceId,
+      id: projectServiceId(spec),
+      serviceId: projectServiceId(spec),
       defaultPort: 0,
       portEnvVar: "KB_PROJECT_RUNTIME_UNUSED_PORT",
       // Project services never bind beyond loopback and take no env override.
@@ -173,8 +195,8 @@ export async function createProjectRuntimeConfig(
           installResolveHook(ctx);
         }
         await assertProjectRoot(ctx, options.projectRoot);
-        assertModuleAddress(ctx, spec.serviceId);
-        const teardown = await spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.id) });
+        assertModuleAddress(ctx, projectServiceId(spec));
+        const teardown = await spec.setup({ ...ctx, logger: ctx.logger.forComponent(spec.manifest.id) });
         if (index === 0) {
           return async () => {
             try {

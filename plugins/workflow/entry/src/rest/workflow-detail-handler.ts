@@ -23,7 +23,7 @@ export default defineHandler({
       throw new Error('Missing id parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/workflows/${encodeURIComponent(id)}`;
+    const url = `${daemonUrl}/workflows/${encodeURIComponent(id)}`;
     ctx.platform.logger.info(`[workflow-detail-handler] Fetching workflow ${id} from ${url}`);
 
     try {

@@ -373,6 +373,7 @@ export type {
 export type {
   IServiceTransport,
   ServiceConnectionInfo,
+  ProjectServiceConnectionInfo,
   ServiceListenAddress,
   ServiceTransportRequest,
   ServiceTransportResponse,

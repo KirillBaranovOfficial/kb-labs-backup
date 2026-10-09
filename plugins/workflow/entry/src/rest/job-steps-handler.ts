@@ -15,7 +15,7 @@ export default defineHandler({
     const daemonUrl = getWorkflowDaemonUrl();
     const { jobId } = input.params!;
 
-    const url = `${daemonUrl}/api/v1/jobs/${encodeURIComponent(jobId)}/steps`;
+    const url = `${daemonUrl}/jobs/${encodeURIComponent(jobId)}/steps`;
 
     ctx.platform.logger.info(`[job-steps-handler] Fetching steps from ${url}`);
 

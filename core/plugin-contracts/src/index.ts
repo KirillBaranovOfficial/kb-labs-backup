@@ -268,6 +268,7 @@ export { createExecutionMeta } from "./runner.js";
 export type {
   ManifestV3,
   ServiceManifest,
+  ProjectServiceApiDeclaration,
   ServiceRuntime,
   ServiceEnvVar,
   SchemaRef,
@@ -296,6 +297,11 @@ export type {
   SetupSpec,
   ErrorSpec,
 } from "./manifest.js";
+export {
+  collectProjectServiceDeclarations,
+  validateProjectServiceDeclarations,
+  ProjectServiceManifestError,
+} from "./project-service-manifest.js";
 export {
   isManifestV3,
   isServiceManifest,

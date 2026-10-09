@@ -30,7 +30,7 @@ export default defineHandler({
 
     const body: WorkflowRunRequest = input.body || {};
 
-    const url = `${daemonUrl}/api/v1/workflows/${encodeURIComponent(id)}/runs`;
+    const url = `${daemonUrl}/workflows/${encodeURIComponent(id)}/runs`;
     ctx.platform.logger.info(`[workflow-run-handler] Running workflow ${id} via ${url}`);
 
     try {

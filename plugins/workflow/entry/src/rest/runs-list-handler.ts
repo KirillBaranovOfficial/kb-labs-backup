@@ -39,7 +39,7 @@ export default defineHandler({
       params.append('status', validatedStatus);
     }
 
-    const url = `${daemonUrl}/api/v1/runs?${params}`;
+    const url = `${daemonUrl}/runs?${params}`;
 
     ctx.platform.logger.info(`[runs-list-handler] Fetching runs from ${url}`);
 

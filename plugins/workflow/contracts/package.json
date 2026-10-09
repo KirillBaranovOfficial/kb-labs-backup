@@ -39,6 +39,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "@kb-labs/workflow-constants": "workspace:*",
     "zod": "^3.25.76"

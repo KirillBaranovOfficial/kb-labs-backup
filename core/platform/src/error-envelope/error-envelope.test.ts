@@ -55,6 +55,10 @@ describe('errors.catalog.json lint', () => {
     });
   });
 
+  it('defines the HTTP status for a project runtime timeout', () => {
+    expect(getCatalogEntry('KB_RUNTIME_TIMEOUT')).toMatchObject({ httpStatus: 504 });
+  });
+
   it('keeps installer index errors separate from publisher sealing errors', () => {
     expect(getCatalogEntry('KB_INSTALL_RELEASE_INDEX_INVALID')).toMatchObject({
       area: 'install',

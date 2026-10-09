@@ -4,6 +4,7 @@
  */
 
 import type { HttpClient } from '../client/http-client';
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path';
 import type { AdaptersDataSource, DateRangeOptions, DailyStats } from './adapters-source';
 import type {
   LLMUsageStats,
@@ -19,7 +20,7 @@ export class HttpAdaptersSource implements AdaptersDataSource {
 
   private path(path: string): string {
     if (!this.projectId) {throw new Error('Select a project to view project adapter usage.');}
-    return `/projects/${encodeURIComponent(this.projectId)}${path}`;
+    return projectServicePath(this.projectId, 'rest', path);
   }
 
   /**
@@ -48,22 +49,22 @@ export class HttpAdaptersSource implements AdaptersDataSource {
 
   async getLLMUsage(options?: DateRangeOptions): Promise<LLMUsageStats> {
     const query = this.buildQueryString(options);
-    return this.client.fetch<LLMUsageStats>(this.path(`/adapters/llm/usage${query}`));
+    return this.client.fetch<LLMUsageStats>(this.path(`/adapters/llm/usage${query}`), { baseURL: '' });
   }
 
   async getEmbeddingsUsage(options?: DateRangeOptions): Promise<EmbeddingsUsageStats> {
     const query = this.buildQueryString(options);
-    return this.client.fetch<EmbeddingsUsageStats>(this.path(`/adapters/embeddings/usage${query}`));
+    return this.client.fetch<EmbeddingsUsageStats>(this.path(`/adapters/embeddings/usage${query}`), { baseURL: '' });
   }
 
   async getLLMDailyStats(options?: DateRangeOptions): Promise<DailyStats[]> {
     const query = this.buildQueryString(options);
-    return this.client.fetch<DailyStats[]>(this.path(`/adapters/llm/daily-stats${query}`));
+    return this.client.fetch<DailyStats[]>(this.path(`/adapters/llm/daily-stats${query}`), { baseURL: '' });
   }
 
   async getEmbeddingsDailyStats(options?: DateRangeOptions): Promise<DailyStats[]> {
     const query = this.buildQueryString(options);
-    return this.client.fetch<DailyStats[]>(this.path(`/adapters/embeddings/daily-stats${query}`));
+    return this.client.fetch<DailyStats[]>(this.path(`/adapters/embeddings/daily-stats${query}`), { baseURL: '' });
   }
 
 }

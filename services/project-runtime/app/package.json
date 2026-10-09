@@ -38,6 +38,7 @@
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/core-project-registry": "workspace:*",
     "@kb-labs/core-runtime": "workspace:*",
+    "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",
     "@kb-labs/mcp-app": "workspace:*",
     "@kb-labs/rest-api-app": "workspace:*",

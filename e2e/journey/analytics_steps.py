@@ -1,6 +1,8 @@
 """Installed-platform analytics API claims for S-191 and S-201."""
 from __future__ import annotations
 
+from project_service_path import project_service_path
+
 import json
 import os
 import subprocess
@@ -91,7 +93,8 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
         else "fixture analytics plugin install and both project invocations must succeed; provide registered project roots"
     ), cases=["S-191.1"])
 
-    query_path = ("/api/v1/analytics/events?type=" + event_type + "&source=" + source
+    project_id = os.environ.get("KB_JOURNEY_PROJECT_ID", "")
+    query_path = project_service_path(project_id, "rest", "analytics/events?type=" + event_type + "&source=" + source
                   + "&from=" + before.isoformat() + "&to="
                   + (datetime.now(timezone.utc) + timedelta(seconds=2)).isoformat())
     with invocation_context(step_id="S-191.2"):
@@ -100,8 +103,8 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
     event_a = _marker_event(events, marker_a)
     event_b = _marker_event(events, marker_b)
     journey.step("query tracked analytics event", "analytics", lambda: (
-        None if status == 200 and event_a is not None and event_a.get("type") == event_type
-        and event_a.get("id") and event_b is not None and event_b.get("type") == event_type
+        None if project_id and status == 200 and event_a is not None and event_a.get("type") == event_type
+        and event_a.get("id") and event_b is None
         else f"analytics query returned HTTP {status} or omitted {event_type}"
     ), cases=["S-191.2"])
 
@@ -120,7 +123,7 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
     ), cases=["S-191.3"])
 
     fixture_file = os.environ.get("KB_JOURNEY_STUDIO_FIXTURE_FILE", "")
-    if fixture_file and event_a and event_b:
+    if fixture_file and event_a:
         fixture_path = Path(fixture_file)
         fixture_path.parent.mkdir(parents=True, exist_ok=True)
         fixture_path.write_text(json.dumps({
@@ -137,10 +140,10 @@ def run_analytics_steps(journey: Journey, *, token: str, runner=run_command,
     project_runs: list[object] = []
     for project_id in projects:
         with invocation_context(step_id="S-201.3"):
-            status, body = _request("GET", f"/api/v1/projects/{project_id}/analytics/events?source={source}",
+            status, body = _request("GET", project_service_path(project_id, "rest", f"analytics/events?source={source}"),
                                     token=token, opener=opener)
         with invocation_context(step_id="S-201.3"):
-            run_status, runs = _request("GET", f"/api/v1/projects/{project_id}/workflow/api/v1/runs",
+            run_status, runs = _request("GET", project_service_path(project_id, "workflow", "runs"),
                                          token=token, opener=opener)
         project_events.append(_event_list(body) if status == 200 else [])
         project_runs.append(runs if run_status == 200 else None)

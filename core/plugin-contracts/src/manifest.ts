@@ -956,8 +956,18 @@ export interface ServiceManifest {
   /** Service IDs this service depends on (for startup ordering) */
   dependsOn?: string[];
 
+  /** Public URL identity and internal mount for a project-scoped service. */
+  projectApi?: ProjectServiceApiDeclaration;
+
   /** Environment variables required/supported */
   env?: Record<string, ServiceEnvVar>;
+}
+
+export interface ProjectServiceApiDeclaration {
+  /** Unique URL segment after `/api/v1/projects/{projectId}`. */
+  serviceId: string;
+  /** Internal service mount prefix removed from its public project URL. */
+  rewritePrefix: string;
 }
 
 /** Describes how kb-dev should start and monitor the service. */

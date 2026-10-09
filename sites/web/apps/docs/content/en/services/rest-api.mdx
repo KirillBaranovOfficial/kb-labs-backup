@@ -1,13 +1,13 @@
 ---
 title: "REST API"
-description: "Fastify-based platform API: hosts plugin routes, exposes platform primitives, emits OpenAPI."
-updatedAt: "2026-04-07"
+description: "Fastify-based project API: serves built-in and plugin routes from each registered project's runtime."
+updatedAt: "2026-10-09"
 order: 2
 ---
 
-The REST API service is the HTTP face of the platform. It loads installed plugins through the entity registry, mounts their declared REST routes under a unified API tree, and exposes platform-level endpoints for health, readiness, metrics, diagnostics, and direct access to adapters (LLM, cache, storage, analytics, etc.).
+The REST API is composed into each registered project's runtime. The Gateway sends `/api/v1/projects/<project-id>/rest/<path>` requests to that project's REST service, which serves built-in endpoints and the routes declared by plugins in that project. For example, analytics events are available at `/api/v1/projects/<project-id>/rest/analytics/events`. This keeps REST data and plugin discovery scoped to the selected project.
 
-It's a Fastify 5 app. Source lives in [plugins/rest-api/app/](plugins/rest-api/app/).
+It's a Fastify 5 app. Source lives in [services/rest-api/app/](services/rest-api/app/).
 
 ## Service manifest
 
@@ -17,40 +17,41 @@ It's a Fastify 5 app. Source lives in [plugins/rest-api/app/](plugins/rest-api/a
   id: 'rest',
   name: 'REST API',
   version: '1.2.0',
-  description: 'Platform REST API daemon — routes, plugin execution, OpenAPI',
+  description: 'Project REST API daemon — routes, plugin execution, OpenAPI',
+  projectApi: { serviceId: 'rest', rewritePrefix: '/api/v1' },
   runtime: {
-    entry: 'dist/index.js',
+    entry: 'dist/bin.js',
     port: 5050,
-    healthCheck: '/api/v1/health',
+    healthCheck: 'localhost:5050',
   },
-  dependsOn: ['qdrant'],
   env: {
     PORT: { description: 'HTTP port', default: '5050' },
+    REST_API_HOST: { description: 'Bind host', default: '127.0.0.1' },
     NODE_ENV: { description: 'Environment mode', default: 'development' },
   },
 }
 ```
 
-The manifest is consumed by `kb-dev` to manage the process — start, stop, health check, dependency ordering. `dependsOn: ['qdrant']` means `kb-dev` boots Qdrant before REST (the vector store is used by Mind and other plugins that may be auto-loaded).
+The manifest is consumed by `kb-dev` to manage the service. Its `projectApi` declaration makes `rest` the public project-service segment and rewrites the service's internal `/api/v1` mount behind the Gateway.
 
-Source: [plugins/rest-api/app/src/manifest.ts](plugins/rest-api/app/src/manifest.ts).
+Source: [services/rest-api/app/src/manifest.ts](services/rest-api/app/src/manifest.ts).
 
 ## Bootstrap sequence
 
-On startup, the entrypoint ([`apps/rest-api/src/index.ts`](plugins/rest-api/app/src/index.ts)) calls `bootstrap(process.cwd())` from `src/bootstrap.ts`. The bootstrap:
+The standalone executable at `services/rest-api/app/src/bin.ts` calls `bootstrap(process.cwd())`. That resolves required project context through `runService()` and then calls the same exported `setup()` function that the project runtime embeds. The setup:
 
 1. Calls `runService()` from `@kb-labs/shared-daemon`, which resolves platform/project roots and loads layered `.env`.
 2. `runService()` initializes the global platform singleton — adapters, logger, cache, storage, everything declared in `kb.config.json`.
 3. Creates the `IEntityRegistry` from `@kb-labs/core-registry`, which walks `.kb/marketplace.lock` and loads plugin manifests.
 4. Constructs a Fastify instance with a Pino-compatible wrapper over `platform.logger` (the platform's logger is vendor-agnostic; Fastify 5 expects a Pino-shaped object, so the server builds a thin adapter).
 5. Registers middleware, plugins (the Fastify kind, not the KB Labs kind), and routes.
-6. Starts the HTTP listener on `PORT` (default 5050).
+6. Starts the HTTP listener on the address assigned by the service transport (port 5050 in standalone development).
 
 The server uses `platform.logger` for application logging — **not** Fastify's built-in logger. Fastify's own request logging is disabled via the `kDisableRequestLogging` symbol so that nothing bypasses the platform's structured logging pipeline.
 
 ## Routes directory
 
-Routes live in [`apps/rest-api/src/routes/`](plugins/rest-api/app/src/routes/) and are all registered from `routes/index.ts`. The current set:
+Routes live in [`services/rest-api/app/src/routes/`](services/rest-api/app/src/routes/) and are all registered from `routes/index.ts`. The service-local paths begin with `/api/v1`; the Gateway's declared rewrite removes that internal base from the public URL. For example, a selected project's analytics events route is `/api/v1/projects/<project-id>/rest/analytics/events`.
 
 | Route file | What it exposes |
 |---|---|

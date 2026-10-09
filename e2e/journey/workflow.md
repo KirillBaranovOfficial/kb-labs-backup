@@ -45,7 +45,7 @@ into that runner.
    HTTP_JSON=$(curl --fail-with-body --silent --show-error \
      -H 'Content-Type: application/json' \
      -d '{}' \
-     "$KB_GATEWAY_URL/api/v1/projects/$PROJECT_ID/workflow/api/v1/workflows/hello/runs")
+     "$KB_GATEWAY_URL/api/v1/projects/$PROJECT_ID/workflow/workflows/hello/runs")
    HTTP_RUN_ID=$(printf '%s' "$HTTP_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["runId"])')
    ```
 

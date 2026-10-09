@@ -15,6 +15,7 @@ RUN npm install --prefix /opt/kb-studio-playwright @playwright/test@1.59.1 \
 ENV PATH="/root/.local/bin:/root/.local/share/pnpm:$PATH"
 COPY tools/kb-create/install.sh /usr/local/share/kb-create/install.sh
 COPY e2e/journey /opt/kb-journey/e2e/journey
+COPY core/plugin-contracts/dist/project-service-path.js /opt/kb-journey/core/plugin-contracts/dist/project-service-path.js
 COPY docs/qa/scenarios /opt/kb-journey/docs/qa/scenarios
 COPY e2e/platform/fixtures/installer-cases /opt/kb-journey/e2e/platform/fixtures/installer-cases
 COPY contracts/ux-result /opt/kb-journey/contracts/ux-result

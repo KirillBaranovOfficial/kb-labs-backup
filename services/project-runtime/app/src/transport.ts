@@ -44,6 +44,11 @@ export class RuntimeServiceTransport implements IServiceTransport {
     return this.pick(serviceId).connectionInfo(serviceId);
   }
 
+  resolveProjectService(projectId: string, serviceId: string) {
+    return this.configured?.resolveProjectService(projectId, serviceId)
+      ?? Promise.resolve(undefined);
+  }
+
   listenAddress(serviceId: string): ServiceListenAddress | undefined {
     return this.pick(serviceId).listenAddress?.(serviceId);
   }

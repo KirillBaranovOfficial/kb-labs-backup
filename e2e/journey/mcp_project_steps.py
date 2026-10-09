@@ -1,6 +1,8 @@
 """Project MCP journey steps for typed errors, mutations, auth and isolation."""
 from __future__ import annotations
 
+from project_service_path import project_service_path
+
 import json
 import os
 import re
@@ -107,7 +109,7 @@ def _valid_error_result(body: object) -> str | None:
 
 def mcp_ux_result_contract(project_id: str, token: str, *, secured: bool = False) -> str | None:
     status, body, _ = _request(
-        f"/api/v1/projects/{project_id}/mcp", method="POST", token=token,
+        project_service_path(project_id, "mcp"), method="POST", token=token,
         accept="application/json, text/event-stream",
         payload={"jsonrpc": "2.0", "id": 2030, "method": "tools/list", "params": {}},
     )
@@ -143,7 +145,7 @@ def mcp_ux_result_contract(project_id: str, token: str, *, secured: bool = False
             return "secured diagnostics call returned an incomplete KB_AUTH_REQUIRED envelope"
 
         no_token_status, no_token_body, _ = _request(
-            f"/api/v1/projects/{project_id}/mcp", method="POST", token="",
+            project_service_path(project_id, "mcp"), method="POST", token="",
             accept="application/json, text/event-stream",
             payload={"jsonrpc": "2.0", "id": 2091, "method": "tools/list", "params": {}},
         )
@@ -159,7 +161,7 @@ def mcp_ux_result_contract(project_id: str, token: str, *, secured: bool = False
 
 def mcp_call(project_id: str, request_id: int, name: str, arguments: dict, token: str = ""):
     status, body, _ = _request(
-        f"/api/v1/projects/{project_id}/mcp",
+        project_service_path(project_id, "mcp"),
         method="POST",
         token=token,
         accept="application/json, text/event-stream",
@@ -225,7 +227,7 @@ def invalid_arguments(project_id: str, token: str = "") -> str | None:
 def secured_auth(project_id: str) -> str | None:
     for token in ("", "not-a-real-token"):
         status, body, _ = _request(
-            f"/api/v1/projects/{project_id}/mcp",
+            project_service_path(project_id, "mcp"),
             method="POST",
             payload={"jsonrpc": "2.0", "id": 145, "method": "tools/list", "params": {}},
             token=token,
@@ -252,7 +254,7 @@ def secured_project_catalog_isolation(project_a: str, project_b: str, token: str
     if not token:
         return "secured project catalog check requires the authenticated journey token"
     for project_id in (project_a, project_b):
-        path = f"/api/v1/projects/{project_id}/mcp"
+        path = project_service_path(project_id, "mcp")
         payload = {"jsonrpc": "2.0", "id": 1995, "method": "tools/list", "params": {}}
         with invocation_context(step_id="mcp.secured-catalog"):
             missing_status, missing_body, _ = _request(
@@ -295,7 +297,7 @@ def secured_project_catalog_isolation(project_a: str, project_b: str, token: str
 
 def local_auth(project_id: str) -> str | None:
     status, body, _ = _request(
-        f"/api/v1/projects/{project_id}/mcp",
+        project_service_path(project_id, "mcp"),
         method="POST",
         payload={"jsonrpc": "2.0", "id": 454, "method": "tools/list", "params": {}},
         token="",
@@ -320,7 +322,7 @@ def local_auth(project_id: str) -> str | None:
 
 def commit_tool_schema(project_id: str, token: str) -> str | None:
     status, body, _ = _request(
-        f"/api/v1/projects/{project_id}/mcp",
+        project_service_path(project_id, "mcp"),
         method="POST",
         token=token,
         accept="application/json, text/event-stream",
@@ -375,7 +377,7 @@ def project_isolation(project_a: str, project_b: str, project_b_root: str, token
             or str(registered_root.resolve()) != project_b_root):
         return "project B registry root must be an existing canonical directory"
     status, body, _ = _request(
-        f"/api/v1/projects/{project_b}/mcp",
+        project_service_path(project_b, "mcp"),
         method="POST",
         token=token,
         accept="application/json, text/event-stream",
@@ -396,7 +398,7 @@ def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str)
     for project_id in (project_a, project_b):
         with invocation_context(step_id="mcp.project-catalog"):
             status, body, _ = _request(
-                f"/api/v1/projects/{project_id}/mcp", method="POST", token=token,
+                project_service_path(project_id, "mcp"), method="POST", token=token,
                 accept="application/json, text/event-stream",
                 payload={"jsonrpc": "2.0", "id": 1993, "method": "tools/list", "params": {}},
             )
@@ -421,7 +423,7 @@ def project_readonly_tool_isolation(project_a: str, project_b: str, token: str) 
     tool_name = "kb-labs-commit__commit_open"
     with invocation_context(step_id="mcp.project-readonly-tool"):
         status_a, body_a, _ = _request(
-            f"/api/v1/projects/{project_a}/mcp", method="POST", token=token,
+            project_service_path(project_a, "mcp"), method="POST", token=token,
             accept="application/json, text/event-stream",
             payload={"jsonrpc": "2.0", "id": 1994, "method": "tools/call",
                      "params": {"name": tool_name, "arguments": {"json": True}}},
@@ -440,7 +442,7 @@ def project_readonly_tool_isolation(project_a: str, project_b: str, token: str) 
 
     with invocation_context(step_id="mcp.project-readonly-tool"):
         status_b, body_b, _ = _request(
-            f"/api/v1/projects/{project_b}/mcp", method="POST", token=token,
+            project_service_path(project_b, "mcp"), method="POST", token=token,
             accept="application/json, text/event-stream",
             payload={"jsonrpc": "2.0", "id": 1994, "method": "tools/call",
                      "params": {"name": tool_name, "arguments": {"json": True}}},
@@ -454,7 +456,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
                             agent_id: str = "orchestrator") -> None:
     """Exercise the documented project Agents session REST lifecycle (S-141)."""
     session_id = ""
-    base = f"/api/v1/projects/{project_id}/rest/api/v1/plugins/agents/sessions"
+    base = project_service_path(project_id, "rest", "plugins/agents/sessions")
 
     def create() -> str | None:
         nonlocal session_id
@@ -547,7 +549,7 @@ def run_agent_session_steps(journey: Journey, project_id: str, token: str,
     journey.step("reject undefined project agent ID", "agents", unknown_agent, cases=["S-141.5"])
 
     def unknown_route() -> str | None:
-        path = f"/api/v1/projects/{project_id}/rest/api/v1/plugins/agents/unknown-route"
+        path = project_service_path(project_id, "rest", "plugins/agents/unknown-route")
         with invocation_context(step_id="S-141.6"):
             status, body, _ = _request(path, token=token)
         error = body.get("error") if isinstance(body, dict) else None
