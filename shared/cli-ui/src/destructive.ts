@@ -66,14 +66,6 @@ export interface ConfirmationRequired {
   message: string;
 }
 
-interface ConfirmContext {
-  ui?: {
-    json?: (data: unknown) => void;
-    warn?: (message: string, opts?: Record<string, unknown>) => void;
-    error?: (message: string, opts?: Record<string, unknown>) => void;
-  };
-}
-
 /**
  * Build the machine-readable signal an agent receives when confirmation is
  * missing in json mode. Exported so a non-CLI surface (REST 409, MCP) can reuse
@@ -118,12 +110,11 @@ export function renderDestructiveMessage(a: DestructiveAction): string {
  * when NOT confirmed (in every mode — agents get the structured signal, not a
  * silent execution), or `null` when confirmed so the caller proceeds.
  *
- *   const blocked = confirmDestructive(ctx, { confirmed: flags.yes, isJson, action });
+ *   const blocked = confirmDestructive({ confirmed: flags.yes, action });
  *   if (blocked) return blocked;
  */
 export function confirmDestructive(
-  _ctx: ConfirmContext,
-  opts: { confirmed: boolean; isJson?: boolean; action: DestructiveAction },
+  opts: { confirmed: boolean; action: DestructiveAction },
 ): CommandFailure | null {
   if (opts.confirmed) {
     return null;

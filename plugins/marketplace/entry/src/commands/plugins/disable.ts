@@ -24,7 +24,7 @@ export default defineCommand<unknown, DisableInput, { packageId: string; scope: 
       const flags = (input.flags ?? input) as DisableFlags;
 
       if (!packageId) {
-        return validationError(ctx, 'Specify a plugin to disable', 'Usage: kb marketplace plugins disable <plugin-id>', flags.json);
+        return validationError('Specify a plugin to disable', 'Usage: kb marketplace plugins disable <plugin-id>');
       }
 
       let scopeCtx;
@@ -32,9 +32,9 @@ export default defineCommand<unknown, DisableInput, { packageId: string; scope: 
         scopeCtx = await resolveCliScope(ctx.cwd, flags.scope);
       } catch (err) {
         if (err instanceof CliScopeError) {
-          return validationError(ctx, err.message, undefined, flags.json);
+          return validationError(err.message);
         } else {
-          return handleError(ctx, err, flags.json);
+          return handleError(err);
         }
               }
 
@@ -47,7 +47,7 @@ export default defineCommand<unknown, DisableInput, { packageId: string; scope: 
         }
         return { packageId, scope: scopeCtx.scope };
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
     },
   },

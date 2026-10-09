@@ -36,7 +36,7 @@ export default defineCommand({
 
         return accounts;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

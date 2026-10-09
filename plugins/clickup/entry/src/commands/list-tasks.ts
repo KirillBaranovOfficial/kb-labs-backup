@@ -21,7 +21,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<ListTasksFlags>) {
       const [listId] = input.argv;
       if (!listId) {
-        return validationError(ctx, 'List ID is required', 'Usage: kb clickup list tasks <listId>  (get IDs via `kb clickup workspace`)', input.flags.json);
+        return validationError('List ID is required', 'Usage: kb clickup list tasks <listId>  (get IDs via `kb clickup workspace`)');
       }
 
       try {
@@ -61,7 +61,7 @@ export default defineCommand({
 
         return tasks;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

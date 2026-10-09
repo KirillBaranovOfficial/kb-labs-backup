@@ -18,7 +18,7 @@ export default defineCommand({
         return companies;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:company.list failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

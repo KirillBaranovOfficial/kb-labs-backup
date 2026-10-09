@@ -47,7 +47,7 @@ export default defineCommand<unknown, CLIInput<SearchFlags>, SearchResponse>({
         }
         return res;
       } catch (err) {
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

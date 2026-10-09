@@ -32,7 +32,7 @@ export default defineCommand({
         result = await pushCommits(cwd, { force: input.force });
       } catch (err) {
         pushLoader.fail('Push failed');
-        return handleError(ctx, err, input.json);
+        return handleError(err);
       }
 
       // Output

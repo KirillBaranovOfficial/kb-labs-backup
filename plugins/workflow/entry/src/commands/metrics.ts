@@ -53,7 +53,7 @@ export default defineCommand<unknown, MetricsInput, unknown>({
         return undefined;
       } catch (error) {
         if (outputJson) {
-          return handleError(ctx, error, true);
+          return handleError(error);
         } else {
           const message = error instanceof Error ? error.message : String(error);
 

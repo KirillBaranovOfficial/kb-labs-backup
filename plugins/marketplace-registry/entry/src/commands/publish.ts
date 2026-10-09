@@ -37,21 +37,16 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData 
         const content = await fs.readFile(path.join(pluginDir, 'package.json'), 'utf-8');
         pkgJson = JSON.parse(content) as Record<string, unknown>;
       } catch {
-        return validationError(ctx, 'Cannot read package.json in current directory', 'Run this command from the plugin root directory', flags.json);
+        return validationError('Cannot read package.json in current directory', 'Run this command from the plugin root directory');
       }
 
       if (!pkgJson.name || !pkgJson.version) {
-        return validationError(ctx, 'package.json must have name and version fields', undefined, flags.json);
+        return validationError('package.json must have name and version fields');
       }
 
       const kb = pkgJson['kb'] as Record<string, unknown> | undefined;
       if (!kb?.manifest && !kb?.adapter) {
-        return validationError(
-          ctx,
-          'Not a KB Labs plugin or adapter',
-          'Add a kb.manifest or kb.adapter field to package.json',
-          flags.json,
-        );
+        return validationError('Not a KB Labs plugin or adapter', 'Add a kb.manifest or kb.adapter field to package.json');
       }
 
       // Read README (non-fatal)
@@ -93,7 +88,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData 
           });
           return;
         } catch (err) {
-          return handleError(ctx, err, flags.json);
+          return handleError(err);
         }
       }
 
@@ -106,7 +101,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData 
         tarball = await packPlugin(pluginDir);
         packMs = Date.now() - t1;
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
 
       try {
@@ -141,7 +136,7 @@ export default defineCommand<unknown, CLIInput<PublishFlags>, PublishResultData 
         return result;
       } catch (err) {
         if (flags.json) {
-          return handleError(ctx, err, true);
+          return handleError(err);
         }
         const message = err instanceof Error ? err.message : String(err);
         ctx.ui?.chain?.([

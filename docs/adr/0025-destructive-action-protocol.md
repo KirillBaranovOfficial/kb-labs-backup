@@ -28,7 +28,7 @@ not safe for critical operations.
 **Criticality is a declared property of the command, not logic inside it.** One
 declaration drives both layers.
 
-1. **Soft layer — now.** `@kb-labs/sdk` exports `confirmDestructive(ctx, { confirmed, isJson, action })`
+1. **Soft layer — now.** `@kb-labs/sdk` exports `confirmDestructive({ confirmed, action })`
    (in `@kb-labs/shared-cli-ui`). `action` is a `DestructiveAction` descriptor:
    `{ action, resource, effect, severity, reversible, recovery?, blastRadius?, confirmFlag? }`.
    Without confirmation the command does **not** run in any mode:

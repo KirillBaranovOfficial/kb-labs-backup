@@ -23,7 +23,7 @@ export default defineCommand<unknown, CLIInput<SyncPathsFlags>, SyncResponse>({
       ctx.ui?.success?.(`Sync update → "${res.indexId}": ${res.updated} updated`);
       return res;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

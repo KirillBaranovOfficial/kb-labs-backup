@@ -34,7 +34,7 @@ export default defineCommand<unknown, { flags?: { json?: boolean } }, unknown>({
         }
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

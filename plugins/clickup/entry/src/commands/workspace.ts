@@ -49,7 +49,7 @@ export default defineCommand({
 
         return workspace;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

@@ -11,7 +11,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<Flags>) {
       const { name, status, description, json } = input.flags;
       if (!name?.trim()) {
-        return validationError(ctx, '--name is required', undefined, json);
+        return validationError('--name is required');
       }
 
       try {
@@ -29,7 +29,7 @@ export default defineCommand({
         return project;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:project.add failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

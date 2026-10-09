@@ -16,12 +16,12 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<DeleteFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        return validationError(ctx, 'uid is required', 'Usage: kb inbox delete <uid>', input.flags.json);
+        return validationError('uid is required', 'Usage: kb inbox delete <uid>');
       }
 
       const uid = parseInt(rawUid, 10);
       if (isNaN(uid)) {
-        return validationError(ctx, `Invalid uid: "${rawUid}" — must be a number`, undefined, input.flags.json);
+        return validationError(`Invalid uid: "${rawUid}" — must be a number`);
       }
 
       try {
@@ -35,7 +35,7 @@ export default defineCommand({
         ctx.ui?.success?.(`Deleted uid=${uid}`);
         return null;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

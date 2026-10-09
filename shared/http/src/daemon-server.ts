@@ -1,4 +1,5 @@
 import Fastify, {
+  type FastifyContextConfig,
   type FastifyInstance,
   type FastifyRequest,
   type FastifyReply,
@@ -29,6 +30,8 @@ export interface DaemonServerOptions {
   /** Optional CORS config — requires @fastify/cors peer dep */
   cors?: Record<string, unknown>;
   openapi?: Pick<OpenAPIOptions, "title" | "description">;
+  /** Route metadata for the standard observability and OpenAPI routes. */
+  standardRouteConfig?: FastifyContextConfig;
   setErrorHandler?: (server: FastifyInstance) => void;
   registerRoutes?: (server: FastifyInstance) => Promise<void>;
   /** Called AFTER correlation hook — request.kbLogger is already set */
@@ -104,12 +107,13 @@ export async function createDaemonServer(
   );
 
   if (!opts.skipStandardRoutes) {
-    server.get("/health", async () =>
+    const standardRouteOptions = () => ({ config: { ...opts.standardRouteConfig } });
+    server.get("/health", standardRouteOptions(), async () =>
       opts.healthResponse
         ? opts.healthResponse()
         : opts.observability.buildHealth(),
     );
-    server.get("/ready", async (_req: FastifyRequest, reply: FastifyReply) => {
+    server.get("/ready", standardRouteOptions(), async (_req: FastifyRequest, reply: FastifyReply) => {
       if (opts.readyCheck) {
         const result = opts.readyCheck();
         return reply.code(result.ready ? 200 : 503).send(result);
@@ -118,6 +122,7 @@ export async function createDaemonServer(
     });
     server.get(
       "/metrics",
+      standardRouteOptions(),
       async (_req: FastifyRequest, reply: FastifyReply) => {
         reply.header(
           "Content-Type",
@@ -126,10 +131,10 @@ export async function createDaemonServer(
         return opts.observability.renderPrometheusMetrics("healthy");
       },
     );
-    server.get("/observability/describe", async () =>
+    server.get("/observability/describe", standardRouteOptions(), async () =>
       opts.observability.buildDescribe(),
     );
-    server.get("/observability/health", async () =>
+    server.get("/observability/health", standardRouteOptions(), async () =>
       opts.observability.buildHealth(),
     );
   }
@@ -147,6 +152,7 @@ export async function createDaemonServer(
       title: opts.openapi.title,
       description: opts.openapi.description,
       version: "1.0.0",
+      routeConfig: opts.standardRouteConfig,
     });
   }
 

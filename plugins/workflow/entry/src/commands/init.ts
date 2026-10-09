@@ -39,9 +39,9 @@ export default defineCommand<unknown, CLIInput<InitFlags>, unknown>({
         return result;
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
-          return workflowCommandError(ctx, 'KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow init`.', input.flags.json ?? false);
+          return workflowCommandError('KB_RUNTIME_COMMAND_FAILED', 'Workflow file already exists: .kb/workflows/hello.yml.', 'Rename the existing workflow file, then retry `kb workflow init`.');
         }
-        return handleError(ctx, error, input.flags.json ?? false);
+        return handleError(error);
       }
     },
   },

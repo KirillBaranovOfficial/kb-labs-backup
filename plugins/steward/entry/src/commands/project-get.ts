@@ -12,7 +12,7 @@ export default defineCommand({
       const [idOrName] = input.argv;
       const { json } = input.flags;
       if (!idOrName) {
-        return validationError(ctx, 'idOrName is required', 'Usage: kb steward project get <idOrName>', json);
+        return validationError('idOrName is required', 'Usage: kb steward project get <idOrName>');
       }
 
       try {
@@ -29,7 +29,7 @@ export default defineCommand({
         return card;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:project.get failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

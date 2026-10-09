@@ -54,7 +54,7 @@ export default defineCommand<unknown, CLIInput<DefsListFlags>, unknown>({
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

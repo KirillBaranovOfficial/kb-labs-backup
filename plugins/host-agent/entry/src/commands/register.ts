@@ -59,18 +59,18 @@ export default defineCommand({
         let pathStat: Awaited<ReturnType<typeof stat>> | null = null;
         try { pathStat = await stat(resolved); } catch { /* will error below */ }
         if (!pathStat?.isDirectory()) {
-          return validationError(ctx, `Workspace path does not exist or is not a directory: ${resolved}`, undefined, flags.json);
+          return validationError(`Workspace path does not exist or is not a directory: ${resolved}`);
         }
         workspacePaths.push(resolved);
       }
 
       if (!gatewayUrl) {
-        return validationError(ctx, '--gateway is required', 'Usage: kb workspace:register --gateway http://localhost:4000', flags.json);
+        return validationError('--gateway is required', 'Usage: kb workspace:register --gateway http://localhost:4000');
       }
 
       // Validate URL
       if (!gatewayUrl.startsWith('http://') && !gatewayUrl.startsWith('https://')) {
-        return validationError(ctx, 'Invalid gateway URL — must start with http:// or https://', undefined, flags.json);
+        return validationError('Invalid gateway URL — must start with http:// or https://');
       }
 
       ctx.ui?.info?.(`Registering with Gateway: ${gatewayUrl}`);
@@ -85,32 +85,32 @@ export default defineCommand({
         });
       } catch (err) {
         if (err instanceof GatewayApiError) {
-          return handleError(ctx, err, flags.json);
+          return handleError(err);
         }
         const causeMessage = err instanceof Error ? err.message : String(err);
-        return handleError(ctx, new Error(`Failed to reach Gateway: ${causeMessage}`), flags.json);
+        return handleError(new Error(`Failed to reach Gateway: ${causeMessage}`));
       }
 
       if (!res.ok) {
         const message = `Gateway returned HTTP ${res.status}. Check the gateway and retry kb workspace:register --gateway ${gatewayUrl}.`;
-        return handleError(ctx, new Error(message), flags.json);
+        return handleError(new Error(message));
       }
 
       let data: { clientId?: string; clientSecret?: string; hostId?: string };
       try {
         data = await res.json() as typeof data;
       } catch {
-        return handleError(ctx, new Error('Gateway response is not valid JSON'), flags.json);
+        return handleError(new Error('Gateway response is not valid JSON'));
       }
 
       if (!data.clientId || !data.clientSecret || !data.hostId) {
-        return handleError(ctx, new Error('Gateway response is missing required fields (clientId, clientSecret, hostId)'), flags.json);
+        return handleError(new Error('Gateway response is missing required fields (clientId, clientSecret, hostId)'));
       }
 
       // Format validation — secrets must be non-empty strings with safe characters only
       const SECRET_PATTERN = /^[A-Za-z0-9_\-+/=]{16,}$/;
       if (typeof data.clientSecret !== 'string' || !SECRET_PATTERN.test(data.clientSecret)) {
-        return handleError(ctx, new Error('Gateway returned an invalid client secret (unexpected format)'), flags.json);
+        return handleError(new Error('Gateway returned an invalid client secret (unexpected format)'));
       }
 
       // Write ~/.kb/agent.json

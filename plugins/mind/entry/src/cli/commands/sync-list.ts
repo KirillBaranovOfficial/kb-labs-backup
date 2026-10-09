@@ -29,7 +29,7 @@ export default defineCommand<unknown, CLIInput<SyncListFlags>, SyncListResponse>
       });
       return res;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

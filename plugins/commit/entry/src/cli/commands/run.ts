@@ -145,7 +145,7 @@ export default defineCommand({
         status = await getGitStatus(scopeCwd);
       } catch (err) {
         statusLoader.fail('Failed to check git status');
-        return handleError(ctx, err, outputJson);
+        return handleError(err);
       }
 
       if (!hasChanges(status)) {

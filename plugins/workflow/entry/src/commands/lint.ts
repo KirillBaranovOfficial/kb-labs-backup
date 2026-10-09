@@ -82,7 +82,7 @@ export default defineCommand<unknown, CLIInput<LintFlags>, unknown>({
 
         return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: firstError ? `${failed.length}/${results.length} workflow file(s) failed validation: ${firstError}` : `${failed.length}/${results.length} workflow file(s) failed validation.`, hint: 'Fix the file and field errors above, then rerun `kb workflow lint`.', diagnostics } };
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

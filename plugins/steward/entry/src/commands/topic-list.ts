@@ -18,7 +18,7 @@ export default defineCommand({
         return topics;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:topic.list failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

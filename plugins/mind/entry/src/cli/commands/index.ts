@@ -58,7 +58,7 @@ export default defineCommand<unknown, CLIInput<IndexFlags>, IndexResponse>({
         }
         return res;
       } catch (err) {
-        return handleError(ctx, err, flags.json);
+        return handleError(err);
       }
     },
   },

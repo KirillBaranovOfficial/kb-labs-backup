@@ -17,15 +17,15 @@ export default defineCommand({
     async execute(ctx: PluginContextV3, input: CLIInput<ReplyFlags>) {
       const [rawUid] = input.argv;
       if (!rawUid) {
-        return validationError(ctx, 'uid is required', 'Usage: kb inbox reply <uid> --body "..."', input.flags.json);
+        return validationError('uid is required', 'Usage: kb inbox reply <uid> --body "..."');
       }
       if (!input.flags.body) {
-        return validationError(ctx, '--body is required', undefined, input.flags.json);
+        return validationError('--body is required');
       }
 
       const uid = parseInt(rawUid, 10);
       if (isNaN(uid)) {
-        return validationError(ctx, `Invalid uid: "${rawUid}" — must be a number`, undefined, input.flags.json);
+        return validationError(`Invalid uid: "${rawUid}" — must be a number`);
       }
 
       try {
@@ -47,7 +47,7 @@ export default defineCommand({
         ctx.ui?.success?.(`Reply sent  id: ${result.messageId}`);
           return result;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

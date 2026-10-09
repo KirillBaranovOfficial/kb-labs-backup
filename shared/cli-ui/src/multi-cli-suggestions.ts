@@ -64,8 +64,7 @@ export class MultiCLISuggestions {
    * Generate suggestions for a specific group
    */
   generateGroupSuggestions(
-    group: string, 
-    context: MultiCLIContext
+    group: string,
   ): CommandSuggestion[] {
     const suggestions: CommandSuggestion[] = [];
     const registry = this.getGlobalRegistry();
@@ -78,9 +77,7 @@ export class MultiCLISuggestions {
     for (const pkg of groupPackages) {
       const groupSuggestions = generateGroupSuggestions(
         pkg.commands, 
-        group, 
-        context.warningCodes, 
-        context
+        group
       );
 
       // Convert to CommandSuggestion format and validate
@@ -127,7 +124,7 @@ export class MultiCLISuggestions {
 
     for (const group of groups) {
       if (group !== 'devlink') { // Skip devlink as it's handled above
-        const groupSuggestions = this.generateGroupSuggestions(group, context);
+        const groupSuggestions = this.generateGroupSuggestions(group);
         suggestions.push(...groupSuggestions);
       }
     }
@@ -157,4 +154,3 @@ export class MultiCLISuggestions {
     return Array.from(this.packages.values());
   }
 }
-

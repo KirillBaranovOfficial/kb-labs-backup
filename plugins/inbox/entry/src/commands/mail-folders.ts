@@ -35,7 +35,7 @@ export default defineCommand({
 
         return folders;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

@@ -55,6 +55,7 @@ export async function createRegistryServer(opts: RegistryServerOptions): Promise
     logger,
     observability,
     onRequest: createRegistryAuthMiddleware(internalSecret),
+    standardRouteConfig: { registryAccess: 'user' },
     // Preserve the legacy /health contract { status:'ok', service, ts } — e2e RG-H01.
     healthResponse: () => ({ status: 'ok', service: 'marketplace-registry', ts: Date.now() }),
     // /ready must return { ready, components } — e2e RG-H02 asserts body.ready === true.

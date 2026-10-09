@@ -12,7 +12,7 @@ export default defineCommand({
       const [topic] = input.argv;
       const { project, json } = input.flags;
       if (!topic?.trim()) {
-        return validationError(ctx, 'topic is required', 'Usage: kb steward who <topic> [--project=]', json);
+        return validationError('topic is required', 'Usage: kb steward who <topic> [--project=]');
       }
 
       try {
@@ -32,7 +32,7 @@ export default defineCommand({
         return candidates;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:who failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

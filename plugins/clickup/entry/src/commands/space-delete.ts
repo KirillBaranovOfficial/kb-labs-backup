@@ -24,10 +24,10 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<SpaceDeleteFlags>) {
       const spaceId = input.argv[0] as string | undefined;
       if (!spaceId) {
-        return validationError(ctx, 'spaceId is required', 'Usage: kb clickup space delete <spaceId> --force', input.flags.json);
+        return validationError('spaceId is required', 'Usage: kb clickup space delete <spaceId> --force');
       }
       if (!input.flags.force) {
-        return validationError(ctx, `--force is required to delete space ${spaceId}`, 'Add --force to confirm deletion', input.flags.json);
+        return validationError(`--force is required to delete space ${spaceId}`, 'Add --force to confirm deletion');
       }
 
       try {
@@ -41,7 +41,7 @@ export default defineCommand({
 
         return { deleted: true, spaceId };
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

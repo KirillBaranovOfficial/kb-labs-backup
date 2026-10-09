@@ -29,9 +29,9 @@ export interface UIPrompts {
 export const NOOP_PROMPTS: UIPrompts = {
   confirm: (message) => unavailablePrompt(message),
   prompt: (message) => unavailablePrompt(message),
-  select: <T>(message: string, _choices: SelectChoice<T>[]) =>
+  select: <T>(message: string): Promise<T> =>
     unavailablePrompt(message),
-  multiSelect: <T>(message: string, _choices: MultiSelectChoice<T>[]) =>
+  multiSelect: <T>(message: string): Promise<T[]> =>
     unavailablePrompt(message),
 };
 

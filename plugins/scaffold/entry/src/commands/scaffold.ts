@@ -137,7 +137,7 @@ async function runDefault(
 
   const available = await listEntities(TEMPLATES_ROOT);
   if (available.length === 0) {
-    return validationError(ctx, 'No scaffold templates found. Reinstall @kb-labs/scaffold.');
+    return validationError('No scaffold templates found. Reinstall @kb-labs/scaffold.');
   }
 
   if (!entityArg) {
@@ -145,7 +145,7 @@ async function runDefault(
   }
 
   if (!available.includes(entityArg)) {
-    return validationError(ctx, `Unknown entity "${entityArg}". Available: ${available.join(', ')}`);
+    return validationError(`Unknown entity "${entityArg}". Available: ${available.join(', ')}`);
   }
 
   if (!nameArg) {
@@ -154,7 +154,7 @@ async function runDefault(
 
   const problem = runValidator('npmName', nameArg);
   if (problem) {
-    return validationError(ctx, `Invalid name "${nameArg}": ${problem}`, 'Name must be lowercase, no spaces, valid npm package name.');
+    return validationError(`Invalid name "${nameArg}": ${problem}`, 'Name must be lowercase, no spaces, valid npm package name.');
   }
 
   const entity = await loadEntity(TEMPLATES_ROOT, entityArg);
@@ -183,7 +183,7 @@ async function runDefault(
   try {
     resolveBlocks(entity.blocks, selectedBlocks);
   } catch (e) {
-    return handleError(ctx, e);
+    return handleError(e);
   }
 
   for (const blockId of selectedBlocks) {
@@ -237,7 +237,7 @@ async function runDefault(
     if (input.force) {
       ctx.ui?.warn?.(`--force: overwriting ${outRoot}`);
     } else {
-      return validationError(ctx, `Output directory "${outRoot}" already exists and is not empty.`, 'Use --force to overwrite.');
+      return validationError(`Output directory "${outRoot}" already exists and is not empty.`, 'Use --force to overwrite.');
     }
   }
 
@@ -248,7 +248,7 @@ async function runDefault(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return validationError(ctx, message, 'Check the platform with `kb-create status`, then start it with `kb-create start`.');
+    return validationError(message, 'Check the platform with `kb-create status`, then start it with `kb-create start`.');
   }
 
   const linkPath = relative(ctx.cwd, entityArg === 'plugin'

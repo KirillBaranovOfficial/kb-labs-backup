@@ -25,7 +25,7 @@ export default defineCommand<unknown, CLIInput<RunsCancelFlags>, unknown>({
       const runId = flags?.['run-id'] ?? argv[0];
 
       if (!runId) {
-        return validationError(ctx, 'Missing run ID', 'Usage: kb workflow runs cancel <runId> [--run-id=<id>]', outputJson);
+        return validationError('Missing run ID', 'Usage: kb workflow runs cancel <runId> [--run-id=<id>]');
       }
 
       try {
@@ -53,7 +53,7 @@ export default defineCommand<unknown, CLIInput<RunsCancelFlags>, unknown>({
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

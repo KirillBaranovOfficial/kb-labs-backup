@@ -24,10 +24,10 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<ListDeleteFlags>) {
       const listId = input.argv[0] as string | undefined;
       if (!listId) {
-        return validationError(ctx, 'listId is required', 'Usage: kb clickup list delete <listId> --force', input.flags.json);
+        return validationError('listId is required', 'Usage: kb clickup list delete <listId> --force');
       }
       if (!input.flags.force) {
-        return validationError(ctx, `--force is required to delete list ${listId}`, 'Add --force to confirm deletion', input.flags.json);
+        return validationError(`--force is required to delete list ${listId}`, 'Add --force to confirm deletion');
       }
 
       try {
@@ -41,7 +41,7 @@ export default defineCommand({
 
         return { deleted: true, listId };
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

@@ -35,7 +35,7 @@ export default defineCommand<unknown, CLIInput<RunsRerunFlags>, unknown>({
       const runId = flags?.['run-id'] ?? argv[0];
 
       if (!runId) {
-        return validationError(ctx, 'Missing run ID', 'Usage: kb workflow runs-rerun <runId> [--run-id=<id>] [--failed-only]', outputJson);
+        return validationError('Missing run ID', 'Usage: kb workflow runs-rerun <runId> [--run-id=<id>] [--failed-only]');
       }
       const failedOnly = flags?.['failed-only'] ?? false;
 
@@ -68,7 +68,7 @@ export default defineCommand<unknown, CLIInput<RunsRerunFlags>, unknown>({
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

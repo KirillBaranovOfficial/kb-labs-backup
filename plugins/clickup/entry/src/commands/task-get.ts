@@ -13,7 +13,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<TaskGetFlags>) {
       const [taskId] = input.argv;
       if (!taskId) {
-        return validationError(ctx, 'Task ID is required', 'Usage: kb clickup task get <taskId>', input.flags.json);
+        return validationError('Task ID is required', 'Usage: kb clickup task get <taskId>');
       }
 
       try {
@@ -65,7 +65,7 @@ export default defineCommand({
 
         return { task, comments };
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

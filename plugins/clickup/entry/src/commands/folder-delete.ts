@@ -24,10 +24,10 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<FolderDeleteFlags>) {
       const folderId = input.argv[0] as string | undefined;
       if (!folderId) {
-        return validationError(ctx, 'folderId is required', 'Usage: kb clickup folder delete <folderId> --force', input.flags.json);
+        return validationError('folderId is required', 'Usage: kb clickup folder delete <folderId> --force');
       }
       if (!input.flags.force) {
-        return validationError(ctx, `--force is required to delete folder ${folderId}`, 'Add --force to confirm deletion', input.flags.json);
+        return validationError(`--force is required to delete folder ${folderId}`, 'Add --force to confirm deletion');
       }
 
       try {
@@ -41,7 +41,7 @@ export default defineCommand({
 
         return { deleted: true, folderId };
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

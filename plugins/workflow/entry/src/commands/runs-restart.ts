@@ -30,12 +30,7 @@ export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
       const runId = flags?.['run-id'] ?? argv[0];
 
       if (!runId) {
-        return validationError(
-          ctx,
-          'Missing run ID',
-          'Usage: kb workflow runs-restart <runId> [--from-step=<stepId>]',
-          outputJson,
-        );
+        return validationError('Missing run ID', 'Usage: kb workflow runs-restart <runId> [--from-step=<stepId>]');
       }
 
       const fromStepId = flags?.['from-step'];
@@ -68,7 +63,7 @@ export default defineCommand<unknown, CLIInput<RunsRestartFlags>, unknown>({
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

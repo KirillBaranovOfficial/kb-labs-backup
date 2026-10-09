@@ -40,7 +40,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
 
       const backup = getLastBackup(rootDir);
       if (!backup) {
-        return validationError(ctx, 'No backups found. Run switch first to create a backup.', undefined, outputJson);
+        return validationError('No backups found. Run switch first to create a backup.');
       }
 
       const loader = useLoader(`Restoring from backup ${backup.id}...`);
@@ -52,7 +52,7 @@ export default defineCommand<unknown, UndoInput, UndoResult>({
         ({ restored, errors } = restoreBackup(rootDir, backup.id));
       } catch (err) {
         loader.fail('Restore failed');
-        return handleError(ctx, err, outputJson);
+        return handleError(err);
       }
       loader.succeed(`Restored ${restored} file(s)`);
       tracker.checkpoint('restore');

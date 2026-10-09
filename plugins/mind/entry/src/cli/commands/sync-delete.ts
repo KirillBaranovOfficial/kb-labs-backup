@@ -17,9 +17,8 @@ export default defineCommand<unknown, CLIInput<SyncDeleteFlags>, SyncResponse>({
       }
       // Destructive: blocks in EVERY mode until --yes (agents get a structured
       // confirmationRequired signal with severity/recovery, not a silent delete).
-      const blocked = confirmDestructive(ctx, {
+      const blocked = confirmDestructive({
         confirmed: input.flags.yes,
-        isJson: input.flags.json,
         action: {
           action: 'mind sync delete',
           resource: `index "${input.flags.index ?? 'default'}"`,
@@ -41,7 +40,7 @@ export default defineCommand<unknown, CLIInput<SyncDeleteFlags>, SyncResponse>({
       ctx.ui?.success?.(`Sync delete → "${res.indexId}": ${res.deleted} chunk(s) removed`);
       return res;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

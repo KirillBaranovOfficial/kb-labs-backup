@@ -42,7 +42,7 @@ export default defineCommand<unknown, CLIInput<JobListFlags>, unknown>({
 
         return undefined;
       } catch (error) {
-        return handleError(ctx, error, outputJson);
+        return handleError(error);
       }
     },
   },

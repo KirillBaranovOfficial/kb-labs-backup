@@ -29,7 +29,7 @@ export default defineCommand({
     async execute(ctx: PluginCommandContextV3, input: CLIInput<ListUpdateFlags>) {
       const listId = input.argv[0] as string | undefined;
       if (!listId) {
-        return validationError(ctx, 'listId is required', 'Usage: kb clickup list update <listId> --name "new name"', input.flags.json);
+        return validationError('listId is required', 'Usage: kb clickup list update <listId> --name "new name"');
       }
 
       try {
@@ -45,7 +45,7 @@ export default defineCommand({
 
         return list;
       } catch (err) {
-        return handleError(ctx, err, input.flags.json);
+        return handleError(err);
       }
     },
   },

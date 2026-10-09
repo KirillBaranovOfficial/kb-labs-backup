@@ -12,7 +12,7 @@ export default defineCommand({
       const [id] = input.argv;
       const { json } = input.flags;
       if (!id) {
-        return validationError(ctx, 'id is required', 'Usage: kb steward commitment done <id>', json);
+        return validationError('id is required', 'Usage: kb steward commitment done <id>');
       }
 
       try {
@@ -25,7 +25,7 @@ export default defineCommand({
         return commitment;
       } catch (err) {
         ctx.platform.logger?.error?.('steward:commitment.done failed', err instanceof Error ? err : new Error(String(err)));
-        return handleError(ctx, err, json);
+        return handleError(err);
       }
     },
   },

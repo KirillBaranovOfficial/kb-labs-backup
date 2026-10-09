@@ -46,7 +46,7 @@ export default defineCommand<unknown, FreezeInput, LockFile>({
         lock = freeze(rootDir, plan);
       } catch (err) {
         loader.fail('Failed to freeze state');
-        return handleError(ctx, err, outputJson);
+        return handleError(err);
       }
       loader.succeed('State frozen');
       tracker.checkpoint('freeze');
