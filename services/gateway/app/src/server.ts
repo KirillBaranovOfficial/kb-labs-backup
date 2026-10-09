@@ -187,6 +187,7 @@ export async function createServer(
     studioEnabled,
     internalSecret: process.env.GATEWAY_INTERNAL_SECRET,
     webhookManifests,
+    ...(studioStatic ? { studioPublicAsset: studioStatic.isPublicAsset } : {}),
     ...(userAuth ? { userAuth: {
       users: userAuth.users,
       sessions: userAuth.sessions,

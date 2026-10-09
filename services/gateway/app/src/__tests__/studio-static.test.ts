@@ -9,6 +9,7 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { ICache, ILogger, IServiceTransport } from "@kb-labs/core-platform";
 import type { GatewayConfig } from "@kb-labs/gateway-contracts";
+import { AuthConfigSchema } from "@kb-labs/gateway-contracts";
 import { createServer } from "../server.js";
 import {
   StudioAssetsMissingError,
@@ -64,6 +65,7 @@ function baseConfig(studio?: GatewayConfig["studio"]): GatewayConfig {
     port: 0,
     upstreams: {},
     staticTokens: {},
+    auth: AuthConfigSchema.parse({ enabled: true }),
     ...(studio ? { studio } : {}),
   };
 }
@@ -89,9 +91,11 @@ beforeAll(() => {
   mkdirSync(join(studioDir, "assets"), { recursive: true });
   writeFileSync(
     join(studioDir, "index.html"),
-    "<!doctype html><html><head><title>fake studio</title></head><body>SPA</body></html>",
+    '<!doctype html><html><head><title>fake studio</title><link href="/main.abcdef12.css" rel="stylesheet"></head><body><script src="/main.abcdef12.js"></script>SPA</body></html>',
   );
   writeFileSync(join(studioDir, "assets", "main.abcdef12.js"), "console.log(1)");
+  writeFileSync(join(studioDir, "main.abcdef12.js"), "console.log('entry')");
+  writeFileSync(join(studioDir, "main.abcdef12.css"), "body { color: black }");
   writeFileSync(join(studioDir, "favicon.ico"), "ico");
   writeFileSync(join(root, "secret.txt"), "TOP-SECRET");
 });
@@ -147,6 +151,22 @@ describe("studio hosting enabled", () => {
     const ico = await app.inject({ method: "GET", url: "/favicon.ico" });
     expect(ico.statusCode).toBe(200);
     expect(ico.headers["cache-control"]).toBe("no-cache");
+  });
+
+  // case: S-020.2
+  it("allows anonymous access to the root-level entry assets present in the served Studio build", async () => {
+    const app = await studioApp();
+    for (const [url, expected] of [
+      ["/main.abcdef12.js", "console.log('entry')"],
+      ["/main.abcdef12.css", "body { color: black }"],
+    ]) {
+      const response = await app.inject({ method: "GET", url });
+      expect(response.statusCode, url).toBe(200);
+      expect(response.body).toBe(expected);
+    }
+    const missing = await app.inject({ method: "GET", url: "/missing-entry.js" });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ ok: false, error: { code: "KB_RUNTIME_RESOURCE_NOT_FOUND" } });
   });
 
   it("returns 404 (not index.html) for a missing file with an extension", async () => {
@@ -271,9 +291,9 @@ describe("studio hosting disabled (default): existing routes untouched", () => {
       expect((await app.inject({ method: "GET", url: "/projects/x" })).statusCode).not.toBe(200);
       expect((await app.inject({ method: "GET", url: "/favicon.ico" })).statusCode).not.toBe(200);
       expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
-      expect(
-        (await app.inject({ method: "POST", url: "/api/auth/token", payload: {} })).statusCode,
-      ).toBe(401); // no alias: the auth hook rejects it before any handler
+      const unmatched = await app.inject({ method: "POST", url: "/api/auth/token", payload: {} });
+      expect(unmatched.statusCode).toBe(404); // no alias is registered when Studio hosting is disabled
+      expect(unmatched.json()).toMatchObject({ ok: false, error: { code: "KB_RUNTIME_RESOURCE_NOT_FOUND" } });
       const token = await app.inject({
         method: "POST",
         url: "/auth/token",

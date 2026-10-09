@@ -3,6 +3,7 @@ export * from './client/types';
 export * from './client/http-client';
 export * from './client/error-mapper';
 export * from './client/envelope-interceptor';
+export { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result';
 export * from './contracts/common';
 export * from './contracts/system';
 export * from './contracts/workflows';
