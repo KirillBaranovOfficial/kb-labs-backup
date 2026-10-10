@@ -145,7 +145,7 @@ describe("registerProjectRoutes", () => {
     expect(released).toBe(1);
   });
 
-  // case: S-220.2
+  // case: S-221.2
   it("times out a stalled upstream and releases its lease once", async () => {
     let released = 0;
     await setup(() => ({

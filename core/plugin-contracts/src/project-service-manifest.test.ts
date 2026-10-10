@@ -27,7 +27,7 @@ describe("collectProjectServiceDeclarations", () => {
     ]);
   });
 
-  // case: S-220.1
+  // case: S-221.1
   it("refuses duplicate and invalid public service identifiers with a catalogued config error", () => {
     try {
       collectProjectServiceDeclarations([
