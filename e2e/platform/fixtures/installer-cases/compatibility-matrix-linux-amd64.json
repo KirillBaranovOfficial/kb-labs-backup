@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "ecccafe7aa79c9324bd753ddbf93e86686816d7cea76ee6e7f878a54c3beebdc",
+  "digest": "438a9d243107072276bd12e87bbbdda63dda80f896e0bb0c987ee859eee67b7d",
   "channels": {
     "stable": "3.2.0"
   },
@@ -63,10 +63,10 @@
             "label": "platform@3.2.0"
           },
           {
-            "label": "sdk@3.2.0"
+            "label": "sdk@3.0.0"
           },
           {
-            "label": "sdk@3.0.0"
+            "label": "sdk@3.2.0"
           }
         ],
         "status": "prepared",

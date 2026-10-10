@@ -9,6 +9,7 @@ import (
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/resolve"
 )
 
@@ -25,17 +26,8 @@ const (
 
 type fixtureOptions struct {
 	minLauncher      string
-	omitSDKRelation  bool
 	unrelatedBinary  bool
 	binaryPlatformOS string // OS the fixture binary is built for
-}
-
-func label(id, kind, artifact string, requires ...string) catalog.CompatibilityLabel {
-	value := catalog.CompatibilityLabel{ID: id, Kind: kind, ArtifactID: artifact, Version: fixtureVersion, Status: "prepared", ValidatedBy: []string{"stage"}}
-	for _, item := range requires {
-		value.Requires = append(value.Requires, catalog.CompatibilityRelation{Label: item})
-	}
-	return value
 }
 
 // fixtureIndex returns the sealed JSON of a small but complete release index.
@@ -45,28 +37,16 @@ func fixtureCatalog(t *testing.T, options fixtureOptions) catalog.Catalog {
 	if binaryOS == "" {
 		binaryOS = targetOS
 	}
-	platformLabel := label("platform@"+fixtureVersion, "platform", "platform", "sdk@"+fixtureVersion)
-	if options.omitSDKRelation {
-		platformLabel.Requires = nil
+	var source catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON(fixtureVersion, fixtureVersion, binaryOS, targetArch), &source); err != nil {
+		t.Fatal(err)
 	}
-	binaryLabel := label("binary:kb-create@"+fixtureVersion+":"+binaryOS+"/"+targetArch, "binary", "kb-create", "platform@"+fixtureVersion, "sdk@"+fixtureVersion)
+	source.Platforms[0].MinLauncherVersion = options.minLauncher
+	source.Platforms[0].Host = testHost()
 	if options.unrelatedBinary {
-		binaryLabel.Requires = nil
+		source.Compatibility.Labels[2].Requires = nil
 	}
-	return catalog.Catalog{
-		Channels: map[contracts.Channel]string{contracts.ChannelStable: fixtureVersion},
-		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{
-			platformLabel, label("sdk@"+fixtureVersion, "sdk", "sdk"), binaryLabel,
-		}},
-		Platforms: []catalog.PlatformBundle{{
-			ID: "platform", Version: fixtureVersion, Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
-			MinLauncherVersion: options.minLauncher,
-			Host:               testHost(),
-			Profiles:           map[string]contracts.ServiceGraph{"default": {}},
-			Binaries:           []catalog.Binary{{ID: "kb-create", OS: binaryOS, Arch: targetArch, URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
-		}},
-		SDKs: []catalog.Component{{ID: "sdk", Version: fixtureVersion, Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
-	}
+	return source
 }
 
 func fixtureIndex(t *testing.T, options fixtureOptions) []byte {
@@ -145,7 +125,22 @@ func TestCompatibilityMatrix(t *testing.T) {
 		}
 	})
 	t.Run("platform without sdk relation", func(t *testing.T) {
-		requireCode(t, installIndex(fixtureIndex(t, fixtureOptions{omitSDKRelation: true}), "2.0.0"), contracts.CodeIncompatibleComponents)
+		data := fixtureIndex(t, fixtureOptions{})
+		var source catalog.Catalog
+		if err := json.Unmarshal(data, &source); err != nil {
+			t.Fatal(err)
+		}
+		source.Compatibility.Labels[0].Requires = nil
+		invalid, err := json.Marshal(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = catalog.Decode(invalid)
+		var typed *diag.Diag
+		if !errors.As(err, &typed) || typed.Code != contracts.CodeReleaseIndexInvalid ||
+			!strings.Contains(typed.Reason, "platform 2.0.0 compatibility label") || !strings.Contains(typed.Reason, "has no SDK relation") {
+			t.Fatalf("Decode error = %#v, want typed invalid-index error for missing platform SDK relation", err)
+		}
 	})
 	t.Run("binary not related to platform or sdk", func(t *testing.T) {
 		_, err := catalog.Seal(fixtureCatalog(t, fixtureOptions{unrelatedBinary: true}))

@@ -1,14 +1,16 @@
 package catalog
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 )
 
 func TestSealAndVerifyImmutableReleaseIndex(t *testing.T) {
-	source, err := Seal(Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}})
+	source, err := Seal(compatibilitySealFixture())
 	if err != nil || source.Digest == "" || Verify(source) != nil {
 		t.Fatalf("source/error = %#v / %v", source, err)
 	}
@@ -19,22 +21,21 @@ func TestSealAndVerifyImmutableReleaseIndex(t *testing.T) {
 }
 
 func TestValidateRejectsChannelOutsideIndex(t *testing.T) {
-	_, err := Seal(Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "missing"}, Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}})
+	source := compatibilitySealFixture()
+	source.Channels[contracts.ChannelStable] = "missing"
+	_, err := Seal(source)
 	if err == nil {
 		t.Fatal("expected absent channel target")
 	}
 }
 
 func TestValidateRejectsCompatibilityLabelOutsideIndex(t *testing.T) {
-	_, err := Seal(Catalog{
-		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Compatibility: &CompatibilityMatrix{
-			Schema: CompatibilitySchema,
-			Labels: []CompatibilityLabel{{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"stage"}}, {ID: "sdk@2.1.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.1.0", Status: "prepared", ValidatedBy: []string{"stage"}}},
-		},
-		Platforms: []PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "artifact", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
+	source := compatibilitySealFixture()
+	source.Compatibility.Labels = append(source.Compatibility.Labels, CompatibilityLabel{
+		ID: "sdk@2.1.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.1.0", Status: "prepared", ValidatedBy: []string{"stage"},
 	})
-	if err == nil {
+	_, err := Seal(source)
+	if err == nil || !strings.Contains(err.Error(), `references absent sdk artifact "sdk"@2.1.0`) {
 		t.Fatal("expected compatibility label to reference an indexed SDK")
 	}
 }
@@ -150,21 +151,11 @@ func TestSealRequiresPlatformSDKRelationsAndRecords(t *testing.T) {
 }
 
 func compatibilitySealFixture() Catalog {
-	return Catalog{
-		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Compatibility: &CompatibilityMatrix{Schema: CompatibilitySchema, Labels: []CompatibilityLabel{
-			{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Requires: []CompatibilityRelation{{Label: "sdk@2.0.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}},
-			{ID: "sdk@2.0.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.0.0", Status: "prepared", ValidatedBy: []string{"stage"}},
-			{ID: "binary:kb-create@2.0.0:linux/amd64", Kind: "binary", ArtifactID: "kb-create", Version: "2.0.0", Requires: []CompatibilityRelation{{Label: "platform@2.0.0"}, {Label: "sdk@2.0.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}},
-		}},
-		Platforms: []PlatformBundle{{
-			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
-			SDKRange: ">=2.0.0 <3.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
-			Profiles: map[string]contracts.ServiceGraph{"default": {}},
-			Binaries: []Binary{{ID: "kb-create", OS: "linux", Arch: "amd64", URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
-		}},
-		SDKs: []Component{{ID: "sdk", Version: "2.0.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk.tgz", SHA256: "sdk"}},
+	var source Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.0.0", "linux", "amd64"), &source); err != nil {
+		panic(err)
 	}
+	return source
 }
 
 // case: S-214.9

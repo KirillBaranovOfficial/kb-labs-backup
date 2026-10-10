@@ -8,6 +8,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -479,7 +480,13 @@ func TestPlanRejectsConflictingManifestRequirementOwnership(t *testing.T) {
 }
 
 func TestPlanIncludesSDKAndResolvedAdapterArtifacts(t *testing.T) {
-	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{{ID: "platform@2.0.0", Kind: "platform", ArtifactID: "platform", Version: "2.0.0", Requires: []catalog.CompatibilityRelation{{Label: "sdk@2.1.0"}}, Status: "prepared", ValidatedBy: []string{"stage"}}, {ID: "sdk@2.1.0", Kind: "sdk", ArtifactID: "sdk", Version: "2.1.0", Status: "prepared", ValidatedBy: []string{"stage"}}}}, Platforms: []catalog.PlatformBundle{{Version: "2.0.0", SDKRange: "^2.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}, Requires: []catalog.Requirement{{Capability: "logs"}}}}, SDKs: []catalog.Component{{ID: "sdk", Version: "2.1.0", Package: "@kb/sdk", SHA256: "sdk"}}, Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "pino", Version: "1.0.0", Package: "@kb/pino", SHA256: "pino"}, Provides: []string{"logs"}}}}
+	var source catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("2.0.0", "2.1.0", stdruntime.GOOS, stdruntime.GOARCH), &source); err != nil {
+		t.Fatal(err)
+	}
+	source.Platforms[0].SDKRange = "^2.0.0"
+	source.Platforms[0].Requires = []catalog.Requirement{{Capability: "logs"}}
+	source.Adapters = []catalog.Adapter{{Component: catalog.Component{ID: "pino", Version: "1.0.0", Package: "@kb/pino", SHA256: "pino"}, Provides: []string{"logs"}}}
 	plan, err := Plan(contracts.InstallRequest{PlatformRoot: "/tmp/x", SDK: contracts.VersionSelector{Version: "2.1.0"}}, source)
 	if err != nil {
 		t.Fatal(err)
