@@ -1353,6 +1353,86 @@
       "hint": "Publish the package to the configured registry and verify its integrity metadata before retrying deployment."
     },
     {
+      "code": "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING",
+      "httpStatus": 409,
+      "area": "plugin",
+      "stage": "preflight",
+      "severity": "error",
+      "retryable": false,
+      "message": "The installed platform is missing kb-create's sealed artifact overrides. No package was installed.",
+      "hint": "Restore the sealed artifact overrides with kb-create update, then retry the exact install command shown by the Marketplace refusal."
+    },
+    {
+      "code": "KB_MARKETPLACE_INSTALL_FAILED",
+      "httpStatus": 422,
+      "area": "plugin",
+      "stage": "extend",
+      "severity": "error",
+      "retryable": true,
+      "message": "Marketplace could not install the requested package.",
+      "hint": "Inspect the correlated Marketplace log, correct the package-manager cause, then run `kb marketplace install {package} --scope {scope}`."
+    },
+    {
+      "code": "KB_MARKETPLACE_PACKAGE_TOO_FRESH",
+      "httpStatus": 422,
+      "area": "plugin",
+      "stage": "extend",
+      "severity": "error",
+      "retryable": true,
+      "message": "The requested package or one of its dependencies is inside the registry release-age window.",
+      "hint": "Wait until the package and its dependencies satisfy the configured minimum release age, then run `kb marketplace install {package} --scope {scope}`."
+    },
+    {
+      "code": "KB_MARKETPLACE_VERSION_NOT_HIGHER",
+      "httpStatus": 409,
+      "area": "plugin",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "Marketplace can only install a version higher than the installed version {installedVersion}.",
+      "hint": "Publish a version higher than {installedVersion}, then run `kb marketplace update {package} --scope {scope}`."
+    },
+    {
+      "code": "KB_MARKETPLACE_VERSION_IMMUTABLE",
+      "httpStatus": 409,
+      "area": "plugin",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "message": "Published version {installedVersion} is immutable and its registry integrity differs from the installed pin.",
+      "hint": "Publish a higher version, then run `kb marketplace install {package}@latest --scope {scope}`."
+    },
+    {
+      "code": "KB_MARKETPLACE_INTEGRITY_MISMATCH",
+      "httpStatus": 502,
+      "area": "plugin",
+      "stage": "verify",
+      "severity": "error",
+      "retryable": false,
+      "message": "The requested package version does not match its immutable Marketplace integrity pin.",
+      "hint": "Do not use this version. Verify the registry publication, publish a higher version, then run `kb marketplace update` to install it."
+    },
+    {
+      "code": "KB_MARKETPLACE_PACKAGE_INVALID",
+      "httpStatus": 422,
+      "area": "plugin",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": false,
+      "message": "Marketplace could not use the requested package.",
+      "hint": "Check the package metadata and classification, then retry the Marketplace operation."
+    },
+    {
+      "code": "KB_MARKETPLACE_RESOLUTION_FAILED",
+      "httpStatus": 502,
+      "area": "plugin",
+      "stage": "resolve",
+      "severity": "error",
+      "retryable": true,
+      "message": "Marketplace could not resolve the requested package.",
+      "hint": "Check the configured registry and inspect the correlated Marketplace log before retrying."
+    },
+    {
       "code": "KB_INSTALL_RELEASE_ID_MISSING",
       "area": "install",
       "stage": "verify",

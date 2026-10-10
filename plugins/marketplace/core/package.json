@@ -32,13 +32,15 @@
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/marketplace-contracts": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
-    "glob": "^11.0.0"
+    "glob": "^11.0.0",
+    "semver": "^7.8.5"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
     "tsup": "^8.5.0",
     "typescript": "^5",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@types/semver": "^7.7.1"
   },
   "engines": {
     "node": ">=24.0.0",

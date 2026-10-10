@@ -8,6 +8,7 @@ import { execa } from 'execa';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as crypto from 'node:crypto';
+import { isMap, isScalar, isSeq, parseDocument } from 'yaml';
 import type {
   PackageSource,
   ResolvedPackage,
@@ -46,10 +47,10 @@ export interface NpmPackageSourceOptions {
 }
 
 export class PackageInstallError extends Error {
-  readonly code: 'NOT_FOUND' | 'INSTALL_FAILED';
+  readonly code: 'NOT_FOUND' | 'INSTALL_FAILED' | 'RELEASE_TOO_FRESH' | 'INTEGRITY_MISMATCH';
   readonly spec: string;
-  constructor(code: PackageInstallError['code'], spec: string, message: string) {
-    super(message);
+  constructor(code: PackageInstallError['code'], spec: string, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'PackageInstallError';
     this.code = code;
     this.spec = spec;
@@ -86,10 +87,14 @@ export class NpmPackageSource implements PackageSource {
     }
     const packument = await response.json() as {
       'dist-tags'?: { latest?: string };
-      versions?: Record<string, { kb?: { manifest?: string; adapter?: unknown } }>;
+      versions?: Record<string, {
+        kb?: { manifest?: string; adapter?: unknown };
+        dist?: { integrity?: string; tarball?: string };
+      }>;
     };
     const version = requestedVersion ?? packument['dist-tags']?.latest;
-    const manifest = version ? packument.versions?.[version]?.kb : undefined;
+    const metadata = version ? packument.versions?.[version] : undefined;
+    const manifest = metadata?.kb;
     if (!version || !manifest) {
       throw new PackageMetadataError('VERSION_NOT_FOUND', id, requestedVersion ?? 'latest',
         `Package ${id} has no published metadata for ${requestedVersion ?? 'latest'}`);
@@ -103,9 +108,12 @@ export class NpmPackageSource implements PackageSource {
     return {
       id,
       version,
-      integrity: '', // computed after install
+      integrity: isSRIIntegrity(metadata?.dist?.integrity)
+        ? metadata.dist.integrity
+        : '',
       source: 'marketplace',
       primaryKind,
+      ...(metadata?.dist?.tarball ? { downloadUrl: metadata.dist.tarball } : {}),
     };
   }
 
@@ -115,42 +123,66 @@ export class NpmPackageSource implements PackageSource {
     opts?: { dev?: boolean },
   ): Promise<InstalledPackage> {
     await assertSealedPlatformOverrides(root, pkg.id, pkg.version);
+    if (pkg.integrity) { await verifyCatalogTarball(pkg); }
     const spec = pkg.version === 'latest' ? pkg.id : `${pkg.id}@${pkg.version}`;
-    const args = ['add', spec];
+    const args = ['add', spec, `--registry=${this.registryUrl}`];
     if (opts?.dev) {args.push('--save-dev');}
     // Bypass the pnpm workspace-root guard: kb-create projects are flat (single-package),
     // so adding to the project root is intentional. Without this flag pnpm throws
     // ERR_PNPM_ADDING_TO_ROOT when a pnpm-workspace.yaml exists in the project directory.
     args.push('--ignore-workspace-root-check');
 
+    const state = await snapshotPackageManagerState(root);
+    let pnpmStarted = false;
     try {
-      await execa('pnpm', args, { cwd: root, timeout: 5 * 60 * 1000 });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const code = msg.includes('ERR_PNPM_FETCH_404') || msg.includes('Not Found - 404')
-        ? 'NOT_FOUND'
-        : 'INSTALL_FAILED';
-      throw new PackageInstallError(code, spec, `pnpm add ${spec} failed: ${msg}`);
+      if (pkg.integrity) { await mergeMinimumReleaseAgeExclude(root, pkg.id, pkg.version); }
+      pnpmStarted = true;
+      try {
+        await execa('pnpm', args, { cwd: root, timeout: 5 * 60 * 1000 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const code = msg.includes('ERR_PNPM_FETCH_404') || msg.includes('Not Found - 404')
+          ? 'NOT_FOUND'
+          : msg.includes('ERR_PNPM_NO_MATURE_MATCHING_VERSION') || msg.includes('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
+            ? 'RELEASE_TOO_FRESH'
+            : msg.includes('ERR_PNPM_TARBALL_INTEGRITY') || msg.includes('ERR_PNPM_TARBALL_INTEGRITY_FAILED')
+              ? 'INTEGRITY_MISMATCH'
+              : 'INSTALL_FAILED';
+        throw new PackageInstallError(code, spec, `pnpm add ${spec} failed: ${msg}`, { cause: err });
+      }
+
+      const packageRoot = path.join(root, 'node_modules', pkg.id);
+      const packageJson = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf-8')) as { version?: unknown };
+      const version = typeof packageJson.version === 'string' ? packageJson.version : pkg.version;
+      const lockIntegrity = pkg.integrity
+        ? await readInstalledTarballIntegrity(root, pkg.id, pkg.version)
+        : undefined;
+      if (pkg.integrity && lockIntegrity !== pkg.integrity) {
+        throw new PackageInstallError('INTEGRITY_MISMATCH', spec,
+          `Installed tarball integrity did not match the Marketplace catalog pin for ${spec}.`);
+      }
+      const integrity = lockIntegrity ?? await computeIntegrity(packageRoot);
+
+      return {
+        id: pkg.id,
+        version,
+        packageRoot,
+        integrity,
+      };
+    } catch (error) {
+      try {
+        await restorePackageManagerState(root, state);
+        if (pnpmStarted) { await reconcilePackageManagerState(root, state); }
+      } catch (rollbackError) {
+        throw new PackageInstallError(
+          'INSTALL_FAILED',
+          spec,
+          `Marketplace could not restore package-manager state after installing ${spec}. Run "pnpm install --offline" in ${root}, then retry "kb marketplace install ${spec}".`,
+          { cause: new AggregateError([error, rollbackError], 'Marketplace package-manager rollback failed') },
+        );
+      }
+      throw error;
     }
-
-    const packageRoot = path.join(root, 'node_modules', pkg.id);
-
-    // Read actual installed version
-    let version = pkg.version;
-    try {
-      const pkgJson = JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf-8'));
-      version = pkgJson.version ?? version;
-    } catch { /* use spec version */ }
-
-    // Compute integrity
-    const integrity = await computeIntegrity(packageRoot);
-
-    return {
-      id: pkg.id,
-      version,
-      packageRoot,
-      integrity,
-    };
   }
 
   async remove(packageId: string, root: string): Promise<void> {
@@ -168,8 +200,7 @@ export async function assertSealedPlatformOverrides(root: string, packageId: str
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return; }
     throw error;
   }
-  let receipt: { plan?: { artifacts?: Array<{ package?: unknown; sha256?: unknown; tarball?: unknown; kind?: unknown }> } };
-  receipt = JSON.parse(await fs.readFile(receiptPath, 'utf8')) as typeof receipt;
+  const receipt = JSON.parse(await fs.readFile(receiptPath, 'utf8')) as { plan?: { artifacts?: Array<{ package?: unknown; sha256?: unknown; tarball?: unknown; kind?: unknown }> } };
   const sealed = new Map<string, string>();
   for (const artifact of receipt.plan?.artifacts ?? []) {
     if (artifact.kind === 'binary' || typeof artifact.tarball !== 'string' || !artifact.tarball) { continue; }
@@ -230,11 +261,145 @@ function extractVersion(spec: string): string | null {
 }
 
 async function computeIntegrity(packageRoot: string): Promise<string> {
+  const content = await fs.readFile(path.join(packageRoot, 'package.json'));
+  const hash = crypto.createHash('sha256').update(content).digest('base64');
+  return `sha256-${hash}`;
+}
+
+interface PackageManagerFileSnapshot {
+  name: string;
+  contents?: Buffer;
+  mode?: number;
+}
+
+const PACKAGE_MANAGER_STATE_FILES = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml'];
+
+async function snapshotPackageManagerState(root: string): Promise<PackageManagerFileSnapshot[]> {
+  return Promise.all(PACKAGE_MANAGER_STATE_FILES.map(async name => {
+    const file = path.join(root, name);
+    try {
+      const [contents, info] = await Promise.all([fs.readFile(file), fs.stat(file)]);
+      return { name, contents, mode: info.mode & 0o777 };
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') { return { name }; }
+      throw error;
+    }
+  }));
+}
+
+async function restorePackageManagerState(root: string, snapshot: PackageManagerFileSnapshot[]): Promise<void> {
+  for (const entry of snapshot) {
+    const file = path.join(root, entry.name);
+    if (entry.contents === undefined) {
+      await fs.rm(file, { force: true });
+      continue;
+    }
+    await fs.writeFile(file, entry.contents, { mode: entry.mode });
+    if (entry.mode !== undefined) { await fs.chmod(file, entry.mode); }
+  }
+}
+
+async function reconcilePackageManagerState(root: string, snapshot: PackageManagerFileSnapshot[]): Promise<void> {
+  const hasLock = snapshot.some(entry => entry.name === 'pnpm-lock.yaml' && entry.contents !== undefined);
+  const args = ['install', '--offline', hasLock ? '--frozen-lockfile' : '--lockfile=false'];
+  await execa('pnpm', args, { cwd: root, timeout: 5 * 60 * 1000 });
+}
+
+export async function mergeMinimumReleaseAgeExclude(root: string, packageId: string, version: string): Promise<void> {
+  const workspacePath = path.join(root, 'pnpm-workspace.yaml');
+  let source: string;
   try {
-    const content = await fs.readFile(path.join(packageRoot, 'package.json'));
-    const hash = crypto.createHash('sha256').update(content).digest('base64');
-    return `sha256-${hash}`;
-  } catch {
-    return '';
+    source = await fs.readFile(workspacePath, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') { throw error; }
+    source = '{}\n';
+  }
+  const document = parseDocument(source);
+  if (document.errors.length > 0) {
+    throw new Error(`Could not parse ${workspacePath}: ${document.errors[0]?.message ?? 'invalid YAML'}`);
+  }
+  if (!isMap(document.contents)) {
+    throw new Error(`${workspacePath} must contain a YAML mapping`);
+  }
+
+  const existing = document.get('minimumReleaseAgeExclude', true);
+  if (existing !== undefined && !isSeq(existing)) {
+    throw new Error(`${workspacePath} minimumReleaseAgeExclude must be a list`);
+  }
+  const selectors: string[] = [];
+  for (const item of existing?.items ?? []) {
+    if (!isScalar(item) || typeof item.value !== 'string') {
+      throw new Error(`${workspacePath} minimumReleaseAgeExclude entries must be strings`);
+    }
+    selectors.push(item.value);
+  }
+
+  const packagePrefix = `${packageId}@`;
+  const samePackage = selectors.filter(selector => selector.startsWith(packagePrefix));
+  const versions = new Set<string>([version]);
+  for (const selector of samePackage) {
+    for (const alternative of selector.slice(packagePrefix.length).split('||')) {
+      const value = alternative.trim();
+      if (value) { versions.add(value); }
+    }
+  }
+  const mergedSelector = `${packagePrefix}${[...versions].sort().join(' || ')}`;
+  const output = selectors.filter(selector => !selector.startsWith(packagePrefix));
+  output.push(mergedSelector);
+  document.set('minimumReleaseAgeExclude', output);
+  await fs.writeFile(workspacePath, document.toString(), { mode: 0o600 });
+}
+
+async function readInstalledTarballIntegrity(root: string, packageId: string, version: string): Promise<string | undefined> {
+  const lockPath = path.join(root, 'pnpm-lock.yaml');
+  const source = await fs.readFile(lockPath, 'utf8');
+  const document = parseDocument(source);
+  if (document.errors.length > 0) {
+    throw new Error(`Could not parse ${lockPath}: ${document.errors[0]?.message ?? 'invalid YAML'}`);
+  }
+  const lock = document.toJS() as { packages?: Record<string, { resolution?: { integrity?: unknown } }> };
+  const packagePrefix = `${packageId}@${version}`;
+  const entry = Object.entries(lock.packages ?? {}).find(([key]) => key === packagePrefix || key.startsWith(`${packagePrefix}(`))?.[1];
+  const integrity = entry?.resolution?.integrity;
+  return typeof integrity === 'string' ? integrity : undefined;
+}
+
+function isSRIIntegrity(value: unknown): value is string {
+  if (typeof value !== 'string' || value.trim() === '') { return false; }
+  return value.split(/\s+/).every(token => {
+    const separator = token.indexOf('-');
+    if (separator <= 0) { return false; }
+    const algorithm = token.slice(0, separator);
+    const digest = token.slice(separator + 1);
+    if (!['sha1', 'sha256', 'sha384', 'sha512'].includes(algorithm) || !/^[A-Za-z0-9+/]+={0,2}$/.test(digest)) {
+      return false;
+    }
+    return Buffer.from(digest, 'base64').length === crypto.createHash(algorithm).digest().length;
+  });
+}
+
+async function verifyCatalogTarball(pkg: ResolvedPackage): Promise<void> {
+  if (!pkg.downloadUrl) {
+    throw new PackageInstallError('INTEGRITY_MISMATCH', `${pkg.id}@${pkg.version}`,
+      `Marketplace catalog provided an integrity pin without a tarball URL for ${pkg.id}@${pkg.version}.`);
+  }
+  const response = await globalThis.fetch(pkg.downloadUrl);
+  if (!response.ok) {
+    throw new PackageInstallError('INSTALL_FAILED', `${pkg.id}@${pkg.version}`,
+      `Could not verify the catalog tarball for ${pkg.id}@${pkg.version}: HTTP ${response.status}.`);
+  }
+  const content = Buffer.from(await response.arrayBuffer());
+  const expected: Array<[string, string]> = pkg.integrity.split(/\s+/).map(token => {
+    const separator = token.indexOf('-');
+    return [token.slice(0, separator), token.slice(separator + 1)];
+  });
+  const strengths: Record<string, number> = { sha1: 1, sha256: 2, sha384: 3, sha512: 4 };
+  const strongest = Math.max(...expected.map(([algorithm]) => strengths[algorithm] ?? 0));
+  const matches = expected
+    .filter(([algorithm]) => strengths[algorithm] === strongest)
+    .some(([algorithm, digest]) => crypto.createHash(algorithm).update(content).digest('base64') === digest);
+  if (!matches) {
+    throw new PackageInstallError('INTEGRITY_MISMATCH', `${pkg.id}@${pkg.version}`,
+      `Registry tarball integrity does not match the Marketplace catalog pin for ${pkg.id}@${pkg.version}.`);
   }
 }
