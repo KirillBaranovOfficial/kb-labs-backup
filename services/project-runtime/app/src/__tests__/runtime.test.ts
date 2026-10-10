@@ -252,8 +252,7 @@ describe("project runtime composition (real runHost, minimal modules)", () => {
 
   it("releases the resolve hook after a first-module startup failure", async () => {
     const failingModule: ProjectRuntimeModule = {
-      id: "rest",
-      serviceId: "rest",
+      ...echoModule("rest"),
       setup: async () => {
         throw new Error("injected project module startup failure");
       },

@@ -338,7 +338,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
 
     // The runtime dies while answering this request.
     const held = await subject.acquire(a);
-    await callRuntime(held, "/rest/__crash").catch(() => undefined);
+    await callRuntime(held, "/rest/api/v1/__crash").catch(() => undefined);
     held.release();
     await waitFor(() => !isAlive(firstPid), "the crashed runtime to be gone");
 
@@ -366,7 +366,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     // From now on the runtime cannot come back up.
     await a.behave({ exitBeforeReady: 9 });
     const held = await subject.acquire(a);
-    await callRuntime(held, "/rest/__crash").catch(() => undefined);
+    await callRuntime(held, "/rest/api/v1/__crash").catch(() => undefined);
     held.release();
 
     await waitFor(
@@ -444,7 +444,7 @@ describe("ProjectRuntimeManager (real child processes, fake runtime script)", ()
     const leaseB = await subject.acquire(b);
     const pids = [pidOf(subject, a.id), pidOf(subject, b.id)];
     const { childPid } = (await (
-      await callRuntime(leaseA, "/rest/__spawn-child")
+      await callRuntime(leaseA, "/rest/api/v1/__spawn-child")
     ).json()) as { childPid: number };
     expect(isAlive(childPid)).toBe(true);
     // Requests are still in flight: shutdown does not wait for them.
