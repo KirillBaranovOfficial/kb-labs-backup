@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT="$ROOT/.journey"
+RUNNER_INPUTS="$OUT/runner-inputs"
 PACKAGES="$ROOT/e2e/packages"
 TAG="journey-candidate"
 TARGET="$OUT/release/$TAG"
@@ -12,6 +13,12 @@ if [[ ! -f "$ROOT/core/plugin-contracts/dist/project-service-path.js" ]]; then
   echo 'The journey runner needs the shared project service URL builder. Run `corepack pnpm --filter @kb-labs/plugin-contracts... --workspace-concurrency=2 build` first.' >&2
   exit 2
 fi
+
+# The repository Docker context excludes dist/ globally. Stage the runner's
+# shared builder under .journey, which is inside the context and not ignored by
+# .dockerignore; Dockerfile.runner restores it at the path used by host runs.
+mkdir -p "$RUNNER_INPUTS"
+cp "$ROOT/core/plugin-contracts/dist/project-service-path.js" "$RUNNER_INPUTS/project-service-path.js"
 
 mkdir -p "$PACKAGES" "$TARGET"
 if [[ -f "$TARGET/update-packages/generated-packages.txt" ]]; then
