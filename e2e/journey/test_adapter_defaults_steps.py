@@ -269,11 +269,20 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                     workspace = (platform_root / "pnpm-workspace.yaml").read_text()
                     if '"@kb-labs/workflow-daemon": "file:.kb/v2/cache/packages/workflow-digest.tgz"' not in workspace:
                         error = {
-                            "code": "MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING",
+                            "code": "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING",
                             "message": "The installed platform is missing kb-create's sealed artifact overrides. No package was installed.",
                             "hint": f'Run "kb-create update --platform-root {platform_root}" and retry "kb marketplace install @kb-labs/adapters-analytics-file@2.120.1 --scope platform".',
                         }
                         return subprocess.CompletedProcess(command, 1, json.dumps({"ok": False, "error": error}), "")
+                    lock_path = platform_root / ".kb" / "marketplace.lock"
+                    lock_path.parent.mkdir(parents=True, exist_ok=True)
+                    lock = {"schema": "kb.marketplace/3", "plugins": {}, "adapters": {
+                        "@kb-labs/adapters-analytics-file": {
+                            "version": "2.120.1", "integrity": "sha512-fixture", "resolvedPath": "node_modules/@kb-labs/adapters-analytics-file",
+                            "enabled": True, "source": "platform",
+                        },
+                    }}
+                    lock_path.write_text(json.dumps(lock))
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if args[:2] == ["project", "remove"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
