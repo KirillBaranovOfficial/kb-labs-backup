@@ -216,6 +216,79 @@ describe('MarketplaceService', () => {
       expect(lock!.plugins['@kb-labs/test-plugin']!.source).toBe('platform');
     });
 
+    // case: S-220.6
+    it('refuses a republished installed version whose integrity changed', async () => {
+      const packageId = '@kb-labs/pinned-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'pinned-plugin', packageId, '1.0.0');
+      const info = { dir, version: '1.0.0', integrity };
+      const source = createMockSource(new Map([[packageId, info]]));
+      const install = vi.spyOn(source, 'install');
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'project', projectRoot }, [packageId]);
+      const before = await readMarketplaceLock(projectRoot, new DiagnosticCollector());
+      info.integrity = `${integrity}-republished`;
+
+      await expect(service.install({ scope: 'project', projectRoot }, [packageId]))
+        .rejects.toMatchObject({ code: 'INTEGRITY_MISMATCH', installedVersion: '1.0.0' });
+
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(await readMarketplaceLock(projectRoot, new DiagnosticCollector())).toEqual(before);
+    });
+
+    // case: S-220.7
+    it('refuses update when registry latest equals the installed version', async () => {
+      await expectUpdateVersionError('1.4.0', '1.4.0');
+    });
+
+    // case: S-220.8
+    it('refuses update when registry latest is lower than the installed version', async () => {
+      await expectUpdateVersionError('2.0.0', '1.9.0');
+    });
+
+    // case: S-220.9
+    it('updates the pin when registry latest is higher than the installed version', async () => {
+      const packageId = '@kb-labs/update-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'update-plugin', packageId, '1.4.0');
+      const info = { dir, version: '1.4.0', integrity };
+      const source = createMockSource(new Map([[packageId, info]]));
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'project', projectRoot }, [packageId]);
+      info.version = '1.5.0';
+
+      const result = await service.update({ scope: 'project', projectRoot }, [packageId]);
+
+      expect(result.installed[0]).toMatchObject({ id: packageId, version: '1.5.0' });
+      expect((await readMarketplaceLock(projectRoot, new DiagnosticCollector()))?.plugins[packageId])
+        .toMatchObject({ version: '1.5.0', integrity });
+    });
+
+    async function expectUpdateVersionError(installedVersion: string, requestedVersion: string): Promise<void> {
+      const packageId = '@kb-labs/update-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'update-plugin', packageId, installedVersion);
+      const info = { dir, version: installedVersion, integrity };
+      const source = createMockSource(new Map([[packageId, info]]));
+      const install = vi.spyOn(source, 'install');
+      const projectRoot = path.join(tmpDir, 'project');
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+      await service.install({ scope: 'project', projectRoot }, [packageId]);
+      const before = await readMarketplaceLock(projectRoot, new DiagnosticCollector());
+      info.version = requestedVersion;
+
+      await expect(service.update({ scope: 'project', projectRoot }, [packageId]))
+        .rejects.toMatchObject({ code: 'VERSION_NOT_HIGHER', installedVersion, requestedVersion });
+
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(await readMarketplaceLock(projectRoot, new DiagnosticCollector())).toEqual(before);
+    }
+
     it('installs platform-scope plugin entry packages in the shared store', async () => {
       const packageId = '@kb-labs/custom-plugin';
       const { dir, integrity } = await createPluginDir(tmpDir, 'platform-plugin', packageId);

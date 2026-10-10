@@ -16,6 +16,7 @@ import { pathToFileURL } from 'node:url';
 import type { IExtensionStore } from '@kb-labs/core-extension-store';
 import type { ILogger } from '@kb-labs/core-platform';
 import { glob } from 'glob';
+import semver from 'semver';
 import type { EntityKind, MarketplaceLock, MarketplaceLockEntry } from '@kb-labs/core-discovery';
 import {
   readMarketplaceLock,
@@ -79,6 +80,25 @@ export interface MarketplaceServiceOptions {
   strategies?: EntityKindStrategy[];
 }
 
+export class MarketplaceVersionError extends Error {
+  readonly code: 'INTEGRITY_MISMATCH' | 'VERSION_NOT_HIGHER' | 'INVALID_VERSION';
+
+  constructor(
+    code: MarketplaceVersionError['code'],
+    readonly packageId: string,
+    readonly installedVersion: string,
+    readonly requestedVersion: string,
+  ) {
+    super(code === 'INTEGRITY_MISMATCH'
+      ? `Installed ${packageId}@${installedVersion} has an immutable integrity pin that differs from the registry.`
+      : code === 'VERSION_NOT_HIGHER'
+        ? `Marketplace update for ${packageId} resolved ${requestedVersion}, which is not higher than installed version ${installedVersion}.`
+        : `Marketplace resolved invalid version ${requestedVersion} for ${packageId}; installed version is ${installedVersion}.`);
+    this.name = 'MarketplaceVersionError';
+    this.code = code;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -132,7 +152,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     opts?: { dev?: boolean; shareToken?: string },
   ): Promise<InstallResult> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, specs, opts));
+    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, specs, opts, false));
   }
 
   private async installInScope(
@@ -140,10 +160,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     scopeRoot: string,
     specs: string[],
     opts?: { dev?: boolean; shareToken?: string },
+    isUpdate = false,
   ): Promise<InstallResult> {
     const installed: InstallResultEntry[] = [];
     const warnings: string[] = [];
     const diagnostics: MarketplaceDiagnostic[] = [];
+    const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
 
     for (const spec of specs) {
       // Route kb: specs to registry source; fall back to npm source
@@ -163,6 +185,20 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           resolved.id,
           resolved.version,
         );
+      }
+      const installedPin = findInstalledPin(lock, resolved.id);
+      if (installedPin) {
+        const installedVersion = installedPin.version;
+        if (!semver.valid(installedVersion) || !semver.valid(resolved.version)) {
+          throw new MarketplaceVersionError('INVALID_VERSION', resolved.id, installedVersion, resolved.version);
+        }
+        const order = semver.compare(resolved.version, installedVersion);
+        if (order === 0 && resolved.integrity !== installedPin.integrity) {
+          throw new MarketplaceVersionError('INTEGRITY_MISMATCH', resolved.id, installedVersion, resolved.version);
+        }
+        if (order < 0 || (isUpdate && order === 0)) {
+          throw new MarketplaceVersionError('VERSION_NOT_HIGHER', resolved.id, installedVersion, resolved.version);
+        }
       }
       // Project plugin pins use the shared version store (ADR-0048). Marketplace
       // plugin entry packages also use it at platform scope: adding them to the
@@ -383,19 +419,20 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
   async update(ctx: ScopeContext, packageIds?: string[]): Promise<InstallResult> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    const diag = new DiagnosticCollector();
-    const lock = await readMarketplaceLock(scopeRoot, diag, ctx.scope);
-    if (!lock) {
-      return { installed: [], warnings: ['No marketplace.lock found'], scope: ctx.scope };
-    }
+    return this.withScopeMutation(scopeRoot, async () => {
+      const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
+      if (!lock) {
+        return { installed: [], warnings: ['No marketplace.lock found'], scope: ctx.scope };
+      }
 
-    const ids = packageIds ?? Object.keys(lock.plugins);
-    const specs = ids.filter(id => id in lock.plugins).map(id => {
-      const entry = lock.plugins[id]!;
-      return entry.package!;
+      const ids = packageIds ?? Object.keys(lock.plugins);
+      const specs = ids.filter(id => id in lock.plugins).map(id => {
+        const entry = lock.plugins[id]!;
+        return entry.package!;
+      });
+
+      return this.installInScope(ctx, scopeRoot, specs, undefined, true);
     });
-
-    return this.install(ctx, specs);
   }
 
   // -------------------------------------------------------------------------
@@ -833,6 +870,21 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       console.warn(`[marketplace] Failed to cache manifest for "${packageId}": ${(err as Error).message}`);
     }
   }
+}
+
+function findInstalledPin(
+  lock: MarketplaceLock | null,
+  packageId: string,
+): { version: string; integrity: string } | undefined {
+  if (!lock) { return undefined; }
+  const plugin = Object.entries(lock.plugins).find(([id, entry]) =>
+    id === packageId || (entry.source !== 'local' && entry.package === packageId),
+  )?.[1];
+  if (plugin && plugin.source !== 'local') {
+    return { version: plugin.version, integrity: plugin.integrity };
+  }
+  const adapter = lock.adapters?.[packageId];
+  return adapter ? { version: adapter.version, integrity: adapter.integrity } : undefined;
 }
 
 // ---------------------------------------------------------------------------

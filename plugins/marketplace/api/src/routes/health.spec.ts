@@ -1,10 +1,27 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { createContextLogger, type ILogger } from '@kb-labs/core-platform';
 import {
   checkCanonicalObservabilityMetrics,
   validateServiceObservabilityDescribe,
   validateServiceObservabilityHealth,
 } from '@kb-labs/core-contracts';
 import { createServer } from '../server.js';
+
+const loggerBase: ILogger = {
+  trace: () => undefined,
+  debug: () => undefined,
+  info: () => undefined,
+  warn: () => undefined,
+  error: () => undefined,
+  fatal: () => undefined,
+  child: () => loggerBase,
+};
+const logger = createContextLogger(loggerBase, {
+  applicationId: 'marketplace-api-test',
+  serviceId: 'marketplace',
+  instanceId: 'test',
+  layer: 'service',
+});
 
 describe('marketplace observability surfaces', () => {
   const servers: Array<Awaited<ReturnType<typeof createServer>>> = [];
@@ -19,7 +36,7 @@ describe('marketplace observability surfaces', () => {
   });
 
   it('returns health and versioned observability documents', async () => {
-    const server = await createServer({ service: {} as any });
+    const server = await createServer({ service: {} as any, logger });
     servers.push(server);
 
     const healthResponse = await server.inject({ method: 'GET', url: '/health' });
@@ -46,7 +63,7 @@ describe('marketplace observability surfaces', () => {
   });
 
   it('renders canonical metrics as prometheus text', async () => {
-    const server = await createServer({ service: {} as any });
+    const server = await createServer({ service: {} as any, logger });
     servers.push(server);
 
     const response = await server.inject({ method: 'GET', url: '/metrics' });
@@ -62,7 +79,7 @@ describe('marketplace observability surfaces', () => {
       sync: async () => ({ scanned: 2, added: 1, updated: 0 }),
     } as any;
 
-    const server = await createServer({ service });
+    const server = await createServer({ service, logger });
     servers.push(server);
 
     const listResponse = await server.inject({

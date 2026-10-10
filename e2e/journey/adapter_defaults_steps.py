@@ -469,6 +469,15 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         install_payload = _json(_run(runner, install, project_a, base_env), install)
         if install_payload.get("ok") is not True:
             raise RuntimeError("could not install the replacement analytics adapter")
+        lock_path = platform_root / ".kb" / "marketplace.lock"
+        try:
+            lock = json.loads(lock_path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("platform Marketplace lock is missing or invalid after adapter install") from error
+        pin = lock.get("adapters", {}).get(replacement) if isinstance(lock, dict) else None
+        if (not isinstance(pin, dict) or not isinstance(pin.get("version"), str)
+                or not isinstance(pin.get("integrity"), str) or not pin["integrity"]):
+            raise RuntimeError("platform Marketplace lock did not record the adapter's exact version and integrity")
         payload = _json(_run(runner, command, project_a, base_env), command)
         if payload.get("ok") is not True:
             raise RuntimeError("could not bind the replacement analytics adapter")
@@ -518,7 +527,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             hint = failure.get("hint", "") if isinstance(failure, dict) else ""
             expected_hint_prefix = f'Run "kb-create update --platform-root {platform_root}" and retry "kb marketplace install @kb-labs/adapters-analytics-file@'
             if (result.returncode == 0 or not isinstance(failure, dict)
-                    or failure.get("code") != "MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"
+                    or failure.get("code") != "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"
                     or failure.get("message") != "The installed platform is missing kb-create's sealed artifact overrides. No package was installed."
                     or not hint.startswith(expected_hint_prefix)
                     or not hint.endswith(' --scope platform".')):

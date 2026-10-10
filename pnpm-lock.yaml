@@ -4071,10 +4071,16 @@ importers:
       glob:
         specifier: ^11.0.0
         version: 11.1.0
+      semver:
+        specifier: ^7.8.5
+        version: 7.8.5
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
+      '@types/semver':
+        specifier: ^7.7.1
+        version: 7.7.1
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(@swc/core@1.15.33)(jiti@2.6.1)(postcss@8.5.28)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
@@ -4197,6 +4203,9 @@ importers:
       tar:
         specifier: ^7.5.21
         version: 7.5.21
+      yaml:
+        specifier: ^2.8.3
+        version: 2.8.3
     devDependencies:
       '@kb-labs/devkit':
         specifier: workspace:*
@@ -20502,7 +20511,7 @@ snapshots:
       '@typescript-eslint/visitor-keys': 8.58.1
       debug: 4.4.3
       minimatch: 10.2.5
-      semver: 7.7.4
+      semver: 7.8.5
       tinyglobby: 0.2.17
       ts-api-utils: 2.5.0(typescript@5.9.3)
       typescript: 5.9.3
@@ -21478,7 +21487,7 @@ snapshots:
       postcss-modules-scope: 3.2.1(postcss@8.5.23)
       postcss-modules-values: 4.0.0(postcss@8.5.23)
       postcss-value-parser: 4.2.0
-      semver: 7.7.4
+      semver: 7.8.5
     optionalDependencies:
       '@rspack/core': 2.1.2(@module-federation/runtime-tools@2.3.3)
       webpack: 5.106.1(@swc/core@1.15.33)(esbuild@0.28.1)(postcss@8.5.28)
@@ -22190,7 +22199,7 @@ snapshots:
       natural-compare: 1.4.0
       nth-check: 2.1.1
       postcss-selector-parser: 7.1.1
-      semver: 7.7.4
+      semver: 7.8.5
       vue-eslint-parser: 10.4.0(eslint@9.39.4(jiti@2.6.1))
       xml-name-validator: 4.0.0
     optionalDependencies:
@@ -23176,7 +23185,7 @@ snapshots:
 
   is-bun-module@2.0.0:
     dependencies:
-      semver: 7.7.4
+      semver: 7.8.5
 
   is-callable@1.2.7: {}
 
@@ -24822,7 +24831,7 @@ snapshots:
       cosmiconfig: 9.0.1(typescript@5.9.3)
       jiti: 2.6.1
       postcss: 8.5.23
-      semver: 7.7.4
+      semver: 7.8.5
     optionalDependencies:
       '@rspack/core': 2.1.2(@module-federation/runtime-tools@2.3.3)
       webpack: 5.106.1(@swc/core@1.15.33)(esbuild@0.28.1)(postcss@8.5.23)

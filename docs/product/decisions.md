@@ -15,6 +15,27 @@ platform secret store and is absent from the plan, receipt, logs, and later
 commands. `kb-create doctor --recover` remains for account recovery after
 installation. Cases: PC-001, S-040, S-100.
 
+### Marketplace integrity pins may bypass registry freshness for the pinned artifact
+
+The Marketplace npm source may exclude one exact package version from
+`minimumReleaseAge` only when the request resolves to an exact version with
+catalog integrity and pnpm records that same tarball integrity after install.
+Marketplace coalesces versions for a package into one union selector and keeps
+all unrelated selectors unchanged. Transitive packages remain subject to the
+release-age policy. This supersedes the earlier rule that Marketplace never
+edits package-manager configuration: Marketplace owns only its exact integrity
+pin in `minimumReleaseAgeExclude`; kb-create remains the owner of sealed
+platform `overrides`. The npm source writes the workspace file at the root it
+installs into (normally platform root for adapters, or project root where the
+npm source is used there); kb-create writes the sealed platform root. Cases:
+S-054.11, S-220.1, S-220.4, S-220.5.
+
+### Marketplace versions are immutable and installed versions only move forward
+
+Cases: S-026.5, S-054.11, S-220.6–S-220.9.
+
+A published package version is immutable. Republishing an existing version is a conflict; publishers must bump the version. The package identity is its exact version and integrity. Installing the same installed version with different registry integrity is treated as tampering and must not mutate the installed package or lock. Marketplace updates must resolve to a strictly higher version than the installed pin; equal and lower versions return a catalogued refusal naming the installed version. Plugin pins keep integrity and the optional platform signature as sibling fields so signature verification can be added without changing the lock shape. Signature verification remains a follow-up.
+
 ## 2026-10-07
 
 ### Credentials are kept per Gateway origin; the marketplace is a KB Labs Gateway

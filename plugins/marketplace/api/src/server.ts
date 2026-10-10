@@ -10,33 +10,20 @@ import {
   createServiceReadyResponse,
   type ObservabilityCollectorLike,
 } from '@kb-labs/shared-http';
-import type { ILogger } from '@kb-labs/core-platform';
-import { createErrorEnvelope } from '@kb-labs/core-platform';
+import type { IContextLogger } from '@kb-labs/core-platform';
+import { createErrorEnvelope, getCatalogEntry } from '@kb-labs/core-platform';
 import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/core-contracts';
 import { registerRoutes } from './routes/index.js';
-import type { MarketplaceService } from '@kb-labs/marketplace-core';
+import { MarketplaceVersionError, type MarketplaceService } from '@kb-labs/marketplace-core';
 import { ScopeResolutionError, AdapterScopeError, InvalidEntityError, PackageClassificationError } from '@kb-labs/marketplace-core';
 import { PackageInstallError, PackageMetadataError, PlatformArtifactPinsError } from '@kb-labs/marketplace-npm';
 import { ScopeRequestError } from './scope-parser.js';
 
 export interface CreateServerOptions {
   service: MarketplaceService;
-  logger?: ILogger;
+  logger: IContextLogger;
   port?: number;
   host?: string;
-}
-
-function createFallbackLogger(): ILogger {
-  const child = (_bindings: Record<string, unknown>): ILogger => createFallbackLogger();
-  return {
-    trace: () => {},
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    fatal: () => {},
-    child,
-  };
 }
 
 /**
@@ -59,7 +46,7 @@ function wrapObservability(collector: HttpObservabilityCollector): Observability
 }
 
 export async function createServer(opts: CreateServerOptions): Promise<FastifyInstance> {
-  const logger = opts.logger ?? createFallbackLogger();
+  const logger = opts.logger;
 
   const collector = new HttpObservabilityCollector({
     serviceId: 'marketplace',
@@ -69,7 +56,7 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
   });
   const observability = wrapObservability(collector);
 
-  const server = await createDaemonServer({
+  return createDaemonServer({
     serviceId: 'marketplace',
     logger,
     observability,
@@ -89,60 +76,19 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
       description: 'Unified marketplace for plugins, adapters, workflows, and more',
     },
     setErrorHandler: (app) => {
-      // Scope-related errors → 400. All three share a `code` property so clients
-      // can discriminate (SCOPE_INVALID, SCOPE_PROJECT_ROOT_REQUIRED,
-      // SCOPE_PROJECT_EQUALS_PLATFORM, MARKETPLACE_ADAPTER_PROJECT_SCOPE, ...).
-      app.setErrorHandler((err, _request, reply) => {
-        if (
-          err instanceof ScopeRequestError ||
-          err instanceof ScopeResolutionError ||
-          err instanceof AdapterScopeError
-        ) {
-          return reply.code(400).send({
-            error: err.name,
-            code: err.code,
-            message: err.message,
-          });
-        }
-        if (err instanceof InvalidEntityError) {
-          return reply.code(422).send({
-            error: err.name,
-            code: err.code,
-            message: err.message,
-          });
-        }
-        if (err instanceof PackageClassificationError || err instanceof PackageMetadataError) {
-          const status = err instanceof PackageMetadataError && err.code === 'PACKAGE_NOT_FOUND' ? 404 : 422;
-          if (err instanceof PackageMetadataError && err.code === 'PACKAGE_NOT_FOUND') {
-            return reply.code(status).send({ ok: false, error: createErrorEnvelope('KB_PLUGIN_NOT_FOUND', {
-              details: { plugin: err.packageId },
-            }) });
-          }
-          return reply.code(status).send({
-            error: err.name,
-            code: err.code,
-            message: err.message,
-            hint: err.hint,
-          });
-        }
-        if (err instanceof PackageInstallError) {
-          const status = err.code === 'NOT_FOUND' ? 404 : 422;
-          return reply.code(status).send({
-            error: err.name,
-            code: err.code,
-            message: err.message,
-          });
-        }
-        if (err instanceof PlatformArtifactPinsError) {
-          return reply.code(409).send({
-            error: err.name,
-            code: err.code,
-            message: err.message,
-            hint: err.hint,
-          });
-        }
-        // Fallback to Fastify default behaviour.
-        throw err;
+      // Keep all route failures on one catalog-backed response and logging boundary.
+      app.setErrorHandler((unknownError, request, reply) => {
+        const err = asError(unknownError);
+        const correlationId = request.id;
+        const body = request.body as { scope?: string } | undefined;
+        const scope = typeof body?.scope === 'string' ? body.scope : 'platform';
+        const mapped = mapMarketplaceError(err, correlationId, scope);
+        logger.forOperation('marketplace.api.request', { requestId: correlationId }).error(
+          'Marketplace API request failed',
+          err,
+          { correlationId, errorCode: mapped.envelope.code, statusCode: mapped.statusCode },
+        );
+        return reply.code(mapped.statusCode).send({ ok: false, error: mapped.envelope });
       });
     },
     registerRoutes: async (app) => {
@@ -153,6 +99,88 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
       await collector.observeOperation('marketplace.bootstrap', () => registerRoutes(app));
     },
   });
+}
 
-  return server;
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
+
+function mapMarketplaceError(err: Error, correlationId: string, scope: string): { statusCode: number; envelope: ReturnType<typeof createErrorEnvelope> } {
+  let code = 'KB_RUNTIME_UNEXPECTED';
+  let message: string | undefined;
+  let hint: string | undefined;
+  let details: Record<string, string> | undefined;
+
+  if ('validation' in err) {
+    code = 'KB_RUNTIME_INPUT_INVALID';
+    message = err.message;
+  } else if (err instanceof ScopeRequestError || err instanceof ScopeResolutionError || err instanceof AdapterScopeError) {
+    code = 'KB_RUNTIME_INPUT_INVALID';
+    message = err.message;
+  } else if (err instanceof InvalidEntityError || err instanceof PackageClassificationError) {
+    code = 'KB_MARKETPLACE_PACKAGE_INVALID';
+    message = err.message;
+    hint = err instanceof PackageClassificationError ? err.hint : undefined;
+  } else if (err instanceof PackageMetadataError) {
+    if (err.code === 'PACKAGE_NOT_FOUND') {
+      code = 'KB_PLUGIN_NOT_FOUND';
+      details = { plugin: err.packageId };
+    } else {
+      code = 'KB_MARKETPLACE_RESOLUTION_FAILED';
+      details = { package: err.packageId };
+      message = err.message;
+      hint = err.hint;
+    }
+  } else if (err instanceof PackageInstallError) {
+    if (err.code === 'NOT_FOUND') {
+      code = 'KB_PLUGIN_NOT_FOUND';
+      details = { plugin: err.spec };
+    } else if (err.code === 'RELEASE_TOO_FRESH') {
+      code = 'KB_MARKETPLACE_PACKAGE_TOO_FRESH';
+      details = { package: err.spec, scope };
+    } else if (err.code === 'INTEGRITY_MISMATCH') {
+      code = 'KB_MARKETPLACE_INTEGRITY_MISMATCH';
+      details = { package: err.spec, scope };
+    } else {
+      code = 'KB_MARKETPLACE_INSTALL_FAILED';
+      details = { package: err.spec, scope };
+    }
+  } else if (err instanceof MarketplaceVersionError) {
+    details = {
+      package: err.packageId,
+      installedVersion: err.installedVersion,
+      requestedVersion: err.requestedVersion,
+      scope,
+    };
+    if (err.code === 'INTEGRITY_MISMATCH') {
+      code = 'KB_MARKETPLACE_VERSION_IMMUTABLE';
+      message = err.message;
+      hint = `Do not replace ${err.packageId}@${err.installedVersion}; publish a higher version, then run "kb marketplace install ${err.packageId}@latest --scope ${scope}".`;
+    } else if (err.code === 'VERSION_NOT_HIGHER') {
+      code = 'KB_MARKETPLACE_VERSION_NOT_HIGHER';
+      message = err.message;
+      hint = `Only a version higher than ${err.installedVersion} can be installed. Publish one, then run "kb marketplace update ${err.packageId} --scope ${scope}".`;
+    } else {
+      code = 'KB_MARKETPLACE_RESOLUTION_FAILED';
+      message = err.message;
+      hint = `Check the registry version metadata for ${err.packageId}, then retry the Marketplace operation.`;
+    }
+  } else if (err instanceof PlatformArtifactPinsError) {
+    code = 'KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING';
+    message = err.message;
+    hint = err.hint;
+  }
+
+  const entry = getCatalogEntry(code);
+  if (!entry?.httpStatus) {
+    code = 'KB_RUNTIME_UNEXPECTED';
+    message = undefined;
+    hint = undefined;
+    details = undefined;
+  }
+  const statusCode = getCatalogEntry(code)?.httpStatus ?? 500;
+  return {
+    statusCode,
+    envelope: createErrorEnvelope(code, { correlationId, details, message, hint }),
+  };
 }

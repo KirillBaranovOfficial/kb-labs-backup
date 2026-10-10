@@ -42,6 +42,7 @@ export class RegistryService {
   private readonly baseUrl: string;
   private readonly signingPrivateKey?: string;
   private readonly siteUrl?: string;
+  private readonly publishTails = new Map<string, Promise<void>>();
 
   constructor(opts: RegistryServiceOptions) {
     this.storage = opts.storage;
@@ -55,6 +56,30 @@ export class RegistryService {
   // ── Publish ────────────────────────────────────────────────────────────────
 
   async publish(
+    tarball: Buffer,
+    req: PublishRequest,
+    authorHandle: string,
+    authorNamespaceId: string,
+  ): Promise<PublishResponse> {
+    const key = `${authorHandle}/${req.meta.name}`;
+    const previous = this.publishTails.get(key) ?? Promise.resolve();
+    let release: () => void = () => undefined;
+    const tail = new Promise<void>((resolve) => { release = resolve; });
+    const queuedTail = previous.then(() => tail);
+    this.publishTails.set(key, queuedTail);
+
+    await previous;
+    try {
+      return await this.publishVersion(tarball, req, authorHandle, authorNamespaceId);
+    } finally {
+      release();
+      if (this.publishTails.get(key) === queuedTail) {
+        this.publishTails.delete(key);
+      }
+    }
+  }
+
+  private async publishVersion(
     tarball: Buffer,
     req: PublishRequest,
     authorHandle: string,

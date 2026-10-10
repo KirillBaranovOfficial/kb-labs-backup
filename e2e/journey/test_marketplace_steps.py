@@ -236,9 +236,9 @@ class MarketplaceStepTests(unittest.TestCase):
 
     def test_marketplace_failure_detail_uses_stderr_when_stdout_is_empty(self):
         command = ["kb", "marketplace", "install", "@kb-labs/adapters-analytics-file", "--json"]
-        result = subprocess.CompletedProcess(command, 1, "", '{"error":{"code":"MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"}}')
+        result = subprocess.CompletedProcess(command, 1, "", '{"ok":false,"error":{"code":"KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"}}')
 
-        with self.assertRaisesRegex(RuntimeError, "MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"):
+        with self.assertRaisesRegex(RuntimeError, "KB_MARKETPLACE_PLATFORM_ARTIFACT_PINS_MISSING"):
             _output(result, command)
 
     def test_setup_command_failure_preserves_typed_code_message_and_next_step(self):
