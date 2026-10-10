@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "data": {
+    "ok": true,
+    "authEnabled": true,
+    "tenantId": "default",
+    "activeAdmins": 1,
+    "bootstrap": "exists-non-active",
+    "issues": [
+      {
+        "code": "bootstrap_user_inactive",
+        "severity": "warning",
+        "message": "The bootstrap admin exists but is not active; bootstrap never re-activates existing users.",
+        "hint": "Reactivate it with kb-create doctor --recover."
+      }
+    ]
+  },
+  "meta": {
+    "requestId": "gateway-health-auth-1"
+  }
+}

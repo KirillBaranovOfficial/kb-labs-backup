@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/kb-labs/clikit/diag"
+	clikitresult "github.com/kb-labs/clikit/result"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
@@ -67,7 +68,7 @@ func (starter *bootstrapTestHost) Start(_ context.Context, spec contracts.HostSp
 	}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/health/auth" {
-			_, _ = fmt.Fprint(w, `{"ok":true,"authEnabled":true,"tenantId":"default","activeAdmins":1,"bootstrap":"provisioned","issues":[]}`)
+			_, _ = fmt.Fprint(w, `{"ok":true,"data":{"ok":true,"authEnabled":true,"tenantId":"default","activeAdmins":1,"bootstrap":"provisioned","issues":[]},"meta":{"requestId":"test"}}`)
 			return
 		}
 		_, _ = fmt.Fprint(w, `{"ok":true}`)
@@ -85,14 +86,31 @@ func TestGatewayBootstrapContractUsesSharedSchemaAndFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	var schema struct {
+		Required   []string `json:"required"`
 		Properties struct {
 			Bootstrap struct {
 				Enum []string `json:"enum"`
 			} `json:"bootstrap"`
+			Issues struct {
+				Items struct {
+					Required   []string `json:"required"`
+					Properties struct {
+						Severity struct {
+							Enum []string `json:"enum"`
+						} `json:"severity"`
+					} `json:"properties"`
+				} `json:"items"`
+			} `json:"issues"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(gatewayAuthHealthResponseRequiredFields[:], schema.Required) {
+		t.Fatalf("generated Gateway required fields %v do not match owner schema %v", gatewayAuthHealthResponseRequiredFields, schema.Required)
+	}
+	if !reflect.DeepEqual(gatewayAuthHealthIssueRequiredFields[:], schema.Properties.Issues.Items.Required) {
+		t.Fatalf("generated Gateway issue required fields %v do not match owner schema %v", gatewayAuthHealthIssueRequiredFields, schema.Properties.Issues.Items.Required)
 	}
 	want := make([]GatewayBootstrapStatus, 0, len(schema.Properties.Bootstrap.Enum))
 	for _, status := range schema.Properties.Bootstrap.Enum {
@@ -101,35 +119,201 @@ func TestGatewayBootstrapContractUsesSharedSchemaAndFixture(t *testing.T) {
 	if !reflect.DeepEqual(gatewayBootstrapStatuses[:], want) {
 		t.Fatalf("generated Gateway bootstrap values %v do not match owner schema %v", gatewayBootstrapStatuses, want)
 	}
-	fixture, err := os.ReadFile(filepath.Join(root, "__fixtures__", "auth-health-response.json"))
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var response gatewayAuthHealthResponse
-	if err := json.Unmarshal(fixture, &response); err != nil {
-		t.Fatalf("shared Gateway response fixture did not decode: %v", err)
+	if err := clikitresult.DecodeSuccessResult(fixture, &response); err != nil {
+		t.Fatalf("shared Gateway result fixture did not decode: %v", err)
 	}
-	if response.Bootstrap != GatewayBootstrapStatusProvisioned || response.OK == nil || response.AuthEnabled == nil || response.TenantID == nil || response.ActiveAdmins == nil || response.Issues == nil {
+	if response.Bootstrap == nil || *response.Bootstrap != GatewayBootstrapStatusExistsNonActive || response.OK == nil || response.AuthEnabled == nil || response.TenantID == nil || response.ActiveAdmins == nil || response.Issues == nil || len(*response.Issues) != 1 {
 		t.Fatalf("shared Gateway response fixture was incomplete: %#v", response)
 	}
-	if err := json.Unmarshal(bytes.Replace(fixture, []byte("provisioned"), []byte("future-state"), 1), &response); err == nil {
+	issue := (*response.Issues)[0]
+	if issue.Code == nil || *issue.Code != "bootstrap_user_inactive" || issue.Severity == nil || *issue.Severity != GatewayAuthHealthIssueSeverityWarning || issue.Message == nil || issue.Hint == nil {
+		t.Fatalf("shared Gateway issue fixture was incomplete: %#v", issue)
+	}
+	severities := make([]string, 0, len(gatewayAuthHealthIssueSeverities))
+	for _, severity := range gatewayAuthHealthIssueSeverities {
+		severities = append(severities, string(severity))
+	}
+	if !reflect.DeepEqual(severities, schema.Properties.Issues.Items.Properties.Severity.Enum) {
+		t.Fatalf("generated Gateway issue severities %v do not match owner schema %v", gatewayAuthHealthIssueSeverities, schema.Properties.Issues.Items.Properties.Severity.Enum)
+	}
+	if err := clikitresult.DecodeSuccessResult(bytes.Replace(fixture, []byte("exists-non-active"), []byte("future-state"), 1), &response); err == nil {
 		t.Fatal("unknown bootstrap enum was accepted")
+	}
+	if err := json.Unmarshal([]byte(`"critical"`), new(GatewayAuthHealthIssueSeverity)); err == nil {
+		t.Fatal("unknown Gateway auth health issue severity was accepted")
 	}
 }
 
+// case: S-222.1
+func TestBootstrapContractFailureNamesInternalMismatchAndNextDiagnosticCommand(t *testing.T) {
+	store := secrets.Store{PlatformRoot: t.TempDir()}
+	err := bootstrapContractFailure("Gateway returned an invalid first-administrator health response.", fmt.Errorf("invalid result"), store.PlatformRoot)
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("bootstrap contract diagnostic = %T; want catalogued diag", err)
+	}
+	if diagnostic.Message != "Gateway returned an invalid first-administrator health response." || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, `kb-create doctor --platform-root "`+store.PlatformRoot+`"`) {
+		t.Fatalf("bootstrap contract diagnostic = %#v", diagnostic)
+	}
+	if strings.Contains(diagnostic.Hint, "Update the Gateway") {
+		t.Fatalf("bootstrap contract hint blames Gateway version: %q", diagnostic.Hint)
+	}
+}
+
+// case: S-222.1
 func TestUnknownGatewayBootstrapFailsWithCataloguedDiagnostic(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"ok":true,"authEnabled":true,"tenantId":"default","activeAdmins":0,"bootstrap":"future-state","issues":[]}`)
+		_, _ = io.WriteString(w, `{"ok":true,"data":{"ok":true,"authEnabled":true,"tenantId":"default","activeAdmins":0,"bootstrap":"future-state","issues":[]},"meta":{}}`)
 	}))
 	defer server.Close()
 	store := secrets.Store{PlatformRoot: t.TempDir()}
 	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Hint, "rerun `kb-create install`") {
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, "kb-create doctor --platform-root") {
 		t.Fatalf("unknown bootstrap status error = %#v, want catalogued apply diagnostic with next step", err)
 	}
 	if _, present, err := store.Get(secrets.BootstrapCompleted); err != nil || present {
 		t.Fatalf("unknown bootstrap response persisted completion: present=%v error=%v", present, err)
+	}
+}
+
+// case: S-222.1
+func TestMissingGatewayRequiredHealthFieldsAreInternalContractFailures(t *testing.T) {
+	fixturePath := filepath.Join("..", "..", "..", "..", "..", "contracts", "ux-result", "fixtures", "valid", "gateway-auth-health.json")
+	fixture, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(fixture, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["data"], &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range gatewayAuthHealthResponseRequiredFields {
+		t.Run(required, func(t *testing.T) {
+			withoutField := make(map[string]json.RawMessage, len(fields)-1)
+			for key, value := range fields {
+				if key != required {
+					withoutField[key] = value
+				}
+			}
+			data, err := json.Marshal(withoutField)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(map[string]any{"ok": true, "data": json.RawMessage(data), "meta": json.RawMessage(`{}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(body)
+			}))
+			defer server.Close()
+
+			store := secrets.Store{PlatformRoot: t.TempDir()}
+			err = readBootstrapOutcome(context.Background(), server.URL+"/health", store)
+			var diagnostic *diag.Diag
+			wantDoctor := `kb-create doctor --platform-root "` + store.PlatformRoot + `"`
+			if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, wantDoctor) {
+				t.Fatalf("missing required Gateway field %q = %#v, want internal contract mismatch", required, err)
+			}
+		})
+	}
+}
+
+// case: S-222.1
+func TestValidGatewayBootstrapFailureDirectsOperatorToAuthReadiness(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"ok":true,"data":{"ok":false,"authEnabled":true,"tenantId":"default","activeAdmins":0,"bootstrap":"failed","issues":[{"code":"bootstrap_failed","severity":"error","message":"Seeding the bootstrap admin failed at startup.","hint":"Check the gateway startup logs."}]},"meta":{}}`)
+	}))
+	defer server.Close()
+	store := secrets.Store{PlatformRoot: t.TempDir()}
+	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "bootstrap did not complete") {
+		t.Fatalf("valid Gateway bootstrap failure = %#v", err)
+	}
+	if !strings.Contains(diagnostic.Hint, "inspect Gateway authentication readiness") || !strings.Contains(diagnostic.Hint, "kb-create doctor --platform-root") || strings.Contains(diagnostic.Hint, "contract mismatch") || strings.Contains(diagnostic.Hint, "Update the Gateway") {
+		t.Fatalf("valid Gateway bootstrap failure hint = %q", diagnostic.Hint)
+	}
+}
+
+// case: S-222.2
+func TestGatewayFailureEnvelopePreservesDiagnosticWithoutSecrets(t *testing.T) {
+	const bodySecret = "BODY_TOKEN_SECRET"
+	const headerSecret = "HEADER_SESSION_SECRET"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Debug-Credential", headerSecret)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>; token=`+bodySecret+`","cause":"token=`+bodySecret+`","correlationId":"corr-auth-health"}}`)
+	}))
+	defer server.Close()
+	store := secrets.Store{PlatformRoot: t.TempDir()}
+	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) {
+		t.Fatalf("Gateway failure = %T %v, want catalogued diagnostic", err, err)
+	}
+	if diagnostic.Code != "KB_AUTH_FORBIDDEN" || diagnostic.Message != "Gateway auth health is unavailable." || diagnostic.Hint != `Run kb-create doctor --platform-root <root>; token="[REDACTED]"` {
+		t.Fatalf("Gateway failure diagnostic = %#v", diagnostic)
+	}
+	encoded, marshalErr := json.Marshal(diagnostic)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	for _, secret := range []string{bodySecret, headerSecret} {
+		if strings.Contains(err.Error(), secret) || strings.Contains(string(encoded), secret) {
+			t.Fatalf("Gateway failure exposed credential %q: %s %s", secret, err, encoded)
+		}
+	}
+}
+
+// case: S-222.3
+func TestNonSuccessGatewayBodyGetsInternalMismatchWithoutSecrets(t *testing.T) {
+	const bodySecret = "BODY_API_TOKEN_SECRET"
+	const headerSecret = "HEADER_AUTH_SECRET"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Debug-Credential", headerSecret)
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"token":"`+bodySecret+`","private":"do-not-display"}`)
+	}))
+	defer server.Close()
+	store := secrets.Store{PlatformRoot: t.TempDir()}
+	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
+	var diagnostic *diag.Diag
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed {
+		t.Fatalf("non-success Gateway body = %#v, want catalogued internal mismatch", err)
+	}
+	wantDoctor := `kb-create doctor --platform-root "` + store.PlatformRoot + `"`
+	if !strings.Contains(diagnostic.Hint, wantDoctor) || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") {
+		t.Fatalf("non-success Gateway diagnostic hint = %q", diagnostic.Hint)
+	}
+	encoded, marshalErr := json.Marshal(diagnostic)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	for _, secret := range []string{bodySecret, headerSecret, "do-not-display"} {
+		if strings.Contains(err.Error(), secret) || strings.Contains(string(encoded), secret) {
+			t.Fatalf("non-success Gateway response exposed private value %q: %s %s", secret, err, encoded)
+		}
+	}
+}
+
+// case: S-222.4
+func TestGatewayTransportFailureKeepsExistingDiagnostic(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+	err := readBootstrapOutcome(context.Background(), server.URL+"/health", secrets.Store{PlatformRoot: t.TempDir()})
+	if err == nil || err.Error() != "Gateway did not report first-admin bootstrap status" {
+		t.Fatalf("transport failure = %v, want existing Gateway unavailable diagnostic", err)
 	}
 }
 

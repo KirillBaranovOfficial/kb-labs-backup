@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
@@ -295,6 +297,20 @@ func TestPlatformSectionRejectsAHealthBodyWithoutTheUxEnvelope(t *testing.T) {
 	section := InspectPlatform(context.Background(), status, nil, nil)
 	if section.OK || check(t, section, "health").OK {
 		t.Fatalf("section = %+v", section)
+	}
+}
+
+func TestGetJSONDecodesGatewayFailureEnvelope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"ok":false,"error":{"code":"KB_AUTH_GATEWAY_UNREACHABLE","area":"auth","stage":"run","severity":"error","retryable":true,"message":"Gateway is unavailable.","hint":"Run kb-create doctor.","correlationId":"corr-doctor"}}`))
+	}))
+	defer server.Close()
+	var payload map[string]any
+	status, err := getJSON(context.Background(), server.Client(), server.URL, &payload)
+	var diagnostic *diag.Diag
+	if status != http.StatusServiceUnavailable || !errors.As(err, &diagnostic) || diagnostic.Code != "KB_AUTH_GATEWAY_UNREACHABLE" {
+		t.Fatalf("getJSON failure = status %d, err %#v; want decoded Gateway failure diagnostic", status, err)
 	}
 }
 

@@ -56,6 +56,25 @@ func TestDecodeSuccessResultRequiresTheSharedEnvelope(t *testing.T) {
 	}
 }
 
+func TestDecodeResultReturnsCataloguedFailureEnvelope(t *testing.T) {
+	body := []byte(`{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>.","correlationId":"corr-auth-health"}}`)
+	var payload struct{ Status string `json:"status"` }
+	failure, err := DecodeResult(body, &payload)
+	if err != nil {
+		t.Fatalf("DecodeResult(failure): %v", err)
+	}
+	if failure == nil || failure.Code != "KB_AUTH_FORBIDDEN" || failure.Message != "Gateway auth health is unavailable." || failure.Hint != "Run kb-create doctor --platform-root <root>." {
+		t.Fatalf("failure = %#v, want catalogued Gateway diagnostic", failure)
+	}
+}
+
+func TestDecodeResultRejectsMalformedFailureEnvelope(t *testing.T) {
+	var payload struct{}
+	if failure, err := DecodeResult([]byte(`{"ok":false,"error":{"code":"KB_NOT_CATALOGUED","message":"bad","hint":"retry"}}`), &payload); err == nil || failure != nil {
+		t.Fatalf("DecodeResult(malformed failure) = (%#v, %v), want validation error", failure, err)
+	}
+}
+
 // case: S-203.1, S-203.2
 func TestRenderResultsMatchSharedContract(t *testing.T) {
 	var success bytes.Buffer
