@@ -21,6 +21,7 @@ import (
 	"github.com/kb-labs/create/v2/gateway"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/shim"
@@ -100,17 +101,11 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	listener := testListenerWithPortHeadroom(t, 100)
 	port := listener.Addr().(*net.TCPAddr).Port
 	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	release, err := catalog.Seal(catalog.Catalog{
-		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Compatibility: testCompatibility("2.0.0"),
-		Platforms: []catalog.PlatformBundle{{
-			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "platform.tgz", SHA256: "platform",
-			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
-			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Port: 4000}}}},
-			Config: []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
-				Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}},
-		}},
-	})
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}}}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
+	release, err := catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,17 +165,11 @@ func TestPlanAutomaticallyAllocatesGatewayFromInstalledRootIndex(t *testing.T) {
 	if err := registry.Register(rootA, "http://127.0.0.1:4000"); err != nil {
 		t.Fatal(err)
 	}
-	release, err := catalog.Seal(catalog.Catalog{
-		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Compatibility: testCompatibility("2.0.0"),
-		Platforms: []catalog.PlatformBundle{{
-			ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "platform.tgz", SHA256: "platform",
-			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
-			Profiles: map[string]contracts.ServiceGraph{"default": {Services: []contracts.Service{{ID: "gateway", Port: 4000}}}},
-			Config: []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
-				Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}},
-		}},
-	})
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}}}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
+	release, err := catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,14 +270,10 @@ func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
 		t.Fatal(err)
 	}
 	index := filepath.Join(home, "release-index.json")
-	release, err := catalog.Seal(catalog.Catalog{
-		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Compatibility: testCompatibility("2.0.0"),
-		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform",
-			Tarball: "https://example.test/platform.tgz", SHA256: "platform",
-			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}},
-			Host:     testHostOnFreePort(t)}},
-	})
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
+	source.Platforms[0].Host = testHostOnFreePort(t)
+	release, err := catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,23 +406,13 @@ func TestInstallRunsInteractiveCommandWithDefaultsAndProgress(t *testing.T) {
 	}
 	root := filepath.Join(home, "kb-platform")
 	index := filepath.Join(home, "release-index.json")
-	compatibility := testCompatibility("2.0.0")
-	compatibility.Labels = append(compatibility.Labels, catalog.CompatibilityLabel{
-		ID:   fmt.Sprintf("binary:kb-create@2.0.0:%s/%s", goruntime.GOOS, goruntime.GOARCH),
-		Kind: "binary", ArtifactID: "kb-create", Version: "2.0.0",
-		Requires: []catalog.CompatibilityRelation{{Label: "platform@2.0.0"}}, Status: "prepared", ValidatedBy: []string{"test"},
-	})
-	release, err := catalog.Seal(catalog.Catalog{
-		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Compatibility: compatibility,
-		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
-			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)},
-			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}},
-			Binaries: []catalog.Binary{{ID: "kb-create", OS: goruntime.GOOS, Arch: goruntime.GOARCH, URL: "https://example.test/kb-create", SHA256: "binary", Filename: "kb-create"}},
-			Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
-				{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}}},
-		Plugins: []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}},
-	})
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Host = &contracts.HostSpec{Command: "kb-host", HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port)}
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: port}}}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`},
+		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions", Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, port)}}
+	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
+	release, err := catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,12 +546,12 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 	}
 	projectRoot = canonicalProjectRoot
 	index := filepath.Join(home, "release-index.json")
-	release, err := catalog.Seal(catalog.Catalog{
-		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Compatibility: testCompatibility("2.0.0"),
-		Platforms:     []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHostOnFreePort(t), Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}, Config: []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}}},
-		Plugins:       []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}},
-	})
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Host = testHostOnFreePort(t)
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}
+	source.Plugins = []catalog.Component{{ID: "@kb-labs/commit", Version: "1.0.0", Package: "@kb/commit", Tarball: "https://example.test/commit.tgz", SHA256: "commit"}}
+	release, err := catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,17 +611,14 @@ func TestInstallRegistersSelectedProjectAndReportsBothResults(t *testing.T) {
 func writeJSONInstallFixture(t *testing.T, home string) string {
 	t.Helper()
 	index := filepath.Join(home, "release-index.json")
-	release, err := catalog.Seal(catalog.Catalog{
-		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
-		Compatibility: testCompatibility("2.0.0"),
-		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform",
-			Tarball: "https://example.test/platform.tgz", SHA256: "platform", Host: testHostOnFreePortWithPortHeadroom(t, 100),
-			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}},
-			Config:   []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}}},
-		Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "1.0.0",
-			Package: "@kb/sqlite-stores", Tarball: "https://example.test/sqlite-stores.tgz", SHA256: "sqlite-stores"},
-			Provides: []string{"documentDatabase"}}},
-	})
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Host = testHostOnFreePortWithPortHeadroom(t, 100)
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "gateway.access.mode", Path: "/gateway/access/mode", Default: `"local"`}}
+	source.Adapters = []catalog.Adapter{{Component: catalog.Component{ID: "sqlite-stores", Version: "1.0.0",
+		Package: "@kb/sqlite-stores", Tarball: "https://example.test/sqlite-stores.tgz", SHA256: "sqlite-stores"},
+		Provides: []string{"documentDatabase"}}}
+	release, err := catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -933,14 +905,14 @@ func testListenerWithPortHeadroom(t *testing.T, headroom int) net.Listener {
 	return nil
 }
 
-func testCompatibility(version string) *catalog.CompatibilityMatrix {
-	return &catalog.CompatibilityMatrix{
-		Schema: catalog.CompatibilitySchema,
-		Labels: []catalog.CompatibilityLabel{{
-			ID: "platform@" + version, Kind: "platform", ArtifactID: "platform", Version: version,
-			Status: "prepared", ValidatedBy: []string{"test"},
-		}},
+func testReleaseCatalog(t *testing.T, platformVersion string) catalog.Catalog {
+	t.Helper()
+	data := testfixtures.ReleaseIndexJSON(platformVersion, platformVersion, goruntime.GOOS, goruntime.GOARCH)
+	var source catalog.Catalog
+	if err := json.Unmarshal(data, &source); err != nil {
+		t.Fatal(err)
 	}
+	return source
 }
 
 func TestParseProvidersSupportsCommaSeparatedPreferences(t *testing.T) {

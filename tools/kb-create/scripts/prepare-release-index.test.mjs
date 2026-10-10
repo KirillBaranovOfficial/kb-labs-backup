@@ -178,6 +178,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     { id: 'binary:kb-create@2.0.0:linux/amd64', kind: 'binary', artifactId: 'kb-create', version: '2.0.0' },
   ]);
   assert.deepEqual(index.compatibility.labels[0].requires, [{ label: 'sdk@2.0.0', constraint: '>=2.0.0 <3.0.0' }]);
+  assert.deepEqual(index.compatibility.labels[2].requires, [{ label: 'platform@2.0.0' }, { label: 'sdk@2.0.0' }]);
   assert.equal(index.channels.canary, '2.0.0');
   assert.equal(index.platforms[0].releaseNotes, 'Candidate release notes from the journey fixture.');
   assert.ok(index.platforms[0].sizeBytes > 0, 'platform bundle must carry its sealed tarball size');

@@ -33,11 +33,7 @@ func TestEqualVersionUpdateReturnsBeforeSnapshotWritesOrLifecycle(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	index, err := catalog.Seal(catalog.Catalog{
-		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "3.2.0"},
-		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{{ID: "platform@3.2.0", Kind: "platform", ArtifactID: "platform", Version: "3.2.0", Status: "prepared", ValidatedBy: []string{"test"}}}},
-		Platforms:     []catalog.PlatformBundle{{ID: "platform", Version: "3.2.0", Package: "@kb/platform", Tarball: "platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
-	})
+	index, err := catalog.Seal(testReleaseCatalog(t, "3.2.0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,11 +107,7 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			index := catalog.Catalog{
-				Channels:      map[contracts.Channel]string{contracts.ChannelStable: test.target},
-				Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{{ID: "platform@" + test.target, Kind: "platform", ArtifactID: "platform", Version: test.target, Status: "prepared", ValidatedBy: []string{"test"}}}},
-				Platforms:     []catalog.PlatformBundle{{ID: "platform", Version: test.target, Package: "@kb/platform", Tarball: "platform.tgz", SHA256: "platform", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
-			}
+			index := testReleaseCatalog(t, test.target)
 			sealed, err := catalog.Seal(index)
 			if err != nil {
 				t.Fatal(err)
@@ -174,16 +166,9 @@ func TestUpdateValidationRefusesBeforeReceiptOrSnapshotMutation(t *testing.T) {
 func TestUpdateMapsTargetPlanCompatibilityToUpdateCode(t *testing.T) {
 	inst := newInstallation(t)
 	index := filepath.Join(t.TempDir(), "release-index.json")
-	sealed, err := catalog.Seal(catalog.Catalog{
-		Channels:      map[contracts.Channel]string{contracts.ChannelStable: "3.2.0"},
-		Compatibility: testCompatibility("3.2.0"),
-		Platforms: []catalog.PlatformBundle{{
-			ID: "platform", Version: "3.2.0", Package: "@kb/platform", Tarball: "platform.tgz", SHA256: "platform",
-			SDKRange: "<3.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
-			Profiles: map[string]contracts.ServiceGraph{"default": {}},
-		}},
-		SDKs: []catalog.Component{{ID: "sdk", Version: "3.2.0", Package: "@kb/sdk", Tarball: "sdk.tgz", SHA256: "sdk"}},
-	})
+	source := testReleaseCatalog(t, "3.2.0")
+	source.Platforms[0].SDKRange = "<3.0.0"
+	sealed, err := catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}

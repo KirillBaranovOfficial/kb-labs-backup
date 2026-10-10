@@ -24,14 +24,14 @@ func label(id, kind, artifact, version string, requires ...string) catalog.Compa
 	return value
 }
 
-func fixtureCatalog(withBinary bool, runnerOS, runnerArch string) catalog.Catalog {
+func fixtureCatalog(hasRunnerBinary bool, runnerOS, runnerArch string) catalog.Catalog {
 	platform := catalog.PlatformBundle{
 		ID: "platform", Version: fixtureVersion, Package: "@kb/fixture-platform",
 		Tarball: "https://example.test/fixture-platform.tgz", SHA256: "fixture-platform-sha256",
 		SDKRange: ">=3.0.0 <4.0.0", Host: &contracts.HostSpec{Command: "node_modules/.bin/kb-host", HealthURL: "http://127.0.0.1:4000/health"},
 		Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: fixtureVersion}},
 	}
-	if withBinary {
+	if hasRunnerBinary {
 		platform.Binaries = []catalog.Binary{{ID: "kb-create", OS: runnerOS, Arch: runnerArch, URL: "https://example.test/kb-create", SHA256: "fixture-binary-sha256", Filename: "kb-create"}}
 	} else {
 		foreignOS := "linux"
@@ -44,13 +44,11 @@ func fixtureCatalog(withBinary bool, runnerOS, runnerArch string) catalog.Catalo
 		label("platform@3.2.0", "platform", "platform", "3.2.0", "sdk@3.0.0"),
 		label("sdk@3.0.0", "sdk", "sdk", "3.0.0"), label("sdk@3.2.0", "sdk", "sdk", "3.2.0"), label("sdk@4.0.0", "sdk", "sdk", "4.0.0"),
 	}
-	if withBinary {
-		binary := platform.Binaries[0]
-		labels = append(labels, catalog.CompatibilityLabel{
-			ID: fmt.Sprintf("binary:kb-create@3.2.0:%s/%s", binary.OS, binary.Arch), Kind: "binary", ArtifactID: "kb-create", Version: fixtureVersion,
-			Requires: []catalog.CompatibilityRelation{{Label: "platform@3.2.0"}, {Label: "sdk@3.2.0"}}, Status: "prepared", ValidatedBy: []string{"installer-journey-fixture"},
-		})
-	}
+	binary := platform.Binaries[0]
+	labels = append(labels, catalog.CompatibilityLabel{
+		ID: fmt.Sprintf("binary:kb-create@3.2.0:%s/%s", binary.OS, binary.Arch), Kind: "binary", ArtifactID: "kb-create", Version: fixtureVersion,
+		Requires: []catalog.CompatibilityRelation{{Label: "platform@3.2.0"}, {Label: "sdk@3.0.0"}, {Label: "sdk@3.2.0"}}, Status: "prepared", ValidatedBy: []string{"installer-journey-fixture"},
+	})
 	return catalog.Catalog{
 		Channels:      map[contracts.Channel]string{contracts.ChannelStable: fixtureVersion},
 		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: labels},
@@ -77,9 +75,9 @@ func main() {
 		fatal(err)
 	}
 	for _, target := range []struct{ os, arch string }{{"linux", "amd64"}, {"linux", "arm64"}, {"darwin", "amd64"}, {"darwin", "arm64"}} {
-		for name, withBinary := range map[string]bool{"compatibility-matrix": true, "missing-host-binary": false} {
+		for name, hasRunnerBinary := range map[string]bool{"compatibility-matrix": true, "missing-host-binary": false} {
 			filename := fmt.Sprintf("%s-%s-%s.json", name, target.os, target.arch)
-			sealed, err := catalog.Seal(fixtureCatalog(withBinary, target.os, target.arch))
+			sealed, err := catalog.Seal(fixtureCatalog(hasRunnerBinary, target.os, target.arch))
 			if err != nil {
 				fatal(fmt.Errorf("seal %s: %w", filename, err))
 			}

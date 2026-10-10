@@ -1,28 +1,30 @@
 package resolve
 
 import (
+	"encoding/json"
 	"github.com/kb-labs/clikit/diag"
 	"path/filepath"
+	stdruntime "runtime"
 	"testing"
 
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 )
 
 func policyCatalog() catalog.Catalog {
-	return catalog.Catalog{
-		Channels: map[contracts.Channel]string{contracts.ChannelStable: "3.2.0"},
-		Compatibility: &catalog.CompatibilityMatrix{Schema: catalog.CompatibilitySchema, Labels: []catalog.CompatibilityLabel{
-			{ID: "platform@3.2.0", Kind: "platform", ArtifactID: "platform", Version: "3.2.0", Requires: []catalog.CompatibilityRelation{{Label: "sdk@3.0.0", Constraint: ">=3.0.0 <4.0.0"}}, Status: "prepared", ValidatedBy: []string{"test"}},
-			{ID: "sdk@3.0.0", Kind: "sdk", ArtifactID: "sdk", Version: "3.0.0", Status: "prepared", ValidatedBy: []string{"test"}},
-			{ID: "sdk@3.2.0", Kind: "sdk", ArtifactID: "sdk", Version: "3.2.0", Status: "prepared", ValidatedBy: []string{"test"}},
-		}},
-		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "3.2.0", Package: "@kb/platform", SHA256: "platform", SDKRange: ">=3.0.0 <4.0.0", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}},
-		SDKs: []catalog.Component{
-			{ID: "sdk", Version: "3.0.0", Package: "@kb/sdk", SHA256: "sdk-3.0.0"},
-			{ID: "sdk", Version: "3.2.0", Package: "@kb/sdk", SHA256: "sdk-3.2.0"},
-		},
+	var source catalog.Catalog
+	if err := json.Unmarshal(testfixtures.ReleaseIndexJSON("3.2.0", "3.0.0", stdruntime.GOOS, stdruntime.GOARCH), &source); err != nil {
+		panic(err)
 	}
+	source.Platforms[0].SDKRange = ">=3.0.0 <4.0.0"
+	source.Compatibility.Labels[0].Requires[0].Constraint = ">=3.0.0 <4.0.0"
+	source.SDKs = append(source.SDKs, catalog.Component{ID: "sdk", Version: "3.2.0", Package: "@kb/sdk", Tarball: "https://example.test/sdk-3.2.0.tgz", SHA256: "sdk-3.2.0"})
+	source.Compatibility.Labels = append(source.Compatibility.Labels, catalog.CompatibilityLabel{
+		ID: "sdk@3.2.0", Kind: "sdk", ArtifactID: "sdk", Version: "3.2.0", Status: "prepared", ValidatedBy: []string{"test"},
+	})
+	source.Compatibility.Labels[2].Requires = append(source.Compatibility.Labels[2].Requires, catalog.CompatibilityRelation{Label: "sdk@3.2.0"})
+	return source
 }
 
 // case: S-053.2
@@ -73,6 +75,7 @@ func TestCompatiblePolicyUsesPrereleaseAwareComparatorRanges(t *testing.T) {
 	source.Compatibility.Labels[0].Requires[0].Constraint = ">=3.0.0 <4.0.0 || ^5.1.0"
 	source.SDKs = append(source.SDKs, catalog.Component{ID: "sdk", Version: "3.3.0-rc.2", Package: "@kb/sdk", SHA256: "sdk-rc"})
 	source.Compatibility.Labels = append(source.Compatibility.Labels, catalog.CompatibilityLabel{ID: "sdk@3.3.0-rc.2", Kind: "sdk", ArtifactID: "sdk", Version: "3.3.0-rc.2", Status: "prepared", ValidatedBy: []string{"test"}})
+	source.Compatibility.Labels[2].Requires = append(source.Compatibility.Labels[2].Requires, catalog.CompatibilityRelation{Label: "sdk@3.3.0-rc.2"})
 	request := contracts.InstallRequest{PlatformRoot: "/tmp/kb-policy", Platform: contracts.VersionSelector{Version: "3.2.0"}, SDK: contracts.VersionSelector{Version: "3.3.0-rc.2"}, Policy: contracts.PolicyCompatible}
 	if _, err := Plan(request, source); err != nil {
 		t.Fatalf("compatible policy rejected a prerelease admitted by the range: %v", err)
