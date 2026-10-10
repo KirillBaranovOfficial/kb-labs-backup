@@ -1,6 +1,8 @@
 """Installed update variants that exercise sealed releases and preserved state."""
 from __future__ import annotations
 
+from project_service_path import project_service_path
+
 import hashlib
 import json
 import os
@@ -423,7 +425,7 @@ def run_platform_update_variant_steps(
         project_id = json.loads(cli([kb_binary, "project", "show", "--json"], project_a).stdout).get("data", {}).get("project", {}).get("id")
         if not project_id:
             raise RuntimeError("project show did not identify project MCP endpoint")
-        request = Request(f"http://127.0.0.1:4000/api/v1/projects/{project_id}/mcp",
+        request = Request(f"http://127.0.0.1:4000{project_service_path(project_id, 'mcp')}",
                           data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                                            "params": {"protocolVersion": "2025-03-26", "capabilities": {},
                                                       "clientInfo": {"name": "update-journey", "version": "1"}}}).encode(),
@@ -434,7 +436,7 @@ def run_platform_update_variant_steps(
             initialized = json.loads(response.read())
         if "result" not in initialized:
             raise RuntimeError("project MCP initialize failed after update")
-        list_request = Request(f"http://127.0.0.1:4000/api/v1/projects/{project_id}/mcp",
+        list_request = Request(f"http://127.0.0.1:4000{project_service_path(project_id, 'mcp')}",
                                data=json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list",
                                                 "params": {}}).encode(),
                                headers={"Content-Type": "application/json"})
@@ -452,7 +454,7 @@ def run_platform_update_variant_steps(
         if safe_call is None:
             raise RuntimeError("project MCP exposed no tool with a declared no-mutation plan option")
         tool, dry_run_flag = safe_call
-        call_request = Request(f"http://127.0.0.1:4000/api/v1/projects/{project_id}/mcp",
+        call_request = Request(f"http://127.0.0.1:4000{project_service_path(project_id, 'mcp')}",
                                data=json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                                                 "params": {"name": tool["name"],
                                                            "arguments": {dry_run_flag: True}}}).encode(),

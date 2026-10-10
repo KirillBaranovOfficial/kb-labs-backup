@@ -2,6 +2,8 @@
 """Probe fresh-install service capabilities and emit machine-readable results."""
 from __future__ import annotations
 
+from project_service_path import project_service_path
+
 import argparse
 from contextlib import ExitStack
 import hashlib
@@ -237,11 +239,11 @@ def project_plugin_settings_isolation() -> str | None:
                 return f"configuring Commit settings created repository files in {project.name}: {', '.join(files)}"
 
         a_status, a_body, _ = request(
-            f"/api/v1/projects/{ids[0]}/rest/api/v1/plugins/commit/scopes",
+            project_service_path(ids[0], "rest", "plugins/commit/scopes"),
             token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
         )
         b_status, b_body, _ = request(
-            f"/api/v1/projects/{ids[1]}/rest/api/v1/plugins/commit/scopes",
+            project_service_path(ids[1], "rest", "plugins/commit/scopes"),
             token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", ""),
         )
 
@@ -385,7 +387,7 @@ def _checks(mode: str):
     def platform_readiness() -> str | None:
         gateway_error = expect_json("/ready", "gateway readiness")
         workflow_error = expect_json(
-            f"/api/v1/projects/{pid}/workflow/health", "project-aware workflow health", token=auth_token())
+            project_service_path(pid, "workflow", "health"), "project-aware workflow health", token=auth_token())
         errors = [error for error in (gateway_error, workflow_error) if error]
         return "; ".join(errors) if errors else None
 
@@ -425,7 +427,7 @@ def _checks(mode: str):
             for runtime in runtimes
         ):
             return f"host health did not list registered project {PROJECT_ID} as a ready runtime"
-        path = f"/api/v1/projects/{PROJECT_ID}/rest/api/v1/health"
+        path = project_service_path(PROJECT_ID, "rest", "health")
         try:
             status, body, _ = request_ux_success(path, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", token))
         except ValueError as error:
@@ -442,7 +444,7 @@ def _checks(mode: str):
                         cases=["S-204.1", "S-204.2", "S-204.8", "S-204.9", "S-204.10", "S-204.11"])
     yield service_check("workflow discovery", "workflow", lambda: discover_workflow(pid, auth_token()))
     yield service_check("workflow execution endpoint", "workflow", lambda: expect(
-        f"/api/v1/projects/{pid}/workflow/api/v1/workflows/e2e-hello/runs", {200, 201, 202},
+        project_service_path(pid, "workflow", "workflows/e2e-hello/runs"), {200, 201, 202},
         "project-aware workflow run endpoint", method="POST", payload={"trigger": {"type": "manual"}}, token=auth_token()))
     yield service_check("project-scoped MCP initialize", "mcp", lambda: mcp_initialize(pid, auth_token()),
                         cases=["S-045.1"])
@@ -500,7 +502,7 @@ def _checks(mode: str):
                             cases=["S-140.5"])
     yield service_check("Studio shell", "studio", lambda: expect_html("/", "Studio shell"))
     yield service_check("Studio project API", "studio", lambda: expect("/api/v1/projects", {200}, "Studio project API", token=auth_token()))
-    yield service_check("marketplace registry", "marketplace", lambda: expect(f"/api/v1/projects/{pid}/rest/api/v1/plugins/registry", {200}, "marketplace registry", token=auth_token()))
+    yield service_check("marketplace registry", "marketplace", lambda: expect(project_service_path(pid, "rest", "plugins/registry"), {200}, "marketplace registry", token=auth_token()))
 
 
 def checks(mode: str):
@@ -517,7 +519,7 @@ def declared_capabilities(mode: str) -> set[str]:
 
 
 def discover_workflow(project_id: str, token: str) -> str | None:
-    path = f"/api/v1/projects/{project_id}/workflow/api/v1/workflows"
+    path = project_service_path(project_id, "workflow", "workflows")
     status, body, _ = request(path, token=token)
     if status != 200:
         return f"project-aware workflow discovery unavailable: GET {path} returned HTTP {status}"
@@ -532,7 +534,7 @@ def discover_workflow(project_id: str, token: str) -> str | None:
 
 
 def _mcp_response(project_id: str, token: str, payload: dict) -> tuple[int, object]:
-    status, body, _ = request(f"/api/v1/projects/{project_id}/mcp", method="POST", token=token,
+    status, body, _ = request(project_service_path(project_id, "mcp"), method="POST", token=token,
                               accept="application/json, text/event-stream", payload=payload)
     if isinstance(body, str) and any(line.startswith("data:") for line in body.splitlines()):
         data = "\n".join(line[5:].strip() for line in body.splitlines() if line.startswith("data:"))
@@ -546,13 +548,14 @@ def _mcp_response(project_id: str, token: str, payload: dict) -> tuple[int, obje
 def mcp_initialize(project_id: str, token: str) -> str | None:
     if project_id == "{projectId}":
         return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
+    route = project_service_path(project_id, "mcp")
     status, body = _mcp_response(project_id, token, {
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": "2025-03-26", "capabilities": {},
                    "clientInfo": {"name": "kb-labs-journey", "version": "1.0.0"}},
     })
     if status != 200:
-        return f"project-scoped MCP initialize unavailable: POST /api/v1/projects/{project_id}/mcp returned HTTP {status}; enable the project MCP runtime and rerun the service journey"
+        return f"project-scoped MCP initialize unavailable: POST {route} returned HTTP {status}; enable the project MCP runtime and rerun the service journey"
     result = body.get("result") if isinstance(body, dict) else None
     if not isinstance(result, dict) or result.get("protocolVersion") != "2025-03-26":
         return "project-scoped MCP initialize returned no result for protocol version 2025-03-26"
@@ -562,11 +565,12 @@ def mcp_initialize(project_id: str, token: str) -> str | None:
 def mcp_probe(project_id: str, token: str) -> str | None:
     if project_id == "{projectId}":
         return "BLOCKED: MCP project scope needs KB_JOURNEY_PROJECT_ID from project registration"
+    route = project_service_path(project_id, "mcp")
     status, body = _mcp_response(project_id, token, {
         "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {},
     })
     if status != 200:
-        return f"project-scoped MCP tools/list unavailable: POST /api/v1/projects/{project_id}/mcp returned HTTP {status}; enable the project MCP runtime and rerun the service journey"
+        return f"project-scoped MCP tools/list unavailable: POST {route} returned HTTP {status}; enable the project MCP runtime and rerun the service journey"
     if not isinstance(body, dict) or not isinstance(body.get("result"), dict):
         return "project-scoped MCP tools/list returned no JSON-RPC result"
     tools = body["result"].get("tools")

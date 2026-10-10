@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 
@@ -392,7 +393,7 @@ test('Studio schedules @S-055.2 toggles a project cron', async ({ page }) => {
   const row = page.getByRole('row').filter({ hasText: process.env.KB_STUDIO_CRON_ID! })
   await row.getByRole('button', { name: 'Disable' }).click()
   await expect(row.getByText('Disabled', { exact: true })).toBeVisible()
-  const response = await page.request.get(`${GATEWAY}/api/v1/projects/${encodeURIComponent(projectId!)}/workflow/api/v1/crons`)
+  const response = await page.request.get(`${GATEWAY}${projectServicePath(projectId!, 'workflow', 'crons')}`)
   expect(response.status()).toBe(200)
   const payload = await response.json() as { data?: { crons?: Array<{ id: string; enabled: boolean }> } }
   expect(payload.data?.crons?.find(cron => cron.id === process.env.KB_STUDIO_CRON_ID)?.enabled).toBe(false)

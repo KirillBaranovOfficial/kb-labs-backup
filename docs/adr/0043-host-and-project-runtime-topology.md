@@ -256,3 +256,40 @@ sets (stage 7).
 ---
 
 **Last Updated:** 2026-09-26
+
+## Project service URL contract amendment (2026-10-09)
+
+Project APIs use a service namespace:
+
+```
+/api/v1/projects/{projectId}/{serviceId}/{servicePath}
+```
+
+The `{serviceId}` is declared by that service's manifest under `projectApi`;
+`rewritePrefix` names the service's internal mount. For example, the public
+`/api/v1/projects/p1/rest/analytics/events` route rewrites to the REST service's
+`/api/v1/analytics/events` mount, while workflow routes use
+`/api/v1/projects/p1/workflow/runs/{runId}` and rewrite to the workflow daemon's
+`/api/v1/runs/{runId}`. The MCP service uses `serviceId: "mcp"` and
+`rewritePrefix: "/"`, so its endpoint remains `/api/v1/projects/p1/mcp`.
+
+The Gateway matches one project service route, verifies `serviceId` against the
+manifest-derived declaration set, and only then asks `IServiceTransport` to
+resolve `(projectId, serviceId)`. Unknown services return the catalogued
+resource-not-found response without acquiring a runtime. Service IDs must be
+unique valid URL segments at host assembly. A project-scoped service ID is a
+public API contract; renaming or splitting that service is a breaking change.
+
+Routing is the same in both deployment topologies. Local transport resolves the
+key through `ProjectRouting.acquire(projectId)` and returns a lease for the
+lazy project runtime. Cloud transport resolves the same key from a map such as
+`projectServices[projectId][serviceId].url` (or an equivalent per-project
+address template); the services are already running, so no runtime lease is
+needed. Gateway routing has no topology branch. Static machine-level upstreams
+continue to use the existing Gateway upstream declarations.
+
+The Gateway rewrites from `rewritePrefix` declared in the service manifest. It
+does not mount service routes itself and does not infer an internal prefix.
+This keeps internal API versions out of public URLs without changing each
+service's standalone mount. A shared `projectServicePath` contract builder is
+the only URL construction rule used by product clients and journey helpers.

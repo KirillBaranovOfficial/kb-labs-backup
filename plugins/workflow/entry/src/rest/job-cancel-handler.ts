@@ -32,7 +32,7 @@ export default defineHandler({
       throw new Error('Missing jobId parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/jobs/${jobId}/cancel`;
+    const url = `${daemonUrl}/jobs/${jobId}/cancel`;
     ctx.platform.logger.info(`[job-cancel-handler] Cancelling job ${jobId} at ${url}`);
 
     try {

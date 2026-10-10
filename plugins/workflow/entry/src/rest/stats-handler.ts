@@ -10,7 +10,7 @@ import { fetchWorkflowApi, getWorkflowDaemonUrl } from '../http-client';
 export default defineHandler({
   async execute(ctx: PluginContextV3, _input: RestInput<unknown>): Promise<DashboardStatsResponse> {
     const daemonUrl = getWorkflowDaemonUrl();
-    const url = `${daemonUrl}/api/v1/stats`;
+    const url = `${daemonUrl}/stats`;
 
     ctx.platform.logger.info(`[stats-handler] Fetching stats from ${url}`);
 

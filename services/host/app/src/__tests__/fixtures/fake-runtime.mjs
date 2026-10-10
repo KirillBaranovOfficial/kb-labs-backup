@@ -54,7 +54,7 @@ const server = createServer((req, res) => {
   req.on("data", (chunk) => chunks.push(chunk));
   req.on("end", async () => {
     const body = Buffer.concat(chunks).toString("utf8");
-    if (url.pathname === "/rest/__host-services") {
+    if (url.pathname === "/rest/api/v1/__host-services") {
       const stateDaemonUrl = process.env.KB_STATE_DAEMON_URL;
       const gatewayUrl = process.env.KB_GATEWAY_URL;
       const firstLeaseStatus = stateDaemonUrl
@@ -64,10 +64,10 @@ const server = createServer((req, res) => {
       res.end(JSON.stringify({ stateDaemonUrl: stateDaemonUrl ?? null, gatewayUrl: gatewayUrl ?? null, firstLeaseStatus }));
       return;
     }
-    if (url.pathname === "/rest/__crash") {
+    if (url.pathname === "/rest/api/v1/__crash") {
       process.exit(1);
     }
-    if (url.pathname === "/rest/__spawn-child") {
+    if (url.pathname === "/rest/api/v1/__spawn-child") {
       const stoppedMarker = join(projectRoot, "runtime-child-stopped");
       const child = spawn(process.execPath, ["-e", [
         "const { writeFileSync } = require('node:fs');",

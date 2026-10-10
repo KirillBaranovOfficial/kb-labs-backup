@@ -38,18 +38,18 @@ export default function WorkflowsRuns() {
   const [runModalOpen, setRunModalOpen] = useState(false);
   const { projectId, picker, hasProjects } = useWorkflowProject();
 
-  const { data, isLoading, refetch } = useData<{ runs: WorkflowRun[]; total: number }>(projectWorkflowEndpoint(projectId, 'api/v1/runs'), {
+  const { data, isLoading, refetch } = useData<{ runs: WorkflowRun[]; total: number }>(projectWorkflowEndpoint(projectId, 'runs'), {
     params: { limit: filters.limit, ...(filters.status ? { status: filters.status } : {}) },
     enabled: hasProjects,
     pollingMs: viewMode !== 'table' ? 5000 : undefined,
   });
-  const { data: workflowsData } = useData<{ workflows: WorkflowInfo[] }>(projectWorkflowEndpoint(projectId, 'api/v1/workflows'), { params: { limit: 100 }, enabled: hasProjects });
+  const { data: workflowsData } = useData<{ workflows: WorkflowInfo[] }>(projectWorkflowEndpoint(projectId, 'workflows'), { params: { limit: 100 }, enabled: hasProjects });
 
   const runWorkflowMutation = useMutateData<
     { workflowId: string; input: Record<string, unknown> },
     { runId: string; status: string }
   >(
-    (p) => projectWorkflowEndpoint(projectId, `api/v1/workflows/${encodeURIComponent(p.workflowId)}/runs`),
+    (p) => projectWorkflowEndpoint(projectId, `workflows/${encodeURIComponent(p.workflowId)}/runs`),
     { mapBody: (p) => ({ inputs: p.input }) },
   );
 

@@ -2,6 +2,8 @@
 """One isolated end-user install journey; each invocation runs in a fresh container."""
 from __future__ import annotations
 
+from project_service_path import project_service_path
+
 import json
 import os
 import re
@@ -336,7 +338,7 @@ def verify_project_mcp(env: dict[str, str], local: bool):
     try:
         project = decode_ux_success_result(read_ux_cli_result(registered.stdout, registered.returncode))["project"]
         project_id = project["id"]
-        url = f"http://127.0.0.1:4000/api/v1/projects/{project_id}/mcp"
+        url = f"http://127.0.0.1:4000{project_service_path(project_id, 'mcp')}"
         token = None
         if not local:
             try:

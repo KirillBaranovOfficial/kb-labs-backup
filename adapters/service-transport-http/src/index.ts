@@ -18,6 +18,7 @@ export function createAdapter(config: HttpServiceTransportConfig): HttpServiceTr
 export type {
   IServiceTransport,
   ServiceConnectionInfo,
+  ProjectServiceConnectionInfo,
   ServiceTransportRequest,
   ServiceTransportResponse,
   ServiceTransportStream,

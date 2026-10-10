@@ -32,7 +32,7 @@ export default function WorkflowsJobs() {
   const [filters, setFilters] = React.useState<JobListFilter>({ limit: 50 });
   const { projectId, picker, hasProjects } = useWorkflowProject();
 
-  const { data: jobsData, isLoading } = useData<{ jobs: JobStatusInfo[] }>(projectWorkflowEndpoint(projectId, 'api/v1/jobs'), {
+  const { data: jobsData, isLoading } = useData<{ jobs: JobStatusInfo[] }>(projectWorkflowEndpoint(projectId, 'jobs'), {
     params: filters as Record<string, string | number | boolean>,
     enabled: hasProjects,
   });

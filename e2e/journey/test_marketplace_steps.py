@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from urllib.parse import urlparse
 import urllib.request
 from unittest.mock import patch
 from pathlib import Path
@@ -561,13 +562,28 @@ class MarketplaceStepTests(unittest.TestCase):
                 def read(self):
                     return json.dumps(self.payload).encode()
 
+            rest_route_table = {"plugins/commit/status"}
+
             def fake_http(request, timeout):
                 http_calls.append((request.full_url, request.get_header("Authorization"), timeout))
-                if len(http_calls) in (1, 3):
+                path = urlparse(request.full_url).path
+                project_marker = "/rest/"
+                service_path = path.split(project_marker, 1)[1] if project_marker in path else ""
+                if "/unknown-service/" in path:
+                    return FakeResponse(404, {"ok": False, "error": {
+                        "code": "KB_RUNTIME_RESOURCE_NOT_FOUND",
+                        "message": "Project service was not found.",
+                        "hint": "Check the project service ID and retry the request.",
+                        "correlationId": "request-fixture"}})
+                if request.full_url.endswith("/health"):
+                    return FakeResponse(200, {"ok": True, "data": {"projectRuntimes": {"runtimes": []}}})
+                if service_path in rest_route_table and "@kb-labs/commit" in lock(project)["plugins"]:
                     return FakeResponse(200, {"ok": True, "data": {"scope": "project", "hasPlan": False}})
+                error_code = "KB_RUNTIME_RESOURCE_NOT_FOUND" if service_path not in rest_route_table else "KB_PLUGIN_NOT_INSTALLED"
+                message = "Project service was not found." if error_code == "KB_RUNTIME_RESOURCE_NOT_FOUND" else "Plugin is not installed in this project."
                 return FakeResponse(404, {"ok": False, "error": {
-                    "code": "KB_PLUGIN_NOT_INSTALLED",
-                    "message": "Plugin is not installed in this project.",
+                    "code": error_code,
+                    "message": message,
                     "hint": "Run `kb marketplace install @kb-labs/commit-entry` in this project.",
                     "correlationId": "request-fixture"}})
 
@@ -579,7 +595,7 @@ class MarketplaceStepTests(unittest.TestCase):
             run_marketplace_steps(journey, project, "http://registry.test", env, fake_run, fake_http,
                                   commit_case_hook=fake_commit_case_hook)
 
-            expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 5))) for step in steps}
+            expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 7))) for step in steps}
             expected.update({
                 "S-010.7",
                 "S-051.2", "S-051.3", "S-051.4",
@@ -596,8 +612,11 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertIn(("kb", "marketplace", "uninstall", "@kb-labs/commit",
                            "--scope", "platform", "--json"), calls)
             self.assertEqual([call[0] for call in http_calls], [
-                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",
-                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",
+                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/unknown-service/health",
+                "http://gateway.test/health",
+                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/plugins/commit/status",
+                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/plugins/commit/status",
+                "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/plugins/commit/status",
                 "http://gateway.test/api/v1/projects/prj_marketplace_fixture/rest/api/v1/plugins/commit/status",
             ])
             self.assertTrue(all(call[1] == "Bearer fixture-token" for call in http_calls))

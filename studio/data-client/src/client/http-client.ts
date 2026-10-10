@@ -95,6 +95,11 @@ export class HttpClient {
     return this.baseUrl;
   }
 
+  /** Gateway URL without the versioned API path, for absolute streaming URLs. */
+  getGatewayBaseUrl(): string {
+    return gatewayBaseFromApiBase(this.baseUrl);
+  }
+
   async fetch<T>(path: string, options: AxiosRequestConfig = {}): Promise<T> {
     return this.fetchWithUxPolicy<T>(path, options, false);
   }
@@ -136,4 +141,23 @@ export class HttpClient {
     }
     throw processedError;
   }
+}
+
+/** Resolve an absolute streaming URL base from the HTTP client's versioned API base. */
+export function gatewayBaseFromApiBase(
+  baseUrl: string,
+  origin = typeof window === 'undefined' ? 'http://localhost' : window.location.origin,
+): string {
+  const url = new URL(baseUrl || '/', origin);
+  if (url.pathname === '/api/v1') {
+    url.pathname = '';
+  } else if (url.pathname.endsWith('/api/v1/')) {
+    url.pathname = url.pathname.slice(0, -'/api/v1/'.length);
+  } else if (url.pathname.endsWith('/api/v1')) {
+    url.pathname = url.pathname.slice(0, -'/api/v1'.length);
+  }
+  const pathname = url.pathname === '/' ? '' : url.pathname;
+  return url.origin === 'http://localhost' && !baseUrl.startsWith('http')
+    ? `${pathname}${url.search}`
+    : `${url.origin}${pathname}${url.search}`;
 }

@@ -7,6 +7,7 @@
 export {
   createProjectRuntimeConfig,
   DEFAULT_PROJECT_MODULES,
+  PROJECT_SERVICE_DECLARATIONS,
   PROJECT_RUNTIME_APP_ID,
   type ProjectRuntimeModule,
   type ProjectRuntimeOptions,

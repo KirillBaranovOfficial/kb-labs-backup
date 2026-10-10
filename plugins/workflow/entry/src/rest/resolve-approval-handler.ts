@@ -41,7 +41,7 @@ export default defineHandler({
       throw new Error('Missing required fields: jobId, stepId, action');
     }
 
-    const url = `${daemonUrl}/api/v1/runs/${encodeURIComponent(runId)}/approvals/resolve`;
+    const url = `${daemonUrl}/runs/${encodeURIComponent(runId)}/approvals/resolve`;
 
     ctx.platform.logger.info(`[resolve-approval-handler] Resolving approval for run ${runId}, step ${body.stepId}: ${body.action}`);
 

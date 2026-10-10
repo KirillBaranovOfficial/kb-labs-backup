@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 const enabled = process.env.KB_STUDIO_FIRST_TIER_JOURNEY === '1'
@@ -140,7 +141,7 @@ test('S-121.6: unconfigured analytics shows adapter setup guidance', async ({ pa
   const projectId = process.env.KB_STUDIO_PROJECT_ID
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
   await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
-  await page.route(`**/api/v1/projects/${encodeURIComponent(projectId!)}/analytics/stats`, async (route) => {
+  await page.route(`**${projectServicePath(projectId!, 'rest', 'analytics/stats')}`, async (route) => {
     await route.fulfill({ status: 501, contentType: 'application/json', body: JSON.stringify({ message: 'Analytics adapter does not support reading stats' }) })
   })
 
@@ -155,7 +156,7 @@ test('unavailable analytics service names its source and recovery command @S-125
   const projectId = process.env.KB_STUDIO_PROJECT_ID
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
   await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
-  await page.route(`**/api/v1/projects/${encodeURIComponent(projectId!)}/analytics/stats`, async (route) => {
+  await page.route(`**${projectServicePath(projectId!, 'rest', 'analytics/stats')}`, async (route) => {
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'unavailable' }) })
   })
 
@@ -190,7 +191,7 @@ test('S-122.2 and S-122.3: failed workflow detail carries its project and run to
   const projectId = process.env.KB_STUDIO_PROJECT_ID
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
   await page.addInitScript((id) => localStorage.setItem('kb.workflow.projectId', id), projectId!)
-  await page.route(`**/api/v1/projects/${encodeURIComponent(projectId!)}/workflow/api/v1/runs/run-studio-diagnostic`, async (route) => {
+  await page.route(`**${projectServicePath(projectId!, 'workflow', 'runs/run-studio-diagnostic')}`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -215,7 +216,7 @@ test('S-122.2 and S-122.3: failed workflow detail carries its project and run to
   const logsLink = page.getByRole('link', { name: 'Inspect run logs', exact: true })
   await expect(logsLink).toBeVisible()
   await expect(logsLink).toHaveAttribute('href', `/observability/logs?projectId=${encodeURIComponent(projectId!)}&executionId=run-studio-diagnostic`)
-  const logsRequest = page.waitForRequest(request => request.url().includes(`/api/v1/projects/${encodeURIComponent(projectId!)}/logs/stream`))
+  const logsRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs/stream')))
   await logsLink.click()
   await expect(page).toHaveURL(new RegExp(`/observability/logs\\?projectId=${encodeURIComponent(projectId!)}&executionId=run-studio-diagnostic$`))
   expect((await logsRequest).url()).toContain('executionId=run-studio-diagnostic')
@@ -226,7 +227,7 @@ test('S-122.5: unavailable observability logs name the source and doctor command
   const projectId = process.env.KB_STUDIO_PROJECT_ID
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
   await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
-  await page.route(`**/api/v1/projects/${encodeURIComponent(projectId!)}/logs**`, async (route) => {
+  await page.route(`**${projectServicePath(projectId!, 'rest', 'logs')}**`, async (route) => {
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'unavailable' }) })
   })
 
@@ -319,7 +320,7 @@ test('S-121.2-.5: filter real analytics events and inspect LLM usage by date and
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
   await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
 
-  const base = `${GATEWAY}/api/v1/projects/${encodeURIComponent(projectId!)}`
+  const base = `${GATEWAY}${projectServicePath(projectId!, 'rest')}`
   const seedResponse = await page.request.get(`${base}/analytics/events?type=llm.completion.completed&limit=10`)
   expect(seedResponse.ok()).toBe(true)
   const seed = await seedResponse.json() as {

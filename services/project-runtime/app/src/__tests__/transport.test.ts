@@ -6,6 +6,7 @@ import { RuntimeServiceTransport } from "../transport.js";
 function configured(known: Record<string, string>): IServiceTransport {
   return {
     connectionInfo: (id) => (known[id] ? { baseUrl: known[id]! } : undefined),
+    resolveProjectService: async () => undefined,
     listenAddress: (id) =>
       known[id] ? { port: Number(new URL(known[id]!).port) } : undefined,
     call: vi.fn().mockResolvedValue({ ok: true, statusCode: 200 }),

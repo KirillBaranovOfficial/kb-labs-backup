@@ -5,7 +5,7 @@ import validFailure from '../../../../../contracts/ux-result/fixtures/valid/fail
 import invalidFailure from '../../../../../contracts/ux-result/fixtures/invalid/failure-missing-hint.json';
 import invalidMixedEnvelope from '../../../../../contracts/ux-result/fixtures/invalid/mixed-success-and-error.json';
 import invalidSuccess from '../../../../../contracts/ux-result/fixtures/invalid/success-missing-data.json';
-import { HttpClient } from '../http-client.js';
+import { gatewayBaseFromApiBase, HttpClient } from '../http-client.js';
 
 const originalAdapter = axios.defaults.adapter;
 
@@ -24,6 +24,11 @@ function respondWith(data: unknown, status = 200): void {
 }
 
 describe('Studio API client UX result envelope', () => {
+  it('derives a gateway base from the versioned API base for streaming routes', () => {
+    expect(gatewayBaseFromApiBase('/api/v1')).toBe('');
+    expect(gatewayBaseFromApiBase('https://gateway.test/api/v1')).toBe('https://gateway.test');
+    expect(gatewayBaseFromApiBase('https://gateway.test/kb/api/v1')).toBe('https://gateway.test/kb');
+  });
   // case: S-203.5
   it('unwraps the shared valid success fixture', async () => {
     respondWith(validSuccess);

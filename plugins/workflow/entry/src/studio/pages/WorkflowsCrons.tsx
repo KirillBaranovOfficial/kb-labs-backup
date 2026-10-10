@@ -21,7 +21,7 @@ import { useWorkflowProject } from '../components/shared/WorkflowProjectPicker';
 
 export default function WorkflowsCrons() {
   const { projectId, picker, hasProjects } = useWorkflowProject();
-  const { data: cronsData, isLoading, refetch } = useData<{ crons: Array<CronInfo> }>(projectWorkflowEndpoint(projectId, 'api/v1/crons'), { enabled: hasProjects });
+  const { data: cronsData, isLoading, refetch } = useData<{ crons: Array<CronInfo> }>(projectWorkflowEndpoint(projectId, 'crons'), { enabled: hasProjects });
 
   const formatDate = (date?: Date | string) => {
     if (!date) {return '-';}
@@ -186,7 +186,7 @@ interface CronInfo {
 
 function CronToggle({ projectId, cron, onSuccess }: { projectId: string; cron: CronInfo; onSuccess: () => void }) {
   const action = cron.enabled ? 'disable' : 'enable';
-  const mutation = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `api/v1/crons/${encodeURIComponent(cron.id)}/${action}`));
+  const mutation = useMutateData<void, void>(projectWorkflowEndpoint(projectId, `crons/${encodeURIComponent(cron.id)}/${action}`));
   return <UIButton size="small" loading={mutation.isLoading} onClick={() => {
     mutation.mutateAsync().then(onSuccess).catch(() => {});
   }}>{cron.enabled ? 'Disable' : 'Enable'}</UIButton>;

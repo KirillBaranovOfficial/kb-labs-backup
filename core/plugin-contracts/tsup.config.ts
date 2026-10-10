@@ -7,6 +7,7 @@ export default defineConfig({
   tsconfig: "tsconfig.build.json",
   entry: {
     index: 'src/index.ts',
+    'project-service-path': 'src/project-service-path.ts',
   },
   external: ['@kb-labs/core-contracts'],
 })

@@ -44,6 +44,12 @@ interface PluginRouteBody {
   error?: { code: string; hint: string };
 }
 
+interface AnalyticsEventsBody {
+  ok: boolean;
+  data?: { events?: unknown[] };
+  error?: { code: string; message: string };
+}
+
 interface ReadyBody {
   ready: boolean;
   components: Record<string, { ready: boolean; status?: string }>;
@@ -142,11 +148,11 @@ describe("kb-host project routing", () => {
     expect(fromB.projectId).toBe(b.id);
     expect(fromA.pid).not.toBe(fromB.pid);
     expect(fromAAgain.pid).toBe(fromA.pid);
-    // The service path after the project id reaches the runtime unchanged.
-    expect(fromA.path).toBe("/rest/whoami");
+    // The declared REST rewrite restores its service-local API mount.
+    expect(fromA.path).toBe("/rest/api/v1/whoami");
   });
 
-  // case: S-124.13, S-192.2, S-192.3, S-192.4
+  // case: S-124.13, S-192.2, S-192.3, S-192.4, S-191.2
   it("reloads the registered project runtime when its Commit lock changes", async () => {
     const project = await registered();
     execFileSync("git", ["init", "--quiet"], { cwd: project.root });
@@ -192,6 +198,14 @@ describe("kb-host project routing", () => {
       },
     }));
     const packages = [...new Set(Object.values(installedAdapters).map((value) => value.split("/").slice(0, 2).join("/")))];
+    for (const packageName of packages) {
+      const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
+      await symlink(
+        packagePath,
+        join(installedPlatformRoot, "node_modules", packageName),
+        "dir",
+      );
+    }
     const lockedAdapters = Object.fromEntries(packages.map((packageName) => {
       const packagePath = join(workspaceRoot, "adapters", packageName.replace("@kb-labs/adapters-", ""));
       return [packageName, {
@@ -239,8 +253,18 @@ describe("kb-host project routing", () => {
         },
       );
 
+      const unknownService = await running.fetchGateway(
+        `/api/v1/projects/${project.id}/unknown-service/health`,
+      );
+      expect(unknownService.status).toBe(404);
+      expect((await unknownService.json() as PluginRouteBody).error?.code)
+        .toBe("KB_RUNTIME_RESOURCE_NOT_FOUND");
+      const healthBeforeKnownService = await running.fetchGateway("/health");
+      const healthBeforeBody = await readUxSuccessResult<HealthBody>(healthBeforeKnownService);
+      expect(healthBeforeBody.projectRuntimes.runtimes).toEqual([]);
+
       const response = await running.fetchGateway(
-        `/api/v1/projects/${project.id}/rest/api/v1/health`,
+        `/api/v1/projects/${project.id}/rest/health`,
       );
       const body = await response.json();
       if (response.status !== 200) {
@@ -250,7 +274,23 @@ describe("kb-host project routing", () => {
       }
       expect(body).toEqual(expect.any(Object));
 
-      const routePath = `/api/v1/projects/${project.id}/rest/api/v1/plugins/commit/status`;
+      // case: S-192.6 — the real REST route table accepts its declared internal
+      // base and rejects the former public path with a duplicated API version.
+      const leakedRestPrefix = await running.fetchGateway(
+        `/api/v1/projects/${project.id}/rest/api/v1/health`,
+      );
+      expect(leakedRestPrefix.status).toBe(404);
+      expect((await leakedRestPrefix.json() as PluginRouteBody).error?.code)
+        .toBe("KB_RUNTIME_RESOURCE_NOT_FOUND");
+
+      const analyticsResponse = await running.fetchGateway(
+        `/api/v1/projects/${project.id}/rest/analytics/events`,
+      );
+      const analyticsBody = await analyticsResponse.json() as AnalyticsEventsBody;
+      expect(analyticsResponse.status, JSON.stringify(analyticsBody)).toBe(200);
+      expect(analyticsBody).toMatchObject({ ok: true, data: { events: expect.any(Array) } });
+
+      const routePath = `/api/v1/projects/${project.id}/rest/plugins/commit/status`;
       const absentBeforeInstall = await running.fetchGateway(routePath);
       expect(absentBeforeInstall.status).toBe(404);
       expect((await absentBeforeInstall.json() as PluginRouteBody).error?.code).toBe("KB_PLUGIN_NOT_INSTALLED");
@@ -268,6 +308,15 @@ describe("kb-host project routing", () => {
       const installedBody = await installedRoute.json() as PluginRouteBody;
       expect(installedRoute.status, JSON.stringify(installedBody)).toBe(200);
       expect(installedBody).toMatchObject({ ok: true, data: { scope: "root" } });
+
+      // The Commit REST route is live, so this proves S-192.6 against the
+      // registered plugin route rather than a generic or missing endpoint.
+      const leakedCommitPrefix = await running.fetchGateway(
+        `/api/v1/projects/${project.id}/rest/api/v1/plugins/commit/status`,
+      );
+      expect(leakedCommitPrefix.status).toBe(404);
+      expect((await leakedCommitPrefix.json() as PluginRouteBody).error?.code)
+        .toBe("KB_RUNTIME_RESOURCE_NOT_FOUND");
 
       await writeFile(projectLockPath, JSON.stringify({ schema: "kb.marketplace/3", plugins: {} }));
       const removedRoute = await running.fetchGateway(routePath);
@@ -585,7 +634,7 @@ describe("kb-host project routing", () => {
     const subject = await host({}, { launcher });
 
     const response = await subject.fetchGateway(
-      `/api/v1/projects/${project.id}/rest/api/v1/health`,
+      `/api/v1/projects/${project.id}/rest/health`,
     );
     expect(response.status).toBe(502);
     const body = (await response.json()) as ErrorBody;

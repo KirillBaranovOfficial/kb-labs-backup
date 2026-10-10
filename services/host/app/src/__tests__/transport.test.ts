@@ -15,6 +15,7 @@ function configuredTransport(
 ): IServiceTransport & { close: ReturnType<typeof vi.fn> } {
   return {
     connectionInfo: (id) => (known[id] ? { baseUrl: known[id]! } : undefined),
+    resolveProjectService: async () => undefined,
     listenAddress: (id) =>
       known[id] ? { port: Number(new URL(known[id]!).port) } : undefined,
     call: vi.fn().mockResolvedValue(ok),

@@ -1,6 +1,8 @@
 """Installed marketplace and adapter journeys for the shared service runner."""
 from __future__ import annotations
 
+from project_service_path import project_service_path
+
 import json
 import hashlib
 import os
@@ -406,6 +408,31 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     if journey.steps[-1].status != "PASS":
         return
 
+    project_id = base_env.get("KB_JOURNEY_PROJECT_ID", "")
+    gateway = base_env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
+
+    def assert_unknown_service_does_not_start_runtime() -> None:
+        if not project_id:
+            raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
+        headers = {"Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"}
+        unknown_url = f"{gateway}{project_service_path(project_id, 'unknown-service', 'health')}"
+        status, raw, _ = open_http(http_opener, urllib.request.Request(unknown_url, headers=headers), timeout=30, env=base_env)
+        unknown = read_ux_http_result(raw, status)
+        if status != 404 or unknown.get("error", {}).get("code") != "KB_RUNTIME_RESOURCE_NOT_FOUND":
+            raise RuntimeError("unknown project service did not return catalogued KB_RUNTIME_RESOURCE_NOT_FOUND")
+        health_status, health_raw, _ = open_http(
+            http_opener, urllib.request.Request(f"{gateway}/health", headers=headers), timeout=30, env=base_env,
+        )
+        health = read_ux_http_result(health_raw, health_status)
+        runtimes = health.get("data", {}).get("projectRuntimes", {}).get("runtimes", [])
+        if health_status != 200 or any(
+            isinstance(runtime, dict) and runtime.get("projectId") == project_id for runtime in runtimes
+        ):
+            raise RuntimeError("unknown project service acquired a project runtime")
+
+    journey.step("reject an unknown project service without starting its runtime", "marketplace",
+                 assert_unknown_service_does_not_start_runtime, cases=["S-192.1"])
+
     def install_commit_for_project_lifecycle() -> None:
         result = _json(cli(install_commit), install_commit)
         installed = result.get("installed")
@@ -415,7 +442,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             raise RuntimeError("project marketplace install did not return the selected plugin version as JSON")
 
     journey.step("install Commit into the project for the route lifecycle", "marketplace",
-                 install_commit_for_project_lifecycle, cases=["S-192.1"])
+                 install_commit_for_project_lifecycle, cases=["S-192.2"])
     if journey.steps[-1].status != "PASS":
         return
 
@@ -427,9 +454,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
     except Exception as error:
         journey.step("prepare Commit case fixture state", "marketplace", lambda: str(error))
 
-    project_id = base_env.get("KB_JOURNEY_PROJECT_ID", "")
-    gateway = base_env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
-    route = f"{gateway}/api/v1/projects/{project_id}/rest/api/v1/plugins/commit/status"
+    route = f"{gateway}{project_service_path(project_id, 'rest', 'plugins/commit/status')}"
 
     def assert_commit_status_route() -> None:
         if not project_id:
@@ -444,7 +469,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         validate_commit_status_response(status, payload)
 
     journey.step("GET the installed project Commit status route", "marketplace",
-                 assert_commit_status_route, cases=["S-192.2"])
+                 assert_commit_status_route, cases=["S-192.3"])
 
     listed = ["marketplace", "plugins", "list", "--json"]
     def assert_marketplace_list() -> None:
@@ -703,7 +728,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
 
     uninstall_commit = ["marketplace", "uninstall", commit_package, "--json"]
     def uninstall_target() -> None:
-        with invocation_context(step_id="S-192.3"):
+        with invocation_context(step_id="S-192.4"):
             _output(cli(uninstall_commit), uninstall_commit)
             if not project_id:
                 raise RuntimeError("S-192 requires KB_JOURNEY_PROJECT_ID from project registration")
@@ -717,7 +742,7 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
         validate_unmounted_commit_response(status, payload)
     journey.step("uninstall target project plugin", "marketplace",
                  uninstall_target,
-                 cases=["S-047.1", "S-192.3"])
+                 cases=["S-047.1", "S-192.4"])
     if journey.steps[-1].status != "PASS":
         return
 
@@ -776,4 +801,16 @@ def run_marketplace_steps(journey: Journey, project_root: str | Path, registry: 
             raise RuntimeError("reinstalled Commit status route did not return JSON") from error
         validate_commit_status_response(status, payload)
     journey.step("reinstall Commit and call its project REST route", "marketplace",
-                 reinstall_commit_and_assert_route, cases=["S-192.4"])
+                 reinstall_commit_and_assert_route, cases=["S-192.5"])
+
+    def reject_rest_internal_mount_prefix() -> None:
+        legacy_url = f"{gateway}{project_service_path(project_id, 'rest', 'api/v1/plugins/commit/status')}"
+        request = urllib.request.Request(legacy_url, headers={
+            "Authorization": f"Bearer {base_env.get('KB_JOURNEY_SERVICE_TOKEN', '')}"})
+        status, raw, _ = open_http(http_opener, request, timeout=30, env=base_env)
+        payload = read_ux_http_result(raw, status)
+        if status != 404 or payload.get("error", {}).get("code") != "KB_RUNTIME_RESOURCE_NOT_FOUND":
+            raise RuntimeError("REST's internal /api/v1 mount prefix remained publicly reachable")
+
+    journey.step("reject REST's internal API mount in public URLs", "marketplace",
+                 reject_rest_internal_mount_prefix, cases=["S-192.6"])

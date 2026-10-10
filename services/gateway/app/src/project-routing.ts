@@ -23,6 +23,8 @@ import {
 } from "node:http";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createErrorEnvelope, getCatalogEntry, isErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform";
+import type { IServiceTransport, ProjectServiceConnectionInfo } from "@kb-labs/core-platform";
+import { validateProjectServiceDeclarations, type ProjectServiceApiDeclaration } from "@kb-labs/plugin-contracts";
 import { createUxFailureResult, isUxResult } from "@kb-labs/core-platform/ux-result";
 
 /** Path prefix under which project-scoped APIs are served. */
@@ -32,6 +34,7 @@ export const PROJECT_ROUTE_PREFIX = "/api/v1/projects";
 export interface ProjectUpstream {
   host: string;
   port: number;
+  socketPath?: string;
   /** Set on the proxied request; replaces any client-supplied header of the same name. */
   headers: Readonly<Record<string, string>>;
   /** Called exactly once when the proxied exchange has ended, whatever the outcome. */
@@ -84,6 +87,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   KB_PROJECT_RUNTIME_LIMIT: 503,
   KB_PROJECT_RUNTIME_IDENTITY_MISMATCH: 502,
   KB_PROJECT_RUNTIME_START_FAILED: 502,
+  KB_HOST_SERVICE_ADDRESS_MISSING: 503,
 };
 
 const HOP_BY_HOP = new Set([
@@ -116,7 +120,7 @@ function buildRequestHeaders(
   for (const [name, value] of Object.entries(upstream.headers)) {
     headers[name.toLowerCase()] = value;
   }
-  headers.host = `${upstream.host}:${upstream.port}`;
+  headers.host = upstream.socketPath ? upstream.host : `${upstream.host}:${upstream.port}`;
   headers["x-forwarded-for"] = request.ip;
   return headers;
 }
@@ -138,19 +142,44 @@ function forward(
   request: FastifyRequest,
   upstream: ProjectUpstream,
   path: string,
+  timeoutMs: number,
+  signal: AbortSignal,
 ): Promise<IncomingMessage> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeout: NodeJS.Timeout | undefined;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      reject(error);
+    };
     const upstreamRequest = httpRequest(
       {
         host: upstream.host,
         port: upstream.port,
+        ...(upstream.socketPath ? { socketPath: upstream.socketPath } : {}),
         method: request.method,
         path,
         headers: buildRequestHeaders(request, upstream),
       },
-      resolve,
+      (response) => {
+        if (settled) {
+          response.destroy();
+          return;
+        }
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        upstreamRequest.setTimeout(0);
+        resolve(response);
+      },
     );
-    upstreamRequest.once("error", reject);
+    timeout = setTimeout(() => {
+      const error = Object.assign(new Error("Project upstream request timed out"), { code: "KB_RUNTIME_TIMEOUT" });
+      upstreamRequest.destroy(error);
+    }, timeoutMs);
+    upstreamRequest.once("error", fail);
+    signal.addEventListener("abort", () => upstreamRequest.destroy(new Error("Project request cancelled")), { once: true });
     // A client that goes away must not leave the runtime holding the request.
     request.raw.once("close", () => {
       if (!request.raw.complete) {
@@ -162,14 +191,17 @@ function forward(
 }
 
 /**
- * Registers `ALL /api/v1/projects/:projectId/*`. The part after the project id
- * is forwarded to the project's runtime unchanged (query string included).
+ * Registers `ALL /api/v1/projects/:projectId/:serviceId/*`. The service id is
+ * checked before resolving its project-specific connection.
  * Call after the global auth hooks and before `app.ready()`.
  */
 export async function registerProjectRoutes(
   app: FastifyInstance,
-  routing: ProjectRouting,
+  services: readonly ProjectServiceApiDeclaration[],
+  projectTransport: Pick<IServiceTransport, "resolveProjectService">,
+  timeoutMs = 30_000,
 ): Promise<void> {
+  validateProjectServiceDeclarations(services);
   await app.register(async function projectRoutes(scope) {
     // The body is streamed to the runtime as-is: no parsing, no size cap here.
     scope.removeAllContentTypeParsers();
@@ -177,31 +209,80 @@ export async function registerProjectRoutes(
       done(null, payload);
     });
 
-    scope.route<{ Params: { projectId: string } }>({
+    const registerProjectRoute = (url: string) => scope.route<{ Params: { projectId: string; serviceId: string } }>({
       // HEAD is exposed by Fastify for the GET route and reaches the same handler.
       method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      url: `${PROJECT_ROUTE_PREFIX}/:projectId/*`,
+      url,
       schema: {
         hide: true,
       },
       handler: async (request, reply) => {
-        const { projectId } = request.params;
-        let upstream: ProjectUpstream;
+        const { projectId, serviceId } = request.params;
+        const service = services.find((candidate) => candidate.serviceId === serviceId);
+        if (!service) {
+          const error = createErrorEnvelope("KB_RUNTIME_RESOURCE_NOT_FOUND", {
+            details: { path: request.url, serviceId },
+            correlationId: String(request.id),
+          });
+          return reply.code(404).send(createUxFailureResult(error));
+        }
+
+        let upstream: ProjectServiceConnectionInfo | undefined;
         try {
-          upstream = await routing.acquire(projectId);
+          upstream = await projectTransport.resolveProjectService(projectId, serviceId);
         } catch (error) {
           return sendError(reply, request, error);
         }
+        if (!upstream) {
+          return sendError(reply, request, new ProjectRoutingError(createErrorEnvelope(
+            "KB_HOST_SERVICE_ADDRESS_MISSING",
+            { details: { service: serviceId, project: projectId }, correlationId: String(request.id) },
+          )));
+        }
 
-        // Everything after `/api/v1/projects/<id>`, query string included.
+        // The service's public prefix is removed; the declared internal base is restored.
         const rawUrl = request.raw.url ?? request.url;
-        const path = rawUrl.slice(PROJECT_ROUTE_PREFIX.length + 1).replace(/^[^/?]*/, "") || "/";
+        const pathname = rawUrl.split("?", 1)[0] ?? rawUrl;
+        const pathParts = pathname.split("/");
+        const suffixPath = pathParts.slice(6).join("/");
+        const query = rawUrl.includes("?") ? `?${rawUrl.split("?").slice(1).join("?")}` : "";
+        const suffix = `/${suffixPath}${query}`;
+        const serviceBase = service.rewritePrefix === "/" ? "" : service.rewritePrefix;
+        const path = `${upstream.pathPrefix ?? ""}${serviceBase}${suffix}`;
 
+        let released = false;
+        const release = () => {
+          if (released) return;
+          released = true;
+          upstream?.release?.();
+        };
+        const abortController = new AbortController();
+        reply.raw.once("close", () => {
+          if (!reply.raw.writableEnded) abortController.abort();
+        });
         let response: IncomingMessage;
         try {
-          response = await forward(request, upstream, path);
+          response = await forward(request, {
+            host: upstream.socketPath ? new URL(upstream.baseUrl).host : new URL(upstream.baseUrl).hostname,
+            port: Number(new URL(upstream.baseUrl).port || 80),
+            ...(upstream.socketPath ? { socketPath: upstream.socketPath } : {}),
+            headers: upstream.headers ?? {},
+            release,
+          }, path, timeoutMs, abortController.signal);
         } catch (error) {
-          upstream.release();
+          release();
+          if (error && typeof error === "object" && "code" in error && error.code === "KB_RUNTIME_TIMEOUT") {
+            const envelope = createErrorEnvelope("KB_RUNTIME_TIMEOUT", {
+              details: { timeoutMs: String(timeoutMs), serviceId },
+              correlationId: String(request.id),
+            });
+            const status = getCatalogEntry(envelope.code)?.httpStatus;
+            if (status === undefined) {
+              return sendError(reply, request, new Error(`${envelope.code} has no catalogued HTTP status`));
+            }
+            return reply.code(status).send(createUxFailureResult(envelope));
+          }
+          if (abortController.signal.aborted) return reply;
           request.kbLogger?.warn("Project runtime unreachable", {
             projectId,
             error: error instanceof Error ? error.message : String(error),
@@ -210,7 +291,8 @@ export async function registerProjectRoutes(
             .code(502)
             .send({ error: "Bad Gateway", reason: "project_runtime_unreachable" });
         }
-        response.once("close", () => upstream.release());
+        response.once("close", release);
+        response.once("end", release);
 
         if ((response.statusCode ?? 502) >= 400) {
           for (const [name, value] of Object.entries(response.headers)) {
@@ -270,5 +352,7 @@ export async function registerProjectRoutes(
         return reply.code(response.statusCode ?? 502).send(response);
       },
     });
+    registerProjectRoute(`${PROJECT_ROUTE_PREFIX}/:projectId/:serviceId`);
+    registerProjectRoute(`${PROJECT_ROUTE_PREFIX}/:projectId/:serviceId/*`);
   });
 }

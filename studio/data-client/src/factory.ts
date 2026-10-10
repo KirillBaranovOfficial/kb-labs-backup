@@ -73,7 +73,7 @@ export function createDataSources(config: DataSourcesConfig): DataSources {
 
   return {
     system: new HttpSystemSource(client),
-    workflow: new HttpWorkflowSource(client),
+    workflow: new HttpWorkflowSource(client, config.projectId),
     cache: new HttpCacheSource(client),
     observability: new HttpObservabilitySource(client, config.projectId),
     analytics: new HttpAnalyticsSource(client, config.projectId),

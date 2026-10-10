@@ -86,7 +86,7 @@ describe('WorkflowsCrons', () => {
     const button = toggle(toggleElement.props as { projectId: string; cron: Cron; onSuccess: () => void });
     await (button.props as { onClick: () => Promise<void> }).onClick();
 
-    expect(hooks.useMutateData).toHaveBeenCalledWith('/v1/projects/project-a/workflow/api/v1/crons/nightly/disable');
+    expect(hooks.useMutateData).toHaveBeenCalledWith('/v1/projects/project-a/workflow/crons/nightly/disable');
     expect(mutateAsync).toHaveBeenCalledOnce();
     expect(refetch).toHaveBeenCalledOnce();
   });

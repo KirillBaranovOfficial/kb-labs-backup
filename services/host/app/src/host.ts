@@ -48,6 +48,8 @@ import {
 import { applyHostGatewayPolicy, type GatewayUpstreams } from "./policy.js";
 import { MarketplaceClient } from "./marketplace-client.js";
 import { createChildProcessLauncher } from "./project-runtime/launcher.js";
+import { createProjectServiceTransport } from "./project-runtime/service-transport.js";
+import { PROJECT_SERVICE_DECLARATIONS } from "@kb-labs/project-runtime-app";
 import {
   ProjectRuntimeManager,
   type ProjectRuntimeManagerOptions,
@@ -448,6 +450,7 @@ export async function createHostConfig(
         );
       }
 
+      const projectRouting = createProjectRouting({ registry, manager, logger });
       const stopGateway = await startGateway(
         { ...ctx, logger: ctx.logger.forComponent("gateway") },
         {
@@ -457,7 +460,9 @@ export async function createHostConfig(
               { ...config, studio: config.studio ?? { enabled: true } },
               { auth: settings.auth, upstreams },
             ),
-          projectRouting: createProjectRouting({ registry, manager, logger }),
+          projectRouting,
+          projectServices: PROJECT_SERVICE_DECLARATIONS,
+          projectServiceTransport: createProjectServiceTransport(projectRouting),
           hostRoutes: combineHostRoutes(
             createProjectsRoutes({ registry, manager }),
             ...pluginsRoutes,

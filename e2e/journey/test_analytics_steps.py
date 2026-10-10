@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from urllib.parse import urlparse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,6 +59,7 @@ class AnalyticsStepTests(unittest.TestCase):
             "HOME": directory,
         }, clear=False):
             events = []
+            paths = []
 
             def runner(command, **_kwargs):
                 if command[:3] == ["kb", "journey", "analytics"]:
@@ -70,19 +72,25 @@ class AnalyticsStepTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, '{"ok":true,"data":{}}', "")
 
             def opener(request, **_kwargs):
-                if "/api/v1/projects/project-a/analytics/events" in request.full_url:
+                path = urlparse(request.full_url).path
+                paths.append(path)
+                if path == "/api/v1/projects/project-a/rest/analytics/events":
                     payload = {"ok": True, "data": {"events": [event for event in events if event["projectId"] == "project-a"]}}
-                elif "/api/v1/projects/project-b/analytics/events" in request.full_url:
+                elif path == "/api/v1/projects/project-b/rest/analytics/events":
                     payload = {"ok": True, "data": {"events": [event for event in events if event["projectId"] == "project-b"]}}
-                elif "/workflow/api/v1/runs" in request.full_url:
+                elif path == "/api/v1/projects/project-a/workflow/runs" or path == "/api/v1/projects/project-b/workflow/runs":
                     payload = {"ok": True, "data": {"runs": []}}
                 else:
-                    payload = {"ok": True, "data": {"events": events}}
+                    return JsonResponse({"ok": False, "error": {"code": "KB_NOT_FOUND", "message": "route not found"}})
                 return JsonResponse(payload)
 
             journey = Journey("local", "analytics-green")
             run_analytics_steps(journey, token="fixture-token", runner=runner, opener=opener)
             fixture_body = (Path(directory) / "studio-fixtures.json").read_text()
+        self.assertIn("/api/v1/projects/project-a/rest/analytics/events", paths)
+        self.assertIn("/api/v1/projects/project-b/rest/analytics/events", paths)
+        self.assertNotIn("/api/v1/projects/project-a/rest/api/v1/analytics/events", paths)
+        self.assertNotIn("/api/v1/analytics/events", paths)
 
         claims = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
         self.assertEqual(claims, {

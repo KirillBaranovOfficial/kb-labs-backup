@@ -39,7 +39,7 @@ own account; administrators can manage users and invites.
 Browser requests use the gateway origin. Machine health uses `/api/health`,
 `/api/ready`, and `/api/observability/health`; host project registration uses
 `/api/v1/projects`. Project runtime calls include the active project id, such as
-`/api/v1/projects/{projectId}/logs`.
+`/api/v1/projects/{projectId}/rest/logs`.
 
 Plugin pages must use `@kb-labs/sdk` and public contracts. They must not import
 Studio implementation packages such as `@kb-labs/studio-data-client` or

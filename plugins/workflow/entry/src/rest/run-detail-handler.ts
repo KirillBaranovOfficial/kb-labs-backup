@@ -29,7 +29,7 @@ export default defineHandler({
       throw new Error('Missing runId parameter');
     }
 
-    const url = `${daemonUrl}/api/v1/runs/${encodeURIComponent(runId)}`;
+    const url = `${daemonUrl}/runs/${encodeURIComponent(runId)}`;
 
     ctx.platform.logger.info(`[run-detail-handler] Fetching run ${runId} from ${url}`);
 

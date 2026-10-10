@@ -26,7 +26,7 @@ view, and log history shows only the selected project's data.
 |---|---|---|
 | S-201.1 | Select Project A in Studio and open the dashboard, Analytics overview/events, and Observability logs | Each view identifies Project A as its scope and shows A's seeded activity only. |
 | S-201.2 | Switch to Project B and reopen those views | The views identify Project B and show B's events and logs only; Project A's event payloads, run IDs, and log records are absent. |
-| S-201.3 | Query each project's analytics API through `/api/v1/projects/<PROJECT_ID>/analytics/events` and inspect workflow run history through that project's API | Responses include only the requested project's event and run data; changing the project ID changes the data source without a client-side filter over combined results. |
+| S-201.3 | Query each project's analytics API through `/api/v1/projects/<PROJECT_ID>/rest/analytics/events` and inspect workflow run history through `/api/v1/projects/<PROJECT_ID>/workflow/runs/<RUN_ID>` | Responses include only the requested project's event and run data; changing the project ID changes the data source without a client-side filter over combined results. |
 | S-201.4 | Return to Project A and inspect the dashboard totals and latest activity | Values match A's own seeded activity and remain unchanged by B's events. |
 
 ## Dependencies

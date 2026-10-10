@@ -128,7 +128,7 @@ Outputs a static bundle to `dist/`. Serve with any static host (nginx, Caddy, Ve
 
 Studio sends browser requests to the **gateway** under one origin. Gateway health routes use `/api/health`, `/api/ready`, and `/api/observability/health`; host APIs use `/api/v1/projects` and `/api/v1/plugins`.
 
-Project runtime requests include the active project id. For example, a project's logs are requested through `/api/v1/projects/{projectId}/logs`; the gateway starts that project's runtime on demand and forwards the request. Studio does not send project data to an unscoped `/api/v1/logs` URL.
+Project runtime requests include the active project id and service id. For example, a project's logs are requested through `/api/v1/projects/{projectId}/rest/logs`; the gateway starts that project's runtime on demand and forwards the request. Studio does not send project data to an unscoped `/api/v1/logs` URL.
 
 This is important for plugin pages too: when a plugin page calls `useData('/api/v1/plugins/mind/search')`, it's calling the gateway, which routes to the REST API, which executes the plugin's REST handler. Everything stays behind one origin from the browser's perspective.
 

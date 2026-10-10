@@ -27,7 +27,7 @@ export default defineHandler({
     if (tags) {params.append('tags', tags);}
 
     const queryString = params.toString();
-    const url = `${daemonUrl}/api/v1/workflows${queryString ? `?${queryString}` : ''}`;
+    const url = `${daemonUrl}/workflows${queryString ? `?${queryString}` : ''}`;
 
     ctx.platform.logger.info(`[workflows-list-handler] Fetching workflows from ${url}`);
 

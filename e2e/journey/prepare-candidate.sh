@@ -8,6 +8,11 @@ TAG="journey-candidate"
 TARGET="$OUT/release/$TAG"
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 
+if [[ ! -f "$ROOT/core/plugin-contracts/dist/project-service-path.js" ]]; then
+  echo 'The journey runner needs the shared project service URL builder. Run `corepack pnpm --filter @kb-labs/plugin-contracts... --workspace-concurrency=2 build` first.' >&2
+  exit 2
+fi
+
 mkdir -p "$PACKAGES" "$TARGET"
 if [[ -f "$TARGET/update-packages/generated-packages.txt" ]]; then
   while IFS= read -r filename; do

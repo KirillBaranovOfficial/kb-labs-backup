@@ -6,6 +6,7 @@ export const manifest: ServiceManifest = {
   name: 'Workflow Engine',
   version: '1.2.0',
   description: 'Workflow orchestration daemon — runs, schedules, cron',
+  projectApi: { serviceId: 'workflow', rewritePrefix: '/api/v1' },
   runtime: {
     entry: 'dist/bin.js',
     port: 7778,

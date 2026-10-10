@@ -46,7 +46,7 @@ describe('workflow-run-cancel-handler (REST)', () => {
 
     expect(result).toEqual({ runId: 'run-123', cancelled: true });
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/api/v1/runs/run-123/cancel',
+      'http://127.0.0.1:4000/api/v1/projects/prj_0123456789abcdef/workflow/runs/run-123/cancel',
       expect.objectContaining({ method: 'POST' }),
     );
   });

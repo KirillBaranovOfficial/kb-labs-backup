@@ -236,7 +236,7 @@
         { "slug": "services/kb-deploy",       "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "services/kb-monitor",      "type": "manual", "owners": ["tools/kb-monitor/**"] },
         { "slug": "services/marketplace",     "type": "manual", "owners": ["plugins/marketplace/**", "core/extension-store/**", "core/discovery/src/marketplace-lock.ts", "cli/commands/src/commands/system/adapter/**"] },
-        { "slug": "services/rest-api",        "type": "hybrid", "owners": ["plugins/rest-api/**"] },
+        { "slug": "services/rest-api",        "type": "hybrid", "owners": ["services/rest-api/app/src/**"] },
         { "slug": "services/studio",          "type": "manual", "owners": ["studio/app/**"] },
         { "slug": "services/host-agent",      "type": "manual", "owners": ["plugins/host-agent/**", "adapters/workspace-agent/**"] },
         { "slug": "services/workflow-daemon", "type": "manual", "owners": ["plugins/workflow/daemon/**", "plugins/workflow/contracts/src/cron.ts", "plugins/workflow/contracts/src/rest-api.ts", "plugins/workflow/entry/src/commands/crons-*.ts", "plugins/workflow/engine/src/state-store.ts", "services/host/app/src/project-runtime/workflow-schedules.ts"] }
@@ -251,7 +251,7 @@
       "pages": [
         { "slug": "operations/index",             "type": "manual", "owners": ["tools/kb-deploy/**"] },
         { "slug": "operations/deployment",        "type": "manual", "owners": ["tools/kb-deploy/**", "services/host/app/src/host.ts"] },
-        { "slug": "operations/observability",     "type": "manual", "owners": ["adapters/analytics-duckdb/**", "adapters/analytics-sqlite/**", "adapters/pino/**", "core/platform/src/adapters/analytics.ts", "core/plugin-runtime/src/platform/adapter-registry.ts"] },
+        { "slug": "operations/observability",     "type": "manual", "owners": ["services/rest-api/app/src/routes/analytics.ts", "adapters/analytics-duckdb/**", "adapters/analytics-sqlite/**", "adapters/pino/**", "core/platform/src/adapters/analytics.ts", "core/plugin-runtime/src/platform/adapter-registry.ts"] },
         { "slug": "operations/security",          "type": "manual", "owners": ["plugins/gateway/auth/**", "core/policy/**", "services/gateway/app/src/auth/**", "services/rest-api/app/src/routes/adapter-call.ts", "plugins/marketplace-registry/api/src/auth-middleware.ts"] },
         { "slug": "operations/incident-response", "type": "manual", "static": true },
         { "slug": "operations/runbooks",          "type": "manual", "static": true }
