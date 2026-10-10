@@ -6,7 +6,44 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/kb-labs/clikit/diag"
 )
+
+// DecodeResult validates a shared UX-result envelope. On success it decodes
+// data into out. On failure it returns the catalogued diagnostic without
+// exposing optional cause/details fields from the remote response.
+func DecodeResult(content []byte, out any) (*diag.Diag, error) {
+	if err := ValidateMachineResult(content); err != nil {
+		return nil, fmt.Errorf("invalid UX result envelope: %w", err)
+	}
+	var envelope struct {
+		OK    bool            `json:"ok"`
+		Data  json.RawMessage `json:"data"`
+		Error json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(content, &envelope); err != nil {
+		return nil, fmt.Errorf("invalid UX result envelope: %w", err)
+	}
+	if !envelope.OK {
+		var failure diag.Diag
+		if err := json.Unmarshal(envelope.Error, &failure); err != nil {
+			return nil, fmt.Errorf("invalid UX failure envelope: %w", err)
+		}
+		failure.Message = diag.RedactText(failure.Message)
+		failure.Hint = diag.RedactText(failure.Hint)
+		failure.Cause = ""
+		failure.Meta = nil
+		failure.Actions = nil
+		failure.Docs = ""
+		failure.CorrelationID = ""
+		return &failure, nil
+	}
+	if err := json.Unmarshal(envelope.Data, out); err != nil {
+		return nil, fmt.Errorf("invalid UX result data: %w", err)
+	}
+	return nil, nil
+}
 
 var catalogCodePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$`)
 
@@ -119,21 +156,12 @@ func ValidateMachineResult(content []byte) error {
 // DecodeSuccessResult validates the shared UX-result envelope and decodes its
 // success payload into out. Failure envelopes and unwrapped payloads are errors.
 func DecodeSuccessResult(content []byte, out any) error {
-	if err := ValidateMachineResult(content); err != nil {
-		return fmt.Errorf("invalid UX result envelope: %w", err)
+	failure, err := DecodeResult(content, out)
+	if err != nil {
+		return err
 	}
-	var envelope struct {
-		OK   bool            `json:"ok"`
-		Data json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(content, &envelope); err != nil {
-		return fmt.Errorf("invalid UX result envelope: %w", err)
-	}
-	if !envelope.OK {
-		return fmt.Errorf("expected a successful UX result envelope")
-	}
-	if err := json.Unmarshal(envelope.Data, out); err != nil {
-		return fmt.Errorf("invalid UX result data: %w", err)
+	if failure != nil {
+		return failure
 	}
 	return nil
 }

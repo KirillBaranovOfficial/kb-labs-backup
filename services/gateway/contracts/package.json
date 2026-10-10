@@ -15,12 +15,14 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "pnpm check:generated && tsup",
     "clean": "rimraf dist",
     "dev": "tsup --watch",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "vitest run -c ../../vitest.config.ts",
+    "generate:auth-health-enums": "node ./scripts/generate-auth-health-enums.mjs",
+    "check:generated": "node ./scripts/generate-auth-health-enums.mjs --check",
+    "test": "pnpm check:generated && vitest run -c ../../vitest.config.ts",
     "test:watch": "vitest -c ../../vitest.config.ts",
     "type-check": "tsc --noEmit"
   },
