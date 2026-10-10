@@ -1,8 +1,0 @@
-{
-  "ok": true,
-  "authEnabled": true,
-  "tenantId": "default",
-  "activeAdmins": 1,
-  "bootstrap": "provisioned",
-  "issues": []
-}
