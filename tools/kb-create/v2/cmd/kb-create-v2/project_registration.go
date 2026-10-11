@@ -162,6 +162,7 @@ func postRegistrationRequest(target string, body []byte, accessToken string) ([]
 		return nil, 0, fmt.Errorf("the Gateway request could not be created")
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Request-Id", diag.NewCorrelationID())
 	if accessToken != "" {
 		request.Header.Set("Authorization", "Bearer "+accessToken)
 	}
@@ -204,7 +205,7 @@ func projectRegistrationFailure(platformRoot, projectRoot string, cause error) *
 	if errors.As(cause, &typed) {
 		causeCode = typed.Code
 		if typed.Meta != nil {
-			for _, key := range []string{"requestStage", "httpStatus"} {
+			for _, key := range []string{"requestStage", "httpStatus", "remoteCorrelationId"} {
 				if value, exists := typed.Meta[key]; exists {
 					meta[key] = value
 				}

@@ -157,7 +157,7 @@ func FromErrorWithLogger(err error, logger *slog.Logger) *Diag {
 	if errors.As(err, &typed) && typed != nil {
 		entry, known := LookupCatalog(typed.Code)
 		if !known {
-			correlationID := newCorrelationID()
+			correlationID := NewCorrelationID()
 			logger.Error("CLI command failed unexpectedly",
 				"correlationId", correlationID, "error", typed.Error(), "stack", string(debug.Stack()))
 			return New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", WithCorrelationID(correlationID))
@@ -167,11 +167,11 @@ func FromErrorWithLogger(err error, logger *slog.Logger) *Diag {
 			normalized.Hint = entry.Hint
 		}
 		if normalized.CorrelationID == "" {
-			normalized.CorrelationID = newCorrelationID()
+			normalized.CorrelationID = NewCorrelationID()
 		}
 		return &normalized
 	}
-	correlationID := newCorrelationID()
+	correlationID := NewCorrelationID()
 	logger.Error("CLI command failed unexpectedly",
 		"correlationId", correlationID, "error", err.Error(), "stack", string(debug.Stack()))
 	return New("KB_RUNTIME_UNEXPECTED", "An unexpected error occurred.", WithCorrelationID(correlationID))
@@ -228,10 +228,26 @@ func (d *Diag) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func newCorrelationID() string {
+// NewCorrelationID returns a correlation ID accepted by IsValidCorrelationID.
+func NewCorrelationID() string {
 	var rawID [16]byte
 	if _, err := rand.Read(rawID[:]); err != nil {
-		return fmt.Sprintf("%x", time.Now().UnixNano())
+		return fmt.Sprintf("%032x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(rawID[:])
+}
+
+// IsValidCorrelationID validates the platform format: 32 lowercase hexadecimal
+// characters.
+func IsValidCorrelationID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }

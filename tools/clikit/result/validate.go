@@ -28,8 +28,8 @@ type RemoteFailureContext struct {
 
 // DecodeResultWithContext validates a UX-result envelope and annotates a
 // reconstructed failure with the request stage and HTTP status observed by
-// the caller. Remote message, hint, cause, details, actions, docs, and
-// correlation ID are discarded.
+// the caller. Remote message, hint, cause, details, actions, and docs are
+// discarded; only a validated correlation ID survives as structured metadata.
 func DecodeResultWithContext(content []byte, out any, context RemoteFailureContext) (*diag.Diag, error) {
 	if err := ValidateMachineResult(content); err != nil {
 		return nil, fmt.Errorf("invalid UX result envelope: %w", err)
@@ -44,21 +44,25 @@ func DecodeResultWithContext(content []byte, out any, context RemoteFailureConte
 	}
 	if !envelope.OK {
 		var failure struct {
-			Code      string `json:"code"`
-			Area      string `json:"area"`
-			Stage     string `json:"stage"`
-			Severity  string `json:"severity"`
-			Retryable bool   `json:"retryable"`
+			Code          string `json:"code"`
+			Area          string `json:"area"`
+			Stage         string `json:"stage"`
+			Severity      string `json:"severity"`
+			Retryable     bool   `json:"retryable"`
+			CorrelationID string `json:"correlationId"`
 		}
 		if err := json.Unmarshal(envelope.Error, &failure); err != nil {
 			return nil, fmt.Errorf("invalid UX failure envelope: %w", err)
 		}
-		meta := make(map[string]any, 2)
+		meta := make(map[string]any, 3)
 		if context.RequestStage != "" {
 			meta["requestStage"] = context.RequestStage
 		}
 		if context.HTTPStatus != 0 {
 			meta["httpStatus"] = context.HTTPStatus
+		}
+		if diag.IsValidCorrelationID(failure.CorrelationID) {
+			meta["remoteCorrelationId"] = failure.CorrelationID
 		}
 		entry, ok := diag.LookupCatalog(failure.Code)
 		if !ok || failure.Area != entry.Area || failure.Stage != entry.Stage || failure.Severity != entry.Severity || failure.Retryable != entry.Retryable {
