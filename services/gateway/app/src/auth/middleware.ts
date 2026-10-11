@@ -11,6 +11,7 @@ import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
 import { authRejectionEnvelope, gatewayRequestUrl, resolveToken, extractBearerToken } from './tokens.js';
 import { createUserAuthMiddleware, type UserAuthMiddlewareDeps } from './user-auth-middleware.js';
+import { isGatewayPath } from '../routes/path-classification.js';
 
 export const LOCAL_ADMIN_CONTEXT: AuthContext = {
   type: 'machine', userId: 'local-admin', namespaceId: 'local', tier: 'enterprise',
@@ -56,9 +57,7 @@ function isRegistryPublicReadRoute(routePath: string): boolean {
 }
 
 function isStudioFallbackRoute(routePath: string): boolean {
-  const segments = routePath.split('/').filter(Boolean);
-  const reserved = new Set(['api', 'auth', 'health', 'ready', 'metrics', 'observability', 'hosts', 'clients', 'internal', 'webhooks', 'telemetry', 'docs', 'docs-all', 'openapi.json', 'openapi-merged.json', 'echo']);
-  return segments.length > 0 && !reserved.has(segments[0] ?? '') && !routePath.slice(1).includes('.');
+  return !isGatewayPath(routePath) && !routePath.slice(1).includes('.');
 }
 
 export function isDeclaredWebhookRoute(method: string, routePath: string, manifests: WebhookManifest[]): boolean {

@@ -77,7 +77,7 @@ class Journey:
                     failures.append(f"{required_name} ended {prior.status}: {prior.message}")
             if failures:
                 message = "selected step prerequisites failed: " + "; ".join(failures)
-                result = StepResult(name, capability, self.mode, "FAIL", 0.0, message, case_ids,
+                result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, message, case_ids,
                                     {"selectionRole": "selected", "prerequisiteFailures": failures})
                 self.steps.append(result)
                 return result
@@ -127,7 +127,7 @@ class Journey:
         first = next((_step_dict(step) for step in self.steps if step.status == "FAIL"), None)
         failed = any(step.status == "FAIL" for step in self.steps)
         blocked = any(step.status == "BLOCKED" for step in self.steps)
-        executed_selected = {case_id for step in self.steps if step.status in {"PASS", "FAIL"}
+        executed_selected = {case_id for step in self.steps if step.status in {"PASS", "FAIL", "BLOCKED"}
                              for case_id in step.cases if case_id in self.selected_steps}
         unexecuted_selected = sorted(self.selected_steps - executed_selected)
         if unexecuted_selected:
@@ -144,12 +144,13 @@ class Journey:
             }
         status = "FAIL" if failed else "BLOCKED" if blocked else "PASS"
         claims = {}
+        priority = {"PASS": 0, "BLOCKED": 1, "FAIL": 2}
         for step in self.steps:
-            if step.status not in {"PASS", "FAIL"}:
+            if step.status not in {"PASS", "FAIL", "BLOCKED"}:
                 continue
             for case_id in step.cases:
                 previous = claims.get(case_id)
-                if step.status == "FAIL" or previous != "FAIL":
+                if previous is None or priority[step.status] > priority[previous]:
                     claims[case_id] = step.status
         case_run = {
             "schema": "kb.qa-case-run/v1",
