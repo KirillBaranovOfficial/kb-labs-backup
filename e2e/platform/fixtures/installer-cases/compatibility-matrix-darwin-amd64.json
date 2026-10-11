@@ -1,6 +1,6 @@
 {
   "schema": "kb.create.release-index/v2",
-  "digest": "33adf3d096ac3e2feb5a51c42036edaa8b22601f5de7ad570ea955344752724f",
+  "digest": "0000f5ea20f70e2975f4276c6e0a5f22492cfcb100d5e0e2eb893e55047681b0",
   "channels": {
     "stable": "3.2.0"
   },
@@ -146,6 +146,15 @@
       "sha256": "fixture-plugin",
       "tarball": "https://example.test/fixture-plugin-1.0.0.tgz",
       "platformRange": "\u003c3.2.0"
+    },
+    {
+      "id": "fixture-sdk-incompat",
+      "version": "1.0.0",
+      "package": "@kb/fixture-sdk-incompat",
+      "sha256": "fixture-sdk-incompat",
+      "tarball": "https://example.test/fixture-sdk-incompat-1.0.0.tgz",
+      "platformRange": "\u003e=3.0.0",
+      "sdkRange": "\u003c3.0.0"
     }
   ],
   "adapters": [

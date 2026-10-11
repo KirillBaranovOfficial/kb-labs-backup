@@ -19,11 +19,17 @@ const (
 // ValidateUpdate checks downgrade and installed extension compatibility before
 // an update can create a snapshot, stop the host, or write package/config state.
 func ValidateUpdate(active contracts.InstallReceipt, target contracts.ResolvedInstallPlan, source catalog.Catalog) (UpdateDisposition, error) {
+	if err := contracts.ValidatePlanArtifactIdentities(active.Plan); err != nil {
+		return UpdateRequired, err
+	}
+	if err := contracts.ValidatePlanArtifactIdentities(target); err != nil {
+		return UpdateRequired, err
+	}
 	installedVersion := active.Plan.ServiceGraph.PlatformVersion
 	targetVersion := target.ServiceGraph.PlatformVersion
 	comparison, err := semrange.Compare(targetVersion, installedVersion)
 	if err != nil {
-		return UpdateRequired, updateIncompatible("platform", "", targetVersion, "", "the selected platform version is invalid")
+		return UpdateRequired, updateIncompatible("platform", "platform", targetVersion, "", "the selected platform version is invalid")
 	}
 	if comparison < 0 {
 		failure := contracts.NewDiag(contracts.CodeUpdateDowngradeRefused,
@@ -47,12 +53,12 @@ func ValidateUpdate(active contracts.InstallReceipt, target contracts.ResolvedIn
 		kind := artifact.Kind
 		compatibilityRange := artifact.PlatformRange
 		if compatibilityRange != "" {
-			if err := compatible(compatibilityRange, targetVersion, kind+" "+artifact.ID+" platform"); err != nil {
+			if err := compatible(compatibilityRange, targetVersion, kind, artifact.ID, kind+" "+artifact.ID+" platform"); err != nil {
 				return UpdateRequired, updateIncompatible(kind, artifact.ID, targetVersion, compatibilityRange, err.Error())
 			}
 		}
 		if artifact.SDKRange != "" && targetSDK != "" {
-			if err := compatible(artifact.SDKRange, targetSDK, kind+" "+artifact.ID+" SDK"); err != nil {
+			if err := compatible(artifact.SDKRange, targetSDK, kind, artifact.ID, kind+" "+artifact.ID+" SDK"); err != nil {
 				return UpdateRequired, updateIncompatible(kind, artifact.ID, targetSDK, artifact.SDKRange, err.Error())
 			}
 		}
@@ -88,6 +94,7 @@ func updateIncompatible(kind, id, version, rangeValue, reason string) *diag.Diag
 	if kind == "adapter" && id != "" {
 		hint = fmt.Sprintf("Update or remove adapter %s first, then rerun `kb-create update`.", id)
 	}
-	return compatibilityFailure(contracts.CodeIncompatibleComponents, kind, id, version, rangeValue,
+	return compatibilityFailure(contracts.CodeIncompatibleComponents,
+		compatibilityIdentity{kind: kind, id: id, selectedVersion: version, requiredRange: rangeValue},
 		message, hint, nil)
 }

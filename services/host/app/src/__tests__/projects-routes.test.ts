@@ -157,7 +157,8 @@ describe("createProjectsRoutes", () => {
     expect((res.json() as ErrorBody).error.code).toBe("KB_RUNTIME_INPUT_INVALID");
   });
 
-  it("POST rejects a duplicate registration with KB_PROJECT_ALREADY_REGISTERED", async () => {
+  // case: S-124.14
+  it("POST returns the existing project for a duplicate canonical path", async () => {
     const dir = await mkdtemp(join(tmpdir(), "kb-proj-"));
     await mkdir(join(dir, ".kb"));
     await registry.add(dir);
@@ -165,8 +166,16 @@ describe("createProjectsRoutes", () => {
 
     const res = await instance.inject({ method: "POST", url: "/api/v1/projects", payload: { path: dir } });
 
-    expect(res.statusCode).toBe(409);
-    expect((res.json() as ErrorBody).error.code).toBe("KB_PROJECT_ALREADY_REGISTERED");
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, data: { path: await realpath(dir), alreadyExisted: true } });
+
+    const renamed = await instance.inject({
+      method: "POST",
+      url: "/api/v1/projects",
+      payload: { path: dir, name: "another-name" },
+    });
+    expect(renamed.statusCode).toBe(409);
+    expect((renamed.json() as ErrorBody).error.code).toBe("KB_PROJECT_ALREADY_REGISTERED");
   });
 
   it("DELETE unregisters a project without touching its folder", async () => {

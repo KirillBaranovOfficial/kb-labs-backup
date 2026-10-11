@@ -10,6 +10,7 @@ import urllib.request
 
 from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context, invocation_link,
                          open_http, read_ux_cli_result, read_ux_http_result, run_command)
+from journey_resources import active_platform_root
 from project_service_path import project_service_path
 from service_steps import Journey
 
@@ -140,7 +141,7 @@ def run_llm_provider_steps(journey: Journey, *, runner=run_command) -> None:
         base_result = {}
         base_result_error = str(error)
     platform_root = Path(os.environ.get("KB_JOURNEY_PLATFORM_ROOT", str(Path.home() / "kb-platform"))).resolve()
-    expected_platform_config = str(platform_root / ".kb" / "kb.config.jsonc")
+    expected_platform_config = str(active_platform_root(platform_root) / ".kb" / "kb.config.jsonc")
     scope_ok = (base_result_error is None and base_result.get("file") == expected_platform_config
                 and project_config_before == (project_config.read_bytes() if project_config.is_file() else None)
                 and base_result.get("nextCommand") == f"kb-create restart --platform-root {json.dumps(str(platform_root))}")
@@ -230,13 +231,13 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
     """Run gateway-owned claims; credentials are always supplied by environment references."""
     run_llm_provider_steps(journey, runner=runner)
 
-    # The documented catalog endpoint is exercised as specified; this currently exposes its absence.
-    with invocation_context(step_id="S-189.1"):
-        catalog_status, catalog = _http("/platform/v1/adapters", token=token, opener=opener)
-    journey.step("discover platform adapter method catalog", "gateway", lambda: (
-        None if catalog_status == 200 and isinstance(catalog, dict) and isinstance(catalog.get("adapters"), dict)
-        else f"documented platform adapter catalog returned HTTP {catalog_status} or no adapter catalog"
-    ), cases=["S-189.1"])
+    with invocation_context(step_id="S-189.7"):
+        missing_status, missing = _http("/platform/v1/unknown/resource", token=token, opener=opener)
+    journey.step("return a JSON 404 for an unmounted Platform API route", "gateway", lambda: (
+        None if missing_status == 404 and isinstance(missing, dict)
+        and missing.get("code") == "KB_RUNTIME_RESOURCE_NOT_FOUND"
+        else f"unmounted Platform API route returned HTTP {missing_status} without KB_RUNTIME_RESOURCE_NOT_FOUND"
+    ), cases=["S-189.7"])
 
     with invocation_context(step_id="S-189.2"):
         call_status, call_body = _http("/platform/v1/analytics/track", token=token, method="POST",
@@ -358,3 +359,14 @@ def run_gateway_steps(journey: Journey, *, token: str, runner=run_command,
         and after_rejection_status == 200 and not mutated
         else f"501-event telemetry batch returned HTTP {rejected_status} or was written / could not be verified after rejection"
     ), cases=["S-190.2"])
+
+
+def run_adapter_catalog_step(journey: Journey, *, token: str,
+                             opener=urllib.request.urlopen) -> None:
+    """Exercise the planned adapter catalog claim independently of gateway extras."""
+    with invocation_context(step_id="S-189.1"):
+        catalog_status, catalog = _http("/platform/v1/adapters", token=token, opener=opener)
+    journey.step("discover platform adapter method catalog", "gateway", lambda: (
+        None if catalog_status == 200 and isinstance(catalog, dict) and isinstance(catalog.get("adapters"), dict)
+        else f"documented platform adapter catalog returned HTTP {catalog_status} or no adapter catalog"
+    ), cases=["S-189.1"])

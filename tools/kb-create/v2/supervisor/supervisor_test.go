@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
 )
@@ -81,5 +82,24 @@ func TestLivePIDRemovesStalePidFile(t *testing.T) {
 	}
 	if _, err := os.Stat(state.SupervisorPID()); !os.IsNotExist(err) {
 		t.Fatal("stale supervisor.pid must be removed")
+	}
+}
+
+func TestSupervisorRejectsAReusedPIDWithoutStartingOrSignallingIt(t *testing.T) {
+	state := host.State{Dir: t.TempDir()}
+	if err := state.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state.SupervisorPID(), []byte(`{"pid":`+strconv.Itoa(os.Getpid())+`,"platformRoot":"/tmp/kb"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &stubRunner{}
+	err := (&Supervisor{Runner: runner, State: state, PlatformRoot: "/tmp/kb"}).Run(context.Background())
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("stale supervisor diagnostic = %#v", err)
+	}
+	if len(runner.calls) != 0 || !host.ProcessAlive(os.Getpid()) {
+		t.Fatalf("stale supervisor record affected its reused PID or started a host: calls=%v", runner.calls)
 	}
 }

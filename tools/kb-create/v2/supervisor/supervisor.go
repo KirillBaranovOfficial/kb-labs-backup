@@ -6,10 +6,10 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
@@ -27,10 +27,16 @@ type Supervisor struct {
 
 // Run starts the host, publishes the control channel and blocks until ctx is
 // cancelled; it then stops the host gracefully and removes its state files.
-// A second supervisor for the same state home fails with KB_HOST_ALREADY_RUNNING.
+// A second supervisor for the same installation state fails with KB_HOST_ALREADY_RUNNING.
 func (s *Supervisor) Run(ctx context.Context) error {
 	if err := s.State.Ensure(); err != nil {
 		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
+	}
+	if record, exists := readRecordFile(s.State); exists && host.ProcessAlive(record.PID) {
+		if !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+			return host.StaleProcessIdentityFailure(s.State.SupervisorPID(), "supervisor", record.PID, s.PlatformRoot, host.GatewayURLForState(s.State))
+		}
+		return Refusal(record, s.PlatformRoot)
 	}
 	if record, ok := ReadRecord(s.State); ok {
 		e := Refusal(record, s.PlatformRoot)
@@ -40,19 +46,23 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if err != nil {
 		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot resolve the platform root for the launcher.", "Pass an accessible --platform-root.", err)
 	}
-	record := Record{PID: os.Getpid(), PlatformRoot: filepath.Clean(root)}
+	processIdentity, err := host.ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		return contracts.NewDiag(contracts.CodeHostStateDirUnwritable, "The supervisor process identity could not be recorded.", "Retry the host start after checking that the process table is available.", err)
+	}
+	record := Record{PID: os.Getpid(), ProcessIdentity: processIdentity, PlatformRoot: filepath.Clean(root)}
 	data, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.State.SupervisorPID(), append(data, '\n'), 0o600); err != nil {
+	if err := host.WriteRecordFile(s.State.SupervisorPID(), append(data, '\n')); err != nil {
 		return contracts.NewDiag("KB_HOST_STATE_DIR_UNWRITABLE", "Cannot write to the state directory "+s.State.Dir+".", "Fix the directory permissions or free disk space.", err)
 	}
 	defer os.Remove(s.State.SupervisorPID())
 	if _, err := s.Runner.Start(ctx); err != nil {
 		return err
 	}
-	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version}
+	server := &control.Server{Runner: s.Runner, State: s.State, Version: s.Version, Restart: s.restart}
 	if err := server.Start(); err != nil {
 		_, _ = s.Runner.Stop(context.Background())
 		return contracts.NewDiag("KB_HOST_CONTROL_UNAVAILABLE", "The launcher control channel is unavailable.", "Start the launcher or the desktop shell.", err)
@@ -64,26 +74,58 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	return err
 }
 
-// livePID returns the pid of a running supervisor for this state home.
+func (s *Supervisor) restart(ctx context.Context) (control.RestartResponse, error) {
+	previous, ok := s.Runner.(*host.ProcessRunner)
+	if !ok {
+		return control.RestartResponse{}, fmt.Errorf("supervisor restart requires the platform process runner")
+	}
+	outcome, err := host.RestartWithRecovery(ctx, s.PlatformRoot, previous,
+		func(ctx context.Context, runner *host.ProcessRunner) (host.Info, error) { return runner.Start(ctx) })
+	if outcome.Runner != nil {
+		s.Runner = outcome.Runner
+	}
+	if err != nil {
+		return control.RestartResponse{}, err
+	}
+	return control.RestartResponse{OK: true, Protocol: control.ProtocolVersion, Stopped: outcome.Stopped, Host: outcome.Info}, nil
+}
+
+// livePID returns the pid of a running supervisor for this installation state.
 // Record identifies the platform root and process held by supervisor.pid.
 type Record struct {
-	PID          int    `json:"pid"`
-	PlatformRoot string `json:"platformRoot"`
+	PID             int    `json:"pid"`
+	ProcessIdentity string `json:"processIdentity,omitempty"`
+	PlatformRoot    string `json:"platformRoot"`
 }
 
 // ReadRecord reads supervisor.pid. A dead process is stale and its file is removed.
 func ReadRecord(state host.State) (Record, bool) {
+	record, ok := readRecordFile(state)
+	if !ok {
+		return Record{}, false
+	}
+	if !host.ProcessAlive(record.PID) {
+		_ = os.Remove(state.SupervisorPID())
+		return Record{}, false
+	}
+	if !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity) {
+		return Record{}, false
+	}
+	return record, true
+}
+
+func StaleRecord(state host.State) (Record, bool) {
+	record, ok := readRecordFile(state)
+	return record, ok && host.ProcessAlive(record.PID) && !host.ProcessIdentityMatches(record.PID, record.ProcessIdentity)
+}
+
+func readRecordFile(state host.State) (Record, bool) {
 	data, err := os.ReadFile(state.SupervisorPID())
 	if err != nil {
 		return Record{}, false
 	}
 	var record Record
-	if err := json.Unmarshal(data, &record); err != nil {
-		// A pre-root record may still identify a live supervisor, but it cannot
-		// authorize signaling that process from an unrelated platform root.
-		record.PID, _ = strconv.Atoi(strings.TrimSpace(string(data)))
-	}
-	if record.PID <= 0 || !host.ProcessAlive(record.PID) {
+	if err := json.Unmarshal(data, &record); err != nil || record.PID <= 0 {
 		_ = os.Remove(state.SupervisorPID())
 		return Record{}, false
 	}
@@ -109,7 +151,9 @@ func Refusal(record Record, requestedRoot string) *diag.Diag {
 		root = requestedRoot
 	}
 	if record.PlatformRoot == filepath.Clean(root) {
-		failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use `kb-create status --platform-root "+requestedRoot+"` or `kb-create restart --platform-root "+requestedRoot+"`.", nil)
+		failure := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.",
+			"Use `"+contracts.ShellCommand("kb-create", "status", "--platform-root", requestedRoot)+"` or `"+
+				contracts.ShellCommand("kb-create", "restart", "--platform-root", requestedRoot)+"`.", nil)
 		failure.Meta = map[string]any{"pid": strconv.Itoa(record.PID), "platformRoot": record.PlatformRoot}
 		return failure
 	}

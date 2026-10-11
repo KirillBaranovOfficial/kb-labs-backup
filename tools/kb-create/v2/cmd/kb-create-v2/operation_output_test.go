@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/doctor"
 )
 
@@ -65,6 +66,27 @@ func TestEveryOperationUsesJSONAndHumanOutputBoundary(t *testing.T) {
 	}
 	if len(registered) != len(operationDescriptors) {
 		t.Fatalf("operation output coverage has %d entries for %d registered descriptors", len(registered), len(operationDescriptors))
+	}
+}
+
+func TestUpdateHumanOutputRendersPendingRestartFields(t *testing.T) {
+	pending := &contracts.PendingRestart{Services: []contracts.PendingRestartService{{ID: "gateway", RunningVersion: "1.0.0"}},
+		InstalledVersion: "2.0.0", Command: contracts.ShellCommand("kb-create", "restart", "--platform-root", "/opt/kb-platform")}
+	got := renderUpdate(updateCommandResult{PendingRestart: pending})
+	want := "Platform update completed.\nPending restart: gateway (running 1.0.0); installed 2.0.0. Run " + contracts.ShellCommand("kb-create", "restart", "--platform-root", "/opt/kb-platform")
+	if got != want {
+		t.Fatalf("update human output = %q, want %q", got, want)
+	}
+	encoded, err := json.Marshal(pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var machine map[string]any
+	if err := json.Unmarshal(encoded, &machine); err != nil {
+		t.Fatal(err)
+	}
+	if machine["installedVersion"] != "2.0.0" || machine["command"] != pending.Command {
+		t.Fatalf("pendingRestart JSON = %s", encoded)
 	}
 }
 

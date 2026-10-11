@@ -12,19 +12,32 @@ from platform_update_variant_steps import run_platform_update_variant_steps
 from service_steps import Journey
 
 
+def _versioned_platform(root: Path, version: str) -> Path:
+    platform = root / "platform"
+    version_root = platform / "versions" / "v1"
+    (version_root / ".kb/v2").mkdir(parents=True)
+    (version_root / ".kb/kb.config.jsonc").write_text("{}\n")
+    (version_root / ".kb/marketplace.lock").write_text('{"plugins":[]}\n')
+    (version_root / ".kb/v2/secrets.env").write_text("secret=sentinel\n")
+    (version_root / ".kb/v2/receipt.json").write_text(json.dumps({
+        "plan": {"serviceGraph": {"platformVersion": version}},
+    }))
+    platform.mkdir(exist_ok=True)
+    (platform / "state").mkdir()
+    (platform / "current").symlink_to(Path("versions/v1"), target_is_directory=True)
+    return platform
+
+
 class PlatformUpdateVariantStepsTests(unittest.TestCase):
     def test_installed_steps_register_each_update_variant_claim(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            platform = root / "platform"
-            receipt = platform / ".kb/v2/receipt.json"
-            receipt.parent.mkdir(parents=True)
-            receipt.write_text(json.dumps({"plan": {"serviceGraph": {"platformVersion": "3.2.0"}}}))
+            platform = _versioned_platform(root, "3.2.0")
             project_a, project_b = root / "project-a", root / "project-b"
             for project in (project_a, project_b):
                 project.mkdir()
             indexes = {name: root / f"{name}.json" for name in
-                       ("base", "update", "patch", "minor", "jump", "next", "bad", "config", "doctor", "failed")}
+                       ("base", "update", "patch", "minor", "jump", "next", "bad", "config", "doctor", "failed", "healthy")}
             registered = []
 
             def capture_step(journey, name, capability, check, cases=(), details=None, *, requires=()):
@@ -40,8 +53,6 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
                         "runningVersion": "3.2.0", "installedVersion": "3.2.0"}}), "")
                 raise AssertionError(f"unexpected fake product command: {args[1]}")
 
-            (platform / ".kb/kb.config.jsonc").write_text("{}\n")
-            (platform / ".kb/v2/secrets.env").write_text("secret=sentinel\n")
             request_file = root / "request.json"
             request_file.write_text("{}\n")
             for index in indexes.values():
@@ -57,7 +68,8 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
                     minor_index=indexes["minor"], jump_index=indexes["jump"],
                     next_index=indexes["next"], bad_checksum_index=indexes["bad"],
                     config_failure_index=indexes["config"], doctor_failure_index=indexes["doctor"],
-                    failed_host_index=indexes["failed"], run=fake_runner, run_interactive=fake_runner,
+                    failed_host_index=indexes["failed"], healthy_host_index=indexes["healthy"],
+                    run=fake_runner, run_interactive=fake_runner,
                 )
             claims = {case for _, cases, _ in registered for case in cases}
             self.assertTrue({"S-023.9", "S-023.10", "S-023.11", "S-023.12", "S-023.13",
@@ -70,17 +82,15 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
     def test_n_plus_two_plan_requires_every_intervening_sealed_note(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            platform = root / "platform"
-            receipt = platform / ".kb/v2/receipt.json"
-            receipt.parent.mkdir(parents=True)
-            receipt.write_text(json.dumps({"plan": {"serviceGraph": {"platformVersion": "3.0.0"}}}))
+            platform = _versioned_platform(root, "3.0.0")
             project_a, project_b = root / "project-a", root / "project-b"
             project_a.mkdir()
             project_b.mkdir()
             indexes = {name: root / f"{name}.json" for name in
-                       ("base", "update", "patch", "minor", "jump", "next", "bad", "config", "doctor", "failed")}
+                       ("base", "update", "patch", "minor", "jump", "next", "bad", "config", "doctor", "failed", "healthy")}
             versions = {"base": "3.0.0", "update": "3.0.1", "patch": "3.0.1", "minor": "3.1.0", "jump": "3.0.2",
-                        "next": "3.0.1", "bad": "3.0.2", "config": "3.1.1", "doctor": "3.1.2", "failed": "3.2.0"}
+                        "next": "3.0.1", "bad": "3.0.2", "config": "3.1.1", "doctor": "3.1.2", "failed": "3.2.0",
+                        "healthy": "3.2.1"}
             for name, index in indexes.items():
                 version = versions[name]
                 index.write_text(json.dumps({"channels": {"stable": version}, "platforms": [
@@ -111,7 +121,8 @@ class PlatformUpdateVariantStepsTests(unittest.TestCase):
                     patch_index=indexes["patch"], minor_index=indexes["minor"], jump_index=indexes["jump"],
                     next_index=indexes["next"], bad_checksum_index=indexes["bad"],
                     config_failure_index=indexes["config"], doctor_failure_index=indexes["doctor"],
-                    failed_host_index=indexes["failed"], run=fake_runner, run_interactive=fake_runner,
+                    failed_host_index=indexes["failed"], healthy_host_index=indexes["healthy"],
+                    run=fake_runner, run_interactive=fake_runner,
                 )
             plan_step = next(check for name, cases, check in registered if "S-023.2" in cases)
             plan_step()

@@ -18,6 +18,7 @@ import (
 	"github.com/kb-labs/create/v2/control"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/supervisor"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // hostCommand carries everything a host lifecycle command needs; nothing is
@@ -48,25 +49,38 @@ func executeHostSupervise(ctx context.Context, command hostCommand) (hostCommand
 	return command.run(ctx, "start", command.supervise)
 }
 
-// setup resolves the per-user state home and the runner of the installation.
-func (c hostCommand) setup() (*host.ProcessRunner, host.State, *diag.Diag) {
+// setup resolves the installation state and the runner of the installation.
+func (c hostCommand) setup(runnerOperation string) (*host.ProcessRunner, host.State, *diag.Diag) {
 	if c.PlatformRoot == "" {
 		return nil, host.State{}, contracts.NewDiag(contracts.CodeInputRequired, "--platform-root is required", "pass the V2 platform root that owns the active receipt", nil)
 	}
-	state, err := host.StateHome()
+	layout, layoutErr := versionroot.New(c.PlatformRoot)
+	if runnerOperation == "stop" {
+		runner, runnerErr := host.NewRecordedRunner(c.PlatformRoot)
+		if runnerErr != nil {
+			return nil, host.State{}, asDiag(runnerErr)
+		}
+		return runner, runner.State, nil
+	}
+	if layoutErr == nil {
+		if runnerOperation == "restart" {
+			layoutErr = layout.ValidateStructure()
+		} else {
+			layoutErr = layout.Validate()
+		}
+	}
+	if layoutErr != nil {
+		return nil, host.State{}, unsupportedPlatformLayout(c.PlatformRoot, layoutErr)
+	}
+	runner, err := host.NewRunner(c.PlatformRoot)
 	if err != nil {
 		return nil, host.State{}, asDiag(err)
 	}
-	runner, err := host.NewRunner(c.PlatformRoot, state)
-	if err != nil {
-		return nil, host.State{}, asDiag(err)
-	}
-	state = runner.State
-	return runner, state, nil
+	return runner, runner.State, nil
 }
 
 func (c hostCommand) run(ctx context.Context, runnerOperation string, action func(context.Context, *host.ProcessRunner, host.State) (hostCommandResult, *diag.Diag)) (hostCommandResult, *diag.Diag) {
-	runner, state, failure := c.setup()
+	runner, state, failure := c.setup(runnerOperation)
 	if failure != nil {
 		failure.ProcessExitCode = diag.ExitInput
 		return nil, failure
@@ -94,9 +108,9 @@ func (c hostCommand) start(ctx context.Context, process *host.ProcessRunner, sta
 		return nil, contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil)
 	}
 	if record, alive := activeLauncher(state); alive {
-		return nil, supervisor.Refusal(record, c.PlatformRoot)
+		return nil, supervisor.Refusal(record, process.InstallRoot)
 	}
-	if pid, alive := supervisor.LivePID(state, c.PlatformRoot); alive {
+	if pid, alive := supervisor.LivePID(state, process.InstallRoot); alive {
 		e := contracts.NewDiag("KB_HOST_ALREADY_RUNNING", "The KB Labs host is already running.", "Use \"kb-create status\" or \"kb-create restart\".", nil)
 		e.Meta = map[string]any{"supervisorPid": fmt.Sprint(pid)}
 		return nil, e
@@ -123,7 +137,7 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	if executable == "" {
 		var err error
 		if executable, err = os.Executable(); err != nil {
-			return host.Info{}, host.StartFailure(state, err, map[string]string{"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot)})
+			return host.Info{}, host.StartFailure(state, err, map[string]string{"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 		}
 	}
 	logFile, err := os.OpenFile(state.SupervisorLog(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
@@ -135,7 +149,7 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	host.ConfigureDetached(cmd)
 	if err := cmd.Start(); err != nil {
-		return host.Info{}, host.StartFailure(state, err, map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot)})
+		return host.Info{}, host.StartFailure(state, err, map[string]string{"supervisorLog": state.SupervisorLog(), "nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot)})
 	}
 	exited := make(chan struct{})
 	waitErr := make(chan error, 1)
@@ -158,14 +172,14 @@ func (c hostCommand) spawnSupervisor(ctx context.Context, process *host.ProcessR
 			return host.Info{}, host.StartFailure(state, errors.New("supervisor did not report a healthy host in time"), map[string]string{
 				"supervisorLog": state.SupervisorLog(), "readinessURL": process.Spec.HealthURL,
 				"waited":      time.Since(started).Round(time.Millisecond).String(),
-				"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot),
+				"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot),
 			})
 		case <-ctx.Done():
 			host.KillProcess(cmd.Process.Pid)
 			return host.Info{}, host.StartFailure(state, ctx.Err(), map[string]string{
 				"supervisorLog": state.SupervisorLog(), "readinessURL": process.Spec.HealthURL,
 				"waited":      time.Since(started).Round(time.Millisecond).String(),
-				"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", c.PlatformRoot),
+				"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", c.PlatformRoot),
 			})
 		case <-ticker.C:
 		}
@@ -193,12 +207,12 @@ func supervisorFailure(state host.State, exit error, readinessURL string, waited
 	return host.StartFailure(state, fmt.Errorf("supervisor exited before host readiness: %v", exit), map[string]string{
 		"supervisorLog": state.SupervisorLog(), "supervisorExit": fmt.Sprint(exit),
 		"readinessURL": readinessURL, "waited": waited.Round(time.Millisecond).String(),
-		"nextCommand": fmt.Sprintf("kb-create start --platform-root %q", platformRoot),
+		"nextCommand": contracts.ShellCommand("kb-create", "start", "--platform-root", platformRoot),
 	})
 }
 
 func (c hostCommand) supervise(ctx context.Context, runner *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {
-	if err := (&supervisor.Supervisor{Runner: runner, State: state, PlatformRoot: c.PlatformRoot, Version: c.Version}).Run(ctx); err != nil {
+	if err := (&supervisor.Supervisor{Runner: runner, State: state, PlatformRoot: runner.InstallRoot, Version: c.Version}).Run(ctx); err != nil {
 		return nil, asDiag(err)
 	}
 	return nil, nil
@@ -218,13 +232,15 @@ func halt(ctx context.Context, runner host.Runner, state host.State) (host.StopR
 	before, _ := runner.Status(ctx)
 	platformRoot := ""
 	if process, ok := runner.(*host.ProcessRunner); ok {
-		platformRoot = process.PlatformRoot
+		platformRoot = process.InstallRoot
 	}
-	if pid, alive := supervisor.LivePID(state, platformRoot); alive {
-		host.TerminateProcess(pid)
-		if !waitExit(pid, stopBudget(runner)) {
-			host.KillProcess(pid)
-			waitExit(pid, 5*time.Second)
+	if record, stale := supervisor.StaleRecord(state); stale {
+		return host.StopResult{Runner: runner.Name()}, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, platformRoot, host.GatewayURLForState(state))
+	}
+	if record, alive := supervisor.ReadRecord(state); alive && record.PlatformRoot == platformRoot {
+		if host.TerminateProcessIfIdentity(record.PID, record.ProcessIdentity) && !waitExit(record.PID, record.ProcessIdentity, stopBudget(runner)) {
+			host.KillProcessIfIdentity(record.PID, record.ProcessIdentity)
+			waitExit(record.PID, record.ProcessIdentity, 5*time.Second)
 		}
 	}
 	result, err := runner.Stop(ctx)
@@ -245,18 +261,21 @@ func stopBudget(runner host.Runner) time.Duration {
 	return 15 * time.Second
 }
 
-func waitExit(pid int, timeout time.Duration) bool {
+func waitExit(pid int, processStart string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if !host.ProcessAlive(pid) {
+		if !host.ProcessIdentityMatches(pid, processStart) {
 			return true
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return !host.ProcessAlive(pid)
+	return !host.ProcessIdentityMatches(pid, processStart)
 }
 
 func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, state host.State) (hostCommandResult, *diag.Diag) {
+	if record, stale := supervisor.StaleRecord(state); stale {
+		return nil, host.StaleProcessIdentityFailure(state.SupervisorPID(), "supervisor", record.PID, c.PlatformRoot, host.GatewayURLForState(state))
+	}
 	// A live supervisor owns the host: restart through its channel so its view
 	// of the child stays consistent.
 	if client, err := control.Connect(state); err == nil {
@@ -266,15 +285,14 @@ func (c hostCommand) restart(ctx context.Context, runner *host.ProcessRunner, st
 		}
 		return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": response.Stopped, "host": response.Host}), nil
 	}
-	stopped, err := runner.Stop(ctx)
-	if err != nil {
-		return nil, asDiag(err)
+	outcome, restartErr := host.RestartWithRecovery(ctx, c.PlatformRoot, runner,
+		func(ctx context.Context, current *host.ProcessRunner) (host.Info, error) {
+			return c.spawnSupervisor(ctx, current, current.State)
+		})
+	if restartErr != nil {
+		return nil, asDiag(restartErr)
 	}
-	info, startErr := c.spawnSupervisor(ctx, runner, state)
-	if startErr != nil {
-		return nil, asDiag(startErr)
-	}
-	return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": stopped, "host": info}), nil
+	return hostCommandResult(map[string]any{"ok": true, "operation": "restart", "stopped": outcome.Stopped, "host": outcome.Info}), nil
 }
 
 // lifecycleHost is the supervised host as the swap operations see it. Both
@@ -286,7 +304,7 @@ type lifecycleHost struct {
 }
 
 func (h lifecycleHost) Halt(ctx context.Context) (bool, error) {
-	runner, err := host.NewRunner(h.command.PlatformRoot, h.state)
+	runner, err := host.NewRunner(h.command.PlatformRoot)
 	if err != nil {
 		return false, err
 	}
@@ -295,7 +313,7 @@ func (h lifecycleHost) Halt(ctx context.Context) (bool, error) {
 }
 
 func (h lifecycleHost) Resume(ctx context.Context) error {
-	runner, err := host.NewRunner(h.command.PlatformRoot, h.state)
+	runner, err := host.NewRunner(h.command.PlatformRoot)
 	if err != nil {
 		return err
 	}

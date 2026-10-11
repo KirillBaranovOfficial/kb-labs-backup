@@ -24,6 +24,8 @@
 # Build output — same story: excluded broadly, except the CI-produced
 # deploy artifacts Dockerfiles actually COPY from.
 **/dist
+!e2e/journey/fixtures/analytics-emitter/dist
+!e2e/journey/fixtures/analytics-emitter/dist/**
 !.kb/deploy/**/dist
 !.kb/deploy/**/dist/**
 !.kb/bundle/**/dist

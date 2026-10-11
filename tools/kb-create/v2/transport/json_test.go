@@ -46,7 +46,7 @@ func TestPlanRejectsMissingProjectRootBeforePlatformMutation(t *testing.T) {
 	if response.OK || response.Error == nil || response.Error.Code != contracts.CodeInputRequired || response.Error.Meta["field"] != "projectRoot" {
 		t.Fatalf("response = %#v, want typed projectRoot input error", response)
 	}
-	if !strings.Contains(response.Error.Hint, "mkdir -p") || !strings.Contains(response.Error.Hint, "existing project directory") {
+	if !strings.Contains(response.Error.Hint, contracts.ShellCommand("mkdir", "-p", projectRoot)) || !strings.Contains(response.Error.Hint, "existing project directory") {
 		t.Fatalf("validation hint omitted the project correction: %#v", response.Error)
 	}
 	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {

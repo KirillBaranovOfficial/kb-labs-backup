@@ -83,7 +83,7 @@ func TestCompatiblePolicyUsesPrereleaseAwareComparatorRanges(t *testing.T) {
 }
 
 func TestIncompatibleComponentErrorExposesRangeAndRemediationHint(t *testing.T) {
-	err := compatible("=3.2.0", "3.3.0", "adapter fixture-adapter platform")
+	err := compatible("=3.2.0", "3.3.0", "adapter", "fixture-adapter", "adapter fixture-adapter platform")
 	launcherErr, ok := err.(*diag.Diag)
 	if !ok || launcherErr.Code != contracts.CodeIncompatibleComponents {
 		t.Fatalf("component error = %#v", err)
@@ -122,7 +122,79 @@ func TestUpdateValidationRefusesDowngradeAndNamesInstalledPluginRange(t *testing
 
 // case: S-053.1
 func TestStrictPolicyStillAcceptsDeclaredSemverRanges(t *testing.T) {
-	if err := compatible("^2.0.0", "2.0.0", "plugin commit platform"); err != nil {
+	if err := compatible("^2.0.0", "2.0.0", "plugin", "commit", "plugin commit platform"); err != nil {
 		t.Fatalf("strict selection rejected a version its declared range admits: %v", err)
+	}
+}
+
+// case: S-053.8
+func TestPlanRefusesPluginOutsideChannelSelectedSDKRange(t *testing.T) {
+	source := policyCatalog()
+	source.Plugins = append(source.Plugins, catalog.Component{
+		ID:            "fixture-sdk-incompat",
+		Version:       "1.0.0",
+		Package:       "@kb/fixture-sdk-incompat",
+		Tarball:       "https://example.test/fixture-sdk-incompat.tgz",
+		SHA256:        "fixture-sdk-incompat",
+		PlatformRange: ">=3.0.0",
+		SDKRange:      "<3.0.0",
+	})
+	request := contracts.InstallRequest{
+		PlatformRoot: t.TempDir(),
+		Platform:     contracts.VersionSelector{Version: "3.2.0"},
+		SDK:          contracts.VersionSelector{Channel: contracts.ChannelStable},
+		Plugins:      []contracts.ComponentRequest{{ID: "fixture-sdk-incompat", Version: contracts.VersionSelector{Version: "1.0.0"}}},
+		Policy:       contracts.PolicyCompatible,
+	}
+	_, err := Plan(request, source)
+	if err == nil {
+		t.Fatal("expected plan to refuse plugin outside channel-selected SDK range")
+	}
+	diagErr, ok := err.(*diag.Diag)
+	if !ok || diagErr.Code != contracts.CodeIncompatibleComponents {
+		t.Fatalf("expected CodeIncompatibleComponents, got %#v", err)
+	}
+	channelSDK := "3.0.0"
+	if diagErr.Meta["kind"] != "plugin" || diagErr.Meta["id"] != "fixture-sdk-incompat" ||
+		diagErr.Meta["selectedVersion"] != channelSDK || diagErr.Meta["requiredRange"] != "<3.0.0" {
+		t.Fatalf("plugin SDK range details = %#v", diagErr.Meta)
+	}
+	if diagErr.Hint != "Choose compatible versions or pass an explicit supported provider." {
+		t.Fatalf("plugin SDK range hint = %q", diagErr.Hint)
+	}
+}
+
+func TestValidateUpdateRejectsActiveReceiptWithMissingArtifactIdentity(t *testing.T) {
+	active := contracts.InstallReceipt{Plan: contracts.ResolvedInstallPlan{
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "3.2.0"},
+		Artifacts:    []contracts.Artifact{{Kind: "plugin", Version: "1.0.0"}},
+	}}
+	target := contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{PlatformVersion: "3.3.0"}}
+	_, err := ValidateUpdate(active, target, policyCatalog())
+	if err == nil {
+		t.Fatal("expected ValidateUpdate to reject receipt with missing artifact identity")
+	}
+	diagErr, ok := err.(*diag.Diag)
+	if !ok || diagErr.Code != contracts.CodeArtifactIdentityInvalid {
+		t.Fatalf("expected CodeArtifactIdentityInvalid, got %#v", err)
+	}
+}
+
+func TestPlanMissingPlatformProducesCanonicalPlatformIdentity(t *testing.T) {
+	source := policyCatalog()
+	request := contracts.InstallRequest{
+		PlatformRoot: t.TempDir(),
+		Platform:     contracts.VersionSelector{Version: "9.9.9"},
+	}
+	_, err := Plan(request, source)
+	if err == nil {
+		t.Fatal("expected plan to refuse absent platform")
+	}
+	diagErr, ok := err.(*diag.Diag)
+	if !ok || diagErr.Code != contracts.CodeIncompatibleComponents {
+		t.Fatalf("expected CodeIncompatibleComponents, got %#v", err)
+	}
+	if diagErr.Meta["kind"] != "platform" || diagErr.Meta["id"] != "platform" || diagErr.Meta["selectedVersion"] != "9.9.9" {
+		t.Fatalf("platform error details = %#v, want kind=platform id=platform selectedVersion=9.9.9", diagErr.Meta)
 	}
 }

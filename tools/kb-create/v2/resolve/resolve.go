@@ -22,6 +22,7 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/semrange"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Options describe the launcher doing the resolving. Zero values mean the
@@ -64,29 +65,38 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	}
 	platform, ok := findPlatform(source.Platforms, platformVersion)
 	if !ok {
-		return contracts.ResolvedInstallPlan{}, incompatible("platform", platformVersion, "is not present in the release index")
+		return contracts.ResolvedInstallPlan{}, incompatible("platform", "platform", platformVersion, "platform "+platformVersion, "is not present in the release index")
 	}
 	sdkVersion := request.SDK.Version
 	if sdkVersion == "" {
-		sdkVersion = source.Channels[request.SDK.Channel]
+		targetPlatform := platform.Version
+		if request.SDK.Channel != "" {
+			if channelPlatform, ok := source.Channels[request.SDK.Channel]; ok {
+				targetPlatform = channelPlatform
+			}
+		}
+		if matrixSDK := catalog.PlatformSDKVersion(source, targetPlatform); matrixSDK != "" {
+			sdkVersion = matrixSDK
+		} else if request.SDK.Channel != "" {
+			sdkVersion = source.Channels[request.SDK.Channel]
+		}
 	}
-	if request.Policy == contracts.PolicyCompatible && platform.SDKRange != "" {
-		if err := compatible(platform.SDKRange, sdkVersion, "platform SDK"); err != nil {
+	if request.Policy == contracts.PolicyCompatible && platform.SDKRange != "" && sdkVersion != "" {
+		if err := compatible(platform.SDKRange, sdkVersion, "sdk", "sdk", "platform SDK"); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
 	}
 	if source.Compatibility != nil {
 		if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, "", "", "", request.Policy); err != nil {
 			if request.Policy == contracts.PolicyStrict && sdkVersion != "" {
-				failure := compatibilityFailure(contracts.CodeIncompatibleComponents, "sdk", "sdk", sdkVersion,
-					platform.SDKRange,
+				failure := compatibilityFailure(contracts.CodeIncompatibleComponents, compatibilityIdentity{kind: "sdk", id: "sdk", selectedVersion: sdkVersion, requiredRange: platform.SDKRange},
 					fmt.Sprintf("strict policy requires an exact compatibility-matrix relation for platform %s and SDK %s; declared SDK range is %s", platform.Version, sdkVersion, platform.SDKRange),
 					"Use an exact platform/SDK pair from the release matrix or choose --policy compatible.",
 					map[string]string{"policy": string(request.Policy)})
 				return contracts.ResolvedInstallPlan{}, failure
 			}
 			return contracts.ResolvedInstallPlan{}, compatibilityFailure(contracts.CodeIncompatibleComponents,
-				"release set", "release set", sdkVersion, platform.SDKRange, err.Error(),
+				compatibilityIdentity{kind: "release set", id: "release set", selectedVersion: sdkVersion, requiredRange: platform.SDKRange}, err.Error(),
 				"Choose compatible versions or pass an explicit supported provider.", nil)
 		}
 	}
@@ -99,7 +109,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			graph, ok = platform.Profiles["default"]
 		}
 		if !ok {
-			return contracts.ResolvedInstallPlan{}, incompatible("service profile", request.ServiceProfile, "is not supplied by platform "+platform.Version)
+			return contracts.ResolvedInstallPlan{}, incompatible("service profile", profileName(request.ServiceProfile), platform.Version, "service profile "+profileName(request.ServiceProfile), "is not supplied by platform "+platform.Version)
 		}
 	}
 	graph.PlatformVersion, graph.Profile = platform.Version, profileName(request.ServiceProfile)
@@ -118,14 +128,14 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			binaryForTarget = true
 			if source.Compatibility != nil {
 				if err := catalog.CheckCompatibility(source, platform.Version, sdkVersion, binary.ID, binary.OS, binary.Arch, request.Policy); err != nil {
-					return contracts.ResolvedInstallPlan{}, incompatible("binary", binary.ID, err.Error())
+					return contracts.ResolvedInstallPlan{}, incompatibleBinary(binary.ID, platform.Version, binary.OS+"/"+binary.Arch, "binary "+binary.ID, err.Error())
 				}
 			}
 			artifacts = append(artifacts, contracts.Artifact{ID: binary.ID, Kind: "binary", Version: platform.Version, SHA256: binary.SHA256, SizeBytes: binary.SizeBytes, URL: binary.URL, Target: binary.ID})
 		}
 	}
 	if len(platform.Binaries) > 0 && !binaryForTarget {
-		return contracts.ResolvedInstallPlan{}, incompatible("binary", goos+"/"+goarch, "platform "+platform.Version+" ships no binary for this OS/arch")
+		return contracts.ResolvedInstallPlan{}, incompatibleBinary("kb-create", platform.Version, goos+"/"+goarch, "binary "+goos+"/"+goarch, "platform "+platform.Version+" ships no binary for this OS/arch")
 	}
 	if graph.Profile == "client" {
 		var clientBinary []contracts.Artifact
@@ -135,7 +145,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			}
 		}
 		if len(clientBinary) != 1 {
-			return contracts.ResolvedInstallPlan{}, incompatible("client binary", platform.Version, "release index must contain exactly one kb-create binary for "+goos+"/"+goarch)
+			return contracts.ResolvedInstallPlan{}, incompatibleBinary("kb-create", platform.Version, goos+"/"+goarch, "client binary "+platform.Version, "release index must contain exactly one kb-create binary for "+goos+"/"+goarch)
 		}
 		var clientCLI []contracts.Artifact
 		for _, member := range platform.Members {
@@ -144,7 +154,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 			}
 		}
 		if len(clientCLI) != 1 {
-			return contracts.ResolvedInstallPlan{}, incompatible("client CLI", platform.Version, "release index must contain exactly one @kb-labs/cli-bin platform member")
+			return contracts.ResolvedInstallPlan{}, incompatible("platform-member", "@kb-labs/cli-bin", platform.Version, "client CLI "+platform.Version, "release index must contain exactly one @kb-labs/cli-bin platform member")
 		}
 		clientArtifacts := append(clientBinary, clientCLI...)
 		plan := contracts.ResolvedInstallPlan{
@@ -161,7 +171,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if request.SDK.Version != "" || request.SDK.Channel != "" {
 		sdk, found := findComponentVersion(source.SDKs, sdkVersion)
 		if !found {
-			return contracts.ResolvedInstallPlan{}, incompatible("SDK", sdkVersion, "is not present in the release index")
+			return contracts.ResolvedInstallPlan{}, incompatible("sdk", "sdk", sdkVersion, "SDK "+sdkVersion, "is not present in the release index")
 		}
 		artifacts, err = appendSelectedSDK(artifacts, artifact(sdk, "sdk"), platform.Version)
 		if err != nil {
@@ -177,13 +187,13 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		}
 		component, found := selectComponent(source.Plugins, item)
 		if !found {
-			return contracts.ResolvedInstallPlan{}, incompatible("plugin", item.ID, "requested version is not present in the release index")
+			return contracts.ResolvedInstallPlan{}, incompatible("plugin", item.ID, item.Version.Version, "plugin "+item.ID, "requested version is not present in the release index")
 		}
-		if err := compatible(component.PlatformRange, platform.Version, "plugin "+component.ID+" platform"); err != nil {
+		if err := compatible(component.PlatformRange, platform.Version, "plugin", component.ID, "plugin "+component.ID+" platform"); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
-		if request.SDK.Version != "" {
-			if err := compatible(component.SDKRange, request.SDK.Version, "plugin "+component.ID+" SDK"); err != nil {
+		if sdkVersion != "" {
+			if err := compatible(component.SDKRange, sdkVersion, "plugin", component.ID, "plugin "+component.ID+" SDK"); err != nil {
 				return contracts.ResolvedInstallPlan{}, err
 			}
 		}
@@ -199,11 +209,11 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if !found {
 			return contracts.ResolvedInstallPlan{}, resolutionDiag(contracts.CodeProviderUnresolved, "no adapter provides required capability "+need.Capability, map[string]string{"capability": need.Capability, "requiredBy": need.RequiredBy})
 		}
-		if err := compatible(adapter.PlatformRange, platform.Version, "adapter "+adapter.ID+" platform"); err != nil {
+		if err := compatible(adapter.PlatformRange, platform.Version, "adapter", adapter.ID, "adapter "+adapter.ID+" platform"); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
-		if request.SDK.Version != "" {
-			if err := compatible(adapter.SDKRange, request.SDK.Version, "adapter "+adapter.ID+" SDK"); err != nil {
+		if sdkVersion != "" {
+			if err := compatible(adapter.SDKRange, sdkVersion, "adapter", adapter.ID, "adapter "+adapter.ID+" SDK"); err != nil {
 				return contracts.ResolvedInstallPlan{}, err
 			}
 		}
@@ -218,7 +228,15 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	for _, item := range request.Adapters {
 		adapter, found := selectComponentAdapter(source.Adapters, item)
 		if !found {
-			return contracts.ResolvedInstallPlan{}, incompatible("adapter", item.ID, "requested version is not present in the release index")
+			return contracts.ResolvedInstallPlan{}, incompatible("adapter", item.ID, item.Version.Version, "adapter "+item.ID, "requested version is not present in the release index")
+		}
+		if err := compatible(adapter.PlatformRange, platform.Version, "adapter", adapter.ID, "adapter "+adapter.ID+" platform"); err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
+		if sdkVersion != "" {
+			if err := compatible(adapter.SDKRange, sdkVersion, "adapter", adapter.ID, "adapter "+adapter.ID+" SDK"); err != nil {
+				return contracts.ResolvedInstallPlan{}, err
+			}
 		}
 		artifacts, err = appendSelectedAdapter(artifacts, adapter)
 		if err != nil {
@@ -242,7 +260,7 @@ func PlanWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		host := cloneHost(*platform.Host)
 		selectedHost = &host
 	} else if graph.Profile != "client" {
-		return contracts.ResolvedInstallPlan{}, incompatible("platform", platform.Version, "declares no host to run")
+		return contracts.ResolvedInstallPlan{}, incompatible("platform", "platform", platform.Version, "platform "+platform.Version, "declares no host to run")
 	}
 	if request.GatewayURL != "" {
 		if selectedHost == nil {
@@ -268,7 +286,7 @@ func appendSelectedSDK(artifacts []contracts.Artifact, sdk contracts.Artifact, p
 			continue
 		}
 		if existing.Version != sdk.Version {
-			return nil, incompatible("SDK", sdk.Version, "platform "+platformVersion+" bundles "+existing.Package+" "+existing.Version)
+			return nil, incompatible("sdk", "sdk", sdk.Version, "SDK "+sdk.Version, "platform "+platformVersion+" bundles "+existing.Package+" "+existing.Version)
 		}
 		if existing.SHA256 != sdk.SHA256 || existing.Tarball != sdk.Tarball {
 			return nil, contracts.PlanArtifactIdentityFailure(sdk.Identity())
@@ -421,7 +439,14 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 	for index := range artifacts {
 		item := &artifacts[index]
 		if request.Source == contracts.SourceOffline {
-			cachePath := filepath.Join(request.PlatformRoot, ".kb", "v2", "cache")
+			layout, err := versionroot.New(request.PlatformRoot)
+			if err != nil {
+				return err
+			}
+			cachePath, err := layout.SharedRuntimePath(".kb/v2/cache")
+			if err != nil {
+				return err
+			}
 			if item.IsBinary() {
 				cachePath = filepath.Join(cachePath, "binaries", item.SHA256)
 			} else {
@@ -478,10 +503,11 @@ func cloneHost(host contracts.HostSpec) contracts.HostSpec {
 }
 
 func profileName(value string) string {
-	if value == "" {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
 		return "default"
 	}
-	return value
+	return trimmed
 }
 
 // registryKind reports whether a package the platform bundles is also a
@@ -693,7 +719,7 @@ func contains(values []string, wanted string) bool {
 // compatible checks a declared semver range under every policy. The strict
 // policy adds the exact release matrix check (catalog.CheckCompatibility); it
 // does not turn a plugin's declared range into an exact string match.
-func compatible(rangeValue, version, name string) error {
+func compatible(rangeValue, version, kind, id, name string) error {
 	if rangeValue == "" {
 		return nil
 	}
@@ -708,7 +734,10 @@ func compatible(rangeValue, version, name string) error {
 	if constraint.Satisfies(candidate) {
 		return nil
 	}
-	return incompatibleRange(name, version, rangeValue)
+	return compatibilityFailure(contracts.CodeIncompatibleComponents,
+		compatibilityIdentity{kind: kind, id: id, selectedVersion: version, requiredRange: rangeValue},
+		name+" "+version+" is incompatible: it does not satisfy declared range "+rangeValue,
+		"Choose compatible versions or pass an explicit supported provider.", nil)
 }
 
 func resolvedChannel(source catalog.Catalog, selector contracts.VersionSelector, version string) string {
@@ -722,33 +751,51 @@ func resolvedChannel(source catalog.Catalog, selector contracts.VersionSelector,
 	}
 	return ""
 }
-func incompatible(subject, value, reason string) error {
-	label := subject
-	if value != "" {
-		label = subject + " " + value
-	}
-	return compatibilityFailure(contracts.CodeIncompatibleComponents, subject, value, value, "",
+func incompatible(kind, id, selectedVersion, label, reason string) error {
+	return compatibilityFailure(contracts.CodeIncompatibleComponents,
+		compatibilityIdentity{kind: kind, id: id, selectedVersion: selectedVersion},
 		label+" is incompatible: "+reason, "Choose compatible versions or pass an explicit supported provider.", nil)
 }
-func incompatibleRange(component, version, rangeValue string) error {
-	message := component + " " + version + " is incompatible: it does not satisfy declared range " + rangeValue
-	kind, id := compatibilityKindAndID(component)
-	kind = strings.ToLower(kind)
-	return compatibilityFailure(contracts.CodeIncompatibleComponents, kind, id, version, rangeValue,
-		message, "Choose compatible versions or pass an explicit supported provider.", nil)
+
+func incompatibleBinary(id, selectedVersion, target, label, reason string) error {
+	extra := map[string]string{}
+	if target != "" {
+		extra["target"] = target
+	}
+	return compatibilityFailure(contracts.CodeIncompatibleComponents,
+		compatibilityIdentity{kind: "binary", id: id, selectedVersion: selectedVersion},
+		label+" is incompatible: "+reason, "Choose compatible versions or pass an explicit supported provider.", extra)
 }
+
 func resolutionDiag(code, message string, details map[string]string) error {
 	d := diag.New(code, message, diag.WithMeta(stringMap(details)))
 	d.Hint = "Choose compatible versions or pass an explicit supported provider."
 	return d
 }
 
-func compatibilityFailure(code, kind, id, selectedVersion, requiredRange, reason, hint string, extra map[string]string) *diag.Diag {
+// compatibilityIdentity represents the canonical component identity for compatibility diagnostics.
+// The identity rule per kind is:
+//   - "platform":        id is "platform" (the platform bundle identity; selectedVersion is platform version)
+//   - "sdk":             id is "sdk" (the SDK component identity; selectedVersion is sdk version)
+//   - "binary":          id is the logical binary id (e.g. "kb-create"; target is structured <os>/<arch>)
+//   - "plugin":          id is the plugin identifier
+//   - "adapter":         id is the adapter identifier
+//   - "platform-member": id is the package name (e.g. "@kb-labs/cli-bin")
+//   - "service profile": id is the service profile name (e.g. "default")
+//   - "release set":     id is "release set"
+type compatibilityIdentity struct {
+	kind, id, selectedVersion, requiredRange string
+}
+
+func compatibilityFailure(code string, identity compatibilityIdentity, reason, hint string, extra map[string]string) *diag.Diag {
+	if identity.kind == "" || identity.id == "" {
+		panic("compatibility diagnostic requires a component kind and id")
+	}
 	details := map[string]string{
-		"kind":            kind,
-		"id":              id,
-		"selectedVersion": selectedVersion,
-		"requiredRange":   requiredRange,
+		"kind":            identity.kind,
+		"id":              identity.id,
+		"selectedVersion": identity.selectedVersion,
+		"requiredRange":   identity.requiredRange,
 	}
 	for key, value := range extra {
 		details[key] = value
@@ -758,19 +805,6 @@ func compatibilityFailure(code, kind, id, selectedVersion, requiredRange, reason
 	return d
 }
 
-func compatibilityKindAndID(component string) (string, string) {
-	fields := strings.Fields(component)
-	if len(fields) == 0 {
-		return component, component
-	}
-	if fields[0] == "platform" && len(fields) > 1 && strings.EqualFold(fields[1], "SDK") {
-		return "sdk", "sdk"
-	}
-	if len(fields) > 1 && (fields[0] == "plugin" || fields[0] == "adapter" || fields[0] == "platform") {
-		return fields[0], fields[1]
-	}
-	return fields[0], component
-}
 func stringMap(values map[string]string) map[string]any {
 	result := make(map[string]any, len(values))
 	for key, value := range values {

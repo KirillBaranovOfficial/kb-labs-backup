@@ -35,8 +35,11 @@ owners to one production command would recreate the split-brain V2 removes.
 `apply` and `update` require an immutable release index and request. Recovery
 operations deliberately require only `--platform-root` (and a snapshot for
 rollback), so they recover the verified V2 receipt rather than recalculating a
-new plan. Raw package-manager transcript is private under `.kb/logs/`; failed
-operations add a redacted dossier under `.kb/diagnostics/`.
+new plan. Operation logs and raw package-manager transcripts are stored under
+`installer/logs/`; failed operations add a redacted dossier under
+`installer/diagnostics/`. Active versions expose shared runtime history from
+`state/logs/` and `state/diagnostics/` through `.kb/logs/` and
+`.kb/diagnostics/`.
 
 CI and agents may pass the request file unchanged, or use direct flags such
 as `--platform-root`, `--platform-version`/`--platform-channel`,
@@ -76,7 +79,8 @@ digest before resolving.
 
 Secret input uses `--secret-env requirement.id=ENV_VAR`, so CI/agents pass a
 reference to process environment rather than secret text through argv/JSON.
-V2 stores the value only in `.kb/v2/secrets.env` (0600); generated config,
+V2 stores the value in the install-root-owned `state/secrets.env` (0600),
+exposed to the active version at `.kb/v2/secrets.env`; generated config,
 receipt, scenario state, logs, diagnostics and telemetry retain only the
 manifest requirement or environment variable name. The launcher hands the
 private store to the host process as its environment (see Host supervision).
@@ -339,9 +343,10 @@ The interactive install collects the same values. Secret input is read with echo
 disabled on a real terminal, a human-chosen value is asked twice, and format
 errors or a mismatch re-ask (three tries) instead of aborting. Pressing Enter at
 the admin password prompt generates a password; the successful install shows it
-once with the admin email. The password is stored in `.kb/v2/secrets.env`
-(0600), passed to the Gateway at startup, and excluded from scenario answers,
-plans, receipts, progress events and logs. `kb-create doctor --recover` remains
+once with the admin email. The password is stored in `state/secrets.env`
+(0600), exposed to the active version at `.kb/v2/secrets.env`, passed to the
+Gateway at startup, and excluded from scenario answers, plans, receipts,
+progress events and logs. `kb-create doctor --recover` remains
 the recovery path for an administrator who later loses access.
 
 ## Engine, receipt and snapshots
@@ -374,12 +379,16 @@ correlation ID. JSON mode returns the shared error envelope. Wrapped Go causes
 remain internal and are never serialized; unexpected causes are recorded in a
 structured local log keyed by the correlation ID.
 
-Each invocation writes a full local log. A failure additionally writes a
-redacted dossier under `.kb/diagnostics/<correlation-id>/` with resolved plan,
-receipt/snapshot metadata, engine journal, package-manager output, toolchain,
-config hashes and the service graph. The CLI prints one recovery
-command and the bundle path so users can attach it to an issue without manual
-terminal reconstruction.
+Each invocation writes an operation log under the install root's
+`installer/logs/`. Runtime log and diagnostic history lives in the shared
+`state/logs/` and `state/diagnostics/` directories and remains available across
+version switches. Active versions expose those shared directories at
+`.kb/logs/` and `.kb/diagnostics/`. An installer failure additionally writes a
+redacted dossier under `installer/diagnostics/<correlation-id>.json` with the
+resolved plan, receipt/snapshot metadata, engine journal, package-manager
+output, toolchain, config hashes, and service graph. The CLI prints one
+recovery command and the bundle path so users can attach it to an issue without
+manual terminal reconstruction.
 
 ## Opt-in anonymous telemetry
 

@@ -970,6 +970,11 @@ export interface ProjectServiceApiDeclaration {
   rewritePrefix: string;
 }
 
+/** Routing declaration enriched with the one health endpoint from the service runtime manifest. */
+export interface ProjectServiceDeclaration extends ProjectServiceApiDeclaration {
+  healthCheck: string;
+}
+
 /** Describes how kb-dev should start and monitor the service. */
 export interface ServiceRuntime {
   /** Entrypoint relative to package root (e.g. "dist/index.js") */

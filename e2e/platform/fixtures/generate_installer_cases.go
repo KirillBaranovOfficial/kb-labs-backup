@@ -61,6 +61,7 @@ func fixtureCatalog(hasRunnerBinary bool, runnerOS, runnerArch string) catalog.C
 		Plugins: []catalog.Component{
 			{ID: "fixture-plugin", Version: "1.0.0", Package: "@kb/fixture-plugin", Tarball: "https://example.test/fixture-plugin-1.0.0.tgz", SHA256: "fixture-plugin", PlatformRange: "<3.2.0"},
 			{ID: "fixture-compat", Version: "1.0.0", Package: "@kb/fixture-compat", Tarball: "https://example.test/fixture-compat-1.0.0.tgz", SHA256: "fixture-compat", PlatformRange: "<3.2.0"},
+			{ID: "fixture-sdk-incompat", Version: "1.0.0", Package: "@kb/fixture-sdk-incompat", Tarball: "https://example.test/fixture-sdk-incompat-1.0.0.tgz", SHA256: "fixture-sdk-incompat", PlatformRange: ">=3.0.0", SDKRange: "<3.0.0"},
 		},
 		Adapters: []catalog.Adapter{{Component: catalog.Component{ID: "fixture-adapter", Version: "1.0.0", Package: "@kb/fixture-adapter", Tarball: "https://example.test/fixture-adapter-1.0.0.tgz", SHA256: "fixture-adapter", PlatformRange: "<3.2.0"}, Provides: []string{"fixtureCapability"}}},
 	}

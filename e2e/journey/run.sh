@@ -43,6 +43,7 @@ if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
   selection_json="$(python3 e2e/journey/select_from_cases.py)"
   export KB_JOURNEY_SELECTED_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))' <<< "$selection_json")"
   export KB_JOURNEY_PREREQUISITE_STEPS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteSteps"]))' <<< "$selection_json")"
+  export KB_JOURNEY_PREREQUISITE_FLOWS="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["prerequisiteFlows"]))' <<< "$selection_json")"
   export KB_JOURNEY_SELECTED_SOURCES="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["stepSources"]))' <<< "$selection_json")"
   if [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
     python3 e2e/journey/dispatch_registry.py --supports "$KB_JOURNEY_ONLY" <<< "$selection_json" || {
@@ -53,6 +54,7 @@ if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
 else
   unset KB_JOURNEY_SELECTED_STEPS
   unset KB_JOURNEY_PREREQUISITE_STEPS
+  unset KB_JOURNEY_PREREQUISITE_FLOWS
   unset KB_JOURNEY_SELECTED_SOURCES
 fi
 
@@ -76,7 +78,7 @@ run_selector() {
 
 if [[ "${1:-}" == "--resolve-only" ]]; then
   if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
-    python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({"runners":d["runners"],"steps":d["steps"],"prerequisiteSteps":d["prerequisiteSteps"],"stepSources":d["stepSources"]},indent=2))' <<< "$selection_json"
+    python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({"runners":d["runners"],"steps":d["steps"],"prerequisiteSteps":d["prerequisiteSteps"],"prerequisiteFlows":d["prerequisiteFlows"],"stepSources":d["stepSources"]},indent=2))' <<< "$selection_json"
   elif [[ -n "${KB_JOURNEY_ONLY:-}" ]]; then
     dispatch_selector "$KB_JOURNEY_ONLY"
   else
@@ -110,7 +112,8 @@ run_journey() {
   if ! KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
     "${COMPOSE[@]}" run --rm -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
     -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_SELECTED_STEPS \
-    -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_SELECTED_SOURCES runner < /dev/null; then
+    -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS \
+    -e KB_JOURNEY_SELECTED_SOURCES runner < /dev/null; then
     status=1
   fi
 }

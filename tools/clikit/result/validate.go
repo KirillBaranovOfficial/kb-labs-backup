@@ -11,9 +11,26 @@ import (
 )
 
 // DecodeResult validates a shared UX-result envelope. On success it decodes
-// data into out. On failure it returns the catalogued diagnostic without
-// exposing optional cause/details fields from the remote response.
+// data into out. On failure it reconstructs a local diagnostic from the
+// shared catalog; no free text or optional context from the remote response is
+// retained.
 func DecodeResult(content []byte, out any) (*diag.Diag, error) {
+	return DecodeResultWithContext(content, out, RemoteFailureContext{})
+}
+
+// RemoteFailureContext contains locally observed request metadata. It is safe
+// to attach to a reconstructed remote failure because it does not come from
+// the response body or headers.
+type RemoteFailureContext struct {
+	RequestStage string
+	HTTPStatus   int
+}
+
+// DecodeResultWithContext validates a UX-result envelope and annotates a
+// reconstructed failure with the request stage and HTTP status observed by
+// the caller. Remote message, hint, cause, details, actions, and docs are
+// discarded; only a validated correlation ID survives as structured metadata.
+func DecodeResultWithContext(content []byte, out any, context RemoteFailureContext) (*diag.Diag, error) {
 	if err := ValidateMachineResult(content); err != nil {
 		return nil, fmt.Errorf("invalid UX result envelope: %w", err)
 	}
@@ -26,18 +43,40 @@ func DecodeResult(content []byte, out any) (*diag.Diag, error) {
 		return nil, fmt.Errorf("invalid UX result envelope: %w", err)
 	}
 	if !envelope.OK {
-		var failure diag.Diag
+		var failure struct {
+			Code          string `json:"code"`
+			Area          string `json:"area"`
+			Stage         string `json:"stage"`
+			Severity      string `json:"severity"`
+			Retryable     bool   `json:"retryable"`
+			CorrelationID string `json:"correlationId"`
+		}
 		if err := json.Unmarshal(envelope.Error, &failure); err != nil {
 			return nil, fmt.Errorf("invalid UX failure envelope: %w", err)
 		}
-		failure.Message = diag.RedactText(failure.Message)
-		failure.Hint = diag.RedactText(failure.Hint)
-		failure.Cause = ""
-		failure.Meta = nil
-		failure.Actions = nil
-		failure.Docs = ""
-		failure.CorrelationID = ""
-		return &failure, nil
+		meta := make(map[string]any, 3)
+		if context.RequestStage != "" {
+			meta["requestStage"] = context.RequestStage
+		}
+		if context.HTTPStatus != 0 {
+			meta["httpStatus"] = context.HTTPStatus
+		}
+		if diag.IsValidCorrelationID(failure.CorrelationID) {
+			meta["remoteCorrelationId"] = failure.CorrelationID
+		}
+		entry, ok := diag.LookupCatalog(failure.Code)
+		if !ok || failure.Area != entry.Area || failure.Stage != entry.Stage || failure.Severity != entry.Severity || failure.Retryable != entry.Retryable {
+			local := diag.New("KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE", "The remote service returned an unrecognized diagnostic.")
+			if len(meta) > 0 {
+				local.Meta = meta
+			}
+			return local, nil
+		}
+		local := diag.New(entry.Code, entry.Message, diag.WithHint(entry.Hint))
+		if len(meta) > 0 {
+			local.Meta = meta
+		}
+		return local, nil
 	}
 	if err := json.Unmarshal(envelope.Data, out); err != nil {
 		return nil, fmt.Errorf("invalid UX result data: %w", err)

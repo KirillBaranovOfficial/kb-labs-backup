@@ -22,7 +22,8 @@ func TestMutateRestoresReceiptAndConfigWhenVerificationFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	packageRestored := false
-	snapshot, err := Mutate(root, time.Unix(2, 0), func() error { return os.WriteFile(config, []byte("after"), 0o600) }, func() error { return errors.New("readiness failed") }, func([]contracts.Artifact) error { packageRestored = true; return nil })
+	snapshots := filepath.Join(root, "snapshots")
+	snapshot, err := Mutate(root, root, snapshots, time.Unix(2, 0), func() error { return os.WriteFile(config, []byte("after"), 0o600) }, func() error { return errors.New("readiness failed") }, func([]contracts.Artifact) error { packageRestored = true; return nil })
 	if err == nil || !strings.Contains(err.Error(), "restored snapshot "+snapshot.ID) {
 		t.Fatalf("err = %v", err)
 	}
@@ -47,14 +48,14 @@ func TestRollbackRestoresNamedSnapshot(t *testing.T) {
 	if err := os.WriteFile(config, []byte("before"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := receipt.CreateSnapshot(root, time.Unix(3, 0))
+	snapshot, err := receipt.CreateSnapshot(root, filepath.Join(root, "snapshots"), time.Unix(3, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(config, []byte("after"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Rollback(root, snapshot.ID, nil); err != nil {
+	if _, err := Rollback(root, filepath.Join(root, "snapshots"), snapshot.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(config); string(data) != "before" {

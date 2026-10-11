@@ -157,7 +157,7 @@ func TestBootstrapContractFailureNamesInternalMismatchAndNextDiagnosticCommand(t
 	if !errors.As(err, &diagnostic) {
 		t.Fatalf("bootstrap contract diagnostic = %T; want catalogued diag", err)
 	}
-	if diagnostic.Message != "Gateway returned an invalid first-administrator health response." || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, `kb-create doctor --platform-root "`+store.PlatformRoot+`"`) {
+	if diagnostic.Message != "Gateway returned an invalid first-administrator health response." || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) {
 		t.Fatalf("bootstrap contract diagnostic = %#v", diagnostic)
 	}
 	if strings.Contains(diagnostic.Hint, "Update the Gateway") {
@@ -174,7 +174,7 @@ func TestUnknownGatewayBootstrapFailsWithCataloguedDiagnostic(t *testing.T) {
 	store := secrets.Store{PlatformRoot: t.TempDir()}
 	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
 	var diagnostic *diag.Diag
-	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, "kb-create doctor --platform-root") {
+	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) {
 		t.Fatalf("unknown bootstrap status error = %#v, want catalogued apply diagnostic with next step", err)
 	}
 	if _, present, err := store.Get(secrets.BootstrapCompleted); err != nil || present {
@@ -221,7 +221,7 @@ func TestMissingGatewayRequiredHealthFieldsAreInternalContractFailures(t *testin
 			store := secrets.Store{PlatformRoot: t.TempDir()}
 			err = readBootstrapOutcome(context.Background(), server.URL+"/health", store)
 			var diagnostic *diag.Diag
-			wantDoctor := `kb-create doctor --platform-root "` + store.PlatformRoot + `"`
+			wantDoctor := contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)
 			if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "invalid first-administrator health response") || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") || !strings.Contains(diagnostic.Hint, wantDoctor) {
 				t.Fatalf("missing required Gateway field %q = %#v, want internal contract mismatch", required, err)
 			}
@@ -241,36 +241,62 @@ func TestValidGatewayBootstrapFailureDirectsOperatorToAuthReadiness(t *testing.T
 	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed || !strings.Contains(diagnostic.Message, "bootstrap did not complete") {
 		t.Fatalf("valid Gateway bootstrap failure = %#v", err)
 	}
-	if !strings.Contains(diagnostic.Hint, "inspect Gateway authentication readiness") || !strings.Contains(diagnostic.Hint, "kb-create doctor --platform-root") || strings.Contains(diagnostic.Hint, "contract mismatch") || strings.Contains(diagnostic.Hint, "Update the Gateway") {
+	if !strings.Contains(diagnostic.Hint, "inspect Gateway authentication readiness") || !strings.Contains(diagnostic.Hint, contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)) || strings.Contains(diagnostic.Hint, "contract mismatch") || strings.Contains(diagnostic.Hint, "Update the Gateway") {
 		t.Fatalf("valid Gateway bootstrap failure hint = %q", diagnostic.Hint)
 	}
 }
 
-// case: S-222.2
+// case: S-222.2, S-224.2
 func TestGatewayFailureEnvelopePreservesDiagnosticWithoutSecrets(t *testing.T) {
 	const bodySecret = "BODY_TOKEN_SECRET"
 	const headerSecret = "HEADER_SESSION_SECRET"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	gatewayCorrelationIDChannel := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gatewayCorrelationID := r.Header.Get("X-Request-Id")
+		gatewayCorrelationIDChannel <- gatewayCorrelationID
+		if !diag.IsValidCorrelationID(gatewayCorrelationID) {
+			t.Errorf("bootstrap X-Request-Id = %q, want valid Gateway correlation ID", gatewayCorrelationID)
+		}
 		w.Header().Set("X-Debug-Credential", headerSecret)
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>; token=`+bodySecret+`","cause":"token=`+bodySecret+`","correlationId":"corr-auth-health"}}`)
+		_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","area":"auth","stage":"run","severity":"error","retryable":false,"message":"Gateway auth health is unavailable.","hint":"Run kb-create doctor --platform-root <root>; token=`+bodySecret+`","cause":"token=`+bodySecret+`","correlationId":"`+gatewayCorrelationID+`","details":{"leak":"`+bodySecret+`"}}}`)
 	}))
 	defer server.Close()
 	store := secrets.Store{PlatformRoot: t.TempDir()}
 	err := readBootstrapOutcome(context.Background(), server.URL+"/health", store)
+	gatewayCorrelationID := <-gatewayCorrelationIDChannel
 	var diagnostic *diag.Diag
 	if !errors.As(err, &diagnostic) {
 		t.Fatalf("Gateway failure = %T %v, want catalogued diagnostic", err, err)
 	}
-	if diagnostic.Code != "KB_AUTH_FORBIDDEN" || diagnostic.Message != "Gateway auth health is unavailable." || diagnostic.Hint != `Run kb-create doctor --platform-root <root>; token="[REDACTED]"` {
+	entry, _ := diag.LookupCatalog("KB_AUTH_FORBIDDEN")
+	if diagnostic.Code != "KB_AUTH_FORBIDDEN" || diagnostic.Message != entry.Message || diagnostic.Hint != entry.Hint {
 		t.Fatalf("Gateway failure diagnostic = %#v", diagnostic)
+	}
+	if diagnostic.Meta["remoteCorrelationId"] != gatewayCorrelationID {
+		t.Fatalf("Gateway failure remote correlation ID = %#v, want %q", diagnostic.Meta["remoteCorrelationId"], gatewayCorrelationID)
+	}
+	var jsonOutput, humanOutput bytes.Buffer
+	clikitresult.RenderDiag(&jsonOutput, &humanOutput, diagnostic, clikitresult.ModeJSON)
+	clikitresult.RenderDiag(&bytes.Buffer{}, &humanOutput, diagnostic, clikitresult.ModeHuman)
+	if !strings.Contains(humanOutput.String(), "remote correlationId: "+gatewayCorrelationID) {
+		t.Fatalf("human bootstrap diagnostic omitted Gateway correlation ID: %s", humanOutput.String())
+	}
+	var rendered struct {
+		Error struct {
+			Details map[string]string `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(jsonOutput.Bytes(), &rendered); err != nil || rendered.Error.Details["remoteCorrelationId"] != gatewayCorrelationID {
+		t.Fatalf("JSON bootstrap diagnostic omitted Gateway correlation ID: %s err=%v", jsonOutput.String(), err)
 	}
 	encoded, marshalErr := json.Marshal(diagnostic)
 	if marshalErr != nil {
 		t.Fatal(marshalErr)
 	}
 	for _, secret := range []string{bodySecret, headerSecret} {
-		if strings.Contains(err.Error(), secret) || strings.Contains(string(encoded), secret) {
+		if strings.Contains(err.Error(), secret) || strings.Contains(string(encoded), secret) ||
+			strings.Contains(jsonOutput.String(), secret) || strings.Contains(humanOutput.String(), secret) {
 			t.Fatalf("Gateway failure exposed credential %q: %s %s", secret, err, encoded)
 		}
 	}
@@ -292,7 +318,7 @@ func TestNonSuccessGatewayBodyGetsInternalMismatchWithoutSecrets(t *testing.T) {
 	if !errors.As(err, &diagnostic) || diagnostic.Code != contracts.CodeApplyFailed {
 		t.Fatalf("non-success Gateway body = %#v, want catalogued internal mismatch", err)
 	}
-	wantDoctor := `kb-create doctor --platform-root "` + store.PlatformRoot + `"`
+	wantDoctor := contracts.ShellCommand("kb-create", "doctor", "--platform-root", store.PlatformRoot)
 	if !strings.Contains(diagnostic.Hint, wantDoctor) || !strings.Contains(diagnostic.Hint, "internal installer/Gateway contract mismatch") {
 		t.Fatalf("non-success Gateway diagnostic hint = %q", diagnostic.Hint)
 	}
@@ -337,7 +363,8 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 			{ID: "gateway.bootstrap.password", Secret: true, Generate: true}, {ID: "gateway.jwtSecret", Secret: true, Generate: true},
 		}}}}
 	resolved := resolvedPlan{Plan: plan, State: state}
-	store := secrets.Store{PlatformRoot: root}
+	platformRoot := platformRootForTest(t, root)
+	store := secrets.Store{PlatformRoot: filepath.Join(root, "current")}
 	starter := &bootstrapTestHost{address: address}
 	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{}, Runtime: &runtime.Dependencies{Host: starter}}
 	firstOutput := runApplyStreamForTest(t, resolved, deps)
@@ -363,7 +390,7 @@ func TestApplyDisclosesGeneratedAdminOnceAcrossRepeatedInstall(t *testing.T) {
 		t.Fatalf("operation log %q is empty", firstResult.LogPath)
 	}
 	assertSecretAbsent(t, "operation log", logBytes, password)
-	receiptBytes, err := os.ReadFile(receipt.Path(root))
+	receiptBytes, err := os.ReadFile(receipt.Path(platformRoot))
 	if err != nil {
 		t.Fatalf("read apply receipt: %v", err)
 	}

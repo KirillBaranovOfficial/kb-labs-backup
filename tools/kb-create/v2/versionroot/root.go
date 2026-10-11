@@ -1,0 +1,1356 @@
+// Package versionroot owns the user's installation container, its active
+// platform root, and all version-root transitions.
+package versionroot
+
+import (
+	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/receipt"
+)
+
+type Layout struct{ Root string }
+
+var ErrPlatformNotInstalled = errors.New("platform is not installed")
+
+type UpdateMetadata struct {
+	SnapshotID string `json:"snapshotId"`
+	LogPath    string `json:"logPath"`
+}
+
+type Metadata struct {
+	Schema          string `json:"schema"`
+	InstallationID  string `json:"installationId"`
+	InitialTarget   string `json:"initialTarget,omitempty"`
+	LastHealthyRoot string `json:"lastHealthyRoot,omitempty"`
+	RecoveryRoot    string `json:"recoveryRoot,omitempty"`
+}
+
+type Ownership struct {
+	Schema         string `json:"schema"`
+	InstallationID string `json:"installationId"`
+}
+
+const LayoutMetadataSchema = "kb.create.installation-layout/v2"
+const OwnershipSchema = "kb.create.installation-owner/v1"
+
+type RetainedVersion struct {
+	Version        string `json:"version"`
+	Role           string `json:"role"`
+	Path           string `json:"path"`
+	DiskUsageBytes int64  `json:"diskUsageBytes"`
+}
+
+func New(installRoot string) (Layout, error) {
+	if err := supportedOS(runtime.GOOS); err != nil {
+		return Layout{}, err
+	}
+	abs, err := filepath.Abs(installRoot)
+	if err != nil {
+		return Layout{}, fmt.Errorf("resolve installation root: %w", err)
+	}
+	canonical, err := canonicalPath(filepath.Clean(abs))
+	if err != nil {
+		return Layout{}, fmt.Errorf("resolve installation root symlinks: %w", err)
+	}
+	return Layout{Root: canonical}, nil
+}
+
+func canonicalPath(path string) (string, error) {
+	missing := make([]string, 0)
+	for current := filepath.Clean(path); ; current = filepath.Dir(current) {
+		_, err := os.Lstat(current)
+		if err == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(current)
+			if resolveErr != nil {
+				return "", resolveErr
+			}
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+	}
+}
+
+func supportedOS(goos string) error {
+	if goos == "linux" || goos == "darwin" {
+		return nil
+	}
+	failure := contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
+		"Atomic platform switching is supported only on Linux and macOS.",
+		"Run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"` on Linux or macOS.", nil)
+	failure.Meta = map[string]any{"goos": goos}
+	return failure
+}
+
+func (l Layout) InstallRoot() string  { return l.Root }
+func (l Layout) PlatformRoot() string { return contracts.CurrentPlatformRoot(l.Root) }
+
+// ExistingPlatformRoot resolves only a complete installed container. A
+// missing or empty target has no platform root; every other invalid shape is
+// an error for the caller to report as an unsupported layout.
+func (l Layout) ExistingPlatformRoot() (string, error) {
+	info, err := os.Lstat(l.Root)
+	if os.IsNotExist(err) {
+		return "", ErrPlatformNotInstalled
+	}
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("install root is not a real directory")
+	}
+	entries, err := os.ReadDir(l.Root)
+	if err != nil {
+		return "", err
+	}
+	if len(entries) == 0 {
+		return "", ErrPlatformNotInstalled
+	}
+	if err := l.ValidateStructure(); err != nil {
+		return "", err
+	}
+	return l.PlatformRoot(), nil
+}
+func (l Layout) VersionsDir() string       { return contracts.VersionRootsDirectory(l.Root) }
+func (l Layout) SharedStateDir() string    { return contracts.SharedStateDirectory(l.Root) }
+func (l Layout) InstallerStateDir() string { return contracts.InstallerStateDirectory(l.Root) }
+func (l Layout) HostStateDir() string      { return contracts.HostStateDirectory(l.Root) }
+func (l Layout) OperationLogsDir() string {
+	return contracts.InstallerRecordPath(l.Root, "operationLogs")
+}
+func (l Layout) FailureDossiersDir() string {
+	return contracts.InstallerRecordPath(l.Root, "failureDossiers")
+}
+func (l Layout) SnapshotsDir() string { return contracts.InstallerRecordPath(l.Root, "snapshots") }
+
+// ForPlatformPath maps the user-facing install root, current symlink, or a
+// physical/staged version root back to the containing install root.
+func ForPlatformPath(platformPath string) (Layout, error) {
+	layout, err := New(platformPath)
+	if err != nil {
+		return Layout{}, err
+	}
+	for current := layout.Root; filepath.Dir(current) != current; current = filepath.Dir(current) {
+		versions := filepath.Dir(current)
+		container := filepath.Dir(versions)
+		if filepath.Clean(contracts.VersionRootsDirectory(container)) == filepath.Clean(versions) {
+			return New(container)
+		}
+	}
+	return layout, nil
+}
+
+func (l Layout) SharedRuntimePath(platformPath string) (string, error) {
+	for _, shared := range contracts.SharedRuntimePaths() {
+		if shared.PlatformPath == platformPath {
+			return filepath.Join(l.Root, filepath.FromSlash(shared.StatePath)), nil
+		}
+	}
+	return "", fmt.Errorf("platform path %q is not declared as shared runtime state", platformPath)
+}
+
+// AtomicWriteFile keeps version-root links to shared runtime files intact.
+// A rename over a symlink replaces the link itself, so atomic writers must
+// write beside its declared target and rename that target instead.
+func AtomicWriteFile(path string, data []byte, mode fs.FileMode) error {
+	destination, err := atomicWriteDestination(path)
+	if err != nil {
+		return err
+	}
+	temporaryFile, err := os.CreateTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	temporary := temporaryFile.Name()
+	defer os.Remove(temporary)
+	if err := temporaryFile.Chmod(mode); err != nil {
+		_ = temporaryFile.Close()
+		return err
+	}
+	if _, err := temporaryFile.Write(data); err != nil {
+		_ = temporaryFile.Close()
+		return err
+	}
+	if err := errors.Join(temporaryFile.Sync(), temporaryFile.Close()); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, destination); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(destination))
+}
+
+func atomicWriteDestination(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return path, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	target, err := os.Readlink(path)
+	if err != nil {
+		return "", err
+	}
+	linkParent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return "", fmt.Errorf("resolve shared runtime link parent: %w", err)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(linkParent, target)
+	}
+	target = filepath.Clean(target)
+	parent, err := filepath.EvalSymlinks(filepath.Dir(target))
+	if err != nil {
+		return "", fmt.Errorf("resolve shared runtime target: %w", err)
+	}
+	return filepath.Join(parent, filepath.Base(target)), nil
+}
+
+func (l Layout) metadataPath() string  { return filepath.Join(l.InstallerStateDir(), "layout.json") }
+func (l Layout) ownershipPath() string { return contracts.OwnershipRecordPath(l.Root) }
+func (l Layout) updateMetadataPath() string {
+	return filepath.Join(l.InstallerStateDir(), "update-operation.json")
+}
+
+func (l Layout) ValidateInitialTarget() error {
+	info, err := os.Lstat(l.Root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("installation root is not a real directory")
+	}
+	entries, err := os.ReadDir(l.Root)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	if _, currentErr := os.Lstat(l.PlatformRoot()); currentErr == nil {
+		return l.Validate()
+	} else if !os.IsNotExist(currentErr) {
+		return currentErr
+	}
+	recovered, err := l.recoverInterruptedInitialActivation()
+	if err != nil {
+		return err
+	}
+	if recovered {
+		return nil
+	}
+	if l.hasOwnershipMarker() {
+		for _, entry := range entries {
+			if !l.isInitialContainerEntry(entry.Name()) {
+				return fmt.Errorf("installation root contains undeclared data at %s", entry.Name())
+			}
+		}
+		return nil
+	}
+	if owned, err := l.validateInterruptedInitialScaffold(); err != nil {
+		return err
+	} else if owned {
+		return nil
+	}
+	allowed := make([]string, 0)
+	for _, shared := range contracts.SharedRuntimePaths() {
+		if shared.Preinstall {
+			allowed = append(allowed, filepath.ToSlash(shared.StatePath))
+		}
+	}
+	return filepath.WalkDir(l.Root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(l.Root, path)
+		if err != nil || relative == "." {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		for _, valid := range allowed {
+			if relative == valid || strings.HasPrefix(relative, valid+"/") || strings.HasPrefix(valid, relative+"/") {
+				return nil
+			}
+		}
+		return fmt.Errorf("installation root contains undeclared data at %s", relative)
+	})
+}
+
+func (l Layout) StageInitial() (string, error) {
+	return l.stageInitial(nil)
+}
+
+func (l Layout) stageInitial(after func(HandoffPoint) error) (string, error) {
+	if err := supportedOS(runtime.GOOS); err != nil {
+		return "", err
+	}
+	if err := l.ValidateInitialTarget(); err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(l.Root); os.IsNotExist(err) {
+		if err := os.Mkdir(l.Root, 0o700); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+	if err := notifyHandoff(after, HandoffInitialRootCreated); err != nil {
+		return "", err
+	}
+	if _, err := l.ensureOwnership(); err != nil {
+		return "", err
+	}
+	if err := notifyHandoff(after, HandoffInitialOwnershipWritten); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(l.VersionsDir(), 0o700); err != nil {
+		return "", err
+	}
+	if err := notifyHandoff(after, HandoffInitialVersionsCreated); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(l.SharedStateDir(), 0o700); err != nil {
+		return "", err
+	}
+	if err := notifyHandoff(after, HandoffInitialStateCreated); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(l.InstallerStateDir(), 0o700); err != nil {
+		return "", err
+	}
+	if err := notifyHandoff(after, HandoffInitialInstallerStateCreated); err != nil {
+		return "", err
+	}
+	entries, err := os.ReadDir(l.VersionsDir())
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".stage-") && entry.IsDir() {
+			if err := os.RemoveAll(filepath.Join(l.VersionsDir(), entry.Name())); err != nil {
+				return "", fmt.Errorf("remove interrupted install staging tree: %w", err)
+			}
+		}
+	}
+	if err := notifyHandoff(after, HandoffInitialStaleStagesRemoved); err != nil {
+		return "", err
+	}
+	stage, err := os.MkdirTemp(l.VersionsDir(), ".stage-")
+	if err != nil {
+		return "", err
+	}
+	if err := notifyHandoff(after, HandoffInitialStageCreated); err != nil {
+		return stage, err
+	}
+	if err := l.prepareVersionRoot(stage, true); err != nil {
+		_ = os.RemoveAll(stage)
+		return "", err
+	}
+	if err := notifyHandoff(after, HandoffInitialStagePrepared); err != nil {
+		return stage, err
+	}
+	return stage, nil
+}
+
+func (l Layout) ensureOwnership() (string, error) {
+	if owner, err := l.readOwnership(); err == nil && owner.InstallationID != "" {
+		return owner.InstallationID, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		// A truncated marker is a reachable first-write crash state. The marker
+		// path itself is reserved by the layout contract and is rewritten here.
+	}
+	var identity [16]byte
+	if _, err := rand.Read(identity[:]); err != nil {
+		return "", fmt.Errorf("generate installation identity: %w", err)
+	}
+	owner := Ownership{Schema: OwnershipSchema, InstallationID: hex.EncodeToString(identity[:])}
+	data, err := json.Marshal(owner)
+	if err != nil {
+		return "", err
+	}
+	data = append(data, '\n')
+	file, err := os.OpenFile(l.ownershipPath(), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := file.Write(data); err != nil {
+		return "", errors.Join(err, file.Close())
+	}
+	if err := errors.Join(file.Sync(), file.Close()); err != nil {
+		return "", err
+	}
+	if err := syncDirectory(l.Root); err != nil {
+		return "", err
+	}
+	return owner.InstallationID, nil
+}
+
+func (l Layout) readOwnership() (Ownership, error) {
+	data, err := os.ReadFile(l.ownershipPath())
+	if err != nil {
+		return Ownership{}, err
+	}
+	var owner Ownership
+	if err := json.Unmarshal(data, &owner); err != nil {
+		return Ownership{}, err
+	}
+	if owner.Schema != OwnershipSchema || len(owner.InstallationID) != 32 {
+		return Ownership{}, fmt.Errorf("invalid install-root ownership record")
+	}
+	if _, err := hex.DecodeString(owner.InstallationID); err != nil {
+		return Ownership{}, fmt.Errorf("invalid install-root ownership identity: %w", err)
+	}
+	return owner, nil
+}
+
+func (l Layout) hasOwnershipMarker() bool {
+	_, err := os.Lstat(l.ownershipPath())
+	return err == nil
+}
+
+func (l Layout) HasOwnershipMarker() bool { return l.hasOwnershipMarker() }
+
+func InstallationIDForPath(platformRoot string) (string, error) {
+	layout, err := ForPlatformPath(platformRoot)
+	if err != nil {
+		return "", err
+	}
+	owner, err := layout.readOwnership()
+	if err != nil {
+		return "", err
+	}
+	return owner.InstallationID, nil
+}
+
+// Active returns the physical root selected by the install-root current link.
+func (l Layout) Active() (string, error) {
+	root, err := filepath.EvalSymlinks(l.PlatformRoot())
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(root), nil
+}
+
+// Stage creates an empty version tree populated from the target's sealed
+// artifact set. Mutable state is linked once from the installation container.
+func (l Layout) Stage() (string, error) {
+	return l.stage(nil)
+}
+
+func (l Layout) stage(after func(HandoffPoint) error) (string, error) {
+	if err := l.Validate(); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(l.VersionsDir(), 0o700); err != nil {
+		return "", err
+	}
+	stage, err := os.MkdirTemp(l.VersionsDir(), ".stage-")
+	if err != nil {
+		return "", err
+	}
+	if err := notifyHandoff(after, HandoffUpdateStageCreated); err != nil {
+		return stage, err
+	}
+	if err := l.prepareVersionRoot(stage, false); err != nil {
+		_ = os.RemoveAll(stage)
+		return "", err
+	}
+	active, err := l.Active()
+	if err != nil {
+		_ = os.RemoveAll(stage)
+		return "", err
+	}
+	installed, err := receipt.Read(active)
+	if err != nil {
+		_ = os.RemoveAll(stage)
+		return "", fmt.Errorf("read active receipt for staged update: %w", err)
+	}
+	if err := receipt.Write(stage, installed); err != nil {
+		_ = os.RemoveAll(stage)
+		return "", fmt.Errorf("seed staged receipt: %w", err)
+	}
+	if err := notifyHandoff(after, HandoffUpdateReceiptSeeded); err != nil {
+		return stage, err
+	}
+	return stage, nil
+}
+
+func (l Layout) prepareVersionRoot(root string, linkSharedState bool) error {
+	if err := os.MkdirAll(filepath.Join(root, ".kb", "v2"), 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(root, ".kb", "v2", "platform-layout.json"), contracts.PlatformLayoutDocument(), 0o600); err != nil {
+		return err
+	}
+	if !linkSharedState {
+		return nil
+	}
+	for _, shared := range contracts.SharedRuntimePaths() {
+		linkPath := filepath.Join(root, filepath.FromSlash(shared.PlatformPath))
+		statePath := filepath.Join(l.Root, filepath.FromSlash(shared.StatePath))
+		if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+			return err
+		}
+		switch shared.Kind {
+		case "directory":
+			if err := os.MkdirAll(statePath, 0o700); err != nil {
+				return err
+			}
+		case "file":
+		default:
+			return fmt.Errorf("shared runtime path %q has unsupported kind %q", shared.PlatformPath, shared.Kind)
+		}
+		if err := os.MkdirAll(filepath.Dir(linkPath), 0o700); err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(filepath.Dir(linkPath), statePath)
+		if err != nil {
+			return err
+		}
+		if err := os.Symlink(relative, linkPath); err != nil {
+			return fmt.Errorf("link shared runtime state %s: %w", shared.PlatformPath, err)
+		}
+	}
+	return nil
+}
+
+func (l Layout) Activate(stage, version, planHash, runningRoot string) (string, error) {
+	return l.activate(stage, version, planHash, runningRoot, nil)
+}
+
+type HandoffPoint string
+
+const (
+	HandoffInitialRootCreated           HandoffPoint = "initial-root-created"
+	HandoffInitialOwnershipWritten      HandoffPoint = "initial-ownership-written"
+	HandoffInitialVersionsCreated       HandoffPoint = "initial-versions-created"
+	HandoffInitialStateCreated          HandoffPoint = "initial-state-created"
+	HandoffInitialInstallerStateCreated HandoffPoint = "initial-installer-state-created"
+	HandoffInitialStaleStagesRemoved    HandoffPoint = "initial-stale-stages-removed"
+	HandoffInitialStageCreated          HandoffPoint = "initial-stage-created"
+	HandoffInitialStagePrepared         HandoffPoint = "initial-stage-prepared"
+	HandoffInitialMetadataWritten       HandoffPoint = "initial-metadata-written"
+	HandoffInitialTargetFinalized       HandoffPoint = "initial-target-finalized"
+	HandoffInitialLinkPrepared          HandoffPoint = "initial-link-prepared"
+	HandoffInitialLinkSwitched          HandoffPoint = "initial-link-switched"
+	HandoffUpdateStageCreated           HandoffPoint = "update-stage-created"
+	HandoffUpdateReceiptSeeded          HandoffPoint = "update-receipt-seeded"
+	HandoffMetadataWritten              HandoffPoint = "metadata-written"
+	HandoffTargetFinalized              HandoffPoint = "target-finalized"
+	HandoffLinkPrepared                 HandoffPoint = "link-prepared"
+	HandoffLinkSwitched                 HandoffPoint = "link-switched"
+)
+
+// CrashPoints is the ordered source of truth for on-disk install/update
+// handoffs. Tests must iterate this list so adding a handoff point adds a
+// required recovery regression.
+func CrashPoints() []HandoffPoint {
+	return []HandoffPoint{
+		HandoffInitialRootCreated, HandoffInitialOwnershipWritten, HandoffInitialVersionsCreated,
+		HandoffInitialStateCreated, HandoffInitialInstallerStateCreated, HandoffInitialStaleStagesRemoved,
+		HandoffInitialStageCreated, HandoffInitialStagePrepared, HandoffInitialMetadataWritten,
+		HandoffInitialTargetFinalized, HandoffInitialLinkPrepared, HandoffInitialLinkSwitched,
+		HandoffUpdateStageCreated, HandoffUpdateReceiptSeeded, HandoffMetadataWritten,
+		HandoffTargetFinalized, HandoffLinkPrepared, HandoffLinkSwitched,
+	}
+}
+
+func notifyHandoff(after func(HandoffPoint) error, point HandoffPoint) error {
+	if after == nil {
+		return nil
+	}
+	return after(point)
+}
+
+func (l Layout) activate(stage, version, planHash, runningRoot string, after func(HandoffPoint) error) (string, error) {
+	if err := l.Validate(); err != nil {
+		return "", err
+	}
+	previous, err := l.Active()
+	if err != nil {
+		return "", err
+	}
+	metadata, err := l.readMetadata()
+	if err != nil {
+		return "", err
+	}
+	recovery := metadata.LastHealthyRoot
+	if recovery == "" {
+		recovery = metadata.RecoveryRoot
+	}
+	if recovery == "" {
+		recovery = previous
+	}
+	if err := l.validateVersionPath(recovery); err != nil {
+		return "", fmt.Errorf("recovery root is unavailable: %w", err)
+	}
+	metadata.RecoveryRoot = recovery
+	if err := l.writeMetadata(metadata); err != nil {
+		return "", fmt.Errorf("record recovery root: %w", err)
+	}
+	if after != nil {
+		if err := after(HandoffMetadataWritten); err != nil {
+			return recovery, err
+		}
+	}
+	target := filepath.Join(l.VersionsDir(), versionKey(version, planHash))
+	if _, err := os.Lstat(target); err == nil {
+		installed, readErr := receipt.Read(target)
+		if readErr != nil || installed.Plan.ServiceGraph.PlatformVersion != version || installed.Plan.PlanHash != planHash {
+			return "", fmt.Errorf("version root already exists and is not a recoverable interrupted update: %s", target)
+		}
+		if filepath.Clean(target) == filepath.Clean(previous) || filepath.Clean(target) == filepath.Clean(recovery) || filepath.Clean(target) == filepath.Clean(runningRoot) {
+			return "", fmt.Errorf("version root already exists and is retained for recovery: %s", target)
+		}
+		if err := os.RemoveAll(target); err != nil {
+			return "", fmt.Errorf("remove interrupted target version root: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.Rename(stage, target); err != nil {
+		return "", fmt.Errorf("finalize staged version root: %w", err)
+	}
+	if err := l.linkSharedRuntimeState(target); err != nil {
+		return recovery, fmt.Errorf("link shared runtime state during activation: %w", err)
+	}
+	if after != nil {
+		if err := after(HandoffTargetFinalized); err != nil {
+			return recovery, err
+		}
+	}
+	link, err := l.prepareCurrentLink(target)
+	if err != nil {
+		_ = os.RemoveAll(target)
+		return "", err
+	}
+	if after != nil {
+		if err := after(HandoffLinkPrepared); err != nil {
+			_ = os.Remove(link)
+			return recovery, err
+		}
+	}
+	if err := os.Rename(link, l.PlatformRoot()); err != nil {
+		_ = os.Remove(link)
+		_ = os.RemoveAll(target)
+		return "", fmt.Errorf("switch active version: %w", err)
+	}
+	if err := syncDirectory(l.Root); err != nil {
+		return recovery, fmt.Errorf("sync installation root after switch: %w", err)
+	}
+	if after != nil {
+		if err := after(HandoffLinkSwitched); err != nil {
+			return recovery, err
+		}
+	}
+	if err := l.Retain(runningRoot); err != nil {
+		return recovery, fmt.Errorf("prune obsolete version roots: %w", err)
+	}
+	return recovery, nil
+}
+
+func (l Layout) prepareCurrentLink(target string) (string, error) {
+	directory := l.InstallerStateDir()
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(directory, "current-next")
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			return "", fmt.Errorf("reserved current handoff path is not a symbolic link")
+		}
+		if err := os.Remove(path); err != nil {
+			return "", err
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	relative, err := filepath.Rel(l.Root, target)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Symlink(relative, path); err != nil {
+		return "", fmt.Errorf("prepare relative current link: %w", err)
+	}
+	if err := syncDirectory(directory); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
+func (l Layout) linkSharedRuntimeState(root string) error {
+	for _, shared := range contracts.SharedRuntimePaths() {
+		linkPath := filepath.Join(root, filepath.FromSlash(shared.PlatformPath))
+		statePath := filepath.Join(l.Root, filepath.FromSlash(shared.StatePath))
+		if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+			return err
+		}
+		switch shared.Kind {
+		case "directory":
+			if err := os.MkdirAll(statePath, 0o700); err != nil {
+				return err
+			}
+		case "file":
+		default:
+			return fmt.Errorf("shared runtime path %q has unsupported kind %q", shared.PlatformPath, shared.Kind)
+		}
+		if err := os.MkdirAll(filepath.Dir(linkPath), 0o700); err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(filepath.Dir(linkPath), statePath)
+		if err != nil {
+			return err
+		}
+		if err := os.Symlink(relative, linkPath); err != nil {
+			return fmt.Errorf("link shared runtime state %s: %w", shared.PlatformPath, err)
+		}
+	}
+	return nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return errors.Join(directory.Sync(), directory.Close())
+}
+
+func (l Layout) ActivateInitial(stage, version, planHash string) (string, error) {
+	return l.activateInitial(stage, version, planHash, nil)
+}
+
+func (l Layout) activateInitial(stage, version, planHash string, after func(HandoffPoint) error) (string, error) {
+	if err := supportedOS(runtime.GOOS); err != nil {
+		return "", err
+	}
+	if info, err := os.Lstat(l.Root); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("installation root changed before activation")
+	}
+	entries, err := os.ReadDir(l.Root)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		if !l.isInitialContainerEntry(entry.Name()) {
+			return "", fmt.Errorf("installation root changed before activation at %s", entry.Name())
+		}
+	}
+	if err := os.MkdirAll(l.Root, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(l.VersionsDir(), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(l.SharedStateDir(), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(l.InstallerStateDir(), 0o700); err != nil {
+		return "", err
+	}
+	installed, err := receipt.Read(stage)
+	if err != nil {
+		return "", fmt.Errorf("read initial receipt: %w", err)
+	}
+	if installed.InstallationID == "" {
+		return "", fmt.Errorf("initial receipt has no installation identity")
+	}
+	owner, err := l.readOwnership()
+	if err != nil || owner.InstallationID != installed.InstallationID {
+		return "", fmt.Errorf("initial receipt identity does not match the install-root ownership record")
+	}
+	target := filepath.Join(l.VersionsDir(), versionKey(version, planHash))
+	metadata := Metadata{Schema: LayoutMetadataSchema, InstallationID: installed.InstallationID,
+		InitialTarget: filepath.Base(target)}
+	if err := l.writeMetadata(metadata); err != nil {
+		return "", err
+	}
+	if after != nil {
+		if err := after(HandoffInitialMetadataWritten); err != nil {
+			return "", err
+		}
+	}
+	if _, err := os.Lstat(target); err == nil {
+		return "", fmt.Errorf("initial version root already exists: %s", target)
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.Rename(stage, target); err != nil {
+		return "", err
+	}
+	if after != nil {
+		if err := after(HandoffInitialTargetFinalized); err != nil {
+			return "", err
+		}
+	}
+	link, err := l.prepareCurrentLink(target)
+	if err != nil {
+		_ = os.RemoveAll(target)
+		return "", err
+	}
+	if after != nil {
+		if err := after(HandoffInitialLinkPrepared); err != nil {
+			_ = os.Remove(link)
+			return "", err
+		}
+	}
+	if err := os.Rename(link, l.PlatformRoot()); err != nil {
+		_ = os.Remove(link)
+		_ = os.RemoveAll(target)
+		return "", err
+	}
+	if err := syncDirectory(l.Root); err != nil {
+		return "", err
+	}
+	if after != nil {
+		if err := after(HandoffInitialLinkSwitched); err != nil {
+			return target, err
+		}
+	}
+	return target, nil
+}
+
+func (l Layout) recoverInterruptedInitialActivation() (bool, error) {
+	if _, err := os.Lstat(l.PlatformRoot()); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	metadata, err := l.readMetadata()
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read interrupted install identity: %w", err)
+	}
+	if metadata.InitialTarget == "" || filepath.Base(metadata.InitialTarget) != metadata.InitialTarget {
+		return false, nil
+	}
+	target := filepath.Join(l.VersionsDir(), metadata.InitialTarget)
+	if _, err := os.Lstat(target); os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if err := l.validateVersionPath(target); err != nil {
+		return false, fmt.Errorf("interrupted install target is incomplete: %w", err)
+	}
+	installed, err := receipt.Read(target)
+	if err != nil || installed.InstallationID != metadata.InstallationID {
+		return false, fmt.Errorf("interrupted install target identity does not match installer state")
+	}
+	contract, err := os.ReadFile(filepath.Join(target, ".kb", "v2", "platform-layout.json"))
+	if err != nil || !bytes.Equal(contract, contracts.PlatformLayoutDocument()) {
+		return false, fmt.Errorf("interrupted install target does not contain the declared platform layout")
+	}
+	link, err := l.prepareCurrentLink(target)
+	if err != nil {
+		return false, err
+	}
+	if err := os.Rename(link, l.PlatformRoot()); err != nil {
+		_ = os.Remove(link)
+		return false, err
+	}
+	if err := syncDirectory(l.Root); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (l Layout) validateInterruptedInitialScaffold() (bool, error) {
+	metadata, err := l.readMetadata()
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil || metadata.InitialTarget == "" || filepath.Base(metadata.InitialTarget) != metadata.InitialTarget {
+		return false, nil
+	}
+	entries, err := os.ReadDir(l.Root)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if !l.isInitialContainerEntry(entry.Name()) {
+			return false, nil
+		}
+	}
+	versionEntries, err := os.ReadDir(l.VersionsDir())
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range versionEntries {
+		if entry.Name() != metadata.InitialTarget && (!strings.HasPrefix(entry.Name(), ".stage-") || !entry.IsDir()) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (l Layout) isInitialContainerEntry(name string) bool {
+	return ownedInstallEntryNames()[name]
+}
+
+func ownedInstallEntryNames() map[string]bool {
+	entries := contracts.OwnedInstallEntries()
+	owned := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		first, _, _ := strings.Cut(filepath.ToSlash(entry), "/")
+		owned[first] = true
+	}
+	return owned
+}
+
+func (l Layout) Validate() error {
+	if err := l.ValidateStructure(); err != nil {
+		return err
+	}
+	metadata, err := l.readMetadata()
+	if err != nil {
+		return err
+	}
+	active, err := l.Active()
+	if err != nil {
+		return err
+	}
+	installed, err := receipt.Read(active)
+	if err != nil {
+		return fmt.Errorf("read active version receipt: %w", err)
+	}
+	if metadata.InstallationID == "" || installed.InstallationID != metadata.InstallationID {
+		return fmt.Errorf("active receipt installation identity does not match the install-root identity")
+	}
+	owner, err := l.readOwnership()
+	if err != nil || owner.InstallationID != metadata.InstallationID {
+		return fmt.Errorf("install-root ownership record does not match installer state")
+	}
+	for _, path := range []string{metadata.LastHealthyRoot, metadata.RecoveryRoot} {
+		if path != "" {
+			if err := l.validateVersionPath(path); err != nil {
+				return fmt.Errorf("installation layout references an unavailable version root: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func (l Layout) ValidateStructure() error {
+	info, err := os.Lstat(l.Root)
+	if err != nil {
+		return fmt.Errorf("install root is not a container: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("install root %s is not a real directory", l.Root)
+	}
+	metadata, err := l.readMetadata()
+	if err != nil {
+		return fmt.Errorf("read installation identity: %w", err)
+	}
+	if metadata.InstallationID == "" {
+		return fmt.Errorf("install-root identity is missing")
+	}
+	owner, err := l.readOwnership()
+	if err != nil || owner.InstallationID != metadata.InstallationID {
+		return fmt.Errorf("install-root ownership record does not match installer state")
+	}
+	active, err := l.Active()
+	if err != nil {
+		return fmt.Errorf("resolve install-root current link: %w", err)
+	}
+	currentInfo, err := os.Lstat(l.PlatformRoot())
+	if err != nil || currentInfo.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("install-root current entry is not a symbolic link")
+	}
+	linkTarget, err := os.Readlink(l.PlatformRoot())
+	if err != nil || filepath.IsAbs(linkTarget) {
+		return fmt.Errorf("install-root current link must use a relative target")
+	}
+	if _, err := l.resolveVersionPath(active); err != nil {
+		return fmt.Errorf("active version root is outside the installation container: %w", err)
+	}
+	contract := filepath.Join(active, ".kb", "v2", "platform-layout.json")
+	data, err := os.ReadFile(contract)
+	if err != nil || !bytes.Equal(data, contracts.PlatformLayoutDocument()) {
+		return fmt.Errorf("platform layout contract is missing or does not match this launcher")
+	}
+	return nil
+}
+
+func (l Layout) validateVersionPath(root string) error {
+	abs, err := l.resolveVersionPath(root)
+	if err != nil {
+		return err
+	}
+	if _, err := receipt.Read(abs); err != nil {
+		return fmt.Errorf("read version root receipt: %w", err)
+	}
+	return nil
+}
+
+func (l Layout) resolveVersionPath(root string) (string, error) {
+	versions, err := filepath.EvalSymlinks(l.VersionsDir())
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	abs, err = filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(versions, abs)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s is not inside %s", root, versions)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", abs)
+	}
+	return filepath.Clean(abs), nil
+}
+
+func (l Layout) readMetadata() (Metadata, error) {
+	data, err := os.ReadFile(l.metadataPath())
+	if err != nil {
+		return Metadata{}, err
+	}
+	var metadata Metadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return Metadata{}, err
+	}
+	if metadata.Schema != LayoutMetadataSchema {
+		return Metadata{}, fmt.Errorf("unsupported installation layout metadata schema %q", metadata.Schema)
+	}
+	return metadata, nil
+}
+
+func (l Layout) writeMetadata(metadata Metadata) error {
+	if metadata.Schema == "" {
+		metadata.Schema = LayoutMetadataSchema
+	}
+	if err := os.MkdirAll(filepath.Dir(l.metadataPath()), 0o700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	temporary := l.metadataPath() + ".tmp"
+	file, err := os.OpenFile(temporary, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	if err := errors.Join(file.Sync(), file.Close()); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, l.metadataPath()); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(l.metadataPath()))
+}
+
+func (l Layout) RecoveryRoot() (string, error) {
+	if err := l.ValidateStructure(); err != nil {
+		return "", err
+	}
+	metadata, err := l.readMetadata()
+	if err != nil {
+		return "", err
+	}
+	root := metadata.LastHealthyRoot
+	if root == "" {
+		root = metadata.RecoveryRoot
+	}
+	if root == "" {
+		return "", fmt.Errorf("the installation has no recovery root")
+	}
+	return root, l.validateVersionPath(root)
+}
+
+func (l Layout) LastHealthyRoot() (string, error) {
+	metadata, err := l.readMetadata()
+	if err != nil {
+		return "", err
+	}
+	if metadata.LastHealthyRoot == "" {
+		return "", nil
+	}
+	return metadata.LastHealthyRoot, l.validateVersionPath(metadata.LastHealthyRoot)
+}
+
+func (l Layout) RecordHealthy() error {
+	if err := l.Validate(); err != nil {
+		return err
+	}
+	active, err := l.Active()
+	if err != nil {
+		return err
+	}
+	metadata, err := l.readMetadata()
+	if err != nil {
+		return err
+	}
+	metadata.LastHealthyRoot, metadata.RecoveryRoot = active, ""
+	if err := l.writeMetadata(metadata); err != nil {
+		return err
+	}
+	return l.Retain(active)
+}
+
+func (l Layout) WriteUpdateMetadata(_ string, metadata UpdateMetadata) error {
+	if err := os.MkdirAll(filepath.Dir(l.updateMetadataPath()), 0o700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	temporary := l.updateMetadataPath() + ".tmp"
+	if err := os.WriteFile(temporary, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temporary, l.updateMetadataPath())
+}
+
+func (l Layout) UpdateMetadata() (UpdateMetadata, error) {
+	data, err := os.ReadFile(l.updateMetadataPath())
+	if err != nil {
+		return UpdateMetadata{}, err
+	}
+	var metadata UpdateMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return UpdateMetadata{}, err
+	}
+	return metadata, nil
+}
+
+func (l Layout) RestorePrevious() (string, error) {
+	previous, err := l.RecoveryRoot()
+	if err != nil {
+		return "", err
+	}
+	link, err := l.prepareCurrentLink(previous)
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(link)
+	if err := os.Rename(link, l.PlatformRoot()); err != nil {
+		return "", fmt.Errorf("atomically restore last-healthy version root: %w", err)
+	}
+	if err := syncDirectory(l.Root); err != nil {
+		return previous, err
+	}
+	if err := l.Retain(""); err != nil {
+		return previous, err
+	}
+	return previous, nil
+}
+
+func (l Layout) Retained(runningRoot string) ([]RetainedVersion, error) {
+	active, err := l.Active()
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := l.readMetadata()
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{active}
+	healthy := metadata.LastHealthyRoot
+	if healthy == "" {
+		healthy = metadata.RecoveryRoot
+	}
+	if healthy != "" && filepath.Clean(healthy) != filepath.Clean(active) {
+		paths = append(paths, healthy)
+	}
+	if runningRoot != "" && filepath.Clean(runningRoot) != filepath.Clean(active) && filepath.Clean(runningRoot) != filepath.Clean(healthy) {
+		paths = append(paths, runningRoot)
+	}
+	items := make([]RetainedVersion, 0, len(paths))
+	for _, path := range paths {
+		installed, err := receipt.Read(path)
+		if err != nil {
+			return nil, fmt.Errorf("read retained version receipt at %s: %w", path, err)
+		}
+		role := "last-healthy"
+		if filepath.Clean(path) == filepath.Clean(active) {
+			role = "active"
+		} else if filepath.Clean(path) == filepath.Clean(runningRoot) {
+			role = "running"
+		}
+		bytes, err := treeSize(path)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, RetainedVersion{Version: installed.Plan.ServiceGraph.PlatformVersion, Role: role, Path: path, DiskUsageBytes: bytes})
+	}
+	return items, nil
+}
+
+func treeSize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
+}
+
+func (l Layout) Retain(runningRoot string) error {
+	active, err := l.Active()
+	if err != nil {
+		return err
+	}
+	metadata, err := l.readMetadata()
+	if err != nil {
+		return err
+	}
+	keep := map[string]struct{}{filepath.Clean(active): {}}
+	for _, root := range []string{metadata.LastHealthyRoot, metadata.RecoveryRoot, runningRoot} {
+		if root == "" {
+			continue
+		}
+		if err := l.validateVersionPath(root); err != nil {
+			return fmt.Errorf("retain version root: %w", err)
+		}
+		keep[filepath.Clean(root)] = struct{}{}
+	}
+	entries, err := os.ReadDir(l.VersionsDir())
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(l.VersionsDir(), entry.Name())
+		resolved, resolveErr := filepath.EvalSymlinks(path)
+		if resolveErr == nil {
+			if _, ok := keep[filepath.Clean(resolved)]; ok {
+				continue
+			}
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("prune version root %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func (l Layout) RemoveOwned() error {
+	if err := l.ValidateStructure(); err != nil {
+		if !l.hasOwnershipMarker() {
+			entries, readErr := os.ReadDir(l.Root)
+			if os.IsNotExist(readErr) {
+				return nil
+			}
+			if readErr != nil {
+				return readErr
+			}
+			if len(entries) == 0 {
+				return os.Remove(l.Root)
+			}
+			return err
+		}
+	}
+	for _, entry := range contracts.OwnedInstallEntries() {
+		path := filepath.Join(l.Root, filepath.FromSlash(entry))
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove owned install entry %s: %w", entry, err)
+		}
+	}
+	entries, err := os.ReadDir(l.Root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return os.Remove(l.Root)
+	}
+	return nil
+}
+
+func (l Layout) PreservedEntries() ([]string, error) {
+	owned := ownedInstallEntryNames()
+	entries, err := os.ReadDir(l.Root)
+	if err != nil {
+		return nil, err
+	}
+	preserved := make([]string, 0)
+	for _, entry := range entries {
+		name := entry.Name()
+		if !owned[name] {
+			preserved = append(preserved, filepath.Join(l.Root, name))
+		}
+	}
+	if !l.hasOwnershipMarker() {
+		if len(preserved) != 0 || len(entries) != 0 {
+			return nil, fmt.Errorf("install root has no valid ownership record")
+		}
+	}
+	return preserved, nil
+}
+
+func versionKey(version, planHash string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' {
+			return r
+		}
+		return '-'
+	}, version)
+	if clean == "" {
+		clean = "release"
+	}
+	return clean + "-" + shortHash([]byte(planHash))
+}
+
+func shortHash(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:8]) }

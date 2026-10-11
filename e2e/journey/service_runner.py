@@ -27,14 +27,14 @@ from invocations import (decode_ux_error_result, decode_ux_success_result, open_
                          store_report_secret,
                          run_with_runner, write_report_json, write_report_text)
 from plugin_author_steps import run_plugin_author_flow
-from marketplace_steps import run_marketplace_steps
+from marketplace_steps import prepare_commit_project_fixture, run_marketplace_steps
 from marketplace_steps import _registry_version, _output
 from adapter_defaults_steps import run_adapter_default_steps
 from analytics_steps import run_analytics_steps
-from gateway_steps import run_gateway_steps
+from gateway_steps import run_adapter_catalog_step, run_gateway_steps
 from worktree_steps import run_worktree_steps
 from project_identity_steps import run_project_identity_steps, run_project_registry_steps
-from workspace_steps import run_workspace_cli_steps
+from workspace_steps import run_workspace_cli_steps, workspace_checkout_problem
 from plugin_isolation_steps import run_project_plugin_availability_steps
 from mcp_project_steps import (
     apply_commit_plan,
@@ -51,7 +51,7 @@ from mcp_project_steps import (
     unknown_tool,
 )
 from platform_state_dump import archive_service_logs
-from journey_resources import journey_module
+from journey_resources import journey_module, active_platform_root
 
 
 BASE_URL = os.getenv("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -59,6 +59,16 @@ PROJECT_ID = os.getenv("KB_JOURNEY_PROJECT_ID", "")
 ADMIN_EMAIL = os.getenv("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
 ADMIN_PASSWORD = os.getenv("KB_JOURNEY_ADMIN_PASSWORD", "")
 HTTP = build_opener(HTTPCookieProcessor(http.cookiejar.CookieJar()))
+
+
+def repository_git_status(project: Path) -> str | None:
+    result = run_command(
+        ["git", "status", "--porcelain", "--untracked-files=all"], cwd=project,
+        capture_output=True, text=True, check=False, timeout=30,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
 
 
 def project_plugin_settings_isolation() -> str | None:
@@ -97,6 +107,7 @@ def project_plugin_settings_isolation() -> str | None:
         root = Path(temp)
         projects = [root / "project-a", root / "project-b"]
         ids: list[str] = []
+        repository_baselines: dict[Path, str] = {}
         for project in projects:
             project.mkdir()
             initialized = run_command(
@@ -105,6 +116,10 @@ def project_plugin_settings_isolation() -> str | None:
             )
             if initialized.returncode != 0:
                 return f"could not initialize disposable settings fixture: {initialized.stderr.strip()}"
+            status = repository_git_status(project)
+            if status is None:
+                return f"could not capture the clean {project.name} repository tree"
+            repository_baselines[project] = status
             registered = run_cli(project, "project", "add", str(project), "--json")
             if registered.returncode != 0:
                 return f"kb project add failed for {project.name}: {(registered.stderr or registered.stdout).strip()}"
@@ -180,6 +195,13 @@ def project_plugin_settings_isolation() -> str | None:
             return "Project A config get did not return its project value and provenance"
         if not isinstance(b_value, list) or b_value[0].get("id") != "journey-shared" or b_layer != "platform":
             return "Project B config get did not return the inherited platform value and provenance"
+
+        for project in projects:
+            status = repository_git_status(project)
+            if status is None:
+                return f"could not inspect {project.name} repository tree after the settings flow"
+            if status != repository_baselines[project] or (project / ".kb").exists():
+                return f"project settings commands changed {project.name}'s repository tree"
 
         # Legacy repository config and overlays are deliberately ignored; scenario overlays live in platform state.
         legacy_dir = projects[0] / ".kb"
@@ -357,6 +379,21 @@ def expect_json(path: str, capability: str, *, token="") -> str | None:
     return None
 
 
+def expect_project_service_health(path: str, service_id: str, *, token="") -> str | None:
+    try:
+        status, payload, _ = request_ux_success(path, token=token)
+    except ValueError as error:
+        return f"project service {service_id} health returned an invalid UX result envelope: {error}"
+    if status != 200 or not isinstance(payload, dict):
+        return f"project service {service_id} health returned HTTP {status} without a health payload"
+    health_status = payload.get("status")
+    if payload.get("ready") is False or health_status == "unhealthy":
+        return f"project service {service_id} reported unhealthy status {health_status!r}"
+    if health_status not in {"healthy", "ok", "degraded", "ready"} and payload.get("ready") is not True:
+        return f"project service {service_id} health payload has no recognized status"
+    return None
+
+
 def service_check(name, capability, check, *, cases=()):
     return name, capability, check, list(cases)
 
@@ -391,8 +428,8 @@ def _checks(mode: str):
 
     def platform_readiness() -> str | None:
         gateway_error = expect_json("/ready", "gateway readiness")
-        workflow_error = expect_json(
-            project_service_path(pid, "workflow", "health"), "project-aware workflow health", token=auth_token())
+        workflow_error = expect_project_service_health(
+            project_service_path(pid, "workflow", "health"), "workflow", token=auth_token())
         errors = [error for error in (gateway_error, workflow_error) if error]
         return "; ".join(errors) if errors else None
 
@@ -441,6 +478,8 @@ def _checks(mode: str):
             return f"registered project runtime REST health returned HTTP {status} at {path}"
         if not isinstance(body, dict):
             return "registered project runtime REST health returned no JSON object"
+        if body.get("status") not in {"healthy", "degraded"}:
+            return "registered project runtime REST health payload has no recognized status"
         return None
     yield service_check("registered project runtime identity", "projects", project_runtime_identity,
                         cases=["PC-002.8", "S-124.11", "S-124.13"])
@@ -614,8 +653,13 @@ SERVICE_GROUPS = {
              "produces": ("session",)},
     "projects": {"capabilities": {"projects"}, "depends_on": ("host-running",)},
     "workflow": {"capabilities": {"workflow"}, "depends_on": ("host-running", "project-registered")},
-    "marketplace": {"capabilities": {"marketplace"}, "depends_on": ("host-running", "project-registered"),
-                     "produces": ("marketplace-available",)},
+    "marketplace-fixture-producer": {"capabilities": set(),
+                                     "depends_on": ("host-running", "project-registered"),
+                                     "produces": ("marketplace-available",)},
+    "marketplace": {"capabilities": {"marketplace"},
+                     "depends_on": ("host-running", "project-registered")},
+    "marketplace-lifecycle": {"capabilities": set(),
+                              "depends_on": ("host-running", "project-registered", "marketplace-available")},
     "marketplace-fixtures": {"capabilities": set(),
                              "depends_on": ("host-running", "project-registered", "marketplace-available"),
                              "produces": ("fixtures-installed",)},
@@ -695,12 +739,28 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
     graph.flow("project registry and current-project flows", "project-registry", "projects",
                lambda: run_project_registry_steps(journey, str(cli_path), env, registry),
                cases=["S-043.1", "S-196.1"], record_empty_success=False)
-    graph.flow("project identity flows", "project-identity", "projects",
-               lambda: run_project_identity_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root))),
-               cases=["S-043.1", "S-196.1"], record_empty_success=False)
+    workspace_root = Path(os.environ.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+
+    def run_workspace_flows() -> None:
+        problem = workspace_checkout_problem(workspace_root)
+        if problem:
+            journey.step(
+                "workspace checkout is staged and built",
+                "workspace-cli",
+                lambda: problem,
+                cases=[
+                    "S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
+                    "S-142.5", "S-203.1", "S-203.19", "S-204.7",
+                ],
+            )
+            return
+        run_project_identity_steps(journey, workspace_root)
+        run_workspace_cli_steps(journey, workspace_root, prechecked=True)
+
     graph.flow("workspace CLI flows", "workspace", "workspace",
-               lambda: run_workspace_cli_steps(journey, Path(os.environ.get("KB_PLATFORM_ROOT", project_root))),
-               cases=["S-179.2", "S-179.3", "S-179.5", "S-203.1"], record_empty_success=False)
+               run_workspace_flows,
+               cases=["S-179.2", "S-179.3", "S-179.4", "S-179.5", "S-179.13",
+                      "S-142.5", "S-203.1", "S-203.19", "S-204.7"], record_empty_success=False)
     project_b_root = os.environ.get("KB_JOURNEY_PROJECT_B_ROOT", "")
     if project_b_root:
         graph.flow("project plugin availability", "plugin-availability", "plugins",
@@ -712,9 +772,9 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                cases=["S-054.1", "S-048.1"], record_empty_success=False)
     platform_root = Path(env.get("KB_JOURNEY_PLATFORM_ROOT", project_root))
     def adapter_defaults_probe() -> str | None:
-        config_path = platform_root / ".kb" / "kb.config.jsonc"
+        config_path = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"
         if not config_path.is_file():
-            config_path = platform_root / ".kb" / "kb.config.json"
+            config_path = active_platform_root(platform_root) / ".kb" / "kb.config.json"
         try:
             value = json.loads(config_path.read_text())
         except (OSError, json.JSONDecodeError) as error:
@@ -951,14 +1011,14 @@ def main() -> int:
         registry = os.getenv("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
         if project_root:
             env = os.environ.copy()
-            if args.mode == "local":
-                graph.flow("marketplace flow", "marketplace", "marketplace",
-                           lambda: run_marketplace_steps(journey, project_root, registry, env),
-                           cases=["S-010.1"], record_empty_success=False)
-            else:
-                graph.flow("marketplace flow", "marketplace", "marketplace",
-                           lambda: run_marketplace_steps(journey, project_root, registry, env),
-                           cases=["S-041.7"], record_empty_success=False)
+            fixture_entry: dict | None = None
+            def produce_commit_fixture() -> None:
+                nonlocal fixture_entry
+                fixture_entry = prepare_commit_project_fixture(journey, project_root, registry, env)
+
+            graph.flow("produce Commit project fixture", "marketplace-fixture-producer", "marketplace-fixtures",
+                       produce_commit_fixture,
+                       record_empty_success=False)
             project_lock = Path(project_root) / ".kb" / "marketplace.lock"
             def marketplace_probe() -> str | None:
                 try:
@@ -967,7 +1027,7 @@ def main() -> int:
                     return f"project plugin lock is missing or unreadable: {error}"
                 entry = lock.get("plugins", {}).get("@kb-labs/commit")
                 return None if isinstance(entry, dict) and entry.get("package") == "@kb-labs/commit-entry" and entry.get("version") else "Commit fixture is absent from the project marketplace lock"
-            graph.probe_state("marketplace-available", "marketplace", "marketplace install",
+            graph.probe_state("marketplace-available", "marketplace-fixture-producer", "Commit project fixture",
                               marketplace_probe)
             graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
                        lambda: _prepare_and_export_mcp_projects(project_root, registry, env),
@@ -984,6 +1044,10 @@ def main() -> int:
                 return None if all(fixtures.get(key) for key in required) else "project fixture handoff omitted a registered project field"
             graph.probe_state("fixtures-installed", "marketplace-fixtures", "project fixture handoff",
                               fixtures_probe)
+            graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                       lambda: run_marketplace_steps(journey, project_root, registry, env,
+                                                     fixture_entry=fixture_entry),
+                       record_empty_success=False)
         run_service_steps(journey, declared_steps, args.mode, graph=graph)
         if PROJECT_ID:
             if project_root:
@@ -1007,9 +1071,13 @@ def main() -> int:
         graph.flow("gateway extras", "gateway-extra", "gateway-extra",
                    lambda: run_gateway_steps(journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")),
                    cases=["S-017.1", "S-017.2", "S-017.3", "S-017.4", "S-017.5",
-                          "S-018.1", "S-018.2", "S-018.3", "S-189.1", "S-189.2",
-                          "S-189.3", "S-189.4", "S-189.5", "S-189.6", "S-190.1", "S-190.2"],
+                          "S-018.1", "S-018.2", "S-018.3", "S-189.2",
+                          "S-189.3", "S-189.4", "S-189.5", "S-189.6", "S-189.7", "S-190.1", "S-190.2"],
                    record_empty_success=False)
+        graph.step("discover platform adapter method catalog", "gateway-extra", "gateway-extra",
+                   lambda: run_adapter_catalog_step(
+                       journey, token=os.getenv("KB_JOURNEY_SERVICE_TOKEN", "")),
+                   cases=["S-189.1"])
         if project_root:
             _run_installed_flows(journey, project_root, registry, graph)
         else:

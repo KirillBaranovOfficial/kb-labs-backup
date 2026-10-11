@@ -17,6 +17,7 @@ import (
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
 	"github.com/kb-labs/create/v2/receipt"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // Doctor answers two different questions and keeps them apart, because they
@@ -68,7 +69,7 @@ func InspectInstallation(platformRoot string, state host.State) Section {
 	active, err := receipt.Read(platformRoot)
 	if err != nil {
 		checks = append(checks, Check{ID: "receipt", Detail: "The active installation receipt cannot be read: " + err.Error(), Hint: "Run \"kb-create apply\" to install, or restore a snapshot with \"kb-create rollback\"."})
-		return NewSection(append(checks, stateCheck(state)))
+		return NewSection(append(checks, stateCheck(platformRoot, state)))
 	}
 	if active.Plan.ServiceGraph.Profile == "client" {
 		if active.Plan.Host != nil || len(active.Plan.ServiceGraph.Services) != 0 {
@@ -77,7 +78,7 @@ func InspectInstallation(platformRoot string, state host.State) Section {
 		if _, err := os.Stat(filepath.Join(platformRoot, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
 			return NewSection([]Check{{ID: "client-runtime-config", Detail: "The client profile must not contain host runtime configuration."}})
 		}
-		return NewSection([]Check{{ID: "receipt", OK: true, Detail: "client installation " + active.ID}, stateCheck(state)})
+		return NewSection([]Check{{ID: "receipt", OK: true, Detail: "client installation " + active.ID}, stateCheck(platformRoot, state)})
 	}
 	checks = append(checks, Check{ID: "receipt", OK: true, Detail: "platform " + active.Plan.ServiceGraph.PlatformVersion + ", receipt " + active.ID})
 	if _, err := os.Stat(filepath.Join(platformRoot, ".kb", "kb.config.jsonc")); err != nil {
@@ -86,7 +87,7 @@ func InspectInstallation(platformRoot string, state host.State) Section {
 		checks = append(checks, Check{ID: "config", OK: true})
 	}
 	checks = append(checks, hostSpecCheck(platformRoot, active))
-	checks = append(checks, stateCheck(state))
+	checks = append(checks, stateCheck(platformRoot, state))
 	return NewSection(checks)
 }
 
@@ -96,19 +97,23 @@ func hostSpecCheck(platformRoot string, active contracts.InstallReceipt) Check {
 	}
 	spec, err := host.NewSpec(platformRoot, *active.Plan.Host)
 	if err != nil {
-		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host specification is invalid: " + err.Error() + ".", Hint: fmt.Sprintf("Run `kb-create apply --platform-root %q` to regenerate the installed host specification.", platformRoot)}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host specification is invalid: " + err.Error() + ".", Hint: "Run `" + contracts.ShellCommand("kb-create", "apply", "--platform-root", platformRoot) + "` to regenerate the installed host specification."}
 	}
 	if _, err := exec.LookPath(spec.Command); err != nil {
-		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host command " + spec.Command + " is not installed.", Hint: fmt.Sprintf("Run `kb-create apply --platform-root %q` or `kb-create rollback --platform-root %q` to restore the platform files.", platformRoot, platformRoot)}
+		return Check{ID: "host-spec", Code: contracts.CodeHostSpecInvalid, Detail: "The host command " + spec.Command + " is not installed.", Hint: "Run `" + contracts.ShellCommand("kb-create", "apply", "--platform-root", platformRoot) + "` or `" + contracts.ShellCommand("kb-create", "rollback", "--platform-root", platformRoot) + "` to restore the platform files."}
 	}
 	return Check{ID: "host-spec", OK: true, Detail: spec.Command}
 }
 
-func stateCheck(state host.State) Check {
+func stateCheck(platformRoot string, state host.State) Check {
 	if err := state.Ensure(); err != nil {
-		return Check{ID: "launcher-state", Detail: "Cannot write to " + state.Dir + ": " + err.Error(), Hint: "Fix the directory permissions or set KB_HOME to a writable directory."}
+		layout, layoutErr := versionroot.ForPlatformPath(platformRoot)
+		if layoutErr != nil {
+			return Check{ID: "host-state", Detail: "Cannot write to " + state.Dir + ": " + err.Error(), Hint: "Fix the permissions on the path shown, then rerun `kb-create doctor`."}
+		}
+		return Check{ID: "host-state", Detail: "Cannot write to " + state.Dir + ": " + err.Error(), Hint: "Fix permissions on the install-root state directory, then rerun `" + contracts.ShellCommand("kb-create", "doctor", "--platform-root", layout.InstallRoot()) + "`."}
 	}
-	return Check{ID: "launcher-state", OK: true, Detail: state.Dir}
+	return Check{ID: "host-state", OK: true, Detail: state.Dir}
 }
 
 // InspectPlatform checks the running host: its process, the gateway health

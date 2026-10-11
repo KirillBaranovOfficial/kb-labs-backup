@@ -22,6 +22,7 @@ import (
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/transport"
 	"github.com/kb-labs/create/v2/verify"
+	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/kb-labs/create/v2/wizard"
 )
 
@@ -85,6 +86,8 @@ func TestOfflineJourneyUsesResolvedGraphAsSingleTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	layout, stage := prepareFreshContainer(t, root)
+	plan.Request.PlatformRoot = stage
 	if _, err := render.Write(plan); err != nil {
 		t.Fatal(err)
 	}
@@ -95,15 +98,27 @@ func TestOfflineJourneyUsesResolvedGraphAsSingleTruth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "r1", Plan: plan, Verification: check}
-	if err := receipt.Write(root, r); err != nil {
+	installed := contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "r1", Plan: plan, Verification: check}
+	installed.InstallationID, err = versionroot.InstallationIDForPath(stage)
+	if err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := receipt.Read(root)
+	if err := receipt.Write(stage, installed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateInitial(stage, "2.0.0", plan.PlanHash); err != nil {
+		t.Fatal(err)
+	}
+	plan.Request.PlatformRoot = layout.PlatformRoot()
+	installed.Plan.Request.PlatformRoot = layout.PlatformRoot()
+	if err := receipt.Write(layout.PlatformRoot(), installed); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := receipt.Read(layout.PlatformRoot())
 	if err != nil || loaded.Plan.PlanHash != plan.PlanHash {
 		t.Fatalf("receipt %#v, %v", loaded, err)
 	}
-	config, err := os.ReadFile(filepath.Join(root, ".kb", "kb.config.jsonc"))
+	config, err := os.ReadFile(filepath.Join(layout.PlatformRoot(), ".kb", "kb.config.jsonc"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,27 +134,36 @@ func TestOfflineJourneyUsesResolvedGraphAsSingleTruth(t *testing.T) {
 func TestOfflineLifecycleUsesReceiptSnapshotsForUpdateRollbackAndUninstall(t *testing.T) {
 	root := t.TempDir()
 	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Host: testHost(), PlanHash: "first-plan", Request: contracts.InstallRequest{PlatformRoot: root}, Artifacts: []contracts.Artifact{{ID: "platform", Package: "@kb/platform", Version: "1.0.0"}}, ServiceGraph: contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Command: "gateway", Required: true}}}}
-	artifacts := &offlineArtifacts{root: root}
+	layout, stage := prepareFreshContainer(t, root)
+	plan.Request.PlatformRoot = stage
+	artifacts := &offlineArtifacts{root: stage}
 	deps := runtime.Dependencies{Artifacts: artifacts, Clock: journeyClock{time.Unix(10, 0)}}
 	first, err := runtime.Apply(context.Background(), plan, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated := plan
+	first = finishFreshContainer(t, layout, stage, first)
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts.root = activeRoot
+	updated := first.Plan
 	updated.PlanHash, updated.Artifacts[0].Version = "second-plan", "1.1.0"
+	updated.Request.PlatformRoot = layout.PlatformRoot()
 	deps.Clock = journeyClock{time.Unix(11, 0)}
 	second, snapshot, err := runtime.Update(context.Background(), updated, deps)
 	if err != nil || second.SnapshotID != snapshot.ID {
 		t.Fatalf("update = %#v / %#v / %v", second, snapshot, err)
 	}
-	active, err := receipt.Read(root)
+	active, err := receipt.Read(layout.PlatformRoot())
 	if err != nil || active.Plan.Artifacts[0].Version != "1.1.0" || active.SnapshotID != snapshot.ID {
 		t.Fatalf("updated receipt = %#v / %v", active, err)
 	}
-	if _, err := receipt.RestoreSnapshot(root, snapshot.ID); err != nil {
+	if _, err := receipt.RestoreSnapshot(layout.PlatformRoot(), layout.SnapshotsDir(), snapshot.ID); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := receipt.Read(root)
+	restored, err := receipt.Read(layout.PlatformRoot())
 	if err != nil || restored.ID != first.ID {
 		t.Fatalf("restored = %#v / %v", restored, err)
 	}
@@ -201,13 +225,16 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifacts := &offlineArtifacts{root: root}
-	receipt, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts})
+	layout, stage := prepareFreshContainer(t, root)
+	plan.Request.PlatformRoot = stage
+	artifacts := &offlineArtifacts{root: stage}
+	installed, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Plan.PlanHash != plan.PlanHash {
-		t.Fatalf("receipt plan hash = %q, want %q", receipt.Plan.PlanHash, plan.PlanHash)
+	installed = finishFreshContainer(t, layout, stage, installed)
+	if installed.Plan.PlanHash != plan.PlanHash {
+		t.Fatalf("receipt plan hash = %q, want %q", installed.Plan.PlanHash, plan.PlanHash)
 	}
 	foundPlugin := false
 	for _, artifact := range artifacts.installed {
@@ -218,7 +245,7 @@ func TestOfflineApplyCompletesPluginAndWorkflowReadyPath(t *testing.T) {
 	if !foundPlugin {
 		t.Fatalf("installed artifacts = %#v, plugin outcome is missing", artifacts.installed)
 	}
-	config, err := os.ReadFile(filepath.Join(root, ".kb", render.ConfigFilename))
+	config, err := os.ReadFile(filepath.Join(layout.PlatformRoot(), ".kb", render.ConfigFilename))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,15 +307,19 @@ func TestTransportMatrixUsesOneResolvedPluginWorkflowPath(t *testing.T) {
 		t.Fatalf("transport artifact sets differ: human=%v agent=%v ci=%v", artifactIDs(humanPlan.Artifacts), artifactIDs(agentResponse.Plan.Artifacts), artifactIDs(ciPlan.Artifacts))
 	}
 	for _, plan := range []contracts.ResolvedInstallPlan{humanPlan, *agentResponse.Plan, ciPlan} {
-		artifacts := &offlineArtifacts{root: plan.Request.PlatformRoot}
-		if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts}); err != nil {
+		layout, stage := prepareFreshContainer(t, plan.Request.PlatformRoot)
+		plan.Request.PlatformRoot = stage
+		artifacts := &offlineArtifacts{root: stage}
+		installed, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts})
+		if err != nil {
 			t.Fatalf("%s apply: %v", plan.Request.PlatformRoot, err)
 		}
+		installed = finishFreshContainer(t, layout, stage, installed)
 		if !containsArtifact(artifacts.installed, "user-plugin") {
 			t.Fatalf("%s did not install selected plugin: %#v", plan.Request.PlatformRoot, artifacts.installed)
 		}
-		if _, err := receipt.Read(plan.Request.PlatformRoot); err != nil {
-			t.Fatalf("%s missing verified receipt: %v", plan.Request.PlatformRoot, err)
+		if _, err := receipt.Read(layout.PlatformRoot()); err != nil {
+			t.Fatalf("%s missing verified receipt: %v", layout.PlatformRoot(), err)
 		}
 	}
 }

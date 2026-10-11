@@ -8,6 +8,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"os"
 	"path/filepath"
+
 	"strings"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -39,7 +40,7 @@ func Redact(value string, secrets []string) string {
 	}
 	return result
 }
-func Write(platformRoot string, dossier Dossier, secrets []string) (string, error) {
+func Write(directory string, dossier Dossier, secrets []string) (string, error) {
 	if dossier.CorrelationID == "" {
 		return "", fmt.Errorf("diagnostic correlation ID is required")
 	}
@@ -61,11 +62,10 @@ func Write(platformRoot string, dossier Dossier, secrets []string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(platformRoot, ".kb", "diagnostics")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(directory, 0o750); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, dossier.CorrelationID+".json")
+	path := filepath.Join(directory, dossier.CorrelationID+".json")
 	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return "", err
 	}

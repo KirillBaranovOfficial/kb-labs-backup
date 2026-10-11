@@ -304,7 +304,6 @@ const platformMemberRoots = new Set([
   ...configuredPlatformAdapterPackages,
   sdk.name,
 ]);
-const sealedPlatformPackages = new Set(platformMemberRoots);
 const packageRootFor = specifier => specifier.startsWith('@')
   ? specifier.split('/').slice(0, 2).join('/')
   : specifier.split('/')[0];
@@ -385,8 +384,6 @@ const runtimeImportsFor = item => {
   }
   return [...imports.values()];
 };
-const runtimePeerPackages = new Set();
-const packagesToValidate = [...platformMemberRoots];
 const dependencyClosureCache = new Map();
 const dependencyClosureFor = packageName => {
   if (dependencyClosureCache.has(packageName)) return dependencyClosureCache.get(packageName);
@@ -405,6 +402,17 @@ const dependencyClosureFor = packageName => {
   }
   return closure;
 };
+// Platform members and the SDK are installed into one platform node_modules
+// tree. Derive peer availability from that exact sealed package graph; mere
+// presence in the release stage does not make a peer available to consumers.
+const platformProvidedPackages = new Set();
+for (const packageName of platformMemberRoots) {
+  for (const dependency of dependencyClosureFor(packageName)) {
+    if (byName.has(dependency)) platformProvidedPackages.add(dependency);
+  }
+}
+const packagesToValidate = [...platformProvidedPackages];
+const runtimeImportViolations = [];
 for (let index = 0; index < packagesToValidate.length; index += 1) {
   const packageName = packagesToValidate[index];
   const item = byName.get(packageName);
@@ -432,27 +440,25 @@ for (let index = 0; index < packagesToValidate.length; index += 1) {
     if (!dependency.startsWith('@kb-labs/')) continue;
     if (optionalPeers.has(dependency)) {
       if (staticImport) {
-        throw new Error(`${packageName} runtime entrypoint ${specifier} statically imports optional peer ${dependency}`);
+        runtimeImportViolations.push(`${packageName} runtime entrypoint ${specifier} statically imports optional peer ${dependency}`);
       }
       continue;
     }
-    const declaredByPackage = dependencies.has(dependency) || dependencyClosure.has(dependency) || peers.has(dependency);
+    const providedPeer = peers.has(dependency) && platformProvidedPackages.has(dependency);
+    if (peers.has(dependency) && !providedPeer) {
+      runtimeImportViolations.push(`${packageName} runtime import ${specifier} is satisfied only by peer ${dependency}, which the platform package graph does not provide`);
+      continue;
+    }
+    const declaredByPackage = dependencies.has(dependency) || providedPeer;
     if (optional && !declaredByPackage) continue;
     if (!declaredByPackage) {
-      throw new Error(`${packageName} runtime import ${specifier} is neither a dependency nor a sealed peer`);
-    }
-    if (!peers.has(dependency)) continue;
-    if (!byName.has(dependency)) {
-      throw new Error(`${packageName} runtime peer ${dependency} is absent from stage manifest`);
-    }
-    runtimePeerPackages.add(dependency);
-    if (!sealedPlatformPackages.has(dependency)) {
-      sealedPlatformPackages.add(dependency);
-      packagesToValidate.push(dependency);
+      runtimeImportViolations.push(`${packageName} runtime import ${specifier} is neither a dependency nor a sealed peer`);
     }
   }
 }
-const sealedRuntimePeerPackages = [...runtimePeerPackages];
+if (runtimeImportViolations.length > 0) {
+  throw new Error(`runtime package import validation failed:\n${runtimeImportViolations.map(violation => `- ${violation}`).join('\n')}`);
+}
 
 const hostItem = byName.get(hostPackage);
 if (!hostItem) throw new Error(`host package ${hostPackage} is absent from stage manifest; a platform release must ship the host`);
@@ -507,7 +513,6 @@ const exportValue = {
       hostPackage,
       ...platformMemberPackages,
       ...configuredPlatformAdapterPackages,
-      ...sealedRuntimePeerPackages,
     ])].map(packageName => {
       const item = byName.get(packageName);
       return item ? component(item, undefined,

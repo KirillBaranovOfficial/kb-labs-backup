@@ -13,6 +13,7 @@ import (
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/spf13/cobra"
 )
 
@@ -50,9 +51,14 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	if root == "" {
 		root = defaultPlatformRoot()
 	}
+	layout, layoutErr := versionroot.New(root)
+	if layoutErr != nil {
+		return nil, unsupportedPlatformLayout(root, layoutErr)
+	}
+	platformRoot := layout.PlatformRoot()
 	in.PlatformRoot = root
 	if in.InputFile == "" {
-		if _, err := receipt.Read(root); err != nil {
+		if _, err := receipt.Read(platformRoot); err != nil {
 			return nil, contracts.NewDiag(contracts.CodeReceiptUnavailable, "No active installation receipt was found.", "Run `kb-create install` to create the platform, then retry `kb-create doctor`.", err)
 		}
 	}
@@ -66,19 +72,19 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 		}
 		doctorInput, err = doctor.Decode(data)
 	} else {
-		active, readErr := receipt.Read(root)
+		active, readErr := receipt.Read(platformRoot)
 		if readErr != nil {
 			err = fmt.Errorf("read active V2 receipt: %w", readErr)
 		} else if active.Plan.ServiceGraph.Profile == "client" {
 			doctorInput = doctor.Input{Configured: map[string]bool{}}
 		} else {
-			issues, inspectErr := installed.InspectProjections(root, active.Plan.Artifacts)
+			issues, inspectErr := installed.InspectProjections(platformRoot, active.Plan.Artifacts)
 			if inspectErr != nil {
 				err = inspectErr
 			} else if len(issues) > 0 {
 				manifestFindings = projectionFindings(issues)
 			} else {
-				doctorInput, err = automaticDoctorInput(root)
+				doctorInput, err = automaticDoctorInput(platformRoot)
 			}
 		}
 	}
@@ -87,26 +93,52 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 	}
 	findings := append(doctor.Diagnose(doctorInput.Manifests, doctorInput.Configured), manifestFindings...)
 	response := doctor.Response{Findings: findings, Repair: doctor.PlanRepair(findings)}
-	if in.Executable != "" {
-		if _, dangling := shim.Dangling(in.Executable); dangling {
-			response.Findings = append(response.Findings, doctor.Finding{Code: "KB_INSTALL_SHIM_DANGLING", Severity: doctor.SeverityError,
-				Component: "kb-create", Path: shim.Path(in.Executable), Hint: fmt.Sprintf("Run `kb-create doctor --fix --platform-root %q`.", root)})
-		}
-	}
-	if active, readErr := receipt.Read(root); readErr == nil {
-		response.PlatformChannel, response.PlatformVersion = active.Plan.PlatformChannel, active.Plan.ServiceGraph.PlatformVersion
-		response.Profile = active.Plan.ServiceGraph.Profile
-	}
-	state, stateErr := host.StateHome()
+	state, stateErr := host.StateForRoot(root)
 	if stateErr != nil {
 		return nil, asDiag(stateErr)
 	}
-	installation := doctor.InspectInstallation(root, state)
-	if in.Executable != "" && !shim.Correct(in.Executable, root) {
-		installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: fmt.Sprintf("Run `kb-create doctor --fix --platform-root %q` to repair the command shim when its current owner has been removed.", root)})
+	if in.Executable != "" {
+		if _, dangling := shim.Dangling(in.Executable); dangling {
+			response.Findings = append(response.Findings, doctor.Finding{Code: "KB_INSTALL_SHIM_DANGLING", Severity: doctor.SeverityError,
+				Component: "kb-create", Path: shim.Path(in.Executable), Hint: "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "`."})
+		}
+	}
+	if active, readErr := receipt.Read(platformRoot); readErr == nil {
+		response.PlatformChannel, response.PlatformVersion = active.Plan.PlatformChannel, active.Plan.ServiceGraph.PlatformVersion
+		response.InstalledVersion = active.Plan.ServiceGraph.PlatformVersion
+		response.Profile = active.Plan.ServiceGraph.Profile
+		runningRoot := ""
+		if runner, runnerErr := host.NewRecordedRunner(root); runnerErr == nil {
+			if running, statusErr := runner.Status(context.Background()); statusErr == nil {
+				response.RunningVersion = running.PlatformVersion
+				response.PendingRestart = pendingRestart(active, running, root)
+				if running.PID > 0 {
+					runningRoot = running.TreeRoot
+				}
+			}
+		}
+		if layoutErr := layout.Validate(); layoutErr != nil {
+			return nil, unsupportedPlatformLayout(root, layoutErr)
+		}
+		versions, retentionErr := layout.Retained(runningRoot)
+		if retentionErr != nil {
+			return nil, contracts.NewDiag(contracts.CodeOperationFailed, "retained platform versions could not be inspected", "check that the installed root and its version directory are readable, then retry `kb-create doctor`", retentionErr)
+		}
+		snapshots, retentionErr := receipt.ListSnapshots(layout.SnapshotsDir())
+		if retentionErr != nil {
+			return nil, contracts.NewDiag(contracts.CodeOperationFailed, "recovery snapshots could not be inspected", "check the V2 receipt directory, then retry `kb-create doctor`", retentionErr)
+		}
+		response.Retention = &doctor.RetentionReport{InstallRoot: root, PlatformRoot: platformRoot,
+			VersionsDirectory: layout.VersionsDir(), SharedState: layout.SharedStateDir(), InstallerState: layout.InstallerStateDir(),
+			HostState: layout.HostStateDir(),
+			Versions:  versions, Snapshots: snapshots}
+	}
+	installation := doctor.InspectInstallation(platformRoot, state)
+	if in.Executable != "" && !shim.Correct(in.Executable, platformRoot) {
+		installation.Checks = append(installation.Checks, doctor.Check{ID: "kb-command-shim", Detail: "The `kb` command shim is missing or points to another platform.", Hint: "Run `" + contracts.ShellCommand("kb-create", "doctor", "--fix", "--platform-root", root) + "` to repair the command shim when its current owner has been removed."})
 		installation.OK = false
 	}
-	platform := in.inspectPlatform(state)
+	platform := in.inspectPlatform()
 	response.Installation, response.Platform = &installation, &platform
 	response.OK = !doctor.HasErrors(response.Findings) && installation.OK && platform.OK
 	response.Installed = installation.OK

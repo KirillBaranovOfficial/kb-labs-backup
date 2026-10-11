@@ -63,6 +63,7 @@ export interface AddProjectOptions {
 export interface AddProjectResult {
   project: ProjectRecord;
   declaration: ProjectDeclarationState;
+  alreadyExisted: boolean;
 }
 
 /** A registered project together with facts read from disk at query time. */

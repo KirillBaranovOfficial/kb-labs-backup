@@ -3,18 +3,38 @@
 package v2cli
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
+	goruntime "runtime"
+	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/kb-labs/clikit/diag"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/host"
+	"github.com/kb-labs/create/v2/internal/testfixtures"
 	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/runtime"
+	"github.com/kb-labs/create/v2/shim"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 // recordingInstaller stands in for pnpm: what an update changes for the host is
@@ -22,13 +42,533 @@ import (
 type recordingInstaller struct {
 	installed []contracts.Artifact
 	restores  int
+	failure   error
+}
+
+// case: PC-001.10, S-181.3
+func TestBuiltCLIApplySecondaryRootRecordsAllocatedGateway(t *testing.T) {
+	_, fakehost := binaries(t)
+	inst := newEmptyInstallation(t)
+	var primaryListener, secondaryListener net.Listener
+	for range 128 {
+		candidate, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := candidate.Addr().(*net.TCPAddr).Port
+		if port+100 > 65535 {
+			_ = candidate.Close()
+			continue
+		}
+		secondary, listenErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+100))
+		if listenErr != nil {
+			_ = candidate.Close()
+			continue
+		}
+		primaryListener, secondaryListener = candidate, secondary
+		inst.port = port
+		break
+	}
+	if primaryListener == nil || secondaryListener == nil {
+		t.Fatal("could not reserve a free Gateway port and its 100-port offset")
+	}
+	if err := primaryListener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := secondaryListener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	binary := []byte("built CLI fixture binary")
+	binaryDigest := sha256.Sum256(binary)
+	packages := map[string][]byte{
+		"/platform-1.0.0.tgz": testPackageTarball("@kb/platform", "1.0.0"),
+		"/sdk-1.0.0.tgz":      testPackageTarball("@kb/sdk", "1.0.0"),
+		"/cli-bin-1.0.0.tgz":  testPackageTarballWithFiles("@kb-labs/cli-bin", "1.0.0", map[string][]byte{"dist/bin.js": []byte("// fixture CLI entry\n")}),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if packageBytes, ok := packages[request.URL.Path]; ok {
+			_, _ = writer.Write(packageBytes)
+			return
+		}
+		_, _ = writer.Write(binary)
+	}))
+	t.Cleanup(server.Close)
+	indexA, _, requestA := writeSecretCommandInputs(t, inst, fakehost, server.URL, hex.EncodeToString(binaryDigest[:]), packages, true, false)
+	indexData, err := os.ReadFile(indexA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source catalog.Catalog
+	if err := json.Unmarshal(indexData, &source); err != nil {
+		t.Fatal(err)
+	}
+	source.Platforms[0].Profiles["default"] = contracts.ServiceGraph{Services: []contracts.Service{{ID: "gateway", Command: "gateway", Port: inst.port}}}
+	for index := range source.Platforms[0].Config {
+		if source.Platforms[0].Config[index].ID == "gateway.token" {
+			source.Platforms[0].Config[index].Services = []string{"gateway"}
+		}
+	}
+	source.Platforms[0].Config = append(source.Platforms[0].Config, catalog.ConfigRequirement{
+		ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+		Default: fmt.Sprintf(`{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:%d"}}}}`, inst.port),
+	})
+	sealedPrimary, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedPrimary, err := json.Marshal(sealedPrimary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexA, encodedPrimary, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source.Platforms[0].Host.Args = []string{"-port", fmt.Sprint(inst.port + 100)}
+	sealed, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexB := filepath.Join(t.TempDir(), "secondary-release-index.json")
+	encodedIndex, err := json.Marshal(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexB, encodedIndex, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	applyRoot := func(index, requestPath string, extraEnv string) commandResult {
+		return inst.runArgv([]string{"kb-create", "apply", "--index", index, "--input", requestPath,
+			"--secret-env", "gateway.token=" + strings.SplitN(extraEnv, "=", 2)[0], "--json"}, extraEnv)
+	}
+	primary := applyRoot(indexA, requestA, "PRIMARY_SECRET=primary-secret")
+	if primary.code != 0 {
+		t.Fatalf("primary built CLI apply failed: %s", primary.output)
+	}
+	if _, code, output := inst.run("stop", "--json"); code != 0 {
+		t.Fatalf("stop primary host before secondary apply: %s", output)
+	}
+
+	requestBytes, err := os.ReadFile(requestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secondaryRequest contracts.InstallRequest
+	if err := json.Unmarshal(requestBytes, &secondaryRequest); err != nil {
+		t.Fatal(err)
+	}
+	secondaryRoot := filepath.Join(t.TempDir(), "secondary-platform")
+	secondaryRequest.PlatformRoot = secondaryRoot
+	t.Cleanup(func() {
+		command := exec.Command(inst.launcher, "stop", "--json", "--platform-root", secondaryRoot)
+		command.Env = append(os.Environ(), host.KBHomeEnv+"="+inst.kbHome)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Errorf("stop secondary test host: %v\n%s", err, output)
+		}
+	})
+	requestB := filepath.Join(t.TempDir(), "secondary-request.json")
+	encodedRequest, err := json.Marshal(secondaryRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestB, encodedRequest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondary := applyRoot(indexB, requestB, "SECONDARY_SECRET=secondary-secret")
+	if secondary.code != 0 {
+		state, _ := host.StateForRoot(secondaryRoot)
+		hostLog, _ := os.ReadFile(state.HostLog())
+		launcherLog, _ := os.ReadFile(state.LauncherLog())
+		activeRoot, _ := versionroot.ForPlatformPath(secondaryRoot)
+		installed, receiptErr := receipt.Read(activeRoot.PlatformRoot())
+		var hostArgs []string
+		if installed.Plan.Host != nil {
+			hostArgs = installed.Plan.Host.Args
+		}
+		t.Fatalf("secondary built CLI apply failed: %s\nhost args: %#v\nhost log: %s\nlauncher log: %s\nreceipt: %#v (%v)", secondary.output, hostArgs, hostLog, launcherLog, installed, receiptErr)
+	}
+	installed, err := receipt.Read(platformRootForTest(t, secondaryRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHealthURL := fmt.Sprintf("http://127.0.0.1:%d/health", inst.port+100)
+	if installed.Verification.HostHealthURL != wantHealthURL {
+		t.Fatalf("secondary receipt Gateway = %q, want %q", installed.Verification.HostHealthURL, wantHealthURL)
+	}
+	encodedReceipt, err := json.Marshal(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, privateValue := range []string{"secondary-secret", "SECONDARY_SECRET"} {
+		if strings.Contains(secondary.output, privateValue) || strings.Contains(string(encodedReceipt), privateValue) {
+			t.Fatalf("secondary apply serialized private value %q", privateValue)
+		}
+	}
+}
+
+// case: S-023.18
+func TestUpdateSecretRefusalExecutesItsSuggestedCommandSequence(t *testing.T) {
+	for _, scenario := range []struct {
+		name          string
+		storedSecret  bool
+		updateMapping string
+		targetHasReq  bool
+	}{
+		{name: "changed stored secret", storedSecret: true, updateMapping: "gateway.token=UPDATE_SECRET"},
+		{name: "missing target secret", targetHasReq: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			launcher, fakehost := binaries(t)
+			inst := newEmptyInstallation(t)
+			binary := []byte("sealed test launcher binary")
+			packages := map[string][]byte{
+				"/platform-1.0.0.tgz": testPackageTarball("@kb/platform", "1.0.0"),
+				"/platform-1.1.0.tgz": testPackageTarball("@kb/platform", "1.1.0"),
+				"/sdk-1.0.0.tgz":      testPackageTarball("@kb/sdk", "1.0.0"),
+				"/cli-bin-1.0.0.tgz":  testPackageTarballWithFiles("@kb-labs/cli-bin", "1.0.0", map[string][]byte{"dist/bin.js": []byte("// fixture CLI entry\n")}),
+			}
+			binaryDigest := sha256.Sum256(binary)
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if packageBytes, ok := packages[request.URL.Path]; ok {
+					_, _ = writer.Write(packageBytes)
+					return
+				}
+				_, _ = writer.Write(binary)
+			}))
+			t.Cleanup(server.Close)
+			initialIndex, updateIndex, requestPath := writeSecretCommandInputs(t, inst, fakehost, server.URL, hex.EncodeToString(binaryDigest[:]), packages, scenario.storedSecret, scenario.targetHasReq)
+			initialArgs := []string{launcher, "apply", "--index", initialIndex, "--input", requestPath, "--platform-root", inst.root, "--json"}
+			initialEnv := []string{"INITIAL_SECRET=before-update"}
+			if scenario.storedSecret {
+				initialArgs = append(initialArgs, "--secret-env", "gateway.token=INITIAL_SECRET")
+			}
+			if result := inst.runArgv(initialArgs, initialEnv...); result.code != 0 {
+				t.Fatalf("initial CLI apply failed: %s", result.output)
+			}
+			initialStatus, initialStatusCode, initialStatusOutput := inst.run("status", "--json")
+			if initialStatusCode != 0 {
+				t.Fatalf("status after initial CLI apply: %s", initialStatusOutput)
+			}
+			if initialStatus["running"] != true {
+				if _, code, output := inst.run("start", "--json"); code != 0 {
+					t.Fatalf("start installed host: %s", output)
+				}
+			}
+			layout, err := versionroot.New(inst.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			activeRoot, err := layout.Active()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if scenario.targetHasReq {
+				requestBytes, err := os.ReadFile(requestPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var request contracts.InstallRequest
+				if err := json.Unmarshal(requestBytes, &request); err != nil {
+					t.Fatal(err)
+				}
+				request.SecretInputs = []string{"gateway.token"}
+				request.Platform.Version = "1.1.0"
+				requestBytes, err = json.Marshal(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(requestPath, requestBytes, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
+			secretsPath := filepath.Join(activeRoot, ".kb", "v2", "secrets.env")
+			secretBefore, readErr := os.ReadFile(secretsPath)
+			if os.IsNotExist(readErr) {
+				secretBefore = nil
+			} else if readErr != nil {
+				t.Fatal(readErr)
+			}
+			secretFingerprintBefore := sha256.Sum256(secretBefore)
+			updateArgs := []string{"update", "--index", updateIndex, "--input", requestPath, "--platform-root", inst.root, "--json"}
+			updateEnv := []string{"UPDATE_SECRET=changed-after-install", "ENV_VAR=provided-after-refusal"}
+			if scenario.updateMapping != "" {
+				updateArgs = append(updateArgs, "--secret-env", scenario.updateMapping)
+			}
+			refused := inst.runCommand(updateArgs, updateEnv...)
+			if refused.code == 0 || errorCode(refused.payload) != contracts.CodeUpdateSecretRefused {
+				t.Fatalf("secret policy result = %d %s", refused.code, refused.output)
+			}
+			if got := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(got, stateBefore) {
+				t.Fatalf("secret refusal changed shared state: before=%#v after=%#v", stateBefore, got)
+			}
+			if stages, err := filepath.Glob(filepath.Join(inst.root, "versions", ".stage-*")); err != nil || len(stages) != 0 {
+				t.Fatalf("secret refusal left staged versions: %v, %v", stages, err)
+			}
+			diagnostic, ok := refused.payload["error"].(map[string]any)
+			if !ok {
+				t.Fatalf("refusal omitted diagnostic: %s", refused.output)
+			}
+			hint, _ := diagnostic["hint"].(string)
+			commandText := quotedCommandFromHint(t, hint)
+			commands, err := contracts.ParseShellCommands(commandText)
+			if err != nil || len(commands) != 2 {
+				t.Fatalf("parse product hint %q: commands=%#v err=%v", commandText, commands, err)
+			}
+			for index, argv := range commands {
+				if len(argv) == 0 || argv[0] != "kb-create" {
+					t.Fatalf("hint command %d argv = %#v, want kb-create command", index, argv)
+				}
+				result := inst.runArgv(argv, updateEnv...)
+				if result.code != 0 {
+					t.Fatalf("suggested command %d (%v) failed: %s", index, argv, result.output)
+				}
+				if index == 0 {
+					stopped, code, output := inst.run("status", "--json")
+					if code != 0 || stopped["running"] == true {
+						t.Fatalf("suggested stop did not stop host: code=%d %s", code, output)
+					}
+				}
+			}
+			secretAfter, err := os.ReadFile(secretsPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			secretFingerprintAfter := sha256.Sum256(secretAfter)
+			if secretFingerprintAfter == secretFingerprintBefore {
+				t.Fatal("suggested apply did not change the secrets file fingerprint")
+			}
+			layout, err = versionroot.New(inst.root)
+			if err != nil {
+				t.Fatalf("suggested apply left an invalid installation layout: %v", err)
+			}
+			if err := layout.Validate(); err != nil {
+				t.Fatalf("suggested apply left an invalid installation layout: %v", err)
+			}
+			activeAfter, err := layout.Active()
+			if err != nil {
+				t.Fatalf("resolve active container after apply: %v", err)
+			}
+			installed, err := receipt.Read(layout.PlatformRoot())
+			if err != nil || installed.InstallationID == "" || activeAfter == "" {
+				t.Fatalf("suggested apply did not record the active container: receipt=%#v err=%v active=%q", installed, err, activeAfter)
+			}
+			status, code, output := inst.run("status", "--json")
+			if code != 0 || status["running"] != true || status["reachable"] != true {
+				t.Fatalf("suggested apply did not restore a healthy running host: code=%d %s", code, output)
+			}
+			followup := []string{"update", "--index", updateIndex, "--input", requestPath, "--platform-root", inst.root, "--json", "--secret-env", secretMapping(scenario)}
+			updated := inst.runCommand(followup, updateEnv...)
+			if updated.code != 0 || updated.payload["alreadyUpToDate"] != true {
+				t.Fatalf("update with newly stored secret is not a no-op: code=%d %s", updated.code, updated.output)
+			}
+		})
+	}
+}
+
+type commandResult struct {
+	payload map[string]any
+	code    int
+	output  string
+}
+
+func quotedCommandFromHint(t *testing.T, hint string) string {
+	t.Helper()
+	parts := strings.Split(hint, "`")
+	if len(parts) < 3 {
+		t.Fatalf("diagnostic hint has no quoted command: %q", hint)
+	}
+	return parts[1]
+}
+
+func secretMapping(scenario struct {
+	name          string
+	storedSecret  bool
+	updateMapping string
+	targetHasReq  bool
+}) string {
+	if scenario.updateMapping != "" {
+		return scenario.updateMapping
+	}
+	return "gateway.token=ENV_VAR"
+}
+
+func writeSecretCommandInputs(t *testing.T, inst installation, fakehost, binaryURL, binaryHash string, packages map[string][]byte, storedSecret, targetRequiresSecret bool) (initialIndex, updateIndex, requestPath string) {
+	t.Helper()
+	makeIndex := func(required bool) string {
+		platformVersion := "1.0.0"
+		if required {
+			platformVersion = "1.1.0"
+		}
+		data := testfixtures.ReleaseIndexJSON(platformVersion, "1.0.0", goruntime.GOOS, goruntime.GOARCH)
+		var source catalog.Catalog
+		if err := json.Unmarshal(data, &source); err != nil {
+			t.Fatal(err)
+		}
+		source.Platforms[0].Host = &contracts.HostSpec{
+			Command: fakehost, Args: []string{"-port", fmt.Sprint(inst.port)},
+			HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", inst.port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5,
+		}
+		source.Platforms[0].Profiles["default"] = contracts.ServiceGraph{Services: []contracts.Service{{ID: "runtime", Command: "runtime", Port: inst.port}}}
+		source.Platforms[0].Binaries[0].URL = binaryURL
+		source.Platforms[0].Binaries[0].SHA256 = binaryHash
+		platformPackage := packages["/platform-"+platformVersion+".tgz"]
+		platformDigest := sha256.Sum256(platformPackage)
+		source.Platforms[0].Tarball = binaryURL + "/platform-" + platformVersion + ".tgz"
+		source.Platforms[0].SHA256 = hex.EncodeToString(platformDigest[:])
+		source.Platforms[0].SizeBytes = int64(len(platformPackage))
+		sdkPackage := packages["/sdk-1.0.0.tgz"]
+		sdkDigest := sha256.Sum256(sdkPackage)
+		source.SDKs[0].Tarball = binaryURL + "/sdk-1.0.0.tgz"
+		source.SDKs[0].SHA256 = hex.EncodeToString(sdkDigest[:])
+		source.SDKs[0].SizeBytes = int64(len(sdkPackage))
+		cliPackage := packages["/cli-bin-1.0.0.tgz"]
+		cliDigest := sha256.Sum256(cliPackage)
+		source.Platforms[0].Members = []catalog.Component{{ID: "cli-bin", Version: "1.0.0", Package: "@kb-labs/cli-bin",
+			Tarball: binaryURL + "/cli-bin-1.0.0.tgz", SHA256: hex.EncodeToString(cliDigest[:]), SizeBytes: int64(len(cliPackage))}}
+		requirement := catalog.ConfigRequirement{ID: "gateway.token", Secret: true, Required: required, Optional: !required,
+			Env: "GATEWAY_TOKEN", Services: []string{"runtime"}}
+		source.Platforms[0].Config = []catalog.ConfigRequirement{requirement}
+		sealed, err := catalog.Seal(source)
+		if err != nil {
+			t.Fatalf("seal test secret index: %v", err)
+		}
+		encoded, err := json.Marshal(sealed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "release-index.json")
+		if err := os.WriteFile(path, encoded, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	initialIndex = makeIndex(false)
+	updateIndex = initialIndex
+	if targetRequiresSecret {
+		updateIndex = makeIndex(true)
+	}
+	request := contracts.InstallRequest{Schema: contracts.RequestSchema, Platform: contracts.VersionSelector{Version: "1.0.0"},
+		SDK: contracts.VersionSelector{Version: "1.0.0"}, Policy: contracts.PolicyStrict, Source: contracts.SourceRegistry, PlatformRoot: inst.root}
+	if storedSecret {
+		request.SecretInputs = []string{"gateway.token"}
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestPath = filepath.Join(t.TempDir(), "request.json")
+	if err := os.WriteFile(requestPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return initialIndex, updateIndex, requestPath
+}
+
+func testPackageTarball(name, version string) []byte {
+	return testPackageTarballWithFiles(name, version, nil)
+}
+
+func testPackageTarballWithFiles(name, version string, files map[string][]byte) []byte {
+	var data bytes.Buffer
+	compressed := gzip.NewWriter(&data)
+	archive := tar.NewWriter(compressed)
+	manifest, _ := json.Marshal(map[string]string{"name": name, "version": version})
+	entries := map[string][]byte{"package/package.json": manifest}
+	for path, contents := range files {
+		entries["package/"+filepath.ToSlash(path)] = contents
+	}
+	paths := make([]string, 0, len(entries))
+	for path := range entries {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		contents := entries[path]
+		_ = archive.WriteHeader(&tar.Header{Name: path, Mode: 0o644, Size: int64(len(contents))})
+		_, _ = archive.Write(contents)
+	}
+	_ = archive.Close()
+	_ = compressed.Close()
+	return data.Bytes()
 }
 
 func (r *recordingInstaller) Install(items []contracts.Artifact) error {
 	r.installed = append(r.installed, items...)
-	return nil
+	return r.failure
 }
-func (r *recordingInstaller) Restore([]contracts.Artifact) error { r.restores++; return nil }
+func (r *recordingInstaller) Restore([]contracts.Artifact) error   { r.restores++; return nil }
+func (r *recordingInstaller) Uninstall([]contracts.Artifact) error { return nil }
+
+func treeDigest(root string) ([32]byte, error) {
+	hash := sha256.New()
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, _ = hash.Write([]byte(relative + "\x00"))
+		_, _ = hash.Write(data)
+		return nil
+	})
+	var digest [32]byte
+	copy(digest[:], hash.Sum(nil))
+	return digest, err
+}
+
+func snapshotStateTree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	snapshot := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		value := fmt.Sprintf("mode=%v;mod=%d;size=%d", info.Mode(), info.ModTime().UnixNano(), info.Size())
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			value += ";link=" + target
+		}
+		if info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			value += ";bytes=" + string(data)
+		}
+		snapshot[relative] = value
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
 
 // updatePlan is the resolved plan of platform 2.0.0 whose host is the fake host.
 func updatePlan(t *testing.T, root string, port int, hostArgs ...string) contracts.ResolvedInstallPlan {
@@ -40,12 +580,33 @@ func updatePlan(t *testing.T, root string, port int, hostArgs ...string) contrac
 	return plan
 }
 
+func versionedReceipt(t *testing.T, version string, port int, hostArgs ...string) contracts.InstallReceipt {
+	t.Helper()
+	_, fakehost := binaries(t)
+	spec := &contracts.HostSpec{Command: fakehost,
+		Args:      append([]string{"-port", fmt.Sprint(port)}, hostArgs...),
+		HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10, StopGraceSeconds: 5}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema,
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: version, Services: []contracts.Service{{ID: "gateway", Command: "gateway"}}},
+		Host:         spec}
+	return contracts.InstallReceipt{ID: "receipt-" + version, InstallationID: "installation-stable", Plan: plan}
+}
+
 // update runs the update command's orchestration and returns its JSON and status.
 func (i installation) update(t *testing.T, plan contracts.ResolvedInstallPlan, installer *recordingInstaller) (map[string]any, int, string) {
 	t.Helper()
-	state := host.State{Dir: i.state}
+	state, err := host.StateForRoot(i.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcherState := host.State{Dir: i.state}
 	deps := runtime.Dependencies{Artifacts: installer, CorrelationID: "update-test"}
-	result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: i.launcher}, plan, state, &deps)
+	layout, err := versionroot.New(i.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Request.PlatformRoot = layout.PlatformRoot()
+	result, failure := runUpdateCommand(context.Background(), updateCommandInput{Executable: i.launcher}, i.root, plan, state, launcherState, &deps)
 	if failure != nil {
 		payload := diagValue(t, failure)
 		return payload, diag.ExitCode(failure), fmt.Sprint(payload)
@@ -61,100 +622,696 @@ func (i installation) update(t *testing.T, plan contracts.ResolvedInstallPlan, i
 	return payload, 0, fmt.Sprint(payload)
 }
 
-func TestUpdateCommandRestartsARunningHostOnTheNewVersion(t *testing.T) {
+func TestUpdateCommandKeepsRunningHostOnPreviousVersionAndReportsPendingRestart(t *testing.T) {
 	inst := newInstallation(t)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Plan.ServiceGraph.PlatformVersion = "1.0.0"
+	active.Plan.ServiceGraph.Services = []contracts.Service{{ID: "gateway"}}
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
+		t.Fatal(err)
+	}
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
-	newPort := freeLoopbackPort(t)
 	installer := &recordingInstaller{}
+	stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldLockPath := filepath.Join(oldRoot, ".kb", "marketplace.lock")
+	oldLockBefore, lockErr := os.ReadFile(oldLockPath)
+	if lockErr != nil {
+		t.Fatal(lockErr)
+	}
+	oldConfigPath := filepath.Join(oldRoot, ".kb", "kb.config.jsonc")
+	oldConfigBefore, configErr := os.ReadFile(oldConfigPath)
+	if configErr != nil {
+		t.Fatal(configErr)
+	}
 
-	payload, code, raw := inst.update(t, updatePlan(t, inst.root, newPort), installer)
-	if code != 0 || payload["ok"] != true || payload["hostRestarted"] != true {
+	payload, code, raw := inst.update(t, updatePlan(t, inst.root, inst.port), installer)
+	if code != 0 || payload["ok"] != true || payload["hostRestarted"] != false {
 		t.Fatalf("update: %d %s", code, raw)
 	}
 	if len(installer.installed) != 1 || installer.restores != 0 {
 		t.Fatalf("installer: %#v", installer)
 	}
+	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
+		t.Fatalf("shared state changed during successful staged update:\nbefore=%#v\nafter=%#v", stateBefore, after)
+	}
+	if got, err := os.ReadFile(oldLockPath); err != nil || !reflect.DeepEqual(got, oldLockBefore) {
+		t.Fatalf("old host marketplace lock view changed: %v", err)
+	}
+	if got, err := os.ReadFile(oldConfigPath); err != nil || !reflect.DeepEqual(got, oldConfigBefore) {
+		t.Fatalf("old host config view changed: %v", err)
+	}
 	committed := payload["receipt"].(map[string]any)
 	if committed["snapshotId"] == "" || committed["snapshotId"] != payload["snapshot"].(map[string]any)["id"] {
 		t.Fatalf("the committed receipt must name the recovery snapshot: %s", raw)
 	}
-	if _, healthURL := inst.hostState(t); healthURL != fmt.Sprintf("http://127.0.0.1:%d/health", newPort) {
-		t.Fatalf("the host must run the new version: %s", healthURL)
+	if state, healthURL := inst.hostState(t); state != host.StateRunning || healthURL != fmt.Sprintf("http://127.0.0.1:%d/health", inst.port) {
+		t.Fatalf("the old host must keep serving: %s %s", state, healthURL)
+	}
+	pending, ok := payload["pendingRestart"].(map[string]any)
+	if !ok || pending["installedVersion"] != "2.0.0" || pending["command"] == "" {
+		t.Fatalf("pending restart = %#v", payload["pendingRestart"])
+	}
+	services, ok := pending["services"].([]any)
+	if !ok || len(services) != 1 || services[0].(map[string]any)["runningVersion"] != "1.0.0" {
+		t.Fatalf("pending restart services = %#v", pending["services"])
+	}
+	mutable := filepath.Join(platformRootForTest(t, inst.root), ".kb", "data", "written-after-update.txt")
+	if err := os.WriteFile(mutable, []byte("written after staging\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, code, raw := inst.run("restart", "--json"); code != 0 {
+		t.Fatalf("explicit restart after update: %d %s", code, raw)
+	}
+	if data, err := os.ReadFile(mutable); err != nil || string(data) != "written after staging\n" {
+		t.Fatalf("mutable data written after staging was lost at restart: data=%q err=%v", data, err)
 	}
 }
 
-func TestUpdateCommandRollsBackWhenTheNewHostCrashes(t *testing.T) {
+// case: PC-001.7, S-023.3
+func TestFreshInstallWritesCompleteRunningIdentityBeforeFirstUpdate(t *testing.T) {
+	launcher, fakehost := binaries(t)
+	home := t.TempDir()
+	kbHome := filepath.Join(home, ".kb")
+	t.Setenv(host.KBHomeEnv, kbHome)
+	root := filepath.Join(home, "install")
+	port := freeLoopbackPort(t)
+	state, err := host.StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "fresh-install-identity",
+		Request: contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
+		Host: &contracts.HostSpec{Command: fakehost, Args: []string{"-port", fmt.Sprint(port)},
+			HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway"}}}}
+	resolved := resolvedPlan{Plan: plan, State: state}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
+	var processID int
+	t.Cleanup(func() {
+		if _, code, output := inst.run("stop", "--json"); code != 0 {
+			t.Errorf("stop fresh-install host cleanup: %s", output)
+		}
+		status, code, output := inst.run("status", "--json")
+		if code != 0 || status["running"] == true {
+			t.Errorf("fresh-install cleanup left host running: %s", output)
+		}
+		if processID != 0 && !waitHostExit(processID, 5*time.Second) {
+			t.Errorf("fresh-install host process %d did not exit", processID)
+		}
+	})
+	runApplyStreamForTest(t, resolved, deps)
+	recorded, err := host.NewRecordedRunner(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostStatus, statusErr := recorded.Status(context.Background())
+	if statusErr != nil {
+		t.Fatal(statusErr)
+	}
+	processID = hostStatus.PID
+	if hostStatus.PlatformVersion != "1.0.0" || hostStatus.ReceiptID == "" || len(hostStatus.ServiceIDs) != 1 || hostStatus.ServiceIDs[0] != "gateway" || hostStatus.TreeRoot == "" {
+		t.Fatalf("fresh install host identity is incomplete: %#v", hostStatus)
+	}
+	if _, err := os.ReadFile(filepath.Join(root, "state", "kb.config.jsonc")); err != nil {
+		t.Fatalf("fresh install did not persist shared runtime config at the install root: %v", err)
+	}
+	if _, code, raw := inst.update(t, updatePlan(t, root, port), &recordingInstaller{}); code != 0 {
+		t.Fatalf("first update after fresh install: %d %s", code, raw)
+	}
+	status, code, raw := inst.run("status", "--json")
+	if code != 0 || status["runningVersion"] != "1.0.0" || status["installedVersion"] != "2.0.0" || status["pendingRestart"] == nil {
+		t.Fatalf("first update did not report pending restart from fresh identity: code=%d status=%#v raw=%s", code, status, raw)
+	}
+}
+
+func TestFreshContainerInstallUpdateUpdateRestartUninstallWritesStayInsideRoot(t *testing.T) {
+	launcher, fakehost := binaries(t)
+	base := t.TempDir()
+	parent := filepath.Join(base, "parent")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "install")
+	kbHome := filepath.Join(base, "user-state")
+	t.Setenv(host.KBHomeEnv, kbHome)
+	state, err := host.StateHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := freeLoopbackPort(t)
+	plan := contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, PlanHash: "container-v1",
+		Request: contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root},
+		Host: &contracts.HostSpec{Command: fakehost, Args: []string{"-port", fmt.Sprint(port)},
+			HealthURL: fmt.Sprintf("http://127.0.0.1:%d/health", port), ReadyTimeoutSeconds: 10},
+		ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0", Services: []contracts.Service{{ID: "gateway"}}}}
+	inst := installation{launcher: launcher, root: root, kbHome: kbHome, state: state.Dir, port: port, t: t}
+	var processID int
+	var installed bool
+	t.Cleanup(func() {
+		if installed {
+			if _, code, output := inst.run("stop", "--json"); code != 0 {
+				t.Errorf("container lifecycle cleanup stop: %s", output)
+			}
+		}
+		if processID != 0 && !waitHostExit(processID, 5*time.Second) {
+			t.Errorf("container lifecycle left host process %d alive", processID)
+		}
+	})
+	resolved := resolvedPlan{Plan: plan, State: state}
+	deps := commandDependencies{NodeCheck: func() error { return nil }, ArtifactRunner: operationLogTestRunner{},
+		Runtime: &runtime.Dependencies{Artifacts: installArtifacts{root: root}}}
+	runApplyStreamForTest(t, resolved, deps)
+	installed = true
+	if _, code, output := inst.run("status", "--json"); code != 0 {
+		t.Fatalf("status after fresh install: %s", output)
+	}
+	status, _, _ := inst.run("status", "--json")
+	processID = int(status["host"].(map[string]any)["pid"].(float64))
+	assertContainerParent(t, parent)
+
+	for _, version := range []string{"2.0.0", "3.0.0"} {
+		target := updatePlan(t, root, port)
+		target.PlanHash = "container-" + version
+		target.ServiceGraph.PlatformVersion = version
+		if _, code, output := inst.update(t, target, &recordingInstaller{}); code != 0 {
+			t.Fatalf("update to %s: %d %s", version, code, output)
+		}
+		assertContainerParent(t, parent)
+	}
+	if running, _ := inst.hostState(t); running != host.StateRunning {
+		t.Fatalf("original host stopped before explicit restart: %s", running)
+	}
+	assertContainerParent(t, parent)
+	if _, code, output := inst.run("restart", "--json"); code != 0 {
+		t.Fatalf("restart after two updates: %s", output)
+	}
+	assertContainerParent(t, parent)
+	if _, code, output := inst.run("stop", "--json"); code != 0 {
+		t.Fatalf("stop before uninstall: %s", output)
+	}
+	installed = false
+	if !waitHostExit(processID, 5*time.Second) {
+		t.Fatalf("host process %d did not exit before uninstall", processID)
+	}
+	if _, err := runtime.Uninstall(root, runtime.Dependencies{Artifacts: &recordingInstaller{}}); err != nil {
+		t.Fatalf("uninstall container: %v", err)
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("parent after uninstall = %#v, %v; expected no entries", entries, err)
+	}
+}
+
+func assertContainerParent(t *testing.T, parent string) {
+	t.Helper()
+	entries, err := os.ReadDir(parent)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "install" {
+		t.Fatalf("install parent entries = %#v, %v; want only install root", entries, err)
+	}
+}
+
+func TestUpdateFailureLeavesReceiptRootHostAndShimUnchanged(t *testing.T) {
 	inst := newInstallation(t)
 	if _, code, raw := inst.run("start", "--json"); code != 0 {
 		t.Fatalf("start: %s", raw)
 	}
-	installer := &recordingInstaller{}
-
-	payload, code, raw := inst.update(t, updatePlan(t, inst.root, freeLoopbackPort(t), "-exit", "5"), installer)
-	if code != 1 || payload["ok"] != false || errorCode(payload) != contracts.CodeUpdateHostNotHealthy {
-		t.Fatalf("update: %d %s", code, raw)
+	installer := &recordingInstaller{failure: errors.New("injected package write failure")}
+	stateBefore := snapshotStateTree(t, filepath.Join(inst.root, "state"))
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	failure := payload["error"].(map[string]any)
-	if failure["correlationId"] != "update-test" || failure["message"] == "" || failure["hint"] == "" {
-		t.Fatalf("error = %v", failure)
+	oldRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
 	}
-	errorDetails := failure["details"].(map[string]any)
-	if path, _ := errorDetails["diagnosticPath"].(string); path == "" {
-		t.Fatalf("a failed update must leave a diagnostic dossier: %s", raw)
-	} else if _, err := os.Stat(path); err != nil {
-		t.Fatalf("dossier: %v", err)
+	oldLockPath := filepath.Join(oldRoot, ".kb", "marketplace.lock")
+	oldLockBefore, err := os.ReadFile(oldLockPath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if installer.restores != 1 {
-		t.Fatalf("the package state must be restored once: %d", installer.restores)
+	receiptBefore, err := os.ReadFile(receipt.Path(platformRootForTest(t, inst.root)))
+	if err != nil {
+		t.Fatal(err)
 	}
-	state, healthURL := inst.hostState(t)
-	if state != "running" || healthURL != fmt.Sprintf("http://127.0.0.1:%d/health", inst.port) {
-		t.Fatalf("the previous version must run again: %s %s", state, healthURL)
+	rootInfoBefore, err := os.Lstat(inst.root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if active, err := receipt.Read(inst.root); err != nil || active.ID != "r1" {
-		t.Fatalf("active receipt = %#v, %v", active, err)
+	state, err := host.StateForRoot(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pidBefore, err := os.ReadFile(state.HostPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot := filepath.Join(inst.root, "current")
+	cliEntry := filepath.Join(platformRootForTest(t, inst.root), "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
+	if err := os.MkdirAll(filepath.Dir(cliEntry), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cliEntry, []byte("export {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := shim.Ensure(inst.launcher, activeRoot); err != nil {
+		t.Fatal(err)
+	}
+	shimPath := shim.Path(inst.launcher)
+	shimBefore, shimErr := os.Readlink(shimPath)
+	shimTargetBefore, err := os.ReadFile(shim.Target(activeRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shimInfoBefore, err := os.Lstat(shim.Target(activeRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout, err = versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeBefore, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeInfoBefore, err := os.Lstat(activeBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentLinkBefore, err := os.Readlink(layout.PlatformRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeTreeBefore, err := treeDigest(activeBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, code, raw := inst.update(t, updatePlan(t, inst.root, freeLoopbackPort(t)), installer)
+	if code == 0 || payload["ok"] != false {
+		t.Fatalf("update unexpectedly succeeded: %s", raw)
+	}
+	if after := snapshotStateTree(t, filepath.Join(inst.root, "state")); !reflect.DeepEqual(after, stateBefore) {
+		t.Fatalf("shared state changed during failed staged update:\nbefore=%#v\nafter=%#v", stateBefore, after)
+	}
+	if got, err := os.ReadFile(oldLockPath); err != nil || !reflect.DeepEqual(got, oldLockBefore) {
+		t.Fatalf("old host marketplace lock view changed after failed update: %v", err)
+	}
+	receiptAfter, err := os.ReadFile(receipt.Path(platformRootForTest(t, inst.root)))
+	if err != nil || string(receiptAfter) != string(receiptBefore) {
+		t.Fatalf("receipt changed: %v", err)
+	}
+	rootInfoAfter, err := os.Lstat(inst.root)
+	if err != nil || !os.SameFile(rootInfoBefore, rootInfoAfter) {
+		t.Fatalf("active root identity changed: %v", err)
+	}
+	activeAfter, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeInfoAfter, err := os.Lstat(activeAfter)
+	if err != nil || !os.SameFile(activeInfoBefore, activeInfoAfter) {
+		t.Fatalf("active version root identity changed: %v", err)
+	}
+	currentLinkAfter, err := os.Readlink(layout.PlatformRoot())
+	if err != nil || currentLinkAfter != currentLinkBefore {
+		t.Fatalf("current link changed before update activation: %q %v", currentLinkAfter, err)
+	}
+	activeTreeAfter, err := treeDigest(activeAfter)
+	if err != nil || activeTreeAfter != activeTreeBefore {
+		t.Fatalf("active root bytes changed: %v", err)
+	}
+	pidAfter, err := os.ReadFile(state.HostPID())
+	if err != nil || string(pidAfter) != string(pidBefore) {
+		t.Fatalf("running host identity changed: %v", err)
+	}
+	shimAfter, shimAfterErr := os.Readlink(shimPath)
+	if shimErr != nil {
+		if shimAfterErr == nil {
+			t.Fatalf("shim appeared before switch: %s", shimAfter)
+		}
+	} else if shimAfterErr != nil || shimAfter != shimBefore {
+		t.Fatalf("shim changed: %s, %v", shimAfter, shimAfterErr)
+	}
+	shimTargetAfter, err := os.ReadFile(shim.Target(activeRoot))
+	if err != nil || string(shimTargetAfter) != string(shimTargetBefore) {
+		t.Fatalf("shim target bytes changed: %v", err)
+	}
+	shimInfoAfter, err := os.Lstat(shim.Target(activeRoot))
+	if err != nil || !os.SameFile(shimInfoBefore, shimInfoAfter) {
+		t.Fatalf("shim target identity changed: %v", err)
 	}
 }
 
-func TestUpdateCommandTrialRunsTheNewHostWhenTheHostWasStopped(t *testing.T) {
+func TestUpdateCommandKeepsStoppedHostStoppedWithoutPendingRestart(t *testing.T) {
 	inst := newInstallation(t)
 	installer := &recordingInstaller{}
 
-	payload, code, raw := inst.update(t, updatePlan(t, inst.root, freeLoopbackPort(t), "-exit", "5"), installer)
-	if code != 1 || errorCode(payload) != contracts.CodeUpdateApplyFailed {
+	payload, code, raw := inst.update(t, updatePlan(t, inst.root, freeLoopbackPort(t)), installer)
+	if code != 0 || payload["ok"] != true || payload["hostRestarted"] != false {
 		t.Fatalf("update: %d %s", code, raw)
-	}
-	if installer.restores != 1 {
-		t.Fatalf("the package state must be restored once: %d", installer.restores)
 	}
 	if state, _ := inst.hostState(t); state != "stopped" {
 		t.Fatalf("a stopped host must stay stopped, state = %s", state)
 	}
-	if active, err := receipt.Read(inst.root); err != nil || active.ID != "r1" {
-		t.Fatalf("active receipt = %#v, %v", active, err)
+	if _, exists := payload["pendingRestart"]; exists {
+		t.Fatalf("stopped host update reported pendingRestart: %#v", payload["pendingRestart"])
+	}
+	if _, err := receipt.Read(platformRootForTest(t, inst.root)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepeatedUpdatesRetainLastHealthyRootUntilRestartHealthPasses(t *testing.T) {
+	inst := newInstallation(t)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.ID = "receipt-v1"
+	active.Plan.ServiceGraph.PlatformVersion = "1.0.0"
+	active.Plan.ServiceGraph.Services = []contracts.Service{{ID: "gateway"}}
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
+		t.Fatal(err)
+	}
+	if _, code, raw := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start v1: %d %s", code, raw)
+	}
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := updatePlan(t, inst.root, inst.port)
+	v2.ServiceGraph.PlatformVersion, v2.PlanHash = "2.0.0", "plan-v2"
+	if _, code, raw := inst.update(t, v2, &recordingInstaller{}); code != 0 {
+		t.Fatalf("update v2: %d %s", code, raw)
+	}
+	v2Root, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v3 := updatePlan(t, inst.root, inst.port, "-exit", "5")
+	v3.ServiceGraph.PlatformVersion, v3.PlanHash = "3.0.0", "plan-v3-unhealthy"
+	if _, code, raw := inst.update(t, v3, &recordingInstaller{}); code != 0 {
+		t.Fatalf("update v3: %d %s", code, raw)
+	}
+	v3Root, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(v2Root); !os.IsNotExist(err) {
+		t.Fatalf("never-started v2 root was not pruned: %v", err)
+	}
+	if _, err := os.Stat(v3Root); err != nil {
+		t.Fatalf("active v3 root is missing: %v", err)
+	}
+	if state, _ := inst.hostState(t); state != host.StateRunning {
+		t.Fatalf("v1 host stopped during repeated updates: %s", state)
+	}
+	recovery, err := layout.RecoveryRoot()
+	if err != nil || recovery == v3Root {
+		t.Fatalf("recovery root = %s, %v", recovery, err)
+	}
+	if restored, err := receipt.Read(recovery); err != nil || restored.Plan.ServiceGraph.PlatformVersion != "1.0.0" {
+		t.Fatalf("last healthy recovery receipt = %#v, %v", restored, err)
+	}
+	if _, code, raw := inst.run("restart", "--json"); code != 1 || errorCodeFromOutput(raw) != contracts.CodeUpdateHostNotHealthy {
+		t.Fatalf("unhealthy v3 restart did not recover: %d %s", code, raw)
+	}
+	if status, code, raw := inst.run("status", "--json"); code != 0 || status["runningVersion"] != "1.0.0" {
+		t.Fatalf("host did not return to healthy v1: %d %s", code, raw)
+	}
+	healthyV3 := updatePlan(t, inst.root, inst.port)
+	healthyV3.ServiceGraph.PlatformVersion, healthyV3.PlanHash = "3.0.0", "plan-v3-healthy"
+	if _, code, raw := inst.update(t, healthyV3, &recordingInstaller{}); code != 0 {
+		t.Fatalf("healthy v3 update: %d %s", code, raw)
+	}
+	if _, code, raw := inst.run("restart", "--json"); code != 0 {
+		t.Fatalf("healthy v3 restart: %d %s", code, raw)
+	}
+	if _, err := os.Stat(recovery); !os.IsNotExist(err) {
+		t.Fatalf("old last-healthy root survived successful v3 health check: %v", err)
+	}
+}
+
+func errorCodeFromOutput(raw string) string {
+	var payload map[string]any
+	if json.Unmarshal([]byte(raw), &payload) != nil {
+		return ""
+	}
+	return errorCode(payload)
+}
+
+// case: S-024.6
+func TestRestartFailureRestoresPreviousVersionAndReportsRecoveryDetails(t *testing.T) {
+	inst := newInstallation(t)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.ID = "receipt-v1"
+	active.Plan.ServiceGraph.PlatformVersion = "1.0.0"
+	active.Plan.ServiceGraph.Services = []contracts.Service{{ID: "gateway"}}
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
+		t.Fatal(err)
+	}
+	if _, code, raw := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start old host: %d %s", code, raw)
 	}
 
-	payload, code, raw = inst.update(t, updatePlan(t, inst.root, freeLoopbackPort(t)), installer)
-	if code != 0 || payload["hostRestarted"] != false {
-		t.Fatalf("a healthy new host must commit without starting: %d %s", code, raw)
+	badPlan := updatePlan(t, inst.root, freeLoopbackPort(t), "-exit", "5")
+	badPlan.ServiceGraph.PlatformVersion = "2.0.0"
+	badPlan.ServiceGraph.Services = []contracts.Service{{ID: "gateway"}}
+	badPlan.PlanHash = "failed-restart-plan"
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if state, _ := inst.hostState(t); state != "stopped" {
-		t.Fatalf("state = %s", state)
+	stage, err := layout.Stage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := contracts.InstallReceipt{ID: "receipt-v2", SnapshotID: "snapshot-before-v2", InstallationID: active.InstallationID,
+		Plan: badPlan, Verification: contracts.Verification{HostHealthURL: badPlan.Host.HealthURL}}
+	if err := receipt.Write(stage, failed); err != nil {
+		t.Fatal(err)
+	}
+	logRelative := filepath.Join("installer", "logs", "restart-update.log")
+	if err := os.MkdirAll(layout.OperationLogsDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(inst.root, logRelative), []byte("update completed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: "snapshot-before-v2", LogPath: logRelative}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.Activate(stage, "2.0.0", badPlan.PlanHash, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, code, raw := inst.run("restart", "--json")
+	if code != 1 || errorCode(payload) != contracts.CodeUpdateHostNotHealthy {
+		t.Fatalf("restart: %d %s", code, raw)
+	}
+	details, _ := payload["error"].(map[string]any)["details"].(map[string]any)
+	if details["snapshotId"] != "snapshot-before-v2" || details["logPath"] == "" {
+		t.Fatalf("recovery details = %#v", details)
+	}
+	restored, err := receipt.Read(platformRootForTest(t, inst.root))
+	if err != nil || restored.ID != "receipt-v1" {
+		t.Fatalf("restored receipt = %#v, %v", restored, err)
+	}
+	status, statusCode, statusRaw := inst.run("status", "--json")
+	if statusCode != 0 || status["running"] != true || status["runningVersion"] != "1.0.0" || status["pendingRestart"] != nil {
+		t.Fatalf("status after automatic restore: %d %s", statusCode, statusRaw)
+	}
+}
+
+// case: S-223.2
+func TestRestartRecoveryDirectCallerReturnsSameCataloguedResult(t *testing.T) {
+	inst := newInstallation(t)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.ID = "receipt-v1"
+	active.Plan.ServiceGraph.PlatformVersion = "1.0.0"
+	active.Plan.ServiceGraph.Services = []contracts.Service{{ID: "gateway"}}
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.RecordHealthy(); err != nil {
+		t.Fatal(err)
+	}
+	badPlan := updatePlan(t, inst.root, inst.port, "-exit", "5")
+	badPlan.ServiceGraph.PlatformVersion, badPlan.PlanHash = "2.0.0", "direct-unhealthy-v2"
+	stage, err := layout.Stage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed := contracts.InstallReceipt{ID: "receipt-v2", SnapshotID: "snapshot-direct-v2", InstallationID: active.InstallationID,
+		Plan: badPlan, Verification: contracts.Verification{HostHealthURL: badPlan.Host.HealthURL}}
+	if err := receipt.Write(stage, installed); err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: "snapshot-direct-v2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.Activate(stage, "2.0.0", badPlan.PlanHash, ""); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := host.NewRunner(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, restartErr := host.RestartWithRecovery(context.Background(), inst.root, previous,
+		func(ctx context.Context, current *host.ProcessRunner) (host.Info, error) { return current.Start(ctx) })
+	if outcome.Runner != nil {
+		t.Cleanup(func() { _, _ = outcome.Runner.Stop(context.Background()) })
+	}
+	var failure *diag.Diag
+	if !errors.As(restartErr, &failure) || failure.Code != contracts.CodeUpdateHostNotHealthy {
+		t.Fatalf("direct restart error = %#v, want catalogued unhealthy-update error", restartErr)
+	}
+	if failure.Meta["recoveryStage"] != "restored-last-healthy" || failure.Meta["nextCommand"] == "" ||
+		outcome.Runner == nil || outcome.Runner.Identity.PlatformVersion != "1.0.0" {
+		t.Fatalf("direct restart recovery = outcome %#v, diagnostic %#v", outcome, failure.Meta)
+	}
+}
+
+func restartWithRecoveryFault(t *testing.T, fault string) (installation, string) {
+	t.Helper()
+	inst := newInstallation(t)
+	active, err := receipt.Read(platformRootForTest(t, inst.root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.ID = "receipt-v1"
+	active.Plan.ServiceGraph.PlatformVersion = "1.0.0"
+	active.Plan.ServiceGraph.Services = []contracts.Service{{ID: "gateway"}}
+	if err := receipt.Write(platformRootForTest(t, inst.root), active); err != nil {
+		t.Fatal(err)
+	}
+	if _, code, raw := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start v1: %d %s", code, raw)
+	}
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badPlan := updatePlan(t, inst.root, inst.port, "-exit", "5")
+	badPlan.ServiceGraph.PlatformVersion, badPlan.PlanHash = "2.0.0", "unhealthy-v2"
+	stage, err := layout.Stage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed := contracts.InstallReceipt{ID: "receipt-v2", SnapshotID: "snapshot-v2", InstallationID: active.InstallationID,
+		Plan: badPlan, Verification: contracts.Verification{HostHealthURL: badPlan.Host.HealthURL}}
+	if err := receipt.Write(stage, installed); err != nil {
+		t.Fatal(err)
+	}
+	if err := layout.WriteUpdateMetadata(stage, versionroot.UpdateMetadata{SnapshotID: "snapshot-v2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.Activate(stage, "2.0.0", badPlan.PlanHash, ""); err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := layout.RecoveryRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch fault {
+	case "restore":
+		if err := os.Remove(receipt.Path(recovery)); err != nil {
+			t.Fatal(err)
+		}
+	case "restored-start":
+		old, err := receipt.Read(recovery)
+		if err != nil {
+			t.Fatal(err)
+		}
+		old.Plan.Host.Args = []string{"-exit", "5"}
+		if err := receipt.Write(recovery, old); err != nil {
+			t.Fatal(err)
+		}
+	case "metadata":
+		path := filepath.Join(layout.InstallerStateDir(), "update-operation.json")
+		if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("unknown recovery fault %q", fault)
+	}
+	return inst, recovery
+}
+
+// case: S-223.2
+func TestRestartRecoveryFailuresReturnCataloguedUpdateError(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		stage string
+	}{
+		{name: "restore failed", stage: "restore last healthy root"},
+		{name: "restored host failed to start", stage: "start restored host"},
+		{name: "update metadata unreadable", stage: "read update recovery metadata"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fault := map[string]string{
+				"restore failed":                "restore",
+				"restored host failed to start": "restored-start",
+				"update metadata unreadable":    "metadata",
+			}[test.name]
+			inst, _ := restartWithRecoveryFault(t, fault)
+			payload, code, raw := inst.run("restart", "--json")
+			if code != 1 || errorCode(payload) != contracts.CodeUpdateHostNotHealthy {
+				t.Fatalf("restart recovery error = %d %s", code, raw)
+			}
+			details, ok := payload["error"].(map[string]any)["details"].(map[string]any)
+			if !ok || details["recoveryStage"] != test.stage || details["nextCommand"] == "" || details["failureReason"] == "" {
+				t.Fatalf("restart recovery details = %#v", details)
+			}
+			if strings.Contains(raw, "errors.Join") || strings.Contains(raw, "\n\t") {
+				t.Fatalf("human-facing restart output exposed joined/raw error text: %s", raw)
+			}
+		})
 	}
 }
 
 func TestUpdateCommandNeedsAnInstallation(t *testing.T) {
 	inst := newInstallation(t)
-	if err := os.Remove(receipt.Path(inst.root)); err != nil {
+	if err := os.Remove(receipt.Path(platformRootForTest(t, inst.root))); err != nil {
+		t.Fatal(err)
+	}
+	before, err := treeDigest(inst.root)
+	if err != nil {
 		t.Fatal(err)
 	}
 	payload, code, raw := inst.update(t, updatePlan(t, inst.root, freeLoopbackPort(t)), &recordingInstaller{})
 	if code != 2 || errorCode(payload) != contracts.CodeReceiptUnavailable {
 		t.Fatalf("update: %d %s", code, raw)
 	}
-	if _, err := os.Stat(filepath.Join(inst.root, ".kb", "kb.config.jsonc")); !os.IsNotExist(err) {
-		t.Fatal("nothing may be written when there is nothing to update")
+	after, err := treeDigest(inst.root)
+	if err != nil || before != after {
+		t.Fatalf("update without an active receipt changed install-root bytes: err=%v", err)
 	}
 }

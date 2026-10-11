@@ -214,7 +214,7 @@ func ValidateProjectSelection(value string) (string, error) {
 		if os.IsNotExist(err) {
 			if _, linkErr := os.Lstat(absolute); os.IsNotExist(linkErr) {
 				return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project directory must exist",
-					fmt.Sprintf("Create it with `mkdir -p %s` or pass an existing project directory, then retry.", ShellQuote(value)), err)
+					fmt.Sprintf("Create it with `%s` or pass an existing project directory, then retry.", ShellCommand("mkdir", "-p", value)), err)
 			}
 			return "", invalidRequestField(CodeInputRequired, "projectRoot", "the selected project path does not resolve to an existing directory",
 				"Pass an existing project directory, then retry.", err)
@@ -234,7 +234,8 @@ func ValidateProjectSelection(value string) (string, error) {
 	return canonical, nil
 }
 
-// ShellQuote returns a POSIX shell-safe single-quoted argument.
+// ShellQuote returns a POSIX shell-safe single-quoted argument for actionable
+// hints. ParseShellCommands parses this word grammar for exact argv execution.
 func ShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

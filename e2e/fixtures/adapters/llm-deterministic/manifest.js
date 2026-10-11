@@ -7,6 +7,7 @@ export const manifest = {
   description: 'Fixed conventional commit plans for installed-platform journeys',
   type: 'core',
   implements: 'ILLM',
+  networkRequired: false,
   capabilities: { streaming: false },
   configSchema: {},
 }

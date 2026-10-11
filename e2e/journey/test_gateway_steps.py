@@ -5,13 +5,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from gateway_steps import run_gateway_steps, run_llm_provider_steps
+from gateway_steps import run_adapter_catalog_step, run_gateway_steps, run_llm_provider_steps
 from service_steps import Journey
+from test_install_layout import create_test_install_container
 
 
 class FakeResponse:
@@ -26,6 +26,13 @@ class FakeResponse:
 
     def read(self):
         return b'{"ok":false,"error":{"code":"KB_RUNTIME_UNEXPECTED","message":"fixture route unavailable"}}'
+
+
+class CatalogResponse(FakeResponse):
+    status = 200
+
+    def read(self):
+        return b'{"ok":true,"data":{"adapters":{"llm":["complete"]}}}'
 
 
 class JsonResponse:
@@ -46,6 +53,15 @@ class JsonResponse:
 
 
 class GatewayStepTests(unittest.TestCase):
+    def setUp(self):
+        self.platform_temp = tempfile.TemporaryDirectory(prefix="journey-gateway-container-")
+        self.platform = Path(self.platform_temp.name) / "platform"
+        create_test_install_container(self.platform)
+        self.env_patcher = patch.dict(os.environ, {"KB_JOURNEY_PLATFORM_ROOT": str(self.platform)}, clear=False)
+        self.env_patcher.start()
+        self.addCleanup(self.env_patcher.stop)
+        self.addCleanup(self.platform_temp.cleanup)
+
     def test_stream_failure_claim_requires_typed_error_and_healthy_gateway(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "KB_JOURNEY_INVOCATIONS": directory,
@@ -53,7 +69,7 @@ class GatewayStepTests(unittest.TestCase):
             "KB_JOURNEY_PROJECT_ROOT": directory,
             "KB_JOURNEY_PROJECT_ID": "project-a",
             "KB_JOURNEY_PROJECT_B_ID": "project-b",
-            "KB_JOURNEY_PLATFORM_ROOT": directory + "/platform",
+            "KB_JOURNEY_PLATFORM_ROOT": str(self.platform),
             "OPENAI_API_KEY": "fake-secret",
         }, clear=False):
             def failed(command, **_kwargs):
@@ -77,6 +93,10 @@ class GatewayStepTests(unittest.TestCase):
                     }}))
                 if path == "/health":
                     return JsonResponse(200, '{"ok":true,"data":{}}')
+                if path == "/platform/v1/unknown/resource":
+                    return JsonResponse(404, json.dumps({"ok": False, "error": {
+                        "code": "KB_RUNTIME_RESOURCE_NOT_FOUND", "message": "Route not found",
+                    }}))
                 if path == "/platform/v1/llm/stream":
                     return JsonResponse(200, "data: [DONE]\n\n")
                 return JsonResponse(200, '{"ok":true,"data":{}}')
@@ -86,6 +106,7 @@ class GatewayStepTests(unittest.TestCase):
 
         statuses = {item["claimId"]: item["status"] for item in journey.result().case_run["claims"]}
         self.assertEqual(statuses["S-189.5"], "PASS")
+        self.assertEqual(statuses["S-189.7"], "PASS")
 
     def test_provider_steps_require_deterministic_content_in_the_json_result(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
@@ -95,7 +116,7 @@ class GatewayStepTests(unittest.TestCase):
             "KB_JOURNEY_PROJECT_ID": "project-a",
             "KB_JOURNEY_PROJECT_B_ID": "project-b",
             "KB_JOURNEY_LLM_MOCK_BASE_URL": "http://mock-llm:8317",
-            "KB_JOURNEY_PLATFORM_ROOT": directory + "/platform",
+            "KB_JOURNEY_PLATFORM_ROOT": str(self.platform),
             "OPENAI_API_KEY": "fake-openai-key",
         }, clear=False):
             calls = []
@@ -106,11 +127,11 @@ class GatewayStepTests(unittest.TestCase):
                 elif command[1:3] == ["config", "get"]:
                     output = '{"ok":true,"data":{"value":"${OPENAI_API_KEY}"}}'
                 elif command[1:3] == ["config", "set"] and any("baseURL" in arg for arg in command):
-                    platform_root = str(Path(directory, "platform").resolve())
+                    platform_root = str(self.platform.resolve())
                     output = json.dumps({
                         "ok": True,
                         "data": {
-                            "file": platform_root + "/.kb/kb.config.jsonc",
+                            "file": str((self.platform / "current").resolve() / ".kb/kb.config.jsonc"),
                             "nextCommand": f"kb-create restart --platform-root {json.dumps(platform_root)}",
                         },
                     })
@@ -243,10 +264,51 @@ class GatewayStepTests(unittest.TestCase):
         self.assertEqual(statuses, {
             "S-017.1": "FAIL", "S-017.2": "FAIL", "S-017.3": "FAIL", "S-017.4": "FAIL",
             "S-018.1": "FAIL", "S-018.2": "FAIL", "S-018.3": "FAIL",
-            "S-189.1": "FAIL", "S-189.2": "FAIL", "S-189.3": "FAIL", "S-189.4": "FAIL", "S-189.5": "FAIL", "S-189.6": "FAIL",
+            "S-189.2": "FAIL", "S-189.3": "FAIL", "S-189.4": "FAIL", "S-189.5": "FAIL", "S-189.6": "FAIL", "S-189.7": "FAIL",
             "S-017.5": "FAIL",
             "S-190.1": "FAIL", "S-190.2": "FAIL",
         })
+
+    def test_planned_adapter_catalog_is_an_independent_selected_claim(self):
+        calls = []
+        def opener(request, **_kwargs):
+            calls.append(request.full_url)
+            return CatalogResponse()
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "KB_JOURNEY_INVOCATIONS": directory,
+            "KB_JOURNEY_SELECTED_STEPS": "S-189.1",
+        }, clear=False):
+            journey = Journey("local", "planned-adapter-catalog")
+            run_adapter_catalog_step(journey, token="fixture-token", opener=opener)
+
+        self.assertEqual(calls, ["http://127.0.0.1:4000/platform/v1/adapters"])
+        self.assertEqual({item["claimId"]: item["status"] for item in journey.result().case_run["claims"]},
+                         {"S-189.1": "PASS"})
+
+    def test_gateway_extras_do_not_claim_the_planned_catalog_route(self):
+        paths = []
+        def fake_http(path, **_kwargs):
+            paths.append(path)
+            if path == "/platform/v1/unknown/resource":
+                return 404, {"code": "KB_RUNTIME_RESOURCE_NOT_FOUND"}
+            if path == "/platform/v1/llm/stream":
+                return 200, "data: chunk\n\n[DONE]"
+            if path == "/platform/v1/analytics/track":
+                return 200, {"ok": True, "data": {}}
+            if path == "/telemetry/v1/ingest":
+                return 200, {"accepted": 500, "rejected": 0}
+            return 200, {"events": []}
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            "KB_JOURNEY_INVOCATIONS": directory,
+        }, clear=False), patch("gateway_steps.run_llm_provider_steps"), \
+                patch("gateway_steps._http", side_effect=fake_http):
+            journey = Journey("local", "planned-adapter-catalog-not-in-extras")
+            run_gateway_steps(journey, token="fixture-token")
+
+        claims = {item["claimId"] for item in journey.result().case_run["claims"]}
+        self.assertNotIn("S-189.1", claims)
+        self.assertNotIn("/platform/v1/adapters", paths)
 
 
 if __name__ == "__main__":

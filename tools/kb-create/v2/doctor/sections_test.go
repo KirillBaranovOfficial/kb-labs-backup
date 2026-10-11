@@ -91,7 +91,7 @@ func TestInstallationSectionReportsInvalidReceiptHostSpec(t *testing.T) {
 	}
 	section := InspectInstallation(root, state)
 	got := check(t, section, "host-spec")
-	if got.OK || got.Code != contracts.CodeHostSpecInvalid || !strings.Contains(got.Detail, "command is required") || !strings.Contains(got.Hint, "kb-create apply --platform-root") {
+	if got.OK || got.Code != contracts.CodeHostSpecInvalid || !strings.Contains(got.Detail, "command is required") || !strings.Contains(got.Hint, contracts.ShellCommand("kb-create", "apply", "--platform-root", root)) {
 		t.Fatalf("host-spec check = %+v", got)
 	}
 }
@@ -112,7 +112,7 @@ func TestInstallationSectionNamesWhatIsMissing(t *testing.T) {
 
 func TestInstallationSectionWithoutAReceiptIsAFindingNotAnError(t *testing.T) {
 	section := InspectInstallation(t.TempDir(), host.State{Dir: t.TempDir()})
-	if section.OK || check(t, section, "receipt").OK || !check(t, section, "launcher-state").OK {
+	if section.OK || check(t, section, "receipt").OK || !check(t, section, "host-state").OK {
 		t.Fatalf("section = %+v", section)
 	}
 }

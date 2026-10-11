@@ -436,7 +436,7 @@ export const manifest = {
         method: 'POST',
         path: AGENTS_ROUTES.SESSION_CREATE,
         description: 'Create a new session',
-        handler: './rest/handlers/create-session-handler.js',
+        handler: './rest/handlers/sessions-handler.js#createSessionHandler',
         security: ['none'],
       },
       {

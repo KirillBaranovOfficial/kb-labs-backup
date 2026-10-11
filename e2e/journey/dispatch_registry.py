@@ -14,6 +14,7 @@ class Runner:
     scenario: str
     variant: str
     service_profile: str = ""
+    journey_sources: tuple[str, ...] = ("e2e/journey/runner.py",)
 
 
 RUNNERS = {
@@ -25,8 +26,12 @@ RUNNERS = {
     "human:nondefault": Runner("human", "commit", "human-nondefault"),
     "negative:wrong-node": Runner("agent", "explore", "wrong-node"),
     "negative:occupied-port": Runner("agent", "explore", "occupied-port"),
-    "service-local:explore": Runner("agent", "explore", "default", "nightly"),
-    "service-secured:explore": Runner("human", "explore", "secured", "nightly"),
+    "service-local:explore": Runner(
+        "agent", "explore", "default", "nightly",
+        ("e2e/journey/runner.py", "e2e/journey/service_runner.py")),
+    "service-secured:explore": Runner(
+        "human", "explore", "secured", "nightly",
+        ("e2e/journey/runner.py", "e2e/journey/service_runner.py")),
 }
 RUNNER_GROUPS = {
     "service-modes": ("agent:commit", "service-secured:explore"),

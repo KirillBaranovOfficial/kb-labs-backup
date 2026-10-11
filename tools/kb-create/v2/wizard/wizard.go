@@ -20,6 +20,7 @@ import (
 	"github.com/kb-labs/create/v2/flow"
 	"github.com/kb-labs/create/v2/scenario"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 type IO struct {
@@ -44,6 +45,15 @@ func Request(source catalog.Catalog, platformRoot string, terminal IO) (contract
 	}
 	if strings.TrimSpace(platformRoot) == "" {
 		return contracts.InstallRequest{}, fmt.Errorf("platform root is required")
+	}
+	layout, err := versionroot.New(platformRoot)
+	if err != nil {
+		return contracts.InstallRequest{}, err
+	}
+	if err := layout.ValidateInitialTarget(); err != nil {
+		return contracts.InstallRequest{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported,
+			"The chosen install root is not an empty directory or an owned installation container.",
+			"Choose a fresh writable path, then run `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "NEW_ROOT")+"`.", err)
 	}
 	if terminal.In == nil || terminal.Out == nil {
 		return contracts.InstallRequest{}, fmt.Errorf("wizard input and output are required")

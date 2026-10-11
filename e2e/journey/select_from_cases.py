@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Select journey entry points from release cases claimed by executable flows."""
+"""Select journey entry points from release cases claimed by executable flows.
+
+The static dependency rail requires every `.step`/`.flow` recorder attribute in
+runner-reachable modules to be the direct callee of a call. Reflection such as
+`getattr(journey, name)` and `eval` is outside this AST rail. Runtime
+`Journey.step` checks every declared step or flow outcome in all run modes;
+`FlowGraph.flow` records flow outcomes for those checks. Thus a dependency the
+selector cannot see still produces a BLOCKED row for a selected claim, never a
+PASS.
+"""
 from __future__ import annotations
 
 import json
@@ -12,7 +21,8 @@ from pathlib import Path
 from hermetic_cli import run_hermetic_cli
 from invocations import (decode_ux_success_result, describe_cli_failure, invocation_context,
                          print_report_text, read_ux_cli_result)
-from dispatch_registry import runners_for_source
+from dispatch_registry import RUNNERS, runners_for_source
+from journey_dependencies import Dependency
 
 
 @lru_cache(maxsize=None)
@@ -44,14 +54,24 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
         prerequisites = keywords.get("requires")
         role = keywords.get("role")
+        function = call.func.attr if isinstance(call.func, ast.Attribute) else (
+            call.func.id if isinstance(call.func, ast.Name) else "")
         if prerequisites is None:
             required = []
         elif isinstance(prerequisites, (ast.Tuple, ast.List)):
-            required = [item.value for item in prerequisites.elts if isinstance(item, ast.Constant)]
+            required = []
+            for item in prerequisites.elts:
+                if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+                    raise ValueError(f"requires= in {source}:{call.lineno} must contain literal dependency references")
+                try:
+                    required.append(str(Dependency.parse(item.value)))
+                except ValueError as error:
+                    raise ValueError(f"{source}:{call.lineno}: {error}") from error
         else:
             raise ValueError(f"step {name!r} in {source} must declare prerequisites as a literal sequence")
         role_name = role.value if isinstance(role, ast.Constant) else None
-        declaration = {"name": name, "requires": required, "role": role_name}
+        declaration = {"name": name, "kind": "flow" if function == "flow" else "step",
+                       "requires": required, "role": role_name}
         for line in range(call.lineno, call.end_lineno + 1):
             declarations.setdefault(line, declaration)
     return declarations
@@ -68,13 +88,32 @@ def _step_declaration(source: str, line: int, root: Path) -> dict:
 
 
 def _source_step_declarations(sources: set[str], root: Path) -> dict[str, dict]:
-    """Index statically named step calls from claim-registered modules."""
-    expanded = _imported_journey_sources(sources, root)
+    """Index declarations reachable from the executable journey entry points."""
+    entrypoints = {source for runner in RUNNERS.values() for source in runner.journey_sources}
+    expanded = _imported_journey_sources(sources | entrypoints, root)
     return _source_step_declarations_cached(tuple(sorted(expanded)), root)
 
 
 def _imported_journey_sources(sources: set[str], root: Path) -> set[str]:
     """Follow local imports from the claim registry to find shared step declarations."""
+    return set(_imported_journey_sources_cached(tuple(sorted(sources)), root))
+
+
+def _validate_recorder_attribute_references(source: str, tree: ast.Module) -> None:
+    """Require recorder attributes to be called directly so dependencies stay visible."""
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute) or node.attr not in {"step", "flow"}:
+            continue
+        parent = parents.get(node)
+        if not isinstance(parent, ast.Call) or parent.func is not node:
+            raise ValueError(
+                f"{source}:{node.lineno}: recorder must be called directly so its dependencies are statically visible"
+            )
+
+
+@lru_cache(maxsize=None)
+def _imported_journey_sources_cached(sources: tuple[str, ...], root: Path) -> frozenset[str]:
     found = set(sources)
     pending = list(sources)
     while pending:
@@ -100,44 +139,205 @@ def _imported_journey_sources(sources: set[str], root: Path) -> set[str]:
                         found.add(discovered)
                         pending.append(discovered)
                     break
-    return found
+    return frozenset(found)
 
 
 @lru_cache(maxsize=None)
 def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> dict[str, dict]:
     declarations: dict[str, dict] = {}
-    for source in sources:
-        path = root / source
-        if not path.is_file() or path.suffix != ".py":
-            continue
-        tree = _source_tree(source, root)
+    trees = {source: _source_tree(source, root) for source in sources
+             if (root / source).is_file() and (root / source).suffix == ".py"}
+    for source, tree in trees.items():
+        _validate_recorder_attribute_references(source, tree)
+    forwarding: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef,
+                           ast.Call, str, str]] = []
+
+    def enclosing_function(tree: ast.Module, target: ast.AST):
+        parents: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
+        current = parents.get(target)
+        while current is not None:
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return current
+            current = parents.get(current)
+        return None
+
+    def call_name(call: ast.Call) -> str:
+        function = call.func
+        return function.id if isinstance(function, ast.Name) else (
+            function.attr if isinstance(function, ast.Attribute) else "")
+
+    def literal_references(value: ast.AST, source: str, line: int) -> list[str]:
+        if not isinstance(value, ast.Tuple):
+            raise ValueError(f"{source}:{line}: dependency declaration is not statically resolvable")
+        required: list[str] = []
+        for item in value.elts:
+            if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+                raise ValueError(f"{source}:{line}: dependency declaration is not statically resolvable")
+            try:
+                required.append(str(Dependency.parse(item.value)))
+            except ValueError as error:
+                raise ValueError(f"{source}:{line}: {error}") from error
+        return required
+
+    # Find functions that forward their own `requires` parameter to a journey
+    # recorder. Their call sites, rather than the wrapper body, are declarations.
+    for source, tree in trees.items():
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not node.args or not isinstance(node.args[0], ast.Constant):
+            if not isinstance(node, ast.Call) or call_name(node) not in {"step", "flow"}:
                 continue
-            name = node.args[0].value
-            if not isinstance(name, str):
+            required = next((keyword.value for keyword in node.keywords if keyword.arg == "requires"), None)
+            if not isinstance(required, ast.Name):
                 continue
+            function = enclosing_function(tree, node)
+            if function is None:
+                continue
+            parameters = {argument.arg for argument in
+                          [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]}
+            if required.id in parameters:
+                rebound = any(isinstance(candidate, ast.Name) and candidate.id == required.id
+                              and isinstance(candidate.ctx, ast.Store)
+                              for candidate in ast.walk(function))
+                if rebound:
+                    raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
+                forwarding.append((source, function, node, required.id, call_name(node)))
+
+    forwarding_names = {function.name for _, function, _, _, _ in forwarding}
+    for name in forwarding_names:
+        definitions = [(source, node) for source, tree in trees.items() for node in ast.walk(tree)
+                       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name]
+        if len(definitions) != 1:
+            source, _, call, _, _ = next(item for item in forwarding if item[1].name == name)
+            raise ValueError(f"{source}:{call.lineno}: dependency declaration is not statically resolvable")
+    forwarding_call_sites: dict[str, list[tuple[str, ast.Call]]] = {name: [] for name in forwarding_names}
+    for source, tree in trees.items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and call_name(node) in forwarding_names:
+                forwarding_call_sites[call_name(node)].append((source, node))
+
+    def add_declaration(source: str, line: int, kind: str, name: str | None,
+                        required: list[str], role: str | None) -> None:
+        # Dynamic step names can carry checked edges, but are not selector
+        # producers. Only a literal name or a statically resolved wrapper
+        # call site can enter the producer graph.
+        if name is None:
+            key = f"@dynamic:{source}:{line}"
+            declarations[key] = {"name": None, "kind": kind, "requires": required,
+                                 "sources": {source}, "role": role, "locations": [(source, line, required)],
+                                 "producer": False}
+            return
+        key = str(Dependency(kind, name))
+        declaration = declarations.setdefault(key, {"name": name, "kind": kind, "requires": [],
+                                                    "sources": set(), "role": role, "locations": []})
+        declaration["requires"] = sorted(set(declaration["requires"]) | set(required))
+        declaration["sources"].add(source)
+        declaration["locations"].append((source, line, required))
+        if role is not None:
+            declaration["role"] = role
+
+    for source in sources:
+        tree = trees.get(source)
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or call_name(node) not in {"step", "flow"}:
+                continue
+            if any(keyword.arg is None for keyword in node.keywords):
+                raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
             keywords = {keyword.arg: keyword.value for keyword in node.keywords}
-            function = node.func.attr if isinstance(node.func, ast.Attribute) else (
-                node.func.id if isinstance(node.func, ast.Name) else "")
-            if not ("cases" in keywords or "requires" in keywords or "role" in keywords
-                    or function in {"step", "flow"}):
-                continue
             required_node = keywords.get("requires")
             if required_node is None:
-                required = []
-            elif isinstance(required_node, (ast.Tuple, ast.List)):
-                required = [item.value for item in required_node.elts if isinstance(item, ast.Constant)]
+                required: list[str] = []
+            elif isinstance(required_node, ast.Tuple):
+                required = literal_references(required_node, source, node.lineno)
+            elif isinstance(required_node, ast.Name):
+                function = enclosing_function(tree, node)
+                parameters = ({argument.arg for argument in
+                               [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]}
+                              if function is not None else set())
+                if required_node.id not in parameters:
+                    raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
+                wrapper_name = function.name
+                matches = [(owner, definition, inner, parameter, kind)
+                           for owner, definition, inner, parameter, kind in forwarding
+                           if owner == source and definition is function and parameter == required_node.id]
+                if not matches:
+                    raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
+                _, _, _, parameter, kind = matches[0]
+                call_sites = forwarding_call_sites.get(wrapper_name, [])
+                if not call_sites:
+                    raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
+                for call_source, call_site in call_sites:
+                    if any(keyword.arg is None for keyword in call_site.keywords):
+                        raise ValueError(f"{call_source}:{call_site.lineno}: dependency declaration is not statically resolvable")
+                    call_keywords = {keyword.arg: keyword.value for keyword in call_site.keywords}
+                    forwarded_value = call_keywords.get(parameter)
+                    if forwarded_value is None:
+                        kwonly_names = [argument.arg for argument in function.args.kwonlyargs]
+                        if parameter in kwonly_names:
+                            forwarded_value = function.args.kw_defaults[kwonly_names.index(parameter)]
+                        else:
+                            parameter_args = [*function.args.posonlyargs, *function.args.args]
+                            parameter_index = next(index for index, argument in enumerate(parameter_args)
+                                                   if argument.arg == parameter)
+                            defaults_start = len(parameter_args) - len(function.args.defaults)
+                            forwarded_value = (function.args.defaults[parameter_index - defaults_start]
+                                               if parameter_index >= defaults_start else None)
+                        if forwarded_value is None:
+                            raise ValueError(f"{call_source}:{call_site.lineno}: dependency declaration is not statically resolvable")
+                    call_required = literal_references(forwarded_value, call_source, call_site.lineno)
+                    inner_name = node.args[0] if node.args else None
+                    call_name_node = None
+                    if isinstance(inner_name, ast.Name):
+                        parameter_names = [argument.arg for argument in
+                                           [*function.args.posonlyargs, *function.args.args]]
+                        if inner_name.id in parameter_names:
+                            parameter_index = parameter_names.index(inner_name.id)
+                            call_name_node = call_keywords.get(inner_name.id)
+                            if call_name_node is None and parameter_index < len(call_site.args):
+                                call_name_node = call_site.args[parameter_index]
+                    call_name_value = (call_name_node.value if isinstance(call_name_node, ast.Constant)
+                                       and isinstance(call_name_node.value, str) else None)
+                    if call_name_value is None:
+                        raise ValueError(f"{call_source}:{call_site.lineno}: dependency declaration is not statically resolvable")
+                    add_declaration(call_source, call_site.lineno, kind, call_name_value,
+                                    call_required, None)
+                continue
             else:
-                raise ValueError(f"step {name!r} in {source} must declare prerequisites as a literal sequence")
+                raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
+            name_node = node.args[0] if node.args else keywords.get("name")
+            name = name_node.value if isinstance(name_node, ast.Constant) and isinstance(name_node.value, str) else None
+            kind = "flow" if call_name(node) == "flow" else "step"
             role_node = keywords.get("role")
             role = role_node.value if isinstance(role_node, ast.Constant) else None
-            declarations.setdefault(name, {"requires": [], "sources": set(), "role": role})
-            declarations[name]["requires"] = sorted(set(declarations[name]["requires"]) | set(required))
-            declarations[name]["sources"].add(source)
-            if role is not None:
-                declarations[name]["role"] = role
+            add_declaration(source, node.lineno, kind, name, required, role)
     return declarations
+
+
+def validate_dependency_declarations(sources: set[str], root: Path) -> dict[str, dict]:
+    """Reject unresolved edges against the declarations reachable by either journey runner."""
+    entrypoints = sorted({source for runner in RUNNERS.values() for source in runner.journey_sources})
+    reachable = {entry: _imported_journey_sources({entry}, root) for entry in entrypoints}
+    declarations = _source_step_declarations(sources, root)
+    graphs = {entry: _source_step_declarations_cached(tuple(sorted(graph)), root)
+              for entry, graph in reachable.items()}
+    validate_dependency_edges(declarations, reachable, graphs)
+    return declarations
+
+
+def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str, set[str]],
+                              graphs: dict[str, dict[str, dict]]) -> None:
+    for dependency_key, declaration in declarations.items():
+        for source, line, references in declaration["locations"]:
+            owners = [entry for entry, source_set in reachable.items()
+                      if source in source_set and (declaration.get("producer") is False
+                                                   or dependency_key in graphs[entry])]
+            for reference in references:
+                key = str(Dependency.parse(reference))
+                if not owners or not any(key in graphs[entry] for entry in owners):
+                    raise ValueError(f"{source}:{line}: {reference!r} does not resolve to a declared, reachable step or flow")
 
 
 def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[str]],
@@ -151,22 +351,29 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
         sources.update(sources_by_step.get(step_id, set()))
         for declaration in declarations_by_step.get(step_id, []):
             name = declaration.get("name") or step_id
-            names.add(name)
+            names.add(str(Dependency(declaration.get("kind", "step"), name)))
             pending.extend(declaration.get("requires", []))
     prerequisites: set[str] = set()
     while pending:
         name = pending.pop()
-        if name in names:
+        dependency = Dependency.parse(name)
+        key = str(dependency)
+        if key in names:
             continue
-        names.add(name)
-        prerequisites.add(name)
-        declaration = declarations_by_name.get(name, {})
+        names.add(key)
+        prerequisites.add(key)
+        declaration = declarations_by_name.get(key, {})
         sources.update(declaration.get("sources", set()))
         pending.extend(declaration.get("requires", []))
     runners = {selector for source in sources for mode in ("local", "secured")
                for selector in runners_for_source(source, mode)}
+    step_prerequisites = sorted(Dependency.parse(item).name for item in prerequisites
+                                if Dependency.parse(item).kind == "step")
+    flow_prerequisites = sorted(Dependency.parse(item).name for item in prerequisites
+                                if Dependency.parse(item).kind == "flow")
     return {"runners": sorted(runners), "steps": sorted(selected),
-            "prerequisiteSteps": sorted(prerequisites), "stepSources": sorted(sources)}
+            "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
+            "stepSources": sorted(sources)}
 
 
 def read_coverage_result(stdout: str, returncode: int) -> dict:
@@ -245,7 +452,7 @@ def selection_from_coverage(results: list[dict], requested: str) -> dict:
                 "Check available IDs with `node ./cli/bin/dist/bin.js qa cases list --json`, then rerun the journey."
             )
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
-    declarations_by_name = _source_step_declarations(claim_sources, root)
+    declarations_by_name = validate_dependency_declarations(claim_sources, root)
     resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name)
     return {"selection": sorted(set(tokens)), **resolved}
 

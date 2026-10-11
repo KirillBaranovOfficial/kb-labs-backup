@@ -29,6 +29,22 @@ func TerminateProcess(pid int) { _ = syscall.Kill(pid, syscall.SIGTERM) }
 // KillProcess force-kills a single process.
 func KillProcess(pid int) { _ = syscall.Kill(pid, syscall.SIGKILL) }
 
+func TerminateProcessIfIdentity(pid int, processStart string) bool {
+	if !ProcessIdentityMatches(pid, processStart) {
+		return false
+	}
+	TerminateProcess(pid)
+	return true
+}
+
+func KillProcessIfIdentity(pid int, processStart string) bool {
+	if !ProcessIdentityMatches(pid, processStart) {
+		return false
+	}
+	KillProcess(pid)
+	return true
+}
+
 // ProcessAlive reports whether pid exists (EPERM still means it exists).
 func ProcessAlive(pid int) bool { return processAlive(pid) }
 

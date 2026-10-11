@@ -940,12 +940,18 @@ importers:
       '@kb-labs/core-config':
         specifier: workspace:*
         version: link:../../core/config
+      '@kb-labs/core-ipc':
+        specifier: workspace:*
+        version: link:../../core/ipc
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../core/platform
       '@kb-labs/core-project-registry':
         specifier: workspace:*
         version: link:../../core/project-registry
+      '@kb-labs/core-resource-broker':
+        specifier: workspace:*
+        version: link:../../core/resource-broker
       '@kb-labs/core-runtime':
         specifier: workspace:*
         version: link:../../core/runtime
@@ -955,6 +961,9 @@ importers:
       '@kb-labs/core-sys':
         specifier: workspace:*
         version: link:../../core/sys
+      '@kb-labs/llm-router':
+        specifier: workspace:*
+        version: link:../../core/llm-router
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts
@@ -5945,6 +5954,15 @@ importers:
       '@kb-labs/core-retry':
         specifier: workspace:*
         version: link:../../core/retry
+      '@kb-labs/perm-presets':
+        specifier: workspace:*
+        version: link:../../shared/perm-presets
+      '@kb-labs/platform-client':
+        specifier: workspace:*
+        version: link:../platform-client
+      '@kb-labs/shared-tool-kit':
+        specifier: workspace:*
+        version: link:../../shared/tool-kit
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -5964,12 +5982,6 @@ importers:
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../infra/devkit
-      '@kb-labs/perm-presets':
-        specifier: workspace:*
-        version: link:../../shared/perm-presets
-      '@kb-labs/platform-client':
-        specifier: workspace:*
-        version: link:../platform-client
       '@kb-labs/plugin-contracts':
         specifier: workspace:*
         version: link:../../core/plugin-contracts
@@ -5988,9 +6000,6 @@ importers:
       '@kb-labs/shared-testing-platform':
         specifier: workspace:*
         version: link:../../shared/testing-platform
-      '@kb-labs/shared-tool-kit':
-        specifier: workspace:*
-        version: link:../../shared/tool-kit
       '@kb-labs/studio-devtools':
         specifier: workspace:*
         version: link:../../studio/devtools

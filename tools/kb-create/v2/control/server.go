@@ -29,6 +29,7 @@ type Server struct {
 	Runner  host.Runner
 	State   host.State
 	Version string
+	Restart func(context.Context) (RestartResponse, error)
 
 	token     string
 	address   string
@@ -58,7 +59,12 @@ func (s *Server) Start() error {
 	s.startedAt = time.Now().UTC()
 	s.queue = &Queue{Path: s.State.UpdateRequests()}
 	s.http = &http.Server{Handler: s.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second}
-	file := File{Protocol: ProtocolVersion, Address: s.address, Token: s.token, PID: os.Getpid(), Version: s.Version}
+	processIdentity, err := host.ProcessIdentityForPID(os.Getpid())
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+	file := File{Protocol: ProtocolVersion, Address: s.address, Token: s.token, PID: os.Getpid(), ProcessIdentity: processIdentity, Version: s.Version}
 	if err := writeControlFile(s.State.Control(), file); err != nil {
 		_ = listener.Close()
 		return err
@@ -92,14 +98,7 @@ func writeControlFile(path string, file File) error {
 	if err != nil {
 		return err
 	}
-	temp := path + ".tmp"
-	// WriteFile only applies the mode to a newly created file, so make sure a
-	// stale temp file cannot leave wider permissions behind.
-	_ = os.Remove(temp)
-	if err := os.WriteFile(temp, append(data, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, path)
+	return host.WriteRecordFile(path, append(data, '\n'))
 }
 
 func (s *Server) handler() http.Handler {
@@ -118,7 +117,7 @@ func (s *Server) handler() http.Handler {
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorized(r) {
-			s.fail(w, http.StatusUnauthorized, contracts.NewDiag("KB_HOST_CONTROL_UNAUTHORIZED", "The launcher control channel rejected the request token.", "Read the current token from control.json in the launcher state directory.", nil))
+			s.fail(w, http.StatusUnauthorized, contracts.NewDiag("KB_HOST_CONTROL_UNAUTHORIZED", "The launcher control channel rejected the request token.", "Read the current token from control.json in the install-root host-state directory reported by `kb-create doctor`.", nil))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -159,6 +158,15 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 	// which is the least surprising behaviour for an idempotent request.
 	s.restartMu.Lock()
 	defer s.restartMu.Unlock()
+	if s.Restart != nil {
+		response, err := s.Restart(r.Context())
+		if err != nil {
+			s.failWith(w, err)
+			return
+		}
+		s.write(w, http.StatusOK, response)
+		return
+	}
 	stopped, err := s.Runner.Stop(r.Context())
 	if err != nil {
 		s.failWith(w, err)

@@ -204,6 +204,25 @@ func requiresCompatibleLabel(label CompatibilityLabel, wanted, version string, p
 	return false, nil
 }
 
+// PlatformSDKVersion returns the SDK version related to platformVersion in the
+// compatibility matrix, or empty string if no exact relation exists.
+func PlatformSDKVersion(source Catalog, platformVersion string) string {
+	if source.Compatibility != nil {
+		platformLabel := "platform@" + platformVersion
+		for _, label := range source.Compatibility.Labels {
+			if label.ID != platformLabel {
+				continue
+			}
+			for _, relation := range label.Requires {
+				if strings.HasPrefix(relation.Label, "sdk@") {
+					return strings.TrimPrefix(relation.Label, "sdk@")
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func validateComponentRanges(component Component) error {
 	if _, err := semrange.ParseRange(component.PlatformRange); err != nil {
 		return fmt.Errorf("component %s platform range is invalid: %w", component.ID, err)

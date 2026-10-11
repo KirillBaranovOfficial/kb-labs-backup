@@ -11,17 +11,20 @@ from unittest.mock import patch
 from platform_state_dump import (MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDumpOnce,
                                  _write_auth_state_probe, archive_service_logs, dump_platform_state,
                                  failure_dump_environment)
+from journey_resources import installer_record_path
+from test_install_layout import create_test_install_container, move_test_platform_into_container
 
 
 class PlatformStateDumpTests(unittest.TestCase):
     def test_auth_state_probe_reports_aggregate_status_and_database_identity_without_tokens(self):
         with tempfile.TemporaryDirectory(prefix="journey-auth-probe-") as temporary:
             root = Path(temporary)
-            database = root / ".kb/database/kb.sqlite"
+            active = create_test_install_container(root)
+            database = active / ".kb/database/kb.sqlite"
             database.parent.mkdir(parents=True)
-            config = root / ".kb/kb.config.jsonc"
+            config = active / ".kb/kb.config.jsonc"
             config.write_text(json.dumps({"platform": {"adapterOptions": {
-                "documentDatabase": {"filename": ".kb/database/kb.sqlite"},
+                "documentDatabase": {"filename": str(database)},
             }}}))
             with sqlite3.connect(database) as connection:
                 connection.execute("CREATE TABLE doc_session_families (id TEXT, data TEXT)")
@@ -44,6 +47,8 @@ class PlatformStateDumpTests(unittest.TestCase):
         for mode in ("local", "secured"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="journey-service-logs-") as temporary:
                 root = Path(temporary)
+                platform_root = root / "platform"
+                create_test_install_container(platform_root)
                 kb_home = root / "home" / ".kb"
                 database = kb_home / "state" / "prj_test" / "database" / "kb.sqlite"
                 database.parent.mkdir(parents=True)
@@ -62,7 +67,7 @@ class PlatformStateDumpTests(unittest.TestCase):
                         connection.execute("INSERT INTO doc_logs VALUES (?, ?, ?, ?)",
                                            (f"log-{index}", json.dumps(data), index, index))
                 destination = archive_service_logs(
-                    kb_home, root / "reports", platform_root=root / "platform", mode=mode, run_id="run-1",
+                    kb_home, root / "reports", platform_root=platform_root, mode=mode, run_id="run-1",
                 )
                 for service in ("host", "gateway", "project-runtime", "workflow-daemon"):
                     archived = list(destination.rglob(f"{service}.jsonl"))
@@ -75,7 +80,8 @@ class PlatformStateDumpTests(unittest.TestCase):
             root = Path(temporary)
             kb_home = root / "home" / ".kb"
             platform_root = root / "platform"
-            database = platform_root / ".kb" / "database" / "kb.sqlite"
+            active = create_test_install_container(platform_root)
+            database = active / ".kb" / "database" / "kb.sqlite"
             database.parent.mkdir(parents=True)
             with sqlite3.connect(database) as connection:
                 connection.execute("CREATE TABLE doc_logs (id TEXT, data TEXT, created_at INT, updated_at INT)")
@@ -153,11 +159,6 @@ class PlatformStateDumpTests(unittest.TestCase):
                     {"id": "missing", "package": "@kb-labs/missing", "version": "4.5.6"},
                 ]},
             }))
-            (platform / ".kb/v2/snapshots").mkdir()
-            (platform / ".kb/v2/snapshots/snapshot-good.json").write_text(
-                '{"id":"snapshot-good","token":"snapshot-secret"}'
-            )
-            (platform / ".kb/v2/snapshots/snapshot-too-large.json").write_text("x" * (MAX_FILE_BYTES + 1))
             (platform / "node_modules/@kb-labs/sample/package.json").write_text(
                 '{"name":"@kb-labs/sample","version":"1.2.3"}'
             )
@@ -180,6 +181,13 @@ class PlatformStateDumpTests(unittest.TestCase):
             launcher = binaries / "kb-create"
             launcher.write_text("#!/bin/sh\necho '{\"token\":\"launcher-secret\"}'\nexit 9\n")
             launcher.chmod(0o755)
+            move_test_platform_into_container(platform)
+            snapshots = installer_record_path(platform, "snapshots")
+            snapshots.mkdir(parents=True)
+            (snapshots / "snapshot-good.json").write_text(
+                '{"id":"snapshot-good","token":"snapshot-secret"}'
+            )
+            (snapshots / "snapshot-too-large.json").write_text("x" * (MAX_FILE_BYTES + 1))
             env = {**os.environ, "HOME": str(home), "PATH": f"{binaries}:{os.environ.get('PATH', '')}",
                    "KB_JOURNEY_GIT_REVISION": "abc123def"}
 
@@ -197,10 +205,10 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertEqual({entry["name"] for entry in fingerprints["entries"]},
                              {"gateway.jwtSecret", "GATEWAY_JWT_SECRET"})
             self.assertNotIn("signing-value", fingerprints_path.read_text())
-            snapshot = destination / ".kb/v2/snapshots/snapshot-good.json"
+            snapshot = destination / "installer/snapshots/snapshot-good.json"
             self.assertTrue(snapshot.is_file())
             self.assertNotIn("snapshot-secret", snapshot.read_text())
-            self.assertFalse((destination / ".kb/v2/snapshots/snapshot-too-large.json").exists())
+            self.assertFalse((destination / "installer/snapshots/snapshot-too-large.json").exists())
             manifests = json.loads((destination / "receipt-artifact-manifests.json").read_text())
             self.assertEqual(manifests, [
                 {"id": "sample", "package": "@kb-labs/sample", "version": "1.2.3", "manifestExists": True},
@@ -258,8 +266,10 @@ class PlatformStateDumpTests(unittest.TestCase):
                 namespace["ACTIVE_MAIN_ENV"], namespace["LAST_COMMAND_ENV"],
                 {"HOME": str(main_home), "KB_JOURNEY_HOME_LABEL": "main"},
             )
+            platform = root / "platform"
+            create_test_install_container(platform)
             destination = dump_platform_state(
-                root / "platform", root / "reports", mode="local", front="agent",
+                platform, root / "reports", mode="local", front="agent",
                 scenario="explore", variant="default", first_failure="runner failed", env=command_env,
             )
             self.assertTrue((destination / "launcher-logs/probe/launcher.log").is_file())
@@ -268,6 +278,7 @@ class PlatformStateDumpTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="journey-workflow-dump-test-") as temporary:
             home = Path(temporary)
             platform = home / "kb-platform"
+            create_test_install_container(platform)
             project = home / "fresh-project"
             reports = home / "reports"
             workflow_dir = project / ".kb/data/workflows"

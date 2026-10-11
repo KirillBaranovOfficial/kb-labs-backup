@@ -18,11 +18,13 @@ import (
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/installed"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/release"
 	"github.com/kb-labs/create/v2/resolve"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/scenario"
 	"github.com/kb-labs/create/v2/secrets"
+	"github.com/kb-labs/create/v2/versionroot"
 	"github.com/kb-labs/create/v2/wizard"
 )
 
@@ -37,7 +39,15 @@ func primeOfflineCatalog(t *testing.T, root string, source *catalog.Catalog) {
 		if kind == "binary" {
 			directory, name = "binaries", *hash
 		}
-		path := filepath.Join(root, ".kb", "v2", "cache", directory, name)
+		layout, err := versionroot.New(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cache, err := layout.SharedRuntimePath(".kb/v2/cache")
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(cache, directory, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			t.Fatal(err)
 		}
@@ -71,6 +81,47 @@ func primeOfflineCatalog(t *testing.T, root string, source *catalog.Catalog) {
 		}
 		*source = sealed
 	}
+}
+
+func prepareFreshContainer(t *testing.T, root string) (versionroot.Layout, string) {
+	t.Helper()
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layout, stage
+}
+
+func finishFreshContainer(t *testing.T, layout versionroot.Layout, stage string,
+	installed contracts.InstallReceipt) contracts.InstallReceipt {
+	t.Helper()
+	installationID, err := versionroot.InstallationIDForPath(stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed.InstallationID = installationID
+	installed.Plan.Request.PlatformRoot = layout.PlatformRoot()
+	if err := receipt.Write(stage, installed); err != nil {
+		t.Fatal(err)
+	}
+	version := installed.Plan.ServiceGraph.PlatformVersion
+	if version == "" && len(installed.Plan.Artifacts) > 0 {
+		version = installed.Plan.Artifacts[0].Version
+	}
+	if version == "" {
+		t.Fatal("fresh container fixture has no platform version")
+	}
+	if _, err := layout.ActivateInitial(stage, version, installed.Plan.PlanHash); err != nil {
+		t.Fatal(err)
+	}
+	if err := receipt.Write(layout.PlatformRoot(), installed); err != nil {
+		t.Fatal(err)
+	}
+	return installed
 }
 
 // These journeys are the installer's install and secret contract, exercised the way
@@ -181,15 +232,19 @@ func install(t *testing.T, answers string) journeyResult {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	store := secrets.Store{PlatformRoot: root}
+	layout, stage := prepareFreshContainer(t, root)
+	plan.Request.PlatformRoot = stage
+	store := secrets.Store{PlatformRoot: stage}
 	if err := secrets.EnsureGenerated(&plan, store); err != nil {
 		t.Fatalf("generate declared secrets: %v", err)
 	}
-	artifacts := &offlineArtifacts{root: root}
-	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts, Secrets: &store, Clock: journeyClock{time.Unix(1, 0)}}); err != nil {
+	artifacts := &offlineArtifacts{root: stage}
+	installed, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts, Secrets: &store, Clock: journeyClock{time.Unix(1, 0)}})
+	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	return readInstall(t, root, plan)
+	installed = finishFreshContainer(t, layout, stage, installed)
+	return readInstall(t, layout.PlatformRoot(), installed.Plan)
 }
 
 func readInstall(t *testing.T, root string, plan contracts.ResolvedInstallPlan) journeyResult {
@@ -412,13 +467,6 @@ func TestMachineRequestSecuredInstallDeliversSecretsThroughTheSameStore(t *testi
 	root := t.TempDir()
 	source := sealedGatewayCatalog(t)
 	primeOfflineCatalog(t, root, &source)
-	store := secrets.Store{PlatformRoot: root}
-	if err := store.Put("gateway.bootstrap.password", adminPassword); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Put("gateway.jwtSecret", strings.Repeat("k", 64)); err != nil {
-		t.Fatal(err)
-	}
 	plan, err := resolve.Plan(contracts.InstallRequest{
 		PlatformRoot: root, Source: contracts.SourceOffline, ServiceProfile: "default",
 		Values:       map[string]string{"gateway.access.mode": `"secured"`, "gateway.bootstrap.adminEmail": `"admin@example.com"`},
@@ -427,10 +475,21 @@ func TestMachineRequestSecuredInstallDeliversSecretsThroughTheSameStore(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: &offlineArtifacts{root: root}, Secrets: &store}); err != nil {
+	layout, stage := prepareFreshContainer(t, root)
+	plan.Request.PlatformRoot = stage
+	store := secrets.Store{PlatformRoot: stage}
+	if err := store.Put("gateway.bootstrap.password", adminPassword); err != nil {
 		t.Fatal(err)
 	}
-	result := readInstall(t, root, plan)
+	if err := store.Put("gateway.jwtSecret", strings.Repeat("k", 64)); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: &offlineArtifacts{root: stage}, Secrets: &store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed = finishFreshContainer(t, layout, stage, installed)
+	result := readInstall(t, layout.PlatformRoot(), installed.Plan)
 	if result.secrets["GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"] != adminPassword || result.secrets["GATEWAY_JWT_SECRET"] != strings.Repeat("k", 64) {
 		t.Fatalf("secrets not deliverable by variable name: %v", keysOf(result.secrets))
 	}
@@ -448,7 +507,9 @@ func TestSecretInputWithNoStoredValueFailsBeforeAnythingIsInstalled(t *testing.T
 		t.Fatal(err)
 	}
 	artifacts := &offlineArtifacts{root: root}
-	store := secrets.Store{PlatformRoot: root}
+	_, stage := prepareFreshContainer(t, root)
+	plan.Request.PlatformRoot = stage
+	store := secrets.Store{PlatformRoot: stage}
 	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{Artifacts: artifacts, Secrets: &store}); err == nil || !strings.Contains(err.Error(), "gateway.jwtSecret is not set") {
 		t.Fatalf("apply must refuse a declared secret with no value, got %v", err)
 	}
@@ -514,16 +575,20 @@ func TestFreshFixtureInstallRendersInternalSecretForEveryConsumer(t *testing.T) 
 	if err != nil {
 		t.Fatalf("resolve fresh install from journey fixture: %v", err)
 	}
-	store := secrets.Store{PlatformRoot: root}
+	layout, stage := prepareFreshContainer(t, root)
+	plan.Request.PlatformRoot = stage
+	store := secrets.Store{PlatformRoot: stage}
 	if err := secrets.EnsureGenerated(&plan, store); err != nil {
 		t.Fatalf("generate fresh install secrets: %v", err)
 	}
 	probe := &captureHostEnvironment{store: store}
-	if _, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{
-		Artifacts: &offlineArtifacts{root: root}, Probe: probe, Secrets: &store,
-	}); err != nil {
+	installed, err := runtime.Apply(context.Background(), plan, runtime.Dependencies{
+		Artifacts: &offlineArtifacts{root: stage}, Probe: probe, Secrets: &store,
+	})
+	if err != nil {
 		t.Fatalf("apply fresh install: %v", err)
 	}
+	installed = finishFreshContainer(t, layout, stage, installed)
 	value := probe.env["GATEWAY_INTERNAL_SECRET"]
 	if value == "" {
 		t.Fatalf("fresh host environment lacks GATEWAY_INTERNAL_SECRET: %v", probe.env)

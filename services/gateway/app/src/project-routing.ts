@@ -22,10 +22,10 @@ import {
   type IncomingMessage,
 } from "node:http";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { createErrorEnvelope, getCatalogEntry, isErrorCode, normalizeHttpFailure, type ErrorEnvelope } from "@kb-labs/core-platform";
+import { createErrorEnvelope, getCatalogEntry, isErrorCode, isErrorEnvelope, normalizeHttpFailure, type ErrorEnvelope } from "@kb-labs/core-platform";
 import type { IServiceTransport, ProjectServiceConnectionInfo } from "@kb-labs/core-platform";
-import { validateProjectServiceDeclarations, type ProjectServiceApiDeclaration } from "@kb-labs/plugin-contracts";
-import { createUxFailureResult } from "@kb-labs/core-platform/ux-result";
+import { validateProjectServiceDeclarations, type ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
+import { createUxFailureResult, createUxSuccessResult } from "@kb-labs/core-platform/ux-result";
 
 /** Path prefix under which project-scoped APIs are served. */
 export const PROJECT_ROUTE_PREFIX = "/api/v1/projects";
@@ -125,14 +125,23 @@ function buildRequestHeaders(
   return headers;
 }
 
+function projectRoutingEnvelope(error: unknown): ErrorEnvelope | undefined {
+  return error instanceof ProjectRoutingError
+    ? error.envelope
+    : error && typeof error === "object" && "envelope" in error && isErrorEnvelope(error.envelope)
+      ? error.envelope
+      : undefined;
+}
+
 function sendError(
   reply: FastifyReply,
   request: FastifyRequest,
   error: unknown,
 ): FastifyReply {
-  if (error instanceof ProjectRoutingError) {
-    const status = STATUS_BY_CODE[error.envelope.code] ?? 500;
-    return reply.code(status).send({ error: error.envelope });
+  const envelope = projectRoutingEnvelope(error);
+  if (envelope) {
+    const status = STATUS_BY_CODE[envelope.code] ?? 500;
+    return reply.code(status).send({ error: envelope });
   }
   request.kbLogger?.error("Project routing failed", error);
   return reply.code(500).send({ error: "Internal Server Error" });
@@ -197,7 +206,7 @@ function forward(
  */
 export async function registerProjectRoutes(
   app: FastifyInstance,
-  services: readonly ProjectServiceApiDeclaration[],
+  services: readonly ProjectServiceDeclaration[],
   projectTransport: Pick<IServiceTransport, "resolveProjectService">,
   timeoutMs = 30_000,
 ): Promise<void> {
@@ -223,17 +232,45 @@ export async function registerProjectRoutes(
           const error = createErrorEnvelope("KB_RUNTIME_RESOURCE_NOT_FOUND", {
             details: { path: request.url, serviceId },
             correlationId: String(request.id),
+            message: `Project service "${serviceId}" is not declared.`,
+            hint: `Run "kb project show ${projectId}" to confirm the project, then use a declared service ID.`,
           });
           return reply.code(404).send(createUxFailureResult(error));
         }
+
+        const rawUrl = request.raw.url ?? request.url;
+        const pathname = rawUrl.split("?", 1)[0] ?? rawUrl;
+        const pathParts = pathname.split("/");
+        const suffixPath = pathParts.slice(6).join("/");
+        const query = rawUrl.includes("?") ? `?${rawUrl.split("?").slice(1).join("?")}` : "";
+        const suffix = `/${suffixPath}${query}`;
+        const isHealthRequest = request.method === "GET" && suffixPath === "health";
+        const sendHealthFailure = (reason: string, upstreamStatus?: number): FastifyReply => {
+          const error = createErrorEnvelope("KB_PROJECT_RUNTIME_START_FAILED", {
+            details: {
+              projectId,
+              serviceId,
+              ...(upstreamStatus === undefined ? {} : { upstreamStatus: String(upstreamStatus) }),
+            },
+            correlationId: String(request.id),
+            message: `Project service "${serviceId}" for project "${projectId}" did not report healthy.`,
+            cause: reason,
+            hint: `Run "kb logs query --source ${serviceId} --level error --limit 20" to inspect its errors, then retry the health request.`,
+          });
+          return reply.code(502).send(createUxFailureResult(error));
+        };
 
         let upstream: ProjectServiceConnectionInfo | undefined;
         try {
           upstream = await projectTransport.resolveProjectService(projectId, serviceId);
         } catch (error) {
+          if (isHealthRequest && !projectRoutingEnvelope(error)) {
+            return sendHealthFailure("The project service runtime could not be acquired.");
+          }
           return sendError(reply, request, error);
         }
         if (!upstream) {
+          if (isHealthRequest) return sendHealthFailure("The project service runtime address is unavailable.");
           return sendError(reply, request, new ProjectRoutingError(createErrorEnvelope(
             "KB_HOST_SERVICE_ADDRESS_MISSING",
             { details: { service: serviceId, project: projectId }, correlationId: String(request.id) },
@@ -241,14 +278,10 @@ export async function registerProjectRoutes(
         }
 
         // The service's public prefix is removed; the declared internal base is restored.
-        const rawUrl = request.raw.url ?? request.url;
-        const pathname = rawUrl.split("?", 1)[0] ?? rawUrl;
-        const pathParts = pathname.split("/");
-        const suffixPath = pathParts.slice(6).join("/");
-        const query = rawUrl.includes("?") ? `?${rawUrl.split("?").slice(1).join("?")}` : "";
-        const suffix = `/${suffixPath}${query}`;
         const serviceBase = service.rewritePrefix === "/" ? "" : service.rewritePrefix;
-        const path = `${upstream.pathPrefix ?? ""}${serviceBase}${suffix}`;
+        const path = isHealthRequest
+          ? `${upstream.pathPrefix ?? ""}${service.healthCheck}`
+          : `${upstream.pathPrefix ?? ""}${serviceBase}${suffix}`;
 
         let released = false;
         const release = () => {
@@ -271,6 +304,10 @@ export async function registerProjectRoutes(
           }, path, timeoutMs, abortController.signal);
         } catch (error) {
           release();
+          if (isHealthRequest) {
+            const reason = error instanceof Error ? error.message : String(error);
+            return sendHealthFailure(reason);
+          }
           if (error && typeof error === "object" && "code" in error && error.code === "KB_RUNTIME_TIMEOUT") {
             const envelope = createErrorEnvelope("KB_RUNTIME_TIMEOUT", {
               details: { timeoutMs: String(timeoutMs), serviceId },
@@ -306,6 +343,12 @@ export async function registerProjectRoutes(
             chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
           }
           const body = Buffer.concat(chunks).toString("utf8");
+          if (isHealthRequest) {
+            return sendHealthFailure(
+              `The declared health endpoint returned HTTP ${response.statusCode ?? 502}.`,
+              response.statusCode,
+            );
+          }
           let parsed: unknown;
           try {
             parsed = JSON.parse(body);
@@ -338,6 +381,27 @@ export async function registerProjectRoutes(
               : "Inspect the project runtime response for this route and status, then retry the request.",
           });
           return reply.code(upstreamStatus).send(createUxFailureResult(error));
+        }
+
+        if (isHealthRequest) {
+          const chunks: Buffer[] = [];
+          for await (const chunk of response) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          }
+          let payload: unknown;
+          try {
+            payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          } catch {
+            return sendHealthFailure("The declared health endpoint did not return JSON.");
+          }
+          if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+            return sendHealthFailure("The declared health endpoint did not return a health object.");
+          }
+          const health = payload as Record<string, unknown>;
+          if (health.status === "unhealthy" || health.ready === false) {
+            return sendHealthFailure("The declared health endpoint did not report a healthy status.");
+          }
+          return reply.code(200).send(createUxSuccessResult(payload));
         }
 
         for (const [name, value] of Object.entries(response.headers)) {

@@ -16,7 +16,7 @@ import {
   type IServiceTransport,
 } from "@kb-labs/core-platform";
 import type { GatewayConfig } from "@kb-labs/gateway-contracts";
-import type { ProjectServiceApiDeclaration } from "@kb-labs/plugin-contracts";
+import type { ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
 import { HostRegistrationSchema } from "@kb-labs/gateway-contracts";
 import {
   AuthService,
@@ -142,7 +142,7 @@ export async function createServer(
   hostRoutes?: HostRoutes,
   routeObserver?: (route: RouteOptions) => void,
   installationIdentity?: { installationId?: string },
-  projectServices?: readonly ProjectServiceApiDeclaration[],
+  projectServices?: readonly ProjectServiceDeclaration[],
   projectServiceTransport?: Pick<IServiceTransport, "resolveProjectService">,
 ) {
   const gatewayLogger = createHttpLogger(logger, {

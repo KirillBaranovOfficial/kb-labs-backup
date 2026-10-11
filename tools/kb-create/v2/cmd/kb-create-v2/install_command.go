@@ -60,7 +60,7 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	}
 	root, err = filepath.Abs(root)
 	if err != nil {
-		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `kb-create install --platform-root PATH`.", err)
+		return applyCommandResult{}, contracts.NewDiag(contracts.CodeInputRequired, "The platform path is invalid.", "Pass a valid path with `"+contracts.ShellCommand("kb-create", "install", "--platform-root", "PATH")+"`.", err)
 	}
 	if err := preflight.CheckInstallResources(root); err != nil {
 		return applyCommandResult{}, asDiag(err)
@@ -99,6 +99,10 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		return applyCommandResult{}, failure
 	}
 	plan := resolved.Plan
+	existingSelection, selectionFailure := existingProjectSelection(root, plan.Request.ProjectRoot)
+	if selectionFailure != nil {
+		return applyCommandResult{}, selectionFailure
+	}
 	if _, err := fmt.Fprintf(out, "  ✓ Resolve (%s)\n", time.Since(started).Round(time.Millisecond)); err != nil {
 		return applyCommandResult{}, progressWriteFailure(err, "install")
 	}
@@ -134,7 +138,14 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 		}
 	}
 	if plan.Request.ProjectRoot == "" {
-		if _, err := fmt.Fprintf(out, "\nKB Labs is installed at %s.\nNext: register a project with `kb project add <path>`.\n", root); err != nil {
+		if _, err := fmt.Fprintf(out, "\nKB Labs is installed at %s.\nNext: register a project with `%s`.\n", root, contracts.ShellCommand("kb", "project", "add", "<path>")); err != nil {
+			return applyCommandResult{}, progressWriteFailure(err, "install")
+		}
+		return result, nil
+	}
+	if existingSelection && plan.Request.ProjectRoot != "" {
+		if _, err := fmt.Fprintf(out, "\nThe installation already records project %s.\nNext: run `%s`.\n", plan.Request.ProjectRoot,
+			contracts.ShellCommand("kb", "project", "show", plan.Request.ProjectRoot)); err != nil {
 			return applyCommandResult{}, progressWriteFailure(err, "install")
 		}
 		return result, nil
@@ -143,7 +154,8 @@ func install(ctx context.Context, input installCommandInput, deps commandDepende
 	if err != nil {
 		return applyCommandResult{}, projectRegistrationFailure(root, plan.Request.ProjectRoot, err)
 	}
-	if _, err := fmt.Fprintf(out, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `kb-create status --platform-root %q` and `kb project show %s`.\n", root, projectID, plan.Request.ProjectRoot, root, projectID); err != nil {
+	if _, err := fmt.Fprintf(out, "\nVerification: platform installed at %s; project %s registered at %s.\nNext: run `%s` and `%s`.\n", root, projectID, plan.Request.ProjectRoot,
+		contracts.ShellCommand("kb-create", "status", "--platform-root", root), contracts.ShellCommand("kb", "project", "show", plan.Request.ProjectRoot)); err != nil {
 		return applyCommandResult{}, progressWriteFailure(err, "install")
 	}
 	return result, nil
@@ -207,6 +219,11 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 	if failure != nil {
 		return finishInstallStreamFailure(writer, inputFailure(failure))
 	}
+	existingSelection, selectionFailure := existingProjectSelection(resolved.Plan.Request.PlatformRoot, resolved.Plan.Request.ProjectRoot)
+	if selectionFailure != nil {
+		selectionFailure.ProcessExitCode = diag.ExitInput
+		return finishInstallStreamFailure(writer, selectionFailure)
+	}
 	deps.Runtime.Progress = streamProgress{writer: writer}
 	result, failure := executeApplyPlanJSON(ctx, input, resolved, deps)
 	if failure != nil {
@@ -220,7 +237,7 @@ func installJSON(ctx context.Context, input installCommandInput, deps commandDep
 		return streamCompletion{ExitCode: writer.ExitCode()}, nil
 	}
 	request := result.Receipt.Plan.Request
-	if request.ProjectRoot != "" {
+	if request.ProjectRoot != "" && !existingSelection {
 		if _, err := deps.ProjectRegistrar(request.PlatformRoot, request.ProjectRoot); err != nil {
 			failure := projectRegistrationFailure(request.PlatformRoot, request.ProjectRoot, err)
 			failure.ProcessExitCode = diag.ExitError
@@ -263,13 +280,16 @@ func registerInstalledProject(platformRoot, projectRoot string, registrar func(s
 	}
 	abs, err := filepath.Abs(projectRoot)
 	if err != nil {
-		return "", fmt.Errorf("resolve project root: %w", err)
+		return "", diag.New("KB_RUNTIME_INPUT_INVALID", "The selected project path could not be resolved.", diag.WithCauseAndReason("Check the path and select an existing project directory."))
 	}
 	canonical, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		return "", fmt.Errorf("project directory %q must exist: %w", projectRoot, err)
+		return "", diag.New("KB_PROJECT_PATH_NOT_FOUND", fmt.Sprintf("The project path %q does not exist.", projectRoot))
 	}
-	return registerProject(platformRoot, filepath.Clean(canonical), registrar)
+	if registrar != nil {
+		return registrar(filepath.Clean(canonical))
+	}
+	return registerProject(platformRoot, filepath.Clean(canonical))
 }
 
 func renderInstall(value any) string { return renderApply(value) }
