@@ -25,7 +25,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, configure_i
                             PROJECT_ID,
                             _prepare_and_export_mcp_projects,
                             main as service_main, mcp_probe, run_grouped_service_steps, run_service_steps)
-from service_steps import FlowGraph, Journey, record_runner_failure
+from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
 from invocations import run_pty_command, store_report_secret
 from steps.auth import run_secured_auth_steps
 
@@ -51,6 +51,44 @@ class FakeGitHub:
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_runner_exception_keeps_completed_steps_and_adds_crash_row_to_report(self):
+        with tempfile.TemporaryDirectory(prefix="journey-runner-crash-") as temp:
+            root = Path(temp)
+            journey = Journey("local", "runner-crash")
+            for number in range(3):
+                journey.step(f"completed step {number + 1}", "journey.test", lambda: None,
+                             cases=[f"S-900.{number + 1}"])
+            try:
+                raise RuntimeError("runner body failed after recorded steps")
+            except RuntimeError as error:
+                record_runner_exception(journey, error, root / "journey-diagnostics.log")
+            report = root / "journey.json"
+            result = journey.write_json(report)
+            saved = json.loads(report.read_text())
+            diagnostic = (root / "journey-diagnostics.log").read_text()
+
+        self.assertEqual(len(saved["steps"]), 4)
+        self.assertEqual([step["status"] for step in saved["steps"]], ["PASS", "PASS", "PASS", "FAIL"])
+        self.assertEqual(saved["steps"][-1]["name"], "outer journey orchestration")
+        self.assertEqual(len(saved["case_run"]["claims"]), 3)
+        self.assertIn("Traceback", diagnostic)
+        self.assertEqual(result.status, "FAIL")
+
+    def test_fixture_journey_rows_are_replayed_into_the_reporting_journey(self):
+        fixture = Journey("local", "fixture-rows")
+        fixture.step("fixture passes", "journey.test", lambda: None, cases=["S-900.1"])
+        fixture.step("fixture fails", "journey.test", lambda: "fixture left a host running", cases=["S-900.2"])
+        report = Journey("local", "reporting")
+        report.step("earlier row", "journey.test", lambda: None, cases=["S-900.3"])
+
+        replay_steps(fixture, report)
+
+        self.assertEqual([(step.name, step.status, step.cases) for step in report.steps],
+                         [("earlier row", "PASS", ["S-900.3"]),
+                          ("fixture passes", "PASS", ["S-900.1"]),
+                          ("fixture fails", "FAIL", ["S-900.2"])])
+        self.assertEqual(report.steps[-1].message, "fixture left a host running")
+
     def test_journey_registry_is_shared_with_npm_resolution(self):
         compose = (Path(__file__).parent / "docker-compose.yml").read_text()
         registry = re.search(r"^\s+KB_JOURNEY_REGISTRY:\s*(.+)$", compose, re.MULTILINE)
