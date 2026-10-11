@@ -4,6 +4,7 @@ package host
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/kb-labs/clikit/diag"
@@ -14,6 +15,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +26,45 @@ import (
 )
 
 var fakeHostBinary string
+
+func TestLifecycleRecordReadersNeverSeePartialPublication(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "host.pid")
+	type record struct {
+		PID      int    `json:"pid"`
+		Identity string `json:"identity"`
+	}
+	first, _ := json.Marshal(record{PID: 1, Identity: strings.Repeat("a", 32*1024)})
+	second, _ := json.Marshal(record{PID: 2, Identity: strings.Repeat("b", 32*1024)})
+	if err := WriteRecordFile(path, first); err != nil {
+		t.Fatal(err)
+	}
+	var writers sync.WaitGroup
+	writers.Add(1)
+	go func() {
+		defer writers.Done()
+		for i := 0; i < 400; i++ {
+			data := first
+			if i%2 == 0 {
+				data = second
+			}
+			if err := WriteRecordFile(path, data); err != nil {
+				t.Errorf("publish record: %v", err)
+				return
+			}
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read record during publication: %v", err)
+		}
+		var got record
+		if err := json.Unmarshal(data, &got); err != nil || (got.PID != 1 && got.PID != 2) || len(got.Identity) != 32*1024 {
+			t.Fatalf("reader saw a partial lifecycle record: pid=%d identity length=%d err=%v", got.PID, len(got.Identity), err)
+		}
+	}
+	writers.Wait()
+}
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "kb-create-fakehost-")

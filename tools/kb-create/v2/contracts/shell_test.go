@@ -27,7 +27,7 @@ func TestShellQuoteAndParseShellCommandsRoundTripArgv(t *testing.T) {
 }
 
 func TestShellCommandRoundTripsEveryArgument(t *testing.T) {
-	want := []string{"kb-create", "stop", "--platform-root", "/tmp/KB Labs/'prod'"}
+	want := []string{"kb-create", "stop", "--platform-root", "/tmp/KB Labs/'prod' $HOME `printf x`\nnext"}
 	encoded := ShellCommand(want...)
 	got, err := ParseShellCommands(encoded)
 	if err != nil || len(got) != 1 || !reflect.DeepEqual(got[0], want) {

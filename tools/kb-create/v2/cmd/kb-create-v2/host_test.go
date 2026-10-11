@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -742,7 +743,7 @@ func TestStartReportsPortInUse(t *testing.T) {
 }
 
 // case: S-025.8, PC-001.9
-func TestPrintedStopCommandWorksForRootWithSpacesAndQuote(t *testing.T) {
+func TestPrintedStopCommandWorksForShellSpecialRoot(t *testing.T) {
 	launcher, fakehost := binaries(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -751,13 +752,14 @@ func TestPrintedStopCommandWorksForRootWithSpacesAndQuote(t *testing.T) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	kbHome := t.TempDir()
-	rootA := filepath.Join(t.TempDir(), "KB Labs ' primary")
+	rootA := filepath.Join(t.TempDir(), "KB Labs ' $ROOT `tick`\nline")
 	rootB := filepath.Join(t.TempDir(), "secondary")
 	a := newInstallationWithRoot(t, launcher, fakehost, rootA, kbHome, port)
 	b := newInstallationWithRoot(t, launcher, fakehost, rootB, kbHome, port)
 	if _, code, output := a.run("start", "--json"); code != 0 {
 		t.Fatalf("start platform A: %d %s", code, output)
 	}
+	t.Cleanup(func() { _, _, _ = a.run("stop", "--json") })
 	layoutA, err := versionroot.New(rootA)
 	if err != nil {
 		t.Fatal(err)
@@ -796,16 +798,14 @@ func TestPrintedStopCommandWorksForRootWithSpacesAndQuote(t *testing.T) {
 		t.Fatalf("start platform B: %d %s", code, output)
 	}
 	hint, _ := payload["error"].(map[string]any)["hint"].(string)
-	commandParts := strings.Split(hint, "`")
-	if len(commandParts) < 3 {
-		t.Fatalf("stop command missing from hint: %q", hint)
-	}
-	commands, err := contracts.ParseShellCommands(commandParts[1])
+	commandText := strings.TrimSuffix(strings.TrimPrefix(hint, "Stop that platform first with "), ".")
+	commandText = strings.TrimSuffix(strings.TrimPrefix(commandText, "`"), "`")
+	commands, err := contracts.ParseShellCommands(commandText)
 	want := []string{"kb-create", "stop", "--platform-root", layoutA.InstallRoot()}
 	if err != nil || len(commands) != 1 || !reflect.DeepEqual(commands[0], want) {
 		t.Fatalf("printed stop command does not preserve root: %#v, %v", commands, err)
 	}
-	command := exec.Command("/bin/sh", "-c", commandParts[1]+" --json")
+	command := exec.Command("/bin/sh", "-c", commandText+" --json")
 	command.Env = append(os.Environ(), "KB_HOME="+kbHome, "PATH="+filepath.Dir(launcher)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stopped, err := command.CombinedOutput()
 	if err != nil {
@@ -823,6 +823,7 @@ func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *tes
 	if code != 0 {
 		t.Fatalf("start host: %d %s", code, output)
 	}
+	t.Cleanup(func() { _, _, _ = inst.run("stop", "--json") })
 	hostPID := int(started["host"].(map[string]any)["pid"].(float64))
 	state, err := host.StateForRoot(inst.root)
 	if err != nil {
@@ -858,6 +859,86 @@ func TestRestartDiagnosesOldSupervisorRecordWithoutSignallingItsReusedPID(t *tes
 	}
 	if !host.ProcessAlive(hostPID) {
 		t.Fatal("restart stopped the genuine host while rejecting the stale supervisor")
+	}
+}
+
+func TestStaleLiveHostRecoveryEndsAtPortConflict(t *testing.T) {
+	launcher, fakehost := binaries(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	_ = listener.Close()
+	kbHome := t.TempDir()
+	rootA := filepath.Join(t.TempDir(), "platform A")
+	rootB := filepath.Join(t.TempDir(), "platform B")
+	a := newInstallationWithRoot(t, launcher, fakehost, rootA, kbHome, port)
+	b := newInstallationWithRoot(t, launcher, fakehost, rootB, kbHome, port)
+	if _, code, output := a.run("start", "--json"); code != 0 {
+		t.Fatalf("start A: %d %s", code, output)
+	}
+	state, err := host.StateForRoot(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layoutA, err := versionroot.New(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (gateway.Registry{Path: filepath.Join(kbHome, "launcher", "gateway-roots.json")}).Register(
+		layoutA.PlatformRoot(), fmt.Sprintf("http://127.0.0.1:%d", port)); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(state.HostPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := host.WriteRecordFile(state.HostPID(), original); err != nil {
+			t.Errorf("restore host record for cleanup: %v", err)
+		}
+		_, _, _ = a.run("stop", "--json")
+	})
+	var record map[string]any
+	if err := json.Unmarshal(original, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["processIdentity"] = "mismatched-process-identity"
+	stale, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state.HostPID(), stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, code, output := a.run("status", "--json")
+	if code != 1 || errorCode(status) != contracts.CodeHostProcessIdentityStale {
+		t.Fatalf("stale status: %d %s", code, output)
+	}
+	staleError := status["error"].(map[string]any)
+	hint := staleError["hint"].(string)
+	if !strings.Contains(staleError["message"].(string), "is running") || !strings.Contains(staleError["message"].(string), "will not signal") {
+		t.Fatalf("stale diagnostic does not say the process is running: %#v", status["error"])
+	}
+	if !strings.Contains(hint, contracts.ShellCommand("curl", "--fail", "--show-error", "--max-time", "2")) ||
+		!strings.Contains(hint, contracts.ShellCommand("lsof", "-nP", "-iTCP:"+strconv.Itoa(port), "-sTCP:LISTEN")) ||
+		!strings.Contains(hint, state.HostPID()) || !strings.Contains(hint, "port conflict") {
+		t.Fatalf("stale diagnostic lacks verification and recovery steps: %s", hint)
+	}
+	if !host.ProcessAlive(int(record["pid"].(float64))) {
+		t.Fatal("diagnosing stale identity stopped the host")
+	}
+	if err := os.Remove(state.HostPID()); err != nil {
+		t.Fatal(err)
+	}
+	status, code, output = a.run("status", "--json")
+	if code != 1 || errorCode(status) != contracts.CodePortInUse {
+		t.Fatalf("status after stale-record removal: %d %s", code, output)
+	}
+	blocked, code, output := b.run("start", "--json")
+	if code != 1 || errorCode(blocked) != contracts.CodePortInUse {
+		t.Fatalf("start after stale-record removal: %d %s", code, output)
 	}
 }
 

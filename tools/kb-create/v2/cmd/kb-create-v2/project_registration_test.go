@@ -329,7 +329,9 @@ func TestExistingInstallationRejectsDifferentProjectBeforeApply(t *testing.T) {
 	}}}
 	writeVersionedReceipt(t, root, active)
 	existing, failure := existingProjectSelection(platformRootForTest(t, root), selectedProject)
-	if !existing || failure == nil || failure.Code != "KB_INSTALL_PROJECT_SELECTION_CHANGED" || !strings.Contains(failure.Hint, "kb project add") || !strings.Contains(failure.Hint, "kb project show") {
+	if !existing || failure == nil || failure.Code != "KB_INSTALL_PROJECT_SELECTION_CHANGED" ||
+		!strings.Contains(failure.Hint, contracts.ShellCommand("kb", "project", "add", selectedProject)) ||
+		!strings.Contains(failure.Hint, contracts.ShellCommand("kb", "project", "show", selectedProject)) {
 		t.Fatalf("existing/failure = %v / %#v", existing, failure)
 	}
 	if _, failure := existingProjectSelection(platformRootForTest(t, root), ""); failure != nil {
@@ -353,8 +355,9 @@ func TestExistingApplyRejectsDifferentProjectBeforeOperation(t *testing.T) {
 		NodeCheck: func() error { return nil },
 	})
 	if failure == nil || failure.Code != "KB_INSTALL_PROJECT_SELECTION_CHANGED" ||
-		failure.ProcessExitCode != diag.ExitInput || !strings.Contains(failure.Hint, "kb project add") ||
-		!strings.Contains(failure.Hint, "kb project show") {
+		failure.ProcessExitCode != diag.ExitInput ||
+		!strings.Contains(failure.Hint, contracts.ShellCommand("kb", "project", "add", selectedProject)) ||
+		!strings.Contains(failure.Hint, contracts.ShellCommand("kb", "project", "show", selectedProject)) {
 		t.Fatalf("apply selection failure = %#v", failure)
 	}
 }

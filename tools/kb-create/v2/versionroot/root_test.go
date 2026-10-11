@@ -812,6 +812,26 @@ func TestVersionRootsShareMutableDataInsteadOfCopyingIt(t *testing.T) {
 	if err != nil || filepath.Clean(activatedDatabase) != filepath.Clean(wantDatabase) {
 		t.Fatalf("activated database path = %q, %v; want shared install-root database %q", activatedDatabase, err, database)
 	}
+	if err := layout.RecordHealthy(); err != nil {
+		t.Fatal(err)
+	}
+	stage, err = layout.Stage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(t, stage, "3.0.0", "receipt-3")
+	if _, err := layout.Activate(stage, "3.0.0", "plan-3", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(layout.SharedStateDir(), "data", "database", "after-update.db")); err != nil || string(got) != "latest" {
+		t.Fatalf("database data after update = %q, %v", got, err)
+	}
+	if _, err := layout.RestorePrevious(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(layout.PlatformRoot(), ".kb", "database", "after-update.db")); err != nil || string(got) != "latest" {
+		t.Fatalf("database data after rollback = %q, %v", got, err)
+	}
 	if _, err := os.Stat(filepath.Join(active, ".kb", "marketplace.lock")); !os.IsNotExist(err) {
 		t.Fatalf("empty marketplace lock was expected in this catalog fixture, got %v", err)
 	}
