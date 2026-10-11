@@ -375,18 +375,33 @@ func TestPlanInstallsPlatformMembersAtomically(t *testing.T) {
 	}
 }
 
-// TestPlanKeepsPlatformMembersThatShareACatalogID guards against a real
-// regression found in the v2.119.0-binaries release: prepare-release-index.mjs
-// derives a member's catalog ID either from its declared service id (e.g.
-// @kb-labs/marketplace-app -> "marketplace") or, for non-service packages,
-// from its npm package name with a trailing "-entry" stripped (e.g.
-// @kb-labs/marketplace-entry -> "marketplace"). A service and its paired CLI
-// package therefore share one logical catalog ID. uniqueArtifacts used to key
-// solely on Kind+ID+Version, so the second package silently vanished from
-// the resolved plan and its service never got installed — reproduced locally
-// against the real published release-index.json, where @kb-labs/marketplace-app
-// and @kb-labs/workflow-daemon were dropped in favor of @kb-labs/marketplace-entry
-// and @kb-labs/workflow-entry.
+func TestPlanKeepsPlatformPackageOnceWhenAlsoSelectedAsMemberAdapter(t *testing.T) {
+	component := catalog.Component{ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform"}
+	source := catalog.Catalog{
+		Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{
+			ID: component.ID, Version: component.Version, Package: component.Package, Tarball: component.Tarball, SHA256: component.SHA256,
+			Members:  []catalog.Component{component},
+			Requires: []catalog.Requirement{{Capability: "platform-runtime"}},
+			Host:     &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {}},
+		}},
+		Adapters: []catalog.Adapter{{Component: component, Provides: []string{"platform-runtime"}, DefaultFor: []string{"platform-runtime"}}},
+	}
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir()}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Artifacts) != 1 || plan.Artifacts[0].Kind != "platform" || plan.Artifacts[0].Registry != "adapter" {
+		t.Fatalf("platform/member/adapter roles did not resolve to one platform artifact: %#v", plan.Artifacts)
+	}
+	if err := contracts.ValidatePlanArtifactIdentities(plan); err != nil {
+		t.Fatalf("resolved plan has duplicate artifact identity: %v", err)
+	}
+}
+
+// TestPlanKeepsPlatformMembersThatShareACatalogID verifies that distinct npm
+// packages stay distinct even when the release index assigns them the same ID.
 func TestPlanKeepsPlatformMembersThatShareACatalogID(t *testing.T) {
 	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{
 		ID: "platform", Version: "2.0.0", Package: "@kb/platform", Tarball: "https://example.test/platform.tgz", SHA256: "platform",
@@ -408,6 +423,48 @@ func TestPlanKeepsPlatformMembersThatShareACatalogID(t *testing.T) {
 	}
 	if !packages["@kb-labs/marketplace-app"] || !packages["@kb-labs/marketplace-entry"] {
 		t.Fatalf("expected both same-ID members to survive dedup, got artifacts = %#v", plan.Artifacts)
+	}
+}
+
+// case: PC-001.8
+// case: S-181.4
+// case: S-023.2
+func TestStableFixturePlansHaveUniqueArtifactIdentitiesAcrossProfilesAndScenarios(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := catalog.Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform, ok := findPlatform(source.Platforms, source.Channels[contracts.ChannelStable])
+	if !ok {
+		t.Fatal("stable channel platform is absent")
+	}
+	for profile := range platform.Profiles {
+		for _, scenario := range []string{"commit", "custom"} {
+			t.Run(profile+"/"+scenario, func(t *testing.T) {
+				plan, err := Plan(contracts.InstallRequest{
+					PlatformRoot: t.TempDir(), ServiceProfile: profile, ScenarioID: scenario,
+					Policy: contracts.PolicyCompatible,
+				}, source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := contracts.ValidatePlanArtifactIdentities(plan); err != nil {
+					t.Fatalf("resolved plan has duplicate artifact identities: %v", err)
+				}
+				active := contracts.InstallReceipt{Plan: plan}
+				summary, err := SummarizeUpdate(active, plan, source)
+				if err != nil {
+					t.Fatalf("summarize install-to-plan round trip: %v", err)
+				}
+				if summary.DownloadBytes != 0 || len(summary.AddedPackages) != 0 || len(summary.RemovedPackages) != 0 {
+					t.Fatalf("same-plan update summary reports changes: %#v", summary)
+				}
+			})
+		}
 	}
 }
 

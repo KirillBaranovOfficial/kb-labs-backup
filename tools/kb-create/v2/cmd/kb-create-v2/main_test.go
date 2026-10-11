@@ -15,6 +15,7 @@ import (
 	"time"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/stream"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
@@ -223,6 +224,20 @@ func TestHumanReleaseIndexFailurePrintsLoaderReason(t *testing.T) {
 	clikitcommand.Execute(newRootCommand(), []string{"install", "--index", path}, &output, &stderr)
 	if !strings.Contains(output.String()+stderr.String(), "Release index read failed for "+path) {
 		t.Fatalf("human output omitted loader reason: %s %s", output.String(), stderr.String())
+	}
+}
+
+func TestReceiptArtifactIdentityFailureGivesExactReinstallCommand(t *testing.T) {
+	index := filepath.Join(t.TempDir(), "release index.json")
+	platformRoot := filepath.Join(t.TempDir(), "installed platform")
+	original := diag.New(contracts.CodeArtifactIdentityInvalid, "the active receipt contains repeated artifacts")
+	failure := receiptArtifactIdentityFailure(original, index, platformRoot)
+	if failure == nil || failure.Code != contracts.CodeArtifactIdentityInvalid {
+		t.Fatalf("identity failure = %#v", failure)
+	}
+	want := "Reinstall this platform with `kb-create apply --index " + contracts.ShellQuote(index) + " --platform-root " + contracts.ShellQuote(platformRoot) + "`."
+	if failure.Hint != want {
+		t.Fatalf("hint = %q, want %q", failure.Hint, want)
 	}
 }
 

@@ -1,13 +1,58 @@
 package receipt
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/create/v2/contracts"
 )
+
+func TestReadRefusesReceiptWithDuplicateArtifactIdentity(t *testing.T) {
+	root := t.TempDir()
+	data, err := json.Marshal(contracts.InstallReceipt{
+		Schema: contracts.ReceiptSchema,
+		Plan: contracts.ResolvedInstallPlan{Artifacts: []contracts.Artifact{
+			{ID: "sqlite", Kind: "platform-member", Package: "@kb/adapters-sqlite"},
+			{ID: "sqlite", Kind: "adapter", Package: "@kb/adapters-sqlite"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(Path(root)), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Path(root), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Read(root)
+	if err == nil {
+		t.Fatal("expected duplicate artifact identity receipt refusal")
+	}
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodeArtifactIdentityInvalid {
+		t.Fatalf("receipt error = %#v, want catalogued artifact identity diagnostic", err)
+	}
+	if !strings.Contains(failure.Hint, "kb-create apply --index <sealed-index> --platform-root") {
+		t.Fatalf("receipt recovery hint = %q", failure.Hint)
+	}
+}
+
+func TestWriteRejectsDuplicateArtifactIdentity(t *testing.T) {
+	err := Write(t.TempDir(), contracts.InstallReceipt{Plan: contracts.ResolvedInstallPlan{Artifacts: []contracts.Artifact{
+		{ID: "sqlite", Kind: "platform-member", Package: "@kb/adapters-sqlite"},
+		{ID: "sqlite", Kind: "adapter", Package: "@kb/adapters-sqlite"},
+	}}})
+	failure, ok := err.(*diag.Diag)
+	if !ok || failure.Code != contracts.CodeArtifactIdentityInvalid {
+		t.Fatalf("write error = %#v, want catalogued artifact identity diagnostic", err)
+	}
+}
 
 func TestSnapshotRestoresManagedFilesWithoutTouchingProjectFiles(t *testing.T) {
 	root := t.TempDir()
