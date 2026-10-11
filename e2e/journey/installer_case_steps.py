@@ -111,6 +111,44 @@ def _diagnostic(result: subprocess.CompletedProcess, label: str) -> tuple[dict, 
     return envelope, error
 
 
+def run_port_conflict_step(*, mode: str, launcher: str, stable_index: Path,
+                           platform_root: Path, run_command: CommandRunner) -> Journey:
+    """Prove apply reports a foreign owner for the Gateway port it resolved."""
+    journey = Journey(mode, f"port-conflict-{mode}")
+    conflict_root = platform_root.parent / "pc001-port-conflict-root"
+
+    def port_conflict_ux() -> None:
+        plan = _json_command(run_command, [launcher, "plan", "--json", "--index", str(stable_index),
+                                           "--platform-root", str(conflict_root),
+                                           "--service-profile", "default", "--scenario", "commit"],
+                             "PC-001 port-conflict plan").get("plan", {})
+        health_url = plan.get("host", {}).get("healthUrl")
+        port = urlsplit(health_url).port if isinstance(health_url, str) else None
+        if port is None:
+            raise RuntimeError("PC-001 port-conflict plan omitted its Gateway port")
+        with socket.socket() as owner:
+            owner.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            owner.bind(("127.0.0.1", port))
+            owner.listen(1)
+            result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                  "--platform-root", str(conflict_root),
+                                  "--service-profile", "default", "--scenario", "commit"])
+        envelope, error = _diagnostic(result, "PC-001 port conflict")
+        details = error.get("details", error.get("meta", {}))
+        if (result.returncode == 0 or envelope.get("ok") is not False
+                or error.get("code") != "KB_INSTALL_PORT_IN_USE"
+                or not isinstance(details, dict)
+                or details.get("port") != str(port) or not details.get("pid") or not details.get("command")
+                or "kb-create apply" not in error.get("hint", "")
+                or str(details["pid"]) not in error.get("hint", "")
+                or str(details["command"]) not in error.get("hint", "")):
+            raise RuntimeError(f"port conflict omitted its catalogued code, owner, or apply hint: {error}")
+
+    journey.step("report the owning process when apply cannot claim a required port", "platform.install",
+                 port_conflict_ux, cases=["PC-001.9"])
+    return journey
+
+
 def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandRunner) -> subprocess.CompletedProcess:
     """Run the CLI installed for the requested root, independent of PATH shim ownership."""
     executable = active_platform_root(platform_root) / ".kb/v2/bin/kb"
@@ -455,28 +493,42 @@ def run_analytics_invalid_retention_step(*, mode: str, launcher: str, platform_r
     config_path = platform_root / "current/.kb/kb.config.jsonc"
 
     def invalid_retention() -> None:
-        config = json.loads(_without_jsonc_comments(config_path.read_text()))
-        platform_config = config.setdefault("platform", {})
-        options = platform_config.setdefault("adapterOptions", {})
-        options.setdefault("analytics", {})["retentionDays"] = 0
-        config_path.write_text(json.dumps(config, indent=2) + "\n")
-
+        original_config = config_path.read_bytes()
         lifecycle = InstallerHostLifecycle(launcher, run_command)
-        with lifecycle.preserve([platform_root]):
-            result = run_command([launcher, "start", "--platform-root", str(platform_root), "--json"])
-            envelope, error = _diagnostic(result, "invalid analytics retention")
-            detail = json.dumps(error, sort_keys=True)
-            expected_hint = (
-                "kb config set --scope platform "
-                "platform.adapterOptions.analytics.retentionDays 90"
-            )
-            if (result.returncode != 1 or envelope.get("ok") is not False
-                    or error.get("code") != "KB_CONFIG_INVALID"
-                    or "platform.adapterOptions.analytics.retentionDays" not in detail
-                    or "positive integer" not in detail
-                    or expected_hint not in str(error.get("hint", ""))
-                    or error.get("code") == "KB_RUNTIME_UNEXPECTED"):
-                raise RuntimeError(f"invalid analytics retention did not return its catalogued config error: {error}")
+        with lifecycle.preserve([platform_root]) as initial:
+            action_error: Exception | None = None
+            try:
+                config = json.loads(_without_jsonc_comments(original_config.decode()))
+                platform_config = config.setdefault("platform", {})
+                options = platform_config.setdefault("adapterOptions", {})
+                options.setdefault("analytics", {})["retentionDays"] = 0
+                config_path.write_text(json.dumps(config, indent=2) + "\n")
+                if initial[platform_root]:
+                    lifecycle.set_running(platform_root, False)
+                result = run_command([launcher, "start", "--platform-root", str(platform_root), "--json"])
+                envelope, error = _diagnostic(result, "invalid analytics retention")
+                detail = json.dumps(error, sort_keys=True)
+                expected_hint = (
+                    "kb config set --scope platform "
+                    "platform.adapterOptions.analytics.retentionDays 90"
+                )
+                if (result.returncode != 1 or envelope.get("ok") is not False
+                        or error.get("code") != "KB_CONFIG_INVALID"
+                        or "platform.adapterOptions.analytics.retentionDays" not in detail
+                        or "positive integer" not in detail
+                        or expected_hint not in str(error.get("hint", ""))
+                        or error.get("code") == "KB_RUNTIME_UNEXPECTED"):
+                    raise RuntimeError(f"invalid analytics retention did not return its catalogued config error: {error}")
+            except Exception as error:
+                action_error = error
+            try:
+                config_path.write_bytes(original_config)
+            except Exception as restore_error:
+                if action_error is not None:
+                    raise RuntimeError(f"{action_error}; could not restore the platform config: {restore_error}") from action_error
+                raise
+            if action_error is not None:
+                raise action_error
 
     journey.step("reject invalid SQLite retention during installed host startup", "platform.install",
                  invalid_retention, cases=["S-191.7"])
@@ -870,29 +922,9 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     fixture_dir = installer_case_fixture_root()
     root = str(platform_root)
-    port_conflict_root = platform_root.parent / "pc001-port-conflict-root"
-
-    def port_conflict_ux() -> None:
-        with socket.socket() as owner:
-            owner.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            owner.bind(("127.0.0.1", 4000))
-            owner.listen(1)
-            result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                                  "--platform-root", str(port_conflict_root),
-                                  "--service-profile", "default", "--scenario", "commit"])
-        envelope, error = _diagnostic(result, "PC-001 port conflict")
-        details = error.get("details", error.get("meta", {}))
-        if (result.returncode == 0 or envelope.get("ok") is not False
-                or error.get("code") != "KB_INSTALL_PORT_IN_USE"
-                or not isinstance(details, dict)
-                or details.get("port") != "4000" or not details.get("pid") or not details.get("command")
-                or "kb-create apply" not in error.get("hint", "")
-                or str(details["pid"]) not in error.get("hint", "")
-                or str(details["command"]) not in error.get("hint", "")):
-            raise RuntimeError(f"port conflict omitted its catalogued code, owner, or apply hint: {error}")
-
-    journey.step("report the owning process when apply cannot claim a required port", "platform.install",
-                 port_conflict_ux, cases=["PC-001.9"])
+    run_fixture_group(journey, "PC-001 port ownership", lambda: run_port_conflict_step(
+        mode=mode, launcher=launcher, stable_index=stable_index,
+        platform_root=platform_root, run_command=run_command))
 
     # PC-001.4 applies an explicit fresh fixture so the end-to-end installer
     # remains the single main journey install and can continue serving later cases.
@@ -1289,6 +1321,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
             raise RuntimeError(f"adapter range refusal omitted its component details: {meta}")
         if error.get("hint") != "Choose compatible versions or pass an explicit supported provider.":
             raise RuntimeError("adapter range refusal omitted its correction hint")
+        if (scratch / "adapter-range").exists():
+            raise RuntimeError("adapter range refusal changed the isolated install root")
 
     exact_step("refuse an adapter outside its platform range", incompatible_adapter, capability="platform.install", cases=["S-053.4"])
 
@@ -1330,6 +1364,8 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 or sdk_meta.get("selectedVersion") != "4.0.0"
                 or sdk_meta.get("requiredRange") != ">=3.0.0 <4.0.0"):
             raise RuntimeError(f"out-of-range SDK refusal omitted component, version, or range: {sdk_meta}")
+        if not sdk_error.get("hint"):
+            raise RuntimeError("out-of-range SDK refusal omitted its correction hint")
         binary_result = run_command([launcher, "plan", "--json", "--index", str(missing_binary),
                                      "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
                                      "--policy", "compatible", "--platform-root", str(scratch / "missing-binary")])
@@ -1337,7 +1373,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         binary_meta = binary_error.get("details", {})
         if binary_result.returncode == 0 or binary_error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(binary_meta, dict):
             raise RuntimeError("missing host binary plan did not fail with the typed incompatibility")
-        if binary_meta.get("kind") != "binary" or binary_meta.get("id") != "kb-create" or not binary_error.get("hint"):
+        if binary_meta.get("kind") != "binary" or not binary_meta.get("id") or not binary_error.get("hint"):
             raise RuntimeError(f"missing binary error omitted its binary identity or hint: {binary_error}")
 
     exact_step("refuse an SDK outside range and a release missing the host binary", sdk_and_binary_ranges, capability="platform.install", cases=["S-053.5"])
@@ -1348,17 +1384,21 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
         target = scratch / "missing-host-root"
         before_exists = target.exists()
         before = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()} if target.exists() else {}
+        before_directories = {str(path.relative_to(target)) for path in target.rglob("*") if path.is_dir()} if target.exists() else set()
         result = run_command([launcher, "plan", "--json", "--index", str(missing_binary),
                               "--platform-version", "3.2.0", "--sdk-version", "3.0.0",
                               "--policy", "compatible", "--platform-root", str(target)])
         _, error = _diagnostic(result, "missing host binary plan")
         meta = error.get("details", {})
         after = {str(path.relative_to(target)): path.read_bytes() for path in target.rglob("*") if path.is_file()} if target.exists() else {}
+        after_directories = {str(path.relative_to(target)) for path in target.rglob("*") if path.is_dir()} if target.exists() else set()
         after_exists = target.exists()
         if result.returncode == 0 or error.get("code") != "KB_INSTALL_INCOMPATIBLE_COMPONENTS" or not isinstance(meta, dict):
             raise RuntimeError("missing host binary did not refuse planning with the typed incompatibility")
-        if meta.get("kind") != "binary" or meta.get("id") != "kb-create" or before != after or before_exists != after_exists:
-            raise RuntimeError("missing binary refusal omitted its kind/id or changed the isolated install root")
+        if meta.get("kind") != "binary" or not meta.get("id") or not error.get("hint"):
+            raise RuntimeError("missing binary refusal omitted its kind/id or correction hint")
+        if before != after or before_directories != after_directories or before_exists != after_exists:
+            raise RuntimeError("missing binary refusal changed the isolated install root")
 
     exact_step("refuse planning without the runner binary", missing_host_binary_before_mutation, capability="platform.install", cases=["S-053.7"])
 

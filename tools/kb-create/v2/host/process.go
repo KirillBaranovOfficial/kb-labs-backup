@@ -21,6 +21,8 @@ import (
 
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/diagnostics"
+	"github.com/kb-labs/create/v2/gateway"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/versionroot"
 )
 
@@ -178,7 +180,7 @@ func (r *ProcessRunner) Start(ctx context.Context) (Info, error) {
 		_ = conn.Close()
 		_, port, _ := net.SplitHostPort(address)
 		owner := listenerOwner(port)
-		return Info{}, portInUseError(port, address, "", owner, r.Operation, nil)
+		return Info{}, portConflictError(port, address, "", owner, r.Operation, nil)
 	}
 	logFile, err := os.OpenFile(r.State.HostLog(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -551,6 +553,46 @@ func portInUseError(port, address, purpose string, owner portOwner, operation st
 	return hostError(contracts.CodePortInUse, message, hint, cause, meta)
 }
 
+func portConflictError(port, address, purpose string, owner portOwner, operation string, cause error) *diag.Diag {
+	if pid, err := strconv.Atoi(owner.PID); err == nil {
+		if root := registeredLiveGatewayRoot(port, pid); root != "" {
+			if layout, layoutErr := versionroot.ForPlatformPath(root); layoutErr == nil {
+				return RootConflict(layout.InstallRoot(), pid)
+			}
+		}
+	}
+	return portInUseError(port, address, purpose, owner, operation, cause)
+}
+
+func registeredLiveGatewayRoot(port string, pid int) string {
+	launcherState, err := StateHome()
+	if err != nil {
+		return ""
+	}
+	roots, err := (gateway.Registry{Path: filepath.Join(launcherState.Dir, "gateway-roots.json")}).Read()
+	if err != nil {
+		return ""
+	}
+	for _, candidate := range roots {
+		origin, err := url.Parse(candidate.URL)
+		if err != nil || origin.Port() != port {
+			continue
+		}
+		if _, err := receipt.Read(candidate.PlatformRoot); err != nil {
+			continue
+		}
+		rootState, err := StateForRoot(candidate.PlatformRoot)
+		if err != nil {
+			continue
+		}
+		active, ok := ActiveHost(rootState)
+		if ok && active.PID == pid && filepath.Clean(active.PlatformRoot) == filepath.Clean(candidate.PlatformRoot) {
+			return active.PlatformRoot
+		}
+	}
+	return ""
+}
+
 // RootConflict reports that the installation's live host serves another
 // platform root. A host recorded without a root predates root ownership, so the
 // hint names its pid instead of a stop command that could not match it.
@@ -614,7 +656,7 @@ func CheckPorts(plan contracts.ResolvedInstallPlan, operation string) error {
 			owner.PID == strconv.Itoa(active.PID) {
 			continue
 		}
-		failure := portInUseError(port, "", purpose, owner, operation, err)
+		failure := portConflictError(port, "", purpose, owner, operation, err)
 		if operation == "plan" || operation == "apply" {
 			if plan.Host != nil {
 				if gatewayURL, suggestionErr := nextGatewayURL(plan.Host.HealthURL); suggestionErr == nil {
