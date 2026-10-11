@@ -60,6 +60,7 @@ import { sendAuthError } from './error-response.js';
 import { authRejectionEnvelope, gatewayRequestUrl } from './tokens.js';
 import { AuthError, verifyCsrfToken } from '@kb-labs/gateway-auth';
 import { PERMISSIONS } from '@kb-labs/core-contracts';
+import { createErrorEnvelope } from '@kb-labs/core-platform';
 import type { UserAuthContext } from './user-auth-middleware.js';
 import {
   setSessionCookies,
@@ -626,6 +627,12 @@ export function registerUserAuthRoutes(app: FastifyInstance, deps: UserAuthRoute
           // 422 Unprocessable Entity: the token was found but is expired or already consumed.
           // The client maps this catalogued envelope to a user-friendly message.
           return sendAuthError(reply, 422, undefined, undefined, 'KB_AUTH_INVALID_INVITE');
+        }
+        if (code === 'weak_password') {
+          return reply.code(400).send({ ok: false, error: createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+            message: err.reason ?? err.message,
+            hint: 'Choose a password that meets the configured password policy, then submit again.',
+          }) });
         }
         return reply.code(400).send({ error: 'Bad Request', message: err.message });
       }

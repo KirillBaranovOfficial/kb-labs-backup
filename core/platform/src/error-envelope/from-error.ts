@@ -126,7 +126,18 @@ export function toErrorEnvelope(error: unknown, options: ToEnvelopeOptions = {})
   }
   const source = getErrorRecord(error);
   if (source && (Array.isArray(source.validation) || Array.isArray(source.issues))) {
-    return createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', options);
+    const validationDetails = getDetails(source.details);
+    if (validationDetails === null) {
+      return createErrorEnvelope('KB_PLUGIN_CONTRACT_VIOLATION', {
+        ...options,
+        message: 'Error details must be a flat map of string identifiers.',
+        hint: 'Keep error.details values as identifiers; return structured reports in data or gate findings in error.diagnostics.',
+      });
+    }
+    return createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+      ...options,
+      ...(validationDetails && Object.keys(validationDetails).length > 0 ? { details: validationDetails } : {}),
+    });
   }
   const sourceCode = typeof source?.code === 'string' ? source.code
     : typeof source?.errorCode === 'string' ? source.errorCode : undefined;

@@ -472,6 +472,18 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(validateErrorEnvelope(envelope)).toEqual([]);
   });
 
+  it('rejects invalid details on validation-shaped errors instead of silently dropping them', () => {
+    const malformed = Object.assign(new Error('Invalid input.'), {
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      issues: [{ path: 'field', message: 'Required' }],
+      details: { field: { nested: true } },
+    });
+    expect(toErrorEnvelope(malformed)).toMatchObject({
+      code: 'KB_PLUGIN_CONTRACT_VIOLATION',
+      hint: expect.stringContaining('error.diagnostics'),
+    });
+  });
+
   it('catalogues an installed adapter that does not declare the requested slot', () => {
     const envelope = createErrorEnvelope('KB_ADAPTER_SLOT_MISMATCH', {
       details: { package: '@kb-labs/adapters-storage-fixture', slot: 'llm' },
