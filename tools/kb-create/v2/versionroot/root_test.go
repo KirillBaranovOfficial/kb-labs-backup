@@ -108,6 +108,60 @@ func TestRollbackSnapshotSurvivesVersionRootPruning(t *testing.T) {
 	}
 }
 
+// case: S-023.10, S-024.6
+func TestPlatformDataSurvivesUpdateAndRollback(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "platform")
+	layout, v1 := initialLayout(t, root, "1.0.0")
+	if err := layout.RecordHealthy(); err != nil {
+		t.Fatal(err)
+	}
+	projection := contracts.PlatformDataRootPath()
+	dataRoot, err := layout.SharedRuntimePath(projection.PlatformPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, value string) string {
+		t.Helper()
+		path := filepath.Join(dataRoot, name)
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	beforeUpdate := write("before-update", "written before staging")
+	v2 := stageVersion(t, layout, "2.0.0")
+	duringStage := write("during-stage", "written after staging and before switch")
+	v2Active, err := layout.Activate(v2, "2.0.0", "plan-2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterSwitch := write("after-switch", "written after switch")
+	if active, err := layout.Active(); err != nil || active == v1 {
+		t.Fatalf("active version after update = %q, %v; want updated root", active, err)
+	}
+	restored, err := layout.RestorePrevious()
+	if err != nil || restored != v1 {
+		t.Fatalf("restored root = %q, %v; want %q", restored, err, v1)
+	}
+	if active, err := layout.Active(); err != nil || active != v1 {
+		t.Fatalf("active root after rollback = %q, %v; want %q", active, err, v1)
+	}
+	for path, want := range map[string]string{
+		beforeUpdate: "written before staging",
+		duringStage:  "written after staging and before switch",
+		afterSwitch:  "written after switch",
+	} {
+		if got, err := os.ReadFile(path); err != nil || string(got) != want {
+			t.Errorf("platform data %q = %q, %v; want %q", path, got, err, want)
+		}
+	}
+	projectedData := filepath.Join(v2Active, filepath.FromSlash(projection.PlatformPath))
+	info, err := os.Lstat(projectedData)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("version root platform data projection = %#v, %v; want shared-state symlink", info, err)
+	}
+}
+
 func writeReceipt(t *testing.T, root, version, id string) {
 	t.Helper()
 	installationID, err := InstallationIDForPath(root)

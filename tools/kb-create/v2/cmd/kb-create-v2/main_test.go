@@ -1,15 +1,18 @@
 package v2cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -317,6 +320,120 @@ func TestPlanLeavesPlatformRootByteIdentical(t *testing.T) {
 	if after := snapshotTree(t, root); !bytes.Equal(foreignBefore, after) {
 		t.Fatalf("plan changed a foreign target: before %q, after %q", foreignBefore, after)
 	}
+}
+
+// case: PC-001.8
+func TestUpdatePlanPreservesLivePlatformDatabaseFiles(t *testing.T) {
+	inst := newInstallation(t)
+	projection := contracts.PlatformDataRootPath()
+	dataRoot := filepath.Join(inst.root, filepath.FromSlash(projection.StatePath))
+	database := filepath.Join(dataRoot, "journey-plan.sqlite")
+	files := startLiveSQLiteDatabase(t, database)
+	before := make(map[string][]byte, len(files))
+	for _, path := range files {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = content
+	}
+
+	index := filepath.Join(t.TempDir(), "release-index.json")
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}
+	source.Platforms[0].Host = testHostOnFreePort(t)
+	release, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, failure, code, output := executeForTest(t, operationTestSetup{Operation: "plan", Index: index, Direct: directRequest{
+		PlatformRoot: inst.root, PlatformVersion: "2.0.0", Policy: string(contracts.PolicyCompatible),
+	}, JSON: true})
+	if code != 0 || failure != nil {
+		t.Fatalf("update plan failed with live platform data: code=%d diagnostic=%#v output=%s", code, failure, output)
+	}
+	for _, path := range files {
+		content, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(content, before[path]) {
+			t.Errorf("planning changed %s: read error %v", filepath.Base(path), err)
+		}
+		if strings.Contains(output, filepath.Base(path)) {
+			t.Errorf("plan reported platform data file %s as a change: %s", filepath.Base(path), output)
+		}
+	}
+	err = filepath.WalkDir(filepath.Join(inst.root, "versions"), func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
+			return nil
+		}
+		for _, name := range files {
+			if filepath.Base(path) == filepath.Base(name) {
+				t.Errorf("plan copied platform data file into version root: %s", path)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func startLiveSQLiteDatabase(t *testing.T, database string) []string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(database), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	script := `import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+c.execute("PRAGMA journal_mode=WAL")
+c.execute("PRAGMA wal_autocheckpoint=0")
+c.execute("CREATE TABLE entries (value TEXT)")
+c.execute("INSERT INTO entries VALUES ('live')")
+c.commit()
+print("READY", flush=True)
+sys.stdin.readline()
+c.close()`
+	command := exec.Command("python3", "-u", "-c", script, database)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = io.WriteString(stdin, "stop\n")
+		_ = stdin.Close()
+		if err := command.Wait(); err != nil {
+			t.Errorf("SQLite fixture process failed: %v; stderr: %s", err, stderr.String())
+		}
+	})
+	line, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil || strings.TrimSpace(line) != "READY" {
+		t.Fatalf("SQLite fixture did not become ready: line=%q err=%v stderr=%s", line, err, stderr.String())
+	}
+	files := []string{database, database + "-wal", database + "-shm"}
+	for _, path := range files {
+		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+			t.Fatalf("live SQLite file %s is missing or empty: %v", path, err)
+		}
+	}
+	return files
 }
 
 func snapshotTree(t *testing.T, root string) []byte {
