@@ -3,7 +3,7 @@ import { Writable } from 'node:stream';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import type { ICache, ILogger, IServiceTransport } from '@kb-labs/core-platform';
-import type { ManifestV3, ProjectServiceApiDeclaration } from '@kb-labs/plugin-contracts';
+import type { ManifestV3, ProjectServiceDeclaration } from '@kb-labs/plugin-contracts';
 import { signAccessToken } from '@kb-labs/gateway-auth';
 import { AuthConfigSchema, type GatewayConfig } from '@kb-labs/gateway-contracts';
 import { createAuthMiddleware, isDeclaredWebhookRoute, isPlatformPublicRoute } from '../middleware.js';
@@ -91,7 +91,7 @@ describe('Gateway global auth gate', () => {
       undefined,
       ({ method, url }) => routeInventory.push({ method, url }),
       undefined,
-      [{ serviceId: 'rest', rewritePrefix: '/api/v1' } satisfies ProjectServiceApiDeclaration],
+      [{ serviceId: 'rest', rewritePrefix: '/api/v1', healthCheck: '/health' } satisfies ProjectServiceDeclaration],
       { resolveProjectService: async () => ({ baseUrl: `http://127.0.0.1:${upstreamPort}` }) },
     );
     await app.ready();

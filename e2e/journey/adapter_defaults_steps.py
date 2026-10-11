@@ -643,8 +643,6 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 if rows_for(project).get("storage", {}).get("implementation") != "@kb-labs/adapters-fs":
                     raise RuntimeError(f"project {project} did not resolve the platform adapter")
         journey.step("bind the platform storage adapter", "adapter", bind_platform_adapter, cases=["S-048.1"])
-        if journey.steps[-1].status != "PASS":
-            return
 
         def set_platform_options() -> None:
             command = ["config", "set", "--scope", "platform", "platform.adapterOptions.storage", '{"baseDir":".kb/data"}', "--json"]
@@ -653,28 +651,38 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
             for project in (project_a, project_b):
                 if rows_for(project).get("storage", {}).get("baseDir") != str(project / ".kb" / "data"):
                     raise RuntimeError(f"project {project} did not use the platform storage options")
-        journey.step("configure platform storage options", "adapter", set_platform_options, cases=["S-048.2"])
-        if journey.steps[-1].status != "PASS":
-            return
+        journey.step("configure platform storage options", "adapter", set_platform_options,
+                     cases=["S-048.2"], requires=("step:bind the platform storage adapter",))
 
         def reject_project_adapter_config() -> None:
-            for project_config in (
-                {"platform": {"adapters": {"storage": "@kb-labs/adapters-fs"}}},
-                {"adapters": {"storage": "@kb-labs/adapters-fs"}},
-            ):
-                write_config(project_a, project_config)
-                result = runner(["kb", "adapter", "list", "--json"], cwd=str(project_a), env=base_env,
-                                capture_output=True, text=True, timeout=300)
-                payload = _json(result, ["adapter", "list", "--json"])
-                error = payload.get("error")
-                if result.returncode == 0 or not isinstance(error, dict) or error.get("code") != "KB_ADAPTER_PROJECT_SCOPE":
-                    raise RuntimeError("project adapter config did not return KB_ADAPTER_PROJECT_SCOPE")
-                if "platform config" not in str(error.get("hint", "")):
-                    raise RuntimeError("project adapter scope error did not point to platform config")
-            write_config(project_a, {})
-        journey.step("reject project adapter configuration", "adapter", reject_project_adapter_config, cases=["S-048.3"])
-        if journey.steps[-1].status != "PASS":
-            return
+            error_to_raise = None
+            try:
+                for project_config in (
+                    {"platform": {"adapters": {"storage": "@kb-labs/adapters-fs"}}},
+                    {"adapters": {"storage": "@kb-labs/adapters-fs"}},
+                ):
+                    write_config(project_a, project_config)
+                    result = runner(["kb", "adapter", "list", "--json"], cwd=str(project_a), env=base_env,
+                                    capture_output=True, text=True, timeout=300)
+                    payload = _json(result, ["adapter", "list", "--json"])
+                    error = payload.get("error")
+                    if result.returncode == 0 or not isinstance(error, dict) or error.get("code") != "KB_ADAPTER_PROJECT_SCOPE":
+                        raise RuntimeError("project adapter config did not return KB_ADAPTER_PROJECT_SCOPE")
+                    if "platform config" not in str(error.get("hint", "")):
+                        raise RuntimeError("project adapter scope error did not point to platform config")
+            except Exception as error:
+                error_to_raise = error
+            finally:
+                try:
+                    write_config(project_a, {})
+                except Exception as cleanup_error:
+                    if error_to_raise is None:
+                        raise
+                    raise error_to_raise from cleanup_error
+            if error_to_raise is not None:
+                raise error_to_raise
+        journey.step("reject project adapter configuration", "adapter", reject_project_adapter_config,
+                     cases=["S-048.3"], requires=("step:configure platform storage options",))
 
         def attach_project_plugin() -> None:
             command = ["marketplace", "install", "@kb-labs/commit-entry", "--scope", "project", "--json"]
@@ -688,9 +696,8 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                     raise RuntimeError(f"project {project} plugin attachment isolation is incorrect")
                 if rows_for(project).get("storage", {}).get("implementation") != "@kb-labs/adapters-fs":
                     raise RuntimeError(f"project {project} adapter binding changed after plugin attachment")
-        journey.step("attach a plugin to project A only", "plugin", attach_project_plugin, cases=["S-048.4"])
-        if journey.steps[-1].status != "PASS":
-            return
+        journey.step("attach a plugin to project A only", "plugin", attach_project_plugin,
+                     cases=["S-048.4"], requires=("step:reject project adapter configuration",))
 
         def verify_project_configs() -> None:
             for project in (project_a, project_b):
@@ -699,7 +706,9 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                 if ("adapters" in value or "adapterOptions" in value or
                         "adapters" in project_config or "adapterOptions" in project_config):
                     raise RuntimeError(f"project {project} contains platform adapter settings")
-        journey.step("verify adapter settings are absent from project configs", "adapter", verify_project_configs, cases=["S-048.5"])
+        journey.step("verify adapter settings are absent from project configs", "adapter",
+                     verify_project_configs, cases=["S-048.5"],
+                     requires=("step:reject project adapter configuration",))
 
         def unbind_platform_storage_and_restore_default() -> None:
             command = ["adapter", "unbind", "storage", "--json"]

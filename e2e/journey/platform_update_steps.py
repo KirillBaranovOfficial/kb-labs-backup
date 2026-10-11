@@ -107,6 +107,7 @@ def run_platform_update_steps(
     run_command: CommandRunner = invoke_command,
     verify_user: Callable[[], subprocess.CompletedProcess] | None = None,
     expire_user_session: Callable[[], None] | None = None,
+    parent_journey: Journey | None = None,
     allowed_outside_roots: tuple[Path, ...] = (),
 ) -> Journey:
     command_runner = run_command
@@ -116,7 +117,7 @@ def run_platform_update_steps(
                                             stdout=(result.stdout or "") + (result.stderr or ""),
                                             stderr=result.stderr)
     """Update the running installation, exercise a project command, and roll back."""
-    journey = Journey(mode, f"platform-update-{mode}")
+    journey = Journey(mode, f"platform-update-{mode}", parent=parent_journey)
     root = str(platform_root)
     receipt_path = platform_root / "current/.kb/v2/receipt.json"
     config_paths = [platform_root / "current/.kb/kb.config.jsonc"]
@@ -198,7 +199,10 @@ def run_platform_update_steps(
                 expire_user_session()
 
     journey.step("save installed receipt, config, and host status", "platform.update", save_known_good_state,
-                 cases=["S-023.1"], details=checkpoint_details)
+                 cases=["S-023.1"], details=checkpoint_details,
+                 requires=("step:candidate provenance", "step:launcher version",
+                           "flow:start platform host", "step:start host",
+                           "step:verify installed project registration"))
 
     def plan_new_release() -> None:
         index = json.loads(update_index.read_text())
@@ -224,8 +228,7 @@ def run_platform_update_steps(
 
     journey.step("plan the newer sealed release", "platform.update", plan_new_release,
                  cases=["S-023.2", "S-214.10"],
-                 requires=("candidate provenance", "launcher version", "start platform host", "start host",
-                           "verify installed project registration"))
+                 requires=("step:save installed receipt, config, and host status",))
 
     def update() -> None:
         nonlocal snapshot_id, updated_plan_hash, updated_plan, pending_restart_services, pending_restart_object

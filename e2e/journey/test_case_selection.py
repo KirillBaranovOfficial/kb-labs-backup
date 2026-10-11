@@ -84,7 +84,8 @@ class CaseJourneySelectionTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue()), {
                 "selection": ["S-042"], "steps": ["S-042.1"],
                 "runners": ["service-local:explore", "service-secured:explore"],
-                "prerequisiteSteps": [], "stepSources": ["e2e/journey/service_runner.py"],
+                "prerequisiteSteps": [], "prerequisiteFlows": [],
+                "stepSources": ["e2e/journey/service_runner.py"],
             })
 
     def test_selector_failure_includes_decoded_cli_error_envelope(self):
@@ -132,7 +133,8 @@ class CaseJourneySelectionTests(unittest.TestCase):
         self.assertEqual(result, {
             "selection": ["S-042", "S-042.1"], "steps": ["S-042.1"],
             "runners": ["service-local:explore", "service-secured:explore"],
-            "prerequisiteSteps": [], "stepSources": ["e2e/journey/service_runner.py"],
+            "prerequisiteSteps": [], "prerequisiteFlows": [],
+            "stepSources": ["e2e/journey/service_runner.py"],
         })
 
     def test_rejects_unknown_case_or_step_id_by_name(self):

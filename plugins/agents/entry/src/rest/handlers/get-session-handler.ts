@@ -2,7 +2,7 @@
  * GET /sessions/:sessionId - Get session details
  */
 
-import { defineHandler, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
+import { defineHandler, PluginError, rethrowForRest, type RestInput, type PluginContextV3 } from '@kb-labs/sdk';
 import { SessionManager } from '@kb-labs/agent-core';
 import type { GetSessionResponse } from '@kb-labs/agent-contracts';
 
@@ -27,7 +27,12 @@ export default defineHandler({
       const session = await sessionManager.getSessionInfo(sessionId);
 
       if (!session) {
-        throw new Error(`Session not found: ${sessionId}`);
+        throw new PluginError(
+          'KB_RUNTIME_RESOURCE_NOT_FOUND',
+          `Agent session ${sessionId} was not found.`,
+          404,
+          { sessionId },
+        );
       }
 
       return { session };

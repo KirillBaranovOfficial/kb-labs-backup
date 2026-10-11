@@ -29,8 +29,6 @@ jobs:
       - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: '3.12'
-      - name: Run report and issue-sync unit tests
-        run: python3 -m unittest discover -s e2e/journey -p 'test_*.py' -v
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         continue-on-error: true
         with:
@@ -64,6 +62,8 @@ jobs:
           make build -C tools/kb-devkit
           pnpm install --frozen-lockfile
           ./tools/kb-devkit/kb-devkit run build --packages @kb-labs/cli-bin,@kb-labs/qa-entry
+      - name: Run report and issue-sync unit tests
+        run: python3 -m unittest discover -s e2e/journey -p 'test_*.py' -v
       - name: Compute local and secured release case coverage
         run: |
           run_files=$(find .journey/nightly-results -type f -name 'service-*.json' -print | sort | paste -sd, -)
